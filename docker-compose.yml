@@ -1,6 +1,7 @@
 services:
   sqlserver:
-    image: mcr.microsoft.com/mssql/server:2025-latest
+    image: mcr.microsoft.com/mssql/server:2025-CU1-ubuntu-24.04
+    platform: linux/amd64
     container_name: polecat-sqlserver
     environment:
       ACCEPT_EULA: "Y"

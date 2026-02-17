@@ -1,0 +1,94 @@
+using System.Collections.Concurrent;
+using Microsoft.Data.SqlClient;
+using Polecat.Storage;
+
+namespace Polecat.Internal;
+
+/// <summary>
+///     Ensures document tables exist on demand. Uses Weasel to create tables
+///     if they don't exist, and tracks which types have been ensured.
+/// </summary>
+internal class DocumentTableEnsurer
+{
+    private readonly ConcurrentDictionary<Type, bool> _ensured = new();
+    private readonly SemaphoreSlim _semaphore = new(1, 1);
+    private readonly ConnectionFactory _connectionFactory;
+    private readonly StoreOptions _options;
+
+    public DocumentTableEnsurer(ConnectionFactory connectionFactory, StoreOptions options)
+    {
+        _connectionFactory = connectionFactory;
+        _options = options;
+    }
+
+    public async Task EnsureTableAsync(DocumentProvider provider, CancellationToken token)
+    {
+        var docType = provider.Mapping.DocumentType;
+
+        if (_ensured.ContainsKey(docType))
+        {
+            return;
+        }
+
+        await _semaphore.WaitAsync(token);
+        try
+        {
+            // Double-check after acquiring lock
+            if (_ensured.ContainsKey(docType))
+            {
+                return;
+            }
+
+            var table = new DocumentTable(provider.Mapping);
+
+            await using var conn = _connectionFactory.Create();
+            await conn.OpenAsync(token);
+
+            // Use raw DDL with IF NOT EXISTS for safety
+            var ddl = BuildCreateTableDdl(provider.Mapping);
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = ddl;
+            await cmd.ExecuteNonQueryAsync(token);
+
+            _ensured.TryAdd(docType, true);
+        }
+        finally
+        {
+            _semaphore.Release();
+        }
+    }
+
+    public async Task EnsureTablesAsync(IEnumerable<DocumentProvider> providers, CancellationToken token)
+    {
+        foreach (var provider in providers)
+        {
+            await EnsureTableAsync(provider, token);
+        }
+    }
+
+    private static string BuildCreateTableDdl(DocumentMapping mapping)
+    {
+        var schema = mapping.DatabaseSchemaName;
+        var table = mapping.TableName;
+        var idType = mapping.IdType == typeof(Guid) ? "uniqueidentifier" : "varchar(250)";
+
+        return $"""
+            IF NOT EXISTS (SELECT 1 FROM sys.tables t
+                           JOIN sys.schemas s ON t.schema_id = s.schema_id
+                           WHERE s.name = '{schema}' AND t.name = '{table}')
+            BEGIN
+                IF SCHEMA_ID('{schema}') IS NULL
+                    EXEC('CREATE SCHEMA [{schema}]');
+
+                CREATE TABLE [{schema}].[{table}] (
+                    id {idType} NOT NULL PRIMARY KEY,
+                    data nvarchar(max) NOT NULL,
+                    version int NOT NULL DEFAULT 1,
+                    last_modified datetimeoffset NOT NULL DEFAULT SYSDATETIMEOFFSET(),
+                    dotnet_type varchar(500) NULL,
+                    tenant_id varchar(250) NOT NULL DEFAULT '*DEFAULT*'
+                );
+            END
+            """;
+    }
+}
