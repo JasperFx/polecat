@@ -24,19 +24,31 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase
 {
     private readonly StoreOptions _options;
     private readonly EventGraph _events;
+    private readonly string _connectionString;
 
     public PolecatDatabase(StoreOptions options)
+        : this(options, options.ConnectionString, "Polecat")
+    {
+    }
+
+    internal PolecatDatabase(StoreOptions options, string connectionString, string identifier)
         : base(
             new DefaultMigrationLogger(),
             options.AutoCreateSchemaObjects,
             new SqlServerMigrator(),
-            "Polecat",
-            options.ConnectionString)
+            identifier,
+            connectionString)
     {
         _options = options;
         _events = options.EventGraph;
+        _connectionString = connectionString;
         Tracker = new ShardStateTracker(NullLogger.Instance);
     }
+
+    /// <summary>
+    ///     The connection string this database instance uses.
+    /// </summary>
+    internal string StoredConnectionString => _connectionString;
 
     internal EventGraph Events => _events;
 
@@ -60,7 +72,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase
 
     public override DatabaseDescriptor Describe()
     {
-        var builder = new SqlConnectionStringBuilder(_options.ConnectionString);
+        var builder = new SqlConnectionStringBuilder(_connectionString);
         return new DatabaseDescriptor
         {
             Engine = SqlServerProvider.EngineName,
@@ -73,7 +85,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase
 
     public async Task<long> ProjectionProgressFor(ShardName name, CancellationToken token = default)
     {
-        await using var conn = new SqlConnection(_options.ConnectionString);
+        await using var conn = new SqlConnection(_connectionString);
         await conn.OpenAsync(token);
 
         await using var cmd = conn.CreateCommand();
@@ -91,7 +103,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase
     {
         var list = new List<ShardState>();
 
-        await using var conn = new SqlConnection(_options.ConnectionString);
+        await using var conn = new SqlConnection(_connectionString);
         await conn.OpenAsync(token);
 
         await using var cmd = conn.CreateCommand();
@@ -110,7 +122,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase
 
     public async Task<long> FetchHighestEventSequenceNumber(CancellationToken token)
     {
-        await using var conn = new SqlConnection(_options.ConnectionString);
+        await using var conn = new SqlConnection(_connectionString);
         await conn.OpenAsync(token);
 
         await using var cmd = conn.CreateCommand();
@@ -122,7 +134,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase
 
     public async Task<long?> FindEventStoreFloorAtTimeAsync(DateTimeOffset timestamp, CancellationToken token)
     {
-        await using var conn = new SqlConnection(_options.ConnectionString);
+        await using var conn = new SqlConnection(_connectionString);
         await conn.OpenAsync(token);
 
         await using var cmd = conn.CreateCommand();
@@ -184,8 +196,8 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase
 
     internal PolecatProjectionDaemon StartProjectionDaemon(DocumentStore store, ILoggerFactory loggerFactory)
     {
-        var detector = new PolecatHighWaterDetector(_events, _options,
-            loggerFactory.CreateLogger<PolecatHighWaterDetector>());
+        var detector = new PolecatHighWaterDetector(_events, _connectionString,
+            _options.DaemonSettings, loggerFactory.CreateLogger<PolecatHighWaterDetector>());
         return new PolecatProjectionDaemon(store, this, loggerFactory, detector);
     }
 }

@@ -106,7 +106,7 @@ public class event_loader_tests : IntegrationContext
 
     private PolecatEventLoader CreateLoader()
     {
-        return new PolecatEventLoader(theStore.Database.Events, theStore.Options);
+        return new PolecatEventLoader(theStore.Database.Events, theStore.Options, theStore.Options.ConnectionString);
     }
 
     private static EventRequest CreateRequest(long floor, long highWater, int batchSize)

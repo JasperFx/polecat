@@ -118,7 +118,8 @@ public class high_water_detector_tests : IntegrationContext
     {
         return new PolecatHighWaterDetector(
             theStore.Database.Events,
-            theStore.Options,
+            theStore.Options.ConnectionString,
+            theStore.Options.DaemonSettings,
             NullLogger<PolecatHighWaterDetector>.Instance);
     }
 

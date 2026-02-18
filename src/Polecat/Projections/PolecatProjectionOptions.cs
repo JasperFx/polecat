@@ -1,7 +1,9 @@
 using JasperFx.Events;
 using JasperFx.Events.Projections;
+using JasperFx.Events.Subscriptions;
 using Polecat.Events;
 using Polecat.Projections.Flattened;
+using Polecat.Subscriptions;
 
 namespace Polecat.Projections;
 
@@ -54,6 +56,29 @@ public class PolecatProjectionOptions
         }
 
         All.Add((IProjectionSource<IDocumentSession, IQuerySession>)projection);
+    }
+
+    /// <summary>
+    ///     Register a subscription for push-based event processing.
+    /// </summary>
+    public void Subscribe(Subscriptions.ISubscription subscription, Action<ISubscriptionOptions>? configure = null)
+    {
+        var source = subscription as ISubscriptionSource<IDocumentSession, IQuerySession>
+            ?? new SubscriptionWrapper(subscription);
+
+        if (source is ISubscriptionOptions options)
+            configure?.Invoke(options);
+
+        registerSubscription(source);
+    }
+
+    /// <summary>
+    ///     Register a subscription by type. The subscription must have a parameterless constructor.
+    /// </summary>
+    public void Subscribe<T>(Action<ISubscriptionOptions>? configure = null)
+        where T : Subscriptions.ISubscription, new()
+    {
+        Subscribe(new T(), configure);
     }
 
     /// <summary>

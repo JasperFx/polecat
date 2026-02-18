@@ -14,10 +14,12 @@ using Polecat.Events;
 using Polecat.Events.Daemon;
 using Polecat.Projections;
 using Polecat.Storage;
+using Polecat.Subscriptions;
 
 namespace Polecat;
 
-public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession>
+public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession>,
+    ISubscriptionRunner<ISubscription>
 {
     private static readonly Meter _meter = new("Polecat");
     private static readonly ActivitySource _activitySource = new("Polecat");
@@ -47,10 +49,12 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
 
     string IEventStore.MetricsPrefix => "polecat";
 
-    DatabaseCardinality IEventStore.DatabaseCardinality => DatabaseCardinality.Single;
+    DatabaseCardinality IEventStore.DatabaseCardinality =>
+        Options.Tenancy?.Cardinality ?? DatabaseCardinality.Single;
 
     bool IEventStore.HasMultipleTenants =>
-        Options.Events.TenancyStyle == TenancyStyle.Conjoined;
+        Options.Events.TenancyStyle == TenancyStyle.Conjoined
+        || Options.Tenancy?.Cardinality == DatabaseCardinality.StaticMultiple;
 
     EventStoreIdentity IEventStore.Identity => new("Polecat", "SqlServer");
 
@@ -74,15 +78,19 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
 
     IEventLoader IEventStore<IDocumentSession, IQuerySession>.BuildEventLoader(
         IEventDatabase database, ILogger loggerFactory, EventFilterable filtering,
-        AsyncOptions shardOptions) =>
-        new PolecatEventLoader(Events, Options);
+        AsyncOptions shardOptions)
+    {
+        var connStr = database is PolecatDatabase pdb ? pdb.StoredConnectionString : Options.ConnectionString;
+        return new PolecatEventLoader(Events, Options, connStr);
+    }
 
     async ValueTask<IProjectionBatch<IDocumentSession, IQuerySession>>
         IEventStore<IDocumentSession, IQuerySession>.StartProjectionBatchAsync(
             EventRange range, IEventDatabase database, ShardExecutionMode mode,
             AsyncOptions projectionOptions, CancellationToken token)
     {
-        var batch = new PolecatProjectionBatch(this, Events);
+        var connStr = database is PolecatDatabase pdb ? pdb.StoredConnectionString : Options.ConnectionString;
+        var batch = new PolecatProjectionBatch(this, Events, connStr);
         await batch.RecordProgress(range);
         return batch;
     }
@@ -100,12 +108,24 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
     {
         logger ??= NullLogger.Instance;
 
-        await Database.EnsureStorageExistsAsync(typeof(IEvent), CancellationToken.None);
+        // Resolve the right database — tenant-specific or default
+        PolecatDatabase db;
+        if (tenantIdOrDatabaseIdentifier != null && Options.Tenancy is SeparateDatabaseTenancy)
+        {
+            db = Options.Tenancy.GetDatabase(tenantIdOrDatabaseIdentifier);
+        }
+        else
+        {
+            db = Database;
+        }
 
-        var detector = new PolecatHighWaterDetector(Events, Options,
-            new Logger<PolecatHighWaterDetector>(new LoggerFactory()));
+        await db.EnsureStorageExistsAsync(typeof(IEvent), CancellationToken.None);
 
-        return new PolecatProjectionDaemon(this, Database, logger, detector);
+        var connStr = db.StoredConnectionString;
+        var detector = new PolecatHighWaterDetector(Events, connStr,
+            Options.DaemonSettings, new Logger<PolecatHighWaterDetector>(new LoggerFactory()));
+
+        return new PolecatProjectionDaemon(this, db, logger, detector);
     }
 
     async ValueTask<IProjectionDaemon> IEventStore.BuildProjectionDaemonAsync(DatabaseId id)
@@ -113,10 +133,16 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
         return await BuildProjectionDaemonAsync();
     }
 
+    private static string ResolveConnectionString(IEventDatabase database, StoreOptions options)
+    {
+        return database is PolecatDatabase pdb ? pdb.StoredConnectionString : options.ConnectionString;
+    }
+
     async Task IEventStore<IDocumentSession, IQuerySession>.RewindSubscriptionProgressAsync(
         IEventDatabase database, string subscriptionName, CancellationToken token, long? sequenceFloor)
     {
-        await using var conn = new SqlConnection(Options.ConnectionString);
+        var connStr = ResolveConnectionString(database, Options);
+        await using var conn = new SqlConnection(connStr);
         await conn.OpenAsync(token);
 
         if (sequenceFloor is null or 0)
@@ -145,7 +171,8 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
     async Task IEventStore<IDocumentSession, IQuerySession>.RewindAgentProgressAsync(
         IEventDatabase database, string shardName, CancellationToken token, long sequenceFloor)
     {
-        await using var conn = new SqlConnection(Options.ConnectionString);
+        var connStr = ResolveConnectionString(database, Options);
+        await using var conn = new SqlConnection(connStr);
         await conn.OpenAsync(token);
 
         await using var cmd = conn.CreateCommand();
@@ -165,20 +192,21 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
     async Task IEventStore<IDocumentSession, IQuerySession>.TeardownExistingProjectionProgressAsync(
         IEventDatabase database, string subscriptionName, CancellationToken token)
     {
-        await TeardownProjectionStateAsync(subscriptionName, token);
+        await TeardownProjectionStateAsync(database, subscriptionName, token);
     }
 #pragma warning restore CS0618
 
     async Task IEventStore<IDocumentSession, IQuerySession>.TeardownExistingProjectionStateAsync(
         IEventDatabase database, string subscriptionName, CancellationToken token)
     {
-        await TeardownProjectionStateAsync(subscriptionName, token);
+        await TeardownProjectionStateAsync(database, subscriptionName, token);
     }
 
     async Task IEventStore<IDocumentSession, IQuerySession>.DeleteProjectionProgressAsync(
         IEventDatabase database, string subscriptionName, CancellationToken token)
     {
-        await using var conn = new SqlConnection(Options.ConnectionString);
+        var connStr = ResolveConnectionString(database, Options);
+        await using var conn = new SqlConnection(connStr);
         await conn.OpenAsync(token);
 
         await using var cmd = conn.CreateCommand();
@@ -187,10 +215,35 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
         await cmd.ExecuteNonQueryAsync(token);
     }
 
-    private async Task TeardownProjectionStateAsync(string subscriptionName, CancellationToken token)
+    // ISubscriptionRunner<ISubscription>
+    async Task ISubscriptionRunner<ISubscription>.ExecuteAsync(
+        ISubscription subscription, IEventDatabase database, EventRange range,
+        ShardExecutionMode mode, CancellationToken token)
     {
+        var connStr = ResolveConnectionString(database, Options);
+        var batch = new PolecatProjectionBatch(this, Events, connStr);
+        await batch.RecordProgress(range);
+
+        // Create a session the subscription can use for reads/writes
+        await using var session = LightweightSession();
+        var listener = await subscription.ProcessEventsAsync(range, range.Agent, session, token);
+
+        await batch.ExecuteAsync(token);
+
+        // Invoke post-commit listener if provided
+        if (listener is not NullChangeListener)
+        {
+            await listener.AfterCommitAsync(token);
+        }
+    }
+
+    private async Task TeardownProjectionStateAsync(IEventDatabase database, string subscriptionName,
+        CancellationToken token)
+    {
+        var connStr = ResolveConnectionString(database, Options);
+
         // Delete projection progress
-        await using var conn = new SqlConnection(Options.ConnectionString);
+        await using var conn = new SqlConnection(connStr);
         await conn.OpenAsync(token);
 
         await using var cmd = conn.CreateCommand();

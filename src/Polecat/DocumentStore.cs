@@ -24,6 +24,9 @@ public partial class DocumentStore : IDocumentStore
         _tableEnsurer = new DocumentTableEnsurer(_connectionFactory, options);
         Database = new PolecatDatabase(options);
 
+        // Initialize default tenancy if not already configured
+        Options.Tenancy ??= new DefaultTenancy(_connectionFactory, Database);
+
         // Initialize projection graph — builds async shard registry
         options.Projections.AssertValidity(options);
 
@@ -34,7 +37,7 @@ public partial class DocumentStore : IDocumentStore
     public StoreOptions Options { get; }
 
     /// <summary>
-    ///     The Weasel database for schema management.
+    ///     The Weasel database for schema management (default tenant).
     /// </summary>
     public PolecatDatabase Database { get; }
 
@@ -65,6 +68,19 @@ public partial class DocumentStore : IDocumentStore
         return For(opts => opts.ConnectionString = connectionString);
     }
 
+    private ConnectionFactory ResolveConnectionFactory(string tenantId)
+    {
+        return Options.Tenancy!.GetConnectionFactory(tenantId);
+    }
+
+    private DocumentTableEnsurer ResolveTableEnsurer(string tenantId)
+    {
+        var factory = ResolveConnectionFactory(tenantId);
+        // For default tenancy, the factory is the same so we reuse the shared ensurer
+        if (ReferenceEquals(factory, _connectionFactory)) return _tableEnsurer;
+        return new DocumentTableEnsurer(factory, Options);
+    }
+
     public IDocumentSession LightweightSession()
     {
         return LightweightSession(new SessionOptions());
@@ -72,11 +88,13 @@ public partial class DocumentStore : IDocumentStore
 
     public IDocumentSession LightweightSession(SessionOptions options)
     {
+        var factory = ResolveConnectionFactory(options.TenantId);
+        var ensurer = ReferenceEquals(factory, _connectionFactory) ? _tableEnsurer : new DocumentTableEnsurer(factory, Options);
         return new LightweightSession(
             Options,
-            _connectionFactory,
+            factory,
             _providers,
-            _tableEnsurer,
+            ensurer,
             Events,
             InlineProjections,
             options.TenantId);
@@ -89,11 +107,13 @@ public partial class DocumentStore : IDocumentStore
 
     public IDocumentSession IdentitySession(SessionOptions options)
     {
+        var factory = ResolveConnectionFactory(options.TenantId);
+        var ensurer = ReferenceEquals(factory, _connectionFactory) ? _tableEnsurer : new DocumentTableEnsurer(factory, Options);
         return new IdentityMapDocumentSession(
             Options,
-            _connectionFactory,
+            factory,
             _providers,
-            _tableEnsurer,
+            ensurer,
             Events,
             InlineProjections,
             options.TenantId);
@@ -106,11 +126,13 @@ public partial class DocumentStore : IDocumentStore
 
     public IQuerySession QuerySession(SessionOptions options)
     {
+        var factory = ResolveConnectionFactory(options.TenantId);
+        var ensurer = ReferenceEquals(factory, _connectionFactory) ? _tableEnsurer : new DocumentTableEnsurer(factory, Options);
         return new Internal.QuerySession(
             Options,
-            _connectionFactory,
+            factory,
             _providers,
-            _tableEnsurer,
+            ensurer,
             Events,
             options.TenantId);
     }

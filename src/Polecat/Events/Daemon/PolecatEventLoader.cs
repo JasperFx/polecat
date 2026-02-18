@@ -13,18 +13,20 @@ internal class PolecatEventLoader : IEventLoader
 {
     private readonly EventGraph _events;
     private readonly StoreOptions _options;
+    private readonly string _connectionString;
 
-    public PolecatEventLoader(EventGraph events, StoreOptions options)
+    public PolecatEventLoader(EventGraph events, StoreOptions options, string connectionString)
     {
         _events = events;
         _options = options;
+        _connectionString = connectionString;
     }
 
     public async Task<EventPage> LoadAsync(EventRequest request, CancellationToken token)
     {
         var page = new EventPage(request.Floor);
 
-        await using var conn = new SqlConnection(_options.ConnectionString);
+        await using var conn = new SqlConnection(_connectionString);
         await conn.OpenAsync(token);
 
         await using var cmd = conn.CreateCommand();

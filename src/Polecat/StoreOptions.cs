@@ -5,6 +5,7 @@ using Polecat.Events;
 using Polecat.Internal;
 using Polecat.Projections;
 using Polecat.Serialization;
+using Polecat.Storage;
 
 namespace Polecat;
 
@@ -93,6 +94,23 @@ public class StoreOptions
     ///     Set by ApplyAllDatabaseChangesOnStartup(). Used by the hosted service.
     /// </summary>
     internal bool ShouldApplyChangesOnStartup { get; set; }
+
+    /// <summary>
+    ///     The tenancy strategy. Defaults to DefaultTenancy (single database).
+    ///     Set via MultiTenantedDatabases() for separate database per tenant.
+    /// </summary>
+    internal ITenancy? Tenancy { get; set; }
+
+    /// <summary>
+    ///     Configure separate database multi-tenancy. Each tenant gets its own
+    ///     SQL Server database with full schema isolation.
+    /// </summary>
+    public void MultiTenantedDatabases(Action<SeparateDatabaseTenancy> configure)
+    {
+        var tenancy = new SeparateDatabaseTenancy(this);
+        configure(tenancy);
+        Tenancy = tenancy;
+    }
 
     internal ConnectionFactory CreateConnectionFactory()
     {

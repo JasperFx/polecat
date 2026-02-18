@@ -14,13 +14,15 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
 {
     private readonly DocumentStore _store;
     private readonly EventGraph _events;
+    private readonly string _connectionString;
     private readonly Dictionary<string, IDocumentSession> _sessions = new();
     private readonly List<ProgressOperation> _progressOps = new();
 
-    public PolecatProjectionBatch(DocumentStore store, EventGraph events)
+    public PolecatProjectionBatch(DocumentStore store, EventGraph events, string connectionString)
     {
         _store = store;
         _events = events;
+        _connectionString = connectionString;
     }
 
     public IDocumentSession SessionForTenant(string tenantId)
@@ -41,7 +43,7 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
 
     public async Task ExecuteAsync(CancellationToken token)
     {
-        await using var conn = new SqlConnection(_store.Options.ConnectionString);
+        await using var conn = new SqlConnection(_connectionString);
         await conn.OpenAsync(token);
         await using var tx = (SqlTransaction)await conn.BeginTransactionAsync(token);
 
@@ -49,7 +51,7 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
         {
             // Ensure document tables exist for projected types
             var tableEnsurer = new DocumentTableEnsurer(
-                _store.Options.CreateConnectionFactory(), _store.Options);
+                new ConnectionFactory(_connectionString), _store.Options);
 
             // Collect all operations from all tenant sessions
             foreach (var (_, session) in _sessions)

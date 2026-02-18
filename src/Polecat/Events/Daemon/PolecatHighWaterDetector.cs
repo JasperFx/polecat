@@ -13,17 +13,19 @@ namespace Polecat.Events.Daemon;
 internal class PolecatHighWaterDetector : IHighWaterDetector
 {
     private readonly EventGraph _events;
-    private readonly StoreOptions _options;
+    private readonly string _connectionString;
+    private readonly DaemonSettings _daemonSettings;
     private readonly ILogger<PolecatHighWaterDetector> _logger;
 
-    public PolecatHighWaterDetector(EventGraph events, StoreOptions options,
-        ILogger<PolecatHighWaterDetector> logger)
+    public PolecatHighWaterDetector(EventGraph events, string connectionString,
+        DaemonSettings daemonSettings, ILogger<PolecatHighWaterDetector> logger)
     {
         _events = events;
-        _options = options;
+        _connectionString = connectionString;
+        _daemonSettings = daemonSettings;
         _logger = logger;
 
-        var builder = new SqlConnectionStringBuilder(options.ConnectionString);
+        var builder = new SqlConnectionStringBuilder(connectionString);
         var server = builder.DataSource ?? "localhost";
         // SQL Server uses comma for port (e.g. "localhost,11433") which is invalid in URIs
         if (server.Contains(','))
@@ -84,7 +86,7 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
         {
             // Check if the gap is stale enough to skip
             if (stats.TryGetStaleAge(out var timeSinceUpdate) &&
-                timeSinceUpdate > _options.DaemonSettings.StaleSequenceThreshold)
+                timeSinceUpdate > _daemonSettings.StaleSequenceThreshold)
             {
                 _logger.LogWarning(
                     "Skipping stale gap starting after seq_id {CurrentMark}. High water was last updated {TimeSinceUpdate} ago",
@@ -116,7 +118,7 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
 
     internal async Task<HighWaterStatistics> LoadStatisticsAsync(CancellationToken token)
     {
-        await using var conn = new SqlConnection(_options.ConnectionString);
+        await using var conn = new SqlConnection(_connectionString);
         await conn.OpenAsync(token);
 
         await using var cmd = conn.CreateCommand();
@@ -153,7 +155,7 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
     internal async Task<(long? GapSeqId, long? MinSeqId, long? MaxSeqId)> DetectGapAsync(long start,
         CancellationToken token)
     {
-        await using var conn = new SqlConnection(_options.ConnectionString);
+        await using var conn = new SqlConnection(_connectionString);
         await conn.OpenAsync(token);
 
         await using var cmd = conn.CreateCommand();
@@ -199,7 +201,7 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
 
     internal async Task MarkHighWaterAsync(long mark, CancellationToken token)
     {
-        await using var conn = new SqlConnection(_options.ConnectionString);
+        await using var conn = new SqlConnection(_connectionString);
         await conn.OpenAsync(token);
 
         await using var cmd = conn.CreateCommand();
