@@ -1,11 +1,22 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
     <PropertyGroup>
+        <Description>SQL Server backed Event Store for the Critter Stack</Description>
+        <GenerateAssemblyTitleAttribute>true</GenerateAssemblyTitleAttribute>
+        <GenerateAssemblyDescriptionAttribute>true</GenerateAssemblyDescriptionAttribute>
+        <GenerateAssemblyProductAttribute>true</GenerateAssemblyProductAttribute>
+        <GenerateAssemblyCopyrightAttribute>false</GenerateAssemblyCopyrightAttribute>
+        <GenerateAssemblyVersionAttribute>true</GenerateAssemblyVersionAttribute>
+        <GenerateAssemblyFileVersionAttribute>true</GenerateAssemblyFileVersionAttribute>
+        <GenerateAssemblyInformationalVersionAttribute>true</GenerateAssemblyInformationalVersionAttribute>
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
+        <Nullable>enable</Nullable>
         <TargetFramework>net10.0</TargetFramework>
         <LangVersion>latest</LangVersion>
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
         <RootNamespace>Polecat</RootNamespace>
+        <Version>0.1.0</Version>
     </PropertyGroup>
 
     <ItemGroup>
