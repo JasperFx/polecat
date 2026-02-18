@@ -69,6 +69,7 @@ internal class QuerySession : IQuerySession
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = provider.LoadSql;
         cmd.Parameters.AddWithValue("@id", id);
+        cmd.Parameters.AddWithValue("@tenant_id", TenantId);
 
         await using var reader = await cmd.ExecuteReaderAsync(token);
         if (await reader.ReadAsync(token))
@@ -110,7 +111,8 @@ internal class QuerySession : IQuerySession
             cmd.Parameters.AddWithValue(paramNames[i], ids[i]);
         }
 
-        cmd.CommandText = $"{provider.SelectSql} WHERE id IN ({string.Join(", ", paramNames)});";
+        cmd.CommandText = $"{provider.SelectSql} WHERE id IN ({string.Join(", ", paramNames)}) AND tenant_id = @tenant_id;";
+        cmd.Parameters.AddWithValue("@tenant_id", TenantId);
 
         var results = new List<T>();
         await using var reader = await cmd.ExecuteReaderAsync(token);

@@ -46,10 +46,11 @@ internal class QueryEventStore : IQueryEventStore
         var sql = $"""
             SELECT seq_id, id, stream_id, version, data, type, timestamp, tenant_id, dotnet_type, is_archived
             FROM {_events.EventsTableName}
-            WHERE stream_id = @stream_id
+            WHERE stream_id = @stream_id AND tenant_id = @tenant_id
             """;
 
         cmd.Parameters.AddWithValue("@stream_id", streamId);
+        cmd.Parameters.AddWithValue("@tenant_id", _session.TenantId);
 
         if (version > 0)
         {
@@ -137,9 +138,10 @@ internal class QueryEventStore : IQueryEventStore
         cmd.CommandText = $"""
             SELECT id, type, version, timestamp, created, tenant_id, is_archived
             FROM {_events.StreamsTableName}
-            WHERE id = @id;
+            WHERE id = @id AND tenant_id = @tenant_id;
             """;
         cmd.Parameters.AddWithValue("@id", streamId);
+        cmd.Parameters.AddWithValue("@tenant_id", _session.TenantId);
 
         await using var reader = await cmd.ExecuteReaderAsync(token);
         if (await reader.ReadAsync(token))

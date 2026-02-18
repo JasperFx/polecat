@@ -82,21 +82,21 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     public void Delete<T>(T document) where T : class
     {
         var provider = _providers.GetProvider<T>();
-        var op = provider.BuildDeleteByDocument(document);
+        var op = provider.BuildDeleteByDocument(document, TenantId);
         _workTracker.Add(op);
     }
 
     public void Delete<T>(Guid id) where T : class
     {
         var provider = _providers.GetProvider<T>();
-        var op = provider.BuildDeleteById(id);
+        var op = provider.BuildDeleteById(id, TenantId);
         _workTracker.Add(op);
     }
 
     public void Delete<T>(string id) where T : class
     {
         var provider = _providers.GetProvider<T>();
-        var op = provider.BuildDeleteById(id);
+        var op = provider.BuildDeleteById(id, TenantId);
         _workTracker.Add(op);
     }
 
@@ -248,8 +248,9 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         {
             cmd.Transaction = tx;
             cmd.CommandText =
-                $"SELECT version FROM {_eventGraph.StreamsTableName} WITH (UPDLOCK, HOLDLOCK) WHERE id = @id;";
+                $"SELECT version FROM {_eventGraph.StreamsTableName} WITH (UPDLOCK, HOLDLOCK) WHERE id = @id AND tenant_id = @tenant_id;";
             cmd.Parameters.AddWithValue("@id", streamId);
+            cmd.Parameters.AddWithValue("@tenant_id", TenantId);
             var result = await cmd.ExecuteScalarAsync(token);
             if (result != null && result != DBNull.Value)
             {
@@ -284,9 +285,10 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             await using var cmd = conn.CreateCommand();
             cmd.Transaction = tx;
             cmd.CommandText =
-                $"UPDATE {_eventGraph.StreamsTableName} SET version = @version, timestamp = SYSDATETIMEOFFSET() WHERE id = @id;";
+                $"UPDATE {_eventGraph.StreamsTableName} SET version = @version, timestamp = SYSDATETIMEOFFSET() WHERE id = @id AND tenant_id = @tenant_id;";
             cmd.Parameters.AddWithValue("@id", streamId);
             cmd.Parameters.AddWithValue("@version", newVersion);
+            cmd.Parameters.AddWithValue("@tenant_id", TenantId);
             await cmd.ExecuteNonQueryAsync(token);
         }
         else

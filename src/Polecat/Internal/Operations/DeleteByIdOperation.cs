@@ -7,11 +7,13 @@ internal class DeleteByIdOperation : IStorageOperation
 {
     private readonly object _id;
     private readonly DocumentMapping _mapping;
+    private readonly string _tenantId;
 
-    public DeleteByIdOperation(object id, DocumentMapping mapping)
+    public DeleteByIdOperation(object id, DocumentMapping mapping, string tenantId)
     {
         _id = id;
         _mapping = mapping;
+        _tenantId = tenantId;
     }
 
     public Type DocumentType => _mapping.DocumentType;
@@ -19,8 +21,9 @@ internal class DeleteByIdOperation : IStorageOperation
 
     public void ConfigureCommand(SqlCommand command)
     {
-        command.CommandText = $"DELETE FROM {_mapping.QualifiedTableName} WHERE id = @id;";
+        command.CommandText = $"DELETE FROM {_mapping.QualifiedTableName} WHERE id = @id AND tenant_id = @tenant_id;";
         command.Parameters.AddWithValue("@id", _id);
+        command.Parameters.AddWithValue("@tenant_id", _tenantId);
     }
 
     public async Task PostprocessAsync(SqlCommand command, CancellationToken token)

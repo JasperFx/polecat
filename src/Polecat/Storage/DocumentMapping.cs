@@ -32,6 +32,7 @@ internal class DocumentMapping
         TableName = tableName;
         DatabaseSchemaName = options.DatabaseSchemaName;
         DotNetTypeName = $"{documentType.FullName}, {documentType.Assembly.GetName().Name}";
+        TenancyStyle = options.Events.TenancyStyle;
     }
 
     public Type DocumentType => _documentType;
@@ -40,6 +41,7 @@ internal class DocumentMapping
     public string QualifiedTableName { get; }
     public string DatabaseSchemaName { get; }
     public string DotNetTypeName { get; }
+    public TenancyStyle TenancyStyle { get; }
 
     public object GetId(object document)
     {

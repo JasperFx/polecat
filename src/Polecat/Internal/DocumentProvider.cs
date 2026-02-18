@@ -20,7 +20,7 @@ internal class DocumentProvider
     public string SelectSql =>
         $"SELECT id, data, version, last_modified, dotnet_type, tenant_id FROM {Mapping.QualifiedTableName}";
 
-    public string LoadSql => $"{SelectSql} WHERE id = @id;";
+    public string LoadSql => $"{SelectSql} WHERE id = @id AND tenant_id = @tenant_id;";
 
     public UpsertOperation BuildUpsert(object document, IPolecatSerializer serializer, string tenantId)
     {
@@ -43,14 +43,14 @@ internal class DocumentProvider
         return new UpdateOperation(document, id, json, Mapping, tenantId);
     }
 
-    public DeleteByIdOperation BuildDeleteById(object id)
+    public DeleteByIdOperation BuildDeleteById(object id, string tenantId)
     {
-        return new DeleteByIdOperation(id, Mapping);
+        return new DeleteByIdOperation(id, Mapping, tenantId);
     }
 
-    public DeleteByIdOperation BuildDeleteByDocument(object document)
+    public DeleteByIdOperation BuildDeleteByDocument(object document, string tenantId)
     {
         var id = Mapping.GetId(document);
-        return new DeleteByIdOperation(id, Mapping);
+        return new DeleteByIdOperation(id, Mapping, tenantId);
     }
 }

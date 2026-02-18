@@ -71,6 +71,30 @@ internal class DocumentTableEnsurer
         var schema = mapping.DatabaseSchemaName;
         var table = mapping.TableName;
         var idType = mapping.IdType == typeof(Guid) ? "uniqueidentifier" : "varchar(250)";
+        var isConjoined = mapping.TenancyStyle == TenancyStyle.Conjoined;
+
+        if (isConjoined)
+        {
+            return $"""
+                IF NOT EXISTS (SELECT 1 FROM sys.tables t
+                               JOIN sys.schemas s ON t.schema_id = s.schema_id
+                               WHERE s.name = '{schema}' AND t.name = '{table}')
+                BEGIN
+                    IF SCHEMA_ID('{schema}') IS NULL
+                        EXEC('CREATE SCHEMA [{schema}]');
+
+                    CREATE TABLE [{schema}].[{table}] (
+                        tenant_id varchar(250) NOT NULL,
+                        id {idType} NOT NULL,
+                        data nvarchar(max) NOT NULL,
+                        version int NOT NULL DEFAULT 1,
+                        last_modified datetimeoffset NOT NULL DEFAULT SYSDATETIMEOFFSET(),
+                        dotnet_type varchar(500) NULL,
+                        CONSTRAINT pk_{table} PRIMARY KEY (tenant_id, id)
+                    );
+                END
+                """;
+        }
 
         return $"""
             IF NOT EXISTS (SELECT 1 FROM sys.tables t

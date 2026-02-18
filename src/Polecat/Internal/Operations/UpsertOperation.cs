@@ -28,7 +28,8 @@ internal class UpsertOperation : IStorageOperation
     {
         command.CommandText = $"""
             MERGE INTO {_mapping.QualifiedTableName} WITH (HOLDLOCK) AS target
-            USING (SELECT @id AS id) AS source ON target.id = source.id
+            USING (SELECT @id AS id, @tenant_id AS tenant_id) AS source
+                ON target.id = source.id AND target.tenant_id = source.tenant_id
             WHEN MATCHED THEN
               UPDATE SET data = @data, version = target.version + 1,
                 last_modified = SYSDATETIMEOFFSET(), dotnet_type = @dotnet_type

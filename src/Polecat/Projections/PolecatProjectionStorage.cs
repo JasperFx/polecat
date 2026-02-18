@@ -51,25 +51,28 @@ internal class PolecatProjectionStorage<TDoc, TId> : IProjectionStorage<TDoc, TI
 
     public void Delete(TId identity)
     {
-        var op = _provider.BuildDeleteById(identity!);
+        var op = _provider.BuildDeleteById(identity!, TenantId);
         _session.WorkTracker.Add(op);
     }
 
     public void Delete(TId identity, string tenantId)
     {
-        Delete(identity);
+        var op = _provider.BuildDeleteById(identity!, tenantId);
+        _session.WorkTracker.Add(op);
     }
 
     public void HardDelete(TDoc snapshot)
     {
         var id = _provider.Mapping.GetId(snapshot);
-        var op = _provider.BuildDeleteById(id);
+        var op = _provider.BuildDeleteById(id, TenantId);
         _session.WorkTracker.Add(op);
     }
 
     public void HardDelete(TDoc snapshot, string tenantId)
     {
-        HardDelete(snapshot);
+        var id = _provider.Mapping.GetId(snapshot);
+        var op = _provider.BuildDeleteById(id, tenantId);
+        _session.WorkTracker.Add(op);
     }
 
     public void UnDelete(TDoc snapshot)
@@ -89,6 +92,7 @@ internal class PolecatProjectionStorage<TDoc, TId> : IProjectionStorage<TDoc, TI
         if (_session.ActiveTransaction != null) cmd.Transaction = _session.ActiveTransaction;
         cmd.CommandText = _provider.LoadSql;
         cmd.Parameters.AddWithValue("@id", (object)id);
+        cmd.Parameters.AddWithValue("@tenant_id", TenantId);
 
         await using var reader = await cmd.ExecuteReaderAsync(cancellation);
         if (await reader.ReadAsync(cancellation))
@@ -117,7 +121,8 @@ internal class PolecatProjectionStorage<TDoc, TId> : IProjectionStorage<TDoc, TI
             cmd.Parameters.AddWithValue(paramNames[i], (object)identities[i]);
         }
 
-        cmd.CommandText = $"{_provider.SelectSql} WHERE id IN ({string.Join(", ", paramNames)});";
+        cmd.CommandText = $"{_provider.SelectSql} WHERE id IN ({string.Join(", ", paramNames)}) AND tenant_id = @tenant_id;";
+        cmd.Parameters.AddWithValue("@tenant_id", TenantId);
 
         await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))

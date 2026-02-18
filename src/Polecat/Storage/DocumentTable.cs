@@ -12,6 +12,11 @@ internal class DocumentTable : Table
     public DocumentTable(DocumentMapping mapping)
         : base(new SqlServerObjectName(mapping.DatabaseSchemaName, mapping.TableName))
     {
+        if (mapping.TenancyStyle == TenancyStyle.Conjoined)
+        {
+            AddColumn("tenant_id", "varchar(250)").AsPrimaryKey().NotNull();
+        }
+
         var idColumnType = mapping.IdType == typeof(Guid)
             ? "uniqueidentifier"
             : "varchar(250)";
@@ -28,8 +33,11 @@ internal class DocumentTable : Table
 
         AddColumn("dotnet_type", "varchar(500)").AllowNulls();
 
-        AddColumn("tenant_id", "varchar(250)")
-            .NotNull()
-            .DefaultValueByString(Tenancy.DefaultTenantId);
+        if (mapping.TenancyStyle != TenancyStyle.Conjoined)
+        {
+            AddColumn("tenant_id", "varchar(250)")
+                .NotNull()
+                .DefaultValueByString(Tenancy.DefaultTenantId);
+        }
     }
 }

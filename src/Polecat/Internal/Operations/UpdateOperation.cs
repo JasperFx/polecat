@@ -31,7 +31,7 @@ internal class UpdateOperation : IStorageOperation
             SET data = @data, version = version + 1,
                 last_modified = SYSDATETIMEOFFSET(), dotnet_type = @dotnet_type
             OUTPUT inserted.version
-            WHERE id = @id;
+            WHERE id = @id AND tenant_id = @tenant_id;
             """;
 
         command.Parameters.AddWithValue("@id", _id);
