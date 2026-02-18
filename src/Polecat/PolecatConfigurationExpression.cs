@@ -1,5 +1,7 @@
+using JasperFx.Events.Daemon;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Polecat.Internal;
 
 namespace Polecat;
@@ -41,6 +43,22 @@ public class PolecatConfigurationExpression
         where T : class, ISessionFactory
     {
         Services.Add(new ServiceDescriptor(typeof(ISessionFactory), typeof(T), lifetime));
+        return this;
+    }
+
+    /// <summary>
+    ///     Enable the async projection daemon as a hosted service.
+    ///     This starts background processing of projections registered with Async lifecycle.
+    /// </summary>
+    public PolecatConfigurationExpression AddAsyncDaemon(DaemonMode mode)
+    {
+        Services.ConfigurePolecat(opts => opts.DaemonSettings.AsyncMode = mode);
+        EnsureActivatorIsRegistered();
+        Services.AddSingleton<IHostedService>(sp =>
+        {
+            var store = (DocumentStore)sp.GetRequiredService<IDocumentStore>();
+            return new PolecatDaemonHostedService(store, sp.GetRequiredService<ILoggerFactory>());
+        });
         return this;
     }
 

@@ -1,7 +1,10 @@
 using System.Collections.Concurrent;
 using System.Text;
 using JasperFx.Events;
+using JasperFx.Events.Aggregation;
+using JasperFx.Events.Projections;
 using Polecat.Events.Schema;
+using Polecat.Projections;
 using Polecat.Serialization;
 
 namespace Polecat.Events;
@@ -11,7 +14,7 @@ namespace Polecat.Events;
 ///     Analogous to Marten's EventGraph. Manages event type registration
 ///     and wrapping of raw event data into IEvent instances.
 /// </summary>
-public class EventGraph : IEventRegistry
+public class EventGraph : IEventRegistry, IAggregationSourceFactory<IQuerySession>
 {
     private readonly StoreOptions _options;
     private readonly ConcurrentDictionary<Type, PolecatEventType> _eventTypes = new();
@@ -91,6 +94,21 @@ public class EventGraph : IEventRegistry
     public void AddEventType(Type eventType)
     {
         EventMappingFor(eventType);
+    }
+
+    /// <summary>
+    ///     Build an on-the-fly aggregator source for live aggregation of the given type.
+    ///     Creates a SingleStreamProjection for convention-based aggregate types.
+    /// </summary>
+    IAggregatorSource<IQuerySession>? IAggregationSourceFactory<IQuerySession>.Build<TDoc>()
+    {
+#pragma warning disable CS8714 // notnull constraint mismatch
+        var projection = new SingleStreamProjection<TDoc>();
+#pragma warning restore CS8714
+        projection.Lifecycle = ProjectionLifecycle.Live;
+        projection.AssembleAndAssertValidity();
+        foreach (var et in projection.IncludedEventTypes) AddEventType(et);
+        return projection as IAggregatorSource<IQuerySession>;
     }
 
     public Type AggregateTypeFor(string aggregateTypeName)

@@ -2,10 +2,13 @@ using JasperFx.Core.Reflection;
 using JasperFx.Descriptors;
 using JasperFx.Events;
 using JasperFx.Events.Daemon;
+using JasperFx.Events.Daemon.HighWater;
 using JasperFx.Events.Projections;
 using Microsoft.Data.SqlClient;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Polecat.Events;
+using Polecat.Events.Daemon;
 using Polecat.Events.Schema;
 using Weasel.Core.Migrations;
 using Weasel.SqlServer;
@@ -31,7 +34,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase
             options.ConnectionString)
     {
         _options = options;
-        _events = new EventGraph(options);
+        _events = options.EventGraph;
         Tracker = new ShardStateTracker(NullLogger.Instance);
     }
 
@@ -161,8 +164,13 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase
 
             var progress = await AllProjectionProgress(CancellationToken.None);
 
-            // All projections must be caught up to the high water mark
-            if (progress.Count > 0 && progress.All(p => p.Sequence >= highWater))
+            // Filter out the HighWaterMark entry — only check actual projection shards
+            var projectionProgress = progress
+                .Where(p => p.ShardName != "HighWaterMark")
+                .ToList();
+
+            // All projection shards must be caught up to the high water mark
+            if (projectionProgress.Count > 0 && projectionProgress.All(p => p.Sequence >= highWater))
             {
                 return;
             }
@@ -172,5 +180,12 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase
 
         throw new TimeoutException(
             $"Timed out after {timeout} waiting for projection data to become non-stale.");
+    }
+
+    internal PolecatProjectionDaemon StartProjectionDaemon(DocumentStore store, ILoggerFactory loggerFactory)
+    {
+        var detector = new PolecatHighWaterDetector(_events, _options,
+            loggerFactory.CreateLogger<PolecatHighWaterDetector>());
+        return new PolecatProjectionDaemon(store, this, loggerFactory, detector);
     }
 }

@@ -177,7 +177,7 @@ internal class QueryEventStore : IQueryEventStore
         var events = await FetchStreamAsync(streamId, version, timestamp, fromVersion, token);
         if (events.Count == 0) return state;
 
-        var aggregator = _options.Projections.AggregatorFor<T>(_events);
+        var aggregator = _options.Projections.AggregatorFor<T>();
         var aggregate = await aggregator.BuildAsync(events, _session, state, token);
         if (aggregate == null) return null;
 
@@ -192,7 +192,7 @@ internal class QueryEventStore : IQueryEventStore
         var events = await FetchStreamAsync(streamKey, version, timestamp, fromVersion, token);
         if (events.Count == 0) return state;
 
-        var aggregator = _options.Projections.AggregatorFor<T>(_events);
+        var aggregator = _options.Projections.AggregatorFor<T>();
         var aggregate = await aggregator.BuildAsync(events, _session, state, token);
         if (aggregate == null) return null;
 

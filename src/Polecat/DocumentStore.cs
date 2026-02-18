@@ -9,7 +9,7 @@ namespace Polecat;
 ///     The main entry point for Polecat. Creates and manages document sessions.
 ///     Typically created via DocumentStore.For() and registered as a singleton.
 /// </summary>
-public class DocumentStore : IDocumentStore
+public partial class DocumentStore : IDocumentStore
 {
     private readonly ConnectionFactory _connectionFactory;
     private readonly DocumentProviderRegistry _providers;
@@ -23,8 +23,12 @@ public class DocumentStore : IDocumentStore
         _providers = new DocumentProviderRegistry(options);
         _tableEnsurer = new DocumentTableEnsurer(_connectionFactory, options);
         Database = new PolecatDatabase(options);
+
+        // Initialize projection graph — builds async shard registry
+        options.Projections.AssertValidity(options);
+
         _inlineProjections = new Lazy<IInlineProjection<IDocumentSession>[]>(
-            () => options.Projections.BuildInlineProjections(Events));
+            () => options.Projections.BuildInlineProjections());
     }
 
     public StoreOptions Options { get; }
@@ -40,6 +44,8 @@ public class DocumentStore : IDocumentStore
     internal EventGraph Events => Database.Events;
 
     internal IInlineProjection<IDocumentSession>[] InlineProjections => _inlineProjections.Value;
+
+    internal DocumentProvider GetProvider(Type documentType) => _providers.GetProvider(documentType);
 
     /// <summary>
     ///     Create a DocumentStore with inline configuration.

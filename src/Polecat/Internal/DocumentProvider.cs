@@ -17,6 +17,8 @@ internal class DocumentProvider
 
     public DocumentMapping Mapping { get; }
 
+    public string QualifiedTableName => Mapping.QualifiedTableName;
+
     public string SelectSql =>
         $"SELECT id, data, version, last_modified, dotnet_type, tenant_id FROM {Mapping.QualifiedTableName}";
 

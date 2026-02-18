@@ -1,6 +1,7 @@
 using JasperFx;
 using JasperFx.Events;
 using JasperFx.Events.Daemon;
+using Polecat.Events;
 using Polecat.Internal;
 using Polecat.Projections;
 using Polecat.Serialization;
@@ -21,7 +22,15 @@ public class StoreOptions
 
     public StoreOptions()
     {
+        EventGraph = new EventGraph(this);
+        Projections = new PolecatProjectionOptions(EventGraph);
     }
+
+    /// <summary>
+    ///     The event graph configuration and registry. Created at construction time
+    ///     so projections can register event types during configuration.
+    /// </summary>
+    internal EventGraph EventGraph { get; }
 
     /// <summary>
     ///     The connection string to the SQL Server database.
@@ -64,7 +73,7 @@ public class StoreOptions
     /// <summary>
     ///     Configure projections for the event store.
     /// </summary>
-    public PolecatProjectionOptions Projections { get; } = new();
+    public PolecatProjectionOptions Projections { get; }
 
     /// <summary>
     ///     Settings for the async projection daemon.
