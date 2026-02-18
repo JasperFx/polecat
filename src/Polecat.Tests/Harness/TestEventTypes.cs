@@ -16,3 +16,8 @@ public record MonsterSlain(string Name, int DamageDealt);
 public record ArrivedAtLocation(string Location, int Day);
 
 public record MonsterDestroyed(string Name);
+
+// Multi-stream projection test events
+public record OrderPlaced(Guid CustomerId, decimal Amount);
+public record PaymentReceived(Guid CustomerId, decimal Amount);
+public record CustomerCreated(Guid CustomerId, string Name);

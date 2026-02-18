@@ -58,11 +58,12 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
                 {
                     var workTracker = sessionBase.WorkTracker;
 
-                    // Ensure projected document tables exist
+                    // Ensure projected document tables exist (skip non-document ops like FlatTable)
                     if (workTracker.Operations.Count > 0)
                     {
                         var providers = workTracker.Operations
                             .Select(op => op.DocumentType)
+                            .Where(t => t != typeof(object))
                             .Distinct()
                             .Select(t => _store.GetProvider(t));
                         await tableEnsurer.EnsureTablesAsync(providers, token);

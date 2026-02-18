@@ -1,6 +1,7 @@
 using JasperFx.Events;
 using JasperFx.Events.Projections;
 using Polecat.Events;
+using Polecat.Projections.Flattened;
 
 namespace Polecat.Projections;
 
@@ -27,6 +28,11 @@ public class PolecatProjectionOptions
             {
                 _events.AddEventType(eventType);
             }
+        }
+
+        if (projection is FlatTableProjection flatTable)
+        {
+            flatTable.Compile(_events);
         }
     }
 
@@ -56,6 +62,15 @@ public class PolecatProjectionOptions
     internal IInlineProjection<IDocumentSession>[] BuildInlineProjections()
     {
         if (_inlineProjections != null) return _inlineProjections;
+
+        // Ensure any FlatTableProjections are compiled
+        foreach (var source in All)
+        {
+            if (source is FlatTableProjection flatTable)
+            {
+                flatTable.Compile(_events);
+            }
+        }
 
         _inlineProjections = All
             .Where(x => x.Lifecycle == ProjectionLifecycle.Inline)

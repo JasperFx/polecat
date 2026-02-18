@@ -42,4 +42,16 @@ public interface IQueryEventStore
     Task<T?> AggregateStreamAsync<T>(string streamKey, long version = 0,
         DateTimeOffset? timestamp = null, T? state = null, long fromVersion = 0,
         CancellationToken token = default) where T : class, new();
+
+    /// <summary>
+    ///     Fetch the latest aggregate state for a stream by Guid id.
+    ///     Convenience wrapper around AggregateStreamAsync.
+    /// </summary>
+    ValueTask<T?> FetchLatest<T>(Guid id, CancellationToken cancellation = default) where T : class, new();
+
+    /// <summary>
+    ///     Fetch the latest aggregate state for a stream by string key.
+    ///     Convenience wrapper around AggregateStreamAsync.
+    /// </summary>
+    ValueTask<T?> FetchLatest<T>(string key, CancellationToken cancellation = default) where T : class, new();
 }

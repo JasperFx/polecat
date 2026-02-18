@@ -9,27 +9,27 @@ public interface IDocumentOperations : IQuerySession
     /// <summary>
     ///     Store (insert or update) a document.
     /// </summary>
-    void Store<T>(T document) where T : class;
+    void Store<T>(T document) where T : notnull;
 
     /// <summary>
     ///     Store multiple documents.
     /// </summary>
-    void Store<T>(params T[] documents) where T : class;
+    void Store<T>(params T[] documents) where T : notnull;
 
     /// <summary>
     ///     Insert a document. Throws if a document with the same id already exists.
     /// </summary>
-    void Insert<T>(T document) where T : class;
+    void Insert<T>(T document) where T : notnull;
 
     /// <summary>
     ///     Update an existing document. Throws if the document does not exist.
     /// </summary>
-    void Update<T>(T document) where T : class;
+    void Update<T>(T document) where T : notnull;
 
     /// <summary>
     ///     Delete a document by entity.
     /// </summary>
-    void Delete<T>(T document) where T : class;
+    void Delete<T>(T document) where T : notnull;
 
     /// <summary>
     ///     Delete a document by its Guid id.

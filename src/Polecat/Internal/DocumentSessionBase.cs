@@ -22,7 +22,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     ///     The active transaction during SaveChangesAsync. Set so that projection storage
     ///     commands can be enlisted in the same transaction.
     /// </summary>
-    internal SqlTransaction? ActiveTransaction { get; private set; }
+    internal override SqlTransaction? ActiveTransaction { get; set; }
 
     protected DocumentSessionBase(
         StoreOptions options,
@@ -47,7 +47,21 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
 
     internal WorkTracker WorkTracker => _workTracker;
 
-    public void Store<T>(T document) where T : class
+    internal EventGraph EventGraph => _eventGraph;
+
+    internal async Task BeginTransactionAsync(CancellationToken token)
+    {
+        if (ActiveTransaction != null) return;
+        var conn = await GetConnectionAsync(token);
+        ActiveTransaction = (SqlTransaction)await conn.BeginTransactionAsync(token);
+    }
+
+    internal async Task EnsureTableForProviderAsync(DocumentProvider provider, CancellationToken token)
+    {
+        await _tableEnsurer.EnsureTablesAsync([provider], token);
+    }
+
+    public void Store<T>(T document) where T : notnull
     {
         var provider = _providers.GetProvider<T>();
         var op = provider.BuildUpsert(document, Serializer, TenantId);
@@ -55,7 +69,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         OnDocumentStored(typeof(T), provider.Mapping.GetId(document), document);
     }
 
-    public void Store<T>(params T[] documents) where T : class
+    public void Store<T>(params T[] documents) where T : notnull
     {
         foreach (var doc in documents)
         {
@@ -63,7 +77,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         }
     }
 
-    public void Insert<T>(T document) where T : class
+    public void Insert<T>(T document) where T : notnull
     {
         var provider = _providers.GetProvider<T>();
         var op = provider.BuildInsert(document, Serializer, TenantId);
@@ -71,7 +85,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         OnDocumentStored(typeof(T), provider.Mapping.GetId(document), document);
     }
 
-    public void Update<T>(T document) where T : class
+    public void Update<T>(T document) where T : notnull
     {
         var provider = _providers.GetProvider<T>();
         var op = provider.BuildUpdate(document, Serializer, TenantId);
@@ -79,7 +93,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         OnDocumentStored(typeof(T), provider.Mapping.GetId(document), document);
     }
 
-    public void Delete<T>(T document) where T : class
+    public void Delete<T>(T document) where T : notnull
     {
         var provider = _providers.GetProvider<T>();
         var op = provider.BuildDeleteByDocument(document, TenantId);
@@ -104,11 +118,12 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     {
         if (!_workTracker.HasOutstandingWork()) return;
 
-        // Ensure document tables exist for pending operations
+        // Ensure document tables exist for pending operations (skip non-document ops like FlatTable)
         if (_workTracker.Operations.Count > 0)
         {
             var typesNeeded = _workTracker.Operations
                 .Select(op => op.DocumentType)
+                .Where(t => t != typeof(object))
                 .Distinct()
                 .Select(t => _providers.GetProvider(t));
 
@@ -116,7 +131,20 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         }
 
         var conn = await GetConnectionAsync(token);
-        await using var tx = (SqlTransaction)await conn.BeginTransactionAsync(token);
+        var existingTx = ActiveTransaction;
+        SqlTransaction tx;
+        bool createdTx;
+
+        if (existingTx != null)
+        {
+            tx = existingTx;
+            createdTx = false;
+        }
+        else
+        {
+            tx = (SqlTransaction)await conn.BeginTransactionAsync(token);
+            createdTx = true;
+        }
 
         try
         {
@@ -138,20 +166,29 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             // Apply inline projections — projected document ops are queued into _workTracker
             if (_inlineProjections.Length > 0 && _workTracker.Streams.Count > 0)
             {
+                // Pre-create document tables for projected types that projections may query
+                var projectedDocTypes = Options.Projections.All
+                    .Where(x => x.Lifecycle == ProjectionLifecycle.Inline)
+                    .SelectMany(x => x.PublishedTypes())
+                    .Distinct()
+                    .Select(t => _providers.GetProvider(t));
+                await _tableEnsurer.EnsureTablesAsync(projectedDocTypes, token);
+
                 var streams = _workTracker.Streams.ToList();
                 foreach (var projection in _inlineProjections)
                 {
                     await projection.ApplyAsync(this, streams, token);
                 }
 
-                // Ensure document tables exist for any projected types
+                // Ensure document tables exist for any additional projected types
                 if (_workTracker.Operations.Count > 0)
                 {
-                    var projectedTypes = _workTracker.Operations
+                    var newTypes = _workTracker.Operations
                         .Select(op => op.DocumentType)
+                        .Where(t => t != typeof(object))
                         .Distinct()
                         .Select(t => _providers.GetProvider(t));
-                    await _tableEnsurer.EnsureTablesAsync(projectedTypes, token);
+                    await _tableEnsurer.EnsureTablesAsync(newTypes, token);
                 }
             }
 
@@ -175,6 +212,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         finally
         {
             ActiveTransaction = null;
+            if (createdTx) await tx.DisposeAsync();
         }
     }
 

@@ -42,6 +42,7 @@ internal class QueryEventStore : IQueryEventStore
     {
         var conn = await _session.GetConnectionAsync(token);
         await using var cmd = conn.CreateCommand();
+        if (_session.ActiveTransaction != null) cmd.Transaction = _session.ActiveTransaction;
 
         var sql = $"""
             SELECT seq_id, id, stream_id, version, data, type, timestamp, tenant_id, dotnet_type, is_archived
@@ -134,6 +135,7 @@ internal class QueryEventStore : IQueryEventStore
     {
         var conn = await _session.GetConnectionAsync(token);
         await using var cmd = conn.CreateCommand();
+        if (_session.ActiveTransaction != null) cmd.Transaction = _session.ActiveTransaction;
 
         cmd.CommandText = $"""
             SELECT id, type, version, timestamp, created, tenant_id, is_archived
@@ -200,7 +202,19 @@ internal class QueryEventStore : IQueryEventStore
         return aggregate;
     }
 
-    private static void TrySetIdentity<T>(T aggregate, object streamId) where T : class
+    public async ValueTask<T?> FetchLatest<T>(Guid id, CancellationToken cancellation = default)
+        where T : class, new()
+    {
+        return await AggregateStreamAsync<T>(id, token: cancellation);
+    }
+
+    public async ValueTask<T?> FetchLatest<T>(string key, CancellationToken cancellation = default)
+        where T : class, new()
+    {
+        return await AggregateStreamAsync<T>(key, token: cancellation);
+    }
+
+    internal static void TrySetIdentity<T>(T aggregate, object streamId) where T : class
     {
         var hasId = _hasIdCache.GetOrAdd(typeof(T), static t =>
             DocumentMapping.FindIdProperty(t) != null);

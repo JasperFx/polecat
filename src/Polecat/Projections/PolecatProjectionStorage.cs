@@ -16,12 +16,20 @@ internal class PolecatProjectionStorage<TDoc, TId> : IProjectionStorage<TDoc, TI
 {
     private readonly DocumentSessionBase _session;
     private readonly DocumentProvider _provider;
+    private bool _tableEnsured;
 
     public PolecatProjectionStorage(DocumentSessionBase session, DocumentProvider provider, string tenantId)
     {
         _session = session;
         _provider = provider;
         TenantId = tenantId;
+    }
+
+    private async Task EnsureTableExistsAsync(CancellationToken cancellation)
+    {
+        if (_tableEnsured) return;
+        await _session.EnsureTableForProviderAsync(_provider, cancellation);
+        _tableEnsured = true;
     }
 
     public string TenantId { get; }
@@ -87,6 +95,7 @@ internal class PolecatProjectionStorage<TDoc, TId> : IProjectionStorage<TDoc, TI
 
     public async Task<TDoc> LoadAsync(TId id, CancellationToken cancellation)
     {
+        await EnsureTableExistsAsync(cancellation);
         var conn = await _session.GetConnectionAsync(cancellation);
         await using var cmd = conn.CreateCommand();
         if (_session.ActiveTransaction != null) cmd.Transaction = _session.ActiveTransaction;
@@ -110,6 +119,7 @@ internal class PolecatProjectionStorage<TDoc, TId> : IProjectionStorage<TDoc, TI
         var dict = new Dictionary<TId, TDoc>();
         if (identities.Length == 0) return dict;
 
+        await EnsureTableExistsAsync(cancellationToken);
         var conn = await _session.GetConnectionAsync(cancellationToken);
         await using var cmd = conn.CreateCommand();
         if (_session.ActiveTransaction != null) cmd.Transaction = _session.ActiveTransaction;

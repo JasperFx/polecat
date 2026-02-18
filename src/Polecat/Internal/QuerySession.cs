@@ -36,6 +36,7 @@ internal class QuerySession : IQuerySession
     internal StoreOptions Options { get; }
     public string TenantId { get; }
     public IPolecatSerializer Serializer { get; }
+    internal virtual SqlTransaction? ActiveTransaction { get => null; set { } }
 
     public IQueryEventStore Events => _events ??= new QueryEventStore(this, _eventGraph, Options);
 
