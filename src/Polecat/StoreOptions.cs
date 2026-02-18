@@ -1,5 +1,6 @@
 using JasperFx;
 using JasperFx.Events;
+using JasperFx.Events.Daemon;
 using Polecat.Internal;
 using Polecat.Projections;
 using Polecat.Serialization;
@@ -64,6 +65,11 @@ public class StoreOptions
     ///     Configure projections for the event store.
     /// </summary>
     public PolecatProjectionOptions Projections { get; } = new();
+
+    /// <summary>
+    ///     Settings for the async projection daemon.
+    /// </summary>
+    public DaemonSettings DaemonSettings { get; } = new();
 
     /// <summary>
     ///     Get or set the serializer. Defaults to PolecatSerializer (System.Text.Json).

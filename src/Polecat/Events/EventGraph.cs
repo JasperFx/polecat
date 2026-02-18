@@ -53,6 +53,7 @@ public class EventGraph : IEventRegistry
 
     internal string StreamsTableName => $"[{DatabaseSchemaName}].[pc_streams]";
     internal string EventsTableName => $"[{DatabaseSchemaName}].[pc_events]";
+    internal string ProgressionTableName => $"[{DatabaseSchemaName}].[pc_event_progression]";
 
     // IEventRegistry members
     public EventAppendMode AppendMode { get; set; } = EventAppendMode.Quick;
