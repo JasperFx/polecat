@@ -17,6 +17,7 @@
         <Nullable>enable</Nullable>
         <RootNamespace>Polecat</RootNamespace>
         <Version>0.1.0</Version>
+        <PackageLicenseExpression>MIT</PackageLicenseExpression>
     </PropertyGroup>
 
     <ItemGroup>
