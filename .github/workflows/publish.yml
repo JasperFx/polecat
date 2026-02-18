@@ -48,6 +48,7 @@ jobs:
             VERSION_ARG="-p:Version=${{ steps.version.outputs.version }}"
           fi
           dotnet pack src/Polecat/Polecat.csproj -c Release --no-build -o ./artifacts $VERSION_ARG
+          dotnet pack src/Polecat.CodeGeneration/Polecat.CodeGeneration.csproj -c Release --no-build -o ./artifacts $VERSION_ARG
 
       - name: Push to NuGet
         run: dotnet nuget push ./artifacts/*.nupkg --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate
