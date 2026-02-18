@@ -24,21 +24,21 @@ internal class DocumentProvider
 
     public string LoadSql => $"{SelectSql} WHERE id = @id AND tenant_id = @tenant_id;";
 
-    public UpsertOperation BuildUpsert(object document, IPolecatSerializer serializer, string tenantId)
+    public UpsertOperation BuildUpsert(object document, ISerializer serializer, string tenantId)
     {
         var id = Mapping.GetId(document);
         var json = serializer.ToJson(document);
         return new UpsertOperation(document, id, json, Mapping, tenantId);
     }
 
-    public InsertOperation BuildInsert(object document, IPolecatSerializer serializer, string tenantId)
+    public InsertOperation BuildInsert(object document, ISerializer serializer, string tenantId)
     {
         var id = Mapping.GetId(document);
         var json = serializer.ToJson(document);
         return new InsertOperation(document, id, json, Mapping, tenantId);
     }
 
-    public UpdateOperation BuildUpdate(object document, IPolecatSerializer serializer, string tenantId)
+    public UpdateOperation BuildUpdate(object document, ISerializer serializer, string tenantId)
     {
         var id = Mapping.GetId(document);
         var json = serializer.ToJson(document);

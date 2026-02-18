@@ -12,7 +12,7 @@ namespace Polecat.Projections;
 ///     Extends ProjectionGraph to integrate with the JasperFx async daemon framework.
 /// </summary>
 public class PolecatProjectionOptions
-    : ProjectionGraph<IPolecatProjection, IDocumentSession, IQuerySession>
+    : ProjectionGraph<IProjection, IDocumentSession, IQuerySession>
 {
     private readonly EventGraph _events;
     private IInlineProjection<IDocumentSession>[]? _inlineProjections;

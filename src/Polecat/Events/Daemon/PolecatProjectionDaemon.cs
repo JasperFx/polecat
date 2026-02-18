@@ -11,7 +11,7 @@ namespace Polecat.Events.Daemon;
 ///     that wires Polecat's event store, database, and projection graph.
 /// </summary>
 public class PolecatProjectionDaemon
-    : JasperFxAsyncDaemon<IDocumentSession, IQuerySession, IPolecatProjection>, IProjectionDaemon
+    : JasperFxAsyncDaemon<IDocumentSession, IQuerySession, IProjection>, IProjectionDaemon
 {
     public PolecatProjectionDaemon(
         DocumentStore store,

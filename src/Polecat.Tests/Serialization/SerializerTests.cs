@@ -2,9 +2,9 @@ using Polecat.Serialization;
 
 namespace Polecat.Tests.Serialization;
 
-public class PolecatSerializerTests
+public class SerializerTests
 {
-    private readonly PolecatSerializer _serializer = new();
+    private readonly Serializer _serializer = new();
 
     [Fact]
     public void can_round_trip_a_simple_object()

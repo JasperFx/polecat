@@ -18,7 +18,7 @@ public class StoreOptions
 
     private string _connectionString = string.Empty;
     private string _databaseSchemaName = "dbo";
-    private IPolecatSerializer? _serializer;
+    private ISerializer? _serializer;
     private AutoCreate? _autoCreate;
 
     public StoreOptions()
@@ -84,9 +84,9 @@ public class StoreOptions
     /// <summary>
     ///     Get or set the serializer. Defaults to PolecatSerializer (System.Text.Json).
     /// </summary>
-    public IPolecatSerializer Serializer
+    public ISerializer Serializer
     {
-        get => _serializer ??= new PolecatSerializer();
+        get => _serializer ??= new Serializer();
         set => _serializer = value ?? throw new ArgumentNullException(nameof(value));
     }
 

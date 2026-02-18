@@ -31,7 +31,7 @@ public class StoreOptionsTests
     public void default_serializer_is_polecat_serializer()
     {
         var options = new StoreOptions();
-        options.Serializer.ShouldBeOfType<PolecatSerializer>();
+        options.Serializer.ShouldBeOfType<Serializer>();
     }
 
     [Fact]

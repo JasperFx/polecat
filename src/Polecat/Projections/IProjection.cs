@@ -6,6 +6,6 @@ namespace Polecat.Projections;
 ///     Marker interface for Polecat projections.
 ///     Mirrors Marten's IProjection : IJasperFxProjection&lt;IDocumentOperations&gt;.
 /// </summary>
-public interface IPolecatProjection : IJasperFxProjection<IDocumentSession>
+public interface IProjection : IJasperFxProjection<IDocumentSession>
 {
 }

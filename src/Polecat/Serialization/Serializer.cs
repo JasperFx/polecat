@@ -7,15 +7,15 @@ namespace Polecat.Serialization;
 /// <summary>
 ///     Default serializer implementation using System.Text.Json.
 /// </summary>
-public class PolecatSerializer : IPolecatSerializer
+public class Serializer : ISerializer
 {
     private readonly JsonSerializerOptions _options;
 
-    public PolecatSerializer() : this(DefaultOptions())
+    public Serializer() : this(DefaultOptions())
     {
     }
 
-    public PolecatSerializer(JsonSerializerOptions options)
+    public Serializer(JsonSerializerOptions options)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
     }

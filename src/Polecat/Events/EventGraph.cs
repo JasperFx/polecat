@@ -50,7 +50,7 @@ public class EventGraph : IEventRegistry, IAggregationSourceFactory<IQuerySessio
     public string DatabaseSchemaName =>
         _options.Events.DatabaseSchemaName ?? _options.DatabaseSchemaName;
 
-    internal IPolecatSerializer Serializer => _options.Serializer;
+    internal ISerializer Serializer => _options.Serializer;
 
     internal EventStoreOptions EventOptions => _options.Events;
 

@@ -5,7 +5,7 @@ namespace Polecat.Serialization;
 /// <summary>
 ///     Serialization abstraction for Polecat. Uses System.Text.Json exclusively.
 /// </summary>
-public interface IPolecatSerializer
+public interface ISerializer
 {
     /// <summary>
     ///     Serialize an object to a JSON string.

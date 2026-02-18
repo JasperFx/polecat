@@ -16,7 +16,7 @@ public interface IQuerySession : IAsyncDisposable
     /// <summary>
     ///     The serializer used by this session.
     /// </summary>
-    IPolecatSerializer Serializer { get; }
+    ISerializer Serializer { get; }
 
     /// <summary>
     ///     Read-only access to event store queries.
