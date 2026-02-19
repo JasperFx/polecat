@@ -1,3 +1,4 @@
+using Polecat.Batching;
 using Polecat.Events;
 using Polecat.Linq;
 using Polecat.Serialization;
@@ -58,4 +59,9 @@ public interface IQuerySession : IAsyncDisposable
     ///     Start a LINQ query against documents of type T.
     /// </summary>
     IPolecatQueryable<T> Query<T>() where T : class;
+
+    /// <summary>
+    ///     Create a batch query to execute multiple Load/Query operations in a single roundtrip.
+    /// </summary>
+    IBatchedQuery CreateBatchQuery();
 }

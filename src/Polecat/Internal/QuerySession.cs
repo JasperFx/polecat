@@ -1,6 +1,8 @@
 using JasperFx;
 using Microsoft.Data.SqlClient;
+using Polecat.Batching;
 using Polecat.Events;
+using Polecat.Internal.Batching;
 using Polecat.Linq;
 using Polecat.Metadata;
 using Polecat.Serialization;
@@ -150,6 +152,11 @@ internal class QuerySession : IQuerySession
     {
         var provider = new PolecatLinqQueryProvider(this, _providers, _tableEnsurer);
         return new PolecatLinqQueryable<T>(provider);
+    }
+
+    public IBatchedQuery CreateBatchQuery()
+    {
+        return new BatchedQuery(this, _providers, _tableEnsurer);
     }
 
     /// <summary>
