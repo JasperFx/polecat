@@ -53,7 +53,8 @@ internal class Statement
             }
         }
 
-        if (OrderBys.Count > 0)
+        // Skip ORDER BY for aggregate queries (COUNT, SUM, etc.) — SQL Server disallows it
+        if (OrderBys.Count > 0 && !IsAggregateSelect())
         {
             builder.Append(" ORDER BY ");
             for (var i = 0; i < OrderBys.Count; i++)
@@ -67,7 +68,7 @@ internal class Statement
         // OFFSET/FETCH pagination (requires ORDER BY)
         if (Offset.HasValue)
         {
-            if (OrderBys.Count == 0)
+            if (OrderBys.Count == 0 || IsAggregateSelect())
             {
                 builder.Append(" ORDER BY (SELECT NULL)");
             }
@@ -78,5 +79,16 @@ internal class Statement
                 builder.Append($" FETCH NEXT {Limit.Value} ROWS ONLY");
             }
         }
+    }
+
+    private bool IsAggregateSelect()
+    {
+        return SelectColumns.StartsWith("COUNT(", StringComparison.OrdinalIgnoreCase)
+               || SelectColumns.StartsWith("CAST(COUNT(", StringComparison.OrdinalIgnoreCase)
+               || SelectColumns.StartsWith("SUM(", StringComparison.OrdinalIgnoreCase)
+               || SelectColumns.StartsWith("ISNULL(SUM(", StringComparison.OrdinalIgnoreCase)
+               || SelectColumns.StartsWith("MIN(", StringComparison.OrdinalIgnoreCase)
+               || SelectColumns.StartsWith("MAX(", StringComparison.OrdinalIgnoreCase)
+               || SelectColumns.StartsWith("AVG(", StringComparison.OrdinalIgnoreCase);
     }
 }
