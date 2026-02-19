@@ -1,4 +1,5 @@
 using Polecat.Events;
+using Polecat.Linq;
 using Polecat.Serialization;
 
 namespace Polecat;
@@ -52,4 +53,9 @@ public interface IQuerySession : IAsyncDisposable
     ///     Load a document by its long id. Returns null if not found.
     /// </summary>
     Task<T?> LoadAsync<T>(long id, CancellationToken token = default) where T : class;
+
+    /// <summary>
+    ///     Start a LINQ query against documents of type T.
+    /// </summary>
+    IPolecatQueryable<T> Query<T>() where T : class;
 }

@@ -1,5 +1,6 @@
 using Microsoft.Data.SqlClient;
 using Polecat.Events;
+using Polecat.Linq;
 using Polecat.Serialization;
 
 namespace Polecat.Internal;
@@ -135,6 +136,12 @@ internal class QuerySession : IQuerySession
         }
 
         return results;
+    }
+
+    public IPolecatQueryable<T> Query<T>() where T : class
+    {
+        var provider = new PolecatLinqQueryProvider(this, _providers, _tableEnsurer);
+        return new PolecatLinqQueryable<T>(provider);
     }
 
     public virtual async ValueTask DisposeAsync()
