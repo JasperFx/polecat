@@ -1,4 +1,5 @@
 using Polecat.Attributes;
+using Polecat.Metadata;
 
 namespace Polecat.Tests.Harness;
 
@@ -58,4 +59,26 @@ public class LongDoc
 public class OverriddenHiloDoc
 {
     public int Id { get; set; }
+}
+
+/// <summary>
+///     Soft-deleted via attribute.
+/// </summary>
+[SoftDeleted]
+public class SoftDeletedDoc
+{
+    public Guid Id { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public int Number { get; set; }
+}
+
+/// <summary>
+///     Soft-deleted via ISoftDeleted interface (auto-detected).
+/// </summary>
+public class SoftDeletedWithInterface : ISoftDeleted
+{
+    public Guid Id { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public bool Deleted { get; set; }
+    public DateTimeOffset? DeletedAt { get; set; }
 }

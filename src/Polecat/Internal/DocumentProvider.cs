@@ -1,4 +1,5 @@
 using Polecat.Internal.Operations;
+using Polecat.Metadata;
 using Polecat.Schema.Identity.Sequences;
 using Polecat.Serialization;
 using Polecat.Storage;
@@ -24,7 +25,9 @@ internal class DocumentProvider
     public string SelectSql =>
         $"SELECT id, data, version, last_modified, dotnet_type, tenant_id FROM {Mapping.QualifiedTableName}";
 
-    public string LoadSql => $"{SelectSql} WHERE id = @id AND tenant_id = @tenant_id;";
+    public string LoadSql => Mapping.DeleteStyle == DeleteStyle.SoftDelete
+        ? $"{SelectSql} WHERE id = @id AND tenant_id = @tenant_id AND is_deleted = 0;"
+        : $"{SelectSql} WHERE id = @id AND tenant_id = @tenant_id;";
 
     public UpsertOperation BuildUpsert(object document, ISerializer serializer, string tenantId)
     {
@@ -49,12 +52,28 @@ internal class DocumentProvider
         return new UpdateOperation(document, id, json, Mapping, tenantId);
     }
 
-    public DeleteByIdOperation BuildDeleteById(object id, string tenantId)
+    public IStorageOperation BuildDeleteById(object id, string tenantId)
+    {
+        if (Mapping.DeleteStyle == DeleteStyle.SoftDelete)
+        {
+            return new SoftDeleteByIdOperation(id, Mapping, tenantId);
+        }
+
+        return new DeleteByIdOperation(id, Mapping, tenantId);
+    }
+
+    public IStorageOperation BuildDeleteByDocument(object document, string tenantId)
+    {
+        var id = Mapping.GetId(document);
+        return BuildDeleteById(id, tenantId);
+    }
+
+    public DeleteByIdOperation BuildHardDeleteById(object id, string tenantId)
     {
         return new DeleteByIdOperation(id, Mapping, tenantId);
     }
 
-    public DeleteByIdOperation BuildDeleteByDocument(object document, string tenantId)
+    public DeleteByIdOperation BuildHardDeleteByDocument(object document, string tenantId)
     {
         var id = Mapping.GetId(document);
         return new DeleteByIdOperation(id, Mapping, tenantId);

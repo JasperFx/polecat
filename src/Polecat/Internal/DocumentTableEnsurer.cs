@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using Microsoft.Data.SqlClient;
+using Polecat.Metadata;
 using Polecat.Storage;
 
 namespace Polecat.Internal;
@@ -105,10 +106,16 @@ internal class DocumentTableEnsurer
             : mapping.IdType == typeof(long) ? "bigint"
             : "varchar(250)";
         var isConjoined = mapping.TenancyStyle == TenancyStyle.Conjoined;
+        var isSoftDelete = mapping.DeleteStyle == DeleteStyle.SoftDelete;
+        var softDeleteCols = isSoftDelete
+            ? @"
+                    is_deleted bit NOT NULL DEFAULT 0,
+                    deleted_at datetimeoffset NULL,"
+            : "";
 
         if (isConjoined)
         {
-            return $"""
+            return $@"
                 IF NOT EXISTS (SELECT 1 FROM sys.tables t
                                JOIN sys.schemas s ON t.schema_id = s.schema_id
                                WHERE s.name = '{schema}' AND t.name = '{table}')
@@ -122,14 +129,13 @@ internal class DocumentTableEnsurer
                         data nvarchar(max) NOT NULL,
                         version int NOT NULL DEFAULT 1,
                         last_modified datetimeoffset NOT NULL DEFAULT SYSDATETIMEOFFSET(),
-                        dotnet_type varchar(500) NULL,
+                        dotnet_type varchar(500) NULL,{softDeleteCols}
                         CONSTRAINT pk_{table} PRIMARY KEY (tenant_id, id)
                     );
-                END
-                """;
+                END";
         }
 
-        return $"""
+        return $@"
             IF NOT EXISTS (SELECT 1 FROM sys.tables t
                            JOIN sys.schemas s ON t.schema_id = s.schema_id
                            WHERE s.name = '{schema}' AND t.name = '{table}')
@@ -142,10 +148,9 @@ internal class DocumentTableEnsurer
                     data nvarchar(max) NOT NULL,
                     version int NOT NULL DEFAULT 1,
                     last_modified datetimeoffset NOT NULL DEFAULT SYSDATETIMEOFFSET(),
-                    dotnet_type varchar(500) NULL,
+                    dotnet_type varchar(500) NULL,{softDeleteCols}
                     tenant_id varchar(250) NOT NULL DEFAULT '*DEFAULT*'
                 );
-            END
-            """;
+            END";
     }
 }

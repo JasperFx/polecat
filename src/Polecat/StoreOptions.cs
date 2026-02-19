@@ -7,6 +7,7 @@ using Polecat.Internal;
 using Polecat.Projections;
 using Polecat.Schema.Identity.Sequences;
 using Polecat.Serialization;
+using Polecat.Metadata;
 using Polecat.Storage;
 
 namespace Polecat;
@@ -88,6 +89,11 @@ public class StoreOptions
     ///     Applied to all numeric-id document types unless overridden by [HiloSequence] attribute.
     /// </summary>
     public HiloSettings HiloSequenceDefaults { get; } = new();
+
+    /// <summary>
+    ///     Document storage policies (e.g., soft deletes).
+    /// </summary>
+    public StorePolicies Policies { get; } = new();
 
     /// <summary>
     ///     Get or set the serializer. Defaults to PolecatSerializer (System.Text.Json).

@@ -6,6 +6,7 @@ using Polecat.Linq.Parsing;
 using Polecat.Linq.QueryHandlers;
 using Polecat.Linq.Selectors;
 using Polecat.Linq.SqlGeneration;
+using Polecat.Metadata;
 
 namespace Polecat.Linq;
 
@@ -84,6 +85,29 @@ internal class PolecatLinqQueryProvider : IQueryProvider
             {
                 parser.Statement.Wheres.Add(
                     new ComparisonFilter("tenant_id", "=", _session.TenantId));
+            }
+        }
+
+        // Add soft delete filter for soft-deleted types (unless overridden by LINQ extensions)
+        if (provider.Mapping.DeleteStyle == DeleteStyle.SoftDelete && !parser.IsMaybeDeleted)
+        {
+            if (parser.IsDeletedOnly)
+            {
+                parser.Statement.Wheres.Add(new LiteralSqlFragment("is_deleted = 1"));
+            }
+            else
+            {
+                parser.Statement.Wheres.Add(new LiteralSqlFragment("is_deleted = 0"));
+            }
+
+            if (parser.DeletedSinceTimestamp.HasValue)
+            {
+                parser.Statement.Wheres.Add(new ComparisonFilter("deleted_at", ">=", parser.DeletedSinceTimestamp.Value));
+            }
+
+            if (parser.DeletedBeforeTimestamp.HasValue)
+            {
+                parser.Statement.Wheres.Add(new ComparisonFilter("deleted_at", "<", parser.DeletedBeforeTimestamp.Value));
             }
         }
 

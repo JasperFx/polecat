@@ -1,9 +1,14 @@
+using System.Linq.Expressions;
 using JasperFx.Events;
 using JasperFx.Events.Daemon;
 using JasperFx.Events.Projections;
 using Microsoft.Data.SqlClient;
 using Polecat.Events;
 using Polecat.Exceptions;
+using Polecat.Internal.Operations;
+using Polecat.Linq.Members;
+using Polecat.Linq.Parsing;
+using Polecat.Metadata;
 using Polecat.Projections;
 
 namespace Polecat.Internal;
@@ -98,6 +103,13 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         var provider = _providers.GetProvider<T>();
         var op = provider.BuildDeleteByDocument(document, TenantId);
         _workTracker.Add(op);
+
+        // Sync ISoftDeleted properties in memory
+        if (document is ISoftDeleted softDeleted && provider.Mapping.DeleteStyle == DeleteStyle.SoftDelete)
+        {
+            softDeleted.Deleted = true;
+            softDeleted.DeletedAt = DateTimeOffset.UtcNow;
+        }
     }
 
     public void Delete<T>(Guid id) where T : class
@@ -125,6 +137,51 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     {
         var provider = _providers.GetProvider<T>();
         var op = provider.BuildDeleteById(id, TenantId);
+        _workTracker.Add(op);
+    }
+
+    public void HardDelete<T>(T document) where T : notnull
+    {
+        var provider = _providers.GetProvider<T>();
+        var op = provider.BuildHardDeleteByDocument(document, TenantId);
+        _workTracker.Add(op);
+    }
+
+    public void HardDelete<T>(Guid id) where T : class
+    {
+        var provider = _providers.GetProvider<T>();
+        var op = provider.BuildHardDeleteById(id, TenantId);
+        _workTracker.Add(op);
+    }
+
+    public void HardDelete<T>(string id) where T : class
+    {
+        var provider = _providers.GetProvider<T>();
+        var op = provider.BuildHardDeleteById(id, TenantId);
+        _workTracker.Add(op);
+    }
+
+    public void HardDelete<T>(int id) where T : class
+    {
+        var provider = _providers.GetProvider<T>();
+        var op = provider.BuildHardDeleteById(id, TenantId);
+        _workTracker.Add(op);
+    }
+
+    public void HardDelete<T>(long id) where T : class
+    {
+        var provider = _providers.GetProvider<T>();
+        var op = provider.BuildHardDeleteById(id, TenantId);
+        _workTracker.Add(op);
+    }
+
+    public void UndoDeleteWhere<T>(Expression<Func<T, bool>> predicate) where T : class
+    {
+        var provider = _providers.GetProvider<T>();
+        var memberFactory = new MemberFactory(Options, provider.Mapping);
+        var whereParser = new WhereClauseParser(memberFactory);
+        var fragment = whereParser.Parse(predicate.Body);
+        var op = new UndoDeleteWhereOperation(provider.Mapping, TenantId, fragment);
         _workTracker.Add(op);
     }
 

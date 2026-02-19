@@ -3,6 +3,8 @@ using JasperFx.Events.Aggregation;
 using JasperFx.Events.Daemon;
 using Microsoft.Data.SqlClient;
 using Polecat.Internal;
+using Polecat.Internal.Operations;
+using Polecat.Metadata;
 
 namespace Polecat.Projections;
 
@@ -72,25 +74,35 @@ internal class PolecatProjectionStorage<TDoc, TId> : IProjectionStorage<TDoc, TI
     public void HardDelete(TDoc snapshot)
     {
         var id = _provider.Mapping.GetId(snapshot);
-        var op = _provider.BuildDeleteById(id, TenantId);
+        var op = _provider.BuildHardDeleteById(id, TenantId);
         _session.WorkTracker.Add(op);
     }
 
     public void HardDelete(TDoc snapshot, string tenantId)
     {
         var id = _provider.Mapping.GetId(snapshot);
-        var op = _provider.BuildDeleteById(id, tenantId);
+        var op = _provider.BuildHardDeleteById(id, tenantId);
         _session.WorkTracker.Add(op);
     }
 
     public void UnDelete(TDoc snapshot)
     {
-        // No soft delete support
+        if (_provider.Mapping.DeleteStyle == DeleteStyle.SoftDelete)
+        {
+            var id = _provider.Mapping.GetId(snapshot);
+            var op = new UnDeleteByIdOperation(id, _provider.Mapping, TenantId);
+            _session.WorkTracker.Add(op);
+        }
     }
 
     public void UnDelete(TDoc snapshot, string tenantId)
     {
-        // No soft delete support
+        if (_provider.Mapping.DeleteStyle == DeleteStyle.SoftDelete)
+        {
+            var id = _provider.Mapping.GetId(snapshot);
+            var op = new UnDeleteByIdOperation(id, _provider.Mapping, tenantId);
+            _session.WorkTracker.Add(op);
+        }
     }
 
     public async Task<TDoc> LoadAsync(TId id, CancellationToken cancellation)
@@ -131,7 +143,10 @@ internal class PolecatProjectionStorage<TDoc, TId> : IProjectionStorage<TDoc, TI
             cmd.Parameters.AddWithValue(paramNames[i], (object)identities[i]);
         }
 
-        cmd.CommandText = $"{_provider.SelectSql} WHERE id IN ({string.Join(", ", paramNames)}) AND tenant_id = @tenant_id;";
+        var softDeleteFilter = _provider.Mapping.DeleteStyle == DeleteStyle.SoftDelete
+            ? " AND is_deleted = 0"
+            : "";
+        cmd.CommandText = $"{_provider.SelectSql} WHERE id IN ({string.Join(", ", paramNames)}) AND tenant_id = @tenant_id{softDeleteFilter};";
         cmd.Parameters.AddWithValue("@tenant_id", TenantId);
 
         await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);

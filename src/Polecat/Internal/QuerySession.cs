@@ -1,6 +1,7 @@
 using Microsoft.Data.SqlClient;
 using Polecat.Events;
 using Polecat.Linq;
+using Polecat.Metadata;
 using Polecat.Serialization;
 
 namespace Polecat.Internal;
@@ -123,7 +124,10 @@ internal class QuerySession : IQuerySession
             cmd.Parameters.AddWithValue(paramNames[i], ids[i]);
         }
 
-        cmd.CommandText = $"{provider.SelectSql} WHERE id IN ({string.Join(", ", paramNames)}) AND tenant_id = @tenant_id;";
+        var softDeleteFilter = provider.Mapping.DeleteStyle == DeleteStyle.SoftDelete
+            ? " AND is_deleted = 0"
+            : "";
+        cmd.CommandText = $"{provider.SelectSql} WHERE id IN ({string.Join(", ", paramNames)}) AND tenant_id = @tenant_id{softDeleteFilter};";
         cmd.Parameters.AddWithValue("@tenant_id", TenantId);
 
         var results = new List<T>();

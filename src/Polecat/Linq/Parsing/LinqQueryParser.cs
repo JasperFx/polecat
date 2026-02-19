@@ -1,5 +1,6 @@
 using System.Linq.Expressions;
 using Polecat.Linq.Members;
+using Polecat.Linq.SoftDeletes;
 using Polecat.Linq.SqlGeneration;
 
 namespace Polecat.Linq.Parsing;
@@ -39,6 +40,26 @@ internal class LinqQueryParser : ExpressionVisitor
     ///     If TenantIsOneOf() was called, the tenant IDs to filter by.
     /// </summary>
     public string[]? TenantIds { get; private set; }
+
+    /// <summary>
+    ///     Whether MaybeDeleted() was called, suppressing the soft delete filter entirely.
+    /// </summary>
+    public bool IsMaybeDeleted { get; private set; }
+
+    /// <summary>
+    ///     Whether IsDeleted() was called, switching the filter to is_deleted = 1.
+    /// </summary>
+    public bool IsDeletedOnly { get; private set; }
+
+    /// <summary>
+    ///     If DeletedSince() was called, the timestamp to filter by.
+    /// </summary>
+    public DateTimeOffset? DeletedSinceTimestamp { get; private set; }
+
+    /// <summary>
+    ///     If DeletedBefore() was called, the timestamp to filter by.
+    /// </summary>
+    public DateTimeOffset? DeletedBeforeTimestamp { get; private set; }
 
     public LinqQueryParser(MemberFactory memberFactory, string fromTable)
     {
@@ -133,6 +154,18 @@ internal class LinqQueryParser : ExpressionVisitor
                 break;
             case "TenantIsOneOf" when node.Method.DeclaringType == typeof(LinqExtensions):
                 HandleTenantIsOneOf(node);
+                break;
+            case "MaybeDeleted" when node.Method.DeclaringType == typeof(SoftDeletedExtensions):
+                IsMaybeDeleted = true;
+                break;
+            case "IsDeleted" when node.Method.DeclaringType == typeof(SoftDeletedExtensions):
+                IsDeletedOnly = true;
+                break;
+            case "DeletedSince" when node.Method.DeclaringType == typeof(SoftDeletedExtensions):
+                HandleDeletedSince(node);
+                break;
+            case "DeletedBefore" when node.Method.DeclaringType == typeof(SoftDeletedExtensions):
+                HandleDeletedBefore(node);
                 break;
         }
 
@@ -261,6 +294,20 @@ internal class LinqQueryParser : ExpressionVisitor
         {
             throw new NotSupportedException("TenantIsOneOf requires string[] tenant IDs");
         }
+    }
+
+    private void HandleDeletedSince(MethodCallExpression node)
+    {
+        IsDeletedOnly = true;
+        var value = WhereClauseParser.ExtractValue(node.Arguments[1]);
+        DeletedSinceTimestamp = (DateTimeOffset)value;
+    }
+
+    private void HandleDeletedBefore(MethodCallExpression node)
+    {
+        IsDeletedOnly = true;
+        var value = WhereClauseParser.ExtractValue(node.Arguments[1]);
+        DeletedBeforeTimestamp = (DateTimeOffset)value;
     }
 
     internal static LambdaExpression GetLambda(Expression expression)

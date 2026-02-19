@@ -1,5 +1,6 @@
 using System.Reflection;
 using Polecat.Attributes;
+using Polecat.Metadata;
 using Polecat.Schema.Identity.Sequences;
 
 namespace Polecat.Storage;
@@ -52,6 +53,14 @@ internal class DocumentMapping
         DatabaseSchemaName = options.DatabaseSchemaName;
         DotNetTypeName = $"{documentType.FullName}, {documentType.Assembly.GetName().Name}";
         TenancyStyle = options.Events.TenancyStyle;
+
+        // Detect soft delete: [SoftDeleted] attribute, ISoftDeleted interface, or policy
+        if (documentType.GetCustomAttribute<SoftDeletedAttribute>() != null
+            || typeof(ISoftDeleted).IsAssignableFrom(documentType)
+            || options.Policies.IsSoftDeleted(documentType))
+        {
+            DeleteStyle = DeleteStyle.SoftDelete;
+        }
     }
 
     public Type DocumentType => _documentType;
@@ -63,6 +72,7 @@ internal class DocumentMapping
     public string DatabaseSchemaName { get; }
     public string DotNetTypeName { get; }
     public TenancyStyle TenancyStyle { get; }
+    public DeleteStyle DeleteStyle { get; } = DeleteStyle.Remove;
 
     public object GetId(object document)
     {
