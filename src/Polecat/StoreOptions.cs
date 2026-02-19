@@ -4,6 +4,7 @@ using JasperFx.Events.Daemon;
 using Polecat.Events;
 using Polecat.Internal;
 using Polecat.Projections;
+using Polecat.Schema.Identity.Sequences;
 using Polecat.Serialization;
 using Polecat.Storage;
 
@@ -82,6 +83,12 @@ public class StoreOptions
     public DaemonSettings DaemonSettings { get; } = new();
 
     /// <summary>
+    ///     Global default settings for HiLo sequence identity generation.
+    ///     Applied to all numeric-id document types unless overridden by [HiloSequence] attribute.
+    /// </summary>
+    public HiloSettings HiloSequenceDefaults { get; } = new();
+
+    /// <summary>
     ///     Get or set the serializer. Defaults to PolecatSerializer (System.Text.Json).
     /// </summary>
     public ISerializer Serializer
@@ -94,6 +101,11 @@ public class StoreOptions
     ///     Set by ApplyAllDatabaseChangesOnStartup(). Used by the hosted service.
     /// </summary>
     internal bool ShouldApplyChangesOnStartup { get; set; }
+
+    /// <summary>
+    ///     Internal access to the document provider registry. Set by DocumentStore during construction.
+    /// </summary>
+    internal DocumentProviderRegistry Providers { get; set; } = null!;
 
     /// <summary>
     ///     The tenancy strategy. Defaults to DefaultTenancy (single database).

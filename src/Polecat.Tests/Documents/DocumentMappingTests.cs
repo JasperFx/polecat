@@ -94,7 +94,23 @@ public class DocumentMappingTests
     public void throws_for_unsupported_id_type()
     {
         Should.Throw<InvalidOperationException>(() =>
-            new DocumentMapping(typeof(IntIdDoc), DefaultOptions()));
+            new DocumentMapping(typeof(DateTimeIdDoc), DefaultOptions()));
+    }
+
+    [Fact]
+    public void discovers_int_id_property()
+    {
+        var mapping = new DocumentMapping(typeof(IntIdDoc), DefaultOptions());
+        mapping.IdType.ShouldBe(typeof(int));
+        mapping.IsNumericId.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void discovers_long_id_property()
+    {
+        var mapping = new DocumentMapping(typeof(LongIdDoc), DefaultOptions());
+        mapping.IdType.ShouldBe(typeof(long));
+        mapping.IsNumericId.ShouldBeTrue();
     }
 
     [Fact]
@@ -114,5 +130,15 @@ public class DocumentMappingTests
     private class IntIdDoc
     {
         public int Id { get; set; }
+    }
+
+    private class LongIdDoc
+    {
+        public long Id { get; set; }
+    }
+
+    private class DateTimeIdDoc
+    {
+        public DateTime Id { get; set; }
     }
 }

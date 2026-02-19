@@ -21,6 +21,8 @@ internal class DocumentTableEnsurer
         _options = options;
     }
 
+    private bool _hiloTableEnsured;
+
     public async Task EnsureTableAsync(DocumentProvider provider, CancellationToken token)
     {
         var docType = provider.Mapping.DocumentType;
@@ -44,6 +46,16 @@ internal class DocumentTableEnsurer
             await using var conn = _connectionFactory.Create();
             await conn.OpenAsync(token);
 
+            // Ensure pc_hilo table for numeric ID types
+            if (provider.Mapping.IsNumericId && !_hiloTableEnsured)
+            {
+                var hiloDdl = BuildHiloTableDdl(provider.Mapping.DatabaseSchemaName);
+                await using var hiloCmd = conn.CreateCommand();
+                hiloCmd.CommandText = hiloDdl;
+                await hiloCmd.ExecuteNonQueryAsync(token);
+                _hiloTableEnsured = true;
+            }
+
             // Use raw DDL with IF NOT EXISTS for safety
             var ddl = BuildCreateTableDdl(provider.Mapping);
             await using var cmd = conn.CreateCommand();
@@ -66,11 +78,32 @@ internal class DocumentTableEnsurer
         }
     }
 
+    private static string BuildHiloTableDdl(string schema)
+    {
+        return $"""
+            IF NOT EXISTS (SELECT 1 FROM sys.tables t
+                           JOIN sys.schemas s ON t.schema_id = s.schema_id
+                           WHERE s.name = '{schema}' AND t.name = 'pc_hilo')
+            BEGIN
+                IF SCHEMA_ID('{schema}') IS NULL
+                    EXEC('CREATE SCHEMA [{schema}]');
+
+                CREATE TABLE [{schema}].[pc_hilo] (
+                    entity_name varchar(250) NOT NULL PRIMARY KEY,
+                    hi_value bigint NOT NULL DEFAULT 0
+                );
+            END
+            """;
+    }
+
     private static string BuildCreateTableDdl(DocumentMapping mapping)
     {
         var schema = mapping.DatabaseSchemaName;
         var table = mapping.TableName;
-        var idType = mapping.IdType == typeof(Guid) ? "uniqueidentifier" : "varchar(250)";
+        var idType = mapping.IdType == typeof(Guid) ? "uniqueidentifier"
+            : mapping.IdType == typeof(int) ? "int"
+            : mapping.IdType == typeof(long) ? "bigint"
+            : "varchar(250)";
         var isConjoined = mapping.TenancyStyle == TenancyStyle.Conjoined;
 
         if (isConjoined)

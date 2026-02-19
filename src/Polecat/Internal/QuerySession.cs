@@ -61,6 +61,16 @@ internal class QuerySession : IQuerySession
         return await LoadInternalAsync<T>(id, token);
     }
 
+    public async Task<T?> LoadAsync<T>(int id, CancellationToken token = default) where T : class
+    {
+        return await LoadInternalAsync<T>(id, token);
+    }
+
+    public async Task<T?> LoadAsync<T>(long id, CancellationToken token = default) where T : class
+    {
+        return await LoadInternalAsync<T>(id, token);
+    }
+
     protected virtual async Task<T?> LoadInternalAsync<T>(object id, CancellationToken token) where T : class
     {
         var provider = _providers.GetProvider<T>();

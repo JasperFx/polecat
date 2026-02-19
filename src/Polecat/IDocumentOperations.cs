@@ -40,4 +40,14 @@ public interface IDocumentOperations : IQuerySession
     ///     Delete a document by its string id.
     /// </summary>
     void Delete<T>(string id) where T : class;
+
+    /// <summary>
+    ///     Delete a document by its int id.
+    /// </summary>
+    void Delete<T>(int id) where T : class;
+
+    /// <summary>
+    ///     Delete a document by its long id.
+    /// </summary>
+    void Delete<T>(long id) where T : class;
 }

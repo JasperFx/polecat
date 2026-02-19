@@ -42,4 +42,14 @@ public interface IQuerySession : IAsyncDisposable
     ///     Load multiple documents by their string ids.
     /// </summary>
     Task<IReadOnlyList<T>> LoadManyAsync<T>(IEnumerable<string> ids, CancellationToken token = default) where T : class;
+
+    /// <summary>
+    ///     Load a document by its int id. Returns null if not found.
+    /// </summary>
+    Task<T?> LoadAsync<T>(int id, CancellationToken token = default) where T : class;
+
+    /// <summary>
+    ///     Load a document by its long id. Returns null if not found.
+    /// </summary>
+    Task<T?> LoadAsync<T>(long id, CancellationToken token = default) where T : class;
 }

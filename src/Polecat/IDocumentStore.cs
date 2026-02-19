@@ -12,6 +12,11 @@ public interface IDocumentStore : IDisposable, IAsyncDisposable
     StoreOptions Options { get; }
 
     /// <summary>
+    ///     Advanced operations including HiLo sequence management.
+    /// </summary>
+    AdvancedOperations Advanced { get; }
+
+    /// <summary>
     ///     Open a lightweight session (no identity map).
     /// </summary>
     IDocumentSession LightweightSession();

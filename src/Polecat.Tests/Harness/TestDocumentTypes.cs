@@ -1,3 +1,5 @@
+using Polecat.Attributes;
+
 namespace Polecat.Tests.Harness;
 
 /// <summary>
@@ -29,4 +31,31 @@ public class Target
     public string Color { get; set; } = string.Empty;
     public int Number { get; set; }
     public double Amount { get; set; }
+}
+
+/// <summary>
+///     Test document with an int Id (HiLo-generated).
+/// </summary>
+public class IntDoc
+{
+    public int Id { get; set; }
+    public string? Name { get; set; }
+}
+
+/// <summary>
+///     Test document with a long Id (HiLo-generated).
+/// </summary>
+public class LongDoc
+{
+    public long Id { get; set; }
+    public string? Name { get; set; }
+}
+
+/// <summary>
+///     Test document with custom HiLo settings via attribute.
+/// </summary>
+[HiloSequence(MaxLo = 66, SequenceName = "Entity")]
+public class OverriddenHiloDoc
+{
+    public int Id { get; set; }
 }

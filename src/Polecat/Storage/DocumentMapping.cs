@@ -1,4 +1,6 @@
 using System.Reflection;
+using Polecat.Attributes;
+using Polecat.Schema.Identity.Sequences;
 
 namespace Polecat.Storage;
 
@@ -7,6 +9,9 @@ namespace Polecat.Storage;
 /// </summary>
 internal class DocumentMapping
 {
+    private static readonly HashSet<Type> SupportedIdTypes =
+        [typeof(Guid), typeof(string), typeof(int), typeof(long)];
+
     private readonly PropertyInfo _idProperty;
     private readonly Type _documentType;
 
@@ -16,15 +21,29 @@ internal class DocumentMapping
 
         _idProperty = FindIdProperty(documentType)
             ?? throw new InvalidOperationException(
-                $"Document type '{documentType.FullName}' must have a public property named 'Id' of type Guid or string.");
+                $"Document type '{documentType.FullName}' must have a public property named 'Id' of type Guid, string, int, or long.");
 
         IdType = _idProperty.PropertyType;
 
-        if (IdType != typeof(Guid) && IdType != typeof(string))
+        if (!SupportedIdTypes.Contains(IdType))
         {
             throw new InvalidOperationException(
                 $"Document type '{documentType.FullName}' has an Id property of type '{IdType.Name}', " +
-                "but only Guid and string are supported.");
+                "but only Guid, string, int, and long are supported.");
+        }
+
+        IsNumericId = IdType == typeof(int) || IdType == typeof(long);
+
+        // Read HiloSequenceAttribute if present on numeric ID types
+        if (IsNumericId)
+        {
+            var attr = documentType.GetCustomAttribute<HiloSequenceAttribute>();
+            if (attr != null)
+            {
+                HiloSettings = new HiloSettings();
+                if (attr.MaxLo > 0) HiloSettings.MaxLo = attr.MaxLo;
+                if (attr.SequenceName != null) HiloSettings.SequenceName = attr.SequenceName;
+            }
         }
 
         var tableName = $"pc_doc_{documentType.Name.ToLowerInvariant()}";
@@ -37,6 +56,8 @@ internal class DocumentMapping
 
     public Type DocumentType => _documentType;
     public Type IdType { get; }
+    public bool IsNumericId { get; }
+    public HiloSettings? HiloSettings { get; set; }
     public string TableName { get; }
     public string QualifiedTableName { get; }
     public string DatabaseSchemaName { get; }

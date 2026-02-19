@@ -114,6 +114,20 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         _workTracker.Add(op);
     }
 
+    public void Delete<T>(int id) where T : class
+    {
+        var provider = _providers.GetProvider<T>();
+        var op = provider.BuildDeleteById(id, TenantId);
+        _workTracker.Add(op);
+    }
+
+    public void Delete<T>(long id) where T : class
+    {
+        var provider = _providers.GetProvider<T>();
+        var op = provider.BuildDeleteById(id, TenantId);
+        _workTracker.Add(op);
+    }
+
     public async Task SaveChangesAsync(CancellationToken token = default)
     {
         if (!_workTracker.HasOutstandingWork()) return;

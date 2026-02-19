@@ -1,6 +1,7 @@
 using JasperFx.Events.Projections;
 using Polecat.Events;
 using Polecat.Internal;
+using Polecat.Schema.Identity.Sequences;
 using Polecat.Storage;
 
 namespace Polecat;
@@ -24,6 +25,11 @@ public partial class DocumentStore : IDocumentStore
         _tableEnsurer = new DocumentTableEnsurer(_connectionFactory, options);
         Database = new PolecatDatabase(options);
 
+        // Wire up sequence factory for HiLo ID generation
+        Sequences = new SequenceFactory(options, _connectionFactory);
+        _providers.SetSequenceFactory(Sequences);
+        options.Providers = _providers;
+
         // Initialize default tenancy if not already configured
         Options.Tenancy ??= new DefaultTenancy(_connectionFactory, Database);
 
@@ -32,14 +38,22 @@ public partial class DocumentStore : IDocumentStore
 
         _inlineProjections = new Lazy<IInlineProjection<IDocumentSession>[]>(
             () => options.Projections.BuildInlineProjections());
+
+        Advanced = new AdvancedOperations(this);
     }
 
     public StoreOptions Options { get; }
+    public AdvancedOperations Advanced { get; }
 
     /// <summary>
     ///     The Weasel database for schema management (default tenant).
     /// </summary>
     public PolecatDatabase Database { get; }
+
+    /// <summary>
+    ///     The sequence factory for HiLo ID generation.
+    /// </summary>
+    internal SequenceFactory Sequences { get; }
 
     /// <summary>
     ///     The event graph configuration and registry.

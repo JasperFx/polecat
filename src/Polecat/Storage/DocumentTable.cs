@@ -17,8 +17,9 @@ internal class DocumentTable : Table
             AddColumn("tenant_id", "varchar(250)").AsPrimaryKey().NotNull();
         }
 
-        var idColumnType = mapping.IdType == typeof(Guid)
-            ? "uniqueidentifier"
+        var idColumnType = mapping.IdType == typeof(Guid) ? "uniqueidentifier"
+            : mapping.IdType == typeof(int) ? "int"
+            : mapping.IdType == typeof(long) ? "bigint"
             : "varchar(250)";
 
         AddColumn("id", idColumnType).AsPrimaryKey().NotNull();
