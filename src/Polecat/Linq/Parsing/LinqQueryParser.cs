@@ -3,6 +3,8 @@ using Polecat.Linq.Members;
 using Polecat.Linq.SoftDeletes;
 using Polecat.Linq.SqlGeneration;
 
+// ReSharper disable ConditionIsAlwaysTrueOrFalseAccordingToNullableAPIContract
+
 namespace Polecat.Linq.Parsing;
 
 /// <summary>
@@ -60,6 +62,12 @@ internal class LinqQueryParser : ExpressionVisitor
     ///     If DeletedBefore() was called, the timestamp to filter by.
     /// </summary>
     public DateTimeOffset? DeletedBeforeTimestamp { get; private set; }
+
+    /// <summary>
+    ///     If QueryForNonStaleData() was called, the timeout for waiting.
+    ///     Null means not called, TimeSpan.Zero means use default (5s).
+    /// </summary>
+    public TimeSpan? NonStaleDataTimeout { get; private set; }
 
     public LinqQueryParser(MemberFactory memberFactory, string fromTable)
     {
@@ -166,6 +174,9 @@ internal class LinqQueryParser : ExpressionVisitor
                 break;
             case "DeletedBefore" when node.Method.DeclaringType == typeof(SoftDeletedExtensions):
                 HandleDeletedBefore(node);
+                break;
+            case "QueryForNonStaleData" when node.Method.DeclaringType == typeof(NonStaleDataExtensions):
+                HandleQueryForNonStaleData(node);
                 break;
         }
 
@@ -308,6 +319,19 @@ internal class LinqQueryParser : ExpressionVisitor
         IsDeletedOnly = true;
         var value = WhereClauseParser.ExtractValue(node.Arguments[1]);
         DeletedBeforeTimestamp = (DateTimeOffset)value;
+    }
+
+    private void HandleQueryForNonStaleData(MethodCallExpression node)
+    {
+        if (node.Arguments.Count > 1)
+        {
+            var value = WhereClauseParser.ExtractValue(node.Arguments[1]);
+            NonStaleDataTimeout = (TimeSpan)value;
+        }
+        else
+        {
+            NonStaleDataTimeout = TimeSpan.FromSeconds(5); // default
+        }
     }
 
     internal static LambdaExpression GetLambda(Expression expression)

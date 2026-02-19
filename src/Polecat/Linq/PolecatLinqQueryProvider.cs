@@ -159,6 +159,12 @@ internal class PolecatLinqQueryProvider : IQueryProvider
         var parser = new LinqQueryParser(memberFactory, provider.Mapping.QualifiedTableName);
         parser.Parse(expression);
 
+        // Wait for non-stale projection data if requested
+        if (parser.NonStaleDataTimeout.HasValue)
+        {
+            await WaitForNonStaleDataAsync(parser.NonStaleDataTimeout.Value, token);
+        }
+
         // Apply single-value mode to Statement
         ApplySingleValueMode(parser);
 
@@ -467,5 +473,74 @@ internal class PolecatLinqQueryProvider : IQueryProvider
         }
 
         throw new NotSupportedException($"Cannot determine element type from: {expression.Type}");
+    }
+
+    private async Task WaitForNonStaleDataAsync(TimeSpan timeout, CancellationToken token)
+    {
+        var options = _session.Options;
+        var eventGraph = options.EventGraph;
+
+        // Get the registered async projection shard names
+        var asyncShardNames = options.Projections.All
+            .Where(p => p.Lifecycle == JasperFx.Events.Projections.ProjectionLifecycle.Async)
+            .SelectMany(p => p.ShardNames())
+            .Select(s => s.Identity)
+            .ToHashSet();
+
+        // If no async projections are registered, nothing to wait for
+        if (asyncShardNames.Count == 0) return;
+
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+        while (stopwatch.Elapsed < timeout)
+        {
+            token.ThrowIfCancellationRequested();
+
+            await using var conn = new SqlConnection(options.ConnectionString);
+            await conn.OpenAsync(token);
+
+            // Get high water mark
+            long highWater;
+            await using (var cmd = conn.CreateCommand())
+            {
+                cmd.CommandText = $"SELECT ISNULL(MAX(seq_id), 0) FROM {eventGraph.EventsTableName};";
+                var result = await cmd.ExecuteScalarAsync(token);
+                highWater = result is long seq ? seq : 0;
+            }
+
+            if (highWater == 0) return;
+
+            // Check only the registered async projection shards
+            var allCaughtUp = true;
+            await using (var cmd = conn.CreateCommand())
+            {
+                cmd.CommandText = $"SELECT name, last_seq_id FROM {eventGraph.ProgressionTableName};";
+                await using var reader = await cmd.ExecuteReaderAsync(token);
+                var foundShards = new HashSet<string>();
+                while (await reader.ReadAsync(token))
+                {
+                    var name = reader.GetString(0);
+                    if (name == "HighWaterMark") continue;
+                    // Only check shards registered in this store
+                    if (!asyncShardNames.Contains(name)) continue;
+
+                    foundShards.Add(name);
+                    var seq = reader.GetInt64(1);
+                    if (seq < highWater)
+                    {
+                        allCaughtUp = false;
+                        break;
+                    }
+                }
+
+                // All registered shards must exist and be caught up
+                if (allCaughtUp && foundShards.SetEquals(asyncShardNames)) return;
+            }
+
+            await Task.Delay(100, token);
+        }
+
+        throw new TimeoutException(
+            $"Timed out after {timeout} waiting for projection data to become non-stale.");
     }
 }
