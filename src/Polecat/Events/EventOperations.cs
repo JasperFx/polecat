@@ -214,6 +214,16 @@ internal class EventOperations : QueryEventStore, IEventOperations
         _workTracker.Add(new ArchiveStreamOperation(_events, streamKey, _tenantId));
     }
 
+    public void UnArchiveStream(Guid streamId)
+    {
+        _workTracker.Add(new UnArchiveStreamOperation(_events, streamId, _tenantId));
+    }
+
+    public void UnArchiveStream(string streamKey)
+    {
+        _workTracker.Add(new UnArchiveStreamOperation(_events, streamKey, _tenantId));
+    }
+
     private async Task<IEventStream<T>> FetchForWritingInternal<T>(object streamId, bool forExclusive,
         long? expectedVersion, CancellationToken cancellation) where T : class, new()
     {

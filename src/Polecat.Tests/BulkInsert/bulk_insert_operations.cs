@@ -42,9 +42,10 @@ public class bulk_insert_operations : IntegrationContext
     [Fact]
     public async Task can_bulk_insert_with_string_ids()
     {
+        var suffix = Guid.NewGuid().ToString()[..8];
         var docs = Enumerable.Range(0, 5).Select(i => new StringDoc
         {
-            Id = $"string-bulk-{i}",
+            Id = $"string-bulk-{suffix}-{i}",
             Name = $"Doc {i}"
         }).ToList();
 

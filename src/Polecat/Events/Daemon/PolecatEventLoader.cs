@@ -34,7 +34,7 @@ internal class PolecatEventLoader : IEventLoader
             SELECT TOP(@batchSize) seq_id, id, stream_id, version, data, type, timestamp,
                 tenant_id, dotnet_type, is_archived
             FROM {_events.EventsTableName}
-            WHERE seq_id > @floor AND seq_id <= @ceiling
+            WHERE seq_id > @floor AND seq_id <= @ceiling AND is_archived = 0
             ORDER BY seq_id;
             """;
 

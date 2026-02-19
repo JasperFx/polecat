@@ -117,4 +117,14 @@ public interface IEventOperations : IQueryEventStore
     ///     Mark a stream and all its events as archived by string key.
     /// </summary>
     void ArchiveStream(string streamKey);
+
+    /// <summary>
+    ///     Remove the archived flag from a stream and all its events by Guid id.
+    /// </summary>
+    void UnArchiveStream(Guid streamId);
+
+    /// <summary>
+    ///     Remove the archived flag from a stream and all its events by string key.
+    /// </summary>
+    void UnArchiveStream(string streamKey);
 }

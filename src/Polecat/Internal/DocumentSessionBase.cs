@@ -396,23 +396,31 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             ? (object)stream.Id
             : stream.Key!;
 
-        // Step 1: Get current version with lock
+        // Step 1: Get current version and archived status with lock
         long currentVersion = 0;
         bool streamExists = false;
+        bool isArchived = false;
 
         await using (var cmd = conn.CreateCommand())
         {
             cmd.Transaction = tx;
             cmd.CommandText =
-                $"SELECT version FROM {_eventGraph.StreamsTableName} WITH (UPDLOCK, HOLDLOCK) WHERE id = @id AND tenant_id = @tenant_id;";
+                $"SELECT version, is_archived FROM {_eventGraph.StreamsTableName} WITH (UPDLOCK, HOLDLOCK) WHERE id = @id AND tenant_id = @tenant_id;";
             cmd.Parameters.AddWithValue("@id", streamId);
             cmd.Parameters.AddWithValue("@tenant_id", TenantId);
-            var result = await cmd.ExecuteScalarAsync(token);
-            if (result != null && result != DBNull.Value)
+            await using var reader = await cmd.ExecuteReaderAsync(token);
+            if (await reader.ReadAsync(token))
             {
-                currentVersion = (long)result;
+                currentVersion = reader.GetInt64(0);
+                isArchived = reader.GetBoolean(1);
                 streamExists = true;
             }
+        }
+
+        // Reject appends to archived streams
+        if (isArchived)
+        {
+            throw new Exceptions.InvalidStreamException(streamId, "Cannot append to an archived stream.");
         }
 
         // Check expected version if set

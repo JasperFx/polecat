@@ -47,7 +47,7 @@ internal class QueryEventStore : IQueryEventStore
         var sql = $"""
             SELECT seq_id, id, stream_id, version, data, type, timestamp, tenant_id, dotnet_type, is_archived
             FROM {_events.EventsTableName}
-            WHERE stream_id = @stream_id AND tenant_id = @tenant_id
+            WHERE stream_id = @stream_id AND tenant_id = @tenant_id AND is_archived = 0
             """;
 
         cmd.Parameters.AddWithValue("@stream_id", streamId);
