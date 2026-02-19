@@ -22,6 +22,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
 {
     private readonly WorkTracker _workTracker = new();
     private readonly IInlineProjection<IDocumentSession>[] _inlineProjections;
+    private readonly IReadOnlyList<IDocumentSessionListener> _sessionListeners;
     private EventOperations? _eventOperations;
 
     /// <summary>
@@ -37,10 +38,12 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         DocumentTableEnsurer tableEnsurer,
         EventGraph eventGraph,
         IInlineProjection<IDocumentSession>[] inlineProjections,
-        string tenantId)
+        string tenantId,
+        IReadOnlyList<IDocumentSessionListener>? sessionListeners = null)
         : base(options, connectionFactory, providers, tableEnsurer, eventGraph, tenantId)
     {
         _inlineProjections = inlineProjections;
+        _sessionListeners = sessionListeners ?? Array.Empty<IDocumentSessionListener>();
     }
 
     public IWorkTracker PendingChanges => _workTracker;
@@ -236,6 +239,17 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     {
         if (!_workTracker.HasOutstandingWork()) return;
 
+        // Call BeforeSaveChangesAsync on all listeners (global then session)
+        foreach (var listener in Options.Listeners)
+        {
+            await listener.BeforeSaveChangesAsync(this, token);
+        }
+
+        foreach (var listener in _sessionListeners)
+        {
+            await listener.BeforeSaveChangesAsync(this, token);
+        }
+
         // Ensure document tables exist for pending operations (skip non-document ops like FlatTable)
         if (_workTracker.Operations.Count > 0)
         {
@@ -321,6 +335,17 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
 
             await tx.CommitAsync(token);
             _workTracker.Reset();
+
+            // Call AfterCommitAsync on all listeners (global then session)
+            foreach (var listener in Options.Listeners)
+            {
+                await listener.AfterCommitAsync(this, token);
+            }
+
+            foreach (var listener in _sessionListeners)
+            {
+                await listener.AfterCommitAsync(this, token);
+            }
         }
         catch
         {
@@ -525,11 +550,48 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         throw new NotSupportedException("Message sinks are not supported in Polecat.");
     }
 
+    public void Eject<T>(T document) where T : notnull
+    {
+        var provider = _providers.GetProvider<T>();
+        var id = provider.Mapping.GetId(document);
+        _workTracker.EjectDocument(typeof(T), id);
+        OnDocumentEjected(typeof(T), id);
+    }
+
+    public void EjectAllOfType(Type type)
+    {
+        _workTracker.EjectAllOfType(type);
+        OnAllOfTypeEjected(type);
+    }
+
+    public void EjectAllPendingChanges()
+    {
+        _workTracker.Reset();
+    }
+
     /// <summary>
     ///     Called when a document is queued via Store/Insert/Update.
     ///     Override in IdentityMap session to track in the map.
     /// </summary>
     protected virtual void OnDocumentStored(Type documentType, object id, object document)
+    {
+        // No-op in lightweight session
+    }
+
+    /// <summary>
+    ///     Called when a document is ejected. Override in IdentityMap session
+    ///     to remove from the identity map.
+    /// </summary>
+    protected virtual void OnDocumentEjected(Type documentType, object id)
+    {
+        // No-op in lightweight session
+    }
+
+    /// <summary>
+    ///     Called when all documents of a type are ejected. Override in IdentityMap session
+    ///     to clear the identity map for that type.
+    /// </summary>
+    protected virtual void OnAllOfTypeEjected(Type documentType)
     {
         // No-op in lightweight session
     }

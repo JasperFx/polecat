@@ -27,6 +27,7 @@ internal class InsertOperation : IStorageOperation
 
     public Type DocumentType => _mapping.DocumentType;
     public OperationRole Role => OperationRole.Insert;
+    public object? DocumentId => _id;
     public object Document => _document;
 
     public void ConfigureCommand(SqlCommand command)

@@ -111,7 +111,8 @@ public partial class DocumentStore : IDocumentStore
             ensurer,
             Events,
             InlineProjections,
-            options.TenantId);
+            options.TenantId,
+            options.Listeners);
     }
 
     public IDocumentSession IdentitySession()
@@ -130,7 +131,8 @@ public partial class DocumentStore : IDocumentStore
             ensurer,
             Events,
             InlineProjections,
-            options.TenantId);
+            options.TenantId,
+            options.Listeners);
     }
 
     public IQuerySession QuerySession()

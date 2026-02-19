@@ -8,11 +8,11 @@ A summary of APIs and features available in [Marten](https://github.com/JasperFx
 
 | Feature | Description |
 |---------|-------------|
-| `IDocumentSessionListener` | Hook into SaveChanges lifecycle events |
+| ~~`IDocumentSessionListener`~~ | ~~Hook into SaveChanges lifecycle events~~ **DONE** |
 | `IChangeListener` | Listen to async projection changes |
-| `session.Eject<T>()` | Remove document from session tracking |
-| `session.EjectAllOfType(Type)` | Bulk eject by type |
-| `session.EjectAllPendingChanges()` | Clear pending operations without affecting identity map |
+| ~~`session.Eject<T>()`~~ | ~~Remove document from session tracking~~ **DONE** |
+| ~~`session.EjectAllOfType(Type)`~~ | ~~Bulk eject by type~~ **DONE** |
+| ~~`session.EjectAllPendingChanges()`~~ | ~~Clear pending operations without affecting identity map~~ **DONE** |
 | `session.SetHeader() / GetHeader()` | User-defined metadata on sessions |
 | `OpenSerializableSessionAsync()` | Session with Serializable isolation level |
 
@@ -20,8 +20,8 @@ A summary of APIs and features available in [Marten](https://github.com/JasperFx
 
 | Feature | Description |
 |---------|-------------|
-| `CreatedSince()` / `CreatedBefore()` | LINQ query helpers for created_at column |
-| `ModifiedSince()` / `ModifiedBefore()` | LINQ query helpers for last_modified column |
+| `CreatedSince()` / `CreatedBefore()` | LINQ query helpers for created_at column (no created_at column in schema) |
+| ~~`ModifiedSince()` / `ModifiedBefore()`~~ | ~~LINQ query helpers for last_modified column~~ **DONE** |
 | `[IndexedCreatedAt]` | Index the created_at column |
 | `[IndexedLastModified]` | Index the last_modified column |
 
@@ -131,6 +131,9 @@ The following Marten features have been implemented:
 - **Pagination** — `IPagedList<T>` with `ToPagedListAsync()` — two-query approach (COUNT + OFFSET/FETCH)
 - **Event archiving** — `ArchiveStream()`, `UnArchiveStream()`, archived events excluded from `FetchStreamAsync()` and daemon loading, append-to-archived-stream prevention
 - **FetchLatest** — `FetchLatest<T>(id)` for quick aggregate state retrieval
+- **Metadata LINQ helpers** — `ModifiedSince()` / `ModifiedBefore()` for filtering by `last_modified` column
+- **Eject methods** — `Eject<T>()`, `EjectAllOfType()`, `EjectAllPendingChanges()` for removing documents from session tracking and pending operations
+- **Session listeners** — `IDocumentSessionListener` with `BeforeSaveChangesAsync` / `AfterCommitAsync` hooks, registered globally or per-session
 
 ---
 
@@ -150,9 +153,8 @@ The following Marten features are out of scope for Polecat by design:
 1. Compiled queries — query caching for performance
 
 **Medium priority:**
-2. Session listeners — lifecycle hooks
-3. Event snapshots — automatic snapshot storage
-4. Advanced SQL — typed raw SQL queries
+2. Event snapshots — automatic snapshot storage
+3. Advanced SQL — typed raw SQL queries
 
 **Lower priority (PostgreSQL-specific or niche):**
 5. Full-text search (needs SQL Server alternative approach)

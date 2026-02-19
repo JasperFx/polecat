@@ -18,8 +18,9 @@ internal class IdentityMapDocumentSession : DocumentSessionBase
         DocumentTableEnsurer tableEnsurer,
         EventGraph eventGraph,
         IInlineProjection<IDocumentSession>[] inlineProjections,
-        string tenantId)
-        : base(options, connectionFactory, providers, tableEnsurer, eventGraph, inlineProjections, tenantId)
+        string tenantId,
+        IReadOnlyList<IDocumentSessionListener>? sessionListeners = null)
+        : base(options, connectionFactory, providers, tableEnsurer, eventGraph, inlineProjections, tenantId, sessionListeners)
     {
     }
 
@@ -87,6 +88,19 @@ internal class IdentityMapDocumentSession : DocumentSessionBase
         }
 
         return results;
+    }
+
+    protected override void OnDocumentEjected(Type documentType, object id)
+    {
+        if (_identityMap.TryGetValue(documentType, out var typeMap))
+        {
+            typeMap.Remove(id);
+        }
+    }
+
+    protected override void OnAllOfTypeEjected(Type documentType)
+    {
+        _identityMap.Remove(documentType);
     }
 
     private Dictionary<object, object> GetOrCreateTypeMap(Type type)

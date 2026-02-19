@@ -27,4 +27,9 @@ public class SessionOptions
     ///     Command timeout in seconds for this session. Null uses the store default.
     /// </summary>
     public int? Timeout { get; set; }
+
+    /// <summary>
+    ///     Session-specific listeners applied only to this session.
+    /// </summary>
+    public List<IDocumentSessionListener> Listeners { get; } = new();
 }

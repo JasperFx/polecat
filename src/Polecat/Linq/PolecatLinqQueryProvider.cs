@@ -84,6 +84,8 @@ internal class PolecatLinqQueryProvider : IQueryProvider
             parser.Statement.Wheres.Add(new LiteralSqlFragment(parser.IsDeletedOnly ? "is_deleted = 1" : "is_deleted = 0"));
         }
 
+        ApplyModifiedFilters(parser);
+
         var builder = new CommandBuilder();
         parser.Statement.Apply(builder);
         return builder.ToString();
@@ -120,6 +122,8 @@ internal class PolecatLinqQueryProvider : IQueryProvider
         {
             parser.Statement.Wheres.Add(new LiteralSqlFragment(parser.IsDeletedOnly ? "is_deleted = 1" : "is_deleted = 0"));
         }
+
+        ApplyModifiedFilters(parser);
 
         var builder = new CommandBuilder();
         parser.Statement.Apply(builder);
@@ -212,6 +216,8 @@ internal class PolecatLinqQueryProvider : IQueryProvider
                 parser.Statement.Wheres.Add(new ComparisonFilter("deleted_at", "<", parser.DeletedBeforeTimestamp.Value));
             }
         }
+
+        ApplyModifiedFilters(parser);
 
         // Adjust select columns for version syncing on IRevisioned/IVersioned types
         bool syncRevision = provider.Mapping.UseNumericRevisions;
@@ -473,6 +479,19 @@ internal class PolecatLinqQueryProvider : IQueryProvider
         }
 
         throw new NotSupportedException($"Cannot determine element type from: {expression.Type}");
+    }
+
+    private static void ApplyModifiedFilters(LinqQueryParser parser)
+    {
+        if (parser.ModifiedSinceTimestamp.HasValue)
+        {
+            parser.Statement.Wheres.Add(new ComparisonFilter("last_modified", ">=", parser.ModifiedSinceTimestamp.Value));
+        }
+
+        if (parser.ModifiedBeforeTimestamp.HasValue)
+        {
+            parser.Statement.Wheres.Add(new ComparisonFilter("last_modified", "<", parser.ModifiedBeforeTimestamp.Value));
+        }
     }
 
     private async Task WaitForNonStaleDataAsync(TimeSpan timeout, CancellationToken token)

@@ -18,6 +18,7 @@ internal class DeleteByIdOperation : IStorageOperation
 
     public Type DocumentType => _mapping.DocumentType;
     public OperationRole Role => OperationRole.Delete;
+    public object? DocumentId => _id;
 
     public void ConfigureCommand(SqlCommand command)
     {

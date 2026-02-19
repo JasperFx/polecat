@@ -96,6 +96,11 @@ public class StoreOptions
     public StorePolicies Policies { get; } = new();
 
     /// <summary>
+    ///     Global session listeners applied to all sessions.
+    /// </summary>
+    public List<IDocumentSessionListener> Listeners { get; } = new();
+
+    /// <summary>
     ///     Get or set the serializer. Defaults to PolecatSerializer (System.Text.Json).
     /// </summary>
     public ISerializer Serializer

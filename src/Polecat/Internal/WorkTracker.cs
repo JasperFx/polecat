@@ -42,4 +42,15 @@ internal class WorkTracker : IWorkTracker
         _operations.Clear();
         _streams.Clear();
     }
+
+    public void EjectDocument(Type documentType, object id)
+    {
+        _operations.RemoveAll(op =>
+            op.DocumentType == documentType && op.DocumentId != null && op.DocumentId.Equals(id));
+    }
+
+    public void EjectAllOfType(Type documentType)
+    {
+        _operations.RemoveAll(op => op.DocumentType == documentType);
+    }
 }

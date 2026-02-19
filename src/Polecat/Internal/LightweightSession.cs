@@ -15,8 +15,9 @@ internal class LightweightSession : DocumentSessionBase
         DocumentTableEnsurer tableEnsurer,
         EventGraph eventGraph,
         IInlineProjection<IDocumentSession>[] inlineProjections,
-        string tenantId)
-        : base(options, connectionFactory, providers, tableEnsurer, eventGraph, inlineProjections, tenantId)
+        string tenantId,
+        IReadOnlyList<IDocumentSessionListener>? sessionListeners = null)
+        : base(options, connectionFactory, providers, tableEnsurer, eventGraph, inlineProjections, tenantId, sessionListeners)
     {
     }
 }

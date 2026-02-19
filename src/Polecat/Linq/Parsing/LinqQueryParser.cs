@@ -1,5 +1,6 @@
 using System.Linq.Expressions;
 using Polecat.Linq.Members;
+using Polecat.Linq.Metadata;
 using Polecat.Linq.SoftDeletes;
 using Polecat.Linq.SqlGeneration;
 
@@ -62,6 +63,16 @@ internal class LinqQueryParser : ExpressionVisitor
     ///     If DeletedBefore() was called, the timestamp to filter by.
     /// </summary>
     public DateTimeOffset? DeletedBeforeTimestamp { get; private set; }
+
+    /// <summary>
+    ///     If ModifiedSince() was called, the timestamp to filter by.
+    /// </summary>
+    public DateTimeOffset? ModifiedSinceTimestamp { get; private set; }
+
+    /// <summary>
+    ///     If ModifiedBefore() was called, the timestamp to filter by.
+    /// </summary>
+    public DateTimeOffset? ModifiedBeforeTimestamp { get; private set; }
 
     /// <summary>
     ///     If QueryForNonStaleData() was called, the timeout for waiting.
@@ -174,6 +185,12 @@ internal class LinqQueryParser : ExpressionVisitor
                 break;
             case "DeletedBefore" when node.Method.DeclaringType == typeof(SoftDeletedExtensions):
                 HandleDeletedBefore(node);
+                break;
+            case "ModifiedSince" when node.Method.DeclaringType == typeof(MetadataExtensions):
+                HandleModifiedSince(node);
+                break;
+            case "ModifiedBefore" when node.Method.DeclaringType == typeof(MetadataExtensions):
+                HandleModifiedBefore(node);
                 break;
             case "QueryForNonStaleData" when node.Method.DeclaringType == typeof(NonStaleDataExtensions):
                 HandleQueryForNonStaleData(node);
@@ -319,6 +336,18 @@ internal class LinqQueryParser : ExpressionVisitor
         IsDeletedOnly = true;
         var value = WhereClauseParser.ExtractValue(node.Arguments[1]);
         DeletedBeforeTimestamp = (DateTimeOffset)value;
+    }
+
+    private void HandleModifiedSince(MethodCallExpression node)
+    {
+        var value = WhereClauseParser.ExtractValue(node.Arguments[1]);
+        ModifiedSinceTimestamp = (DateTimeOffset)value;
+    }
+
+    private void HandleModifiedBefore(MethodCallExpression node)
+    {
+        var value = WhereClauseParser.ExtractValue(node.Arguments[1]);
+        ModifiedBeforeTimestamp = (DateTimeOffset)value;
     }
 
     private void HandleQueryForNonStaleData(MethodCallExpression node)

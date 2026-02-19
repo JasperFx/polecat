@@ -23,4 +23,21 @@ public interface IDocumentSession : IDocumentOperations, IStorageOperations
     ///     Flush all pending operations to the database in a single transaction.
     /// </summary>
     Task SaveChangesAsync(CancellationToken token = default);
+
+    /// <summary>
+    ///     Remove a specific document from the session's pending operations
+    ///     and identity map (if applicable).
+    /// </summary>
+    void Eject<T>(T document) where T : notnull;
+
+    /// <summary>
+    ///     Remove all pending operations and identity map entries for the given document type.
+    /// </summary>
+    void EjectAllOfType(Type type);
+
+    /// <summary>
+    ///     Clear all pending document operations and stream actions.
+    ///     Does not clear the identity map.
+    /// </summary>
+    void EjectAllPendingChanges();
 }

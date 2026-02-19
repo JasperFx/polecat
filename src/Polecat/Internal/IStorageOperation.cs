@@ -30,6 +30,12 @@ public interface IStorageOperation
     OperationRole Role { get; }
 
     /// <summary>
+    ///     The document ID this operation targets, if applicable.
+    ///     Null for bulk/where operations.
+    /// </summary>
+    object? DocumentId => null;
+
+    /// <summary>
     ///     Configure the SqlCommand for execution.
     /// </summary>
     void ConfigureCommand(SqlCommand command);

@@ -18,6 +18,7 @@ internal class UnDeleteByIdOperation : IStorageOperation
 
     public Type DocumentType => _mapping.DocumentType;
     public OperationRole Role => OperationRole.Update;
+    public object? DocumentId => _id;
 
     public void ConfigureCommand(SqlCommand command)
     {

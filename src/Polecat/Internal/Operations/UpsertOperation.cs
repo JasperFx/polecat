@@ -31,6 +31,7 @@ internal class UpsertOperation : IStorageOperation
 
     public Type DocumentType => _mapping.DocumentType;
     public OperationRole Role => OperationRole.Upsert;
+    public object? DocumentId => _id;
     public object Document => _document;
 
     public void ConfigureCommand(SqlCommand command)
