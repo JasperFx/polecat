@@ -79,8 +79,6 @@ A summary of APIs and features available in [Marten](https://github.com/JasperFx
 |---------|-------------|
 | `BulkInsertAsync<T>()` | High-performance bulk insert (bypasses session) |
 | `BulkInsertMode` | InsertsOnly, IgnoreDuplicates, OverwriteExisting, OverwriteIfVersionMatches |
-| `DeleteWhere<T>(predicate)` | Bulk delete by predicate expression |
-| `HardDeleteWhere<T>(predicate)` | Bulk hard delete for soft-deleted types |
 
 ## Enhanced CRUD
 
@@ -164,25 +162,35 @@ A summary of APIs and features available in [Marten](https://github.com/JasperFx
 
 ---
 
+## Already Implemented in Polecat
+
+The following Marten features have been implemented:
+
+- **Soft deletes** — `[SoftDeleted]` attribute, `ISoftDeleted` interface, `StorePolicies`, `HardDelete()`, `UndoDeleteWhere()`, `MaybeDeleted()`, `IsDeleted()`, `DeletedSince()`, `DeletedBefore()`
+- **DeleteWhere / HardDeleteWhere** — bulk delete by predicate expression (respects soft-delete configuration)
+- **LINQ querying** — Where, OrderBy, Take, Skip, First, Single, Count, Any, Sum, Min, Max, Average, Select, Distinct
+- **LINQ extensions** — IsOneOf, In, IsEmpty, AnyTenant, TenantIsOneOf
+- **HiLo identity** — int/long ID auto-generation with `[HiloSequence]` attribute
+- **JSON serialization config** — EnumStorage, Casing, CollectionStorage, NonPublicMembersStorage
+
 ## Priority Assessment
 
 **High priority for production use:**
 1. Compiled queries — query caching for performance
 2. Batch querying — reduce DB roundtrips
 3. Bulk insert — high-throughput document ingestion
-4. DeleteWhere / HardDeleteWhere — bulk deletion by predicate
-5. IVersioned / IRevisioned — optimistic concurrency
+4. IVersioned / IRevisioned — optimistic concurrency
 
 **Medium priority:**
-6. Document patching — incremental JSON updates
-7. Session listeners — lifecycle hooks
-8. Diagnostics & admin — schema management tools
-9. Metadata interfaces (ITracked, ITenanted)
-10. Pagination (IPagedList)
+5. Document patching — incremental JSON updates
+6. Session listeners — lifecycle hooks
+7. Diagnostics & admin — schema management tools
+8. Metadata interfaces (ITracked, ITenanted)
+9. Pagination (IPagedList)
 
 **Lower priority (PostgreSQL-specific or niche):**
-11. Full-text search (needs SQL Server alternative approach)
-12. GIN indexes (PostgreSQL-specific)
-13. Dirty tracking sessions
-14. Advanced SQL / MatchesSql
-15. Event archiving & tombstones
+10. Full-text search (needs SQL Server alternative approach)
+11. GIN indexes (PostgreSQL-specific)
+12. Dirty tracking sessions
+13. Advanced SQL / MatchesSql
+14. Event archiving & tombstones
