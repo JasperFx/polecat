@@ -14,7 +14,7 @@ A summary of APIs and features available in [Marten](https://github.com/JasperFx
 | ~~`session.EjectAllOfType(Type)`~~ | ~~Bulk eject by type~~ **DONE** |
 | ~~`session.EjectAllPendingChanges()`~~ | ~~Clear pending operations without affecting identity map~~ **DONE** |
 | `session.SetHeader() / GetHeader()` | User-defined metadata on sessions |
-| `OpenSerializableSessionAsync()` | Session with Serializable isolation level |
+| ~~`OpenSerializableSessionAsync()`~~ | ~~Session with Serializable isolation level~~ **DONE** |
 
 ## Metadata & Tracking Interfaces
 
@@ -47,7 +47,7 @@ A summary of APIs and features available in [Marten](https://github.com/JasperFx
 
 | Feature | Description |
 |---------|-------------|
-| **Tombstone Streams** | Mark streams as permanently deleted |
+| ~~**Tombstone Streams**~~ | ~~Mark streams as permanently deleted~~ **DONE** |
 | **Event Snapshots** | `Snapshot<T>(SnapshotLifecycle)` — automatic snapshot storage |
 | Optimized projection rebuilds | `UseOptimizedProjectionRebuilds` |
 
@@ -55,7 +55,7 @@ A summary of APIs and features available in [Marten](https://github.com/JasperFx
 
 | Feature | Description |
 |---------|-------------|
-| `CompositeProjection` | Multi-stage projection pipelines |
+| ~~`CompositeProjection`~~ | ~~Multi-stage projection pipelines~~ **DONE** |
 | Snapshot management | Automatic snapshot storage and retrieval |
 | Projection rebuild/reset | Administrative rebuild of projection data |
 
@@ -134,6 +134,9 @@ The following Marten features have been implemented:
 - **Metadata LINQ helpers** — `ModifiedSince()` / `ModifiedBefore()` for filtering by `last_modified` column
 - **Eject methods** — `Eject<T>()`, `EjectAllOfType()`, `EjectAllPendingChanges()` for removing documents from session tracking and pending operations
 - **Session listeners** — `IDocumentSessionListener` with `BeforeSaveChangesAsync` / `AfterCommitAsync` hooks, registered globally or per-session
+- **Tombstone streams** — `TombstoneStream(Guid/string)` for permanent hard DELETE of stream and all events
+- **OpenSessionAsync** — `OpenSessionAsync(SessionOptions)` with configurable `IsolationLevel` (eagerly opens connection + begins transaction for non-ReadCommitted)
+- **Composite projections** — `CompositeProjectionFor()` for multi-stage async projection pipelines with parallel execution within stages
 
 ---
 
@@ -159,4 +162,3 @@ The following Marten features are out of scope for Polecat by design:
 **Lower priority (PostgreSQL-specific or niche):**
 5. Full-text search (needs SQL Server alternative approach)
 6. Advanced SQL / MatchesSql
-7. Tombstone streams
