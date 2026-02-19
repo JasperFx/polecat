@@ -1,6 +1,7 @@
 using System.Data.Common;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
 
 namespace Polecat.Serialization;
 
@@ -9,7 +10,11 @@ namespace Polecat.Serialization;
 /// </summary>
 public class Serializer : ISerializer
 {
-    private readonly JsonSerializerOptions _options;
+    private JsonSerializerOptions _options;
+    private EnumStorage _enumStorage = EnumStorage.AsInteger;
+    private Casing _casing = Casing.CamelCase;
+    private CollectionStorage _collectionStorage = CollectionStorage.Default;
+    private NonPublicMembersStorage _nonPublicMembersStorage = NonPublicMembersStorage.Default;
 
     public Serializer() : this(DefaultOptions())
     {
@@ -24,6 +29,50 @@ public class Serializer : ISerializer
     ///     Provides access to the underlying JsonSerializerOptions for advanced configuration.
     /// </summary>
     public JsonSerializerOptions Options => _options;
+
+    public EnumStorage EnumStorage
+    {
+        get => _enumStorage;
+        set
+        {
+            _enumStorage = value;
+            ApplyEnumStorage();
+        }
+    }
+
+    public Casing Casing
+    {
+        get => _casing;
+        set
+        {
+            _casing = value;
+            ApplyCasing();
+        }
+    }
+
+    public CollectionStorage CollectionStorage
+    {
+        get => _collectionStorage;
+        set => _collectionStorage = value;
+    }
+
+    public NonPublicMembersStorage NonPublicMembersStorage
+    {
+        get => _nonPublicMembersStorage;
+        set
+        {
+            _nonPublicMembersStorage = value;
+            ApplyNonPublicMembers();
+        }
+    }
+
+    /// <summary>
+    ///     Apply custom configuration to the underlying JsonSerializerOptions.
+    /// </summary>
+    public void Configure(Action<JsonSerializerOptions> configure)
+    {
+        configure(_options);
+    }
 
     public string ToJson(object document)
     {
@@ -81,5 +130,84 @@ public class Serializer : ISerializer
             DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
             WriteIndented = false
         };
+    }
+
+    private void ApplyEnumStorage()
+    {
+        // Remove any existing JsonStringEnumConverter
+        for (var i = _options.Converters.Count - 1; i >= 0; i--)
+        {
+            if (_options.Converters[i] is JsonStringEnumConverter)
+            {
+                _options.Converters.RemoveAt(i);
+            }
+        }
+
+        if (_enumStorage == EnumStorage.AsString)
+        {
+            _options.Converters.Add(new JsonStringEnumConverter(_options.PropertyNamingPolicy));
+        }
+    }
+
+    private void ApplyCasing()
+    {
+        _options.PropertyNamingPolicy = _casing switch
+        {
+            Casing.CamelCase => JsonNamingPolicy.CamelCase,
+            Casing.SnakeCase => JsonNamingPolicy.SnakeCaseLower,
+            Casing.Default => null,
+            _ => null
+        };
+    }
+
+    private void ApplyNonPublicMembers()
+    {
+        if (_nonPublicMembersStorage == NonPublicMembersStorage.Default)
+        {
+            return;
+        }
+
+        var resolver = new DefaultJsonTypeInfoResolver();
+
+        if (_nonPublicMembersStorage.HasFlag(NonPublicMembersStorage.NonPublicSetters))
+        {
+            resolver.Modifiers.Add(typeInfo =>
+            {
+                if (typeInfo.Kind != JsonTypeInfoKind.Object) return;
+
+                foreach (var property in typeInfo.Properties)
+                {
+                    if (property.Set == null)
+                    {
+                        // property.Name is the JSON name (e.g. "name" in camelCase), so look up
+                        // by AttributeProvider which gives us the actual PropertyInfo
+                        var clrProperty = property.AttributeProvider as System.Reflection.PropertyInfo;
+                        if (clrProperty == null)
+                        {
+                            // Fallback: search all properties by case-insensitive match
+                            clrProperty = typeInfo.Type.GetProperties(
+                                    System.Reflection.BindingFlags.Public |
+                                    System.Reflection.BindingFlags.NonPublic |
+                                    System.Reflection.BindingFlags.Instance)
+                                .FirstOrDefault(p => string.Equals(p.Name, property.Name,
+                                    StringComparison.OrdinalIgnoreCase));
+                        }
+
+                        if (clrProperty?.GetSetMethod(true) != null)
+                        {
+                            property.Set = (obj, value) => clrProperty.GetSetMethod(true)!.Invoke(obj, [value]);
+                        }
+                    }
+                }
+            });
+        }
+
+        _options.TypeInfoResolver = resolver;
+
+        if (_nonPublicMembersStorage.HasFlag(NonPublicMembersStorage.NonPublicDefaultConstructor) ||
+            _nonPublicMembersStorage.HasFlag(NonPublicMembersStorage.NonPublicConstructor))
+        {
+            _options.PreferredObjectCreationHandling = JsonObjectCreationHandling.Populate;
+        }
     }
 }

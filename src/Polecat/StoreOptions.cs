@@ -1,3 +1,4 @@
+using System.Text.Json;
 using JasperFx;
 using JasperFx.Events;
 using JasperFx.Events.Daemon;
@@ -122,6 +123,45 @@ public class StoreOptions
         var tenancy = new SeparateDatabaseTenancy(this);
         configure(tenancy);
         Tenancy = tenancy;
+    }
+
+    /// <summary>
+    ///     Configure the serialization settings for the document store.
+    /// </summary>
+    public void ConfigureSerialization(
+        EnumStorage enumStorage = EnumStorage.AsInteger,
+        Casing casing = Casing.CamelCase,
+        CollectionStorage collectionStorage = CollectionStorage.Default,
+        NonPublicMembersStorage nonPublicMembersStorage = NonPublicMembersStorage.Default,
+        Action<JsonSerializerOptions>? configure = null)
+    {
+        var serializer = new Serializer();
+        serializer.Casing = casing;
+        serializer.EnumStorage = enumStorage;
+        serializer.CollectionStorage = collectionStorage;
+        serializer.NonPublicMembersStorage = nonPublicMembersStorage;
+        if (configure != null) serializer.Configure(configure);
+        Serializer = serializer;
+    }
+
+    /// <summary>
+    ///     Configure the serialization settings with a custom base JsonSerializerOptions.
+    /// </summary>
+    public void ConfigureSerialization(
+        JsonSerializerOptions options,
+        EnumStorage enumStorage = EnumStorage.AsInteger,
+        Casing casing = Casing.CamelCase,
+        CollectionStorage collectionStorage = CollectionStorage.Default,
+        NonPublicMembersStorage nonPublicMembersStorage = NonPublicMembersStorage.Default,
+        Action<JsonSerializerOptions>? configure = null)
+    {
+        var serializer = new Serializer(options);
+        serializer.Casing = casing;
+        serializer.EnumStorage = enumStorage;
+        serializer.CollectionStorage = collectionStorage;
+        serializer.NonPublicMembersStorage = nonPublicMembersStorage;
+        if (configure != null) serializer.Configure(configure);
+        Serializer = serializer;
     }
 
     internal ConnectionFactory CreateConnectionFactory()

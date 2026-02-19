@@ -8,6 +8,16 @@ namespace Polecat.Serialization;
 public interface ISerializer
 {
     /// <summary>
+    ///     The enum storage strategy.
+    /// </summary>
+    EnumStorage EnumStorage { get; }
+
+    /// <summary>
+    ///     The property naming casing strategy.
+    /// </summary>
+    Casing Casing { get; }
+
+    /// <summary>
     ///     Serialize an object to a JSON string.
     /// </summary>
     string ToJson(object document);
