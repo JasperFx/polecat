@@ -176,7 +176,55 @@ internal class QueryEventStore : IQueryEventStore
         DateTimeOffset? timestamp = null, T? state = null, long fromVersion = 0,
         CancellationToken token = default) where T : class, new()
     {
-        var events = await FetchStreamAsync(streamId, version, timestamp, fromVersion, token);
+        return await AggregateStreamInternalAsync<T>(streamId, version, timestamp, state, fromVersion, token);
+    }
+
+    public async Task<T?> AggregateStreamAsync<T>(string streamKey, long version = 0,
+        DateTimeOffset? timestamp = null, T? state = null, long fromVersion = 0,
+        CancellationToken token = default) where T : class, new()
+    {
+        return await AggregateStreamInternalAsync<T>(streamKey, version, timestamp, state, fromVersion, token);
+    }
+
+    private async Task<T?> AggregateStreamInternalAsync<T>(object streamId, long version,
+        DateTimeOffset? timestamp, T? state, long fromVersion,
+        CancellationToken token) where T : class, new()
+    {
+        var effectiveFromVersion = fromVersion;
+
+        // Try loading a cached snapshot from pc_streams if no explicit state or fromVersion was provided
+        if (state == null && fromVersion == 0 && timestamp == null)
+        {
+            var (snapshot, snapshotVersion) = await TryLoadSnapshotAsync<T>(streamId, token);
+            if (snapshot != null && snapshotVersion > 0)
+            {
+                // If a max version was requested and it's less than snapshot version,
+                // we can't use the snapshot — fall back to full event replay
+                if (version > 0 && version < snapshotVersion)
+                {
+                    // Don't use snapshot, let full replay happen below
+                }
+                else if (version > 0 && version == snapshotVersion)
+                {
+                    // Snapshot exactly matches requested version
+                    TrySetIdentity(snapshot, streamId);
+                    return snapshot;
+                }
+                else
+                {
+                    // Snapshot is valid; replay only events after snapshot
+                    state = snapshot;
+                    effectiveFromVersion = snapshotVersion + 1;
+                }
+            }
+        }
+
+        IReadOnlyList<IEvent> events;
+        if (streamId is Guid guid)
+            events = await FetchStreamAsync(guid, version, timestamp, effectiveFromVersion, token);
+        else
+            events = await FetchStreamAsync((string)streamId, version, timestamp, effectiveFromVersion, token);
+
         if (events.Count == 0) return state;
 
         var aggregator = _options.Projections.AggregatorFor<T>();
@@ -187,19 +235,31 @@ internal class QueryEventStore : IQueryEventStore
         return aggregate;
     }
 
-    public async Task<T?> AggregateStreamAsync<T>(string streamKey, long version = 0,
-        DateTimeOffset? timestamp = null, T? state = null, long fromVersion = 0,
-        CancellationToken token = default) where T : class, new()
+    private async Task<(T? snapshot, long version)> TryLoadSnapshotAsync<T>(object streamId,
+        CancellationToken token) where T : class
     {
-        var events = await FetchStreamAsync(streamKey, version, timestamp, fromVersion, token);
-        if (events.Count == 0) return state;
+        var conn = await _session.GetConnectionAsync(token);
+        await using var cmd = conn.CreateCommand();
+        if (_session.ActiveTransaction != null) cmd.Transaction = _session.ActiveTransaction;
 
-        var aggregator = _options.Projections.AggregatorFor<T>();
-        var aggregate = await aggregator.BuildAsync(events, _session, state, token);
-        if (aggregate == null) return null;
+        cmd.CommandText = $"""
+            SELECT snapshot, snapshot_version
+            FROM {_events.StreamsTableName}
+            WHERE id = @id AND tenant_id = @tenant_id AND snapshot IS NOT NULL;
+            """;
+        cmd.Parameters.AddWithValue("@id", streamId);
+        cmd.Parameters.AddWithValue("@tenant_id", _session.TenantId);
 
-        TrySetIdentity(aggregate, streamKey);
-        return aggregate;
+        await using var reader = await cmd.ExecuteReaderAsync(token);
+        if (await reader.ReadAsync(token))
+        {
+            var json = reader.GetString(0);
+            var snapshotVersion = reader.GetInt32(1);
+            var snapshot = _session.Serializer.FromJson<T>(json);
+            return (snapshot, snapshotVersion);
+        }
+
+        return (null, 0);
     }
 
     public async ValueTask<T?> FetchLatest<T>(Guid id, CancellationToken cancellation = default)
