@@ -169,6 +169,11 @@ The following Marten features have been implemented:
 - **LINQ extensions** — IsOneOf, In, IsEmpty, AnyTenant, TenantIsOneOf
 - **HiLo identity** — int/long ID auto-generation with `[HiloSequence]` attribute
 - **JSON serialization config** — EnumStorage, Casing, CollectionStorage, NonPublicMembersStorage
+- **Batch querying** — `IBatchedQuery` with `Load`, `LoadMany`, and `Query` (Where, Count, Any, FirstOrDefault) in a single DB roundtrip
+- **Metadata interfaces** — `ITracked` (CorrelationId, CausationId, LastModifiedBy) and `ITenanted` (TenantId) synced on save/load
+- **Diagnostics** — `CleanAllDocumentsAsync()`, `CleanAsync<T>()`, `CleanAllEventDataAsync()`, `ToSql()` for SQL preview
+- **Stream JSON** — `LoadJsonAsync<T>()` and `ToJsonArrayAsync()` for raw JSON without deserialization
+- **QueryForNonStaleData** — LINQ extension to wait for async projections before query execution
 
 ## Priority Assessment
 
