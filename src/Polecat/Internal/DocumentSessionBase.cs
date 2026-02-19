@@ -1,4 +1,5 @@
 using System.Linq.Expressions;
+using JasperFx;
 using JasperFx.Events;
 using JasperFx.Events.Daemon;
 using JasperFx.Events.Projections;
@@ -206,6 +207,26 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         var fragment = whereParser.Parse(predicate.Body);
         var op = new UndoDeleteWhereOperation(provider.Mapping, TenantId, fragment);
         _workTracker.Add(op);
+    }
+
+    public void UpdateExpectedVersion<T>(T document, Guid version) where T : notnull
+    {
+        if (document is IVersioned versioned)
+        {
+            versioned.Version = version;
+        }
+
+        Store(document);
+    }
+
+    public void UpdateRevision<T>(T document, int revision) where T : notnull
+    {
+        if (document is IRevisioned revisioned)
+        {
+            revisioned.Version = revision;
+        }
+
+        Store(document);
     }
 
     public async Task SaveChangesAsync(CancellationToken token = default)

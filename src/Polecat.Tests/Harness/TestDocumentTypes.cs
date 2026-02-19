@@ -1,3 +1,4 @@
+using JasperFx;
 using Polecat.Attributes;
 using Polecat.Metadata;
 
@@ -81,4 +82,24 @@ public class SoftDeletedWithInterface : ISoftDeleted
     public string Name { get; set; } = string.Empty;
     public bool Deleted { get; set; }
     public DateTimeOffset? DeletedAt { get; set; }
+}
+
+/// <summary>
+///     Document with int-based revision tracking via IRevisioned.
+/// </summary>
+public class RevisionedDoc : IRevisioned
+{
+    public Guid Id { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public int Version { get; set; }
+}
+
+/// <summary>
+///     Document with Guid-based optimistic concurrency via IVersioned.
+/// </summary>
+public class VersionedDoc : IVersioned
+{
+    public Guid Id { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public Guid Version { get; set; }
 }

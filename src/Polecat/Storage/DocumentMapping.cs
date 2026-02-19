@@ -1,4 +1,5 @@
 using System.Reflection;
+using JasperFx;
 using Polecat.Attributes;
 using Polecat.Metadata;
 using Polecat.Schema.Identity.Sequences;
@@ -61,6 +62,16 @@ internal class DocumentMapping
         {
             DeleteStyle = DeleteStyle.SoftDelete;
         }
+
+        // Detect optimistic concurrency: IVersioned (Guid) or IRevisioned (int)
+        if (typeof(IVersioned).IsAssignableFrom(documentType))
+        {
+            UseOptimisticConcurrency = true;
+        }
+        else if (typeof(IRevisioned).IsAssignableFrom(documentType))
+        {
+            UseNumericRevisions = true;
+        }
     }
 
     public Type DocumentType => _documentType;
@@ -73,6 +84,16 @@ internal class DocumentMapping
     public string DotNetTypeName { get; }
     public TenancyStyle TenancyStyle { get; }
     public DeleteStyle DeleteStyle { get; } = DeleteStyle.Remove;
+
+    /// <summary>
+    ///     When true, uses Guid-based optimistic concurrency (IVersioned interface).
+    /// </summary>
+    public bool UseOptimisticConcurrency { get; }
+
+    /// <summary>
+    ///     When true, uses int-based numeric revision tracking (IRevisioned interface).
+    /// </summary>
+    public bool UseNumericRevisions { get; }
 
     public object GetId(object document)
     {

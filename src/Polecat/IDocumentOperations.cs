@@ -93,4 +93,16 @@ public interface IDocumentOperations : IQuerySession
     ///     Sets is_deleted = 0 and deleted_at = NULL.
     /// </summary>
     void UndoDeleteWhere<T>(Expression<Func<T, bool>> predicate) where T : class;
+
+    /// <summary>
+    ///     Store an IVersioned document with an explicitly expected Guid version
+    ///     for optimistic concurrency checking.
+    /// </summary>
+    void UpdateExpectedVersion<T>(T document, Guid version) where T : notnull;
+
+    /// <summary>
+    ///     Store an IRevisioned document with an explicitly expected int revision
+    ///     for optimistic concurrency checking.
+    /// </summary>
+    void UpdateRevision<T>(T document, int revision) where T : notnull;
 }

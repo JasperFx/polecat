@@ -112,6 +112,10 @@ internal class DocumentTableEnsurer
                     is_deleted bit NOT NULL DEFAULT 0,
                     deleted_at datetimeoffset NULL,"
             : "";
+        var guidVersionCol = mapping.UseOptimisticConcurrency
+            ? @"
+                    guid_version uniqueidentifier NOT NULL DEFAULT NEWID(),"
+            : "";
 
         if (isConjoined)
         {
@@ -129,7 +133,7 @@ internal class DocumentTableEnsurer
                         data nvarchar(max) NOT NULL,
                         version int NOT NULL DEFAULT 1,
                         last_modified datetimeoffset NOT NULL DEFAULT SYSDATETIMEOFFSET(),
-                        dotnet_type varchar(500) NULL,{softDeleteCols}
+                        dotnet_type varchar(500) NULL,{softDeleteCols}{guidVersionCol}
                         CONSTRAINT pk_{table} PRIMARY KEY (tenant_id, id)
                     );
                 END";
@@ -148,7 +152,7 @@ internal class DocumentTableEnsurer
                     data nvarchar(max) NOT NULL,
                     version int NOT NULL DEFAULT 1,
                     last_modified datetimeoffset NOT NULL DEFAULT SYSDATETIMEOFFSET(),
-                    dotnet_type varchar(500) NULL,{softDeleteCols}
+                    dotnet_type varchar(500) NULL,{softDeleteCols}{guidVersionCol}
                     tenant_id varchar(250) NOT NULL DEFAULT '*DEFAULT*'
                 );
             END";

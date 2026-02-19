@@ -39,8 +39,6 @@ A summary of APIs and features available in [Marten](https://github.com/JasperFx
 
 | Feature | Description |
 |---------|-------------|
-| `IVersioned` | Guid-based optimistic concurrency version tracking |
-| `IRevisioned` | Int-based document revision tracking |
 | `ITracked` | Correlation/causation/user metadata tracking |
 | `ITenanted` | Track tenant_id in document for conjoined tenancy |
 | `CreatedSince()` / `CreatedBefore()` | LINQ query helpers for created_at column |
@@ -84,9 +82,7 @@ A summary of APIs and features available in [Marten](https://github.com/JasperFx
 
 | Feature | Description |
 |---------|-------------|
-| `UpdateExpectedVersion<T>(entity, version)` | Set expected Guid version for optimistic concurrency |
-| `UpdateRevision<T>(entity, revision)` | Set expected int revision |
-| `TryUpdateRevision<T>(entity, revision)` | Conditional revision update |
+| `TryUpdateRevision<T>(entity, revision)` | Conditional revision update (no-throw variant) |
 | `UseIdentityMapFor<T>()` | Opt into identity map for specific type in lightweight session |
 
 ## Event Store Enhancements
@@ -168,6 +164,7 @@ The following Marten features have been implemented:
 
 - **Soft deletes** — `[SoftDeleted]` attribute, `ISoftDeleted` interface, `StorePolicies`, `HardDelete()`, `UndoDeleteWhere()`, `MaybeDeleted()`, `IsDeleted()`, `DeletedSince()`, `DeletedBefore()`
 - **DeleteWhere / HardDeleteWhere** — bulk delete by predicate expression (respects soft-delete configuration)
+- **IVersioned / IRevisioned** — optimistic concurrency with `IVersioned` (Guid-based) and `IRevisioned` (int-based), `ConcurrencyException`, `UpdateExpectedVersion()`, `UpdateRevision()`, version synced on Load and LINQ queries
 - **LINQ querying** — Where, OrderBy, Take, Skip, First, Single, Count, Any, Sum, Min, Max, Average, Select, Distinct
 - **LINQ extensions** — IsOneOf, In, IsEmpty, AnyTenant, TenantIsOneOf
 - **HiLo identity** — int/long ID auto-generation with `[HiloSequence]` attribute
@@ -179,18 +176,17 @@ The following Marten features have been implemented:
 1. Compiled queries — query caching for performance
 2. Batch querying — reduce DB roundtrips
 3. Bulk insert — high-throughput document ingestion
-4. IVersioned / IRevisioned — optimistic concurrency
 
 **Medium priority:**
-5. Document patching — incremental JSON updates
-6. Session listeners — lifecycle hooks
-7. Diagnostics & admin — schema management tools
-8. Metadata interfaces (ITracked, ITenanted)
-9. Pagination (IPagedList)
+4. Document patching — incremental JSON updates
+5. Session listeners — lifecycle hooks
+6. Diagnostics & admin — schema management tools
+7. Metadata interfaces (ITracked, ITenanted)
+8. Pagination (IPagedList)
 
 **Lower priority (PostgreSQL-specific or niche):**
-10. Full-text search (needs SQL Server alternative approach)
-11. GIN indexes (PostgreSQL-specific)
-12. Dirty tracking sessions
-13. Advanced SQL / MatchesSql
-14. Event archiving & tombstones
+9. Full-text search (needs SQL Server alternative approach)
+10. GIN indexes (PostgreSQL-specific)
+11. Dirty tracking sessions
+12. Advanced SQL / MatchesSql
+13. Event archiving & tombstones

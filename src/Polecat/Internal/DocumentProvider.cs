@@ -1,3 +1,4 @@
+using JasperFx;
 using Polecat.Internal.Operations;
 using Polecat.Metadata;
 using Polecat.Schema.Identity.Sequences;
@@ -22,19 +23,50 @@ internal class DocumentProvider
 
     public string QualifiedTableName => Mapping.QualifiedTableName;
 
-    public string SelectSql =>
-        $"SELECT id, data, version, last_modified, dotnet_type, tenant_id FROM {Mapping.QualifiedTableName}";
+    public string SelectSql
+    {
+        get
+        {
+            var baseCols = "id, data, version, last_modified, dotnet_type, tenant_id";
+            if (Mapping.UseOptimisticConcurrency)
+            {
+                baseCols += ", guid_version";
+            }
 
-    public string LoadSql => Mapping.DeleteStyle == DeleteStyle.SoftDelete
-        ? $"{SelectSql} WHERE id = @id AND tenant_id = @tenant_id AND is_deleted = 0;"
-        : $"{SelectSql} WHERE id = @id AND tenant_id = @tenant_id;";
+            return $"SELECT {baseCols} FROM {Mapping.QualifiedTableName}";
+        }
+    }
+
+    public string LoadSql
+    {
+        get
+        {
+            var softDeleteFilter = Mapping.DeleteStyle == DeleteStyle.SoftDelete
+                ? " AND is_deleted = 0"
+                : "";
+            return $"{SelectSql} WHERE id = @id AND tenant_id = @tenant_id{softDeleteFilter};";
+        }
+    }
 
     public UpsertOperation BuildUpsert(object document, ISerializer serializer, string tenantId)
     {
         AssignIdIfNeeded(document);
         var id = Mapping.GetId(document);
         var json = serializer.ToJson(document);
-        return new UpsertOperation(document, id, json, Mapping, tenantId);
+
+        int expectedRevision = 0;
+        Guid? expectedGuidVersion = null;
+
+        if (Mapping.UseNumericRevisions && document is IRevisioned revisioned)
+        {
+            expectedRevision = revisioned.Version;
+        }
+        else if (Mapping.UseOptimisticConcurrency && document is IVersioned versioned)
+        {
+            expectedGuidVersion = versioned.Version;
+        }
+
+        return new UpsertOperation(document, id, json, Mapping, tenantId, expectedRevision, expectedGuidVersion);
     }
 
     public InsertOperation BuildInsert(object document, ISerializer serializer, string tenantId)
@@ -49,7 +81,20 @@ internal class DocumentProvider
     {
         var id = Mapping.GetId(document);
         var json = serializer.ToJson(document);
-        return new UpdateOperation(document, id, json, Mapping, tenantId);
+
+        int expectedRevision = 0;
+        Guid? expectedGuidVersion = null;
+
+        if (Mapping.UseNumericRevisions && document is IRevisioned revisioned)
+        {
+            expectedRevision = revisioned.Version;
+        }
+        else if (Mapping.UseOptimisticConcurrency && document is IVersioned versioned)
+        {
+            expectedGuidVersion = versioned.Version;
+        }
+
+        return new UpdateOperation(document, id, json, Mapping, tenantId, expectedRevision, expectedGuidVersion);
     }
 
     public IStorageOperation BuildDeleteById(object id, string tenantId)

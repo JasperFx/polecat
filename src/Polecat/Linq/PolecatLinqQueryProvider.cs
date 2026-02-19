@@ -111,6 +111,21 @@ internal class PolecatLinqQueryProvider : IQueryProvider
             }
         }
 
+        // Adjust select columns for version syncing on IRevisioned/IVersioned types
+        bool syncRevision = provider.Mapping.UseNumericRevisions;
+        bool syncGuidVersion = provider.Mapping.UseOptimisticConcurrency;
+        if (parser.Statement.SelectColumns == "data")
+        {
+            if (syncGuidVersion)
+            {
+                parser.Statement.SelectColumns = "data, version, guid_version";
+            }
+            else if (syncRevision)
+            {
+                parser.Statement.SelectColumns = "data, version";
+            }
+        }
+
         // Build SQL
         var builder = new CommandBuilder();
         parser.Statement.Apply(builder);
@@ -128,7 +143,7 @@ internal class PolecatLinqQueryProvider : IQueryProvider
 
         await using var reader = await cmd.ExecuteReaderAsync(token);
 
-        return await HandleResultAsync<TResult>(reader, parser, documentType, token);
+        return await HandleResultAsync<TResult>(reader, parser, documentType, token, syncRevision, syncGuidVersion);
     }
 
     private static void ApplySingleValueMode(LinqQueryParser parser)
@@ -204,7 +219,8 @@ internal class PolecatLinqQueryProvider : IQueryProvider
     }
 
     private async Task<TResult> HandleResultAsync<TResult>(
-        SqlDataReader reader, LinqQueryParser parser, Type documentType, CancellationToken token)
+        SqlDataReader reader, LinqQueryParser parser, Type documentType, CancellationToken token,
+        bool syncRevision = false, bool syncGuidVersion = false)
     {
         if (parser.ValueMode == null)
         {
@@ -222,7 +238,7 @@ internal class PolecatLinqQueryProvider : IQueryProvider
             }
 
             // Plain list result
-            return await InvokeListHandlerAsync<TResult>(documentType, reader, token);
+            return await InvokeListHandlerAsync<TResult>(documentType, reader, token, syncRevision, syncGuidVersion);
         }
 
         switch (parser.ValueMode)
@@ -232,14 +248,16 @@ internal class PolecatLinqQueryProvider : IQueryProvider
             case SingleValueMode.Last:
                 return await InvokeOneResultHandlerAsync<TResult>(
                     documentType, reader, token, canBeNull: false,
-                    canBeMultiples: parser.ValueMode == SingleValueMode.First || parser.ValueMode == SingleValueMode.Last);
+                    canBeMultiples: parser.ValueMode == SingleValueMode.First || parser.ValueMode == SingleValueMode.Last,
+                    syncRevision: syncRevision, syncGuidVersion: syncGuidVersion);
 
             case SingleValueMode.FirstOrDefault:
             case SingleValueMode.SingleOrDefault:
             case SingleValueMode.LastOrDefault:
                 return await InvokeOneResultHandlerAsync<TResult>(
                     documentType, reader, token, canBeNull: true,
-                    canBeMultiples: parser.ValueMode != SingleValueMode.SingleOrDefault);
+                    canBeMultiples: parser.ValueMode != SingleValueMode.SingleOrDefault,
+                    syncRevision: syncRevision, syncGuidVersion: syncGuidVersion);
 
             case SingleValueMode.Count:
             case SingleValueMode.LongCount:
@@ -261,10 +279,11 @@ internal class PolecatLinqQueryProvider : IQueryProvider
     }
 
     private async Task<TResult> InvokeListHandlerAsync<TResult>(
-        Type itemType, SqlDataReader reader, CancellationToken token)
+        Type itemType, SqlDataReader reader, CancellationToken token,
+        bool syncRevision = false, bool syncGuidVersion = false)
     {
         var selectorType = typeof(DeserializingSelector<>).MakeGenericType(itemType);
-        var selector = Activator.CreateInstance(selectorType, _session.Serializer)!;
+        var selector = Activator.CreateInstance(selectorType, _session.Serializer, syncRevision, syncGuidVersion)!;
 
         var handlerType = typeof(ListQueryHandler<>).MakeGenericType(itemType);
         var handler = Activator.CreateInstance(handlerType, selector)!;
@@ -312,10 +331,11 @@ internal class PolecatLinqQueryProvider : IQueryProvider
 
     private async Task<TResult> InvokeOneResultHandlerAsync<TResult>(
         Type documentType, SqlDataReader reader, CancellationToken token,
-        bool canBeNull, bool canBeMultiples)
+        bool canBeNull, bool canBeMultiples,
+        bool syncRevision = false, bool syncGuidVersion = false)
     {
         var selectorType = typeof(DeserializingSelector<>).MakeGenericType(documentType);
-        var selector = Activator.CreateInstance(selectorType, _session.Serializer)!;
+        var selector = Activator.CreateInstance(selectorType, _session.Serializer, syncRevision, syncGuidVersion)!;
 
         var handlerType = typeof(OneResultHandler<>).MakeGenericType(documentType);
         var handler = Activator.CreateInstance(handlerType, selector, canBeNull, canBeMultiples)!;

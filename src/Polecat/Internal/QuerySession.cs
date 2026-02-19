@@ -1,3 +1,4 @@
+using JasperFx;
 using Microsoft.Data.SqlClient;
 using Polecat.Events;
 using Polecat.Linq;
@@ -88,7 +89,9 @@ internal class QuerySession : IQuerySession
         if (await reader.ReadAsync(token))
         {
             var json = reader.GetString(1); // data column
-            return Serializer.FromJson<T>(json);
+            var doc = Serializer.FromJson<T>(json);
+            SyncVersionProperties(doc, reader, provider);
+            return doc;
         }
 
         return null;
@@ -136,6 +139,7 @@ internal class QuerySession : IQuerySession
         {
             var json = reader.GetString(1); // data column
             var doc = Serializer.FromJson<T>(json);
+            SyncVersionProperties(doc, reader, provider);
             results.Add(doc);
         }
 
@@ -146,6 +150,23 @@ internal class QuerySession : IQuerySession
     {
         var provider = new PolecatLinqQueryProvider(this, _providers, _tableEnsurer);
         return new PolecatLinqQueryable<T>(provider);
+    }
+
+    /// <summary>
+    ///     Syncs version/revision properties from the DB columns to the document object.
+    ///     SelectSql column layout: id[0], data[1], version[2], last_modified[3], dotnet_type[4], tenant_id[5], guid_version[6]?
+    /// </summary>
+    internal static void SyncVersionProperties<T>(T doc, SqlDataReader reader, DocumentProvider provider) where T : class
+    {
+        if (provider.Mapping.UseNumericRevisions && doc is IRevisioned revisioned)
+        {
+            revisioned.Version = reader.GetInt32(2); // version column
+        }
+
+        if (provider.Mapping.UseOptimisticConcurrency && doc is IVersioned versioned)
+        {
+            versioned.Version = reader.GetGuid(6); // guid_version column
+        }
     }
 
     public virtual async ValueTask DisposeAsync()
