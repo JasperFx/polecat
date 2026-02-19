@@ -1,6 +1,7 @@
 using Polecat.Batching;
 using Polecat.Events;
 using Polecat.Linq;
+using Polecat.Logging;
 using Polecat.Serialization;
 
 namespace Polecat;
@@ -34,6 +35,16 @@ public interface IQuerySession : IAsyncDisposable
     ///     Last modified by value to be set on ITracked documents on save.
     /// </summary>
     string? LastModifiedBy { get; set; }
+
+    /// <summary>
+    ///     The number of database requests executed by this session.
+    /// </summary>
+    int RequestCount { get; }
+
+    /// <summary>
+    ///     The session-level logger for SQL command diagnostics. Can be replaced per-session.
+    /// </summary>
+    IPolecatSessionLogger Logger { get; set; }
 
     /// <summary>
     ///     Read-only access to event store queries.

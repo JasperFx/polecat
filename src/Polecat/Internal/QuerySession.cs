@@ -4,6 +4,7 @@ using Polecat.Batching;
 using Polecat.Events;
 using Polecat.Internal.Batching;
 using Polecat.Linq;
+using Polecat.Logging;
 using Polecat.Metadata;
 using Polecat.Serialization;
 
@@ -36,6 +37,7 @@ internal class QuerySession : IQuerySession
         _providers = providers;
         _tableEnsurer = tableEnsurer;
         _eventGraph = eventGraph;
+        Logger = options.Logger.StartSession(this);
     }
 
     internal StoreOptions Options { get; }
@@ -45,6 +47,8 @@ internal class QuerySession : IQuerySession
     public string? CorrelationId { get; set; }
     public string? CausationId { get; set; }
     public string? LastModifiedBy { get; set; }
+    public int RequestCount { get; internal set; }
+    public IPolecatSessionLogger Logger { get; set; }
     internal virtual SqlTransaction? ActiveTransaction { get => null; set { } }
 
     public IQueryEventStore Events => _events ??= new QueryEventStore(this, _eventGraph, Options);
@@ -100,17 +104,29 @@ internal class QuerySession : IQuerySession
         cmd.Parameters.AddWithValue("@id", id);
         cmd.Parameters.AddWithValue("@tenant_id", TenantId);
 
-        await using var reader = await cmd.ExecuteReaderAsync(token);
-        if (await reader.ReadAsync(token))
+        Logger.OnBeforeExecute(cmd);
+        try
         {
-            var json = reader.GetString(1); // data column
-            var doc = Serializer.FromJson<T>(json);
-            SyncVersionProperties(doc, reader, provider);
-            SyncTenantId(doc, reader);
-            return doc;
-        }
+            await using var reader = await cmd.ExecuteReaderAsync(token);
+            RequestCount++;
+            Logger.LogSuccess(cmd);
 
-        return null;
+            if (await reader.ReadAsync(token))
+            {
+                var json = reader.GetString(1); // data column
+                var doc = Serializer.FromJson<T>(json);
+                SyncVersionProperties(doc, reader, provider);
+                SyncTenantId(doc, reader);
+                return doc;
+            }
+
+            return null;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogFailure(cmd, ex);
+            throw;
+        }
     }
 
     public async Task<IReadOnlyList<T>> LoadManyAsync<T>(IEnumerable<Guid> ids, CancellationToken token = default)
@@ -150,18 +166,30 @@ internal class QuerySession : IQuerySession
         cmd.CommandText = $"{provider.SelectSql} WHERE id IN ({string.Join(", ", paramNames)}) AND tenant_id = @tenant_id{softDeleteFilter};";
         cmd.Parameters.AddWithValue("@tenant_id", TenantId);
 
-        var results = new List<T>();
-        await using var reader = await cmd.ExecuteReaderAsync(token);
-        while (await reader.ReadAsync(token))
+        Logger.OnBeforeExecute(cmd);
+        try
         {
-            var json = reader.GetString(1); // data column
-            var doc = Serializer.FromJson<T>(json);
-            SyncVersionProperties(doc, reader, provider);
-            SyncTenantId(doc, reader);
-            results.Add(doc);
-        }
+            var results = new List<T>();
+            await using var reader = await cmd.ExecuteReaderAsync(token);
+            RequestCount++;
+            Logger.LogSuccess(cmd);
 
-        return results;
+            while (await reader.ReadAsync(token))
+            {
+                var json = reader.GetString(1); // data column
+                var doc = Serializer.FromJson<T>(json);
+                SyncVersionProperties(doc, reader, provider);
+                SyncTenantId(doc, reader);
+                results.Add(doc);
+            }
+
+            return results;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogFailure(cmd, ex);
+            throw;
+        }
     }
 
     public IPolecatQueryable<T> Query<T>() where T : class
@@ -204,8 +232,19 @@ internal class QuerySession : IQuerySession
         cmd.Parameters.AddWithValue("@id", id);
         cmd.Parameters.AddWithValue("@tenant_id", TenantId);
 
-        var result = await cmd.ExecuteScalarAsync(token);
-        return result is string json ? json : null;
+        Logger.OnBeforeExecute(cmd);
+        try
+        {
+            var result = await cmd.ExecuteScalarAsync(token);
+            RequestCount++;
+            Logger.LogSuccess(cmd);
+            return result is string json ? json : null;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogFailure(cmd, ex);
+            throw;
+        }
     }
 
     public string ToSql<T>(IQueryable<T> queryable) where T : class

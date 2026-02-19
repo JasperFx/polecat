@@ -330,11 +330,25 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
                 await using var cmd = conn.CreateCommand();
                 cmd.Transaction = tx;
                 operation.ConfigureCommand(cmd);
-                await operation.PostprocessAsync(cmd, token);
+
+                Logger.OnBeforeExecute(cmd);
+                try
+                {
+                    await operation.PostprocessAsync(cmd, token);
+                    RequestCount++;
+                    Logger.LogSuccess(cmd);
+                }
+                catch (Exception ex)
+                {
+                    Logger.LogFailure(cmd, ex);
+                    throw;
+                }
             }
 
             await tx.CommitAsync(token);
             _workTracker.Reset();
+
+            Logger.RecordSavedChanges(this);
 
             // Call AfterCommitAsync on all listeners (global then session)
             foreach (var listener in Options.Listeners)

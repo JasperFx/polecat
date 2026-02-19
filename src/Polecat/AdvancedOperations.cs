@@ -3,6 +3,7 @@ using Microsoft.Data.SqlClient;
 using Polecat.Internal;
 using Polecat.Metadata;
 using Polecat.Schema.Identity.Sequences;
+using Polecat.Storage;
 
 namespace Polecat;
 
@@ -251,6 +252,48 @@ public class AdvancedOperations
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = $"DELETE FROM {provider.Mapping.QualifiedTableName};";
         await cmd.ExecuteNonQueryAsync(token);
+    }
+
+    /// <summary>
+    ///     Generate the full DDL script for all Polecat schema objects (event store tables + any registered document tables).
+    /// </summary>
+    public string ToDatabaseScript()
+    {
+        var sb = new StringBuilder();
+        var writer = new StringWriter(sb);
+
+        // Event store tables via Weasel
+        foreach (var featureSchema in _store.Database.BuildFeatureSchemas())
+        {
+            foreach (var schemaObject in featureSchema.Objects)
+            {
+                schemaObject.WriteCreateStatement(new Weasel.SqlServer.SqlServerMigrator(), writer);
+                writer.WriteLine();
+                writer.WriteLine("GO");
+                writer.WriteLine();
+            }
+        }
+
+        // Document tables for already-registered providers
+        foreach (var provider in _store.Options.Providers.AllProviders)
+        {
+            var table = new DocumentTable(provider.Mapping);
+            table.WriteCreateStatement(new Weasel.SqlServer.SqlServerMigrator(), writer);
+            writer.WriteLine();
+            writer.WriteLine("GO");
+            writer.WriteLine();
+        }
+
+        return sb.ToString();
+    }
+
+    /// <summary>
+    ///     Write the full DDL creation script to a file.
+    /// </summary>
+    public async Task WriteCreationScriptToFileAsync(string path, CancellationToken token = default)
+    {
+        var script = ToDatabaseScript();
+        await File.WriteAllTextAsync(path, script, token);
     }
 
     /// <summary>

@@ -7,6 +7,7 @@ using Polecat.Internal;
 using Polecat.Projections;
 using Polecat.Schema.Identity.Sequences;
 using Polecat.Serialization;
+using Polecat.Logging;
 using Polecat.Metadata;
 using Polecat.Storage;
 
@@ -100,6 +101,12 @@ public class StoreOptions
     ///     Global session listeners applied to all sessions.
     /// </summary>
     public List<IDocumentSessionListener> Listeners { get; } = new();
+
+    /// <summary>
+    ///     The store-level logger for SQL command logging and session tracking.
+    ///     Defaults to NullPolecatLogger (no-op).
+    /// </summary>
+    public IPolecatLogger Logger { get; set; } = NullPolecatLogger.Instance;
 
     /// <summary>
     ///     Get or set the serializer. Defaults to PolecatSerializer (System.Text.Json).
