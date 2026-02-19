@@ -22,6 +22,12 @@ internal class PolecatActivator : IHostedService
             var documentStore = (DocumentStore)_store;
             await documentStore.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: cancellationToken);
         }
+
+        // Run initial data seeders after schema migration
+        foreach (var initialData in _store.Options.InitialData)
+        {
+            await initialData.Populate(_store, cancellationToken);
+        }
     }
 
     public Task StopAsync(CancellationToken cancellationToken)

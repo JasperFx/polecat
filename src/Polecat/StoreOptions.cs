@@ -109,6 +109,12 @@ public class StoreOptions
     public IPolecatLogger Logger { get; set; } = NullPolecatLogger.Instance;
 
     /// <summary>
+    ///     Collection of IInitialData instances that will be populated on startup
+    ///     after schema migration completes.
+    /// </summary>
+    public InitialDataCollection InitialData { get; } = new();
+
+    /// <summary>
     ///     Get or set the serializer. Defaults to PolecatSerializer (System.Text.Json).
     /// </summary>
     public ISerializer Serializer
