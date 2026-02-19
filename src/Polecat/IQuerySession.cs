@@ -79,4 +79,9 @@ public interface IQuerySession : IAsyncDisposable
     ///     Create a batch query to execute multiple Load/Query operations in a single roundtrip.
     /// </summary>
     IBatchedQuery CreateBatchQuery();
+
+    /// <summary>
+    ///     Preview the SQL that would be generated for a LINQ query without executing it.
+    /// </summary>
+    string ToSql<T>(IQueryable<T> queryable) where T : class;
 }

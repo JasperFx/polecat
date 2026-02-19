@@ -164,6 +164,17 @@ internal class QuerySession : IQuerySession
         return new BatchedQuery(this, _providers, _tableEnsurer);
     }
 
+    public string ToSql<T>(IQueryable<T> queryable) where T : class
+    {
+        if (queryable.Provider is not PolecatLinqQueryProvider polecatProvider)
+        {
+            throw new InvalidOperationException(
+                "ToSql can only be used with Polecat IQueryable instances.");
+        }
+
+        return polecatProvider.BuildSql(queryable.Expression, TenantId);
+    }
+
     /// <summary>
     ///     Syncs version/revision properties from the DB columns to the document object.
     ///     SelectSql column layout: id[0], data[1], version[2], last_modified[3], dotnet_type[4], tenant_id[5], guid_version[6]?

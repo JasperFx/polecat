@@ -53,6 +53,41 @@ internal class PolecatLinqQueryProvider : IQueryProvider
             "Polecat does not support synchronous LINQ execution. Use async methods (ToListAsync, etc.) instead.");
     }
 
+    internal string BuildSql(Expression expression, string tenantId)
+    {
+        var documentType = FindDocumentType(expression);
+        var provider = _providers.GetProvider(documentType);
+
+        var memberFactory = new MemberFactory(_session.Options, provider.Mapping);
+        var parser = new LinqQueryParser(memberFactory, provider.Mapping.QualifiedTableName);
+        parser.Parse(expression);
+
+        ApplySingleValueMode(parser);
+
+        if (parser.IsDistinct) parser.Statement.IsDistinct = true;
+
+        if (!parser.IsAnyTenant)
+        {
+            if (parser.TenantIds != null)
+            {
+                parser.Statement.Wheres.Add(new TenantInFilter(parser.TenantIds));
+            }
+            else
+            {
+                parser.Statement.Wheres.Add(new ComparisonFilter("tenant_id", "=", tenantId));
+            }
+        }
+
+        if (provider.Mapping.DeleteStyle == DeleteStyle.SoftDelete && !parser.IsMaybeDeleted)
+        {
+            parser.Statement.Wheres.Add(new LiteralSqlFragment(parser.IsDeletedOnly ? "is_deleted = 1" : "is_deleted = 0"));
+        }
+
+        var builder = new CommandBuilder();
+        parser.Statement.Apply(builder);
+        return builder.ToString();
+    }
+
     internal async Task<TResult> ExecuteAsync<TResult>(Expression expression, CancellationToken token)
     {
         var documentType = FindDocumentType(expression);
