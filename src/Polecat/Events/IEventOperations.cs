@@ -127,4 +127,14 @@ public interface IEventOperations : IQueryEventStore
     ///     Remove the archived flag from a stream and all its events by string key.
     /// </summary>
     void UnArchiveStream(string streamKey);
+
+    /// <summary>
+    ///     Permanently delete a stream and all its events (hard DELETE) by Guid id.
+    /// </summary>
+    void TombstoneStream(Guid streamId);
+
+    /// <summary>
+    ///     Permanently delete a stream and all its events (hard DELETE) by string key.
+    /// </summary>
+    void TombstoneStream(string streamKey);
 }

@@ -224,6 +224,16 @@ internal class EventOperations : QueryEventStore, IEventOperations
         _workTracker.Add(new UnArchiveStreamOperation(_events, streamKey, _tenantId));
     }
 
+    public void TombstoneStream(Guid streamId)
+    {
+        _workTracker.Add(new TombstoneStreamOperation(_events, streamId, _tenantId));
+    }
+
+    public void TombstoneStream(string streamKey)
+    {
+        _workTracker.Add(new TombstoneStreamOperation(_events, streamKey, _tenantId));
+    }
+
     private async Task<IEventStream<T>> FetchForWritingInternal<T>(object streamId, bool forExclusive,
         long? expectedVersion, CancellationToken cancellation) where T : class, new()
     {
