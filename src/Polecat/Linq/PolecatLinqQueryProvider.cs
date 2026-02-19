@@ -1,4 +1,5 @@
 using System.Linq.Expressions;
+using System.Text;
 using Microsoft.Data.SqlClient;
 using Polecat.Internal;
 using Polecat.Linq.Members;
@@ -86,6 +87,66 @@ internal class PolecatLinqQueryProvider : IQueryProvider
         var builder = new CommandBuilder();
         parser.Statement.Apply(builder);
         return builder.ToString();
+    }
+
+    internal async Task<string> ExecuteJsonArrayAsync(Expression expression, CancellationToken token)
+    {
+        var documentType = FindDocumentType(expression);
+        var provider = _providers.GetProvider(documentType);
+        await _tableEnsurer.EnsureTableAsync(provider, token);
+
+        var memberFactory = new MemberFactory(_session.Options, provider.Mapping);
+        var parser = new LinqQueryParser(memberFactory, provider.Mapping.QualifiedTableName);
+        parser.Parse(expression);
+
+        // Force select only the data column
+        parser.Statement.SelectColumns = "data";
+
+        if (parser.IsDistinct) parser.Statement.IsDistinct = true;
+
+        if (!parser.IsAnyTenant)
+        {
+            if (parser.TenantIds != null)
+            {
+                parser.Statement.Wheres.Add(new TenantInFilter(parser.TenantIds));
+            }
+            else
+            {
+                parser.Statement.Wheres.Add(new ComparisonFilter("tenant_id", "=", _session.TenantId));
+            }
+        }
+
+        if (provider.Mapping.DeleteStyle == DeleteStyle.SoftDelete && !parser.IsMaybeDeleted)
+        {
+            parser.Statement.Wheres.Add(new LiteralSqlFragment(parser.IsDeletedOnly ? "is_deleted = 1" : "is_deleted = 0"));
+        }
+
+        var builder = new CommandBuilder();
+        parser.Statement.Apply(builder);
+
+        var conn = await _session.GetConnectionAsync(token);
+        await using var cmd = conn.CreateCommand();
+
+        if (_session.ActiveTransaction != null)
+        {
+            cmd.Transaction = _session.ActiveTransaction;
+        }
+
+        builder.ApplyTo(cmd);
+
+        await using var reader = await cmd.ExecuteReaderAsync(token);
+
+        var sb = new StringBuilder("[");
+        var first = true;
+        while (await reader.ReadAsync(token))
+        {
+            if (!first) sb.Append(',');
+            sb.Append(reader.GetString(0));
+            first = false;
+        }
+
+        sb.Append(']');
+        return sb.ToString();
     }
 
     internal async Task<TResult> ExecuteAsync<TResult>(Expression expression, CancellationToken token)

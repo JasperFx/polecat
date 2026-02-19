@@ -164,6 +164,38 @@ internal class QuerySession : IQuerySession
         return new BatchedQuery(this, _providers, _tableEnsurer);
     }
 
+    public Task<string?> LoadJsonAsync<T>(Guid id, CancellationToken token = default) where T : class
+        => LoadJsonInternalAsync<T>(id, token);
+
+    public Task<string?> LoadJsonAsync<T>(string id, CancellationToken token = default) where T : class
+        => LoadJsonInternalAsync<T>(id, token);
+
+    public Task<string?> LoadJsonAsync<T>(int id, CancellationToken token = default) where T : class
+        => LoadJsonInternalAsync<T>(id, token);
+
+    public Task<string?> LoadJsonAsync<T>(long id, CancellationToken token = default) where T : class
+        => LoadJsonInternalAsync<T>(id, token);
+
+    private async Task<string?> LoadJsonInternalAsync<T>(object id, CancellationToken token) where T : class
+    {
+        var provider = _providers.GetProvider<T>();
+        await _tableEnsurer.EnsureTableAsync(provider, token);
+
+        var conn = await GetConnectionAsync(token);
+        await using var cmd = conn.CreateCommand();
+
+        var softDeleteFilter = provider.Mapping.DeleteStyle == Metadata.DeleteStyle.SoftDelete
+            ? " AND is_deleted = 0"
+            : "";
+
+        cmd.CommandText = $"SELECT data FROM {provider.Mapping.QualifiedTableName} WHERE id = @id AND tenant_id = @tenant_id{softDeleteFilter};";
+        cmd.Parameters.AddWithValue("@id", id);
+        cmd.Parameters.AddWithValue("@tenant_id", TenantId);
+
+        var result = await cmd.ExecuteScalarAsync(token);
+        return result is string json ? json : null;
+    }
+
     public string ToSql<T>(IQueryable<T> queryable) where T : class
     {
         if (queryable.Provider is not PolecatLinqQueryProvider polecatProvider)

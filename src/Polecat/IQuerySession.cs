@@ -84,4 +84,24 @@ public interface IQuerySession : IAsyncDisposable
     ///     Preview the SQL that would be generated for a LINQ query without executing it.
     /// </summary>
     string ToSql<T>(IQueryable<T> queryable) where T : class;
+
+    /// <summary>
+    ///     Load the raw JSON for a document by its Guid id, without deserializing.
+    /// </summary>
+    Task<string?> LoadJsonAsync<T>(Guid id, CancellationToken token = default) where T : class;
+
+    /// <summary>
+    ///     Load the raw JSON for a document by its string id, without deserializing.
+    /// </summary>
+    Task<string?> LoadJsonAsync<T>(string id, CancellationToken token = default) where T : class;
+
+    /// <summary>
+    ///     Load the raw JSON for a document by its int id, without deserializing.
+    /// </summary>
+    Task<string?> LoadJsonAsync<T>(int id, CancellationToken token = default) where T : class;
+
+    /// <summary>
+    ///     Load the raw JSON for a document by its long id, without deserializing.
+    /// </summary>
+    Task<string?> LoadJsonAsync<T>(long id, CancellationToken token = default) where T : class;
 }
