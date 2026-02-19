@@ -14,6 +14,7 @@ EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "SolutionItems", "SolutionItems", "{6E2D73F6-DC6E-4202-9DCC-0A397B729466}"
 	ProjectSection(SolutionItems) = preProject
 		.github\workflows\publish.yml = .github\workflows\publish.yml
+		marten-gaps.md = marten-gaps.md
 	EndProjectSection
 EndProject
 Global
