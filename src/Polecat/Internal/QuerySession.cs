@@ -60,6 +60,14 @@ internal class QuerySession : IQuerySession
         return _connection;
     }
 
+    /// <summary>
+    ///     Enlists a command in the active transaction if one exists.
+    /// </summary>
+    internal void EnlistInTransaction(SqlCommand cmd)
+    {
+        if (ActiveTransaction != null) cmd.Transaction = ActiveTransaction;
+    }
+
     public async Task<T?> LoadAsync<T>(Guid id, CancellationToken token = default) where T : class
     {
         return await LoadInternalAsync<T>(id, token);
@@ -87,6 +95,7 @@ internal class QuerySession : IQuerySession
 
         var conn = await GetConnectionAsync(token);
         await using var cmd = conn.CreateCommand();
+        EnlistInTransaction(cmd);
         cmd.CommandText = provider.LoadSql;
         cmd.Parameters.AddWithValue("@id", id);
         cmd.Parameters.AddWithValue("@tenant_id", TenantId);
@@ -126,6 +135,7 @@ internal class QuerySession : IQuerySession
 
         var conn = await GetConnectionAsync(token);
         await using var cmd = conn.CreateCommand();
+        EnlistInTransaction(cmd);
 
         var paramNames = new string[ids.Count];
         for (var i = 0; i < ids.Count; i++)
@@ -184,6 +194,7 @@ internal class QuerySession : IQuerySession
 
         var conn = await GetConnectionAsync(token);
         await using var cmd = conn.CreateCommand();
+        EnlistInTransaction(cmd);
 
         var softDeleteFilter = provider.Mapping.DeleteStyle == Metadata.DeleteStyle.SoftDelete
             ? " AND is_deleted = 0"

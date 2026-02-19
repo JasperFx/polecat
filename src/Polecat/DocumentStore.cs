@@ -1,4 +1,5 @@
 using JasperFx.Events.Projections;
+using Microsoft.Data.SqlClient;
 using Polecat.Events;
 using Polecat.Internal;
 using Polecat.Schema.Identity.Sequences;
@@ -160,6 +161,20 @@ public partial class DocumentStore : IDocumentStore
             DocumentTracking.IdentityOnly => IdentitySession(options),
             _ => LightweightSession(options)
         };
+    }
+
+    public async Task<IDocumentSession> OpenSessionAsync(SessionOptions options, CancellationToken token = default)
+    {
+        var session = OpenSession(options);
+
+        if (options.IsolationLevel != System.Data.IsolationLevel.ReadCommitted)
+        {
+            var sessionBase = (DocumentSessionBase)session;
+            var conn = await sessionBase.GetConnectionAsync(token);
+            sessionBase.ActiveTransaction = (SqlTransaction)await conn.BeginTransactionAsync(options.IsolationLevel, token);
+        }
+
+        return session;
     }
 
     public void Dispose()

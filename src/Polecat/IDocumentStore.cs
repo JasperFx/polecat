@@ -51,4 +51,11 @@ public interface IDocumentStore : IDisposable, IAsyncDisposable
     ///     Session type is determined by the Tracking property.
     /// </summary>
     IDocumentSession OpenSession(SessionOptions options);
+
+    /// <summary>
+    ///     Open a session asynchronously with the specified options.
+    ///     If IsolationLevel is not ReadCommitted, eagerly opens a connection
+    ///     and begins a transaction with the specified isolation level.
+    /// </summary>
+    Task<IDocumentSession> OpenSessionAsync(SessionOptions options, CancellationToken token = default);
 }
