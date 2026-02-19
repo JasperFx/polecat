@@ -39,6 +39,7 @@ internal class QuerySession : IQuerySession
     }
 
     internal StoreOptions Options { get; }
+    internal DocumentProviderRegistry Providers => _providers;
     public string TenantId { get; }
     public ISerializer Serializer { get; }
     public string? CorrelationId { get; set; }

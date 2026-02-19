@@ -10,7 +10,8 @@ public enum OperationRole
     Upsert,
     Insert,
     Update,
-    Delete
+    Delete,
+    Patch
 }
 
 /// <summary>
