@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using JasperFx.Events;
 using JasperFx.Events.Daemon;
 using JasperFx.Events.Projections;
@@ -9,14 +10,15 @@ namespace Polecat.Events.Daemon;
 /// <summary>
 ///     Implements IProjectionBatch for the async daemon.
 ///     Accumulates operations from multiple tenant sessions and flushes them in one SQL transaction.
+///     Thread-safe: composite projections may call SessionForTenant concurrently.
 /// </summary>
 internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuerySession>
 {
     private readonly DocumentStore _store;
     private readonly EventGraph _events;
     private readonly string _connectionString;
-    private readonly Dictionary<string, IDocumentSession> _sessions = new();
-    private readonly List<ProgressOperation> _progressOps = new();
+    private readonly ConcurrentBag<IDocumentSession> _sessions = new();
+    private readonly ConcurrentQueue<ProgressOperation> _progressOps = new();
 
     public PolecatProjectionBatch(DocumentStore store, EventGraph events, string connectionString)
     {
@@ -27,17 +29,14 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
 
     public IDocumentSession SessionForTenant(string tenantId)
     {
-        if (_sessions.TryGetValue(tenantId, out var existing))
-            return existing;
-
         var session = _store.LightweightSession(new SessionOptions { TenantId = tenantId });
-        _sessions[tenantId] = session;
+        _sessions.Add(session);
         return session;
     }
 
     public ValueTask RecordProgress(EventRange range)
     {
-        _progressOps.Add(new ProgressOperation(range.ShardName.Identity, range.SequenceFloor, range.SequenceCeiling));
+        _progressOps.Enqueue(new ProgressOperation(range.ShardName.Identity, range.SequenceFloor, range.SequenceCeiling));
         return ValueTask.CompletedTask;
     }
 
@@ -53,8 +52,8 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
             var tableEnsurer = new DocumentTableEnsurer(
                 new ConnectionFactory(_connectionString), _store.Options);
 
-            // Collect all operations from all tenant sessions
-            foreach (var (_, session) in _sessions)
+            // Collect all operations from all sessions
+            foreach (var session in _sessions)
             {
                 if (session is DocumentSessionBase sessionBase)
                 {
@@ -83,7 +82,7 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
             }
 
             // Execute progress operations
-            foreach (var progressOp in _progressOps)
+            foreach (var progressOp in _progressOps.ToArray())
             {
                 await using var cmd = conn.CreateCommand();
                 cmd.Transaction = tx;
@@ -145,13 +144,10 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
 
     public async ValueTask DisposeAsync()
     {
-        foreach (var (_, session) in _sessions)
+        foreach (var session in _sessions)
         {
             await session.DisposeAsync();
         }
-
-        _sessions.Clear();
-        _progressOps.Clear();
     }
 
     private record ProgressOperation(string Name, long Floor, long Ceiling);

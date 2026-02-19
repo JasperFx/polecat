@@ -1,5 +1,6 @@
 using JasperFx.Events;
 using JasperFx.Events.Projections;
+using JasperFx.Events.Projections.Composite;
 using JasperFx.Events.Subscriptions;
 using Polecat.Events;
 using Polecat.Projections.Flattened;
@@ -15,12 +16,15 @@ public class PolecatProjectionOptions
     : ProjectionGraph<IProjection, IDocumentSession, IQuerySession>
 {
     private readonly EventGraph _events;
+    private StoreOptions? _storeOptions;
     private IInlineProjection<IDocumentSession>[]? _inlineProjections;
 
     internal PolecatProjectionOptions(EventGraph events) : base(events, "polecat")
     {
         _events = events;
     }
+
+    internal void SetStoreOptions(StoreOptions options) => _storeOptions = options;
 
     protected override void onAddProjection(object projection)
     {
@@ -56,6 +60,32 @@ public class PolecatProjectionOptions
         }
 
         All.Add((IProjectionSource<IDocumentSession, IQuerySession>)projection);
+    }
+
+    /// <summary>
+    ///     Register a composite projection that orchestrates multiple projections
+    ///     in ordered stages. Stages run sequentially; projections within a stage
+    ///     run in parallel. Composite projections always run asynchronously.
+    /// </summary>
+    public void CompositeProjectionFor(string name, Action<PolecatCompositeProjection> configure)
+    {
+        var composite = new PolecatCompositeProjection(name, _storeOptions!);
+        configure(composite);
+        composite.AssembleAndAssertValidity();
+
+        // Register event types from all child projections
+        foreach (var child in composite.AllProjections())
+        {
+            if (child is ProjectionBase pb)
+            {
+                foreach (var eventType in pb.IncludedEventTypes)
+                {
+                    _events.AddEventType(eventType);
+                }
+            }
+        }
+
+        All.Add((IProjectionSource<IDocumentSession, IQuerySession>)composite);
     }
 
     /// <summary>

@@ -28,6 +28,7 @@ public class StoreOptions
     {
         EventGraph = new EventGraph(this);
         Projections = new PolecatProjectionOptions(EventGraph);
+        Projections.SetStoreOptions(this);
     }
 
     /// <summary>
