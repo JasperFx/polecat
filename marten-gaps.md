@@ -4,43 +4,22 @@ A summary of APIs and features available in [Marten](https://github.com/JasperFx
 
 ---
 
-## Session Management & Dirty Tracking
+## Session Management
 
 | Feature | Description |
 |---------|-------------|
-| `DirtyTrackedSession()` | Full session with automatic change detection on Store/Update |
-| `IDocumentSession.Concurrency` | Optimistic concurrency control property |
 | `IDocumentSessionListener` | Hook into SaveChanges lifecycle events |
 | `IChangeListener` | Listen to async projection changes |
 | `session.Eject<T>()` | Remove document from session tracking |
 | `session.EjectAllOfType(Type)` | Bulk eject by type |
 | `session.EjectAllPendingChanges()` | Clear pending operations without affecting identity map |
-| `session.LastModifiedBy` | Track who modified documents |
 | `session.SetHeader() / GetHeader()` | User-defined metadata on sessions |
 | `OpenSerializableSessionAsync()` | Session with Serializable isolation level |
-| `SessionOptions` class | Fine-grained session configuration (isolation levels, etc.) |
-
-## Document Patching
-
-| Feature | Description |
-|---------|-------------|
-| `session.Patch<T>(id)` | Fluent JSON patching API |
-| `.Set<TValue>()` | Set a field value |
-| `.Increment()` | Increment numeric fields (int, long, double, float, decimal) |
-| `.Append<T>()` | Append to collections |
-| `.AppendIfNotExists<T>()` | Conditional append |
-| `.Insert<T>()` / `.InsertIfNotExists<T>()` | Insert at index in collection |
-| `.Remove<T>()` | Remove from collection (first/all) |
-| `.Rename()` | Rename a field |
-| `.Delete()` | Delete a field |
-| `.Duplicate<T>()` | Copy field to multiple destinations |
 
 ## Metadata & Tracking Interfaces
 
 | Feature | Description |
 |---------|-------------|
-| `ITracked` | Correlation/causation/user metadata tracking |
-| `ITenanted` | Track tenant_id in document for conjoined tenancy |
 | `CreatedSince()` / `CreatedBefore()` | LINQ query helpers for created_at column |
 | `ModifiedSince()` / `ModifiedBefore()` | LINQ query helpers for last_modified column |
 | `[IndexedCreatedAt]` | Index the created_at column |
@@ -53,30 +32,9 @@ A summary of APIs and features available in [Marten](https://github.com/JasperFx
 | **Compiled Queries** | `ICompiledQuery<TDoc, TOut>` — parameterized, cached query plans |
 | **Query Plans** | `IQueryPlan<T>` — specification pattern for complex queries |
 | **Full-Text Search** | `SearchAsync()`, `PlainTextSearchAsync()`, `PhraseSearchAsync()`, `WebStyleSearchAsync()` |
-| **Includes/Joins** | `IMartenQueryable<T>.Include<TInclude>()` — eager-load related documents |
 | **Advanced SQL** | `IAdvancedSql` — typed raw SQL queries with tuple result support |
-| **Pagination** | `IPagedList<T>` with `ToPagedListAsync()` — first-class pagination |
 | **MatchesSql** | Raw SQL fragment filters in LINQ (with parameterization) |
 | **Stream JSON** | `StreamJson<T>()` — stream results as JSON directly to output |
-| `QueryForNonStaleData<T>()` | Wait for async daemon to catch up before querying |
-
-## Batch Querying
-
-| Feature | Description |
-|---------|-------------|
-| `IBatchedQuery` | Batch multiple queries in single DB roundtrip |
-| Batch `Load<T>()` / `LoadMany<T>()` | Add document loads to batch |
-| Batch `Query<T>()` | Add LINQ queries to batch |
-| Batch compiled queries | Add compiled queries to batch |
-| `IBatchEvents` | Batch event loading operations |
-| `Execute()` | Execute all batched queries at once |
-
-## Bulk Operations
-
-| Feature | Description |
-|---------|-------------|
-| `BulkInsertAsync<T>()` | High-performance bulk insert (bypasses session) |
-| `BulkInsertMode` | InsertsOnly, IgnoreDuplicates, OverwriteExisting, OverwriteIfVersionMatches |
 
 ## Enhanced CRUD
 
@@ -89,18 +47,14 @@ A summary of APIs and features available in [Marten](https://github.com/JasperFx
 
 | Feature | Description |
 |---------|-------------|
-| **Event Archiving** | Archive streams and filter archived events in queries |
 | **Tombstone Streams** | Mark streams as permanently deleted |
 | **Event Snapshots** | `Snapshot<T>(SnapshotLifecycle)` — automatic snapshot storage |
-| `FetchLatest<T>(id)` | Fetch latest projected state without FetchForWriting locking |
-| Timestamp-based event fetching | Fetch events by time range |
 | Optimized projection rebuilds | `UseOptimizedProjectionRebuilds` |
 
 ## Advanced Projections
 
 | Feature | Description |
 |---------|-------------|
-| `MultiStreamProjection<TDoc, TId>` | Cross-stream aggregations (Polecat has multi-stream but may lack some features) |
 | `CompositeProjection` | Multi-stage projection pipelines |
 | Snapshot management | Automatic snapshot storage and retrieval |
 | Projection rebuild/reset | Administrative rebuild of projection data |
@@ -110,7 +64,6 @@ A summary of APIs and features available in [Marten](https://github.com/JasperFx
 | Feature | Description |
 |---------|-------------|
 | **Duplicated Fields** | Store JSON path in relational column for efficient indexing |
-| **GIN Indexes** | `[GinIndexed]` — PostgreSQL-specific index type |
 | **Foreign Keys** | `[ForeignKey]` — cross-document foreign key constraints |
 | **Partitioning** | Table partitioning support |
 | **Custom DDL Templates** | `[DdlTemplate]` — templated DDL generation |
@@ -133,7 +86,6 @@ A summary of APIs and features available in [Marten](https://github.com/JasperFx
 | `IDiagnostics` | Query analysis tools |
 | `PreviewCommand()` | Preview SQL that would be executed |
 | `ExplainPlanAsync()` | Get database query execution plan |
-| `IDocumentCleaner` | Document cleanup/reset tools for testing |
 | `AllSchemaNames()` | List all schemas |
 | `AllObjects()` | List schema objects in dependency order |
 | `ToDatabaseScript()` | Generate full SQL creation script |
@@ -174,24 +126,35 @@ The following Marten features have been implemented:
 - **Diagnostics** — `CleanAllDocumentsAsync()`, `CleanAsync<T>()`, `CleanAllEventDataAsync()`, `ToSql()` for SQL preview
 - **Stream JSON** — `LoadJsonAsync<T>()` and `ToJsonArrayAsync()` for raw JSON without deserialization
 - **QueryForNonStaleData** — LINQ extension to wait for async projections before query execution
+- **Document patching** — `IPatchExpression<T>` with Set, Increment, Append, AppendIfNotExists, Insert, InsertIfNotExists, Remove, Rename, Delete, Duplicate — all via SQL Server `JSON_MODIFY()`
+- **Bulk insert** — `BulkInsertAsync<T>()` with InsertsOnly, IgnoreDuplicates, OverwriteExisting modes
+- **Pagination** — `IPagedList<T>` with `ToPagedListAsync()` — two-query approach (COUNT + OFFSET/FETCH)
+- **Event archiving** — `ArchiveStream()`, `UnArchiveStream()`, archived events excluded from `FetchStreamAsync()` and daemon loading, append-to-archived-stream prevention
+- **FetchLatest** — `FetchLatest<T>(id)` for quick aggregate state retrieval
+
+---
+
+## Will Not Implement
+
+The following Marten features are out of scope for Polecat by design:
+
+- **Dirty Tracking** — `DirtyTrackedSession()` is not supported. Polecat only supports Lightweight and IdentityMap sessions per CLAUDE.md architecture decisions.
+- **GIN Indexes** — `[GinIndexed]` is a PostgreSQL-specific feature with no SQL Server equivalent.
+- **Includes/Joins** — `IMartenQueryable<T>.Include<TInclude>()` for eager-loading related documents is not planned.
+
+---
 
 ## Priority Assessment
 
 **High priority for production use:**
 1. Compiled queries — query caching for performance
-2. Batch querying — reduce DB roundtrips
-3. Bulk insert — high-throughput document ingestion
 
 **Medium priority:**
-4. Document patching — incremental JSON updates
-5. Session listeners — lifecycle hooks
-6. Diagnostics & admin — schema management tools
-7. Metadata interfaces (ITracked, ITenanted)
-8. Pagination (IPagedList)
+2. Session listeners — lifecycle hooks
+3. Event snapshots — automatic snapshot storage
+4. Advanced SQL — typed raw SQL queries
 
 **Lower priority (PostgreSQL-specific or niche):**
-9. Full-text search (needs SQL Server alternative approach)
-10. GIN indexes (PostgreSQL-specific)
-11. Dirty tracking sessions
-12. Advanced SQL / MatchesSql
-13. Event archiving & tombstones
+5. Full-text search (needs SQL Server alternative approach)
+6. Advanced SQL / MatchesSql
+7. Tombstone streams
