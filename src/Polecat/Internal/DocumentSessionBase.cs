@@ -69,6 +69,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
 
     public void Store<T>(T document) where T : notnull
     {
+        SyncMetadata(document);
         var provider = _providers.GetProvider<T>();
         var op = provider.BuildUpsert(document, Serializer, TenantId);
         _workTracker.Add(op);
@@ -85,6 +86,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
 
     public void Insert<T>(T document) where T : notnull
     {
+        SyncMetadata(document);
         var provider = _providers.GetProvider<T>();
         var op = provider.BuildInsert(document, Serializer, TenantId);
         _workTracker.Add(op);
@@ -93,6 +95,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
 
     public void Update<T>(T document) where T : notnull
     {
+        SyncMetadata(document);
         var provider = _providers.GetProvider<T>();
         var op = provider.BuildUpdate(document, Serializer, TenantId);
         _workTracker.Add(op);
@@ -521,5 +524,20 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     protected virtual void OnDocumentStored(Type documentType, object id, object document)
     {
         // No-op in lightweight session
+    }
+
+    private void SyncMetadata(object document)
+    {
+        if (document is Metadata.ITracked tracked)
+        {
+            tracked.CorrelationId = CorrelationId;
+            tracked.CausationId = CausationId;
+            tracked.LastModifiedBy = LastModifiedBy;
+        }
+
+        if (document is Metadata.ITenanted tenanted)
+        {
+            tenanted.TenantId = TenantId;
+        }
     }
 }

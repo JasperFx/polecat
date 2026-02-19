@@ -21,6 +21,21 @@ public interface IQuerySession : IAsyncDisposable
     ISerializer Serializer { get; }
 
     /// <summary>
+    ///     Correlation id to be set on ITracked documents on save.
+    /// </summary>
+    string? CorrelationId { get; set; }
+
+    /// <summary>
+    ///     Causation id to be set on ITracked documents on save.
+    /// </summary>
+    string? CausationId { get; set; }
+
+    /// <summary>
+    ///     Last modified by value to be set on ITracked documents on save.
+    /// </summary>
+    string? LastModifiedBy { get; set; }
+
+    /// <summary>
     ///     Read-only access to event store queries.
     /// </summary>
     IQueryEventStore Events { get; }

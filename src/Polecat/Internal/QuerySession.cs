@@ -41,6 +41,9 @@ internal class QuerySession : IQuerySession
     internal StoreOptions Options { get; }
     public string TenantId { get; }
     public ISerializer Serializer { get; }
+    public string? CorrelationId { get; set; }
+    public string? CausationId { get; set; }
+    public string? LastModifiedBy { get; set; }
     internal virtual SqlTransaction? ActiveTransaction { get => null; set { } }
 
     public IQueryEventStore Events => _events ??= new QueryEventStore(this, _eventGraph, Options);
@@ -93,6 +96,7 @@ internal class QuerySession : IQuerySession
             var json = reader.GetString(1); // data column
             var doc = Serializer.FromJson<T>(json);
             SyncVersionProperties(doc, reader, provider);
+            SyncTenantId(doc, reader);
             return doc;
         }
 
@@ -142,6 +146,7 @@ internal class QuerySession : IQuerySession
             var json = reader.GetString(1); // data column
             var doc = Serializer.FromJson<T>(json);
             SyncVersionProperties(doc, reader, provider);
+            SyncTenantId(doc, reader);
             results.Add(doc);
         }
 
@@ -173,6 +178,18 @@ internal class QuerySession : IQuerySession
         if (provider.Mapping.UseOptimisticConcurrency && doc is IVersioned versioned)
         {
             versioned.Version = reader.GetGuid(6); // guid_version column
+        }
+    }
+
+    /// <summary>
+    ///     Syncs tenant_id from the DB column to ITenanted documents.
+    ///     tenant_id is at column index 5 in SelectSql.
+    /// </summary>
+    internal static void SyncTenantId<T>(T doc, SqlDataReader reader) where T : class
+    {
+        if (doc is ITenanted tenanted)
+        {
+            tenanted.TenantId = reader.GetString(5); // tenant_id column
         }
     }
 
