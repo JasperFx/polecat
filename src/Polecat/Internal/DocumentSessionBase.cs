@@ -175,6 +175,29 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         _workTracker.Add(op);
     }
 
+    public void DeleteWhere<T>(Expression<Func<T, bool>> predicate) where T : class
+    {
+        var provider = _providers.GetProvider<T>();
+        var memberFactory = new MemberFactory(Options, provider.Mapping);
+        var whereParser = new WhereClauseParser(memberFactory);
+        var fragment = whereParser.Parse(predicate.Body);
+
+        IStorageOperation op = provider.Mapping.DeleteStyle == DeleteStyle.SoftDelete
+            ? new SoftDeleteWhereOperation(provider.Mapping, TenantId, fragment)
+            : new DeleteWhereOperation(provider.Mapping, TenantId, fragment);
+        _workTracker.Add(op);
+    }
+
+    public void HardDeleteWhere<T>(Expression<Func<T, bool>> predicate) where T : class
+    {
+        var provider = _providers.GetProvider<T>();
+        var memberFactory = new MemberFactory(Options, provider.Mapping);
+        var whereParser = new WhereClauseParser(memberFactory);
+        var fragment = whereParser.Parse(predicate.Body);
+        var op = new DeleteWhereOperation(provider.Mapping, TenantId, fragment);
+        _workTracker.Add(op);
+    }
+
     public void UndoDeleteWhere<T>(Expression<Func<T, bool>> predicate) where T : class
     {
         var provider = _providers.GetProvider<T>();

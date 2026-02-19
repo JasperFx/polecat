@@ -79,6 +79,16 @@ public interface IDocumentOperations : IQuerySession
     void HardDelete<T>(long id) where T : class;
 
     /// <summary>
+    ///     Delete all documents matching the predicate. For soft-deleted types, marks as deleted.
+    /// </summary>
+    void DeleteWhere<T>(Expression<Func<T, bool>> predicate) where T : class;
+
+    /// <summary>
+    ///     Permanently remove all documents matching the predicate, regardless of soft-delete configuration.
+    /// </summary>
+    void HardDeleteWhere<T>(Expression<Func<T, bool>> predicate) where T : class;
+
+    /// <summary>
     ///     Reverse a soft delete for documents matching the given predicate.
     ///     Sets is_deleted = 0 and deleted_at = NULL.
     /// </summary>

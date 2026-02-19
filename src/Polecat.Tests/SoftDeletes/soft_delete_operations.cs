@@ -1,3 +1,5 @@
+using Polecat.Linq;
+using Polecat.Linq.SoftDeletes;
 using Polecat.Tests.Harness;
 
 namespace Polecat.Tests.SoftDeletes;
@@ -140,5 +142,86 @@ public class soft_delete_operations : IntegrationContext
 
         var stillDeleted = await query.LoadAsync<SoftDeletedDoc>(doc2.Id);
         stillDeleted.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task delete_where_soft_deletes_matching_documents()
+    {
+        var doc1 = new SoftDeletedDoc { Id = Guid.NewGuid(), Name = "delete-where-keep", Number = 10 };
+        var doc2 = new SoftDeletedDoc { Id = Guid.NewGuid(), Name = "delete-where-remove", Number = 20 };
+        var doc3 = new SoftDeletedDoc { Id = Guid.NewGuid(), Name = "delete-where-also-remove", Number = 20 };
+
+        theSession.Store(doc1, doc2, doc3);
+        await theSession.SaveChangesAsync();
+
+        await using var session2 = theStore.LightweightSession();
+        session2.DeleteWhere<SoftDeletedDoc>(x => x.Number == 20);
+        await session2.SaveChangesAsync();
+
+        // doc1 should still be visible
+        await using var query = theStore.QuerySession();
+        var kept = await query.LoadAsync<SoftDeletedDoc>(doc1.Id);
+        kept.ShouldNotBeNull();
+
+        // doc2 and doc3 should be soft-deleted (hidden from normal queries)
+        var gone2 = await query.LoadAsync<SoftDeletedDoc>(doc2.Id);
+        gone2.ShouldBeNull();
+        var gone3 = await query.LoadAsync<SoftDeletedDoc>(doc3.Id);
+        gone3.ShouldBeNull();
+
+        // But still present via MaybeDeleted
+        var all = await query.Query<SoftDeletedDoc>()
+            .MaybeDeleted()
+            .Where(x => x.Id == doc2.Id || x.Id == doc3.Id)
+            .ToListAsync();
+        all.Count.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task hard_delete_where_physically_removes_matching_documents()
+    {
+        var doc1 = new SoftDeletedDoc { Id = Guid.NewGuid(), Name = "hdw-keep", Number = 30 };
+        var doc2 = new SoftDeletedDoc { Id = Guid.NewGuid(), Name = "hdw-remove", Number = 40 };
+
+        theSession.Store(doc1, doc2);
+        await theSession.SaveChangesAsync();
+
+        await using var session2 = theStore.LightweightSession();
+        session2.HardDeleteWhere<SoftDeletedDoc>(x => x.Number == 40);
+        await session2.SaveChangesAsync();
+
+        // doc1 still present
+        await using var query = theStore.QuerySession();
+        var kept = await query.LoadAsync<SoftDeletedDoc>(doc1.Id);
+        kept.ShouldNotBeNull();
+
+        // doc2 physically gone — not even MaybeDeleted can find it
+        var all = await query.Query<SoftDeletedDoc>()
+            .MaybeDeleted()
+            .Where(x => x.Id == doc2.Id)
+            .ToListAsync();
+        all.Count.ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task delete_where_on_non_soft_deleted_type_does_hard_delete()
+    {
+        // User is a normal (non-soft-deleted) type, so DeleteWhere should physically remove
+        var user1 = new User { Id = Guid.NewGuid(), FirstName = "Keep", LastName = "Me", Age = 25 };
+        var user2 = new User { Id = Guid.NewGuid(), FirstName = "Delete", LastName = "Me", Age = 99 };
+
+        theSession.Store(user1, user2);
+        await theSession.SaveChangesAsync();
+
+        await using var session2 = theStore.LightweightSession();
+        session2.DeleteWhere<User>(x => x.Age == 99);
+        await session2.SaveChangesAsync();
+
+        await using var query = theStore.QuerySession();
+        var kept = await query.LoadAsync<User>(user1.Id);
+        kept.ShouldNotBeNull();
+
+        var gone = await query.LoadAsync<User>(user2.Id);
+        gone.ShouldBeNull();
     }
 }
