@@ -1,4 +1,5 @@
 using Polecat.Batching;
+using Polecat.Linq;
 using Polecat.Linq.SqlGeneration;
 
 namespace Polecat.Internal.Batching;
@@ -18,6 +19,8 @@ internal class BatchedQuery : IBatchedQuery
         _providers = providers;
         _tableEnsurer = tableEnsurer;
     }
+
+    public IQuerySession Parent => _session;
 
     internal void AddItem(IBatchQueryItem item) => _items.Add(item);
 
@@ -53,6 +56,27 @@ internal class BatchedQuery : IBatchedQuery
         var provider = _providers.GetProvider<T>();
         _involvedProviders.Add(provider);
         return new BatchedQueryable<T>(this, provider, _session.Options, _session.TenantId, _session.Serializer);
+    }
+
+    public Task<T> QueryByPlan<T>(IBatchQueryPlan<T> plan)
+    {
+        return plan.Fetch(this);
+    }
+
+    /// <summary>
+    ///     Register an IQueryable as a deferred list query in this batch.
+    ///     Used by QueryListPlan to integrate with batched execution.
+    /// </summary>
+    internal Task<IReadOnlyList<T>> AddQueryableList<T>(IQueryable<T> queryable) where T : class
+    {
+        if (queryable.Provider is not PolecatLinqQueryProvider provider)
+            throw new InvalidOperationException(
+                "QueryListPlan can only be used with Polecat queryables from session.Query<T>().");
+
+        var statement = provider.BuildStatement(queryable.Expression, _session.TenantId);
+        var item = new QueryListBatchItem<T>(statement, _session.Serializer);
+        AddItem(item);
+        return item.Result;
     }
 
     public async Task Execute(CancellationToken token = default)

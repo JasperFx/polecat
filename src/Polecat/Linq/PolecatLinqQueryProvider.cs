@@ -56,6 +56,14 @@ internal class PolecatLinqQueryProvider : IQueryProvider
 
     internal string BuildSql(Expression expression, string tenantId)
     {
+        var statement = BuildStatement(expression, tenantId);
+        var builder = new CommandBuilder();
+        statement.Apply(builder);
+        return builder.ToString();
+    }
+
+    internal Statement BuildStatement(Expression expression, string tenantId)
+    {
         var documentType = FindDocumentType(expression);
         var provider = _providers.GetProvider(documentType);
 
@@ -86,9 +94,7 @@ internal class PolecatLinqQueryProvider : IQueryProvider
 
         ApplyModifiedFilters(parser);
 
-        var builder = new CommandBuilder();
-        parser.Statement.Apply(builder);
-        return builder.ToString();
+        return parser.Statement;
     }
 
     internal async Task<string> ExecuteJsonArrayAsync(Expression expression, CancellationToken token)

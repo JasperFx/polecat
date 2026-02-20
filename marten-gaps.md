@@ -30,7 +30,7 @@ A summary of APIs and features available in [Marten](https://github.com/JasperFx
 | Feature | Description |
 |---------|-------------|
 | ~~**Compiled Queries**~~ | ~~`ICompiledQuery<TDoc, TOut>` — parameterized, cached query plans~~ **Will Not Implement** |
-| **Query Plans** | `IQueryPlan<T>` — specification pattern for complex queries |
+| ~~**Query Plans**~~ | ~~`IQueryPlan<T>` — specification pattern for complex queries~~ **DONE** |
 | **Full-Text Search** | `SearchAsync()`, `PlainTextSearchAsync()`, `PhraseSearchAsync()`, `WebStyleSearchAsync()` |
 | ~~**Advanced SQL**~~ | ~~`IAdvancedSql` — typed raw SQL queries with tuple result support~~ **Will Not Implement** |
 | ~~**MatchesSql**~~ | ~~Raw SQL fragment filters in LINQ (with parameterization)~~ **Will Not Implement** |
@@ -141,6 +141,7 @@ The following Marten features have been implemented:
 - **Schema diagnostics** — `ToDatabaseScript()` and `WriteCreationScriptToFileAsync()` for full DDL export
 - **IInitialData seeding** — `IInitialData` interface with `InitialDataCollection` on `StoreOptions`, executed by `PolecatActivator` on startup
 - **Event snapshots** — `Snapshot<T>(SnapshotLifecycle)` caches aggregate state on `pc_streams.snapshot`; `AggregateStreamAsync` loads from snapshot for partial replay
+- **Query plans** — `IQueryPlan<T>`, `IBatchQueryPlan<T>`, `QueryListPlan<T>` specification pattern; `QueryByPlanAsync()` on `IQuerySession`, `QueryByPlan()` on `IBatchedQuery` with proper deferred batch integration
 
 ---
 
@@ -158,12 +159,9 @@ The following Marten features are out of scope for Polecat by design:
 
 ## Priority Assessment
 
-**Remaining medium priority:**
-1. Query Plans (`IQueryPlan<T>`) — specification pattern
-
 **Lower priority (PostgreSQL-specific or niche):**
-2. Full-text search (needs SQL Server alternative approach)
-3. Duplicated fields / relational column indexing
+1. Full-text search (needs SQL Server alternative approach)
+2. Duplicated fields / relational column indexing
 
 **Completed or Will Not Implement:**
 - ~~Compiled queries~~ — Will Not Implement (SQL Server query plan caching)
@@ -172,3 +170,4 @@ The following Marten features are out of scope for Polecat by design:
 - ~~Session logging / RequestCount~~ — Done
 - ~~IInitialData seeding~~ — Done
 - ~~Schema diagnostics~~ — Done
+- ~~Query plans~~ — Done

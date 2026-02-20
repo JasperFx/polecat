@@ -97,6 +97,11 @@ public interface IQuerySession : IAsyncDisposable
     string ToSql<T>(IQueryable<T> queryable) where T : class;
 
     /// <summary>
+    ///     Execute a query plan (specification pattern) against this session.
+    /// </summary>
+    Task<T> QueryByPlanAsync<T>(IQueryPlan<T> plan, CancellationToken token = default);
+
+    /// <summary>
     ///     Load the raw JSON for a document by its Guid id, without deserializing.
     /// </summary>
     Task<string?> LoadJsonAsync<T>(Guid id, CancellationToken token = default) where T : class;

@@ -203,6 +203,11 @@ internal class QuerySession : IQuerySession
         return new BatchedQuery(this, _providers, _tableEnsurer);
     }
 
+    public Task<T> QueryByPlanAsync<T>(IQueryPlan<T> plan, CancellationToken token = default)
+    {
+        return plan.Fetch(this, token);
+    }
+
     public Task<string?> LoadJsonAsync<T>(Guid id, CancellationToken token = default) where T : class
         => LoadJsonInternalAsync<T>(id, token);
 
