@@ -15,6 +15,7 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "SolutionItems", "SolutionIt
 	ProjectSection(SolutionItems) = preProject
 		.github\workflows\publish.yml = .github\workflows\publish.yml
 		marten-gaps.md = marten-gaps.md
+		README.md = README.md
 	EndProjectSection
 EndProject
 Global

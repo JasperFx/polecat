@@ -1,8 +1,16 @@
 # Polecat
 
-SQL Server-Backed Event Store inside the Critter Stack
+SQL Server-Backed Event Store inside the Critter Stack.
 
 First off, don't get too excited because it's going to be a little while before there's too much happening here.
+
+[![Discord](https://img.shields.io/discord/1074998995086225460?color=blue&label=Chat%20on%20Discord)](https://discord.gg/WMxrvegf8H)
+[![Nuget Package](https://badgen.net/nuget/v/polecat)](https://www.nuget.org/packages/Polecat/)
+[![Nuget](https://img.shields.io/nuget/dt/polecat)](https://www.nuget.org/packages/Polecat/)
+
+<div align="center">
+    <img src="./docs/polecat-logo.png" alt="polecat logo" width="40%">
+</div>
 
 ## Goals and Approach
 
@@ -22,3 +30,18 @@ First off, don't get too excited because it's going to be a little while before 
 * Should mimic the test structure of Marten (https://github.com/jasperfx/marten)
 * Completely support an "Async Daemon" 
 
+## Documentation
+
+All the documentation is expected to mimic how other JasperFx projects are handled, which is written in Markdown and the docs are published as a static site.
+
+More details coming soon as development progresses.
+
+## License
+
+Copyright © Jeremy D. Miller and contributors.
+
+Polecat is provided as-is under the MIT license. For more information see [LICENSE](LICENSE).
+
+## Code of Conduct
+
+This project has adopted the code of conduct defined by the [Contributor Covenant](http://contributor-covenant.org/) to clarify expected behavior in our community.
