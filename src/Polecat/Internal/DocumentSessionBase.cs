@@ -28,6 +28,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     private readonly IInlineProjection<IDocumentSession>[] _inlineProjections;
     private readonly IReadOnlyList<IDocumentSessionListener> _sessionListeners;
     private readonly IAlwaysConnectedLifetime _transactional;
+    private readonly List<ITransactionParticipant> _transactionParticipants = new();
     private EventOperations? _eventOperations;
 
     protected DocumentSessionBase(
@@ -62,6 +63,17 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     ///     Access the transactional connection's active transaction (if any).
     /// </summary>
     internal SqlTransaction? ActiveTransaction => _transactional.Transaction;
+
+    /// <summary>
+    ///     Transaction participants registered on this session.
+    ///     Exposed internally for batch access by the async daemon.
+    /// </summary>
+    internal IReadOnlyList<ITransactionParticipant> TransactionParticipants => _transactionParticipants;
+
+    public void AddTransactionParticipant(ITransactionParticipant participant)
+    {
+        _transactionParticipants.Add(participant);
+    }
 
     internal async Task BeginTransactionAsync(CancellationToken token)
     {
@@ -364,6 +376,12 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
                 }
             }
 
+            // Call transaction participants (e.g., EF Core DbContext) before commit
+            foreach (var participant in _transactionParticipants)
+            {
+                await participant.BeforeCommitAsync(_transactional.Connection!, tx, token);
+            }
+
             await tx.CommitAsync(token);
             _workTracker.Reset();
 
@@ -616,6 +634,12 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     Task<IProjectionStorage<TDoc, TId>> IStorageOperations.FetchProjectionStorageAsync<TDoc, TId>(
         string tenantId, CancellationToken cancellationToken)
     {
+        // Check for custom projection storage providers (e.g., EF Core)
+        if (Options.CustomProjectionStorageProviders.TryGetValue(typeof(TDoc), out var factory))
+        {
+            return Task.FromResult((IProjectionStorage<TDoc, TId>)factory(this, tenantId));
+        }
+
         var provider = _providers.GetProvider(typeof(TDoc));
         IProjectionStorage<TDoc, TId> storage =
 #pragma warning disable CS8714 // notnull constraint mismatch with JasperFx interface

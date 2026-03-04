@@ -7,7 +7,7 @@ namespace Polecat;
 ///     Full document session with mutation operations and SaveChanges.
 ///     This is the primary unit of work for Polecat.
 /// </summary>
-public interface IDocumentSession : IDocumentOperations, IStorageOperations
+public interface IDocumentSession : IDocumentOperations, IStorageOperations, ITransactionParticipantRegistrar
 {
     /// <summary>
     ///     Read-only view of pending operations.

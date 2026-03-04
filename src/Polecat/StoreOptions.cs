@@ -149,6 +149,12 @@ public class StoreOptions
     internal ITenancy? Tenancy { get; set; }
 
     /// <summary>
+    ///     Custom projection storage providers registered by extensions (e.g., EF Core).
+    ///     Keyed by document type, returns a factory that creates IProjectionStorage instances.
+    /// </summary>
+    internal Dictionary<Type, Func<Internal.DocumentSessionBase, string, object>> CustomProjectionStorageProviders { get; } = new();
+
+    /// <summary>
     ///     Replace the default Polly resilience pipeline with a custom one.
     /// </summary>
     public void ConfigurePolly(Action<ResiliencePipelineBuilder> configure)

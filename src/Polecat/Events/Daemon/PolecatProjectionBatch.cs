@@ -157,6 +157,18 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
                     // Progress ops don't need result processing
                 }
 
+                // Call transaction participants (e.g., EF Core DbContext) before commit
+                foreach (var session in _sessions)
+                {
+                    if (session is DocumentSessionBase sessionBase)
+                    {
+                        foreach (var participant in sessionBase.TransactionParticipants)
+                        {
+                            await participant.BeforeCommitAsync(conn, tx, ct);
+                        }
+                    }
+                }
+
                 await tx.CommitAsync(ct);
             }
             catch

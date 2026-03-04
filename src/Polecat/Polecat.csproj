@@ -22,6 +22,8 @@
 
     <ItemGroup>
         <InternalsVisibleTo Include="Polecat.Tests" />
+        <InternalsVisibleTo Include="Polecat.EntityFrameworkCore" />
+        <InternalsVisibleTo Include="Polecat.EntityFrameworkCore.Tests" />
     </ItemGroup>
 
     <ItemGroup>
