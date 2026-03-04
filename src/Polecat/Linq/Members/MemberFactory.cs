@@ -1,6 +1,7 @@
 using System.Linq.Expressions;
 using System.Reflection;
 using System.Text.Json;
+using JasperFx.Core.Reflection;
 using Polecat.Serialization;
 using Polecat.Storage;
 
@@ -14,11 +15,13 @@ internal class MemberFactory
     private readonly JsonNamingPolicy? _namingPolicy;
     private readonly EnumStorage _enumStorage;
     private readonly Type _idType;
+    private readonly ValueTypeInfo? _valueTypeId;
 
     public MemberFactory(StoreOptions options, DocumentMapping mapping)
     {
         _enumStorage = options.Serializer.EnumStorage;
         _idType = mapping.IdType;
+        _valueTypeId = mapping.ValueTypeId;
 
         if (options.Serializer is Serializer s)
         {
@@ -35,7 +38,7 @@ internal class MemberFactory
         // Check if it's the Id property on the root document
         if (expression.Member.Name == "Id" && expression.Expression is ParameterExpression)
         {
-            return new IdMember(_idType);
+            return new IdMember(_idType, _valueTypeId);
         }
 
         var jsonPath = BuildJsonPath(expression);

@@ -1,3 +1,5 @@
+using JasperFx.Core.Reflection;
+
 namespace Polecat.Linq.Members;
 
 /// <summary>
@@ -5,9 +7,12 @@ namespace Polecat.Linq.Members;
 /// </summary>
 internal class IdMember : IQueryableMember
 {
-    public IdMember(Type idType)
+    private readonly ValueTypeInfo? _valueTypeInfo;
+
+    public IdMember(Type idType, ValueTypeInfo? valueTypeInfo = null)
     {
         MemberType = idType;
+        _valueTypeInfo = valueTypeInfo;
     }
 
     public Type MemberType { get; }
@@ -15,5 +20,14 @@ internal class IdMember : IQueryableMember
     public string RawLocator => "id";
     public bool IsBoolean => false;
 
-    public object? ConvertValue(object? value) => value;
+    public object? ConvertValue(object? value)
+    {
+        if (value == null) return null;
+        if (_valueTypeInfo != null)
+        {
+            return _valueTypeInfo.ValueProperty.GetValue(value);
+        }
+
+        return value;
+    }
 }

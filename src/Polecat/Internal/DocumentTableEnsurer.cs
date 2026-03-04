@@ -101,9 +101,10 @@ internal class DocumentTableEnsurer
     {
         var schema = mapping.DatabaseSchemaName;
         var table = mapping.TableName;
-        var idType = mapping.IdType == typeof(Guid) ? "uniqueidentifier"
-            : mapping.IdType == typeof(int) ? "int"
-            : mapping.IdType == typeof(long) ? "bigint"
+        var innerIdType = mapping.InnerIdType;
+        var idType = innerIdType == typeof(Guid) ? "uniqueidentifier"
+            : innerIdType == typeof(int) ? "int"
+            : innerIdType == typeof(long) ? "bigint"
             : "varchar(250)";
         var isConjoined = mapping.TenancyStyle == TenancyStyle.Conjoined;
         var isSoftDelete = mapping.DeleteStyle == DeleteStyle.SoftDelete;

@@ -60,15 +60,24 @@ public class AdvancedOperations
         var rows = new List<(object Id, string Json, string DotNetType)>(documents.Count);
         foreach (var doc in documents)
         {
-            // Assign HiLo ID if needed
-            if (mapping.IsNumericId && provider.Sequence != null)
+            // Auto-assign Guid for strongly typed Guid wrappers when default
+            if (mapping.IsStrongTypedId && mapping.InnerIdType == typeof(Guid))
             {
                 var currentId = mapping.GetId(doc);
-                if (mapping.IdType == typeof(int) && (int)currentId <= 0)
+                if ((Guid)currentId == Guid.Empty)
+                {
+                    mapping.SetId(doc, Guid.NewGuid());
+                }
+            }
+            // Assign HiLo ID if needed
+            else if (mapping.IsNumericId && provider.Sequence != null)
+            {
+                var currentId = mapping.GetId(doc);
+                if (mapping.InnerIdType == typeof(int) && (int)currentId <= 0)
                 {
                     mapping.SetId(doc, provider.Sequence.NextInt());
                 }
-                else if (mapping.IdType == typeof(long) && (long)currentId <= 0)
+                else if (mapping.InnerIdType == typeof(long) && (long)currentId <= 0)
                 {
                     mapping.SetId(doc, provider.Sequence.NextLong());
                 }

@@ -1,5 +1,6 @@
 using System.Reflection;
 using JasperFx;
+using JasperFx.Core.Reflection;
 using Polecat.Attributes;
 using Polecat.Metadata;
 using Polecat.Schema.Identity.Sequences;
@@ -29,12 +30,17 @@ internal class DocumentMapping
 
         if (!SupportedIdTypes.Contains(IdType))
         {
-            throw new InvalidOperationException(
-                $"Document type '{documentType.FullName}' has an Id property of type '{IdType.Name}', " +
-                "but only Guid, string, int, and long are supported.");
+            // Check for strongly typed ID wrapper (e.g., record struct OrderId(Guid Value))
+            ValueTypeId = TryResolveValueTypeId(IdType);
+            if (ValueTypeId == null)
+            {
+                throw new InvalidOperationException(
+                    $"Document type '{documentType.FullName}' has an Id property of type '{IdType.Name}', " +
+                    "but only Guid, string, int, long, and value type wrappers around those types are supported.");
+            }
         }
 
-        IsNumericId = IdType == typeof(int) || IdType == typeof(long);
+        IsNumericId = InnerIdType == typeof(int) || InnerIdType == typeof(long);
 
         // Read HiloSequenceAttribute if present on numeric ID types
         if (IsNumericId)
@@ -76,6 +82,24 @@ internal class DocumentMapping
 
     public Type DocumentType => _documentType;
     public Type IdType { get; }
+
+    /// <summary>
+    ///     The unwrapped inner type for SQL column mapping.
+    ///     For strongly typed IDs (e.g., OrderId wrapping Guid), returns the inner type.
+    ///     For plain IDs, returns IdType.
+    /// </summary>
+    public Type InnerIdType => ValueTypeId?.SimpleType ?? IdType;
+
+    /// <summary>
+    ///     Non-null when the Id property is a strongly typed value wrapper.
+    /// </summary>
+    public ValueTypeInfo? ValueTypeId { get; }
+
+    /// <summary>
+    ///     True when the Id property uses a strongly typed wrapper.
+    /// </summary>
+    public bool IsStrongTypedId => ValueTypeId != null;
+
     public bool IsNumericId { get; }
     public HiloSettings? HiloSettings { get; set; }
     public string TableName { get; }
@@ -95,20 +119,87 @@ internal class DocumentMapping
     /// </summary>
     public bool UseNumericRevisions { get; }
 
+    /// <summary>
+    ///     Returns the unwrapped inner ID value for SQL parameters.
+    ///     For strongly typed IDs, extracts the inner value (e.g., OrderId → Guid).
+    /// </summary>
     public object GetId(object document)
+    {
+        var raw = _idProperty.GetValue(document)
+            ?? throw new InvalidOperationException(
+                $"Document of type '{_documentType.Name}' has a null Id.");
+
+        if (ValueTypeId != null)
+        {
+            return ValueTypeId.ValueProperty.GetValue(raw)!;
+        }
+
+        return raw;
+    }
+
+    /// <summary>
+    ///     Returns the raw (possibly wrapped) ID value from the document.
+    ///     Used for identity map keys where wrapper type matters.
+    /// </summary>
+    public object GetRawId(object document)
     {
         return _idProperty.GetValue(document)
             ?? throw new InvalidOperationException(
                 $"Document of type '{_documentType.Name}' has a null Id.");
     }
 
+    /// <summary>
+    ///     Sets the ID on a document. For strongly typed IDs, wraps the inner value first.
+    /// </summary>
     public void SetId(object document, object id)
     {
-        _idProperty.SetValue(document, id);
+        if (ValueTypeId != null)
+        {
+            // Wrap: Guid → OrderId
+            object wrapped;
+            if (ValueTypeId.Ctor != null)
+            {
+                wrapped = ValueTypeId.Ctor.Invoke([id]);
+            }
+            else
+            {
+                wrapped = ValueTypeId.Builder!.Invoke(null, [id])!;
+            }
+
+            _idProperty.SetValue(document, wrapped);
+        }
+        else
+        {
+            _idProperty.SetValue(document, id);
+        }
     }
 
     public static PropertyInfo? FindIdProperty(Type type)
     {
         return type.GetProperty("Id", BindingFlags.Public | BindingFlags.Instance);
+    }
+
+    /// <summary>
+    ///     Attempts to resolve a value type as a strongly typed ID wrapper.
+    ///     Returns null if the type isn't a valid wrapper around a supported ID type.
+    /// </summary>
+    private static ValueTypeInfo? TryResolveValueTypeId(Type idType)
+    {
+        if (!idType.IsValueType || idType.IsPrimitive || idType.IsEnum) return null;
+
+        try
+        {
+            var info = ValueTypeInfo.ForType(idType);
+            if (SupportedIdTypes.Contains(info.SimpleType))
+            {
+                return info;
+            }
+
+            return null;
+        }
+        catch
+        {
+            return null;
+        }
     }
 }

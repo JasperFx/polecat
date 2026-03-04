@@ -126,19 +126,31 @@ internal class DocumentProvider
 
     private void AssignIdIfNeeded(object document)
     {
+        // Auto-assign Guid for strongly typed Guid wrappers when default
+        if (Mapping.IsStrongTypedId && Mapping.InnerIdType == typeof(Guid))
+        {
+            var currentId = Mapping.GetId(document);
+            if ((Guid)currentId == Guid.Empty)
+            {
+                Mapping.SetId(document, Guid.NewGuid());
+            }
+
+            return;
+        }
+
         if (Sequence == null || !Mapping.IsNumericId) return;
 
-        var currentId = Mapping.GetId(document);
-        if (Mapping.IdType == typeof(int))
+        var numericId = Mapping.GetId(document);
+        if (Mapping.InnerIdType == typeof(int))
         {
-            if ((int)currentId <= 0)
+            if ((int)numericId <= 0)
             {
                 Mapping.SetId(document, Sequence.NextInt());
             }
         }
-        else if (Mapping.IdType == typeof(long))
+        else if (Mapping.InnerIdType == typeof(long))
         {
-            if ((long)currentId <= 0)
+            if ((long)numericId <= 0)
             {
                 Mapping.SetId(document, Sequence.NextLong());
             }
