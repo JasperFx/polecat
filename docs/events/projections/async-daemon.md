@@ -84,15 +84,18 @@ The daemon uses Polly resilience pipelines for error handling. See [Resiliency P
 
 ## Architecture
 
-```mermaid
-graph TD
-    A[pc_events] -->|Polling| B[High Water Mark Detector]
-    B -->|Sequence Range| C[Event Loader]
-    C -->|Event Batch| D[Projection A]
-    C -->|Event Batch| E[Projection B]
-    C -->|Event Batch| F[Subscription C]
-    D -->|Update| G[pc_doc_summary]
-    E -->|Update| H[pc_doc_dashboard]
-    F -->|Side Effect| I[External System]
-    D & E & F -->|Progress| J[pc_event_progression]
+```
+pc_events
+  │ (Polling)
+  ▼
+High Water Mark Detector
+  │ (Sequence Range)
+  ▼
+Event Loader
+  ├──► Projection A ──► pc_doc_summary
+  ├──► Projection B ──► pc_doc_dashboard
+  └──► Subscription C ──► External System
+         │
+         ▼
+  pc_event_progression (tracks progress for all)
 ```
