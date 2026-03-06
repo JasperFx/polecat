@@ -11,6 +11,8 @@ In traditional event sourcing, consistency is enforced per-stream using optimist
 3. **Aggregate** tagged events into a view (like a live aggregation, but cross-stream)
 4. **Enforce consistency** at save time -- detecting if new matching events were appended since you last read
 
+Polecat uses a single append strategy (direct `INSERT` with `OUTPUT inserted.seq_id`), so DCB tags are always persisted immediately after each event insert. There are no separate append modes to configure -- tags just work.
+
 ## Registering Tag Types
 
 Tag types are strong-typed identifiers (typically `record` types wrapping a primitive). Register them during store configuration:

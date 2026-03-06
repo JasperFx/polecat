@@ -41,6 +41,8 @@ public class StudentCourseEnrollment
     }
 }
 
+// Polecat always uses Quick append (direct INSERT with OUTPUT seq_id).
+// Tags are inserted immediately after each event, so DCB works with the only append mode available.
 [Collection("integration")]
 public class dcb_tag_query_and_consistency_tests : IntegrationContext
 {
