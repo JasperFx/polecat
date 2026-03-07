@@ -34,6 +34,9 @@ public partial class DocumentStore : IDocumentStore
         // Initialize default tenancy if not already configured
         Options.Tenancy ??= new DefaultTenancy(_connectionFactory, Database);
 
+        // Auto-discover aggregate types with source-generated evolvers
+        options.Projections.DiscoverGeneratedEvolvers(AppDomain.CurrentDomain.GetAssemblies());
+
         // Initialize projection graph — builds async shard registry
         options.Projections.AssertValidity(options);
 

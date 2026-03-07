@@ -1,4 +1,5 @@
 using JasperFx.Events;
+using JasperFx.Events.Tags;
 using Polecat.Internal;
 
 namespace Polecat.Events.Dcb;
@@ -41,56 +42,98 @@ internal class EventBoundary<T> : IEventBoundary<T> where T : class
     private void RouteEventByTags(IEvent wrapped)
     {
         var tags = wrapped.Tags;
+
+        // If no explicit tags, try to infer from event properties
         if (tags == null || tags.Count == 0)
         {
-            throw new InvalidOperationException(
-                "Events appended via IEventBoundary must have tags set via WithTag(). " +
-                "Polecat uses tags to route events to the appropriate stream(s).");
+            var inferred = EventTagInference.InferTags(wrapped.Data, _events.TagTypes);
+            if (inferred.Count == 0)
+            {
+                throw new InvalidOperationException(
+                    $"Cannot route event of type '{wrapped.Data.GetType().Name}' appended via IEventBoundary. " +
+                    "The event has no explicit tags set via WithTag() and Polecat could not infer any tags " +
+                    "from its public properties matching registered tag types. Either set tags explicitly " +
+                    "or ensure the event type has properties matching registered tag types.");
+            }
+
+            foreach (var tag in inferred)
+            {
+                wrapped.AddTag(tag);
+            }
+
+            tags = wrapped.Tags;
         }
 
-        foreach (var tag in tags)
+        // Find the stream to route to. An event belongs to exactly ONE stream,
+        // but its tags are written to ALL matching tag tables at save time.
+        // Use the first tag with an AggregateType to determine the target stream.
+        StreamAction? stream = null;
+
+        foreach (var tag in tags!)
         {
             var registration = _events.FindTagType(tag.TagType);
-            if (registration == null) continue;
-
-            var aggregateType = registration.AggregateType;
-            if (aggregateType == null) continue;
+            if (registration?.AggregateType == null) continue;
 
             var streamId = tag.Value;
-            StreamAction? stream = null;
-
             if (streamId is Guid guidId)
             {
                 if (!_session.WorkTracker.TryFindStream(guidId, out stream))
                 {
-                    stream = StreamAction.Start(_events, guidId, Array.Empty<IEvent>());
-                    stream.AggregateType = aggregateType;
+                    stream = StreamAction.Start(guidId, new[] { wrapped });
+                    stream.AggregateType = registration.AggregateType;
+                    stream.TenantId = _session.TenantId;
                     _session.WorkTracker.AddStream(stream);
+                }
+                else
+                {
+                    stream.AddEvent(wrapped);
                 }
             }
             else if (streamId is string stringId)
             {
                 if (!_session.WorkTracker.TryFindStream(stringId, out stream))
                 {
-                    stream = StreamAction.Start(_events, stringId, Array.Empty<IEvent>());
-                    stream.AggregateType = aggregateType;
+                    stream = StreamAction.Start(stringId, new[] { wrapped });
+                    stream.AggregateType = registration.AggregateType;
+                    stream.TenantId = _session.TenantId;
                     _session.WorkTracker.AddStream(stream);
                 }
+                else
+                {
+                    stream.AddEvent(wrapped);
+                }
             }
 
-            if (stream != null)
+            break; // Route to the first matching stream only
+        }
+
+        // If no tag has an AggregateType, create a new orphan stream
+        // to avoid concurrency conflicts
+        if (stream == null)
+        {
+            if (_events.StreamIdentity == StreamIdentity.AsGuid)
             {
-                if (stream.Id != Guid.Empty)
-                {
-                    wrapped.StreamId = stream.Id;
-                }
-                else if (stream.Key != null)
-                {
-                    wrapped.StreamKey = stream.Key;
-                }
-
-                stream.AddEvent(wrapped);
+                var newId = Guid.NewGuid();
+                stream = StreamAction.Start(newId, new[] { wrapped });
+                stream.TenantId = _session.TenantId;
+                _session.WorkTracker.AddStream(stream);
             }
+            else
+            {
+                var newKey = Guid.NewGuid().ToString();
+                stream = StreamAction.Start(newKey, new[] { wrapped });
+                stream.TenantId = _session.TenantId;
+                _session.WorkTracker.AddStream(stream);
+            }
+        }
+
+        if (stream.Id != Guid.Empty)
+        {
+            wrapped.StreamId = stream.Id;
+        }
+        else if (stream.Key != null)
+        {
+            wrapped.StreamKey = stream.Key;
         }
     }
 }

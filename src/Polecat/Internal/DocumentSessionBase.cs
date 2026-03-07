@@ -288,7 +288,43 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
 
         try
         {
-            // Process event streams first
+            // Run DCB consistency checks BEFORE inserting new events,
+            // so that newly appended events don't trigger false violations
+            var dcbAssertions = _workTracker.Operations
+                .OfType<AssertDcbConsistencyOperation>()
+                .ToList();
+
+            if (dcbAssertions.Count > 0)
+            {
+                await using var dcbBatch = new SqlBatch();
+                var dcbBuilder = new BatchBuilder(dcbBatch);
+
+                for (var i = 0; i < dcbAssertions.Count; i++)
+                {
+                    if (i > 0) dcbBuilder.StartNewCommand();
+                    dcbAssertions[i].ConfigureCommand(dcbBuilder);
+                }
+
+                dcbBuilder.Compile();
+
+                var dcbExceptions = new List<Exception>();
+                await using var dcbReader = await ExecuteReaderAsync(dcbBatch, token);
+                for (var i = 0; i < dcbAssertions.Count; i++)
+                {
+                    await dcbAssertions[i].PostprocessAsync(dcbReader, dcbExceptions, token);
+                    if (i < dcbAssertions.Count - 1)
+                    {
+                        await dcbReader.NextResultAsync(token);
+                    }
+                }
+
+                if (dcbExceptions.Count > 0)
+                {
+                    throw new AggregateException(dcbExceptions);
+                }
+            }
+
+            // Process event streams
             foreach (var stream in _workTracker.Streams)
             {
                 // Handle AlwaysEnforceConsistency with no events — just assert version
@@ -340,12 +376,16 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             }
 
             // Process document operations using BatchBuilder/SqlBatch
-            if (_workTracker.Operations.Count > 0)
+            // (excluding DCB assertions which were already run above)
+            var remainingOps = _workTracker.Operations
+                .Where(op => op is not AssertDcbConsistencyOperation)
+                .ToList();
+            if (remainingOps.Count > 0)
             {
                 await using var batch = new SqlBatch();
                 var builder = new BatchBuilder(batch);
 
-                var operations = _workTracker.Operations;
+                var operations = remainingOps;
                 for (var i = 0; i < operations.Count; i++)
                 {
                     if (i > 0) builder.StartNewCommand();
