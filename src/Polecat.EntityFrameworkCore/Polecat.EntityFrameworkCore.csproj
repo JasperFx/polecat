@@ -7,7 +7,7 @@
         <ImplicitUsings>enable</ImplicitUsings>
         <LangVersion>latest</LangVersion>
         <RootNamespace>Polecat.EntityFrameworkCore</RootNamespace>
-        <Version>0.1.0</Version>
+        <Version>0.9.0</Version>
         <PackageLicenseExpression>MIT</PackageLicenseExpression>
     </PropertyGroup>
 
