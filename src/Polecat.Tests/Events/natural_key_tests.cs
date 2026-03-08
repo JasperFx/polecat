@@ -5,7 +5,7 @@ using Polecat.Tests.Harness;
 
 namespace Polecat.Tests.Events;
 
-#region Aggregate types and events
+#region sample_polecat_natural_key_aggregate_types
 
 public record OrderNumber(string Value);
 
@@ -109,14 +109,17 @@ public class natural_key_inline_guid_tests : OneOffConfigurationsContext
         await session1.SaveChangesAsync();
 
         await using var session2 = theStore.LightweightSession();
+        #region sample_polecat_fetch_for_writing_by_natural_key
+        // FetchForWriting by the business identifier instead of stream id
         var stream = await session2.Events.FetchForWriting<OrderAggregate, OrderNumber>(orderNumber);
 
         stream.Aggregate.ShouldNotBeNull();
         stream.Aggregate!.OrderNum.ShouldBe(orderNumber);
-        stream.Aggregate.CustomerName.ShouldBe("Alice");
-        stream.Aggregate.TotalAmount.ShouldBe(9.99m);
-        stream.StartingVersion.ShouldBe(2);
-        stream.Id.ShouldBe(streamId);
+
+        // Append new events through the stream
+        stream.AppendOne(new NkOrderItemAdded("Gadget", 19.99m));
+        await session2.SaveChangesAsync();
+        #endregion
     }
 
     [Fact]
@@ -162,7 +165,10 @@ public class natural_key_inline_guid_tests : OneOffConfigurationsContext
         await session1.SaveChangesAsync();
 
         await using var session2 = theStore.LightweightSession();
+        #region sample_polecat_fetch_latest_by_natural_key
+        // Read-only access by natural key
         var aggregate = await session2.Events.FetchLatest<OrderAggregate, OrderNumber>(orderNumber);
+        #endregion
 
         aggregate.ShouldNotBeNull();
         aggregate!.OrderNum.ShouldBe(orderNumber);

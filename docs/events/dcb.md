@@ -17,16 +17,8 @@ Polecat uses a single append strategy (direct `INSERT` with `OUTPUT inserted.seq
 
 Tag types are strong-typed identifiers (typically `record` types wrapping a primitive). Register them during store configuration:
 
-```cs
-var store = DocumentStore.For(opts =>
-{
-    opts.ConnectionString = "...";
-
-    // Register tag types with explicit table suffixes
-    opts.Events.RegisterTagType<StudentId>("student");
-    opts.Events.RegisterTagType<CourseId>("course");
-});
-```
+<!-- snippet: sample_polecat_dcb_registering_tag_types -->
+<!-- endSnippet -->
 
 Each tag type gets its own table (`pc_event_tag_student`, `pc_event_tag_course`, etc.) with a composite primary key of `(value, seq_id)`.
 
@@ -34,12 +26,8 @@ Each tag type gets its own table (`pc_event_tag_student`, `pc_event_tag_course`,
 
 Tag types should be simple wrapper records around a primitive value:
 
-```cs
-public record StudentId(Guid Value);
-public record CourseId(Guid Value);
-public record TenantCode(string Value);
-public record OrderNumber(int Value);
-```
+<!-- snippet: sample_polecat_dcb_tag_type_definitions -->
+<!-- endSnippet -->
 
 Supported inner value types: `Guid`, `string`, `int`, `long`, `short`.
 
@@ -47,15 +35,8 @@ Supported inner value types: `Guid`, `string`, `int`, `long`, `short`.
 
 Use `BuildEvent` and `WithTag` to attach tags before appending:
 
-```cs
-await using var session = store.LightweightSession();
-
-var enrolled = session.Events.BuildEvent(new StudentEnrolled("Alice", "Math 101"));
-enrolled.WithTag(new StudentId(aliceId), new CourseId(mathId));
-
-session.Events.Append(streamId, enrolled);
-await session.SaveChangesAsync();
-```
+<!-- snippet: sample_polecat_dcb_tagging_events -->
+<!-- endSnippet -->
 
 Events can have multiple tags of different types. Tags are persisted to their respective tag tables in the same transaction as the event.
 
@@ -63,71 +44,32 @@ Events can have multiple tags of different types. Tags are persisted to their re
 
 Use `EventTagQuery` to build a query, then execute it with `QueryByTagsAsync`:
 
-```cs
-await using var session = store.LightweightSession();
-
-// Query by a single tag
-var query = new EventTagQuery()
-    .Or<StudentId>(new StudentId(aliceId));
-
-var events = await session.Events.QueryByTagsAsync(query);
-```
+<!-- snippet: sample_polecat_dcb_query_by_single_tag -->
+<!-- endSnippet -->
 
 ### Multiple Tags (OR)
 
-```cs
-// Find events tagged with EITHER student
-var query = new EventTagQuery()
-    .Or<StudentId>(new StudentId(aliceId))
-    .Or<StudentId>(new StudentId(bobId));
-
-var events = await session.Events.QueryByTagsAsync(query);
-```
+<!-- snippet: sample_polecat_dcb_query_multiple_tags_or -->
+<!-- endSnippet -->
 
 ### Filtering by Event Type
 
-```cs
-// Only AssignmentSubmitted events for this student
-var query = new EventTagQuery()
-    .Or<AssignmentSubmitted, StudentId>(new StudentId(aliceId));
-
-var events = await session.Events.QueryByTagsAsync(query);
-```
+<!-- snippet: sample_polecat_dcb_query_by_event_type -->
+<!-- endSnippet -->
 
 Events are always returned ordered by sequence number (global append order).
 
 ## Aggregating by Tags
 
-Build an aggregate from tagged events, similar to `AggregateStreamAsync` but across streams:
+Build an aggregate from tagged events, similar to `AggregateStreamAsync` but across streams. First define an aggregate that applies the tagged events:
 
-```cs
-public class StudentCourseEnrollment
-{
-    public Guid Id { get; set; }
-    public string StudentName { get; set; } = "";
-    public string CourseName { get; set; } = "";
-    public List<string> Assignments { get; set; } = new();
-    public bool IsDropped { get; set; }
+<!-- snippet: sample_polecat_dcb_aggregate -->
+<!-- endSnippet -->
 
-    public void Apply(StudentEnrolled e)
-    {
-        StudentName = e.StudentName;
-        CourseName = e.CourseName;
-    }
+Then aggregate across streams by tag query:
 
-    public void Apply(AssignmentSubmitted e)
-    {
-        Assignments.Add(e.AssignmentName);
-    }
-}
-
-// Aggregate all events for this student + course
-var query = new EventTagQuery()
-    .Or<StudentId>(studentId)
-    .Or<CourseId>(courseId);
-
-var enrollment = await session.Events.AggregateByTagsAsync<StudentCourseEnrollment>(query);
-```
+<!-- snippet: sample_polecat_dcb_aggregate_by_tags -->
+<!-- endSnippet -->
 
 Returns `null` if no matching events are found.
 
@@ -135,43 +77,13 @@ Returns `null` if no matching events are found.
 
 `FetchForWritingByTags` loads the aggregate and establishes a consistency boundary. At `SaveChangesAsync` time, Polecat checks whether any new events matching the query have been appended since the read, throwing `DcbConcurrencyException` if so:
 
-```cs
-await using var session = store.LightweightSession();
-
-var query = new EventTagQuery()
-    .Or<StudentId>(studentId);
-
-var boundary = await session.Events.FetchForWritingByTags<StudentCourseEnrollment>(query);
-
-// Read current state
-var aggregate = boundary.Aggregate; // may be null if no events yet
-var lastSequence = boundary.LastSeenSequence;
-
-// Append new events through the boundary
-var submitted = session.Events.BuildEvent(new AssignmentSubmitted("HW1", 95));
-submitted.WithTag(studentId, courseId);
-boundary.AppendOne(submitted);
-
-// Save -- will throw DcbConcurrencyException if another session
-// appended matching events after our read
-await session.SaveChangesAsync();
-```
+<!-- snippet: sample_polecat_dcb_fetch_for_writing_by_tags -->
+<!-- endSnippet -->
 
 ### Handling Concurrency Violations
 
-```cs
-try
-{
-    await session.SaveChangesAsync();
-}
-catch (AggregateException ex) when (ex.InnerExceptions.OfType<DcbConcurrencyException>().Any())
-{
-    // Reload and retry -- the boundary's tag query had new matching events
-    var violation = ex.InnerExceptions.OfType<DcbConcurrencyException>().First();
-    // violation.Query -- the original tag query
-    // violation.LastSeenSequence -- the sequence at time of read
-}
-```
+<!-- snippet: sample_polecat_dcb_handling_concurrency -->
+<!-- endSnippet -->
 
 ::: tip
 The consistency check only detects events that match the **same tag query**. Events appended to unrelated tags or streams will not cause a violation.

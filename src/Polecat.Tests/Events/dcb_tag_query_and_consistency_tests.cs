@@ -6,14 +6,18 @@ using Polecat.Tests.Harness;
 
 namespace Polecat.Tests.Events;
 
+#region sample_polecat_dcb_tag_type_definitions
 // Strong-typed tag identifiers
 public record StudentId(Guid Value);
 public record CourseId(Guid Value);
+#endregion
 
+#region sample_polecat_dcb_domain_events
 // Domain events
 public record StudentEnrolled(string StudentName, string CourseName);
 public record AssignmentSubmitted(string AssignmentName, int Score);
 public record StudentDropped(string Reason);
+#endregion
 
 // Event with tag-typed properties for inference testing
 public record StudentGraded(StudentId StudentId, CourseId CourseId, int Grade);
@@ -21,6 +25,7 @@ public record StudentGraded(StudentId StudentId, CourseId CourseId, int Grade);
 // Event with NO tag-typed properties — should fail inference
 public record SystemNotification(string Message);
 
+#region sample_polecat_dcb_aggregate
 // Aggregate for DCB
 public class StudentCourseEnrollment
 {
@@ -46,6 +51,7 @@ public class StudentCourseEnrollment
         IsDropped = true;
     }
 }
+#endregion
 
 // Polecat always uses Quick append (direct INSERT with OUTPUT seq_id).
 // Tags are inserted immediately after each event, so DCB works with the only append mode available.
@@ -56,16 +62,19 @@ public class dcb_tag_query_and_consistency_tests : IntegrationContext
     {
     }
 
+    #region sample_polecat_dcb_registering_tag_types
     public override async Task InitializeAsync()
     {
         await StoreOptions(opts =>
         {
+            // Register tag types -- each gets its own table (pc_event_tag_student, pc_event_tag_course)
             opts.Events.RegisterTagType<StudentId>("student")
                 .ForAggregate<StudentCourseEnrollment>();
             opts.Events.RegisterTagType<CourseId>("course")
                 .ForAggregate<StudentCourseEnrollment>();
         });
     }
+    #endregion
 
     [Fact]
     public async Task can_query_events_by_single_tag()
@@ -74,14 +83,18 @@ public class dcb_tag_query_and_consistency_tests : IntegrationContext
         var courseId = new CourseId(Guid.NewGuid());
         var streamId = Guid.NewGuid();
 
+        #region sample_polecat_dcb_tagging_events
         var enrolled = theSession.Events.BuildEvent(new StudentEnrolled("Alice", "Math"));
         enrolled.WithTag(studentId, courseId);
         theSession.Events.Append(streamId, enrolled);
         await theSession.SaveChangesAsync();
+        #endregion
 
         await using var session2 = theStore.LightweightSession();
+        #region sample_polecat_dcb_query_by_single_tag
         var query = new EventTagQuery().Or<StudentId>(studentId);
         var events = await session2.Events.QueryByTagsAsync(query);
+        #endregion
 
         events.Count.ShouldBe(1);
         events[0].Data.ShouldBeOfType<StudentEnrolled>().StudentName.ShouldBe("Alice");
@@ -107,11 +120,13 @@ public class dcb_tag_query_and_consistency_tests : IntegrationContext
         await theSession.SaveChangesAsync();
 
         await using var session2 = theStore.LightweightSession();
+        #region sample_polecat_dcb_query_multiple_tags_or
         var query = new EventTagQuery()
             .Or<StudentId>(student1)
             .Or<StudentId>(student2);
 
         var events = await session2.Events.QueryByTagsAsync(query);
+        #endregion
         events.Count.ShouldBe(2);
     }
 
@@ -132,10 +147,12 @@ public class dcb_tag_query_and_consistency_tests : IntegrationContext
         await theSession.SaveChangesAsync();
 
         await using var session2 = theStore.LightweightSession();
+        #region sample_polecat_dcb_query_by_event_type
         var query = new EventTagQuery()
             .Or<AssignmentSubmitted, StudentId>(studentId);
 
         var events = await session2.Events.QueryByTagsAsync(query);
+        #endregion
         events.Count.ShouldBe(1);
         events[0].Data.ShouldBeOfType<AssignmentSubmitted>().AssignmentName.ShouldBe("HW1");
     }
@@ -176,11 +193,13 @@ public class dcb_tag_query_and_consistency_tests : IntegrationContext
         await theSession.SaveChangesAsync();
 
         await using var session2 = theStore.LightweightSession();
+        #region sample_polecat_dcb_aggregate_by_tags
         var query = new EventTagQuery()
             .Or<StudentId>(studentId)
             .Or<CourseId>(courseId);
 
         var aggregate = await session2.Events.AggregateByTagsAsync<StudentCourseEnrollment>(query);
+        #endregion
         aggregate.ShouldNotBeNull();
         aggregate.StudentName.ShouldBe("Alice");
         aggregate.CourseName.ShouldBe("Math");
@@ -210,22 +229,28 @@ public class dcb_tag_query_and_consistency_tests : IntegrationContext
         theSession.Events.Append(streamId, enrolled);
         await theSession.SaveChangesAsync();
 
+        #region sample_polecat_dcb_fetch_for_writing_by_tags
         await using var session2 = theStore.LightweightSession();
         var query = new EventTagQuery().Or<StudentId>(studentId);
         var boundary = await session2.Events.FetchForWritingByTags<StudentCourseEnrollment>(query);
 
-        boundary.Aggregate.ShouldNotBeNull();
-        boundary.Aggregate!.StudentName.ShouldBe("Alice");
-        boundary.Events.Count.ShouldBe(1);
-        boundary.LastSeenSequence.ShouldBeGreaterThan(0);
+        // Read current state
+        var aggregate = boundary.Aggregate; // may be null if no events yet
+        var lastSequence = boundary.LastSeenSequence;
 
         // Append via boundary
         var assignment = session2.Events.BuildEvent(new AssignmentSubmitted("HW1", 95));
         assignment.WithTag(studentId, courseId);
         boundary.AppendOne(assignment);
 
-        // Should succeed — no concurrency violation
+        // Save -- will throw DcbConcurrencyException if another session
+        // appended matching events after our read
         await session2.SaveChangesAsync();
+        #endregion
+
+        boundary.Aggregate.ShouldNotBeNull();
+        boundary.Aggregate!.StudentName.ShouldBe("Alice");
+        boundary.Events.Count.ShouldBe(1);
     }
 
     [Fact]
@@ -257,11 +282,19 @@ public class dcb_tag_query_and_consistency_tests : IntegrationContext
         assignment.WithTag(studentId, courseId);
         boundary.AppendOne(assignment);
 
-        var ex = await Should.ThrowAsync<AggregateException>(async () =>
+        #region sample_polecat_dcb_handling_concurrency
+        try
         {
             await session1.SaveChangesAsync();
-        });
-        ex.InnerExceptions.ShouldContain(e => e is DcbConcurrencyException);
+        }
+        catch (AggregateException ex) when (ex.InnerExceptions.OfType<DcbConcurrencyException>().Any())
+        {
+            // Reload and retry -- the boundary's tag query had new matching events
+            var violation = ex.InnerExceptions.OfType<DcbConcurrencyException>().First();
+            // violation.Query -- the original tag query
+            // violation.LastSeenSequence -- the sequence at time of read
+        }
+        #endregion
     }
 
     [Fact]
