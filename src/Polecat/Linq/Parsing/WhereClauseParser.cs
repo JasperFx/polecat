@@ -21,9 +21,9 @@ internal class WhereClauseParser
         { ExpressionType.LessThanOrEqual, "<=" }
     };
 
-    private readonly MemberFactory _memberFactory;
+    private readonly IMemberResolver _memberFactory;
 
-    public WhereClauseParser(MemberFactory memberFactory)
+    public WhereClauseParser(IMemberResolver memberFactory)
     {
         _memberFactory = memberFactory;
     }

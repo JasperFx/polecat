@@ -14,7 +14,7 @@ namespace Polecat.Linq.Parsing;
 /// </summary>
 internal class LinqQueryParser : ExpressionVisitor
 {
-    private readonly MemberFactory _memberFactory;
+    private readonly IMemberResolver _memberFactory;
     private readonly WhereClauseParser _whereParser;
 
     public Statement Statement { get; }
@@ -34,6 +34,16 @@ internal class LinqQueryParser : ExpressionVisitor
     ///     The Select() lambda, if present. Used for projections.
     /// </summary>
     public LambdaExpression? SelectExpression { get; private set; }
+
+    /// <summary>
+    ///     If GroupBy was detected, the key selector lambda.
+    /// </summary>
+    public LambdaExpression? GroupByKeySelector { get; private set; }
+
+    /// <summary>
+    ///     HAVING expressions collected from Where() after GroupBy().
+    /// </summary>
+    public List<Expression> GroupByHavingExpressions { get; } = [];
 
     /// <summary>
     ///     Whether Distinct() was applied.
@@ -86,7 +96,7 @@ internal class LinqQueryParser : ExpressionVisitor
     /// </summary>
     public TimeSpan? NonStaleDataTimeout { get; private set; }
 
-    public LinqQueryParser(MemberFactory memberFactory, string fromTable)
+    public LinqQueryParser(IMemberResolver memberFactory, string fromTable)
     {
         _memberFactory = memberFactory;
         _whereParser = new WhereClauseParser(memberFactory);
@@ -121,6 +131,12 @@ internal class LinqQueryParser : ExpressionVisitor
             case "SelectMany" when GroupJoinData != null:
                 HandleSelectManyAfterGroupJoin(node);
                 return node;
+            case "GroupBy":
+                HandleGroupBy(node);
+                break;
+            case "Where" when GroupByKeySelector != null:
+                HandleGroupByWhere(node);
+                break;
             case "Where":
                 HandleWhere(node);
                 break;
@@ -192,6 +208,11 @@ internal class LinqQueryParser : ExpressionVisitor
                 break;
             case "Average":
                 HandleAggregation(node, SingleValueMode.Average);
+                break;
+            case "Select" when GroupByKeySelector != null:
+                // For GroupBy queries, just store the select expression;
+                // the GroupBy execution path in the provider handles projection.
+                SelectExpression = GetLambda(node.Arguments[1]);
                 break;
             case "Select":
                 HandleSelect(node);
@@ -297,6 +318,19 @@ internal class LinqQueryParser : ExpressionVisitor
 
         var lambda = GetLambda(node.Arguments[1]);
         GroupJoinData!.OrderByExpressions.Add((lambda, descending));
+    }
+
+    private void HandleGroupBy(MethodCallExpression node)
+    {
+        GroupByKeySelector = GetLambda(node.Arguments[1]);
+    }
+
+    private void HandleGroupByWhere(MethodCallExpression node)
+    {
+        // Where() after GroupBy() becomes a HAVING clause.
+        // Store the expression body for later resolution in the provider.
+        var predicate = GetLambda(node.Arguments[1]);
+        GroupByHavingExpressions.Add(predicate.Body);
     }
 
     private void HandleWhere(MethodCallExpression node)

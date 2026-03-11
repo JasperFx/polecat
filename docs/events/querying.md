@@ -85,6 +85,85 @@ Each event returned from `FetchStreamAsync` implements `IEvent`:
 | `CausationId` | `string?` | Causation ID |
 | `Headers` | `Dictionary` | Custom headers |
 
+## Querying Directly Against Event Data
+
+### QueryRawEventDataOnly
+
+You can issue LINQ queries against a specific event type's data. This searches the entire `pc_events` table filtered by event type, so it is primarily intended for diagnostics and troubleshooting:
+
+```cs
+// Query all MembersJoined events
+var joinedEvents = await session.Events.QueryRawEventDataOnly<MembersJoined>()
+    .ToListAsync();
+
+// Count events of a specific type
+var count = await session.Events.QueryRawEventDataOnly<MembersJoined>()
+    .CountAsync();
+
+// Filter by event data properties
+var events = await session.Events.QueryRawEventDataOnly<MembersJoined>()
+    .Where(x => x.Day == 1)
+    .ToListAsync();
+
+// Check if any events exist
+var any = await session.Events.QueryRawEventDataOnly<MembersJoined>()
+    .AnyAsync();
+```
+
+### QueryAllRawEvents
+
+Query across all event types using the `IEvent` metadata properties:
+
+```cs
+// Query all events for a specific stream
+var events = await session.Events.QueryAllRawEvents()
+    .Where(x => x.StreamId == streamId)
+    .OrderBy(x => x.Sequence)
+    .ToListAsync();
+
+// Filter by event metadata
+var recentEvents = await session.Events.QueryAllRawEvents()
+    .Where(x => x.Timestamp > cutoffDate)
+    .ToListAsync();
+
+// Filter by event type name
+var joinedTypeName = store.Options.EventGraph
+    .EventMappingFor(typeof(MembersJoined)).EventTypeName;
+var events = await session.Events.QueryAllRawEvents()
+    .Where(x => x.EventTypeName == joinedTypeName)
+    .ToListAsync();
+
+// Count events matching a condition
+var count = await session.Events.QueryAllRawEvents()
+    .CountAsync(x => x.Version == 1);
+
+// Select specific metadata columns
+var streamIds = await session.Events.QueryAllRawEvents()
+    .Select(x => x.StreamId)
+    .Distinct()
+    .ToListAsync();
+```
+
+The queryable `IEvent` properties available for filtering and projection are:
+
+| Property | SQL Column | Description |
+| :--- | :--- | :--- |
+| `Id` | `id` | Unique event ID |
+| `Sequence` | `seq_id` | Global sequence number |
+| `StreamId` | `stream_id` | Stream identifier (Guid) |
+| `Version` | `version` | Position within the stream |
+| `Timestamp` | `timestamp` | When recorded |
+| `EventTypeName` | `type` | Event type name |
+| `DotNetTypeName` | `dotnet_type` | .NET type name |
+| `IsArchived` | `is_archived` | Archive flag |
+| `TenantId` | `tenant_id` | Tenant identifier |
+| `CorrelationId` | `correlation_id` | Correlation ID |
+| `CausationId` | `causation_id` | Causation ID |
+
+::: warning
+These queries search the entire event table and should be used judiciously. For routine application queries, prefer projected views or tag-based queries.
+:::
+
 ## QueryForNonStaleData
 
 Wait for async projections to catch up before querying:

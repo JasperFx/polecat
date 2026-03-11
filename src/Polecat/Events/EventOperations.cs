@@ -1,10 +1,12 @@
 using System.Data.Common;
+using System.Linq.Expressions;
 using System.Text;
 using JasperFx.Events;
 using JasperFx.Events.Tags;
 using Microsoft.Data.SqlClient;
 using Polecat.Events.Dcb;
 using Polecat.Events.Fetching;
+using Polecat.Events.Operations;
 using Polecat.Internal;
 using Polecat.Internal.Operations;
 using Polecat.Serialization;
@@ -414,6 +416,80 @@ internal class EventOperations : QueryEventStore, IEventOperations
 
     public IEvent BuildEvent(object data) => _events.BuildEvent(data);
 
+    public async Task<bool> EventsExistAsync(EventTagQuery query, CancellationToken cancellation = default)
+    {
+        var conditions = query.Conditions;
+        if (conditions.Count == 0)
+            throw new ArgumentException("EventTagQuery must have at least one condition.");
+
+        var distinctTagTypes = conditions.Select(c => c.TagType).Distinct().ToList();
+        var schema = _events.DatabaseSchemaName;
+
+        var sb = new StringBuilder();
+        sb.Append("SELECT CASE WHEN EXISTS (SELECT 1 FROM ");
+
+        var first = true;
+        for (var i = 0; i < distinctTagTypes.Count; i++)
+        {
+            var tagType = distinctTagTypes[i];
+            var registration = _events.FindTagType(tagType)
+                               ?? throw new InvalidOperationException(
+                                   $"Tag type '{tagType.Name}' is not registered.");
+
+            var alias = $"t{i}";
+            if (first)
+            {
+                sb.Append($"[{schema}].[pc_event_tag_{registration.TableSuffix}] {alias}");
+                first = false;
+            }
+            else
+            {
+                sb.Append($" INNER JOIN [{schema}].[pc_event_tag_{registration.TableSuffix}] {alias} ON t0.seq_id = {alias}.seq_id");
+            }
+        }
+
+        // Join to pc_events only if we need event type filtering
+        var hasEventTypeFilter = conditions.Any(c => c.EventType != null);
+        if (hasEventTypeFilter)
+        {
+            sb.Append($" INNER JOIN [{schema}].[pc_events] e ON t0.seq_id = e.seq_id");
+        }
+
+        sb.Append(" WHERE (");
+        await using var cmd = new SqlCommand();
+        var paramIndex = 0;
+
+        for (var i = 0; i < conditions.Count; i++)
+        {
+            if (i > 0) sb.Append(" OR ");
+
+            var condition = conditions[i];
+            var tagIndex = distinctTagTypes.IndexOf(condition.TagType);
+            var registration = _events.FindTagType(condition.TagType)!;
+            var value = registration.ExtractValue(condition.TagValue);
+
+            sb.Append($"(t{tagIndex}.value = @p{paramIndex}");
+            cmd.Parameters.AddWithValue($"@p{paramIndex}", value);
+            paramIndex++;
+
+            if (condition.EventType != null)
+            {
+                sb.Append($" AND e.type = @p{paramIndex}");
+                var eventTypeName = _events.EventMappingFor(condition.EventType).EventTypeName;
+                cmd.Parameters.AddWithValue($"@p{paramIndex}", eventTypeName);
+                paramIndex++;
+            }
+
+            sb.Append(')');
+        }
+
+        sb.Append(")) THEN 1 ELSE 0 END");
+        cmd.CommandText = sb.ToString();
+
+        var result = await _sessionBase.ExecuteScalarAsync(cmd, cancellation);
+        return result is int intVal && intVal == 1;
+    }
+
     public async Task<IReadOnlyList<IEvent>> QueryByTagsAsync(EventTagQuery query,
         CancellationToken cancellation = default)
     {
@@ -560,6 +636,26 @@ internal class EventOperations : QueryEventStore, IEventOperations
         _workTracker.Add(new AssertDcbConsistencyOperation(_events, query, lastSeenSequence));
 
         return new EventBoundary<T>(_sessionBase, _events, aggregate, events, lastSeenSequence);
+    }
+
+    public void AssignTagWhere(Expression<Func<IEvent, bool>> expression, object tag)
+    {
+        if (expression == null) throw new ArgumentNullException(nameof(expression));
+        if (tag == null) throw new ArgumentNullException(nameof(tag));
+
+        var tagType = tag.GetType();
+        var registration = _events.FindTagType(tagType)
+                           ?? throw new InvalidOperationException(
+                               $"Tag type '{tagType.Name}' is not registered. Call RegisterTagType<{tagType.Name}>() first.");
+
+        var value = registration.ExtractValue(tag);
+        var schema = _events.DatabaseSchemaName;
+
+        var parser = new EventWhereClauseParser();
+        var whereFragment = parser.Parse(expression.Body);
+
+        var op = new AssignTagWhereOperation(schema, registration, value, whereFragment);
+        _workTracker.Add(op);
     }
 
     private IEvent[] WrapEvents(object[] events)

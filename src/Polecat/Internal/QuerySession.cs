@@ -94,6 +94,49 @@ internal class QuerySession : IQuerySession
             new BatchExecution(batch, _lifetime), token).AsTask();
     }
 
+    // ── Existence check operations ──────────────────────────────────────
+
+    public Task<bool> CheckExistsAsync<T>(Guid id, CancellationToken token = default) where T : class
+        => CheckExistsInternalAsync<T>(id, token);
+
+    public Task<bool> CheckExistsAsync<T>(string id, CancellationToken token = default) where T : class
+        => CheckExistsInternalAsync<T>(id, token);
+
+    public Task<bool> CheckExistsAsync<T>(int id, CancellationToken token = default) where T : class
+        => CheckExistsInternalAsync<T>(id, token);
+
+    public Task<bool> CheckExistsAsync<T>(long id, CancellationToken token = default) where T : class
+        => CheckExistsInternalAsync<T>(id, token);
+
+    private async Task<bool> CheckExistsInternalAsync<T>(object id, CancellationToken token) where T : class
+    {
+        var provider = _providers.GetProvider<T>();
+        await _tableEnsurer.EnsureTableAsync(provider, token);
+
+        await using var cmd = new SqlCommand();
+
+        var softDeleteFilter = provider.Mapping.DeleteStyle == Metadata.DeleteStyle.SoftDelete
+            ? " AND is_deleted = 0"
+            : "";
+
+        cmd.CommandText = $"SELECT CAST(CASE WHEN EXISTS(SELECT 1 FROM {provider.Mapping.QualifiedTableName} WHERE id = @id AND tenant_id = @tenant_id{softDeleteFilter}) THEN 1 ELSE 0 END AS BIT);";
+        cmd.Parameters.AddWithValue("@id", id);
+        cmd.Parameters.AddWithValue("@tenant_id", TenantId);
+
+        Logger.OnBeforeExecute(cmd.CommandText);
+        try
+        {
+            var result = await ExecuteScalarAsync(cmd, token);
+            Logger.LogSuccess(cmd.CommandText);
+            return result is true;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogFailure(cmd.CommandText, ex);
+            throw;
+        }
+    }
+
     // ── Load operations ─────────────────────────────────────────────────
 
     public async Task<T?> LoadAsync<T>(Guid id, CancellationToken token = default) where T : class

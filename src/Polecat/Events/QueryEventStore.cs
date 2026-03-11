@@ -2,7 +2,9 @@ using System.Collections.Concurrent;
 using System.Reflection;
 using JasperFx.Events;
 using Microsoft.Data.SqlClient;
+using Polecat.Events.Linq;
 using Polecat.Internal;
+using Polecat.Linq;
 using Polecat.Storage;
 
 namespace Polecat.Events;
@@ -25,6 +27,20 @@ internal class QueryEventStore : IQueryEventStore
         _session = session;
         _events = events;
         _options = options;
+    }
+
+    public IPolecatQueryable<T> QueryRawEventDataOnly<T>() where T : class
+    {
+        _events.AddEventType(typeof(T));
+        var eventTypeName = _events.EventMappingFor(typeof(T)).EventTypeName;
+        var provider = new EventLinqQueryProvider(_session, _events, eventTypeName, typeof(T), _options);
+        return new PolecatLinqQueryable<T>(provider);
+    }
+
+    public IPolecatQueryable<IEvent> QueryAllRawEvents()
+    {
+        var provider = new EventLinqQueryProvider(_session, _events);
+        return new PolecatLinqQueryable<IEvent>(provider);
     }
 
     public async Task<IReadOnlyList<IEvent>> FetchStreamAsync(Guid streamId, long version = 0,

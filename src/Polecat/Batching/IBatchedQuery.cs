@@ -14,6 +14,30 @@ public interface IBatchedQuery
     /// </summary>
     IQuerySession Parent { get; }
 
+    /// <summary>
+    ///     Check if a document of type T with the given Guid id exists in the database
+    ///     without loading or deserializing the document.
+    /// </summary>
+    Task<bool> CheckExists<T>(Guid id) where T : class;
+
+    /// <summary>
+    ///     Check if a document of type T with the given string id exists in the database
+    ///     without loading or deserializing the document.
+    /// </summary>
+    Task<bool> CheckExists<T>(string id) where T : class;
+
+    /// <summary>
+    ///     Check if a document of type T with the given int id exists in the database
+    ///     without loading or deserializing the document.
+    /// </summary>
+    Task<bool> CheckExists<T>(int id) where T : class;
+
+    /// <summary>
+    ///     Check if a document of type T with the given long id exists in the database
+    ///     without loading or deserializing the document.
+    /// </summary>
+    Task<bool> CheckExists<T>(long id) where T : class;
+
     Task<T?> Load<T>(Guid id) where T : class;
     Task<T?> Load<T>(string id) where T : class;
     Task<T?> Load<T>(int id) where T : class;
@@ -28,6 +52,12 @@ public interface IBatchedQuery
     ///     Execute a batch query plan (specification pattern).
     /// </summary>
     Task<T> QueryByPlan<T>(IBatchQueryPlan<T> plan);
+
+    /// <summary>
+    ///     Check whether any events exist that match the given tag query, without loading the events.
+    ///     This is a lightweight existence check useful for DCB guard clauses.
+    /// </summary>
+    Task<bool> EventsExist(EventTagQuery query);
 
     /// <summary>
     ///     Fetch events matching a tag query and aggregate them into type T with a DCB consistency boundary.

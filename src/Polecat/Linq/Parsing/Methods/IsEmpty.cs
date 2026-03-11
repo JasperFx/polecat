@@ -15,7 +15,7 @@ internal class IsEmpty : IMethodCallParser
             && expression.Method.Name == "IsEmpty";
     }
 
-    public ISqlFragment Parse(MemberFactory memberFactory, MethodCallExpression expression)
+    public ISqlFragment Parse(IMemberResolver memberFactory, MethodCallExpression expression)
     {
         // IsEmpty is an extension: first arg is the collection member
         var memberExpr = expression.Arguments[0];

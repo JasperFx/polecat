@@ -16,7 +16,7 @@ internal class StringContains : IMethodCallParser
             && expression.Arguments.Count == 1;
     }
 
-    public ISqlFragment Parse(MemberFactory memberFactory, MethodCallExpression expression)
+    public ISqlFragment Parse(IMemberResolver memberFactory, MethodCallExpression expression)
     {
         var member = memberFactory.ResolveMember((MemberExpression)expression.Object!);
         var value = WhereClauseParser.ExtractValue(expression.Arguments[0]);

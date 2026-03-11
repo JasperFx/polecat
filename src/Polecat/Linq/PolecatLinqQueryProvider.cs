@@ -19,7 +19,7 @@ namespace Polecat.Linq;
 ///     IQueryProvider that translates LINQ expression trees into SQL Server queries.
 ///     All SQL execution routes through session's Polly-wrapped centralized methods.
 /// </summary>
-internal class PolecatLinqQueryProvider : IQueryProvider
+internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider
 {
     private readonly QuerySession _session;
     private readonly DocumentProviderRegistry _providers;
@@ -157,7 +157,7 @@ internal class PolecatLinqQueryProvider : IQueryProvider
         return sb.ToString();
     }
 
-    internal async Task<TResult> ExecuteAsync<TResult>(Expression expression, CancellationToken token)
+    public async Task<TResult> ExecuteAsync<TResult>(Expression expression, CancellationToken token)
     {
         var documentType = FindDocumentType(expression);
         var provider = _providers.GetProvider(documentType);
@@ -171,6 +171,12 @@ internal class PolecatLinqQueryProvider : IQueryProvider
         if (parser.GroupJoinData != null)
         {
             return await ExecuteGroupJoinAsync<TResult>(parser, token);
+        }
+
+        // Route to GroupBy execution if detected
+        if (parser.GroupByKeySelector != null)
+        {
+            return await ExecuteGroupByAsync<TResult>(parser, memberFactory, token);
         }
 
         // Wait for non-stale projection data if requested
@@ -253,6 +259,118 @@ internal class PolecatLinqQueryProvider : IQueryProvider
         await using var reader = await _session.ExecuteReaderAsync(batch, token);
 
         return await HandleResultAsync<TResult>(reader, parser, documentType, token, syncRevision, syncGuidVersion);
+    }
+
+    private async Task<TResult> ExecuteGroupByAsync<TResult>(
+        LinqQueryParser parser, MemberFactory memberFactory, CancellationToken token)
+    {
+        var builder2 = new GroupBySelectBuilder(memberFactory, _session.Options);
+
+        if (parser.SelectExpression != null)
+        {
+            builder2.Build(parser.GroupByKeySelector!, parser.SelectExpression);
+        }
+        else
+        {
+            throw new NotSupportedException(
+                "GroupBy must be followed by a Select() projection.");
+        }
+
+        // Apply GROUP BY columns
+        foreach (var col in builder2.GroupByColumns)
+        {
+            parser.Statement.GroupByColumns.Add(col);
+        }
+
+        // Apply SELECT columns
+        parser.Statement.SelectColumns = builder2.SelectColumns;
+
+        // Apply HAVING clauses
+        if (parser.GroupByHavingExpressions.Count > 0)
+        {
+            // We need the grouping parameter from the Where lambda to resolve aggregates.
+            // The expressions were stored as lambda bodies; find the grouping parameter.
+            // The parameter comes from the original Where() lambda, but we only stored the body.
+            // We need to find the IGrouping parameter by examining the expression tree.
+            var groupingParam = FindGroupingParameterInExpression(parser.GroupByHavingExpressions[0]);
+
+            foreach (var havingExpr in parser.GroupByHavingExpressions)
+            {
+                var fragment = builder2.ResolveHaving(havingExpr, groupingParam!);
+                parser.Statement.HavingClauses.Add(fragment);
+            }
+        }
+
+        // Add tenant filter
+        if (!parser.IsAnyTenant)
+        {
+            if (parser.TenantIds != null)
+            {
+                parser.Statement.Wheres.Add(new TenantInFilter(parser.TenantIds));
+            }
+            else
+            {
+                parser.Statement.Wheres.Add(new ComparisonFilter("tenant_id", "=", _session.TenantId));
+            }
+        }
+
+        // Build SQL and execute
+        await using var batch = new SqlBatch();
+        var batchBuilder = new BatchBuilder(batch);
+        parser.Statement.Apply(batchBuilder);
+        batchBuilder.Compile();
+
+        await using var reader = await _session.ExecuteReaderAsync(batch, token);
+
+        // Check if the select is JSON_OBJECT (complex projection) or scalar
+        if (builder2.SelectColumns.StartsWith("JSON_OBJECT("))
+        {
+            // Deserialize JSON results
+            return await InvokeGroupByListHandlerAsync<TResult>(reader, parser.SelectExpression!, token);
+        }
+
+        // Scalar select (g.Key or g.Count())
+        return await InvokeScalarListHandlerAsync<TResult>(reader, token);
+    }
+
+    private async Task<TResult> InvokeGroupByListHandlerAsync<TResult>(
+        System.Data.Common.DbDataReader reader, LambdaExpression selectExpression,
+        CancellationToken token)
+    {
+        // TResult is IReadOnlyList<TElement>
+        var elementType = typeof(TResult).GetGenericArguments()[0];
+        var handlerType = typeof(QueryHandlers.GroupByListHandler<>).MakeGenericType(elementType);
+        var handler = Activator.CreateInstance(handlerType, _session.Serializer)!;
+
+        var handleMethod = handlerType.GetMethod("HandleAsync")!;
+        var task = (Task)handleMethod.Invoke(handler, [reader, token])!;
+        await task;
+
+        var resultProperty = task.GetType().GetProperty("Result")!;
+        return (TResult)resultProperty.GetValue(task)!;
+    }
+
+    private static System.Linq.Expressions.ParameterExpression? FindGroupingParameterInExpression(
+        Expression expression)
+    {
+        var finder = new GroupingParameterFinder();
+        finder.Visit(expression);
+        return finder.Parameter;
+    }
+
+    private class GroupingParameterFinder : ExpressionVisitor
+    {
+        public System.Linq.Expressions.ParameterExpression? Parameter { get; private set; }
+
+        protected override Expression VisitParameter(System.Linq.Expressions.ParameterExpression node)
+        {
+            if (Parameter == null && node.Type.IsGenericType
+                && node.Type.GetGenericTypeDefinition() == typeof(IGrouping<,>))
+            {
+                Parameter = node;
+            }
+            return base.VisitParameter(node);
+        }
     }
 
     private async Task<TResult> ExecuteGroupJoinAsync<TResult>(LinqQueryParser parser, CancellationToken token)

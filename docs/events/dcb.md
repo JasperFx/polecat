@@ -89,6 +89,17 @@ Returns `null` if no matching events are found.
 The consistency check only detects events that match the **same tag query**. Events appended to unrelated tags or streams will not cause a violation.
 :::
 
+## Checking Event Existence
+
+If you only need to know whether any events matching a tag query exist -- without loading or deserializing them -- use `EventsExistAsync`. This is a lightweight existence check that avoids the overhead of fetching and materializing event data:
+
+<!-- snippet: sample_polecat_dcb_events_exist_async -->
+<!-- endSnippet -->
+
+This is useful for guard clauses and validation logic in DCB workflows where you need to check preconditions before appending new events.
+
+`EventsExistAsync` is also available in batch queries via `batch.EventsExist(query)`.
+
 ## How It Works
 
 ### Storage

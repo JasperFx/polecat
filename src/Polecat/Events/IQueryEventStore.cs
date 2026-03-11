@@ -1,4 +1,5 @@
 using JasperFx.Events;
+using Polecat.Linq;
 
 namespace Polecat.Events;
 
@@ -7,6 +8,19 @@ namespace Polecat.Events;
 /// </summary>
 public interface IQueryEventStore
 {
+    /// <summary>
+    ///     Query directly against ONLY the raw event data for a specific event type.
+    ///     Warning: this searches the entire event table and is primarily intended
+    ///     for diagnostics and troubleshooting.
+    /// </summary>
+    IPolecatQueryable<T> QueryRawEventDataOnly<T>() where T : class;
+
+    /// <summary>
+    ///     Query directly against the raw event data across all event types.
+    ///     Returns IEvent wrappers with full metadata.
+    /// </summary>
+    IPolecatQueryable<IEvent> QueryAllRawEvents();
+
     /// <summary>
     ///     Fetch all events for a stream by Guid id.
     /// </summary>

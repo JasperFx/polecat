@@ -10,5 +10,5 @@ namespace Polecat.Linq.Parsing.Methods;
 internal interface IMethodCallParser
 {
     bool Matches(MethodCallExpression expression);
-    ISqlFragment Parse(MemberFactory memberFactory, MethodCallExpression expression);
+    ISqlFragment Parse(IMemberResolver memberFactory, MethodCallExpression expression);
 }

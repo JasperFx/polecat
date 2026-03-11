@@ -272,9 +272,9 @@ public static class PolecatQueryableExtensions
         return await provider.ExecuteAsync<double>(expression, token);
     }
 
-    private static PolecatLinqQueryProvider GetPolecatProvider<T>(IQueryable<T> queryable)
+    private static IPolecatAsyncQueryProvider GetPolecatProvider<T>(IQueryable<T> queryable)
     {
-        if (queryable.Provider is PolecatLinqQueryProvider provider)
+        if (queryable.Provider is IPolecatAsyncQueryProvider provider)
         {
             return provider;
         }

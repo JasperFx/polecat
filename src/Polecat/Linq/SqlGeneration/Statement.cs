@@ -15,6 +15,8 @@ internal class Statement
     public int? Offset { get; set; }
     public bool IsExistsWrapper { get; set; }
     public bool IsDistinct { get; set; }
+    public List<string> GroupByColumns { get; } = [];
+    public List<ISqlFragment> HavingClauses { get; } = [];
 
     public void Apply(ICommandBuilder builder)
     {
@@ -52,6 +54,26 @@ internal class Statement
             {
                 if (i > 0) builder.Append(" AND ");
                 Wheres[i].Apply(builder);
+            }
+        }
+
+        if (GroupByColumns.Count > 0)
+        {
+            builder.Append(" GROUP BY ");
+            for (var i = 0; i < GroupByColumns.Count; i++)
+            {
+                if (i > 0) builder.Append(", ");
+                builder.Append(GroupByColumns[i]);
+            }
+        }
+
+        if (HavingClauses.Count > 0)
+        {
+            builder.Append(" HAVING ");
+            for (var i = 0; i < HavingClauses.Count; i++)
+            {
+                if (i > 0) builder.Append(" AND ");
+                HavingClauses[i].Apply(builder);
             }
         }
 

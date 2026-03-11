@@ -8,19 +8,19 @@ namespace Polecat.Linq;
 /// </summary>
 internal class PolecatLinqQueryable<T> : IPolecatQueryable<T>
 {
-    public PolecatLinqQueryable(PolecatLinqQueryProvider provider)
+    public PolecatLinqQueryable(IPolecatAsyncQueryProvider provider)
     {
         Provider = provider;
         Expression = Expression.Constant(this);
     }
 
-    public PolecatLinqQueryable(PolecatLinqQueryProvider provider, Expression expression)
+    public PolecatLinqQueryable(IPolecatAsyncQueryProvider provider, Expression expression)
     {
         Provider = provider;
         Expression = expression;
     }
 
-    internal PolecatLinqQueryProvider PolecatProvider => (PolecatLinqQueryProvider)Provider;
+    internal IPolecatAsyncQueryProvider PolecatProvider => (IPolecatAsyncQueryProvider)Provider;
 
     public Type ElementType => typeof(T);
     public Expression Expression { get; }

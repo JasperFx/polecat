@@ -490,6 +490,96 @@ public class dcb_tag_query_and_consistency_tests : IntegrationContext
         ex.InnerExceptions.ShouldContain(e => e is DcbConcurrencyException);
     }
 
+    #region sample_polecat_dcb_events_exist_async
+    [Fact]
+    public async Task events_exist_returns_true_when_matching_events_found()
+    {
+        var studentId = new StudentId(Guid.NewGuid());
+        var courseId = new CourseId(Guid.NewGuid());
+        var streamId = Guid.NewGuid();
+
+        var enrolled = theSession.Events.BuildEvent(new StudentEnrolled("Alice", "Math"));
+        enrolled.WithTag(studentId, courseId);
+        theSession.Events.Append(streamId, enrolled);
+        await theSession.SaveChangesAsync();
+
+        // Check existence -- lightweight, no event loading
+        await using var session2 = theStore.LightweightSession();
+        var query = new EventTagQuery().Or<StudentId>(studentId);
+        var exists = await session2.Events.EventsExistAsync(query);
+        exists.ShouldBeTrue();
+    }
+    #endregion
+
+    [Fact]
+    public async Task events_exist_returns_false_when_no_matching_events()
+    {
+        var studentId = new StudentId(Guid.NewGuid());
+
+        await using var session2 = theStore.LightweightSession();
+        var query = new EventTagQuery().Or<StudentId>(studentId);
+        var exists = await session2.Events.EventsExistAsync(query);
+        exists.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task events_exist_with_event_type_filter()
+    {
+        var studentId = new StudentId(Guid.NewGuid());
+        var courseId = new CourseId(Guid.NewGuid());
+        var streamId = Guid.NewGuid();
+
+        var enrolled = theSession.Events.BuildEvent(new StudentEnrolled("Alice", "Math"));
+        enrolled.WithTag(studentId, courseId);
+        theSession.Events.Append(streamId, enrolled);
+        await theSession.SaveChangesAsync();
+
+        await using var session2 = theStore.LightweightSession();
+
+        // Should find StudentEnrolled
+        var query1 = new EventTagQuery().Or<StudentEnrolled, StudentId>(studentId);
+        (await session2.Events.EventsExistAsync(query1)).ShouldBeTrue();
+
+        // Should NOT find AssignmentSubmitted (none appended)
+        var query2 = new EventTagQuery().Or<AssignmentSubmitted, StudentId>(studentId);
+        (await session2.Events.EventsExistAsync(query2)).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task events_exist_via_batch_query_positive()
+    {
+        var studentId = new StudentId(Guid.NewGuid());
+        var courseId = new CourseId(Guid.NewGuid());
+        var streamId = Guid.NewGuid();
+
+        var enrolled = theSession.Events.BuildEvent(new StudentEnrolled("Alice", "Math"));
+        enrolled.WithTag(studentId, courseId);
+        theSession.Events.Append(streamId, enrolled);
+        await theSession.SaveChangesAsync();
+
+        await using var session2 = theStore.LightweightSession();
+        var batch = session2.CreateBatchQuery();
+        var query = new EventTagQuery().Or<StudentId>(studentId);
+        var existsTask = batch.EventsExist(query);
+        await batch.Execute();
+
+        (await existsTask).ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task events_exist_via_batch_query_negative()
+    {
+        var studentId = new StudentId(Guid.NewGuid());
+
+        await using var session2 = theStore.LightweightSession();
+        var batch = session2.CreateBatchQuery();
+        var query = new EventTagQuery().Or<StudentId>(studentId);
+        var existsTask = batch.EventsExist(query);
+        await batch.Execute();
+
+        (await existsTask).ShouldBeFalse();
+    }
+
     [Fact]
     public async Task fetch_for_writing_by_tags_throws_on_empty_query()
     {

@@ -1,3 +1,4 @@
+using System.Linq.Expressions;
 using JasperFx.Events;
 using JasperFx.Events.Tags;
 using Polecat.Events.Dcb;
@@ -139,6 +140,20 @@ public interface IEventOperations : IQueryEventStore
     ///     Permanently delete a stream and all its events (hard DELETE) by string key.
     /// </summary>
     void TombstoneStream(string streamKey);
+
+    /// <summary>
+    ///     Retroactively assign a tag to all events matching the given LINQ predicate.
+    ///     The tag must be of a registered tag type. The operation is queued and applied at SaveChangesAsync time.
+    /// </summary>
+    /// <param name="expression">LINQ predicate against IEvent properties (e.g. EventTypeName, StreamId, Timestamp)</param>
+    /// <param name="tag">Tag value whose type must be registered via RegisterTagType</param>
+    void AssignTagWhere(Expression<Func<IEvent, bool>> expression, object tag);
+
+    /// <summary>
+    ///     Check whether any events exist that match the given tag query, without loading the events.
+    ///     This is a lightweight existence check useful for DCB guard clauses.
+    /// </summary>
+    Task<bool> EventsExistAsync(EventTagQuery query, CancellationToken cancellation = default);
 
     /// <summary>
     ///     Query events across streams by tag conditions (DCB support).

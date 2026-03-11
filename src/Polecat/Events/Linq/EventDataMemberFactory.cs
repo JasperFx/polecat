@@ -1,27 +1,23 @@
 using System.Linq.Expressions;
 using System.Reflection;
 using System.Text.Json;
-using JasperFx.Core.Reflection;
+using Polecat.Linq.Members;
 using Polecat.Serialization;
-using Polecat.Storage;
 
-namespace Polecat.Linq.Members;
+namespace Polecat.Events.Linq;
 
 /// <summary>
-///     Resolves C# member expressions to IQueryableMember instances for SQL generation.
+///     Resolves event data type properties to JSON_VALUE expressions on the data column.
+///     Unlike MemberFactory, all properties (including Id) resolve to JSON paths.
 /// </summary>
-internal class MemberFactory : IMemberResolver
+internal class EventDataMemberFactory : IMemberResolver
 {
     private readonly JsonNamingPolicy? _namingPolicy;
     private readonly EnumStorage _enumStorage;
-    private readonly Type _idType;
-    private readonly ValueTypeInfo? _valueTypeId;
 
-    public MemberFactory(StoreOptions options, DocumentMapping mapping)
+    public EventDataMemberFactory(StoreOptions options)
     {
         _enumStorage = options.Serializer.EnumStorage;
-        _idType = mapping.IdType;
-        _valueTypeId = mapping.ValueTypeId;
 
         if (options.Serializer is Serializer s)
         {
@@ -35,12 +31,6 @@ internal class MemberFactory : IMemberResolver
 
     public IQueryableMember ResolveMember(MemberExpression expression)
     {
-        // Check if it's the Id property on the root document
-        if (expression.Member.Name == "Id" && expression.Expression is ParameterExpression)
-        {
-            return new IdMember(_idType, _valueTypeId);
-        }
-
         var jsonPath = BuildJsonPath(expression);
         var memberType = GetMemberType(expression.Member);
         return CreateMember(jsonPath, memberType);
@@ -113,6 +103,6 @@ internal class MemberFactory : IMemberResolver
         if (type == typeof(Guid)) return "uniqueidentifier";
         if (type == typeof(DateTime)) return "datetime2";
         if (type == typeof(DateTimeOffset)) return "datetimeoffset";
-        return null; // string, bool, etc. — no CAST needed
+        return null;
     }
 }

@@ -30,6 +30,11 @@ internal class BatchedQuery : IBatchedQuery
 
     internal void TrackProvider(DocumentProvider provider) => _involvedProviders.Add(provider);
 
+    public Task<bool> CheckExists<T>(Guid id) where T : class => AddCheckExists<T>(id);
+    public Task<bool> CheckExists<T>(string id) where T : class => AddCheckExists<T>(id);
+    public Task<bool> CheckExists<T>(int id) where T : class => AddCheckExists<T>(id);
+    public Task<bool> CheckExists<T>(long id) where T : class => AddCheckExists<T>(id);
+
     public Task<T?> Load<T>(Guid id) where T : class => AddLoad<T>(id);
     public Task<T?> Load<T>(string id) where T : class => AddLoad<T>(id);
     public Task<T?> Load<T>(int id) where T : class => AddLoad<T>(id);
@@ -83,6 +88,17 @@ internal class BatchedQuery : IBatchedQuery
         return item.Result;
     }
 
+    public Task<bool> EventsExist(EventTagQuery query)
+    {
+        var eventGraph = _session is DocumentSessionBase docSession
+            ? docSession.Options.EventGraph
+            : throw new InvalidOperationException("EventsExist requires a document session.");
+
+        var item = new EventsExistBatchItem(eventGraph, query);
+        _items.Add(item);
+        return item.Result;
+    }
+
     public Task<IEventBoundary<T>> FetchForWritingByTags<T>(EventTagQuery query) where T : class
     {
         if (_session is not DocumentSessionBase docSession)
@@ -123,6 +139,15 @@ internal class BatchedQuery : IBatchedQuery
 
             await _items[i].ReadResultSetAsync(reader, token);
         }
+    }
+
+    private Task<bool> AddCheckExists<T>(object id) where T : class
+    {
+        var provider = _providers.GetProvider<T>();
+        _involvedProviders.Add(provider);
+        var item = new CheckExistsBatchQueryItem<T>(id, provider, _session.TenantId);
+        _items.Add(item);
+        return item.Result;
     }
 
     private Task<T?> AddLoad<T>(object id) where T : class

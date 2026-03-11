@@ -52,6 +52,30 @@ public interface IQuerySession : IAsyncDisposable
     IQueryEventStore Events { get; }
 
     /// <summary>
+    ///     Check if a document of type T with the given Guid id exists in the database
+    ///     without loading or deserializing the document.
+    /// </summary>
+    Task<bool> CheckExistsAsync<T>(Guid id, CancellationToken token = default) where T : class;
+
+    /// <summary>
+    ///     Check if a document of type T with the given string id exists in the database
+    ///     without loading or deserializing the document.
+    /// </summary>
+    Task<bool> CheckExistsAsync<T>(string id, CancellationToken token = default) where T : class;
+
+    /// <summary>
+    ///     Check if a document of type T with the given int id exists in the database
+    ///     without loading or deserializing the document.
+    /// </summary>
+    Task<bool> CheckExistsAsync<T>(int id, CancellationToken token = default) where T : class;
+
+    /// <summary>
+    ///     Check if a document of type T with the given long id exists in the database
+    ///     without loading or deserializing the document.
+    /// </summary>
+    Task<bool> CheckExistsAsync<T>(long id, CancellationToken token = default) where T : class;
+
+    /// <summary>
     ///     Load a document by its id. Returns null if not found.
     /// </summary>
     Task<T?> LoadAsync<T>(Guid id, CancellationToken token = default) where T : class;

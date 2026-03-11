@@ -17,7 +17,7 @@ internal class IsOneOf : IMethodCallParser
             && expression.Method.Name is "IsOneOf" or "In";
     }
 
-    public ISqlFragment Parse(MemberFactory memberFactory, MethodCallExpression expression)
+    public ISqlFragment Parse(IMemberResolver memberFactory, MethodCallExpression expression)
     {
         // IsOneOf is an extension method: first arg is the member, second is the values
         var memberExpr = expression.Arguments[0];

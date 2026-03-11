@@ -44,7 +44,7 @@ internal class EnumerableContains : IMethodCallParser
         return false;
     }
 
-    public ISqlFragment Parse(MemberFactory memberFactory, MethodCallExpression expression)
+    public ISqlFragment Parse(IMemberResolver memberFactory, MethodCallExpression expression)
     {
         // Check if this is a collection property contains: x.Tags.Contains("value")
         if (IsCollectionPropertyContains(expression))
@@ -74,7 +74,7 @@ internal class EnumerableContains : IMethodCallParser
     }
 
     private static ISqlFragment ParseCollectionPropertyContains(
-        MemberFactory memberFactory, MethodCallExpression expression)
+        IMemberResolver memberFactory, MethodCallExpression expression)
     {
         MemberExpression collectionMember;
         Expression valueExpr;
@@ -102,7 +102,7 @@ internal class EnumerableContains : IMethodCallParser
     }
 
     private static ISqlFragment ParseListContainsMember(
-        MemberFactory memberFactory, MethodCallExpression expression)
+        IMemberResolver memberFactory, MethodCallExpression expression)
     {
         Expression memberExpr;
         Expression listExpr;

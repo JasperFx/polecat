@@ -17,7 +17,7 @@ internal class StringIsNullOrEmpty : IMethodCallParser
             && expression.Arguments.Count == 1;
     }
 
-    public ISqlFragment Parse(MemberFactory memberFactory, MethodCallExpression expression)
+    public ISqlFragment Parse(IMemberResolver memberFactory, MethodCallExpression expression)
     {
         var arg = expression.Arguments[0];
 
