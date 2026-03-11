@@ -41,7 +41,7 @@ public class StoreOptions
     ///     The event graph configuration and registry. Created at construction time
     ///     so projections can register event types during configuration.
     /// </summary>
-    internal EventGraph EventGraph { get; }
+    public EventGraph EventGraph { get; }
 
     /// <summary>
     ///     The connection string to the SQL Server database.

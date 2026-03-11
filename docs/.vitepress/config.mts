@@ -62,6 +62,7 @@ const config: UserConfig<DefaultTheme.Config> = {
             { text: 'JSON Serialization', link: '/configuration/json' },
             { text: 'Resiliency Policies', link: '/configuration/retries' },
             { text: 'Multi-Tenancy with Database per Tenant', link: '/configuration/multitenancy' },
+            { text: 'MCP Server', link: '/configuration/mcp' },
           ]
         },
         {

@@ -171,6 +171,11 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
 
     public IReadOnlyList<ITagTypeRegistration> TagTypes => _tagTypes;
 
+    /// <summary>
+    ///     All currently registered event types.
+    /// </summary>
+    public IReadOnlyList<PolecatEventType> AllKnownEventTypes() => _eventTypes.Values.ToList();
+
     public ITagTypeRegistration? FindTagType(Type tagType)
     {
         return _tagTypes.FirstOrDefault(t => t.TagType == tagType);
