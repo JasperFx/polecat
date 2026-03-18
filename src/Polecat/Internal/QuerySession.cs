@@ -17,7 +17,7 @@ namespace Polecat.Internal;
 ///     Read-only query session. All SQL execution flows through Polly-wrapped
 ///     centralized methods backed by IConnectionLifetime.
 /// </summary>
-internal class QuerySession : IQuerySession
+internal partial class QuerySession : IQuerySession
 {
     internal readonly IConnectionLifetime _lifetime;
     private readonly ResiliencePipeline _resilience;

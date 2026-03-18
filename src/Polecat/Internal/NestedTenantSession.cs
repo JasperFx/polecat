@@ -41,6 +41,7 @@ internal class NestedTenantSession : ITenantOperations
     public string? LastModifiedBy { get => _parent.LastModifiedBy; set => _parent.LastModifiedBy = value; }
     public int RequestCount => _parent.RequestCount;
     public IPolecatSessionLogger Logger { get => _parent.Logger; set => _parent.Logger = value; }
+    public IAdvancedSql AdvancedSql => _parent.AdvancedSql;
 
     public Task<bool> CheckExistsAsync<T>(Guid id, CancellationToken token = default) where T : class
         => _parent.CheckExistsAsync<T>(id, token);
