@@ -403,6 +403,15 @@ internal class EventOperations : QueryEventStore, IEventOperations
         _workTracker.Add(new TombstoneStreamOperation(_events, streamKey, _tenantId));
     }
 
+    public void OverwriteEvent(IEvent @event)
+    {
+        var serializedData = _sessionBase.Serializer.ToJson(@event.Data);
+        var serializedHeaders = @event.Headers != null
+            ? _sessionBase.Serializer.ToJson(@event.Headers)
+            : null;
+        _workTracker.Add(new Protected.OverwriteEventOperation(_events, @event, serializedData, serializedHeaders));
+    }
+
     private async Task<IEventStream<T>> FetchForWritingInternal<T>(object streamId, bool forExclusive,
         long? expectedVersion, CancellationToken cancellation) where T : class, new()
     {

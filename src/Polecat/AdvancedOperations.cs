@@ -359,6 +359,17 @@ public class AdvancedOperations
     }
 
     /// <summary>
+    ///     Configure and execute a batch masking of protected data for a subset of the events
+    ///     in the event store. Used for GDPR right-to-erasure compliance.
+    /// </summary>
+    public Task ApplyEventDataMasking(Action<Events.Protected.IEventDataMasking> configure, CancellationToken token = default)
+    {
+        var masking = new Events.Protected.EventDataMasking(_store);
+        configure(masking);
+        return masking.ApplyAsync(token);
+    }
+
+    /// <summary>
     ///     Delete all rows from event store tables (pc_events, pc_streams, pc_event_progression)
     ///     and all natural key tables (pc_natural_key_*).
     /// </summary>

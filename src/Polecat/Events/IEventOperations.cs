@@ -234,6 +234,12 @@ public interface IEventOperations : IQueryEventStore
     void AssignTagWhere(Expression<Func<IEvent, bool>> expression, object tag);
 
     /// <summary>
+    ///     Overwrite the data and optionally headers of an existing event. Used for GDPR
+    ///     data masking operations.
+    /// </summary>
+    void OverwriteEvent(IEvent @event);
+
+    /// <summary>
     ///     Check whether any events exist that match the given tag query, without loading the events.
     ///     This is a lightweight existence check useful for DCB guard clauses.
     /// </summary>
