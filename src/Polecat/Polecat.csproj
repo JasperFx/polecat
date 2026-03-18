@@ -35,13 +35,14 @@
     </ItemGroup>
 
     <ItemGroup>
-        <PackageReference Include="JasperFx" Version="1.21.0" />
-        <PackageReference Include="JasperFx.Events" Version="1.23.1" />
+        <!-- Local project references for unreleased features -->
+        <ProjectReference Include="..\..\..\..\..\..\jasperfx\src\JasperFx\JasperFx.csproj" />
+        <ProjectReference Include="..\..\..\..\..\..\jasperfx\src\JasperFx.Events\JasperFx.Events.csproj" />
         <PackageReference Include="Microsoft.Data.SqlClient" Version="6.1.4" />
         <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
         <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.0" />
         <PackageReference Include="Polly.Core" Version="8.6.5" />
-        <PackageReference Include="Weasel.SqlServer" Version="8.9.0" />
+        <ProjectReference Include="..\..\..\..\..\..\weasel\src\Weasel.SqlServer\Weasel.SqlServer.csproj" />
     </ItemGroup>
 
 </Project>

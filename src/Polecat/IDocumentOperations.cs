@@ -95,6 +95,12 @@ public interface IDocumentOperations : IQuerySession
     void UndoDeleteWhere<T>(Expression<Func<T, bool>> predicate) where T : class;
 
     /// <summary>
+    ///     Access data from another tenant and apply document or event updates to this
+    ///     session for a separate tenant.
+    /// </summary>
+    ITenantOperations ForTenant(string tenantId);
+
+    /// <summary>
     ///     Store an IVersioned document with an explicitly expected Guid version
     ///     for optimistic concurrency checking.
     /// </summary>

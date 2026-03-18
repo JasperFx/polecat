@@ -21,6 +21,7 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
     private readonly ConcurrentDictionary<Type, PolecatEventType> _eventTypes = new();
     private readonly ConcurrentDictionary<string, Type> _aggregateTypes = new();
     private readonly List<ITagTypeRegistration> _tagTypes = new();
+    private readonly List<IMasker> _maskers = new();
 
     internal EventGraph(StoreOptions options)
     {
@@ -213,6 +214,81 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
         }
 
         return result.ToString();
+    }
+
+    /// <summary>
+    ///     Register a policy for how to remove or mask protected information
+    ///     for an event type T or series of event types that can be cast to T.
+    /// </summary>
+    public void AddMaskingRuleForProtectedInformation<T>(Action<T> action)
+    {
+        ArgumentNullException.ThrowIfNull(action);
+        _maskers.Add(new ActionMasker<T>(action));
+    }
+
+    /// <summary>
+    ///     Register a policy for how to remove or mask protected information
+    ///     for an event type T, replacing the event data with a new instance.
+    /// </summary>
+    public void AddMaskingRuleForProtectedInformation<T>(Func<T, T> func)
+    {
+        ArgumentNullException.ThrowIfNull(func);
+        _maskers.Add(new FuncMasker<T>(func));
+    }
+
+    internal bool TryMask(IEvent e)
+    {
+        var matched = false;
+        foreach (var masker in _maskers)
+        {
+            matched = matched || masker.TryMask(e);
+        }
+        return matched;
+    }
+}
+
+internal interface IMasker
+{
+    bool TryMask(IEvent @event);
+}
+
+internal class ActionMasker<T> : IMasker where T : notnull
+{
+    private readonly Action<T> _masking;
+
+    public ActionMasker(Action<T> masking)
+    {
+        _masking = masking;
+    }
+
+    public bool TryMask(IEvent @event)
+    {
+        if (@event is IEvent<T> e)
+        {
+            _masking(e.Data);
+            return true;
+        }
+        return false;
+    }
+}
+
+internal class FuncMasker<T> : IMasker where T : notnull
+{
+    private readonly Func<T, T> _masking;
+
+    public FuncMasker(Func<T, T> masking)
+    {
+        _masking = masking;
+    }
+
+    public bool TryMask(IEvent @event)
+    {
+        if (@event is Event<T> e)
+        {
+            e.Data = _masking(e.Data);
+            return true;
+        }
+        return false;
     }
 }
 

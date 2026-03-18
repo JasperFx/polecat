@@ -91,6 +91,16 @@ internal class LinqQueryParser : ExpressionVisitor
     public DateTimeOffset? ModifiedBeforeTimestamp { get; private set; }
 
     /// <summary>
+    ///     If CreatedSince() was called, the timestamp to filter by.
+    /// </summary>
+    public DateTimeOffset? CreatedSinceTimestamp { get; private set; }
+
+    /// <summary>
+    ///     If CreatedBefore() was called, the timestamp to filter by.
+    /// </summary>
+    public DateTimeOffset? CreatedBeforeTimestamp { get; private set; }
+
+    /// <summary>
     ///     If QueryForNonStaleData() was called, the timeout for waiting.
     ///     Null means not called, TimeSpan.Zero means use default (5s).
     /// </summary>
@@ -243,6 +253,12 @@ internal class LinqQueryParser : ExpressionVisitor
                 break;
             case "ModifiedBefore" when node.Method.DeclaringType == typeof(MetadataExtensions):
                 HandleModifiedBefore(node);
+                break;
+            case "CreatedSince" when node.Method.DeclaringType == typeof(CreatedAtExtensions):
+                HandleCreatedSince(node);
+                break;
+            case "CreatedBefore" when node.Method.DeclaringType == typeof(CreatedAtExtensions):
+                HandleCreatedBefore(node);
                 break;
             case "QueryForNonStaleData" when node.Method.DeclaringType == typeof(NonStaleDataExtensions):
                 HandleQueryForNonStaleData(node);
@@ -481,6 +497,18 @@ internal class LinqQueryParser : ExpressionVisitor
     {
         var value = WhereClauseParser.ExtractValue(node.Arguments[1]);
         ModifiedBeforeTimestamp = (DateTimeOffset)value;
+    }
+
+    private void HandleCreatedSince(MethodCallExpression node)
+    {
+        var value = WhereClauseParser.ExtractValue(node.Arguments[1]);
+        CreatedSinceTimestamp = (DateTimeOffset)value;
+    }
+
+    private void HandleCreatedBefore(MethodCallExpression node)
+    {
+        var value = WhereClauseParser.ExtractValue(node.Arguments[1]);
+        CreatedBeforeTimestamp = (DateTimeOffset)value;
     }
 
     private void HandleQueryForNonStaleData(MethodCallExpression node)

@@ -80,6 +80,28 @@ internal class WhereClauseParser
             return moduloFragment!;
         }
 
+        // Handle string transform methods: x.Name.ToLower() == "value"
+        if (TryParseMethodTransform(binary.Left, binary.Right, op, out var transformFragment))
+        {
+            return transformFragment!;
+        }
+
+        if (TryParseMethodTransform(binary.Right, binary.Left, ReverseOperator(op), out transformFragment))
+        {
+            return transformFragment!;
+        }
+
+        // Handle string.Length: x.Name.Length == 5
+        if (TryParseMemberProperty(binary.Left, binary.Right, op, out var memberPropFragment))
+        {
+            return memberPropFragment!;
+        }
+
+        if (TryParseMemberProperty(binary.Right, binary.Left, ReverseOperator(op), out memberPropFragment))
+        {
+            return memberPropFragment!;
+        }
+
         // Try to resolve: left=member, right=value
         if (TryResolveMemberAndValue(binary.Left, binary.Right, out var member, out var value))
         {
@@ -96,6 +118,52 @@ internal class WhereClauseParser
 
         throw new NotSupportedException(
             $"Cannot resolve comparison: {binary}");
+    }
+
+    private bool TryParseMethodTransform(Expression methodSide, Expression valueSide, string op,
+        out ISqlFragment? fragment)
+    {
+        fragment = null;
+
+        var unwrapped = StripConvert(methodSide);
+        if (unwrapped is not MethodCallExpression methodCall) return false;
+
+        var parser = MethodCallParserRegistry.FindParser(methodCall);
+        if (parser == null) return false;
+
+        var result = parser.Parse(_memberFactory, methodCall);
+        if (result is not SqlFunctionLocator funcLocator) return false;
+
+        var value = ExtractValue(valueSide);
+        if (value == null)
+        {
+            fragment = op == "="
+                ? new WhereFragment($"{funcLocator.FullLocator} IS NULL")
+                : new WhereFragment($"{funcLocator.FullLocator} IS NOT NULL");
+        }
+        else
+        {
+            fragment = new ComparisonFilter(funcLocator.FullLocator, op, value);
+        }
+
+        return true;
+    }
+
+    private bool TryParseMemberProperty(Expression memberSide, Expression valueSide, string op,
+        out ISqlFragment? fragment)
+    {
+        fragment = null;
+
+        var unwrapped = StripConvert(memberSide);
+        if (unwrapped is not MemberExpression { Member.Name: "Length" } lengthExpr) return false;
+        if (lengthExpr.Expression is not MemberExpression innerMember) return false;
+        if (!IsDocumentMember(innerMember)) return false;
+        if (innerMember.Type != typeof(string)) return false;
+
+        var member = _memberFactory.ResolveMember(innerMember);
+        var value = ExtractValue(valueSide);
+        fragment = new FunctionComparisonFilter("LEN", member.RawLocator, op, value!);
+        return true;
     }
 
     private bool TryParseModulo(BinaryExpression binary, string op, out ISqlFragment? fragment)

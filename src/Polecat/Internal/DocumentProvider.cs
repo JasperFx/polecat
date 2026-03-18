@@ -27,13 +27,32 @@ internal class DocumentProvider
     {
         get
         {
-            var baseCols = "id, data, version, last_modified, dotnet_type, tenant_id";
+            var baseCols = "id, data, version, last_modified, created_at, dotnet_type, tenant_id";
             if (Mapping.UseOptimisticConcurrency)
             {
                 baseCols += ", guid_version";
             }
 
+            if (Mapping.IsHierarchy())
+            {
+                baseCols += ", doc_type";
+            }
+
             return $"SELECT {baseCols} FROM {Mapping.QualifiedTableName}";
+        }
+    }
+
+    /// <summary>
+    ///     Column index of doc_type in SelectSql, or -1 if not a hierarchy.
+    /// </summary>
+    public int DocTypeColumnIndex
+    {
+        get
+        {
+            if (!Mapping.IsHierarchy()) return -1;
+            // Base columns: id[0], data[1], version[2], last_modified[3], created_at[4], dotnet_type[5], tenant_id[6]
+            // Optional: guid_version[7], doc_type[8] OR doc_type[7]
+            return Mapping.UseOptimisticConcurrency ? 8 : 7;
         }
     }
 

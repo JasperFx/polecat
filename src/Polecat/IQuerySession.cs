@@ -52,6 +52,12 @@ public interface IQuerySession : IAsyncDisposable
     IQueryEventStore Events { get; }
 
     /// <summary>
+    ///     Access to raw SQL query capabilities. Allows executing arbitrary SQL
+    ///     and mapping results to scalars, JSON objects, or document types.
+    /// </summary>
+    IAdvancedSql AdvancedSql { get; }
+
+    /// <summary>
     ///     Check if a document of type T with the given Guid id exists in the database
     ///     without loading or deserializing the document.
     /// </summary>

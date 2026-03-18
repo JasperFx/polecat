@@ -45,18 +45,18 @@ internal static class DocumentProviderEmitter
 
         // Select SQL
         sb.AppendLine($"    public const string SelectSql =");
-        sb.AppendLine($"        \"SELECT id, data, version, last_modified, dotnet_type, tenant_id FROM [{schema}].[{tableName}]\";");
+        sb.AppendLine($"        \"SELECT id, data, version, last_modified, created_at, dotnet_type, tenant_id FROM [{schema}].[{tableName}]\";");
         sb.AppendLine();
 
         // Load SQL
         sb.AppendLine($"    public const string LoadSql =");
-        sb.AppendLine($"        \"SELECT id, data, version, last_modified, dotnet_type, tenant_id FROM [{schema}].[{tableName}] WHERE id = @id AND tenant_id = @tenant_id;\";");
+        sb.AppendLine($"        \"SELECT id, data, version, last_modified, created_at, dotnet_type, tenant_id FROM [{schema}].[{tableName}] WHERE id = @id AND tenant_id = @tenant_id;\";");
         sb.AppendLine();
 
         // Insert SQL (with MERGE for upsert)
         sb.AppendLine($"    public const string InsertSql =");
-        sb.AppendLine($"        \"INSERT INTO [{schema}].[{tableName}] (id, data, version, last_modified, dotnet_type, tenant_id) \" +");
-        sb.AppendLine($"        \"VALUES (@id, @data, 1, SYSDATETIMEOFFSET(), @dotnet_type, @tenant_id);\";");
+        sb.AppendLine($"        \"INSERT INTO [{schema}].[{tableName}] (id, data, version, last_modified, created_at, dotnet_type, tenant_id) \" +");
+        sb.AppendLine($"        \"VALUES (@id, @data, 1, SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET(), @dotnet_type, @tenant_id);\";");
         sb.AppendLine();
 
         // Upsert SQL (MERGE)
@@ -66,8 +66,8 @@ internal static class DocumentProviderEmitter
         sb.AppendLine($"        \"ON target.id = source.id AND target.tenant_id = source.tenant_id \" +");
         sb.AppendLine($"        \"WHEN MATCHED THEN UPDATE SET data = @data, version = target.version + 1, \" +");
         sb.AppendLine($"        \"last_modified = SYSDATETIMEOFFSET(), dotnet_type = @dotnet_type \" +");
-        sb.AppendLine($"        \"WHEN NOT MATCHED THEN INSERT (id, data, version, last_modified, dotnet_type, tenant_id) \" +");
-        sb.AppendLine($"        \"VALUES (@id, @data, 1, SYSDATETIMEOFFSET(), @dotnet_type, @tenant_id);\";");
+        sb.AppendLine($"        \"WHEN NOT MATCHED THEN INSERT (id, data, version, last_modified, created_at, dotnet_type, tenant_id) \" +");
+        sb.AppendLine($"        \"VALUES (@id, @data, 1, SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET(), @dotnet_type, @tenant_id);\";");
         sb.AppendLine();
 
         // Delete SQL

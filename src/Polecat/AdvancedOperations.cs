@@ -1,6 +1,7 @@
 using System.Text;
 using Microsoft.Data.SqlClient;
 using Polly;
+using Polecat.Events.TestSupport;
 using Polecat.Internal;
 using Polecat.Metadata;
 using Polecat.Schema.Identity.Sequences;
@@ -137,9 +138,9 @@ public class AdvancedOperations
                     var pTenant = $"@p{paramIndex++}";
 
                     sb.AppendLine(
-                        $"INSERT INTO {mapping.QualifiedTableName} (id, data, version, last_modified, dotnet_type, tenant_id)");
+                        $"INSERT INTO {mapping.QualifiedTableName} (id, data, version, last_modified, created_at, dotnet_type, tenant_id)");
                     sb.AppendLine(
-                        $"VALUES ({pId}, {pData}, 1, SYSDATETIMEOFFSET(), {pType}, {pTenant});");
+                        $"VALUES ({pId}, {pData}, 1, SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET(), {pType}, {pTenant});");
 
                     cmd.Parameters.AddWithValue(pId, id);
                     cmd.Parameters.AddWithValue(pData, json);
@@ -165,9 +166,9 @@ public class AdvancedOperations
                         "    ON target.id = source.id AND target.tenant_id = source.tenant_id");
                     sb.AppendLine("WHEN NOT MATCHED THEN");
                     sb.AppendLine(
-                        $"    INSERT (id, data, version, last_modified, dotnet_type, tenant_id)");
+                        $"    INSERT (id, data, version, last_modified, created_at, dotnet_type, tenant_id)");
                     sb.AppendLine(
-                        $"    VALUES ({pId}, {pData}, 1, SYSDATETIMEOFFSET(), {pType}, {pTenant});");
+                        $"    VALUES ({pId}, {pData}, 1, SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET(), {pType}, {pTenant});");
 
                     cmd.Parameters.AddWithValue(pId, id);
                     cmd.Parameters.AddWithValue(pData, json);
@@ -198,9 +199,9 @@ public class AdvancedOperations
                         $"        last_modified = SYSDATETIMEOFFSET(), dotnet_type = {pType}");
                     sb.AppendLine("WHEN NOT MATCHED THEN");
                     sb.AppendLine(
-                        $"    INSERT (id, data, version, last_modified, dotnet_type, tenant_id)");
+                        $"    INSERT (id, data, version, last_modified, created_at, dotnet_type, tenant_id)");
                     sb.AppendLine(
-                        $"    VALUES ({pId}, {pData}, 1, SYSDATETIMEOFFSET(), {pType}, {pTenant});");
+                        $"    VALUES ({pId}, {pData}, 1, SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET(), {pType}, {pTenant});");
 
                     cmd.Parameters.AddWithValue(pId, id);
                     cmd.Parameters.AddWithValue(pData, json);
@@ -319,6 +320,57 @@ public class AdvancedOperations
     }
 
     /// <summary>
+    ///     Fetch the current size of the event store tables, including the current value
+    ///     of the event sequence number.
+    /// </summary>
+    public async Task<Events.EventStoreStatistics> FetchEventStoreStatistics(CancellationToken token = default)
+    {
+        var events = _store.Events;
+        var schema = events.DatabaseSchemaName;
+
+        var sql = $"""
+            SELECT COUNT(*) FROM [{schema}].[pc_events];
+            SELECT COUNT(*) FROM [{schema}].[pc_streams];
+            SELECT ISNULL(IDENT_CURRENT('[{schema}].[pc_events]'), 0);
+            """;
+
+        var statistics = new Events.EventStoreStatistics();
+
+        await _resilience.ExecuteAsync(async (_, ct) =>
+        {
+            await using var conn = new SqlConnection(_store.Options.ConnectionString);
+            await conn.OpenAsync(ct);
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = sql;
+            await using var reader = await cmd.ExecuteReaderAsync(ct);
+
+            if (await reader.ReadAsync(ct))
+                statistics.EventCount = reader.GetInt32(0);
+
+            await reader.NextResultAsync(ct);
+            if (await reader.ReadAsync(ct))
+                statistics.StreamCount = reader.GetInt32(0);
+
+            await reader.NextResultAsync(ct);
+            if (await reader.ReadAsync(ct))
+                statistics.EventSequenceNumber = Convert.ToInt64(reader.GetValue(0));
+        }, token);
+
+        return statistics;
+    }
+
+    /// <summary>
+    ///     Configure and execute a batch masking of protected data for a subset of the events
+    ///     in the event store. Used for GDPR right-to-erasure compliance.
+    /// </summary>
+    public Task ApplyEventDataMasking(Action<Events.Protected.IEventDataMasking> configure, CancellationToken token = default)
+    {
+        var masking = new Events.Protected.EventDataMasking(_store);
+        configure(masking);
+        return masking.ApplyAsync(token);
+    }
+
+    /// <summary>
     ///     Delete all rows from event store tables (pc_events, pc_streams, pc_event_progression)
     ///     and all natural key tables (pc_natural_key_*).
     /// </summary>
@@ -377,5 +429,17 @@ public class AdvancedOperations
                 await cmd.ExecuteNonQueryAsync(ct);
             }
         }, token);
+    }
+
+    /// <summary>
+    ///     Run a projection scenario test that appends events and asserts against projected documents.
+    ///     Automatically cleans data, starts the async daemon if needed, and waits for projections
+    ///     to catch up before running assertions.
+    /// </summary>
+    public Task EventProjectionScenario(Action<ProjectionScenario> configuration, CancellationToken ct = default)
+    {
+        var scenario = new ProjectionScenario(_store);
+        configuration(scenario);
+        return scenario.Execute(ct);
     }
 }

@@ -309,6 +309,47 @@ internal class QueryEventStore : IQueryEventStore
         return (null, 0);
     }
 
+    public async Task<T?> AggregateStreamToLastKnownAsync<T>(Guid streamId, long version = 0,
+        DateTimeOffset? timestamp = null, CancellationToken token = default) where T : class, new()
+    {
+        return await AggregateStreamToLastKnownInternalAsync<T>(streamId, version, timestamp, token);
+    }
+
+    public async Task<T?> AggregateStreamToLastKnownAsync<T>(string streamKey, long version = 0,
+        DateTimeOffset? timestamp = null, CancellationToken token = default) where T : class, new()
+    {
+        return await AggregateStreamToLastKnownInternalAsync<T>(streamKey, version, timestamp, token);
+    }
+
+    private async Task<T?> AggregateStreamToLastKnownInternalAsync<T>(object streamId, long version,
+        DateTimeOffset? timestamp, CancellationToken token) where T : class, new()
+    {
+        IReadOnlyList<IEvent> events;
+        if (streamId is Guid guid)
+            events = await FetchStreamAsync(guid, version, timestamp, 0, token);
+        else
+            events = await FetchStreamAsync((string)streamId, version, timestamp, 0, token);
+
+        if (events.Count == 0) return null;
+
+        var aggregator = _options.Projections.AggregatorFor<T>();
+        var eventList = events.ToList();
+
+        T? aggregate = null;
+        while (aggregate == null && eventList.Count > 0)
+        {
+            aggregate = await aggregator.BuildAsync(eventList, _session, default, token);
+            eventList = eventList.SkipLast(1).ToList();
+        }
+
+        if (aggregate != null)
+        {
+            TrySetIdentity(aggregate, streamId);
+        }
+
+        return aggregate;
+    }
+
     public async ValueTask<T?> FetchLatest<T>(Guid id, CancellationToken cancellation = default)
         where T : class, new()
     {

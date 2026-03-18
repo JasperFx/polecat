@@ -58,6 +58,20 @@ public interface IQueryEventStore
         CancellationToken token = default) where T : class, new();
 
     /// <summary>
+    ///     Perform a live aggregation but return the last known non-null version of the aggregate,
+    ///     walking backwards through events if the aggregate is deleted at the current version.
+    /// </summary>
+    Task<T?> AggregateStreamToLastKnownAsync<T>(Guid streamId, long version = 0,
+        DateTimeOffset? timestamp = null, CancellationToken token = default) where T : class, new();
+
+    /// <summary>
+    ///     Perform a live aggregation but return the last known non-null version of the aggregate,
+    ///     walking backwards through events if the aggregate is deleted at the current version.
+    /// </summary>
+    Task<T?> AggregateStreamToLastKnownAsync<T>(string streamKey, long version = 0,
+        DateTimeOffset? timestamp = null, CancellationToken token = default) where T : class, new();
+
+    /// <summary>
     ///     Fetch the latest aggregate state for a stream by Guid id.
     ///     Convenience wrapper around AggregateStreamAsync.
     /// </summary>

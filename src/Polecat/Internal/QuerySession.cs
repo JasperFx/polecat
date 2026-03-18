@@ -17,7 +17,7 @@ namespace Polecat.Internal;
 ///     Read-only query session. All SQL execution flows through Polly-wrapped
 ///     centralized methods backed by IConnectionLifetime.
 /// </summary>
-internal class QuerySession : IQuerySession
+internal partial class QuerySession : IQuerySession
 {
     internal readonly IConnectionLifetime _lifetime;
     private readonly ResiliencePipeline _resilience;
@@ -178,8 +178,20 @@ internal class QuerySession : IQuerySession
             if (await reader.ReadAsync(token))
             {
                 var json = reader.GetString(1); // data column
-                var doc = Serializer.FromJson<T>(json);
+                T doc;
+                if (provider.DocTypeColumnIndex >= 0)
+                {
+                    var docType = reader.GetString(provider.DocTypeColumnIndex);
+                    var resolvedType = provider.Mapping.TypeFor(docType);
+                    doc = (T)Serializer.FromJson(resolvedType, json);
+                }
+                else
+                {
+                    doc = Serializer.FromJson<T>(json);
+                }
+
                 SyncVersionProperties(doc, reader, provider);
+                SyncCreatedAt(doc, reader);
                 SyncTenantId(doc, reader);
                 return doc;
             }
@@ -238,8 +250,20 @@ internal class QuerySession : IQuerySession
             while (await reader.ReadAsync(token))
             {
                 var json = reader.GetString(1); // data column
-                var doc = Serializer.FromJson<T>(json);
+                T doc;
+                if (provider.DocTypeColumnIndex >= 0)
+                {
+                    var docType = reader.GetString(provider.DocTypeColumnIndex);
+                    var resolvedType = provider.Mapping.TypeFor(docType);
+                    doc = (T)Serializer.FromJson(resolvedType, json);
+                }
+                else
+                {
+                    doc = Serializer.FromJson<T>(json);
+                }
+
                 SyncVersionProperties(doc, reader, provider);
+                SyncCreatedAt(doc, reader);
                 SyncTenantId(doc, reader);
                 results.Add(doc);
             }
@@ -323,7 +347,7 @@ internal class QuerySession : IQuerySession
 
     /// <summary>
     ///     Syncs version/revision properties from the DB columns to the document object.
-    ///     SelectSql column layout: id[0], data[1], version[2], last_modified[3], dotnet_type[4], tenant_id[5], guid_version[6]?
+    ///     SelectSql column layout: id[0], data[1], version[2], last_modified[3], created_at[4], dotnet_type[5], tenant_id[6], guid_version[7]?
     /// </summary>
     internal static void SyncVersionProperties<T>(T doc, DbDataReader reader, DocumentProvider provider) where T : class
     {
@@ -334,19 +358,31 @@ internal class QuerySession : IQuerySession
 
         if (provider.Mapping.UseOptimisticConcurrency && doc is IVersioned versioned)
         {
-            versioned.Version = reader.GetGuid(6); // guid_version column
+            versioned.Version = reader.GetGuid(7); // guid_version column
         }
     }
 
     /// <summary>
     ///     Syncs tenant_id from the DB column to ITenanted documents.
-    ///     tenant_id is at column index 5 in SelectSql.
+    ///     tenant_id is at column index 6 in SelectSql.
     /// </summary>
     internal static void SyncTenantId<T>(T doc, DbDataReader reader) where T : class
     {
         if (doc is ITenanted tenanted)
         {
-            tenanted.TenantId = reader.GetString(5); // tenant_id column
+            tenanted.TenantId = reader.GetString(6); // tenant_id column
+        }
+    }
+
+    /// <summary>
+    ///     Syncs created_at from the DB column to ICreated documents.
+    ///     created_at is at column index 4 in SelectSql.
+    /// </summary>
+    internal static void SyncCreatedAt<T>(T doc, DbDataReader reader) where T : class
+    {
+        if (doc is ICreated created)
+        {
+            created.CreatedAt = reader.GetFieldValue<DateTimeOffset>(4); // created_at column
         }
     }
 

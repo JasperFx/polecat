@@ -35,33 +35,40 @@ internal class InsertOperation : IStorageOperation
 
     public void ConfigureCommand(ICommandBuilder builder)
     {
+        var docTypeCol = _mapping.IsHierarchy() ? ", doc_type" : "";
+        var docTypeVal = _mapping.IsHierarchy() ? ", @doc_type" : "";
+
         if (_mapping.UseOptimisticConcurrency)
         {
             builder.Append($"""
-                INSERT INTO {_mapping.QualifiedTableName} (id, data, version, guid_version, last_modified, dotnet_type, tenant_id)
+                INSERT INTO {_mapping.QualifiedTableName} (id, data, version, guid_version, last_modified, created_at, dotnet_type{docTypeCol}, tenant_id)
                 OUTPUT inserted.version, inserted.guid_version
-                VALUES (@id, @data, 1, @new_guid_version, SYSDATETIMEOFFSET(), @dotnet_type, @tenant_id);
+                VALUES (@id, @data, 1, @new_guid_version, SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET(), @dotnet_type{docTypeVal}, @tenant_id);
                 """);
 
-            builder.AddParameters(new Dictionary<string, object?>
+            var parameters = new Dictionary<string, object?>
             {
                 ["id"] = _id, ["data"] = _json, ["new_guid_version"] = _newGuidVersion,
                 ["dotnet_type"] = _mapping.DotNetTypeName, ["tenant_id"] = _tenantId
-            });
+            };
+            if (_mapping.IsHierarchy()) parameters["doc_type"] = _mapping.AliasFor(_document.GetType());
+            builder.AddParameters(parameters);
         }
         else
         {
             builder.Append($"""
-                INSERT INTO {_mapping.QualifiedTableName} (id, data, version, last_modified, dotnet_type, tenant_id)
+                INSERT INTO {_mapping.QualifiedTableName} (id, data, version, last_modified, created_at, dotnet_type{docTypeCol}, tenant_id)
                 OUTPUT inserted.version
-                VALUES (@id, @data, 1, SYSDATETIMEOFFSET(), @dotnet_type, @tenant_id);
+                VALUES (@id, @data, 1, SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET(), @dotnet_type{docTypeVal}, @tenant_id);
                 """);
 
-            builder.AddParameters(new Dictionary<string, object?>
+            var parameters = new Dictionary<string, object?>
             {
                 ["id"] = _id, ["data"] = _json,
                 ["dotnet_type"] = _mapping.DotNetTypeName, ["tenant_id"] = _tenantId
-            });
+            };
+            if (_mapping.IsHierarchy()) parameters["doc_type"] = _mapping.AliasFor(_document.GetType());
+            builder.AddParameters(parameters);
         }
     }
 

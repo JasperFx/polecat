@@ -24,6 +24,7 @@ public partial class DocumentStore : IDocumentStore
         _connectionFactory = options.CreateConnectionFactory();
         _providers = new DocumentProviderRegistry(options);
         _tableEnsurer = new DocumentTableEnsurer(_connectionFactory, options);
+        _tableEnsurer.SetProviderRegistry(_providers);
         Database = new PolecatDatabase(options);
 
         // Wire up sequence factory for HiLo ID generation
@@ -96,7 +97,9 @@ public partial class DocumentStore : IDocumentStore
         var factory = ResolveConnectionFactory(tenantId);
         // For default tenancy, the factory is the same so we reuse the shared ensurer
         if (ReferenceEquals(factory, _connectionFactory)) return _tableEnsurer;
-        return new DocumentTableEnsurer(factory, Options);
+        var ensurer = new DocumentTableEnsurer(factory, Options);
+        ensurer.SetProviderRegistry(_providers);
+        return ensurer;
     }
 
     public IDocumentSession LightweightSession()
@@ -107,7 +110,7 @@ public partial class DocumentStore : IDocumentStore
     public IDocumentSession LightweightSession(SessionOptions options)
     {
         var factory = ResolveConnectionFactory(options.TenantId);
-        var ensurer = ReferenceEquals(factory, _connectionFactory) ? _tableEnsurer : new DocumentTableEnsurer(factory, Options);
+        var ensurer = ResolveTableEnsurer(options.TenantId);
         var timeout = options.Timeout ?? Options.CommandTimeout;
         var lifetime = new TransactionalConnection(factory, timeout);
         return new LightweightSession(
@@ -129,7 +132,7 @@ public partial class DocumentStore : IDocumentStore
     public IDocumentSession IdentitySession(SessionOptions options)
     {
         var factory = ResolveConnectionFactory(options.TenantId);
-        var ensurer = ReferenceEquals(factory, _connectionFactory) ? _tableEnsurer : new DocumentTableEnsurer(factory, Options);
+        var ensurer = ResolveTableEnsurer(options.TenantId);
         var timeout = options.Timeout ?? Options.CommandTimeout;
         var lifetime = new TransactionalConnection(factory, timeout);
         return new IdentityMapDocumentSession(
@@ -151,7 +154,7 @@ public partial class DocumentStore : IDocumentStore
     public IQuerySession QuerySession(SessionOptions options)
     {
         var factory = ResolveConnectionFactory(options.TenantId);
-        var ensurer = ReferenceEquals(factory, _connectionFactory) ? _tableEnsurer : new DocumentTableEnsurer(factory, Options);
+        var ensurer = ResolveTableEnsurer(options.TenantId);
         var timeout = options.Timeout ?? Options.CommandTimeout;
         var lifetime = new AutoClosingLifetime(factory, timeout);
         return new Internal.QuerySession(
@@ -175,7 +178,7 @@ public partial class DocumentStore : IDocumentStore
     public async Task<IDocumentSession> OpenSessionAsync(SessionOptions options, CancellationToken token = default)
     {
         var factory = ResolveConnectionFactory(options.TenantId);
-        var ensurer = ReferenceEquals(factory, _connectionFactory) ? _tableEnsurer : new DocumentTableEnsurer(factory, Options);
+        var ensurer = ResolveTableEnsurer(options.TenantId);
         var timeout = options.Timeout ?? Options.CommandTimeout;
         var lifetime = new TransactionalConnection(factory, timeout);
 

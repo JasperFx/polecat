@@ -7,6 +7,7 @@ using Microsoft.Data.SqlClient;
 using Polecat.Events.Dcb;
 using Polecat.Events.Fetching;
 using Polecat.Events.Operations;
+using Polecat.Events.Protected;
 using Polecat.Internal;
 using Polecat.Internal.Operations;
 using Polecat.Serialization;
@@ -214,6 +215,165 @@ internal class EventOperations : QueryEventStore, IEventOperations
         await _sessionBase.SaveChangesAsync(cancellation);
     }
 
+    public async Task WriteToAggregate<T>(Guid id, int initialVersion, Action<IEventStream<T>> writing, CancellationToken cancellation = default)
+        where T : class, new()
+    {
+        var stream = await FetchForWriting<T>(id, initialVersion, cancellation);
+        writing(stream);
+        await _sessionBase.SaveChangesAsync(cancellation);
+    }
+
+    public async Task WriteToAggregate<T>(Guid id, int initialVersion, Func<IEventStream<T>, Task> writing, CancellationToken cancellation = default)
+        where T : class, new()
+    {
+        var stream = await FetchForWriting<T>(id, initialVersion, cancellation);
+        await writing(stream);
+        await _sessionBase.SaveChangesAsync(cancellation);
+    }
+
+    public async Task WriteToAggregate<T>(string key, int initialVersion, Action<IEventStream<T>> writing, CancellationToken cancellation = default)
+        where T : class, new()
+    {
+        var stream = await FetchForWriting<T>(key, initialVersion, cancellation);
+        writing(stream);
+        await _sessionBase.SaveChangesAsync(cancellation);
+    }
+
+    public async Task WriteToAggregate<T>(string key, int initialVersion, Func<IEventStream<T>, Task> writing, CancellationToken cancellation = default)
+        where T : class, new()
+    {
+        var stream = await FetchForWriting<T>(key, initialVersion, cancellation);
+        await writing(stream);
+        await _sessionBase.SaveChangesAsync(cancellation);
+    }
+
+    public async Task WriteExclusivelyToAggregate<T>(Guid id, Action<IEventStream<T>> writing, CancellationToken cancellation = default)
+        where T : class, new()
+    {
+        var stream = await FetchForExclusiveWriting<T>(id, cancellation);
+        writing(stream);
+        await _sessionBase.SaveChangesAsync(cancellation);
+    }
+
+    public async Task WriteExclusivelyToAggregate<T>(string key, Action<IEventStream<T>> writing, CancellationToken cancellation = default)
+        where T : class, new()
+    {
+        var stream = await FetchForExclusiveWriting<T>(key, cancellation);
+        writing(stream);
+        await _sessionBase.SaveChangesAsync(cancellation);
+    }
+
+    public async Task WriteExclusivelyToAggregate<T>(Guid id, Func<IEventStream<T>, Task> writing, CancellationToken cancellation = default)
+        where T : class, new()
+    {
+        var stream = await FetchForExclusiveWriting<T>(id, cancellation);
+        await writing(stream);
+        await _sessionBase.SaveChangesAsync(cancellation);
+    }
+
+    public async Task WriteExclusivelyToAggregate<T>(string key, Func<IEventStream<T>, Task> writing, CancellationToken cancellation = default)
+        where T : class, new()
+    {
+        var stream = await FetchForExclusiveWriting<T>(key, cancellation);
+        await writing(stream);
+        await _sessionBase.SaveChangesAsync(cancellation);
+    }
+
+    public async Task AppendOptimistic(Guid streamId, CancellationToken token, params object[] events)
+    {
+        var version = await ReadVersionFromExistingStream(streamId, false, token);
+        var action = Append(streamId, events);
+        action.ExpectedVersionOnServer = version;
+    }
+
+    public Task AppendOptimistic(Guid streamId, params object[] events)
+        => AppendOptimistic(streamId, CancellationToken.None, events);
+
+    public async Task AppendOptimistic(string streamKey, CancellationToken token, params object[] events)
+    {
+        var version = await ReadVersionFromExistingStream(streamKey, false, token);
+        var action = Append(streamKey, events);
+        action.ExpectedVersionOnServer = version;
+    }
+
+    public Task AppendOptimistic(string streamKey, params object[] events)
+        => AppendOptimistic(streamKey, CancellationToken.None, events);
+
+    public async Task AppendExclusive(Guid streamId, CancellationToken token, params object[] events)
+    {
+        try
+        {
+            await _sessionBase.BeginTransactionAsync(token);
+            var version = await ReadVersionFromExistingStream(streamId, true, token);
+            var action = Append(streamId, events);
+            action.ExpectedVersionOnServer = version;
+        }
+        catch (Exception e) when (IsLockFailure(e))
+        {
+            throw new Exceptions.StreamLockedException(streamId, e.InnerException);
+        }
+    }
+
+    public Task AppendExclusive(Guid streamId, params object[] events)
+        => AppendExclusive(streamId, CancellationToken.None, events);
+
+    public async Task AppendExclusive(string streamKey, CancellationToken token, params object[] events)
+    {
+        try
+        {
+            await _sessionBase.BeginTransactionAsync(token);
+            var version = await ReadVersionFromExistingStream(streamKey, true, token);
+            var action = Append(streamKey, events);
+            action.ExpectedVersionOnServer = version;
+        }
+        catch (Exception e) when (IsLockFailure(e))
+        {
+            throw new Exceptions.StreamLockedException(streamKey, e.InnerException);
+        }
+    }
+
+    public Task AppendExclusive(string streamKey, params object[] events)
+        => AppendExclusive(streamKey, CancellationToken.None, events);
+
+    private async Task<long> ReadVersionFromExistingStream(object streamId, bool forUpdate, CancellationToken token)
+    {
+        var lockHint = forUpdate ? " WITH (UPDLOCK, HOLDLOCK)" : "";
+        await using var cmd = new SqlCommand();
+        cmd.CommandText = $"""
+            SELECT version FROM {_events.StreamsTableName}{lockHint}
+            WHERE id = @id AND tenant_id = @tenant_id;
+            """;
+        cmd.Parameters.AddWithValue("@id", streamId);
+        cmd.Parameters.AddWithValue("@tenant_id", _tenantId);
+
+        long version = 0;
+        try
+        {
+            var result = await _sessionBase.ExecuteScalarAsync(cmd, token);
+            if (result != null && result != DBNull.Value)
+            {
+                version = (long)result;
+            }
+        }
+        catch (Exception e) when (IsLockFailure(e))
+        {
+            throw new Exceptions.StreamLockedException(streamId, e.InnerException);
+        }
+
+        if (version == 0)
+        {
+            throw new Exceptions.NonExistentStreamException(streamId);
+        }
+
+        return version;
+    }
+
+    private static bool IsLockFailure(Exception e)
+    {
+        // SQL Server lock timeout or deadlock errors
+        return e.InnerException is SqlException { Number: 1222 or 1205 };
+    }
+
     public void ArchiveStream(Guid streamId)
     {
         _workTracker.Add(new ArchiveStreamOperation(_events, streamId, _tenantId));
@@ -242,6 +402,15 @@ internal class EventOperations : QueryEventStore, IEventOperations
     public void TombstoneStream(string streamKey)
     {
         _workTracker.Add(new TombstoneStreamOperation(_events, streamKey, _tenantId));
+    }
+
+    public void OverwriteEvent(IEvent @event)
+    {
+        var serializedData = _sessionBase.Serializer.ToJson(@event.Data);
+        var serializedHeaders = @event.Headers != null
+            ? _sessionBase.Serializer.ToJson(@event.Headers)
+            : null;
+        _workTracker.Add(new Protected.OverwriteEventOperation(_events, @event, serializedData, serializedHeaders));
     }
 
     private async Task<IEventStream<T>> FetchForWritingInternal<T>(object streamId, bool forExclusive,
@@ -412,6 +581,22 @@ internal class EventOperations : QueryEventStore, IEventOperations
         throw new InvalidOperationException(
             $"No natural key definition found for aggregate type '{typeof(T).Name}'. " +
             "Configure a natural key via NaturalKey() in a SingleStreamProjection or Snapshot registration.");
+    }
+
+    public async Task CompactStreamAsync<T>(Guid streamId, Action<StreamCompactingRequest<T>>? configure = null)
+        where T : class
+    {
+        var request = new StreamCompactingRequest<T>(streamId);
+        configure?.Invoke(request);
+        await request.ExecuteAsync(_sessionBase).ConfigureAwait(false);
+    }
+
+    public async Task CompactStreamAsync<T>(string streamKey, Action<StreamCompactingRequest<T>>? configure = null)
+        where T : class
+    {
+        var request = new StreamCompactingRequest<T>(streamKey);
+        configure?.Invoke(request);
+        await request.ExecuteAsync(_sessionBase).ConfigureAwait(false);
     }
 
     public IEvent BuildEvent(object data) => _events.BuildEvent(data);

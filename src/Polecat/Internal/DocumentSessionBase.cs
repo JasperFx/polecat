@@ -231,6 +231,22 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         _workTracker.Add(op);
     }
 
+    private Dictionary<string, NestedTenantSession>? _byTenant;
+
+    public ITenantOperations ForTenant(string tenantId)
+    {
+        _byTenant ??= new Dictionary<string, NestedTenantSession>();
+
+        if (_byTenant.TryGetValue(tenantId, out var tenantSession))
+        {
+            return tenantSession;
+        }
+
+        tenantSession = new NestedTenantSession(this, tenantId);
+        _byTenant[tenantId] = tenantSession;
+        return tenantSession;
+    }
+
     public void UpdateExpectedVersion<T>(T document, Guid version) where T : notnull
     {
         if (document is IVersioned versioned)
@@ -255,6 +271,24 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     {
         if (!_workTracker.HasOutstandingWork()) return;
 
+        using var activity = OpenTelemetry.TracingSessionDecorator.StartSessionActivity(
+            "polecat.save_changes", TenantId, Options.OpenTelemetry);
+        OpenTelemetry.TracingSessionDecorator.AddOperationEvents(
+            activity, _workTracker.Operations, Options.OpenTelemetry);
+
+        try
+        {
+        await SaveChangesInternalAsync(token);
+        }
+        catch (Exception ex)
+        {
+            OpenTelemetry.TracingSessionDecorator.RecordException(activity, ex);
+            throw;
+        }
+    }
+
+    private async Task SaveChangesInternalAsync(CancellationToken token)
+    {
         // Call BeforeSaveChangesAsync on all listeners (global then session)
         foreach (var listener in Options.Listeners)
         {

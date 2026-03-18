@@ -2,6 +2,7 @@ using System.Linq.Expressions;
 using JasperFx.Events;
 using JasperFx.Events.Tags;
 using Polecat.Events.Dcb;
+using Polecat.Events.Protected;
 
 namespace Polecat.Events;
 
@@ -112,6 +113,90 @@ public interface IEventOperations : IQueryEventStore
     Task WriteToAggregate<T>(string key, Func<IEventStream<T>, Task> writing, CancellationToken cancellation = default) where T : class, new();
 
     /// <summary>
+    ///     Fetch the aggregate at a specific version, apply events via callback, and save changes in one step.
+    /// </summary>
+    Task WriteToAggregate<T>(Guid id, int initialVersion, Action<IEventStream<T>> writing, CancellationToken cancellation = default) where T : class, new();
+
+    /// <summary>
+    ///     Fetch the aggregate at a specific version, apply events via async callback, and save changes in one step.
+    /// </summary>
+    Task WriteToAggregate<T>(Guid id, int initialVersion, Func<IEventStream<T>, Task> writing, CancellationToken cancellation = default) where T : class, new();
+
+    /// <summary>
+    ///     Fetch the aggregate at a specific version, apply events via callback, and save changes in one step.
+    /// </summary>
+    Task WriteToAggregate<T>(string key, int initialVersion, Action<IEventStream<T>> writing, CancellationToken cancellation = default) where T : class, new();
+
+    /// <summary>
+    ///     Fetch the aggregate at a specific version, apply events via async callback, and save changes in one step.
+    /// </summary>
+    Task WriteToAggregate<T>(string key, int initialVersion, Func<IEventStream<T>, Task> writing, CancellationToken cancellation = default) where T : class, new();
+
+    /// <summary>
+    ///     Fetch the aggregate with an exclusive lock, apply events via callback, and save changes in one step.
+    /// </summary>
+    Task WriteExclusivelyToAggregate<T>(Guid id, Action<IEventStream<T>> writing, CancellationToken cancellation = default) where T : class, new();
+
+    /// <summary>
+    ///     Fetch the aggregate with an exclusive lock, apply events via callback, and save changes in one step.
+    /// </summary>
+    Task WriteExclusivelyToAggregate<T>(string key, Action<IEventStream<T>> writing, CancellationToken cancellation = default) where T : class, new();
+
+    /// <summary>
+    ///     Fetch the aggregate with an exclusive lock, apply events via async callback, and save changes in one step.
+    /// </summary>
+    Task WriteExclusivelyToAggregate<T>(Guid id, Func<IEventStream<T>, Task> writing, CancellationToken cancellation = default) where T : class, new();
+
+    /// <summary>
+    ///     Fetch the aggregate with an exclusive lock, apply events via async callback, and save changes in one step.
+    /// </summary>
+    Task WriteExclusivelyToAggregate<T>(string key, Func<IEventStream<T>, Task> writing, CancellationToken cancellation = default) where T : class, new();
+
+    /// <summary>
+    ///     Append events to an existing stream with optimistic concurrency. Reads the current
+    ///     version and sets ExpectedVersionOnServer. Throws NonExistentStreamException if the
+    ///     stream does not exist.
+    /// </summary>
+    Task AppendOptimistic(Guid streamId, CancellationToken token, params object[] events);
+
+    /// <summary>
+    ///     Append events to an existing stream with optimistic concurrency.
+    /// </summary>
+    Task AppendOptimistic(Guid streamId, params object[] events);
+
+    /// <summary>
+    ///     Append events to an existing stream with optimistic concurrency.
+    /// </summary>
+    Task AppendOptimistic(string streamKey, CancellationToken token, params object[] events);
+
+    /// <summary>
+    ///     Append events to an existing stream with optimistic concurrency.
+    /// </summary>
+    Task AppendOptimistic(string streamKey, params object[] events);
+
+    /// <summary>
+    ///     Append events to an existing stream with exclusive row locking. Begins a transaction
+    ///     and holds an exclusive lock until SaveChangesAsync. Throws StreamLockedException
+    ///     if the lock cannot be acquired.
+    /// </summary>
+    Task AppendExclusive(Guid streamId, CancellationToken token, params object[] events);
+
+    /// <summary>
+    ///     Append events to an existing stream with exclusive row locking.
+    /// </summary>
+    Task AppendExclusive(Guid streamId, params object[] events);
+
+    /// <summary>
+    ///     Append events to an existing stream with exclusive row locking.
+    /// </summary>
+    Task AppendExclusive(string streamKey, CancellationToken token, params object[] events);
+
+    /// <summary>
+    ///     Append events to an existing stream with exclusive row locking.
+    /// </summary>
+    Task AppendExclusive(string streamKey, params object[] events);
+
+    /// <summary>
     ///     Mark a stream and all its events as archived by Guid id.
     /// </summary>
     void ArchiveStream(Guid streamId);
@@ -150,6 +235,12 @@ public interface IEventOperations : IQueryEventStore
     void AssignTagWhere(Expression<Func<IEvent, bool>> expression, object tag);
 
     /// <summary>
+    ///     Overwrite the data and optionally headers of an existing event. Used for GDPR
+    ///     data masking operations.
+    /// </summary>
+    void OverwriteEvent(IEvent @event);
+
+    /// <summary>
     ///     Check whether any events exist that match the given tag query, without loading the events.
     ///     This is a lightweight existence check useful for DCB guard clauses.
     /// </summary>
@@ -169,6 +260,18 @@ public interface IEventOperations : IQueryEventStore
     ///     Fetch events by tags and return a writable boundary with DCB consistency checking.
     /// </summary>
     Task<IEventBoundary<T>> FetchForWritingByTags<T>(EventTagQuery query, CancellationToken cancellation = default) where T : class;
+
+    /// <summary>
+    ///     Compact a stream by replacing its events with a single Compacted&lt;T&gt; snapshot event.
+    ///     Use this when you do not care about older stream data but want to keep database size down.
+    /// </summary>
+    Task CompactStreamAsync<T>(Guid streamId, Action<StreamCompactingRequest<T>>? configure = null) where T : class;
+
+    /// <summary>
+    ///     Compact a stream by replacing its events with a single Compacted&lt;T&gt; snapshot event.
+    ///     Use this when you do not care about older stream data but want to keep database size down.
+    /// </summary>
+    Task CompactStreamAsync<T>(string streamKey, Action<StreamCompactingRequest<T>>? configure = null) where T : class;
 
     /// <summary>
     ///     Build an IEvent wrapper for raw event data. Useful for setting tags before appending.
