@@ -10,6 +10,7 @@ using Polecat.Projections;
 using Polecat.Resilience;
 using Polecat.Schema.Identity.Sequences;
 using Polecat.Serialization;
+using Polecat.Internal.OpenTelemetry;
 using Polecat.Logging;
 using Polecat.Metadata;
 using Polecat.Storage;
@@ -117,6 +118,11 @@ public class StoreOptions
     ///     Defaults to NullPolecatLogger (no-op).
     /// </summary>
     public IPolecatLogger Logger { get; set; } = NullPolecatLogger.Instance;
+
+    /// <summary>
+    ///     OpenTelemetry tracing and metrics configuration.
+    /// </summary>
+    public OpenTelemetryOptions OpenTelemetry { get; } = new();
 
     /// <summary>
     ///     Collection of IInitialData instances that will be populated on startup

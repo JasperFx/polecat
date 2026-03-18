@@ -271,6 +271,24 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     {
         if (!_workTracker.HasOutstandingWork()) return;
 
+        using var activity = OpenTelemetry.TracingSessionDecorator.StartSessionActivity(
+            "polecat.save_changes", TenantId, Options.OpenTelemetry);
+        OpenTelemetry.TracingSessionDecorator.AddOperationEvents(
+            activity, _workTracker.Operations, Options.OpenTelemetry);
+
+        try
+        {
+        await SaveChangesInternalAsync(token);
+        }
+        catch (Exception ex)
+        {
+            OpenTelemetry.TracingSessionDecorator.RecordException(activity, ex);
+            throw;
+        }
+    }
+
+    private async Task SaveChangesInternalAsync(CancellationToken token)
+    {
         // Call BeforeSaveChangesAsync on all listeners (global then session)
         foreach (var listener in Options.Listeners)
         {
