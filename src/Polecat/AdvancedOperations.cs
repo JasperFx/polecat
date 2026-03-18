@@ -102,19 +102,20 @@ public class AdvancedOperations
 
         // Execute in batches with Polly wrapping
         var connFactory = _store.Options.Tenancy!.GetConnectionFactory(tenantId);
-        await _resilience.ExecuteAsync(async (_, ct) =>
+        await _resilience.ExecuteAsync(static async (state, ct) =>
         {
-            await using var conn = connFactory.Create();
+            var (factory, allRows, size, docMapping, tenant, insertMode) = state;
+            await using var conn = factory.Create();
             await conn.OpenAsync(ct);
 
-            for (var offset = 0; offset < rows.Count; offset += batchSize)
+            for (var offset = 0; offset < allRows.Count; offset += size)
             {
-                var batch = rows.Skip(offset).Take(batchSize).ToList();
+                var batch = allRows.Skip(offset).Take(size).ToList();
                 await using var cmd = conn.CreateCommand();
-                BuildBatchCommand(cmd, batch, mapping, tenantId, mode);
+                BuildBatchCommand(cmd, batch, docMapping, tenant, insertMode);
                 await cmd.ExecuteNonQueryAsync(ct);
             }
-        }, token);
+        }, (connFactory, rows, batchSize, mapping, tenantId, mode), token);
     }
 
     private static void BuildBatchCommand(
@@ -227,9 +228,11 @@ public class AdvancedOperations
     public async Task CleanAllDocumentsAsync(CancellationToken token = default)
     {
         var schema = _store.Options.DatabaseSchemaName;
-        await _resilience.ExecuteAsync(async (_, ct) =>
+        var connStr = _store.Options.ConnectionString;
+        await _resilience.ExecuteAsync(static async (state, ct) =>
         {
-            await using var conn = new SqlConnection(_store.Options.ConnectionString);
+            var (connectionString, schemaName) = state;
+            await using var conn = new SqlConnection(connectionString);
             await conn.OpenAsync(ct);
 
             // Find all pc_doc_* tables in the schema
@@ -239,7 +242,7 @@ public class AdvancedOperations
                 WHERE TABLE_SCHEMA = @schema AND TABLE_NAME LIKE 'pc_doc_%'
                 ORDER BY TABLE_NAME;
                 """;
-            findCmd.Parameters.AddWithValue("@schema", schema);
+            findCmd.Parameters.AddWithValue("@schema", schemaName);
 
             var tables = new List<string>();
             await using (var reader = await findCmd.ExecuteReaderAsync(ct))
@@ -253,10 +256,10 @@ public class AdvancedOperations
             foreach (var table in tables)
             {
                 await using var deleteCmd = conn.CreateCommand();
-                deleteCmd.CommandText = $"DELETE FROM [{schema}].[{table}];";
+                deleteCmd.CommandText = $"DELETE FROM [{schemaName}].[{table}];";
                 await deleteCmd.ExecuteNonQueryAsync(ct);
             }
-        }, token);
+        }, (connStr, schema), token);
     }
 
     /// <summary>
@@ -266,15 +269,17 @@ public class AdvancedOperations
     {
         var provider = _store.GetProvider(typeof(T));
         var tableName = provider.Mapping.QualifiedTableName;
-        await _resilience.ExecuteAsync(async (_, ct) =>
+        var connStr = _store.Options.ConnectionString;
+        await _resilience.ExecuteAsync(static async (state, ct) =>
         {
-            await using var conn = new SqlConnection(_store.Options.ConnectionString);
+            var (connectionString, qualifiedTableName) = state;
+            await using var conn = new SqlConnection(connectionString);
             await conn.OpenAsync(ct);
 
             await using var cmd = conn.CreateCommand();
-            cmd.CommandText = $"IF OBJECT_ID('{tableName}', 'U') IS NOT NULL DELETE FROM {tableName};";
+            cmd.CommandText = $"IF OBJECT_ID('{qualifiedTableName}', 'U') IS NOT NULL DELETE FROM {qualifiedTableName};";
             await cmd.ExecuteNonQueryAsync(ct);
-        }, token);
+        }, (connStr, tableName), token);
     }
 
     /// <summary>
@@ -335,26 +340,28 @@ public class AdvancedOperations
             """;
 
         var statistics = new Events.EventStoreStatistics();
+        var connStr = _store.Options.ConnectionString;
 
-        await _resilience.ExecuteAsync(async (_, ct) =>
+        await _resilience.ExecuteAsync(static async (state, ct) =>
         {
-            await using var conn = new SqlConnection(_store.Options.ConnectionString);
+            var (connectionString, sqlText, stats) = state;
+            await using var conn = new SqlConnection(connectionString);
             await conn.OpenAsync(ct);
             await using var cmd = conn.CreateCommand();
-            cmd.CommandText = sql;
+            cmd.CommandText = sqlText;
             await using var reader = await cmd.ExecuteReaderAsync(ct);
 
             if (await reader.ReadAsync(ct))
-                statistics.EventCount = reader.GetInt32(0);
+                stats.EventCount = reader.GetInt32(0);
 
             await reader.NextResultAsync(ct);
             if (await reader.ReadAsync(ct))
-                statistics.StreamCount = reader.GetInt32(0);
+                stats.StreamCount = reader.GetInt32(0);
 
             await reader.NextResultAsync(ct);
             if (await reader.ReadAsync(ct))
-                statistics.EventSequenceNumber = Convert.ToInt64(reader.GetValue(0));
-        }, token);
+                stats.EventSequenceNumber = Convert.ToInt64(reader.GetValue(0));
+        }, (connStr, sql, statistics), token);
 
         return statistics;
     }
@@ -378,9 +385,15 @@ public class AdvancedOperations
     {
         var events = _store.Events;
         var schema = events.DatabaseSchemaName;
-        await _resilience.ExecuteAsync(async (_, ct) =>
+        var connStr = _store.Options.ConnectionString;
+        var eventsTable = events.EventsTableName;
+        var streamsTable = events.StreamsTableName;
+        var progressionTable = events.ProgressionTableName;
+
+        await _resilience.ExecuteAsync(static async (state, ct) =>
         {
-            await using var conn = new SqlConnection(_store.Options.ConnectionString);
+            var (connectionString, schemaName, evtTable, strmTable, progTable) = state;
+            await using var conn = new SqlConnection(connectionString);
             await conn.OpenAsync(ct);
 
             // Delete natural key tables first (they reference streams)
@@ -391,7 +404,7 @@ public class AdvancedOperations
                     WHERE TABLE_SCHEMA = @schema AND TABLE_NAME LIKE 'pc_natural_key_%'
                     ORDER BY TABLE_NAME;
                     """;
-                findCmd.Parameters.AddWithValue("@schema", schema);
+                findCmd.Parameters.AddWithValue("@schema", schemaName);
 
                 var nkTables = new List<string>();
                 await using (var reader = await findCmd.ExecuteReaderAsync(ct))
@@ -405,7 +418,7 @@ public class AdvancedOperations
                 foreach (var table in nkTables)
                 {
                     await using var deleteCmd = conn.CreateCommand();
-                    deleteCmd.CommandText = $"DELETE FROM [{schema}].[{table}];";
+                    deleteCmd.CommandText = $"DELETE FROM [{schemaName}].[{table}];";
                     await deleteCmd.ExecuteNonQueryAsync(ct);
                 }
             }
@@ -413,22 +426,22 @@ public class AdvancedOperations
             // Delete in FK-safe order: events first, then streams, then progression
             await using (var cmd = conn.CreateCommand())
             {
-                cmd.CommandText = $"DELETE FROM {events.EventsTableName};";
+                cmd.CommandText = $"DELETE FROM {evtTable};";
                 await cmd.ExecuteNonQueryAsync(ct);
             }
 
             await using (var cmd = conn.CreateCommand())
             {
-                cmd.CommandText = $"DELETE FROM {events.StreamsTableName};";
+                cmd.CommandText = $"DELETE FROM {strmTable};";
                 await cmd.ExecuteNonQueryAsync(ct);
             }
 
             await using (var cmd = conn.CreateCommand())
             {
-                cmd.CommandText = $"DELETE FROM {events.ProgressionTableName};";
+                cmd.CommandText = $"DELETE FROM {progTable};";
                 await cmd.ExecuteNonQueryAsync(ct);
             }
-        }, token);
+        }, (connStr, schema, eventsTable, streamsTable, progressionTable), token);
     }
 
     /// <summary>

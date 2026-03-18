@@ -123,15 +123,16 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
 
     internal async Task<HighWaterStatistics> LoadStatisticsAsync(CancellationToken token)
     {
-        return await _resilience.ExecuteAsync(async (_, ct) =>
+        return await _resilience.ExecuteAsync(static async (state, ct) =>
         {
-            await using var conn = new SqlConnection(_connectionString);
+            var (connectionString, events) = state;
+            await using var conn = new SqlConnection(connectionString);
             await conn.OpenAsync(ct);
 
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = $"""
-                SELECT ISNULL(MAX(seq_id), 0) FROM {_events.EventsTableName};
-                SELECT last_seq_id, last_updated FROM {_events.ProgressionTableName}
+                SELECT ISNULL(MAX(seq_id), 0) FROM {events.EventsTableName};
+                SELECT last_seq_id, last_updated FROM {events.ProgressionTableName}
                     WHERE name = 'HighWaterMark';
                 """;
 
@@ -157,30 +158,31 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
             stats.Timestamp = DateTimeOffset.UtcNow;
 
             return stats;
-        }, token);
+        }, (_connectionString, _events), token);
     }
 
     internal async Task<(long? GapSeqId, long? MinSeqId, long? MaxSeqId)> DetectGapAsync(long start,
         CancellationToken token)
     {
-        return await _resilience.ExecuteAsync(async (state, ct) =>
+        return await _resilience.ExecuteAsync(static async (state, ct) =>
         {
-            await using var conn = new SqlConnection(_connectionString);
+            var (connectionString, events, startSeq) = state;
+            await using var conn = new SqlConnection(connectionString);
             await conn.OpenAsync(ct);
 
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = $"""
                 SELECT TOP 1 seq_id FROM (
                     SELECT seq_id, LEAD(seq_id) OVER (ORDER BY seq_id) AS next_seq
-                    FROM {_events.EventsTableName} WHERE seq_id >= @start
+                    FROM {events.EventsTableName} WHERE seq_id >= @start
                 ) ct WHERE next_seq IS NOT NULL AND next_seq - seq_id > 1;
 
-                SELECT MIN(seq_id) FROM {_events.EventsTableName} WHERE seq_id >= @start;
+                SELECT MIN(seq_id) FROM {events.EventsTableName} WHERE seq_id >= @start;
 
-                SELECT MAX(seq_id) FROM {_events.EventsTableName} WHERE seq_id >= @start;
+                SELECT MAX(seq_id) FROM {events.EventsTableName} WHERE seq_id >= @start;
                 """;
 
-            cmd.Parameters.AddWithValue("@start", state);
+            cmd.Parameters.AddWithValue("@start", startSeq);
 
             long? gapSeqId = null;
             long? minSeqId = null;
@@ -207,27 +209,28 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
             }
 
             return (gapSeqId, minSeqId, maxSeqId);
-        }, start, token);
+        }, (_connectionString, _events, start), token);
     }
 
     internal async Task MarkHighWaterAsync(long mark, CancellationToken token)
     {
-        await _resilience.ExecuteAsync(async (state, ct) =>
+        await _resilience.ExecuteAsync(static async (state, ct) =>
         {
-            await using var conn = new SqlConnection(_connectionString);
+            var (connectionString, events, markValue) = state;
+            await using var conn = new SqlConnection(connectionString);
             await conn.OpenAsync(ct);
 
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = $"""
-                MERGE {_events.ProgressionTableName} AS target
+                MERGE {events.ProgressionTableName} AS target
                 USING (SELECT 'HighWaterMark' AS name) AS source ON target.name = source.name
                 WHEN MATCHED THEN UPDATE SET last_seq_id = @mark, last_updated = SYSDATETIMEOFFSET()
                 WHEN NOT MATCHED THEN INSERT (name, last_seq_id, last_updated)
                     VALUES ('HighWaterMark', @mark, SYSDATETIMEOFFSET());
                 """;
 
-            cmd.Parameters.AddWithValue("@mark", state);
+            cmd.Parameters.AddWithValue("@mark", markValue);
             await cmd.ExecuteNonQueryAsync(ct);
-        }, mark, token);
+        }, (_connectionString, _events, mark), token);
     }
 }
