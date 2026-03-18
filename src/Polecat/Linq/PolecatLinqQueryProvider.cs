@@ -238,16 +238,32 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider
         // Adjust select columns for version syncing on IRevisioned/IVersioned types
         bool syncRevision = provider.Mapping.UseNumericRevisions;
         bool syncGuidVersion = provider.Mapping.UseOptimisticConcurrency;
+        bool isHierarchy = provider.Mapping.IsHierarchy();
         if (parser.Statement.SelectColumns == "data")
         {
+            var cols = "data";
             if (syncGuidVersion)
             {
-                parser.Statement.SelectColumns = "data, version, guid_version";
+                cols = "data, version, guid_version";
             }
             else if (syncRevision)
             {
-                parser.Statement.SelectColumns = "data, version";
+                cols = "data, version";
             }
+
+            if (isHierarchy)
+            {
+                cols += ", doc_type";
+            }
+
+            parser.Statement.SelectColumns = cols;
+        }
+
+        // Add doc_type filter for subclass queries
+        if (isHierarchy && documentType != provider.Mapping.DocumentType)
+        {
+            var alias = provider.Mapping.AliasFor(documentType);
+            parser.Statement.Wheres.Add(new ComparisonFilter("doc_type", "=", alias));
         }
 
         // Build SQL and execute via BatchBuilder/SqlBatch
@@ -258,7 +274,8 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider
 
         await using var reader = await _session.ExecuteReaderAsync(batch, token);
 
-        return await HandleResultAsync<TResult>(reader, parser, documentType, token, syncRevision, syncGuidVersion);
+        return await HandleResultAsync<TResult>(reader, parser, documentType, token, syncRevision, syncGuidVersion,
+            isHierarchy ? provider.Mapping : null);
     }
 
     private async Task<TResult> ExecuteGroupByAsync<TResult>(
@@ -873,7 +890,7 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider
 
     private async Task<TResult> HandleResultAsync<TResult>(
         DbDataReader reader, LinqQueryParser parser, Type documentType, CancellationToken token,
-        bool syncRevision = false, bool syncGuidVersion = false)
+        bool syncRevision = false, bool syncGuidVersion = false, DocumentMapping? hierarchyMapping = null)
     {
         if (parser.ValueMode == null)
         {
@@ -891,7 +908,7 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider
             }
 
             // Plain list result
-            return await InvokeListHandlerAsync<TResult>(documentType, reader, token, syncRevision, syncGuidVersion);
+            return await InvokeListHandlerAsync<TResult>(documentType, reader, token, syncRevision, syncGuidVersion, hierarchyMapping);
         }
 
         switch (parser.ValueMode)
@@ -902,7 +919,7 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider
                 return await InvokeOneResultHandlerAsync<TResult>(
                     documentType, reader, token, canBeNull: false,
                     canBeMultiples: parser.ValueMode == SingleValueMode.First || parser.ValueMode == SingleValueMode.Last,
-                    syncRevision: syncRevision, syncGuidVersion: syncGuidVersion);
+                    syncRevision: syncRevision, syncGuidVersion: syncGuidVersion, hierarchyMapping: hierarchyMapping);
 
             case SingleValueMode.FirstOrDefault:
             case SingleValueMode.SingleOrDefault:
@@ -910,7 +927,7 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider
                 return await InvokeOneResultHandlerAsync<TResult>(
                     documentType, reader, token, canBeNull: true,
                     canBeMultiples: parser.ValueMode != SingleValueMode.SingleOrDefault,
-                    syncRevision: syncRevision, syncGuidVersion: syncGuidVersion);
+                    syncRevision: syncRevision, syncGuidVersion: syncGuidVersion, hierarchyMapping: hierarchyMapping);
 
             case SingleValueMode.Count:
             case SingleValueMode.LongCount:
@@ -933,10 +950,11 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider
 
     private async Task<TResult> InvokeListHandlerAsync<TResult>(
         Type itemType, DbDataReader reader, CancellationToken token,
-        bool syncRevision = false, bool syncGuidVersion = false)
+        bool syncRevision = false, bool syncGuidVersion = false, DocumentMapping? hierarchyMapping = null)
     {
         var selectorType = typeof(DeserializingSelector<>).MakeGenericType(itemType);
-        var selector = Activator.CreateInstance(selectorType, _session.Serializer, syncRevision, syncGuidVersion)!;
+        var selector = Activator.CreateInstance(selectorType, _session.Serializer, syncRevision, syncGuidVersion,
+            hierarchyMapping)!;
 
         var handlerType = typeof(ListQueryHandler<>).MakeGenericType(itemType);
         var handler = Activator.CreateInstance(handlerType, selector)!;
@@ -985,10 +1003,11 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider
     private async Task<TResult> InvokeOneResultHandlerAsync<TResult>(
         Type documentType, DbDataReader reader, CancellationToken token,
         bool canBeNull, bool canBeMultiples,
-        bool syncRevision = false, bool syncGuidVersion = false)
+        bool syncRevision = false, bool syncGuidVersion = false, DocumentMapping? hierarchyMapping = null)
     {
         var selectorType = typeof(DeserializingSelector<>).MakeGenericType(documentType);
-        var selector = Activator.CreateInstance(selectorType, _session.Serializer, syncRevision, syncGuidVersion)!;
+        var selector = Activator.CreateInstance(selectorType, _session.Serializer, syncRevision, syncGuidVersion,
+            hierarchyMapping)!;
 
         var handlerType = typeof(OneResultHandler<>).MakeGenericType(documentType);
         var handler = Activator.CreateInstance(handlerType, selector, canBeNull, canBeMultiples)!;

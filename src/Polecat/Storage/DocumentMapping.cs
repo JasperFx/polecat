@@ -120,6 +120,79 @@ internal class DocumentMapping
     public bool UseNumericRevisions { get; }
 
     /// <summary>
+    ///     Registered subclass types for this document hierarchy.
+    /// </summary>
+    public List<SubClassMapping> SubClasses { get; } = new();
+
+    /// <summary>
+    ///     The alias used in the doc_type discriminator column for the base type.
+    /// </summary>
+    public string Alias { get; set; } = "base";
+
+    /// <summary>
+    ///     True when this mapping has subclasses registered, or the document type is abstract/interface.
+    /// </summary>
+    public bool IsHierarchy() =>
+        SubClasses.Count > 0
+        || _documentType.IsAbstract
+        || _documentType.IsInterface;
+
+    /// <summary>
+    ///     Get the doc_type alias for a given runtime type.
+    /// </summary>
+    public string AliasFor(Type subclassType)
+    {
+        if (subclassType == _documentType) return Alias;
+        var sub = SubClasses.FirstOrDefault(x => x.DocumentType == subclassType);
+        if (sub == null)
+            throw new ArgumentOutOfRangeException(nameof(subclassType),
+                $"Type '{subclassType.Name}' is not a registered subclass of '{_documentType.Name}'.");
+        return sub.Alias;
+    }
+
+    /// <summary>
+    ///     Resolve a doc_type alias back to its .NET type.
+    /// </summary>
+    public Type TypeFor(string alias)
+    {
+        if (string.Equals(alias, Alias, StringComparison.OrdinalIgnoreCase)) return _documentType;
+        var sub = SubClasses.FirstOrDefault(x =>
+            string.Equals(x.Alias, alias, StringComparison.OrdinalIgnoreCase));
+        if (sub == null)
+            throw new ArgumentOutOfRangeException(nameof(alias),
+                $"Unknown doc_type alias '{alias}' for document type '{_documentType.Name}'.");
+        return sub.DocumentType;
+    }
+
+    /// <summary>
+    ///     Register a subclass type.
+    /// </summary>
+    public void AddSubClass(Type subclassType, string? alias = null)
+    {
+        if (!_documentType.IsAssignableFrom(subclassType))
+            throw new ArgumentException(
+                $"Type '{subclassType.Name}' does not inherit from '{_documentType.Name}'.");
+
+        if (SubClasses.Any(x => x.DocumentType == subclassType)) return;
+        SubClasses.Add(new SubClassMapping(subclassType, alias));
+    }
+
+    /// <summary>
+    ///     Auto-discover and register all subclasses from the base type's assembly.
+    /// </summary>
+    public void AddSubClassHierarchy()
+    {
+        var assembly = _documentType.Assembly;
+        foreach (var type in assembly.GetTypes())
+        {
+            if (type != _documentType && _documentType.IsAssignableFrom(type) && !type.IsAbstract)
+            {
+                AddSubClass(type);
+            }
+        }
+    }
+
+    /// <summary>
     ///     Returns the unwrapped inner ID value for SQL parameters.
     ///     For strongly typed IDs, extracts the inner value (e.g., OrderId → Guid).
     /// </summary>

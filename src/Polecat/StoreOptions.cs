@@ -98,6 +98,11 @@ public class StoreOptions
     public HiloSettings HiloSequenceDefaults { get; } = new();
 
     /// <summary>
+    ///     Configure document schema mappings including sub-class hierarchies.
+    /// </summary>
+    public SchemaConfiguration Schema { get; } = new();
+
+    /// <summary>
     ///     Document storage policies (e.g., soft deletes).
     /// </summary>
     public StorePolicies Policies { get; } = new();

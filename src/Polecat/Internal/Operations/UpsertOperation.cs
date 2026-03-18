@@ -54,36 +54,72 @@ internal class UpsertOperation : IStorageOperation
 
     private void ConfigureStandardCommand(ICommandBuilder builder)
     {
-        builder.Append($"""
-            MERGE INTO {_mapping.QualifiedTableName} WITH (HOLDLOCK) AS target
-            USING (SELECT @id AS id, @tenant_id AS tenant_id) AS source
-                ON target.id = source.id AND target.tenant_id = source.tenant_id
-            WHEN MATCHED THEN
-              UPDATE SET data = @data, version = target.version + 1,
-                last_modified = SYSDATETIMEOFFSET(), dotnet_type = @dotnet_type
-            WHEN NOT MATCHED THEN
-              INSERT (id, data, version, last_modified, created_at, dotnet_type, tenant_id)
-              VALUES (@id, @data, 1, SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET(), @dotnet_type, @tenant_id)
-            OUTPUT inserted.version;
-            """);
+        if (_mapping.IsHierarchy())
+        {
+            builder.Append($"""
+                MERGE INTO {_mapping.QualifiedTableName} WITH (HOLDLOCK) AS target
+                USING (SELECT @id AS id, @tenant_id AS tenant_id) AS source
+                    ON target.id = source.id AND target.tenant_id = source.tenant_id
+                WHEN MATCHED THEN
+                  UPDATE SET data = @data, version = target.version + 1,
+                    last_modified = SYSDATETIMEOFFSET(), dotnet_type = @dotnet_type, doc_type = @doc_type
+                WHEN NOT MATCHED THEN
+                  INSERT (id, data, version, last_modified, created_at, dotnet_type, tenant_id, doc_type)
+                  VALUES (@id, @data, 1, SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET(), @dotnet_type, @tenant_id, @doc_type)
+                OUTPUT inserted.version;
+                """);
+        }
+        else
+        {
+            builder.Append($"""
+                MERGE INTO {_mapping.QualifiedTableName} WITH (HOLDLOCK) AS target
+                USING (SELECT @id AS id, @tenant_id AS tenant_id) AS source
+                    ON target.id = source.id AND target.tenant_id = source.tenant_id
+                WHEN MATCHED THEN
+                  UPDATE SET data = @data, version = target.version + 1,
+                    last_modified = SYSDATETIMEOFFSET(), dotnet_type = @dotnet_type
+                WHEN NOT MATCHED THEN
+                  INSERT (id, data, version, last_modified, created_at, dotnet_type, tenant_id)
+                  VALUES (@id, @data, 1, SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET(), @dotnet_type, @tenant_id)
+                OUTPUT inserted.version;
+                """);
+        }
 
         AddBaseParameters(builder);
     }
 
     private void ConfigureRevisionCommand(ICommandBuilder builder)
     {
-        builder.Append($"""
-            MERGE INTO {_mapping.QualifiedTableName} WITH (HOLDLOCK) AS target
-            USING (SELECT @id AS id, @tenant_id AS tenant_id) AS source
-                ON target.id = source.id AND target.tenant_id = source.tenant_id
-            WHEN MATCHED AND (@expected_version = 0 OR target.version = @expected_version) THEN
-              UPDATE SET data = @data, version = target.version + 1,
-                last_modified = SYSDATETIMEOFFSET(), dotnet_type = @dotnet_type
-            WHEN NOT MATCHED THEN
-              INSERT (id, data, version, last_modified, created_at, dotnet_type, tenant_id)
-              VALUES (@id, @data, 1, SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET(), @dotnet_type, @tenant_id)
-            OUTPUT inserted.version;
-            """);
+        if (_mapping.IsHierarchy())
+        {
+            builder.Append($"""
+                MERGE INTO {_mapping.QualifiedTableName} WITH (HOLDLOCK) AS target
+                USING (SELECT @id AS id, @tenant_id AS tenant_id) AS source
+                    ON target.id = source.id AND target.tenant_id = source.tenant_id
+                WHEN MATCHED AND (@expected_version = 0 OR target.version = @expected_version) THEN
+                  UPDATE SET data = @data, version = target.version + 1,
+                    last_modified = SYSDATETIMEOFFSET(), dotnet_type = @dotnet_type, doc_type = @doc_type
+                WHEN NOT MATCHED THEN
+                  INSERT (id, data, version, last_modified, created_at, dotnet_type, tenant_id, doc_type)
+                  VALUES (@id, @data, 1, SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET(), @dotnet_type, @tenant_id, @doc_type)
+                OUTPUT inserted.version;
+                """);
+        }
+        else
+        {
+            builder.Append($"""
+                MERGE INTO {_mapping.QualifiedTableName} WITH (HOLDLOCK) AS target
+                USING (SELECT @id AS id, @tenant_id AS tenant_id) AS source
+                    ON target.id = source.id AND target.tenant_id = source.tenant_id
+                WHEN MATCHED AND (@expected_version = 0 OR target.version = @expected_version) THEN
+                  UPDATE SET data = @data, version = target.version + 1,
+                    last_modified = SYSDATETIMEOFFSET(), dotnet_type = @dotnet_type
+                WHEN NOT MATCHED THEN
+                  INSERT (id, data, version, last_modified, created_at, dotnet_type, tenant_id)
+                  VALUES (@id, @data, 1, SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET(), @dotnet_type, @tenant_id)
+                OUTPUT inserted.version;
+                """);
+        }
 
         AddBaseParameters(builder);
         builder.AddParameters(new Dictionary<string, object?> { ["expected_version"] = _expectedRevision });
@@ -91,18 +127,36 @@ internal class UpsertOperation : IStorageOperation
 
     private void ConfigureGuidVersionCommand(ICommandBuilder builder)
     {
-        builder.Append($"""
-            MERGE INTO {_mapping.QualifiedTableName} WITH (HOLDLOCK) AS target
-            USING (SELECT @id AS id, @tenant_id AS tenant_id) AS source
-                ON target.id = source.id AND target.tenant_id = source.tenant_id
-            WHEN MATCHED AND (@expected_guid_version IS NULL OR target.guid_version = @expected_guid_version) THEN
-              UPDATE SET data = @data, version = target.version + 1, guid_version = @new_guid_version,
-                last_modified = SYSDATETIMEOFFSET(), dotnet_type = @dotnet_type
-            WHEN NOT MATCHED THEN
-              INSERT (id, data, version, guid_version, last_modified, created_at, dotnet_type, tenant_id)
-              VALUES (@id, @data, 1, @new_guid_version, SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET(), @dotnet_type, @tenant_id)
-            OUTPUT inserted.version, inserted.guid_version;
-            """);
+        if (_mapping.IsHierarchy())
+        {
+            builder.Append($"""
+                MERGE INTO {_mapping.QualifiedTableName} WITH (HOLDLOCK) AS target
+                USING (SELECT @id AS id, @tenant_id AS tenant_id) AS source
+                    ON target.id = source.id AND target.tenant_id = source.tenant_id
+                WHEN MATCHED AND (@expected_guid_version IS NULL OR target.guid_version = @expected_guid_version) THEN
+                  UPDATE SET data = @data, version = target.version + 1, guid_version = @new_guid_version,
+                    last_modified = SYSDATETIMEOFFSET(), dotnet_type = @dotnet_type, doc_type = @doc_type
+                WHEN NOT MATCHED THEN
+                  INSERT (id, data, version, guid_version, last_modified, created_at, dotnet_type, tenant_id, doc_type)
+                  VALUES (@id, @data, 1, @new_guid_version, SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET(), @dotnet_type, @tenant_id, @doc_type)
+                OUTPUT inserted.version, inserted.guid_version;
+                """);
+        }
+        else
+        {
+            builder.Append($"""
+                MERGE INTO {_mapping.QualifiedTableName} WITH (HOLDLOCK) AS target
+                USING (SELECT @id AS id, @tenant_id AS tenant_id) AS source
+                    ON target.id = source.id AND target.tenant_id = source.tenant_id
+                WHEN MATCHED AND (@expected_guid_version IS NULL OR target.guid_version = @expected_guid_version) THEN
+                  UPDATE SET data = @data, version = target.version + 1, guid_version = @new_guid_version,
+                    last_modified = SYSDATETIMEOFFSET(), dotnet_type = @dotnet_type
+                WHEN NOT MATCHED THEN
+                  INSERT (id, data, version, guid_version, last_modified, created_at, dotnet_type, tenant_id)
+                  VALUES (@id, @data, 1, @new_guid_version, SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET(), @dotnet_type, @tenant_id)
+                OUTPUT inserted.version, inserted.guid_version;
+                """);
+        }
 
         AddBaseParameters(builder);
         builder.AddParameters(new Dictionary<string, object?>
@@ -148,5 +202,13 @@ internal class UpsertOperation : IStorageOperation
             ["id"] = _id, ["data"] = _json,
             ["dotnet_type"] = _mapping.DotNetTypeName, ["tenant_id"] = _tenantId
         });
+
+        if (_mapping.IsHierarchy())
+        {
+            builder.AddParameters(new Dictionary<string, object?>
+            {
+                ["doc_type"] = _mapping.AliasFor(_document.GetType())
+            });
+        }
     }
 }

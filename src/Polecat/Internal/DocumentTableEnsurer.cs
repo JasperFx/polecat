@@ -117,6 +117,10 @@ internal class DocumentTableEnsurer
             ? @"
                     guid_version uniqueidentifier NOT NULL DEFAULT NEWID(),"
             : "";
+        var docTypeCol = mapping.IsHierarchy()
+            ? @"
+                    doc_type varchar(250) NOT NULL DEFAULT 'base',"
+            : "";
 
         if (isConjoined)
         {
@@ -135,7 +139,7 @@ internal class DocumentTableEnsurer
                         version int NOT NULL DEFAULT 1,
                         last_modified datetimeoffset NOT NULL DEFAULT SYSDATETIMEOFFSET(),
                         created_at datetimeoffset NOT NULL DEFAULT SYSDATETIMEOFFSET(),
-                        dotnet_type varchar(500) NULL,{softDeleteCols}{guidVersionCol}
+                        dotnet_type varchar(500) NULL,{docTypeCol}{softDeleteCols}{guidVersionCol}
                         CONSTRAINT pk_{table} PRIMARY KEY (tenant_id, id)
                     );
                 END";
@@ -155,7 +159,7 @@ internal class DocumentTableEnsurer
                     version int NOT NULL DEFAULT 1,
                     last_modified datetimeoffset NOT NULL DEFAULT SYSDATETIMEOFFSET(),
                     created_at datetimeoffset NOT NULL DEFAULT SYSDATETIMEOFFSET(),
-                    dotnet_type varchar(500) NULL,{softDeleteCols}{guidVersionCol}
+                    dotnet_type varchar(500) NULL,{docTypeCol}{softDeleteCols}{guidVersionCol}
                     tenant_id varchar(250) NOT NULL DEFAULT '*DEFAULT*'
                 );
             END";

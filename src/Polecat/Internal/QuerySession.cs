@@ -178,7 +178,18 @@ internal partial class QuerySession : IQuerySession
             if (await reader.ReadAsync(token))
             {
                 var json = reader.GetString(1); // data column
-                var doc = Serializer.FromJson<T>(json);
+                T doc;
+                if (provider.DocTypeColumnIndex >= 0)
+                {
+                    var docType = reader.GetString(provider.DocTypeColumnIndex);
+                    var resolvedType = provider.Mapping.TypeFor(docType);
+                    doc = (T)Serializer.FromJson(resolvedType, json);
+                }
+                else
+                {
+                    doc = Serializer.FromJson<T>(json);
+                }
+
                 SyncVersionProperties(doc, reader, provider);
                 SyncCreatedAt(doc, reader);
                 SyncTenantId(doc, reader);
@@ -239,7 +250,18 @@ internal partial class QuerySession : IQuerySession
             while (await reader.ReadAsync(token))
             {
                 var json = reader.GetString(1); // data column
-                var doc = Serializer.FromJson<T>(json);
+                T doc;
+                if (provider.DocTypeColumnIndex >= 0)
+                {
+                    var docType = reader.GetString(provider.DocTypeColumnIndex);
+                    var resolvedType = provider.Mapping.TypeFor(docType);
+                    doc = (T)Serializer.FromJson(resolvedType, json);
+                }
+                else
+                {
+                    doc = Serializer.FromJson<T>(json);
+                }
+
                 SyncVersionProperties(doc, reader, provider);
                 SyncCreatedAt(doc, reader);
                 SyncTenantId(doc, reader);
