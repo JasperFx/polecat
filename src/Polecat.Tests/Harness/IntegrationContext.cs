@@ -68,6 +68,9 @@ public abstract class IntegrationContext : IAsyncLifetime
         _database = _customStore.Database;
         await _database.ApplyAllConfiguredChangesToDatabaseAsync();
 
+        // Reset session so subsequent access uses the new store
+        _session = null;
+
         return options.DatabaseSchemaName;
     }
 

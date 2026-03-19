@@ -70,7 +70,8 @@ public class created_at_tests : IntegrationContext
         await using var query2 = theStore.QuerySession();
         var loaded2 = await query2.LoadAsync<CreatedDoc>(doc.Id);
         loaded2.ShouldNotBeNull();
-        loaded2.CreatedAt.ShouldBe(originalCreatedAt);
+        // Use fuzzy comparison — SQL Server datetimeoffset may lose sub-tick precision on round-trip
+        (loaded2.CreatedAt - originalCreatedAt).Duration().ShouldBeLessThan(TimeSpan.FromMilliseconds(1));
     }
 
     [Fact]

@@ -121,13 +121,31 @@ public class ef_core_single_stream_inline_tests : ef_core_single_stream_projecti
 public class ef_core_single_stream_async_tests : ef_core_single_stream_projection_tests_base
 {
     protected override ProjectionLifecycle Lifecycle => ProjectionLifecycle.Async;
+    private IProjectionDaemon? _daemon;
 
     protected override async Task WaitForProjectionAsync()
     {
-        using var daemon = (IProjectionDaemon)await Store.BuildProjectionDaemonAsync();
-        await daemon.StartAllAsync();
-        await daemon.CatchUpAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
-        await daemon.StopAllAsync();
+        if (_daemon == null)
+        {
+            SqlConnection.ClearAllPools();
+            _daemon = (IProjectionDaemon)await Store.BuildProjectionDaemonAsync();
+            await _daemon.StartAllAsync();
+        }
+
+        // Retry on transient SQL Server connection errors from daemon internals
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            try
+            {
+                await _daemon.CatchUpAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
+                return;
+            }
+            catch (AggregateException) when (attempt < 2)
+            {
+                SqlConnection.ClearAllPools();
+                await Task.Delay(200);
+            }
+        }
     }
 }
 

@@ -21,6 +21,9 @@ public class linq_string_methods_tests : IntegrationContext
     {
         await StoreOptions(opts => opts.DatabaseSchemaName = schema);
 
+        // Clean any existing data from previous test runs
+        await theStore.Advanced.CleanAllDocumentsAsync();
+
         theSession.Store(new StringMethodDoc { Id = Guid.NewGuid(), Name = "Alice", Code = "  ABC  " });
         theSession.Store(new StringMethodDoc { Id = Guid.NewGuid(), Name = "Bob", Code = "  DEF  " });
         theSession.Store(new StringMethodDoc { Id = Guid.NewGuid(), Name = "CAROL", Code = "GHI" });

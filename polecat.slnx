@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Polecat/Polecat.csproj" />
+    <Project Path="src/Polecat.Tests/Polecat.Tests.csproj" />
+    <Project Path="src/Polecat.CodeGeneration/Polecat.CodeGeneration.csproj" />
+    <Project Path="src/Polecat.EntityFrameworkCore/Polecat.EntityFrameworkCore.csproj" />
+    <Project Path="src/Polecat.EntityFrameworkCore.Tests/Polecat.EntityFrameworkCore.Tests.csproj" />
+    <Project Path="src/Polecat.AspNetCore/Polecat.AspNetCore.csproj" />
+    <Project Path="src/Polecat.AspNetCore.Testing/Polecat.AspNetCore.Testing.csproj" />
+    <Project Path="src/DcbLoadTest/DcbLoadTest.csproj" />
+  </Folder>
+</Solution>

@@ -70,6 +70,11 @@ internal class DocumentTableEnsurer
             cmd.CommandText = ddl;
             await cmd.ExecuteNonQueryAsync(token);
 
+            // Ensure created_at column exists (migration for tables created before this column was added)
+            await using var migrateCmd = conn.CreateCommand();
+            migrateCmd.CommandText = BuildAddMissingColumnsDdl(provider.Mapping);
+            await migrateCmd.ExecuteNonQueryAsync(token);
+
             // Create custom indexes (computed columns + index)
             // Each statement executed separately so computed columns are visible
             // before filtered indexes reference them
@@ -227,6 +232,21 @@ internal class DocumentTableEnsurer
                     tenant_id varchar(250) NOT NULL DEFAULT '*DEFAULT*'
                 );
             END";
+    }
+
+    private static string BuildAddMissingColumnsDdl(DocumentMapping mapping)
+    {
+        var schema = mapping.DatabaseSchemaName;
+        var table = mapping.TableName;
+        return $"""
+            IF NOT EXISTS (SELECT 1 FROM sys.columns
+                           WHERE object_id = OBJECT_ID('[{schema}].[{table}]')
+                             AND name = 'created_at')
+            BEGIN
+                ALTER TABLE [{schema}].[{table}]
+                    ADD created_at datetimeoffset NOT NULL DEFAULT SYSDATETIMEOFFSET();
+            END
+            """;
     }
 
 }

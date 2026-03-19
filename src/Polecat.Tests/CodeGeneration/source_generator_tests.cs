@@ -120,14 +120,14 @@ namespace TestApp
 
         // Select SQL should query all standard columns
         generatedSource.ShouldContain(
-            "SELECT id, data, version, last_modified, dotnet_type, tenant_id FROM [dbo].[pc_doc_order]");
+            "SELECT id, data, version, last_modified, created_at, dotnet_type, tenant_id FROM [dbo].[pc_doc_order]");
 
         // Load SQL should filter by id and tenant_id
         generatedSource.ShouldContain("WHERE id = @id AND tenant_id = @tenant_id");
 
         // Insert SQL should use VALUES with version=1
         generatedSource.ShouldContain("INSERT INTO [dbo].[pc_doc_order]");
-        generatedSource.ShouldContain("VALUES (@id, @data, 1, SYSDATETIMEOFFSET(), @dotnet_type, @tenant_id)");
+        generatedSource.ShouldContain("VALUES (@id, @data, 1, SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET(), @dotnet_type, @tenant_id)");
 
         // Upsert SQL should use MERGE
         generatedSource.ShouldContain("MERGE [dbo].[pc_doc_order]");

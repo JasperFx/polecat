@@ -1,6 +1,7 @@
 using JasperFx;
 using JasperFx.Events.Daemon;
 using JasperFx.Events.Projections;
+using Microsoft.Data.SqlClient;
 using Polecat.Projections;
 using Polecat.Tests.Harness;
 using Polecat.Tests.Projections;
@@ -18,9 +19,25 @@ public class async_daemon_tests : IntegrationContext
     {
         await StoreOptions(opts =>
         {
+            opts.DatabaseSchemaName = "async_daemon";
             opts.Projections.Snapshot<QuestParty>(SnapshotLifecycle.Async);
         });
         return theStore;
+    }
+
+    private static async Task CatchUpWithRetryAsync(IProjectionDaemon daemon)
+    {
+        try
+        {
+            await daemon.CatchUpAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
+        }
+        catch (AggregateException)
+        {
+            // Transient SQL Server connection error — clear pools and retry once
+            SqlConnection.ClearAllPools();
+            await Task.Delay(500);
+            await daemon.CatchUpAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
+        }
     }
 
     [Fact]
@@ -64,7 +81,7 @@ public class async_daemon_tests : IntegrationContext
         // Run daemon to completion
         using var daemon = (IProjectionDaemon)await store.BuildProjectionDaemonAsync();
         await daemon.StartAllAsync();
-        await daemon.CatchUpAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
+        await CatchUpWithRetryAsync(daemon);
         await daemon.StopAllAsync();
 
         // Verify projected document
@@ -93,7 +110,7 @@ public class async_daemon_tests : IntegrationContext
         // Run daemon
         using var daemon = (IProjectionDaemon)await store.BuildProjectionDaemonAsync();
         await daemon.StartAllAsync();
-        await daemon.CatchUpAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
+        await CatchUpWithRetryAsync(daemon);
         await daemon.StopAllAsync();
 
         // Verify progress was recorded
@@ -125,7 +142,7 @@ public class async_daemon_tests : IntegrationContext
         // Start daemon and catch up
         using var daemon = (IProjectionDaemon)await store.BuildProjectionDaemonAsync();
         await daemon.StartAllAsync();
-        await daemon.CatchUpAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
+        await CatchUpWithRetryAsync(daemon);
         await daemon.StopAllAsync();
 
         await using var query = store.QuerySession();
@@ -156,7 +173,7 @@ public class async_daemon_tests : IntegrationContext
         // Start daemon and catch up to all events
         using var daemon = (IProjectionDaemon)await store.BuildProjectionDaemonAsync();
         await daemon.StartAllAsync();
-        await daemon.CatchUpAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
+        await CatchUpWithRetryAsync(daemon);
         await daemon.StopAllAsync();
 
         await using var query = store.QuerySession();
@@ -187,7 +204,7 @@ public class async_daemon_tests : IntegrationContext
 
         using var daemon = (IProjectionDaemon)await store.BuildProjectionDaemonAsync();
         await daemon.StartAllAsync();
-        await daemon.CatchUpAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
+        await CatchUpWithRetryAsync(daemon);
         await daemon.StopAllAsync();
 
         await using var query = store.QuerySession();

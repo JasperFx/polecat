@@ -2,22 +2,11 @@
 
     <PropertyGroup>
         <Description>SQL Server backed Event Store for the Critter Stack</Description>
-        <GenerateAssemblyTitleAttribute>true</GenerateAssemblyTitleAttribute>
-        <GenerateAssemblyDescriptionAttribute>true</GenerateAssemblyDescriptionAttribute>
-        <GenerateAssemblyProductAttribute>true</GenerateAssemblyProductAttribute>
-        <GenerateAssemblyCopyrightAttribute>false</GenerateAssemblyCopyrightAttribute>
-        <GenerateAssemblyVersionAttribute>true</GenerateAssemblyVersionAttribute>
-        <GenerateAssemblyFileVersionAttribute>true</GenerateAssemblyFileVersionAttribute>
-        <GenerateAssemblyInformationalVersionAttribute>true</GenerateAssemblyInformationalVersionAttribute>
         <GenerateDocumentationFile>true</GenerateDocumentationFile>
-        <Nullable>enable</Nullable>
         <TargetFramework>net10.0</TargetFramework>
-        <LangVersion>latest</LangVersion>
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
         <RootNamespace>Polecat</RootNamespace>
-        <Version>0.9.0</Version>
-        <PackageLicenseExpression>MIT</PackageLicenseExpression>
     </PropertyGroup>
 
     <ItemGroup>
@@ -38,10 +27,10 @@
         <!-- Local project references for unreleased features -->
         <ProjectReference Include="..\..\..\..\..\..\jasperfx\src\JasperFx\JasperFx.csproj" />
         <ProjectReference Include="..\..\..\..\..\..\jasperfx\src\JasperFx.Events\JasperFx.Events.csproj" />
-        <PackageReference Include="Microsoft.Data.SqlClient" Version="6.1.4" />
-        <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
-        <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.0" />
-        <PackageReference Include="Polly.Core" Version="8.6.5" />
+        <PackageReference Include="Microsoft.Data.SqlClient" />
+        <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+        <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
+        <PackageReference Include="Polly.Core" />
         <ProjectReference Include="..\..\..\..\..\..\weasel\src\Weasel.SqlServer\Weasel.SqlServer.csproj" />
     </ItemGroup>
 
