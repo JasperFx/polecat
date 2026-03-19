@@ -54,11 +54,12 @@ public class PolecatConfigurationExpression
     {
         Services.ConfigurePolecat(opts => opts.DaemonSettings.AsyncMode = mode);
         EnsureActivatorIsRegistered();
-        Services.AddSingleton<IHostedService>(sp =>
+        Services.AddSingleton<PolecatDaemonHostedService>(sp =>
         {
             var store = (DocumentStore)sp.GetRequiredService<IDocumentStore>();
             return new PolecatDaemonHostedService(store, sp.GetRequiredService<ILoggerFactory>());
         });
+        Services.AddSingleton<IHostedService>(sp => sp.GetRequiredService<PolecatDaemonHostedService>());
         return this;
     }
 

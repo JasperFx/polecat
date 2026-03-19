@@ -82,7 +82,7 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
         AsyncOptions shardOptions)
     {
         var connStr = database is PolecatDatabase pdb ? pdb.ConnectionString : Options.ConnectionString;
-        return new PolecatEventLoader(Events, Options, connStr);
+        return new PolecatEventLoader(Events, Options, connStr, filtering);
     }
 
     async ValueTask<IProjectionBatch<IDocumentSession, IQuerySession>>
@@ -262,8 +262,11 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
         var batch = new PolecatProjectionBatch(this, Events, connStr);
         await batch.RecordProgress(range);
 
-        // Create a session the subscription can use for reads/writes
+        // Create a session the subscription can use for reads/writes,
+        // and register it with the batch so its pending operations are included
+        // in the batch's transaction.
         await using var session = LightweightSession();
+        batch.RegisterSession(session);
         var listener = await subscription.ProcessEventsAsync(range, range.Agent, session, token);
 
         await batch.ExecuteAsync(token);

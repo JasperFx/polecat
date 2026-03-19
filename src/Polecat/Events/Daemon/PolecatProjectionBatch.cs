@@ -40,6 +40,15 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
         return session;
     }
 
+    /// <summary>
+    ///     Register an externally-created session with this batch so its pending
+    ///     operations are included in the batch's transaction.
+    /// </summary>
+    internal void RegisterSession(IDocumentSession session)
+    {
+        _sessions.Add(session);
+    }
+
     public ValueTask RecordProgress(EventRange range)
     {
         var progressionTable = _events.ProgressionTableName;
