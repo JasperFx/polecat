@@ -33,7 +33,7 @@ jobs:
           dotnet-version: 10.0.x
 
       - name: Install mdsnippets
-	run: dotnet tool install -g MarkdownSnippets.Tool
+        run: dotnet tool install -g MarkdownSnippets.Tool
 
       - name: Build docs
         run: npm run docs-build
