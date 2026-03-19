@@ -36,10 +36,10 @@ jobs:
           fi
 
       - name: Restore
-        run: dotnet restore polecat.sln
+        run: dotnet restore polecat.slnx
 
       - name: Build
-        run: dotnet build polecat.sln -c Release --no-restore
+        run: dotnet build polecat.slnx -c Release --no-restore
 
       - name: Pack
         run: |
