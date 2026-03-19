@@ -159,7 +159,7 @@ public class StoreOptions
     ///     The tenancy strategy. Defaults to DefaultTenancy (single database).
     ///     Set via MultiTenantedDatabases() for separate database per tenant.
     /// </summary>
-    internal ITenancy? Tenancy { get; set; }
+    public ITenancy? Tenancy { get; set; }
 
     /// <summary>
     ///     Custom projection storage providers registered by extensions (e.g., EF Core).

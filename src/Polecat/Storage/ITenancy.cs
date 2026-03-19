@@ -7,7 +7,7 @@ namespace Polecat.Storage;
 ///     Abstracts tenant-to-database routing. Implementations determine whether
 ///     all tenants share one database or each gets a separate one.
 /// </summary>
-internal interface ITenancy
+public interface ITenancy
 {
     DatabaseCardinality Cardinality { get; }
     string DefaultTenantId { get; }

@@ -24,7 +24,8 @@ internal class DocumentMapping
 
         _idProperty = FindIdProperty(documentType)
             ?? throw new InvalidOperationException(
-                $"Document type '{documentType.FullName}' must have a public property named 'Id' of type Guid, string, int, or long.");
+                $"Document type '{documentType.FullName}' must have a public property named 'Id' " +
+                "or a property marked with [Identity] of type Guid, string, int, or long.");
 
         IdType = _idProperty.PropertyType;
 
@@ -259,6 +260,15 @@ internal class DocumentMapping
 
     public static PropertyInfo? FindIdProperty(Type type)
     {
+        // Priority:
+        // 1) Property with [Identity] attribute
+        // 2) Conventional "Id" property (case-insensitive)
+        var properties = type.GetProperties(BindingFlags.Public | BindingFlags.Instance);
+
+        var identityProperty = properties.FirstOrDefault(p =>
+            p.GetCustomAttribute<IdentityAttribute>() != null);
+        if (identityProperty != null) return identityProperty;
+
         return type.GetProperty("Id", BindingFlags.Public | BindingFlags.Instance);
     }
 

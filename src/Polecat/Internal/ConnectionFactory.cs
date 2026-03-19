@@ -5,7 +5,7 @@ namespace Polecat.Internal;
 /// <summary>
 ///     Creates SqlConnection instances from a connection string.
 /// </summary>
-internal class ConnectionFactory
+public class ConnectionFactory
 {
     private readonly string _connectionString;
 

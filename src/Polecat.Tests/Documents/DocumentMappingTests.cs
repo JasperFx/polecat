@@ -121,6 +121,63 @@ public class DocumentMappingTests
         mapping.DotNetTypeName.ShouldContain("Polecat.Tests");
     }
 
+    [Fact]
+    public void discovers_identity_attribute_on_property()
+    {
+        var mapping = new DocumentMapping(typeof(NonStandardWithProp), DefaultOptions());
+        mapping.IdType.ShouldBe(typeof(string));
+    }
+
+    [Fact]
+    public void can_get_identity_attribute_id()
+    {
+        var mapping = new DocumentMapping(typeof(NonStandardWithProp), DefaultOptions());
+        var doc = new NonStandardWithProp { Name = "test-key", Other = "other" };
+        mapping.GetId(doc).ShouldBe("test-key");
+    }
+
+    [Fact]
+    public void can_set_identity_attribute_id()
+    {
+        var mapping = new DocumentMapping(typeof(NonStandardWithProp), DefaultOptions());
+        var doc = new NonStandardWithProp();
+        mapping.SetId(doc, "new-key");
+        doc.Name.ShouldBe("new-key");
+    }
+
+    [Fact]
+    public void identity_attribute_takes_priority_over_id_property()
+    {
+        var mapping = new DocumentMapping(typeof(IdAndIdentityAttDoc), DefaultOptions());
+        // The [Identity] attribute on DocumentId should take priority over Id
+        mapping.IdType.ShouldBe(typeof(string));
+
+        var doc = new IdAndIdentityAttDoc { Id = Guid.NewGuid(), DocumentId = "custom-key" };
+        mapping.GetId(doc).ShouldBe("custom-key");
+    }
+
+    [Fact]
+    public void identity_attribute_with_guid()
+    {
+        var mapping = new DocumentMapping(typeof(GuidIdentityDoc), DefaultOptions());
+        mapping.IdType.ShouldBe(typeof(Guid));
+
+        var id = Guid.NewGuid();
+        var doc = new GuidIdentityDoc { UniqueId = id };
+        mapping.GetId(doc).ShouldBe(id);
+    }
+
+    [Fact]
+    public void identity_attribute_with_int()
+    {
+        var mapping = new DocumentMapping(typeof(IntIdentityDoc), DefaultOptions());
+        mapping.IdType.ShouldBe(typeof(int));
+        mapping.IsNumericId.ShouldBeTrue();
+
+        var doc = new IntIdentityDoc { Number = 42 };
+        mapping.GetId(doc).ShouldBe(42);
+    }
+
     // Test types
     private class NoIdDoc
     {
@@ -140,5 +197,33 @@ public class DocumentMappingTests
     private class DateTimeIdDoc
     {
         public DateTime Id { get; set; }
+    }
+
+    private class NonStandardWithProp
+    {
+        [Polecat.Attributes.Identity]
+        public string Name { get; set; } = string.Empty;
+
+        public string Other { get; set; } = string.Empty;
+    }
+
+    private class IdAndIdentityAttDoc
+    {
+        public Guid Id { get; set; }
+
+        [Polecat.Attributes.Identity]
+        public string DocumentId { get; set; } = string.Empty;
+    }
+
+    private class GuidIdentityDoc
+    {
+        [Polecat.Attributes.Identity]
+        public Guid UniqueId { get; set; }
+    }
+
+    private class IntIdentityDoc
+    {
+        [Polecat.Attributes.Identity]
+        public int Number { get; set; }
     }
 }

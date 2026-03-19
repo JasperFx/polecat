@@ -81,7 +81,7 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
         IEventDatabase database, ILogger loggerFactory, EventFilterable filtering,
         AsyncOptions shardOptions)
     {
-        var connStr = database is PolecatDatabase pdb ? pdb.StoredConnectionString : Options.ConnectionString;
+        var connStr = database is PolecatDatabase pdb ? pdb.ConnectionString : Options.ConnectionString;
         return new PolecatEventLoader(Events, Options, connStr);
     }
 
@@ -90,7 +90,7 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
             EventRange range, IEventDatabase database, ShardExecutionMode mode,
             AsyncOptions projectionOptions, CancellationToken token)
     {
-        var connStr = database is PolecatDatabase pdb ? pdb.StoredConnectionString : Options.ConnectionString;
+        var connStr = database is PolecatDatabase pdb ? pdb.ConnectionString : Options.ConnectionString;
         var batch = new PolecatProjectionBatch(this, Events, connStr);
         await batch.RecordProgress(range);
         return batch;
@@ -114,7 +114,15 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
 
     async Task<EventStoreUsage?> IEventStore.TryCreateUsage(CancellationToken token)
     {
-        var usage = new EventStoreUsage(Database.DatabaseUri, this);
+        var usage = new EventStoreUsage(Database.DatabaseUri, this)
+        {
+            Database = new DatabaseUsage
+            {
+                Cardinality = DatabaseCardinality.Single,
+                MainDatabase = Database.Describe()
+            }
+        };
+
         Options.Projections.Describe(usage, this);
         return usage;
     }
@@ -138,7 +146,7 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
 
         await db.EnsureStorageExistsAsync(typeof(IEvent), CancellationToken.None);
 
-        var connStr = db.StoredConnectionString;
+        var connStr = db.ConnectionString;
         var detector = new PolecatHighWaterDetector(Events, connStr,
             Options.DaemonSettings, new Logger<PolecatHighWaterDetector>(new LoggerFactory()),
             Options.ResiliencePipeline);
@@ -153,7 +161,7 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
 
     private static string ResolveConnectionString(IEventDatabase database, StoreOptions options)
     {
-        return database is PolecatDatabase pdb ? pdb.StoredConnectionString : options.ConnectionString;
+        return database is PolecatDatabase pdb ? pdb.ConnectionString : options.ConnectionString;
     }
 
     async Task IEventStore<IDocumentSession, IQuerySession>.RewindSubscriptionProgressAsync(

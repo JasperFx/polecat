@@ -167,6 +167,65 @@ await store.Advanced.ResetHiloSequenceFloor<Invoice>();
 
 This scans existing documents and resets the HiLo sequence to start above the highest existing ID.
 
+## Natural Keys with the [Identity] Attribute
+
+If your document type uses a property name other than `Id` for its identity, you can use the `[Identity]`
+attribute to designate the identity property. This is common when migrating from other databases or when
+the natural key of the document has a more descriptive name.
+
+```cs
+using Polecat.Attributes;
+
+public class Customer
+{
+    [Identity]
+    public string CustomerCode { get; set; } = "";
+
+    public string Name { get; set; } = "";
+}
+```
+
+With the `[Identity]` attribute, Polecat will use `CustomerCode` as the document identity instead of
+looking for a conventional `Id` property. All standard operations work the same way:
+
+```cs
+// Store
+var customer = new Customer { CustomerCode = "CUST-001", Name = "Acme" };
+session.Store(customer);
+await session.SaveChangesAsync();
+
+// Load by the identity value
+var loaded = await query.LoadAsync<Customer>("CUST-001");
+
+// Delete
+session.Delete<Customer>("CUST-001");
+```
+
+### Priority
+
+When both an `[Identity]` attribute and a conventional `Id` property exist on the same document type,
+the `[Identity]` attribute takes priority:
+
+```cs
+public class LegacyDoc
+{
+    public Guid Id { get; set; }  // Ignored by Polecat
+
+    [Identity]
+    public string DocumentId { get; set; } = "";  // Used as the identity
+}
+```
+
+### Supported Types
+
+The `[Identity]` attribute works with all the same ID types as the conventional `Id` property:
+`Guid`, `string`, `int`, `long`, and [strongly typed ID wrappers](#strongly-typed-ids).
+
 ## ID Member Resolution
 
-Polecat looks for an `Id` property on your document class. The property must be public with a getter and setter.
+Polecat resolves the identity property in the following priority order:
+
+1. A property marked with `[Identity]` attribute
+2. A public property named `Id`
+
+The property must be public with both a getter and setter.

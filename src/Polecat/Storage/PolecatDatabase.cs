@@ -49,7 +49,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase
     /// <summary>
     ///     The connection string this database instance uses.
     /// </summary>
-    internal string StoredConnectionString => _connectionString;
+    public string ConnectionString => _connectionString;
 
     internal EventGraph Events => _events;
 
