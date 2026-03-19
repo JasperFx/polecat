@@ -164,7 +164,7 @@ public class document_hierarchy_tests : IntegrationContext
         await using (var conn = await OpenConnectionAsync())
         {
             await using var cmd = conn.CreateCommand();
-            cmd.CommandText = "DELETE FROM [hierarchy_query_sub].[pc_doc_user]";
+            cmd.CommandText = "IF OBJECT_ID('[hierarchy_query_sub].[pc_doc_user]', 'U') IS NOT NULL DELETE FROM [hierarchy_query_sub].[pc_doc_user]";
             await cmd.ExecuteNonQueryAsync();
         }
 
@@ -246,7 +246,7 @@ public class document_hierarchy_tests : IntegrationContext
         await using (var conn = await OpenConnectionAsync())
         {
             await using var cmd = conn.CreateCommand();
-            cmd.CommandText = "DELETE FROM [hierarchy_auto].[pc_doc_user]";
+            cmd.CommandText = "IF OBJECT_ID('[hierarchy_auto].[pc_doc_user]', 'U') IS NOT NULL DELETE FROM [hierarchy_auto].[pc_doc_user]";
             await cmd.ExecuteNonQueryAsync();
         }
 

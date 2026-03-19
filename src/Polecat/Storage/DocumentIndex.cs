@@ -51,11 +51,31 @@ public class DocumentIndex
     public SortOrder SortOrder { get; set; } = SortOrder.Ascending;
 
     /// <summary>
+    ///     Marks the column value as upper/lower casing for case-insensitive indexing.
+    ///     Only applies to string-typed columns; non-string columns ignore this setting.
+    /// </summary>
+    public IndexCasing Casing { get; set; } = IndexCasing.Default;
+
+    /// <summary>
     ///     Derives the computed column name for a JSON path.
     /// </summary>
     internal static string ColumnNameForPath(string jsonPath)
     {
-        return "cc_" + jsonPath.Replace("$.", "").Replace(".", "_").ToLowerInvariant();
+        return ColumnNameForPath(jsonPath, IndexCasing.Default);
+    }
+
+    /// <summary>
+    ///     Derives the computed column name for a JSON path with casing suffix.
+    /// </summary>
+    internal static string ColumnNameForPath(string jsonPath, IndexCasing casing)
+    {
+        var baseName = "cc_" + jsonPath.Replace("$.", "").Replace(".", "_").ToLowerInvariant();
+        return casing switch
+        {
+            IndexCasing.Upper => baseName + "_upper",
+            IndexCasing.Lower => baseName + "_lower",
+            _ => baseName
+        };
     }
 
     /// <summary>
@@ -84,10 +104,20 @@ public class DocumentIndex
         // Add persisted computed columns for each JSON path
         foreach (var path in JsonPaths)
         {
-            var colName = ColumnNameForPath(path);
+            var colName = ColumnNameForPath(path, Casing);
+            var jsonValueExpr = $"JSON_VALUE(data, '{path}')";
+
+            // Apply case transformation for string-typed columns
+            var castedExpr = Casing switch
+            {
+                IndexCasing.Upper => $"UPPER(CAST({jsonValueExpr} AS {sqlType}))",
+                IndexCasing.Lower => $"LOWER(CAST({jsonValueExpr} AS {sqlType}))",
+                _ => $"CAST({jsonValueExpr} AS {sqlType})"
+            };
+
             statements.Add($"""
                 IF COL_LENGTH('{schema}.{table}', '{colName}') IS NULL
-                    ALTER TABLE {qualifiedTable} ADD [{colName}] AS CAST(JSON_VALUE(data, '{path}') AS {sqlType}) PERSISTED;
+                    ALTER TABLE {qualifiedTable} ADD [{colName}] AS {castedExpr} PERSISTED;
                 """);
         }
 
@@ -100,7 +130,7 @@ public class DocumentIndex
 
         foreach (var path in JsonPaths)
         {
-            var colName = ColumnNameForPath(path);
+            var colName = ColumnNameForPath(path, Casing);
             var sortDir = SortOrder == SortOrder.Descending ? " DESC" : "";
             indexColumns.Add($"[{colName}]{sortDir}");
         }
@@ -122,7 +152,13 @@ public class DocumentIndex
         var prefix = IsUnique ? "ux" : "ix";
         var pathSuffix = string.Join("_", JsonPaths.Select(p =>
             p.Replace("$.", "").Replace(".", "_").ToLowerInvariant()));
-        return $"{prefix}_{tableName}_{pathSuffix}";
+        var casingSuffix = Casing switch
+        {
+            IndexCasing.Upper => "_upper",
+            IndexCasing.Lower => "_lower",
+            _ => ""
+        };
+        return $"{prefix}_{tableName}_{pathSuffix}{casingSuffix}";
     }
 
     /// <summary>
@@ -191,4 +227,26 @@ public enum TenancyScope
     ///     Index is scoped per tenant (includes tenant_id column).
     /// </summary>
     PerTenant
+}
+
+/// <summary>
+///     Case transformation for indexed string columns.
+///     Non-string columns ignore this setting.
+/// </summary>
+public enum IndexCasing
+{
+    /// <summary>
+    ///     Leave the casing as-is (default).
+    /// </summary>
+    Default,
+
+    /// <summary>
+    ///     Transform the indexed value to uppercase for case-insensitive lookups.
+    /// </summary>
+    Upper,
+
+    /// <summary>
+    ///     Transform the indexed value to lowercase for case-insensitive lookups.
+    /// </summary>
+    Lower
 }

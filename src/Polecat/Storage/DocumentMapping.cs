@@ -62,6 +62,9 @@ internal class DocumentMapping
         DotNetTypeName = $"{documentType.FullName}, {documentType.Assembly.GetName().Name}";
         TenancyStyle = options.Events.TenancyStyle;
 
+        // Discover and register attribute-based indexes
+        DiscoverIndexAttributes(documentType);
+
         // Detect soft delete: [SoftDeleted] attribute, ISoftDeleted interface, or policy
         if (documentType.GetCustomAttribute<SoftDeletedAttribute>() != null
             || typeof(ISoftDeleted).IsAssignableFrom(documentType)
@@ -270,6 +273,57 @@ internal class DocumentMapping
         if (identityProperty != null) return identityProperty;
 
         return type.GetProperty("Id", BindingFlags.Public | BindingFlags.Instance);
+    }
+
+    /// <summary>
+    ///     Scans the document type for [Index] and [UniqueIndex] attribute-based indexes
+    ///     and auto-registers them.
+    /// </summary>
+    private void DiscoverIndexAttributes(Type documentType)
+    {
+        var properties = documentType.GetProperties(BindingFlags.Public | BindingFlags.Instance);
+
+        // Discover [Index] attributes — each property gets its own index
+        foreach (var prop in properties)
+        {
+            var indexAttr = prop.GetCustomAttribute<IndexAttribute>();
+            if (indexAttr == null) continue;
+
+            var jsonPath = DocumentIndex.MemberToJsonPath(prop);
+            var index = new DocumentIndex([jsonPath])
+            {
+                IndexName = indexAttr.IndexName,
+                SortOrder = indexAttr.SortOrder,
+                Casing = indexAttr.Casing
+            };
+            if (indexAttr.SqlType != null) index.SqlType = indexAttr.SqlType;
+            Indexes.Add(index);
+        }
+
+        // Discover [UniqueIndex] attributes — group by IndexName for composite unique indexes
+        var uniqueProps = properties
+            .Select(p => new { Property = p, Attr = p.GetCustomAttribute<UniqueIndexAttribute>() })
+            .Where(x => x.Attr != null)
+            .ToList();
+
+        // Group by IndexName: properties with the same IndexName form a composite unique index
+        var groups = uniqueProps.GroupBy(x => x.Attr!.IndexName ?? x.Property.Name);
+        foreach (var group in groups)
+        {
+            var members = group.ToList();
+            var firstAttr = members[0].Attr!;
+            var jsonPaths = members.Select(m => DocumentIndex.MemberToJsonPath(m.Property)).ToArray();
+
+            var index = new DocumentIndex(jsonPaths)
+            {
+                IsUnique = true,
+                IndexName = firstAttr.IndexName,
+                TenancyScope = firstAttr.TenancyScope,
+                Casing = firstAttr.Casing
+            };
+            if (firstAttr.SqlType != null) index.SqlType = firstAttr.SqlType;
+            Indexes.Add(index);
+        }
     }
 
     /// <summary>
