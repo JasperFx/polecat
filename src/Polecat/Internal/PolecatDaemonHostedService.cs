@@ -9,11 +9,10 @@ namespace Polecat.Internal;
 ///     Hosted service that starts and stops the async projection daemon.
 ///     Registered by AddAsyncDaemon().
 /// </summary>
-internal class PolecatDaemonHostedService : IHostedService, IAsyncDisposable
+public class PolecatDaemonHostedService : IHostedService, IAsyncDisposable
 {
     private readonly DocumentStore _store;
     private readonly ILoggerFactory _loggerFactory;
-    private IProjectionDaemon? _daemon;
 
     public PolecatDaemonHostedService(DocumentStore store, ILoggerFactory loggerFactory)
     {
@@ -21,23 +20,28 @@ internal class PolecatDaemonHostedService : IHostedService, IAsyncDisposable
         _loggerFactory = loggerFactory;
     }
 
+    /// <summary>
+    ///     The running projection daemon, if started.
+    /// </summary>
+    public IProjectionDaemon? Daemon { get; private set; }
+
     public async Task StartAsync(CancellationToken token)
     {
         var logger = _loggerFactory.CreateLogger<PolecatDaemonHostedService>();
-        _daemon = await _store.BuildProjectionDaemonAsync(logger: logger);
-        await _daemon.StartAllAsync();
+        Daemon = await _store.BuildProjectionDaemonAsync(logger: logger);
+        await Daemon.StartAllAsync();
     }
 
     public async Task StopAsync(CancellationToken token)
     {
-        if (_daemon != null)
+        if (Daemon != null)
         {
-            await _daemon.StopAllAsync();
+            await Daemon.StopAllAsync();
         }
     }
 
     public async ValueTask DisposeAsync()
     {
-        _daemon?.Dispose();
+        Daemon?.Dispose();
     }
 }

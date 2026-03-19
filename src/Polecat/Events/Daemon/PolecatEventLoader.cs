@@ -17,13 +17,26 @@ internal class PolecatEventLoader : IEventLoader
     private readonly StoreOptions _options;
     private readonly string _connectionString;
     private readonly ResiliencePipeline _resilience;
+    private readonly HashSet<string>? _allowedDotNetTypes;
 
-    public PolecatEventLoader(EventGraph events, StoreOptions options, string connectionString)
+    public PolecatEventLoader(EventGraph events, StoreOptions options, string connectionString,
+        EventFilterable? filtering = null)
     {
         _events = events;
         _options = options;
         _connectionString = connectionString;
         _resilience = options.ResiliencePipeline;
+
+        // Build an allow list of dotnet_type names from the included event types
+        if (filtering?.IncludedEventTypes is { Count: > 0 } includedTypes)
+        {
+            _allowedDotNetTypes = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var type in includedTypes)
+            {
+                var mapping = events.EventMappingFor(type);
+                _allowedDotNetTypes.Add(mapping.DotNetTypeName);
+            }
+        }
     }
 
     public async Task<EventPage> LoadAsync(EventRequest request, CancellationToken token)
@@ -63,6 +76,13 @@ internal class PolecatEventLoader : IEventLoader
                 var tenantId = reader.GetString(7);
                 var dotNetTypeName = reader.IsDBNull(8) ? null : reader.GetString(8);
                 var isArchived = reader.GetBoolean(9);
+
+                // Apply event type allow-list filter (skip events not in the subscription's filter)
+                if (_allowedDotNetTypes != null && dotNetTypeName != null &&
+                    !_allowedDotNetTypes.Contains(dotNetTypeName))
+                {
+                    continue;
+                }
 
                 var resolvedType = _events.ResolveEventType(dotNetTypeName);
                 if (resolvedType == null)
