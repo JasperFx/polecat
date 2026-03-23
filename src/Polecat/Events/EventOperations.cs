@@ -1,7 +1,9 @@
 using System.Data.Common;
 using System.Linq.Expressions;
+using System.Reflection;
 using System.Text;
 using JasperFx.Events;
+using JasperFx.Events.Aggregation;
 using JasperFx.Events.Tags;
 using Microsoft.Data.SqlClient;
 using Polecat.Events.Dcb;
@@ -10,6 +12,7 @@ using Polecat.Events.Operations;
 using Polecat.Events.Protected;
 using Polecat.Internal;
 using Polecat.Internal.Operations;
+using Polecat.Projections;
 using Polecat.Serialization;
 using Weasel.SqlServer;
 
@@ -586,10 +589,23 @@ internal class EventOperations : QueryEventStore, IEventOperations
         }
     }
 
-    private NaturalKeyDefinition FindNaturalKeyDefinition<T>()
+    private NaturalKeyDefinition FindNaturalKeyDefinition<T>() where T : class, new()
     {
         var definition = _sessionBase.Options.Projections.FindNaturalKeyDefinition(typeof(T));
         if (definition != null) return definition;
+
+        // Auto-discover natural key from [NaturalKey] attribute on the aggregate type
+        // and register an Inline snapshot projection if none exists
+        var naturalKeyProp = typeof(T).GetProperties(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)
+            .FirstOrDefault(p => p.GetCustomAttribute<NaturalKeyAttribute>() != null);
+
+        if (naturalKeyProp != null)
+        {
+            _sessionBase.Options.Projections.Snapshot<T>(SnapshotLifecycle.Inline);
+
+            definition = _sessionBase.Options.Projections.FindNaturalKeyDefinition(typeof(T));
+            if (definition != null) return definition;
+        }
 
         throw new InvalidOperationException(
             $"No natural key definition found for aggregate type '{typeof(T).Name}'. " +
