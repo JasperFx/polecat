@@ -3,7 +3,7 @@
     <PropertyGroup>
         <Description>SQL Server backed Event Store for the Critter Stack</Description>
         <GenerateDocumentationFile>true</GenerateDocumentationFile>
-        <TargetFramework>net10.0</TargetFramework>
+        <TargetFrameworks>net9.0;net10.0</TargetFrameworks>
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
         <RootNamespace>Polecat</RootNamespace>

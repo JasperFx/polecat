@@ -2,7 +2,7 @@
 
     <PropertyGroup>
         <Description>EF Core integration for Polecat event store projections</Description>
-        <TargetFramework>net10.0</TargetFramework>
+        <TargetFrameworks>net9.0;net10.0</TargetFrameworks>
         <Nullable>enable</Nullable>
         <ImplicitUsings>enable</ImplicitUsings>
         <RootNamespace>Polecat.EntityFrameworkCore</RootNamespace>
@@ -12,8 +12,15 @@
         <ProjectReference Include="..\Polecat\Polecat.csproj" />
     </ItemGroup>
 
-    <ItemGroup>
+    <ItemGroup Condition="'$(TargetFramework)' == 'net10.0'">
         <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" />
+    </ItemGroup>
+
+    <ItemGroup Condition="'$(TargetFramework)' == 'net9.0'">
+        <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" VersionOverride="9.0.3" />
+    </ItemGroup>
+
+    <ItemGroup>
         <PackageReference Include="Weasel.EntityFrameworkCore" />
     </ItemGroup>
 
