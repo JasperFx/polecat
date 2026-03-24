@@ -2,7 +2,6 @@
 
     <PropertyGroup>
         <Description>Helpers for Polecat-backed AspNetCore applications</Description>
-        <TargetFramework>net10.0</TargetFramework>
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
         <GenerateDocumentationFile>true</GenerateDocumentationFile>

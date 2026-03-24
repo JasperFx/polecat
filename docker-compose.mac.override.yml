@@ -8,11 +8,4 @@ services:
   # For CI or x86 Linux/Windows, use:
   #   image: mcr.microsoft.com/mssql/server:2025-latest
   sqlserver:
-    image: "mcr.microsoft.com/mssql/server:2025-latest"
-    container_name: polecat-sqlserver
-    environment:
-      ACCEPT_EULA: "Y"
-      SA_PASSWORD: "P@55w0rd"
-      MSSQL_PID: "Developer"
-    ports:
-      - "11433:1433"
+    image: "mcr.microsoft.com/azure-sql-edge:latest"

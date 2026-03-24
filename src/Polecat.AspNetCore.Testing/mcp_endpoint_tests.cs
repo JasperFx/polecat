@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Alba;
+using Microsoft.AspNetCore.TestHost;
 using Shouldly;
 using Xunit;
 
@@ -138,7 +139,7 @@ public class mcp_endpoint_tests : IAsyncLifetime
 
         var error = doc.RootElement.GetProperty("error");
         error.GetProperty("code").GetInt32().ShouldBe(-32601);
-        error.GetProperty("message").GetString().ShouldContain("Method not found");
+        error.GetProperty("message").GetString()!.ShouldContain("Method not found");
     }
 
     [Fact]
@@ -149,7 +150,7 @@ public class mcp_endpoint_tests : IAsyncLifetime
 
         var error = doc.RootElement.GetProperty("error");
         error.GetProperty("code").GetInt32().ShouldBe(-32602);
-        error.GetProperty("message").GetString().ShouldContain("Unknown tool");
+        error.GetProperty("message").GetString()!.ShouldContain("Unknown tool");
     }
 
     [Fact]

@@ -10,7 +10,7 @@ public static class ConnectionSource
 {
     public static readonly string ConnectionString =
         Environment.GetEnvironmentVariable("POLECAT_TESTING_DATABASE")
-        ?? "Server=localhost,11433;Database=polecat_testing;User Id=sa;Password=Polecat#Dev2025;TrustServerCertificate=true";
+        ?? "Server=localhost,11433;User Id=sa;Password=P@55w0rd;TrustServerCertificate=true";
 }
 
 public static class EfCoreTestHelper

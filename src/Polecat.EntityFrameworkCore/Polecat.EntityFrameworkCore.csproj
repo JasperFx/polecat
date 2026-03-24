@@ -2,7 +2,6 @@
 
     <PropertyGroup>
         <Description>EF Core integration for Polecat event store projections</Description>
-        <TargetFramework>net10.0</TargetFramework>
         <Nullable>enable</Nullable>
         <ImplicitUsings>enable</ImplicitUsings>
         <RootNamespace>Polecat.EntityFrameworkCore</RootNamespace>

@@ -7,6 +7,7 @@
         <PackageIcon>logo.png</PackageIcon>
         <PackageProjectUrl>https://polecat.netlify.app/</PackageProjectUrl>
         <PackageLicenseExpression>MIT</PackageLicenseExpression>
+        <TargetFrameworks>net9.0;net10.0</TargetFrameworks>
         <NoWarn>1570;1571;1572;1573;1574;1587;1591;1701;1702;1711;1735;0618</NoWarn>
         <RepositoryUrl>https://github.com/JasperFx/polecat</RepositoryUrl>
     </PropertyGroup>

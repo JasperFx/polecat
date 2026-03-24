@@ -82,10 +82,10 @@ public class snapshot_edge_cases : IntegrationContext
         // Snapshot should capture all 5 events
         var (json, version) = await ReadSnapshotFromDb(streamId, "snapshot_edge");
         version.ShouldBe(5);
-        json.ShouldContain("A");
-        json.ShouldContain("B");
-        json.ShouldContain("C");
-        json.ShouldContain("Goblin");
+        json!.ShouldContain("A");
+        json!.ShouldContain("B");
+        json!.ShouldContain("C");
+        json!.ShouldContain("Goblin");
     }
 
     [Fact]

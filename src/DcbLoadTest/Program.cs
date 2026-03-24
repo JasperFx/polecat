@@ -13,7 +13,7 @@ const int BENCH_EVENTS_PER_STREAM = 10;
 
 var connectionString =
     Environment.GetEnvironmentVariable("POLECAT_TESTING_DATABASE")
-    ?? "Server=localhost,11433;Database=polecat_testing;User Id=sa;Password=Polecat#Dev2025;TrustServerCertificate=true";
+    ?? "Server=localhost,11433;User Id=sa;Password=P@55w0rd;TrustServerCertificate=true";
 
 Console.WriteLine("DCB Load Test — Append into large database (SQL Server)");
 Console.WriteLine($"  Seed: {SEED_STREAMS} streams x {SEED_EVENTS_PER_STREAM} events = {SEED_STREAMS * SEED_EVENTS_PER_STREAM} events");

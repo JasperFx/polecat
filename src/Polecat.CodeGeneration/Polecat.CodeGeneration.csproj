@@ -2,7 +2,6 @@
 
     <PropertyGroup>
         <Description>Source Generator support for Polecat</Description>
-        <TargetFramework>netstandard2.0</TargetFramework>
         <Nullable>enable</Nullable>
         <NoWarn>$(NoWarn);CS8603</NoWarn>
         <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>

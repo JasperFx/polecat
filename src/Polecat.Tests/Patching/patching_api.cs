@@ -659,7 +659,7 @@ public class patching_api : IntegrationContext
         theSession.Store(target);
         await theSession.SaveChangesAsync();
 
-        theSession.Patch<Target>(target.Id).Rename("String", x => x.AnotherString);
+        theSession.Patch<Target>(target.Id).Rename("String", x => x.AnotherString!);
         await theSession.SaveChangesAsync();
 
         await using var query = theStore.QuerySession();
@@ -678,7 +678,7 @@ public class patching_api : IntegrationContext
         theSession.Store(target);
         await theSession.SaveChangesAsync();
 
-        theSession.Patch<Target>(target.Id).Rename("String", x => x.Inner!.AnotherString);
+        theSession.Patch<Target>(target.Id).Rename("String", x => x.Inner!.AnotherString!);
         await theSession.SaveChangesAsync();
 
         await using var query = theStore.QuerySession();
