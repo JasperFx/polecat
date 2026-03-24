@@ -114,14 +114,54 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
 
     async Task<EventStoreUsage?> IEventStore.TryCreateUsage(CancellationToken token)
     {
-        var usage = new EventStoreUsage(Database.DatabaseUri, this)
+        // Explicitly build — no reflection via base(this)
+        var usage = new EventStoreUsage
         {
+            Subject = "Polecat.DocumentStore",
+            SubjectUri = Database.DatabaseUri,
+            Version = GetType().Assembly.GetName().Version?.ToString(),
             Database = new DatabaseUsage
             {
                 Cardinality = DatabaseCardinality.Single,
                 MainDatabase = Database.Describe()
             }
         };
+
+        // Event store configuration properties
+        usage.AddValue(nameof(Options.Events.StreamIdentity), Options.Events.StreamIdentity);
+        usage.AddValue(nameof(Options.Events.TenancyStyle), Options.Events.TenancyStyle);
+        usage.AddValue(nameof(Options.Events.EnableExtendedProgressionTracking), Options.Events.EnableExtendedProgressionTracking);
+        usage.AddValue(nameof(Options.Events.EnableCorrelationId), Options.Events.EnableCorrelationId);
+        usage.AddValue(nameof(Options.Events.EnableCausationId), Options.Events.EnableCausationId);
+        usage.AddValue(nameof(Options.Events.EnableHeaders), Options.Events.EnableHeaders);
+        if (Options.Events.DatabaseSchemaName != null)
+        {
+            usage.AddValue(nameof(Options.Events.DatabaseSchemaName), Options.Events.DatabaseSchemaName);
+        }
+
+        // Daemon settings child
+        var daemon = new OptionsDescription { Subject = "Polecat.DaemonSettings" };
+        daemon.AddValue(nameof(Options.DaemonSettings.AsyncMode), Options.DaemonSettings.AsyncMode);
+        daemon.AddValue(nameof(Options.DaemonSettings.HealthCheckPollingTime), Options.DaemonSettings.HealthCheckPollingTime);
+        daemon.AddValue(nameof(Options.DaemonSettings.LeadershipPollingTime), Options.DaemonSettings.LeadershipPollingTime);
+        daemon.AddValue(nameof(Options.DaemonSettings.StaleSequenceThreshold), Options.DaemonSettings.StaleSequenceThreshold);
+        daemon.AddValue(nameof(Options.DaemonSettings.SlowPollingTime), Options.DaemonSettings.SlowPollingTime);
+        daemon.AddValue(nameof(Options.DaemonSettings.FastPollingTime), Options.DaemonSettings.FastPollingTime);
+        daemon.AddValue(nameof(Options.DaemonSettings.AgentPauseTime), Options.DaemonSettings.AgentPauseTime);
+        daemon.AddValue(nameof(Options.DaemonSettings.DaemonLockId), Options.DaemonSettings.DaemonLockId);
+        usage.Children["DaemonSettings"] = daemon;
+
+        // OpenTelemetry child
+        var otel = new OptionsDescription { Subject = "Polecat.OpenTelemetryOptions" };
+        otel.AddValue(nameof(Options.OpenTelemetry.TrackConnections), Options.OpenTelemetry.TrackConnections);
+        usage.Children["OpenTelemetry"] = otel;
+
+        // HiloSettings child
+        var hilo = new OptionsDescription { Subject = "Polecat.HiloSettings" };
+        hilo.AddValue(nameof(Options.HiloSequenceDefaults.MaxLo), Options.HiloSequenceDefaults.MaxLo);
+        hilo.AddValue(nameof(Options.HiloSequenceDefaults.SequenceName), Options.HiloSequenceDefaults.SequenceName ?? "default");
+        hilo.AddValue(nameof(Options.HiloSequenceDefaults.MaxAdvanceToNextHiAttempts), Options.HiloSequenceDefaults.MaxAdvanceToNextHiAttempts);
+        usage.Children["HiloSequenceDefaults"] = hilo;
 
         Options.Projections.Describe(usage, this);
         return usage;
