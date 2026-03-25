@@ -267,6 +267,12 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         Store(document);
     }
 
+    public void QueueSqlCommand(string sql, params object[] parameterValues)
+    {
+        var operation = new Operations.ExecuteSqlStorageOperation(sql, parameterValues);
+        _workTracker.Add(operation);
+    }
+
     public async Task SaveChangesAsync(CancellationToken token = default)
     {
         if (!_workTracker.HasOutstandingWork()) return;

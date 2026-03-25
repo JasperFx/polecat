@@ -213,6 +213,9 @@ internal class NestedTenantSession : ITenantOperations
     public void UpdateRevision<T>(T document, int revision) where T : notnull
         => _parent.UpdateRevision(document, revision);
 
+    public void QueueSqlCommand(string sql, params object[] parameterValues)
+        => _parent.QueueSqlCommand(sql, parameterValues);
+
     public ValueTask DisposeAsync()
     {
         // No-op: parent owns the connection

@@ -111,4 +111,10 @@ public interface IDocumentOperations : IQuerySession
     ///     for optimistic concurrency checking.
     /// </summary>
     void UpdateRevision<T>(T document, int revision) where T : notnull;
+
+    /// <summary>
+    ///     Registers a SQL command to be executed with the underlying unit of work as part of the batched command.
+    ///     The '?' character is used as a placeholder for positional parameters.
+    /// </summary>
+    void QueueSqlCommand(string sql, params object[] parameterValues);
 }
