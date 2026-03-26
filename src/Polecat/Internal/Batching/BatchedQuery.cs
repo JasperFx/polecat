@@ -94,7 +94,8 @@ internal class BatchedQuery : IBatchedQuery
             ? docSession.Options.EventGraph
             : throw new InvalidOperationException("EventsExist requires a document session.");
 
-        var item = new EventsExistBatchItem(eventGraph, query);
+        var tenantId = _session is DocumentSessionBase ds ? ds.TenantId : Tenancy.DefaultTenantId;
+        var item = new EventsExistBatchItem(eventGraph, query, tenantId);
         _items.Add(item);
         return item.Result;
     }

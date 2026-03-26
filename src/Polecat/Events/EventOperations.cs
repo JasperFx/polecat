@@ -568,12 +568,21 @@ internal class EventOperations : QueryEventStore, IEventOperations
 
         // Look up stream id from natural key table (read-only, no locking)
         await using var cmd = new SqlCommand();
+
+        var tenantFilter = _events.TenancyStyle == TenancyStyle.Conjoined
+            ? " AND nk.tenant_id = @tenantId"
+            : "";
+
         cmd.CommandText = $"""
             SELECT nk.{streamColumn}
             FROM [{schema}].[{tableName}] nk
-            WHERE nk.natural_key_value = @naturalKey AND nk.is_archived = 0;
+            WHERE nk.natural_key_value = @naturalKey AND nk.is_archived = 0{tenantFilter};
             """;
         cmd.Parameters.AddWithValue("@naturalKey", unwrapped);
+        if (_events.TenancyStyle == TenancyStyle.Conjoined)
+        {
+            cmd.Parameters.AddWithValue("@tenantId", _tenantId);
+        }
 
         var result = await _sessionBase.ExecuteScalarAsync(cmd, cancellation);
         if (result == null || result == DBNull.Value) return default;
@@ -697,7 +706,17 @@ internal class EventOperations : QueryEventStore, IEventOperations
             sb.Append(')');
         }
 
-        sb.Append(")) THEN 1 ELSE 0 END");
+        sb.Append(')');
+
+        // Filter by tenant_id for conjoined tenancy
+        if (_events.TenancyStyle == TenancyStyle.Conjoined)
+        {
+            sb.Append($" AND t0.tenant_id = @p{paramIndex}");
+            cmd.Parameters.AddWithValue($"@p{paramIndex}", _tenantId);
+            paramIndex++;
+        }
+
+        sb.Append(") THEN 1 ELSE 0 END");
         cmd.CommandText = sb.ToString();
 
         var result = await _sessionBase.ExecuteScalarAsync(cmd, cancellation);
@@ -764,7 +783,17 @@ internal class EventOperations : QueryEventStore, IEventOperations
             sb.Append(')');
         }
 
-        sb.Append(") ORDER BY e.seq_id");
+        sb.Append(')');
+
+        // Filter by tenant_id for conjoined tenancy
+        if (_events.TenancyStyle == TenancyStyle.Conjoined)
+        {
+            sb.Append($" AND e.tenant_id = @p{paramIndex}");
+            cmd.Parameters.AddWithValue($"@p{paramIndex}", _tenantId);
+            paramIndex++;
+        }
+
+        sb.Append(" ORDER BY e.seq_id");
         cmd.CommandText = sb.ToString();
 
         var results = new List<IEvent>();
@@ -847,7 +876,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
         }
 
         // Register DCB assertion operation
-        _workTracker.Add(new AssertDcbConsistencyOperation(_events, query, lastSeenSequence));
+        _workTracker.Add(new AssertDcbConsistencyOperation(_events, query, lastSeenSequence, _tenantId));
 
         return new EventBoundary<T>(_sessionBase, _events, aggregate, events, lastSeenSequence);
     }
@@ -868,7 +897,8 @@ internal class EventOperations : QueryEventStore, IEventOperations
         var parser = new EventWhereClauseParser();
         var whereFragment = parser.Parse(expression.Body);
 
-        var op = new AssignTagWhereOperation(schema, registration, value, whereFragment);
+        var isConjoined = _events.TenancyStyle == TenancyStyle.Conjoined;
+        var op = new AssignTagWhereOperation(schema, registration, value, whereFragment, isConjoined, _tenantId);
         _workTracker.Add(op);
     }
 
@@ -887,7 +917,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
     /// Build tag query SELECT columns and FROM/JOIN/WHERE SQL into a command builder.
     /// Shared between direct queries and batch queries.
     /// </summary>
-    internal static void WriteTagQuerySql(ICommandBuilder builder, EventGraph eventGraph, EventTagQuery query)
+    internal static void WriteTagQuerySql(ICommandBuilder builder, EventGraph eventGraph, EventTagQuery query, string? tenantId = null)
     {
         var conditions = query.Conditions;
         var distinctTagTypes = conditions.Select(c => c.TagType).Distinct().ToList();
@@ -934,7 +964,16 @@ internal class EventOperations : QueryEventStore, IEventOperations
             builder.Append(")");
         }
 
-        builder.Append(") ORDER BY e.seq_id");
+        builder.Append(")");
+
+        // Filter by tenant_id for conjoined tenancy
+        if (eventGraph.TenancyStyle == TenancyStyle.Conjoined && tenantId != null)
+        {
+            builder.Append(" AND e.tenant_id = ");
+            builder.AppendParameter(tenantId);
+        }
+
+        builder.Append(" ORDER BY e.seq_id");
     }
 
     /// <summary>

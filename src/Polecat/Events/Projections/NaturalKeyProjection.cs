@@ -16,6 +16,7 @@ internal class NaturalKeyProjection : IInlineProjection<IDocumentSession>
     private readonly EventGraph _events;
     private readonly string _qualifiedTableName;
     private readonly bool _isGuidStream;
+    private readonly bool _isConjoined;
 
     public NaturalKeyProjection(NaturalKeyDefinition definition, EventGraph events)
     {
@@ -23,6 +24,7 @@ internal class NaturalKeyProjection : IInlineProjection<IDocumentSession>
         _events = events;
         _qualifiedTableName = $"[{events.DatabaseSchemaName}].[pc_natural_key_{definition.AggregateType.Name.ToLowerInvariant()}]";
         _isGuidStream = events.StreamIdentity == StreamIdentity.AsGuid;
+        _isConjoined = events.TenancyStyle == TenancyStyle.Conjoined;
     }
 
     public Task ApplyAsync(IDocumentSession operations, IReadOnlyList<StreamAction> streams,
@@ -33,6 +35,7 @@ internal class NaturalKeyProjection : IInlineProjection<IDocumentSession>
         foreach (var stream in streams)
         {
             var streamId = _isGuidStream ? (object)stream.Id : stream.Key!;
+            var tenantId = stream.TenantId;
 
             foreach (var e in stream.Events)
             {
@@ -40,7 +43,8 @@ internal class NaturalKeyProjection : IInlineProjection<IDocumentSession>
                 if (e.EventType == typeof(Archived))
                 {
                     sessionBase.WorkTracker.Add(
-                        new NaturalKeyArchiveOperation(_qualifiedTableName, streamId, _isGuidStream));
+                        new NaturalKeyArchiveOperation(_qualifiedTableName, streamId, _isGuidStream,
+                            _isConjoined, tenantId));
                     continue;
                 }
 
@@ -58,7 +62,8 @@ internal class NaturalKeyProjection : IInlineProjection<IDocumentSession>
                 if (unwrapped == null) continue;
 
                 sessionBase.WorkTracker.Add(
-                    new NaturalKeyUpsertOperation(_qualifiedTableName, unwrapped, streamId, _isGuidStream));
+                    new NaturalKeyUpsertOperation(_qualifiedTableName, unwrapped, streamId, _isGuidStream,
+                        _isConjoined, tenantId));
             }
         }
 

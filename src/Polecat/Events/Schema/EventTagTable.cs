@@ -6,7 +6,8 @@ namespace Polecat.Events.Schema;
 
 /// <summary>
 ///     Weasel table definition for pc_event_tag_{suffix} — stores tag values for DCB support.
-///     One table is created per registered tag type. Composite PK is (value, seq_id).
+///     One table is created per registered tag type. Composite PK is (value, seq_id),
+///     with tenant_id added to the PK for conjoined tenancy.
 /// </summary>
 internal class EventTagTable : Table
 {
@@ -14,8 +15,16 @@ internal class EventTagTable : Table
         : base(new SqlServerObjectName(events.DatabaseSchemaName, $"pc_event_tag_{registration.TableSuffix}"))
     {
         var sqlType = SqlServerTypeFor(registration.SimpleType);
+        var isConjoined = events.TenancyStyle == TenancyStyle.Conjoined;
 
         AddColumn("value", sqlType).NotNull().AsPrimaryKey();
+
+        // Add tenant_id to PK for conjoined tenancy to enable tenant-scoped tag queries
+        if (isConjoined)
+        {
+            AddColumn("tenant_id", "varchar(250)").NotNull().AsPrimaryKey();
+        }
+
         AddColumn("seq_id", "bigint").NotNull().AsPrimaryKey();
 
         PrimaryKeyName = $"pk_pc_event_tag_{registration.TableSuffix}";

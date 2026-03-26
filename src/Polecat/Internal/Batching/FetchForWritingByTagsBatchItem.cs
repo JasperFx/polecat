@@ -15,6 +15,7 @@ internal class FetchForWritingByTagsBatchItem<T> : IBatchQueryItem where T : cla
     private readonly EventTagQuery _query;
     private readonly DocumentSessionBase _session;
     private readonly ISerializer _serializer;
+    private readonly string _tenantId;
     private readonly TaskCompletionSource<IEventBoundary<T>> _tcs = new();
 
     public FetchForWritingByTagsBatchItem(EventGraph eventGraph, EventTagQuery query,
@@ -24,13 +25,14 @@ internal class FetchForWritingByTagsBatchItem<T> : IBatchQueryItem where T : cla
         _query = query;
         _session = session;
         _serializer = serializer;
+        _tenantId = session.TenantId;
     }
 
     public Task<IEventBoundary<T>> Result => _tcs.Task;
 
     public void WriteSql(ICommandBuilder builder)
     {
-        EventOperations.WriteTagQuerySql(builder, _eventGraph, _query);
+        EventOperations.WriteTagQuerySql(builder, _eventGraph, _query, _tenantId);
     }
 
     public async Task ReadResultSetAsync(DbDataReader reader, CancellationToken token)
@@ -54,7 +56,7 @@ internal class FetchForWritingByTagsBatchItem<T> : IBatchQueryItem where T : cla
             }
         }
 
-        _session.WorkTracker.Add(new AssertDcbConsistencyOperation(_eventGraph, _query, lastSeenSequence));
+        _session.WorkTracker.Add(new AssertDcbConsistencyOperation(_eventGraph, _query, lastSeenSequence, _tenantId));
 
         _tcs.SetResult(new EventBoundary<T>(_session, _eventGraph, aggregate, events, lastSeenSequence));
     }

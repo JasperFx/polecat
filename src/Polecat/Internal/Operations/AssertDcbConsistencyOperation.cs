@@ -13,12 +13,15 @@ internal class AssertDcbConsistencyOperation : IStorageOperation
     private readonly EventGraph _events;
     private readonly EventTagQuery _query;
     private readonly long _lastSeenSequence;
+    private readonly string? _tenantId;
 
-    public AssertDcbConsistencyOperation(EventGraph events, EventTagQuery query, long lastSeenSequence)
+    public AssertDcbConsistencyOperation(EventGraph events, EventTagQuery query, long lastSeenSequence,
+        string? tenantId = null)
     {
         _events = events;
         _query = query;
         _lastSeenSequence = lastSeenSequence;
+        _tenantId = tenantId;
     }
 
     public Type DocumentType => typeof(IEvent);
@@ -92,7 +95,16 @@ internal class AssertDcbConsistencyOperation : IStorageOperation
             builder.Append(")");
         }
 
-        builder.Append(")) THEN 1 ELSE 0 END");
+        builder.Append(")");
+
+        // Filter by tenant_id for conjoined tenancy
+        if (_events.TenancyStyle == TenancyStyle.Conjoined && _tenantId != null)
+        {
+            builder.Append(" AND t0.tenant_id = ");
+            builder.AppendParameter(_tenantId);
+        }
+
+        builder.Append(") THEN 1 ELSE 0 END");
     }
 
     public async Task PostprocessAsync(DbDataReader reader, IList<Exception> exceptions, CancellationToken token)

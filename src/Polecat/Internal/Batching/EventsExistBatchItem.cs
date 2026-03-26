@@ -9,12 +9,14 @@ internal class EventsExistBatchItem : IBatchQueryItem
 {
     private readonly EventGraph _eventGraph;
     private readonly EventTagQuery _query;
+    private readonly string _tenantId;
     private readonly TaskCompletionSource<bool> _tcs = new();
 
-    public EventsExistBatchItem(EventGraph eventGraph, EventTagQuery query)
+    public EventsExistBatchItem(EventGraph eventGraph, EventTagQuery query, string tenantId)
     {
         _eventGraph = eventGraph;
         _query = query;
+        _tenantId = tenantId;
     }
 
     public Task<bool> Result => _tcs.Task;
@@ -79,7 +81,16 @@ internal class EventsExistBatchItem : IBatchQueryItem
             builder.Append(")");
         }
 
-        builder.Append(")) THEN 1 ELSE 0 END");
+        builder.Append(")");
+
+        // Filter by tenant_id for conjoined tenancy
+        if (_eventGraph.TenancyStyle == TenancyStyle.Conjoined)
+        {
+            builder.Append(" AND t0.tenant_id = ");
+            builder.AppendParameter(_tenantId);
+        }
+
+        builder.Append(") THEN 1 ELSE 0 END");
     }
 
     public async Task ReadResultSetAsync(DbDataReader reader, CancellationToken token)
