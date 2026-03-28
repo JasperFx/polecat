@@ -36,7 +36,14 @@ internal partial class QuerySession : IQuerySession
     {
         if (AggregateIdentityMap.TryGetValue(typeof(TDoc), out var raw))
         {
-            ((Dictionary<TId, TDoc>)raw)[id] = document;
+            if (raw is Dictionary<TId, TDoc> typedDict)
+            {
+                typedDict[id] = document;
+            }
+            // else: The identity map was created with a different key type (e.g., a strong-typed ID
+            // like PaymentId while TId is Guid). The document is already stored by the inline
+            // projection under the strong-typed key, so we skip storing it again to avoid
+            // replacing the dictionary with an incompatible key type.
         }
         else
         {
