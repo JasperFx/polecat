@@ -126,7 +126,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase
         await using var cmd = conn.CreateCommand();
         if (_events.EnableExtendedProgressionTracking)
         {
-            cmd.CommandText = $"SELECT name, last_seq_id, heartbeat, agent_status, pause_reason, running_on_node FROM {_events.ProgressionTableName};";
+            cmd.CommandText = $"SELECT name, last_seq_id, heartbeat, agent_status, pause_reason, running_on_node, warning_behind_threshold, critical_behind_threshold FROM {_events.ProgressionTableName};";
         }
         else
         {
@@ -140,14 +140,15 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase
             var seq = reader.GetInt64(1);
             var state = new ShardState(name, seq);
 
-            // TODO: Re-enable when JasperFx.Events ShardState gains these properties
-            // if (_events.EnableExtendedProgressionTracking)
-            // {
-            //     if (!reader.IsDBNull(2)) state.LastHeartbeat = reader.GetDateTimeOffset(2);
-            //     if (!reader.IsDBNull(3)) state.AgentStatus = reader.GetString(3);
-            //     if (!reader.IsDBNull(4)) state.PauseReason = reader.GetString(4);
-            //     if (!reader.IsDBNull(5)) state.RunningOnNode = reader.GetInt32(5);
-            // }
+            if (_events.EnableExtendedProgressionTracking)
+            {
+                if (!reader.IsDBNull(2)) state.LastHeartbeat = reader.GetDateTimeOffset(2);
+                if (!reader.IsDBNull(3)) state.AgentStatus = reader.GetString(3);
+                if (!reader.IsDBNull(4)) state.PauseReason = reader.GetString(4);
+                if (!reader.IsDBNull(5)) state.RunningOnNode = reader.GetInt32(5);
+                if (!reader.IsDBNull(6)) state.WarningBehindThreshold = reader.GetInt64(6);
+                if (!reader.IsDBNull(7)) state.CriticalBehindThreshold = reader.GetInt64(7);
+            }
 
             list.Add(state);
         }

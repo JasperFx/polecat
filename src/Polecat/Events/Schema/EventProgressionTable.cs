@@ -25,6 +25,8 @@ internal class EventProgressionTable : Table
             AddColumn("agent_status", "varchar(20)").AllowNulls();
             AddColumn("pause_reason", "nvarchar(max)").AllowNulls();
             AddColumn("running_on_node", "int").AllowNulls();
+            AddColumn("warning_behind_threshold", "bigint").AllowNulls();
+            AddColumn("critical_behind_threshold", "bigint").AllowNulls();
         }
     }
 }
