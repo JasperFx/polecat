@@ -182,7 +182,7 @@ public class advanced_sql_query : IntegrationContext
         await using var query = theStore.QuerySession();
         var results = new List<(int, string)>();
         await foreach (var item in query.AdvancedSql.StreamAsync<int, string>(
-            "SELECT value, CONCAT('item_', CAST(value AS varchar)) FROM GENERATE_SERIES(1, 3)",
+            "SELECT value, CONCAT('item_', CAST(value AS varchar)) FROM (VALUES (1),(2),(3)) AS s(value)",
             CancellationToken.None))
         {
             results.Add(item);

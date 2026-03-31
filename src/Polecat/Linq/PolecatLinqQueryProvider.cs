@@ -339,8 +339,8 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider
 
         await using var reader = await _session.ExecuteReaderAsync(batch, token);
 
-        // Check if the select is JSON_OBJECT (complex projection) or scalar
-        if (builder2.SelectColumns.StartsWith("JSON_OBJECT("))
+        // Check if the select is a complex JSON projection or scalar
+        if (builder2.SelectColumns.EndsWith(" as data"))
         {
             // Deserialize JSON results
             return await InvokeGroupByListHandlerAsync<TResult>(reader, parser.SelectExpression!, token);

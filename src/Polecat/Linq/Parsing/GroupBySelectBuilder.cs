@@ -8,8 +8,10 @@ using Weasel.SqlServer;
 namespace Polecat.Linq.Parsing;
 
 /// <summary>
-///     Builds JSON_OBJECT SELECT clause, GROUP BY columns, and HAVING fragments
+///     Builds SELECT clause (using CONCAT-based JSON), GROUP BY columns, and HAVING fragments
 ///     from a GroupBy key selector and result projection.
+///     Uses CONCAT with manual JSON encoding for broad SQL Server compatibility
+///     (works on Azure SQL Edge and SQL Server 2022+).
 /// </summary>
 internal class GroupBySelectBuilder
 {
@@ -17,8 +19,9 @@ internal class GroupBySelectBuilder
     private readonly JsonNamingPolicy? _namingPolicy;
 
     // Key members for GROUP BY (maps anonymous type member name to SQL locator)
-    private readonly Dictionary<string, string> _keyLocators = new();
+    private readonly Dictionary<string, (string locator, bool isString)> _keyLocators = new();
     private string? _simpleKeyLocator;
+    private bool _simpleKeyIsString;
     private bool _isCompositeKey;
 
     public List<string> GroupByColumns { get; } = [];
@@ -65,7 +68,8 @@ internal class GroupBySelectBuilder
                     ?? throw new NotSupportedException(
                         $"GroupBy composite key member must be a property, got: {newExpr.Arguments[i]}");
                 var member = _memberFactory.ResolveMember(memberExpr);
-                _keyLocators[parameters[i].Name!] = member.TypedLocator;
+                var isString = IsStringType(memberExpr.Type);
+                _keyLocators[parameters[i].Name!] = (member.TypedLocator, isString);
                 GroupByColumns.Add(member.TypedLocator);
             }
         }
@@ -74,6 +78,7 @@ internal class GroupBySelectBuilder
             _isCompositeKey = false;
             var member = _memberFactory.ResolveMember(memberBody);
             _simpleKeyLocator = member.TypedLocator;
+            _simpleKeyIsString = IsStringType(memberBody.Type);
             GroupByColumns.Add(member.TypedLocator);
         }
         else
@@ -97,7 +102,7 @@ internal class GroupBySelectBuilder
 
         if (body is MethodCallExpression scalarMethod)
         {
-            var sql = ResolveAggregate(scalarMethod, groupingParam);
+            var (sql, _) = ResolveProjectionMember(scalarMethod, groupingParam);
             if (sql != null)
             {
                 SelectColumns = sql;
@@ -105,7 +110,7 @@ internal class GroupBySelectBuilder
             }
         }
 
-        // Complex projection: build JSON_OBJECT
+        // Complex projection: build JSON via CONCAT
         if (body is NewExpression newExpr)
         {
             SelectColumns = BuildJsonObject(newExpr, groupingParam);
@@ -124,43 +129,46 @@ internal class GroupBySelectBuilder
     private string BuildJsonObject(NewExpression newExpr, ParameterExpression groupingParam)
     {
         var parameters = newExpr.Constructor!.GetParameters();
-        var parts = new List<string>();
+        var parts = new List<(string key, string valueSql, bool isString)>();
 
         for (var i = 0; i < parameters.Length; i++)
         {
             var name = FormatKey(parameters[i].Name!);
-            var sql = ResolveProjectionMember(newExpr.Arguments[i], groupingParam);
-            parts.Add($"'{name}': {sql}");
+            var (sql, isString) = ResolveProjectionMember(newExpr.Arguments[i], groupingParam);
+            parts.Add((name, sql, isString));
         }
 
-        return $"JSON_OBJECT({string.Join(", ", parts)}) as data";
+        return BuildConcatJson(parts);
     }
 
     private string BuildJsonObjectFromMemberInit(MemberInitExpression memberInit, ParameterExpression groupingParam)
     {
-        var parts = new List<string>();
+        var parts = new List<(string key, string valueSql, bool isString)>();
 
         // Handle constructor parameters
         var ctorParams = memberInit.NewExpression.Constructor!.GetParameters();
         for (var i = 0; i < ctorParams.Length; i++)
         {
             var name = FormatKey(ctorParams[i].Name!);
-            var sql = ResolveProjectionMember(memberInit.NewExpression.Arguments[i], groupingParam);
-            parts.Add($"'{name}': {sql}");
+            var (sql, isString) = ResolveProjectionMember(memberInit.NewExpression.Arguments[i], groupingParam);
+            parts.Add((name, sql, isString));
         }
 
         // Handle member bindings
         foreach (var binding in memberInit.Bindings.OfType<MemberAssignment>())
         {
             var name = FormatKey(binding.Member.Name);
-            var sql = ResolveProjectionMember(binding.Expression, groupingParam);
-            parts.Add($"'{name}': {sql}");
+            var (sql, isString) = ResolveProjectionMember(binding.Expression, groupingParam);
+            parts.Add((name, sql, isString));
         }
 
-        return $"JSON_OBJECT({string.Join(", ", parts)}) as data";
+        return BuildConcatJson(parts);
     }
 
-    private string ResolveProjectionMember(Expression expr, ParameterExpression groupingParam)
+    /// <summary>
+    ///     Returns (sql, isStringType) for a projection member.
+    /// </summary>
+    private (string sql, bool isString) ResolveProjectionMember(Expression expr, ParameterExpression groupingParam)
     {
         // g.Key
         if (expr is MemberExpression memberAccess && memberAccess.Member.Name == "Key"
@@ -172,7 +180,7 @@ internal class GroupBySelectBuilder
                     "Cannot select the entire composite GroupBy key directly. Access individual key members like g.Key.Color instead.");
             }
 
-            return _simpleKeyLocator!;
+            return (_simpleKeyLocator!, _simpleKeyIsString);
         }
 
         // g.Key.PropertyName (composite key)
@@ -182,20 +190,20 @@ internal class GroupBySelectBuilder
             && innerMember.Expression == groupingParam)
         {
             var propName = compositeAccess.Member.Name;
-            if (_keyLocators.TryGetValue(propName, out var locator))
+            if (_keyLocators.TryGetValue(propName, out var info))
             {
-                return locator;
+                return (info.locator, info.isString);
             }
 
             throw new NotSupportedException(
                 $"Unknown composite key member '{propName}' in GroupBy projection");
         }
 
-        // Aggregate method calls
+        // Aggregate method calls (always numeric)
         if (expr is MethodCallExpression methodCall)
         {
             var sql = ResolveAggregate(methodCall, groupingParam);
-            if (sql != null) return sql;
+            if (sql != null) return (sql, false);
         }
 
         throw new NotSupportedException(
@@ -316,6 +324,47 @@ internal class GroupBySelectBuilder
             throw new NotSupportedException(
                 $"Unsupported HAVING operand: {expr}");
         }
+    }
+
+    /// <summary>
+    ///     Combines key-value fragments into a JSON object using CONCAT.
+    ///     Numeric values are emitted bare; string values are quoted and escaped.
+    /// </summary>
+    private static string BuildConcatJson(List<(string key, string valueSql, bool isString)> fragments)
+    {
+        var concatParts = new List<string>();
+        concatParts.Add("'{'");
+
+        for (var i = 0; i < fragments.Count; i++)
+        {
+            if (i > 0) concatParts.Add("','");
+            var (key, valueSql, isString) = fragments[i];
+            concatParts.Add($"'\"' + '{EscapeJsonKey(key)}' + '\":'");
+            if (isString)
+            {
+                // String values: quote and escape embedded double-quotes
+                concatParts.Add($"'\"' + REPLACE(CAST({valueSql} AS nvarchar(max)), '\"', '\\\"') + '\"'");
+            }
+            else
+            {
+                // Numeric values: emit raw
+                concatParts.Add($"CAST({valueSql} AS nvarchar(max))");
+            }
+        }
+
+        concatParts.Add("'}'");
+        return $"CONCAT({string.Join(", ", concatParts)}) as data";
+    }
+
+    private static string EscapeJsonKey(string key)
+    {
+        return key.Replace("'", "''");
+    }
+
+    private static bool IsStringType(Type type)
+    {
+        var underlying = Nullable.GetUnderlyingType(type) ?? type;
+        return underlying == typeof(string);
     }
 
     private string FormatKey(string name)

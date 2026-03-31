@@ -15,10 +15,10 @@ public class separate_database_tenancy_tests : IAsyncLifetime
     private const string DbB = "polecat_tenant_b";
 
     private static readonly string MasterConnectionString =
-        "Server=localhost,11433;Database=master;User Id=sa;Password=Polecat#Dev2025;TrustServerCertificate=true";
+        ConnectionSource.ConnectionString.Replace("Initial Catalog=master", "Database=master");
 
     private static string TenantConnectionString(string dbName) =>
-        $"Server=localhost,11433;Database={dbName};User Id=sa;Password=Polecat#Dev2025;TrustServerCertificate=true";
+        ConnectionSource.ConnectionString.Replace("Initial Catalog=master", $"Database={dbName}");
 
     public async Task InitializeAsync()
     {
