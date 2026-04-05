@@ -17,7 +17,11 @@ public class SchemaCreationTests : IAsyncLifetime
 
     private static PolecatDatabase CreateDatabase(Action<StoreOptions>? configure = null)
     {
-        var options = new StoreOptions { ConnectionString = ConnectionSource.ConnectionString };
+        var options = new StoreOptions
+        {
+            ConnectionString = ConnectionSource.ConnectionString,
+            UseNativeJsonType = ConnectionSource.SupportsNativeJson
+        };
         configure?.Invoke(options);
         return new PolecatDatabase(options);
     }

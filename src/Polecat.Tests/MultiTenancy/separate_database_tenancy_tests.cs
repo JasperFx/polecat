@@ -60,6 +60,7 @@ public class separate_database_tenancy_tests : IAsyncLifetime
         {
             opts.ConnectionString = TenantConnectionString(DbA); // default connection
             opts.AutoCreateSchemaObjects = AutoCreate.All;
+            opts.UseNativeJsonType = ConnectionSource.SupportsNativeJson;
 
             opts.MultiTenantedDatabases(tenancy =>
             {
@@ -204,6 +205,7 @@ public class separate_database_tenancy_tests : IAsyncLifetime
         using var store = DocumentStore.For(opts =>
         {
             opts.ConnectionString = ConnectionSource.ConnectionString;
+            opts.UseNativeJsonType = ConnectionSource.SupportsNativeJson;
         });
 
         store.Options.Tenancy.ShouldNotBeNull();

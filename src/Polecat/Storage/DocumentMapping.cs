@@ -64,6 +64,7 @@ internal class DocumentMapping
         DatabaseSchemaName = options.DatabaseSchemaName;
         DotNetTypeName = $"{documentType.FullName}, {documentType.Assembly.GetName().Name}";
         TenancyStyle = options.Events.TenancyStyle;
+        JsonColumnType = options.JsonColumnType;
 
         // Discover and register attribute-based indexes
         DiscoverIndexAttributes(documentType);
@@ -114,6 +115,7 @@ internal class DocumentMapping
     public string DatabaseSchemaName { get; }
     public string DotNetTypeName { get; }
     public TenancyStyle TenancyStyle { get; }
+    public string JsonColumnType { get; }
     public DeleteStyle DeleteStyle { get; } = DeleteStyle.Remove;
 
     /// <summary>

@@ -59,7 +59,8 @@ public abstract class IntegrationContext : IAsyncLifetime
         var options = new StoreOptions
         {
             ConnectionString = ConnectionSource.ConnectionString,
-            AutoCreateSchemaObjects = AutoCreate.All
+            AutoCreateSchemaObjects = AutoCreate.All,
+            UseNativeJsonType = ConnectionSource.SupportsNativeJson
         };
 
         configure(options);

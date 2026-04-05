@@ -35,7 +35,7 @@ internal class StreamsTable : Table
             .NotNull()
             .DefaultValueByExpression("SYSDATETIMEOFFSET()");
 
-        AddColumn("snapshot", "nvarchar(max)").AllowNulls();
+        AddColumn("snapshot", events.JsonColumnType).AllowNulls();
         AddColumn("snapshot_version", "int").AllowNulls();
 
         if (events.TenancyStyle != TenancyStyle.Conjoined)

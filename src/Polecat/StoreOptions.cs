@@ -168,6 +168,18 @@ public class StoreOptions
     internal Dictionary<Type, Func<Internal.DocumentSessionBase, string, object>> CustomProjectionStorageProviders { get; } = new();
 
     /// <summary>
+    ///     When true (the default), Polecat uses the SQL Server 2025 native <c>json</c>
+    ///     data type for document bodies, event data, headers, and snapshots.
+    ///     Set to false to fall back to <c>nvarchar(max)</c> for pre-2025 SQL Server instances.
+    /// </summary>
+    public bool UseNativeJsonType { get; set; } = true;
+
+    /// <summary>
+    ///     Resolved SQL column type for JSON storage based on <see cref="UseNativeJsonType"/>.
+    /// </summary>
+    internal string JsonColumnType => UseNativeJsonType ? "json" : "nvarchar(max)";
+
+    /// <summary>
     ///     Additional SQL Server tables to be managed by this DocumentStore alongside
     ///     Polecat's own schema objects. Used by extensions like EF Core integration
     ///     to register entity tables for Weasel schema migration.

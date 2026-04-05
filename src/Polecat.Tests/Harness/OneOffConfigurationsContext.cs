@@ -57,7 +57,8 @@ public abstract class OneOffConfigurationsContext : IAsyncLifetime
         {
             ConnectionString = ConnectionSource.ConnectionString,
             AutoCreateSchemaObjects = AutoCreate.All,
-            DatabaseSchemaName = _schemaName
+            DatabaseSchemaName = _schemaName,
+            UseNativeJsonType = ConnectionSource.SupportsNativeJson
         };
 
         configure(options);

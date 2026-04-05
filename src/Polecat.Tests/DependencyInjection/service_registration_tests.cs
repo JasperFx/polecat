@@ -13,6 +13,7 @@ public class service_registration_tests
         var expression = services.AddPolecat(opts =>
         {
             opts.ConnectionString = ConnectionSource.ConnectionString;
+            opts.UseNativeJsonType = ConnectionSource.SupportsNativeJson;
         });
         configure?.Invoke(expression);
         return services.BuildServiceProvider();
@@ -129,7 +130,8 @@ public class service_registration_tests
         var options = new StoreOptions
         {
             ConnectionString = ConnectionSource.ConnectionString,
-            DatabaseSchemaName = "custom"
+            DatabaseSchemaName = "custom",
+            UseNativeJsonType = ConnectionSource.SupportsNativeJson
         };
 
         var services = new ServiceCollection();
@@ -152,7 +154,8 @@ public class service_registration_tests
             sp.GetRequiredService<string>().ShouldBe("test-connection-marker");
             return new StoreOptions
             {
-                ConnectionString = ConnectionSource.ConnectionString
+                ConnectionString = ConnectionSource.ConnectionString,
+                UseNativeJsonType = ConnectionSource.SupportsNativeJson
             };
         });
 

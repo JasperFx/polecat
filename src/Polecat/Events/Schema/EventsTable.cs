@@ -30,8 +30,8 @@ internal class EventsTable : Table
         // Version within the stream
         AddColumn("version", "bigint").NotNull();
 
-        // Event data — SQL Server 2025 JSON type
-        AddColumn("data", "nvarchar(max)").NotNull();
+        // Event data — SQL Server 2025 native JSON type by default
+        AddColumn("data", events.JsonColumnType).NotNull();
 
         // Event type name for deserialization
         AddColumn("type", "varchar(500)").NotNull();
@@ -62,7 +62,7 @@ internal class EventsTable : Table
 
         if (events.EventOptions.EnableHeaders)
         {
-            AddColumn("headers", "nvarchar(max)").AllowNulls();
+            AddColumn("headers", events.JsonColumnType).AllowNulls();
         }
 
         // Archive flag

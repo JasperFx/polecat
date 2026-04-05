@@ -19,7 +19,8 @@ public class DefaultStoreFixture : IAsyncLifetime
         Options = new StoreOptions
         {
             ConnectionString = ConnectionSource.ConnectionString,
-            AutoCreateSchemaObjects = AutoCreate.All
+            AutoCreateSchemaObjects = AutoCreate.All,
+            UseNativeJsonType = ConnectionSource.SupportsNativeJson
         };
 
         Store = new DocumentStore(Options);

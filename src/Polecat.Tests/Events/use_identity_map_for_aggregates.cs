@@ -52,7 +52,8 @@ public class use_identity_map_for_aggregates : IntegrationContext
         var options = new StoreOptions
         {
             ConnectionString = ConnectionSource.ConnectionString,
-            DatabaseSchemaName = "idmap_disabled"
+            DatabaseSchemaName = "idmap_disabled",
+            UseNativeJsonType = ConnectionSource.SupportsNativeJson
         };
 
         await using var store = new DocumentStore(options);

@@ -58,6 +58,8 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
 
     internal EventStoreOptions EventOptions => _options.Events;
 
+    internal string JsonColumnType => _options.JsonColumnType;
+
     /// <summary>
     ///     Whether extended progression tracking columns are enabled.
     /// </summary>

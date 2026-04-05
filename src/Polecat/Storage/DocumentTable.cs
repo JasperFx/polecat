@@ -24,7 +24,7 @@ internal class DocumentTable : Table
 
         AddColumn("id", idColumnType).AsPrimaryKey().NotNull();
 
-        AddColumn("data", "nvarchar(max)").NotNull();
+        AddColumn("data", mapping.JsonColumnType).NotNull();
 
         AddColumn("version", "int").NotNull().DefaultValue(1);
 
