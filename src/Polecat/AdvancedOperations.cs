@@ -283,33 +283,24 @@ public class AdvancedOperations
     }
 
     /// <summary>
-    ///     Generate the full DDL script for all Polecat schema objects (event store tables + any registered document tables).
+    ///     Generate the full DDL script for all Polecat schema objects (event store tables, document tables, HiLo).
     /// </summary>
     public string ToDatabaseScript()
     {
         var sb = new StringBuilder();
         var writer = new StringWriter(sb);
+        var migrator = new Weasel.SqlServer.SqlServerMigrator();
 
-        // Event store tables via Weasel
+        // All schema objects (event store + documents + hilo) via Weasel feature schemas
         foreach (var featureSchema in _store.Database.BuildFeatureSchemas())
         {
             foreach (var schemaObject in featureSchema.Objects)
             {
-                schemaObject.WriteCreateStatement(new Weasel.SqlServer.SqlServerMigrator(), writer);
+                schemaObject.WriteCreateStatement(migrator, writer);
                 writer.WriteLine();
                 writer.WriteLine("GO");
                 writer.WriteLine();
             }
-        }
-
-        // Document tables for already-registered providers
-        foreach (var provider in _store.Options.Providers.AllProviders)
-        {
-            var table = new DocumentTable(provider.Mapping);
-            table.WriteCreateStatement(new Weasel.SqlServer.SqlServerMigrator(), writer);
-            writer.WriteLine();
-            writer.WriteLine("GO");
-            writer.WriteLine();
         }
 
         return sb.ToString();

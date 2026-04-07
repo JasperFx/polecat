@@ -1,13 +1,16 @@
 using System.Collections.Concurrent;
+using JasperFx;
 using Microsoft.Data.SqlClient;
-using Polecat.Metadata;
+using Polecat.Schema.Identity.Sequences;
 using Polecat.Storage;
+using Weasel.Core;
+using Weasel.SqlServer;
 
 namespace Polecat.Internal;
 
 /// <summary>
-///     Ensures document tables exist on demand. Uses Weasel to create tables
-///     if they don't exist, and tracks which types have been ensured.
+///     Ensures document tables exist on demand. Uses Weasel SchemaMigration to create
+///     or update tables, and tracks which types have been ensured.
 /// </summary>
 internal class DocumentTableEnsurer
 {
@@ -49,35 +52,29 @@ internal class DocumentTableEnsurer
                 return;
             }
 
-            var table = new DocumentTable(provider.Mapping);
-
             await using var conn = _connectionFactory.Create();
             await conn.OpenAsync(token);
+
+            var migrator = new SqlServerMigrator();
 
             // Ensure pc_hilo table for numeric ID types
             if (provider.Mapping.IsNumericId && !_hiloTableEnsured)
             {
-                var hiloDdl = BuildHiloTableDdl(provider.Mapping.DatabaseSchemaName);
-                await using var hiloCmd = conn.CreateCommand();
-                hiloCmd.CommandText = hiloDdl;
-                await hiloCmd.ExecuteNonQueryAsync(token);
+                var hiloTable = new HiloTable(provider.Mapping.DatabaseSchemaName);
+                var hiloMigration = await SchemaMigration.DetermineAsync(conn, token, hiloTable);
+                await migrator.ApplyAllAsync(conn, hiloMigration, AutoCreate.CreateOrUpdate, ct: token);
                 _hiloTableEnsured = true;
             }
 
-            // Use raw DDL with IF NOT EXISTS for safety
-            var ddl = BuildCreateTableDdl(provider.Mapping);
-            await using var cmd = conn.CreateCommand();
-            cmd.CommandText = ddl;
-            await cmd.ExecuteNonQueryAsync(token);
-
-            // Ensure created_at column exists (migration for tables created before this column was added)
-            await using var migrateCmd = conn.CreateCommand();
-            migrateCmd.CommandText = BuildAddMissingColumnsDdl(provider.Mapping);
-            await migrateCmd.ExecuteNonQueryAsync(token);
+            // Use Weasel SchemaMigration to create or update the document table
+            var table = new DocumentTable(provider.Mapping);
+            var migration = await SchemaMigration.DetermineAsync(conn, token, table);
+            await migrator.ApplyAllAsync(conn, migration, AutoCreate.CreateOrUpdate, ct: token);
 
             // Create custom indexes (computed columns + index)
+            // Computed columns are not modeled in Weasel, so they remain as supplementary DDL.
             // Each statement executed separately so computed columns are visible
-            // before filtered indexes reference them
+            // before filtered indexes reference them.
             foreach (var index in provider.Mapping.Indexes)
             {
                 foreach (var statement in index.ToDdlStatements(provider.Mapping))
@@ -147,107 +144,4 @@ internal class DocumentTableEnsurer
             await EnsureTableAsync(provider, token);
         }
     }
-
-    private static string BuildHiloTableDdl(string schema)
-    {
-        return $"""
-            IF NOT EXISTS (SELECT 1 FROM sys.tables t
-                           JOIN sys.schemas s ON t.schema_id = s.schema_id
-                           WHERE s.name = '{schema}' AND t.name = 'pc_hilo')
-            BEGIN
-                IF SCHEMA_ID('{schema}') IS NULL
-                    EXEC('CREATE SCHEMA [{schema}]');
-
-                CREATE TABLE [{schema}].[pc_hilo] (
-                    entity_name varchar(250) NOT NULL PRIMARY KEY,
-                    hi_value bigint NOT NULL DEFAULT 0
-                );
-            END
-            """;
-    }
-
-    private static string BuildCreateTableDdl(DocumentMapping mapping)
-    {
-        var schema = mapping.DatabaseSchemaName;
-        var table = mapping.TableName;
-        var jsonType = mapping.JsonColumnType;
-        var innerIdType = mapping.InnerIdType;
-        var idType = innerIdType == typeof(Guid) ? "uniqueidentifier"
-            : innerIdType == typeof(int) ? "int"
-            : innerIdType == typeof(long) ? "bigint"
-            : "varchar(250)";
-        var isConjoined = mapping.TenancyStyle == TenancyStyle.Conjoined;
-        var isSoftDelete = mapping.DeleteStyle == DeleteStyle.SoftDelete;
-        var softDeleteCols = isSoftDelete
-            ? @"
-                    is_deleted bit NOT NULL DEFAULT 0,
-                    deleted_at datetimeoffset NULL,"
-            : "";
-        var guidVersionCol = mapping.UseOptimisticConcurrency
-            ? @"
-                    guid_version uniqueidentifier NOT NULL DEFAULT NEWID(),"
-            : "";
-        var docTypeCol = mapping.IsHierarchy()
-            ? @"
-                    doc_type varchar(250) NOT NULL DEFAULT 'base',"
-            : "";
-
-        if (isConjoined)
-        {
-            return $@"
-                IF NOT EXISTS (SELECT 1 FROM sys.tables t
-                               JOIN sys.schemas s ON t.schema_id = s.schema_id
-                               WHERE s.name = '{schema}' AND t.name = '{table}')
-                BEGIN
-                    IF SCHEMA_ID('{schema}') IS NULL
-                        EXEC('CREATE SCHEMA [{schema}]');
-
-                    CREATE TABLE [{schema}].[{table}] (
-                        tenant_id varchar(250) NOT NULL,
-                        id {idType} NOT NULL,
-                        data {jsonType} NOT NULL,
-                        version int NOT NULL DEFAULT 1,
-                        last_modified datetimeoffset NOT NULL DEFAULT SYSDATETIMEOFFSET(),
-                        created_at datetimeoffset NOT NULL DEFAULT SYSDATETIMEOFFSET(),
-                        dotnet_type varchar(500) NULL,{docTypeCol}{softDeleteCols}{guidVersionCol}
-                        CONSTRAINT pk_{table} PRIMARY KEY (tenant_id, id)
-                    );
-                END";
-        }
-
-        return $@"
-            IF NOT EXISTS (SELECT 1 FROM sys.tables t
-                           JOIN sys.schemas s ON t.schema_id = s.schema_id
-                           WHERE s.name = '{schema}' AND t.name = '{table}')
-            BEGIN
-                IF SCHEMA_ID('{schema}') IS NULL
-                    EXEC('CREATE SCHEMA [{schema}]');
-
-                CREATE TABLE [{schema}].[{table}] (
-                    id {idType} NOT NULL PRIMARY KEY,
-                    data {jsonType} NOT NULL,
-                    version int NOT NULL DEFAULT 1,
-                    last_modified datetimeoffset NOT NULL DEFAULT SYSDATETIMEOFFSET(),
-                    created_at datetimeoffset NOT NULL DEFAULT SYSDATETIMEOFFSET(),
-                    dotnet_type varchar(500) NULL,{docTypeCol}{softDeleteCols}{guidVersionCol}
-                    tenant_id varchar(250) NOT NULL DEFAULT '*DEFAULT*'
-                );
-            END";
-    }
-
-    private static string BuildAddMissingColumnsDdl(DocumentMapping mapping)
-    {
-        var schema = mapping.DatabaseSchemaName;
-        var table = mapping.TableName;
-        return $"""
-            IF NOT EXISTS (SELECT 1 FROM sys.columns
-                           WHERE object_id = OBJECT_ID('[{schema}].[{table}]')
-                             AND name = 'created_at')
-            BEGIN
-                ALTER TABLE [{schema}].[{table}]
-                    ADD created_at datetimeoffset NOT NULL DEFAULT SYSDATETIMEOFFSET();
-            END
-            """;
-    }
-
 }

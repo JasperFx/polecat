@@ -79,6 +79,12 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase
             new EventStoreFeatureSchema(_events, naturalKeys)
         };
 
+        // Document tables + HiLo (if any providers are registered)
+        if (_options.Providers != null && _options.Providers.AllProviders.Any())
+        {
+            schemas.Add(new DocumentFeatureSchema(_options));
+        }
+
         if (_options.ExtendedSchemaObjects.Count > 0)
         {
             schemas.Add(new ExtendedObjectsFeatureSchema(_options.ExtendedSchemaObjects));
