@@ -170,6 +170,7 @@ internal class DocumentTableEnsurer
     {
         var schema = mapping.DatabaseSchemaName;
         var table = mapping.TableName;
+        var jsonType = mapping.JsonColumnType;
         var innerIdType = mapping.InnerIdType;
         var idType = innerIdType == typeof(Guid) ? "uniqueidentifier"
             : innerIdType == typeof(int) ? "int"
@@ -204,7 +205,7 @@ internal class DocumentTableEnsurer
                     CREATE TABLE [{schema}].[{table}] (
                         tenant_id varchar(250) NOT NULL,
                         id {idType} NOT NULL,
-                        data nvarchar(max) NOT NULL,
+                        data {jsonType} NOT NULL,
                         version int NOT NULL DEFAULT 1,
                         last_modified datetimeoffset NOT NULL DEFAULT SYSDATETIMEOFFSET(),
                         created_at datetimeoffset NOT NULL DEFAULT SYSDATETIMEOFFSET(),
@@ -224,7 +225,7 @@ internal class DocumentTableEnsurer
 
                 CREATE TABLE [{schema}].[{table}] (
                     id {idType} NOT NULL PRIMARY KEY,
-                    data nvarchar(max) NOT NULL,
+                    data {jsonType} NOT NULL,
                     version int NOT NULL DEFAULT 1,
                     last_modified datetimeoffset NOT NULL DEFAULT SYSDATETIMEOFFSET(),
                     created_at datetimeoffset NOT NULL DEFAULT SYSDATETIMEOFFSET(),
