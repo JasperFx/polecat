@@ -1,7 +1,10 @@
+using JasperFx;
 using Microsoft.Data.SqlClient;
 using Polly;
 using Polecat.Exceptions;
 using Polecat.Internal;
+using Weasel.Core;
+using Weasel.SqlServer;
 
 namespace Polecat.Schema.Identity.Sequences;
 
@@ -119,9 +122,10 @@ internal class HiloSequence : ISequence
     {
         if (_tableEnsured) return;
 
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = HiloTableDdl();
-        await cmd.ExecuteNonQueryAsync(ct);
+        var table = new HiloTable(_schemaName);
+        var migrator = new SqlServerMigrator();
+        var migration = await SchemaMigration.DetermineAsync(conn, ct, table);
+        await migrator.ApplyAllAsync(conn, migration, AutoCreate.CreateOrUpdate, ct: ct);
         _tableEnsured = true;
     }
 
@@ -129,28 +133,11 @@ internal class HiloSequence : ISequence
     {
         if (_tableEnsured) return;
 
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = HiloTableDdl();
-        cmd.ExecuteNonQuery();
+        var table = new HiloTable(_schemaName);
+        var migrator = new SqlServerMigrator();
+        var migration = SchemaMigration.DetermineAsync(conn, table).GetAwaiter().GetResult();
+        migrator.ApplyAllAsync(conn, migration, AutoCreate.CreateOrUpdate).GetAwaiter().GetResult();
         _tableEnsured = true;
-    }
-
-    private string HiloTableDdl()
-    {
-        return $"""
-            IF NOT EXISTS (SELECT 1 FROM sys.tables t
-                           JOIN sys.schemas s ON t.schema_id = s.schema_id
-                           WHERE s.name = '{_schemaName}' AND t.name = 'pc_hilo')
-            BEGIN
-                IF SCHEMA_ID('{_schemaName}') IS NULL
-                    EXEC('CREATE SCHEMA [{_schemaName}]');
-
-                CREATE TABLE [{_schemaName}].[pc_hilo] (
-                    entity_name varchar(250) NOT NULL PRIMARY KEY,
-                    hi_value bigint NOT NULL DEFAULT 0
-                );
-            END
-            """;
     }
 
     private async Task<long> TryGetNextHiAsync(SqlConnection conn, CancellationToken ct)

@@ -216,7 +216,8 @@ public class document_foreign_key_tests : IntegrationContext
         {
             ConnectionString = theStore.Options.ConnectionString,
             AutoCreateSchemaObjects = JasperFx.AutoCreate.All,
-            DatabaseSchemaName = "fk_idempotent"
+            DatabaseSchemaName = "fk_idempotent",
+            UseNativeJsonType = ConnectionSource.SupportsNativeJson
         };
         opts2.Schema.For<FkUser>();
         opts2.Schema.For<FkIssue>().ForeignKey<FkUser>(x => x.AssigneeId);

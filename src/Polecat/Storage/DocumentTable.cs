@@ -1,3 +1,4 @@
+using Polecat.Metadata;
 using Weasel.SqlServer;
 using Weasel.SqlServer.Tables;
 
@@ -32,7 +33,30 @@ internal class DocumentTable : Table
             .NotNull()
             .DefaultValueByExpression("SYSDATETIMEOFFSET()");
 
+        AddColumn("created_at", "datetimeoffset")
+            .NotNull()
+            .DefaultValueByExpression("SYSDATETIMEOFFSET()");
+
         AddColumn("dotnet_type", "varchar(500)").AllowNulls();
+
+        // Sub-class hierarchy discriminator
+        if (mapping.IsHierarchy())
+        {
+            AddColumn("doc_type", "varchar(250)").NotNull().DefaultValueByString("base");
+        }
+
+        // Soft delete columns
+        if (mapping.DeleteStyle == DeleteStyle.SoftDelete)
+        {
+            AddColumn("is_deleted", "bit").NotNull().DefaultValue(0);
+            AddColumn("deleted_at", "datetimeoffset").AllowNulls();
+        }
+
+        // Guid-based optimistic concurrency
+        if (mapping.UseOptimisticConcurrency)
+        {
+            AddColumn("guid_version", "uniqueidentifier").NotNull().DefaultValueByExpression("NEWID()");
+        }
 
         if (mapping.TenancyStyle != TenancyStyle.Conjoined)
         {

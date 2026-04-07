@@ -285,7 +285,8 @@ public class document_index_tests : IntegrationContext
         {
             ConnectionString = theStore.Options.ConnectionString,
             AutoCreateSchemaObjects = JasperFx.AutoCreate.All,
-            DatabaseSchemaName = "idx_idempotent"
+            DatabaseSchemaName = "idx_idempotent",
+            UseNativeJsonType = ConnectionSource.SupportsNativeJson
         };
         opts2.Schema.For<IndexedProduct>().Index(x => x.Sku);
         using var store2 = new DocumentStore(opts2);

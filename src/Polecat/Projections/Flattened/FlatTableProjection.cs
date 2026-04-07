@@ -232,38 +232,13 @@ public abstract class FlatTableProjection : ProjectionBase,
 
     private async Task EnsureTableAsync(DocumentSessionBase session, CancellationToken cancellation)
     {
-        await using var cmd = new Microsoft.Data.SqlClient.SqlCommand();
-        cmd.CommandText = $"""
-            IF NOT EXISTS (SELECT * FROM sys.tables t
-                JOIN sys.schemas s ON t.schema_id = s.schema_id
-                WHERE s.name = '{Table.Identifier.Schema}' AND t.name = '{Table.Identifier.Name}')
-            BEGIN
-                {GenerateCreateTableDdl()}
-            END
-            """;
+        var migrator = new SqlServerMigrator();
+        var writer = new StringWriter();
+        Table.WriteCreateStatement(migrator, writer);
 
+        await using var cmd = new SqlCommand();
+        cmd.CommandText = writer.ToString();
         await session.ExecuteAsync(cmd, cancellation);
-    }
-
-    private string GenerateCreateTableDdl()
-    {
-        var columns = Table.Columns.Select(c =>
-        {
-            var nullable = c.AllowNulls && !c.IsPrimaryKey ? "NULL" : "NOT NULL";
-            var identity = c.IsAutoNumber ? " IDENTITY(1,1)" : "";
-            return $"[{c.Name}] {c.Type}{identity} {nullable}";
-        });
-
-        var pkColumns = Table.PrimaryKeyColumns;
-        var pkConstraint = pkColumns.Count > 0
-            ? $", CONSTRAINT [PK_{Table.Identifier.Name}] PRIMARY KEY ({string.Join(", ", pkColumns.Select(c => $"[{c}]"))})"
-            : "";
-
-        return $"""
-            CREATE TABLE [{Table.Identifier.Schema}].[{Table.Identifier.Name}] (
-                {string.Join(",\n            ", columns)}{pkConstraint}
-            );
-            """;
     }
 
     private static MemberInfo[]? GetMemberPath<T>(Expression<Func<T, object>> expression)
