@@ -15,7 +15,7 @@
         <PackageVersion Include="Polly.Core" Version="8.6.5" />
 
         <!-- EF Core -->
-        <PackageVersion Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.0-preview.2.25163.2" />
+        <PackageVersion Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.0-preview.2.25163.8" />
 
         <!-- Code analysis -->
         <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="4.3.0" />
