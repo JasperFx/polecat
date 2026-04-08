@@ -1,25 +1,16 @@
 services:
-  # SQL Server 2025 is required for full Polecat functionality (JSON_OBJECT,
-  # GENERATE_SERIES, etc.). On Apple Silicon Macs, SQL Server 2025 under
-  # Rosetta may crash due to memory constraints. Use Azure SQL Edge as a
-  # fallback for basic development — some LINQ tests (group_by, streaming)
-  # will fail since they need SQL Server 2022+ features.
-  #
-  # For CI or x86 Linux/Windows, use:
-  #   image: mcr.microsoft.com/mssql/server:2025-latest
-  # otherwise:
-  #   image: "mcr.microsoft.com/azure-sql-edge:latest"
   sqlserver:
-    image: "mcr.microsoft.com/mssql/server:2025-latest"
+    image: mcr.microsoft.com/mssql/server:2025-latest
     container_name: polecat-sqlserver
     environment:
       ACCEPT_EULA: "Y"
       SA_PASSWORD: "P@55w0rd"
       MSSQL_PID: "Developer"
+      SQLCMD_PATH: "/opt/mssql-tools18/bin/sqlcmd"
     ports:
       - "11433:1433"
     healthcheck:
-      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P P@55w0rd -C -Q \"SELECT 1\""]
+      test: ["CMD-SHELL", "$$SQLCMD_PATH -S localhost -U sa -P $$SA_PASSWORD -C -Q \"SELECT 1\""]
       interval: 10s
       timeout: 5s
       retries: 10

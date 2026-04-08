@@ -1,0 +1,5 @@
+services:
+  sqlserver:
+    image: mcr.microsoft.com/azure-sql-edge:latest
+    environment:
+      SQLCMD_PATH: "/opt/mssql-tools/bin/sqlcmd"
