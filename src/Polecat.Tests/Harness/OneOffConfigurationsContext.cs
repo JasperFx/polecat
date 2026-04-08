@@ -65,6 +65,9 @@ public abstract class OneOffConfigurationsContext : IAsyncLifetime
 
         _store = new DocumentStore(options);
         _database = _store.Database;
+
+        // Apply schema changes immediately so tables are ready for use
+        _database.ApplyAllConfiguredChangesToDatabaseAsync().GetAwaiter().GetResult();
     }
 
     /// <summary>
