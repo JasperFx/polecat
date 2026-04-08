@@ -7,8 +7,10 @@ services:
   #
   # For CI or x86 Linux/Windows, use:
   #   image: mcr.microsoft.com/mssql/server:2025-latest
+  # otherwise:
+  #   image: "mcr.microsoft.com/azure-sql-edge:latest"
   sqlserver:
-    image: "mcr.microsoft.com/azure-sql-edge:latest"
+    image: "mcr.microsoft.com/mssql/server:2025-latest"
     container_name: polecat-sqlserver
     environment:
       ACCEPT_EULA: "Y"
@@ -16,3 +18,10 @@ services:
       MSSQL_PID: "Developer"
     ports:
       - "11433:1433"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P P@55w0rd -C -Q \"SELECT 1\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
