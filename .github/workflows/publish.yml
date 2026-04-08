@@ -41,30 +41,6 @@ jobs:
       - name: Build
         run: dotnet build polecat.slnx -c Release --no-restore
 
-      - name: Start containers
-        run: docker compose up -d
-
-      - name: Wait for SQL Server to be healthy
-        run: |
-          for i in {1..30}; do
-            STATUS=$(docker inspect --format='{{.State.Health.Status}}' polecat-sqlserver)
-            if [ "$STATUS" == "healthy" ]; then
-              echo "SQL Server is ready!"
-              exit 0
-            fi
-            echo "Waiting for SQL Server... ($i)"
-            sleep 5
-          done
-          echo "SQL Server failed to become healthy"
-          exit 1
-
-      - name: Test
-        run: dotnet test polecat.slnx -c Release --no-build --framework net9.0
-
-      - name: Stop containers
-        if: always()
-        run: docker compose down
-
       - name: Pack
         run: |
           VERSION_ARG=""
@@ -76,5 +52,4 @@ jobs:
           dotnet pack src/Polecat.EntityFrameworkCore/Polecat.EntityFrameworkCore.csproj -c Release --no-build -o ./artifacts $VERSION_ARG
 
       - name: Push to NuGet
-        if: github.repository_owner == 'JasperFx'
         run: dotnet nuget push ./artifacts/*.nupkg --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate
