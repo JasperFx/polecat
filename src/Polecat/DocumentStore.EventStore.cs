@@ -119,7 +119,7 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
         {
             Subject = "Polecat.DocumentStore",
             SubjectUri = Database.DatabaseUri,
-            Version = GetType().Assembly.GetName().Version?.ToString(),
+            Version = GetType().Assembly.GetName().Version?.ToString()!,
             Database = new DatabaseUsage
             {
                 Cardinality = DatabaseCardinality.Single,
