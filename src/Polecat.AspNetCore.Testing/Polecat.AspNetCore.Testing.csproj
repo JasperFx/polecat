@@ -2,6 +2,7 @@
 
     <PropertyGroup>
         <IsPackable>false</IsPackable>
+        <GenerateLaunchSettings>false</GenerateLaunchSettings>
     </PropertyGroup>
 
     <ItemGroup>
@@ -16,7 +17,7 @@
     </ItemGroup>
 
     <ItemGroup>
-        <ProjectReference Include="..\Polecat.AspNetCore\Polecat.AspNetCore.csproj"/>
+        <ProjectReference Include="..\Polecat.AspNetCore\Polecat.AspNetCore.csproj" />
     </ItemGroup>
 
 </Project>
