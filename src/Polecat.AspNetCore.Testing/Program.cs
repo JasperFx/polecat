@@ -21,8 +21,3 @@ var app = builder.Build();
 app.MapPolecatMcp();
 
 app.Run();
-
-/// <summary>
-///     Entry point class for Alba integration testing.
-/// </summary>
-public partial class Program { }

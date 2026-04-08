@@ -3,6 +3,7 @@
     <PropertyGroup>
         <IsPackable>false</IsPackable>
         <GenerateLaunchSettings>false</GenerateLaunchSettings>
+        <NoWarn>CS7022</NoWarn>
     </PropertyGroup>
 
     <ItemGroup>
