@@ -22,7 +22,7 @@
         <PackageVersion Include="Microsoft.CodeAnalysis.Analyzers" Version="3.3.4" />
 
         <!-- Testing -->
-        <PackageVersion Include="Alba" Version="8.3.0" />
+        <PackageVersion Include="Alba" Version="8.5.2" />
         <PackageVersion Include="coverlet.collector" Version="6.0.4" />
         <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
         <PackageVersion Include="Shouldly" Version="4.3.0" />
