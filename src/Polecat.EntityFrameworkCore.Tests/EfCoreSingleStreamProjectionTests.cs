@@ -21,7 +21,7 @@ public abstract class ef_core_single_stream_projection_tests_base : IAsyncLifeti
 
     protected virtual Task WaitForProjectionAsync() => Task.CompletedTask;
 
-    [Fact]
+    [RequiresNativeJsonFact]
     public async Task single_stream_projection_writes_aggregate_on_create()
     {
         var orderId = Guid.NewGuid();
@@ -43,7 +43,7 @@ public abstract class ef_core_single_stream_projection_tests_base : IAsyncLifeti
         ((int)row["item_count"]!).ShouldBe(5);
     }
 
-    [Fact]
+    [RequiresNativeJsonFact]
     public async Task single_stream_projection_evolves_aggregate_with_subsequent_events()
     {
         var orderId = Guid.NewGuid();
@@ -69,7 +69,7 @@ public abstract class ef_core_single_stream_projection_tests_base : IAsyncLifeti
         ((bool)row["is_shipped"]!).ShouldBeTrue();
     }
 
-    [Fact]
+    [RequiresNativeJsonFact]
     public async Task single_stream_projection_handles_multiple_events_in_one_append()
     {
         var orderId = Guid.NewGuid();
@@ -91,7 +91,7 @@ public abstract class ef_core_single_stream_projection_tests_base : IAsyncLifeti
         ((bool)row["is_shipped"]!).ShouldBeTrue();
     }
 
-    [Fact]
+    [RequiresNativeJsonFact]
     public async Task single_stream_projection_writes_ef_core_side_effects()
     {
         var orderId = Guid.NewGuid();
@@ -164,7 +164,7 @@ public class ef_core_single_stream_live_tests : IAsyncLifetime
         return Task.CompletedTask;
     }
 
-    [Fact]
+    [RequiresNativeJsonFact]
     public async Task live_aggregation_builds_aggregate_on_the_fly()
     {
         var orderId = Guid.NewGuid();
@@ -183,7 +183,7 @@ public class ef_core_single_stream_live_tests : IAsyncLifetime
         order.IsShipped.ShouldBeTrue();
     }
 
-    [Fact]
+    [RequiresNativeJsonFact]
     public async Task live_aggregation_returns_null_for_unknown_stream()
     {
         await using var query = _store.QuerySession();
