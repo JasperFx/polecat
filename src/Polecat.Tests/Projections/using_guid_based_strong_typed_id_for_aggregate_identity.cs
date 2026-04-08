@@ -25,7 +25,7 @@ public record PaymentVerified(DateTimeOffset VerifiedAt);
 
 public class Payment
 {
-    [JsonInclude] public PaymentId? Id { get; private set; }
+    [JsonInclude] public PaymentId Id { get; private set; }
     [JsonInclude] public DateTimeOffset CreatedAt { get; private set; }
     [JsonInclude] public PaymentState State { get; private set; }
 
@@ -75,7 +75,7 @@ public class using_guid_based_strong_typed_id_for_aggregate_identity : Integrati
         var payment = await session.Events.AggregateStreamAsync<Payment>(streamId);
 
         payment.ShouldNotBeNull();
-        payment.Id!.Value.Value.ShouldBe(streamId);
+        payment.Id.Value.ShouldBe(streamId);
         payment.State.ShouldBe(PaymentState.Verified);
     }
 
@@ -148,7 +148,7 @@ public class using_guid_based_strong_typed_id_for_aggregate_identity : Integrati
 
         stream.ShouldNotBeNull();
         stream.Aggregate.ShouldNotBeNull();
-        stream.Aggregate.Id!.Value.Value.ShouldBe(streamId);
+        stream.Aggregate.Id.Value.ShouldBe(streamId);
         stream.Aggregate.State.ShouldBe(PaymentState.Verified);
     }
 

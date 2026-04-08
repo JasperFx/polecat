@@ -13,7 +13,7 @@ public readonly partial struct Payment2Id;
 
 public class Payment2
 {
-    [JsonInclude] public Payment2Id? Id { get; private set; }
+    [JsonInclude] public Payment2Id Id { get; private set; }
     [JsonInclude] public DateTimeOffset CreatedAt { get; private set; }
     [JsonInclude] public PaymentState State { get; private set; }
 
@@ -65,7 +65,7 @@ public class using_string_based_strong_typed_id_for_aggregate_identity : Integra
         var payment = await session.Events.AggregateStreamAsync<Payment2>(id);
 
         payment.ShouldNotBeNull();
-        payment.Id!.Value.Value.ShouldBe(id);
+        payment.Id.Value.ShouldBe(id);
         payment.State.ShouldBe(PaymentState.Verified);
     }
 
@@ -144,7 +144,7 @@ public class using_string_based_strong_typed_id_for_aggregate_identity : Integra
 
         stream.ShouldNotBeNull();
         stream.Aggregate.ShouldNotBeNull();
-        stream.Aggregate.Id!.Value.Value.ShouldBe(id);
+        stream.Aggregate.Id.Value.ShouldBe(id);
         stream.Aggregate.State.ShouldBe(PaymentState.Verified);
     }
 
