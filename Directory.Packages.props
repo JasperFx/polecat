@@ -14,9 +14,6 @@
         <PackageVersion Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.0" />
         <PackageVersion Include="Polly.Core" Version="8.6.5" />
 
-        <!-- EF Core -->
-        <PackageVersion Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.0-preview.2.25163.8" />
-
         <!-- Code analysis -->
         <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="4.3.0" />
         <PackageVersion Include="Microsoft.CodeAnalysis.Analyzers" Version="3.3.4" />
@@ -28,8 +25,8 @@
         <PackageVersion Include="Shouldly" Version="4.3.0" />
         <PackageVersion Include="xunit" Version="2.9.3" />
         <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.4" />
-        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="8.11.1" />
-        <PackageVersion Include="Weasel.SqlServer" Version="8.11.1" />
+        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="8.12.1" />
+        <PackageVersion Include="Weasel.SqlServer" Version="8.12.1" />
 
         <!-- Strongly typed IDs -->
         <PackageVersion Include="StronglyTypedId" Version="1.0.0-beta08" />
@@ -37,4 +34,13 @@
         <!-- Source generators -->
         <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="1.4.0" />
     </ItemGroup>
+
+    <!-- EF Core -->
+    <ItemGroup Condition=" '$(TargetFramework)' == 'net10.0' ">
+        <PackageVersion Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.0" />
+    </ItemGroup>
+    <ItemGroup Condition=" '$(TargetFramework)' == 'net9.0' ">
+        <PackageVersion Include="Microsoft.EntityFrameworkCore.SqlServer" Version="9.0.14" />
+    </ItemGroup>
+
 </Project>
