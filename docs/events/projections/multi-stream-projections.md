@@ -66,6 +66,40 @@ Identity<OrderCreated>(e => e.CustomerId);
 Identity<OrderCreated>(e => e.CustomerKey);
 ```
 
+## Time-Based Segmentation
+
+Multi-stream projections can segment a single event stream by time period. This is useful for monthly reports, daily summaries, billing periods, or any scenario where you need per-period aggregations of a single stream's events.
+
+The key technique is using a composite identity that combines the stream ID with a time bucket (e.g., `"{streamId}:{yyyy-MM}"`), derived from the event's timestamp metadata via `IEvent<T>`.
+
+**Events:**
+
+<!-- snippet: sample_polecat_monthly_account_activity_events -->
+<!-- endSnippet -->
+
+**Read model document:**
+
+<!-- snippet: sample_polecat_monthly_account_activity_document -->
+<!-- endSnippet -->
+
+**Projection with time-based routing:**
+
+<!-- snippet: sample_polecat_monthly_account_activity_projection -->
+<!-- endSnippet -->
+
+Each account stream's events are routed to monthly documents automatically. Querying is straightforward:
+
+```cs
+// Get all monthly summaries for an account
+var monthlies = await session.Query<MonthlyAccountActivity>()
+    .Where(x => x.AccountId == accountId)
+    .OrderBy(x => x.Month)
+    .ToListAsync();
+
+// Get a specific month
+var jan = await session.LoadAsync<MonthlyAccountActivity>($"{accountId}:2026-01");
+```
+
 ## ID Types
 
 Multi stream projections support any ID type for the aggregate:
