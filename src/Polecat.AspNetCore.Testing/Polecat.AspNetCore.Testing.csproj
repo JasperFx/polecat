@@ -2,7 +2,7 @@
 
     <PropertyGroup>
         <IsPackable>false</IsPackable>
-        <GenerateLaunchSettings>false</GenerateLaunchSettings>
+        <NoDefaultLaunchSettingsFile>true</NoDefaultLaunchSettingsFile>
         <NoWarn>CS7022</NoWarn>
     </PropertyGroup>
 
