@@ -55,7 +55,14 @@ jobs:
           exit 1
 
       - name: Test
-        run: dotnet test ${{ env.TEST_PROJECT_PATH }} -c Release --no-build --framework net9.0
+        run: dotnet test ${{ env.TEST_PROJECT_PATH }} -c Release --no-build --framework net9.0 --logger "trx;LogFileName=test-results.trx"
+
+      - name: Report results
+        uses: dorny/test-reporter@v1
+        with:
+          name: xUnit Tests
+          path: "**/TestResults/*.trx"
+          reporter: dotnet-trx
 
       - name: Stop containers
         if: ${{ always() }}
