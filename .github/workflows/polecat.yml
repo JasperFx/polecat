@@ -1,4 +1,4 @@
-name: test
+name: polecat
 
 on:
   push:
