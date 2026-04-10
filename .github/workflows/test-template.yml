@@ -24,7 +24,7 @@ jobs:
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: '10.0.x'
+          dotnet-version: '9.0.x'
 
       - name: Restore
         run: dotnet restore ${{ env.TEST_PROJECT_PATH }}
@@ -33,12 +33,12 @@ jobs:
         run: dotnet build ${{ env.TEST_PROJECT_PATH }} -c Release --no-restore
 
       - name: Start SQL Server
-        if: ${{ inputs.USE_AZURE_SQL_EDGE == 'false' }}
+        if: ${{ !inputs.USE_AZURE_SQL_EDGE }}
         run: docker compose up -d
 
       - name: Start Azure SQL Edge
-        if: ${{ inputs.USE_AZURE_SQL_EDGE == 'true' }}
-        run: docker compose up -d        
+        if: ${{ inputs.USE_AZURE_SQL_EDGE }}
+        run: docker compose up -d
 
       - name: Wait for SQL Server to be healthy
         run: |
@@ -58,5 +58,5 @@ jobs:
         run: dotnet test ${{ env.TEST_PROJECT_PATH }} -c Release --no-build --framework net9.0
 
       - name: Stop containers
-        if: always()
+        if: ${{ always() }}
         run: docker compose down
