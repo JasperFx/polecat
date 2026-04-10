@@ -44,7 +44,6 @@ public abstract class EfCoreMultiStreamProjection<TDoc, TId, TDbContext>
         CancellationToken cancellation)
     {
         TDbContext? dbContext = null;
-        SqlConnection? placeholderConnection = null;
 
         // Try to extract DbContext from EfCoreProjectionStorage
         if (identitySetter is EfCoreProjectionStorage<TDoc, TId, TDbContext> efStorage)
@@ -57,7 +56,6 @@ public abstract class EfCoreMultiStreamProjection<TDoc, TId, TDbContext>
         {
             var (ctx, placeholder) = EfCoreDbContextFactory.Create<TDbContext>(_connectionString);
             dbContext = ctx;
-            placeholderConnection = placeholder;
 
             if (session is ITransactionParticipantRegistrar registrar)
             {
