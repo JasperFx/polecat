@@ -10,6 +10,8 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      TEST_PROJECT_PATH: src/Polecat.AspNetCore.Testing/Polecat.AspNetCore.Testing.csproj
 
     steps:
       - name: Checkout
@@ -21,10 +23,10 @@ jobs:
           dotnet-version: '10.0.x'
 
       - name: Restore
-        run: dotnet restore polecat.slnx
+        run: dotnet restore ${{ env.TEST_PROJECT_PATH }}
 
       - name: Build
-        run: dotnet build polecat.slnx -c Release --no-restore
+        run: dotnet build ${{ env.TEST_PROJECT_PATH }} -c Release --no-restore
 
       - name: Start containers
         run: docker compose up -d
@@ -44,7 +46,7 @@ jobs:
           exit 1
 
       - name: Test
-        run: dotnet test polecat.slnx -c Release --no-build --framework net9.0
+        run: dotnet test ${{ env.TEST_PROJECT_PATH }} -c Release --no-build --framework net9.0
 
       - name: Stop containers
         if: always()
