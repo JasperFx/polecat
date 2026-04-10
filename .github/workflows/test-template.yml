@@ -1,4 +1,4 @@
-name: aspnetcore
+name: test-template
 
 on:
   workflow_call:
@@ -33,12 +33,12 @@ jobs:
         run: dotnet build ${{ env.TEST_PROJECT_PATH }} -c Release --no-restore
 
       - name: Start SQL Server
-        if: ${{ !inputs.USE_AZURE_SQL_EDGE }}
-        run: docker compose up -d
-
-      - name: Start Azure SQL Edge
-        if: ${{ inputs.USE_AZURE_SQL_EDGE }}
-        run: docker compose up -d
+        run: |
+          if [ "${{ inputs.USE_AZURE_SQL_EDGE }}" = 'true' ]; then
+            docker compose -f docker-compose.yml -f docker-compose.azure-sql-edge.yml up -d
+          else
+            docker compose up -d
+          fi
 
       - name: Wait for SQL Server to be healthy
         run: |
