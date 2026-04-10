@@ -110,7 +110,7 @@ public class patching_api : IntegrationContext
     // ---- Duplicate operations ----
 
     [Fact]
-    public async Task duplicate_to_new_field()
+    public async Task duplicate_primitive_element_to_new_field()
     {
         var target = Target.Random();
         target.AnotherString = null;
@@ -122,27 +122,46 @@ public class patching_api : IntegrationContext
 
         await using var query = theStore.QuerySession();
         var result = await query.LoadAsync<Target>(target.Id);
-        result!.AnotherString.ShouldBe(target.String);
+        result!.String.ShouldBe(target.String);
+        result.AnotherString.ShouldBe(target.String);
     }
 
     [Fact]
-    public async Task duplicate_to_multiple_new_fields()
+    public async Task duplicate_primitive_element_to_multiple_fields()
     {
         var target = Target.Random();
-        target.StringField = null;
-        target.Inner = null;
+        target.StringField = null; // AnotherString is not null, so we can verify both are updated
         theSession.Store(target);
         await theSession.SaveChangesAsync();
 
-        theSession.Patch<Target>(target.Id).Duplicate(t => t.String,
-            t => t.StringField,
-            t => t.AnotherString);
+        theSession.Patch<Target>(target.Id)
+            .Duplicate(t => t.String, t => t.StringField, t => t.AnotherString);
         await theSession.SaveChangesAsync();
 
         await using var query = theStore.QuerySession();
         var result = await query.LoadAsync<Target>(target.Id);
-        result!.StringField.ShouldBe(target.String);
+        result!.String.ShouldBe(target.String);
+        result.StringField.ShouldBe(target.String);
         result.AnotherString.ShouldBe(target.String);
+    }
+
+    [Fact]
+    public async Task duplicate_complex_element_to_multiple_fields()
+    {
+        var target = Target.Random(withChildren: true);
+        target.Inner2 = null; // Inner3 is not null, so we can verify both are updated
+        theSession.Store(target);
+        await theSession.SaveChangesAsync();
+
+        theSession.Patch<Target>(target.Id)
+            .Duplicate(t => t.Inner, t => t.Inner2, t => t.Inner3);
+        await theSession.SaveChangesAsync();
+
+        await using var query = theStore.QuerySession();
+        var result = await query.LoadAsync<Target>(target.Id);
+        result!.Inner.ShouldBeEquivalentTo(target.Inner);
+        result.Inner2.ShouldBeEquivalentTo(target.Inner);
+        result.Inner3.ShouldBeEquivalentTo(target.Inner);
     }
 
     // ---- Increment operations ----
