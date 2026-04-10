@@ -58,7 +58,8 @@ jobs:
         run: dotnet test ${{ env.TEST_PROJECT_PATH }} -c Release --no-build --framework net9.0 --logger "trx;LogFileName=test-results.trx"
 
       - name: Report results
-        uses: dorny/test-reporter@v1
+        uses: dorny/test-reporter@v3
+        if: ${{ always() }}
         with:
           name: xUnit Tests
           path: "**/TestResults/*.trx"
