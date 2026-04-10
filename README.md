@@ -35,12 +35,10 @@ Available [here](https://dotnet.microsoft.com/download)
 ### 2. SQL Server 2025 or above database
 
 The fastest possible way to develop with Polecat is to run SQL Server in a Docker container. Assuming that you have Docker running on your local box, type:
-`docker-compose up -d`. This will SQL Server 2025 required for full Polecat functionality (JSON_OBJECT, GENERATE_SERIES, etc.). 
+`docker-compose up -d`. This will SQL Server 2025 required for full Polecat functionality (JSON_OBJECT, GENERATE_SERIES, etc.).
 
-On Apple Silicon Macs, SQL Server 2025 under Rosetta may crash due to memory constraints. 
-Use Azure SQL Edge as a fallback for basic development — some LINQ tests (group_by, streaming) will be skipped since they need SQL Server 2022+ features.
-
-For Azure SQL Edge use `docker-compose up -f docker-compose.yml -f docker-compose.azure-sql-edge.yml -d` instead.
+> On Apple Silicon Macs, SQL Server 2025 under Rosetta may crash due to memory constraints.
+> Azure SQL Edge can be used as a fallback for basic development with `docker-compose -f docker-compose.yml -f docker-compose.azure-sql-edge.yml up -d`. Be aware about limited functionality in this case.
 
 ## Documentation
 
