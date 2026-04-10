@@ -1,4 +1,4 @@
-name: aspnetcore
+name: aspnetcore-with-azure-sql-edge 
 
 on:
   push:
@@ -12,3 +12,4 @@ jobs:
     uses: ./.github/workflows/test-template.yml
     with:
       TEST_PROJECT_PATH: src/Polecat.AspNetCore.Testing/Polecat.AspNetCore.Testing.csproj
+      USE_AZURE_SQL_EDGE: true

@@ -1,4 +1,4 @@
-name: polecat
+name: polecat-with-azure-sql-edge
 
 on:
   push:
@@ -12,3 +12,4 @@ jobs:
     uses: ./.github/workflows/test-template.yml
     with:
       TEST_PROJECT_PATH: src/Polecat.Tests/Polecat.Tests.csproj
+      USE_AZURE_SQL_EDGE: true
