@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
     <PropertyGroup>
         <IsPackable>false</IsPackable>
@@ -20,6 +20,7 @@
     </ItemGroup>
 
     <ItemGroup>
+        <ProjectReference Include="..\Polecat.TestUtils\Polecat.TestUtils.csproj" />
         <ProjectReference Include="..\Polecat\Polecat.csproj" />
         <ProjectReference Include="..\Polecat.EntityFrameworkCore\Polecat.EntityFrameworkCore.csproj" />
         <PackageReference Include="Weasel.SqlServer" />

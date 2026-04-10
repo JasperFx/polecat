@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Polecat.TestUtils;
 using Weasel.EntityFrameworkCore;
 using Weasel.SqlServer.Tables;
 

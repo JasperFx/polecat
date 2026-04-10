@@ -3,6 +3,7 @@ using JasperFx.Events.Projections;
 using Microsoft.Data.SqlClient;
 
 using JasperFx;
+using Polecat.TestUtils;
 
 namespace Polecat.EntityFrameworkCore.Tests;
 
@@ -37,7 +38,7 @@ public abstract class ef_core_tenanted_single_stream_tests_base : IAsyncLifetime
 
     protected virtual Task WaitForProjectionAsync() => Task.CompletedTask;
 
-    [RequiresNativeJsonFact]
+    [RequiresNativeJsonFact(true)]
     public async Task tenant_id_is_written_to_ef_core_table()
     {
         var orderId = Guid.NewGuid();
@@ -57,7 +58,7 @@ public abstract class ef_core_tenanted_single_stream_tests_base : IAsyncLifetime
         row["tenant_id"].ShouldBe("tenant-a");
     }
 
-    [RequiresNativeJsonFact]
+    [RequiresNativeJsonFact(true)]
     public async Task different_tenants_get_isolated_data()
     {
         var orderId1 = Guid.NewGuid();
@@ -91,7 +92,7 @@ public abstract class ef_core_tenanted_single_stream_tests_base : IAsyncLifetime
         rowY["tenant_id"].ShouldBe("tenant-y");
     }
 
-    [RequiresNativeJsonFact]
+    [RequiresNativeJsonFact(true)]
     public async Task subsequent_appends_preserve_tenant_id()
     {
         var orderId = Guid.NewGuid();

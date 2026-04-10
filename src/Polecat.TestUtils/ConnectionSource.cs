@@ -1,6 +1,6 @@
 using Microsoft.Data.SqlClient;
 
-namespace Polecat.Tests.Harness;
+namespace Polecat.TestUtils;
 
 /// <summary>
 ///     Centralizes the SQL Server connection string for integration tests.

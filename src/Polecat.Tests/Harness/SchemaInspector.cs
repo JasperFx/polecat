@@ -1,4 +1,5 @@
 using Microsoft.Data.SqlClient;
+using Polecat.TestUtils;
 
 namespace Polecat.Tests.Harness;
 

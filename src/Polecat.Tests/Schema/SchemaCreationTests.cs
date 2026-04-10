@@ -1,6 +1,7 @@
 using JasperFx.Events;
 using Polecat.Storage;
 using Polecat.Tests.Harness;
+using Polecat.TestUtils;
 
 namespace Polecat.Tests.Schema;
 
