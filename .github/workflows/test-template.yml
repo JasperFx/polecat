@@ -59,11 +59,13 @@ jobs:
 
       - name: Report results
         uses: dorny/test-reporter@v3
-        if: ${{ always() }}
+        if: ${{ !cancelled() }}
         with:
           name: xUnit Tests
           path: "**/TestResults/*.trx"
           reporter: dotnet-trx
+          list-suites: "failed"
+          list-tests: "failed"
 
       - name: Stop containers
         if: ${{ always() }}
