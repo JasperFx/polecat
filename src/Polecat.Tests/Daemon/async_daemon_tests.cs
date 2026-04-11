@@ -5,6 +5,7 @@ using Microsoft.Data.SqlClient;
 using Polecat.Projections;
 using Polecat.Tests.Harness;
 using Polecat.Tests.Projections;
+using Polecat.TestUtils;
 
 namespace Polecat.Tests.Daemon;
 
@@ -25,21 +26,6 @@ public class async_daemon_tests : IntegrationContext
         return theStore;
     }
 
-    private static async Task CatchUpWithRetryAsync(IProjectionDaemon daemon)
-    {
-        try
-        {
-            await daemon.CatchUpAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
-        }
-        catch (AggregateException)
-        {
-            // Transient SQL Server connection error — clear pools and retry once
-            SqlConnection.ClearAllPools();
-            await Task.Delay(500);
-            await daemon.CatchUpAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
-        }
-    }
-
     [Fact]
     public async Task projection_shards_are_registered()
     {
@@ -57,7 +43,7 @@ public class async_daemon_tests : IntegrationContext
     public async Task daemon_can_start_and_stop()
     {
         var store = await CreateStoreWithAsyncProjection();
-        using var daemon = (IProjectionDaemon)await store.BuildProjectionDaemonAsync();
+        using var daemon = await store.BuildProjectionDaemonAsync();
 
         await daemon.StartAllAsync();
         daemon.IsRunning.ShouldBeTrue();
@@ -78,11 +64,7 @@ public class async_daemon_tests : IntegrationContext
             new MembersJoined(1, "Rivendell", ["Aragorn", "Legolas", "Gimli"]));
         await session.SaveChangesAsync();
 
-        // Run daemon to completion
-        using var daemon = (IProjectionDaemon)await store.BuildProjectionDaemonAsync();
-        await daemon.StartAllAsync();
-        await CatchUpWithRetryAsync(daemon);
-        await daemon.StopAllAsync();
+        await store.WaitForProjectionAsync();
 
         // Verify projected document
         await using var query = store.QuerySession();
@@ -107,11 +89,7 @@ public class async_daemon_tests : IntegrationContext
             new MembersJoined(1, "Rivendell", ["Aragorn"]));
         await session.SaveChangesAsync();
 
-        // Run daemon
-        using var daemon = (IProjectionDaemon)await store.BuildProjectionDaemonAsync();
-        await daemon.StartAllAsync();
-        await CatchUpWithRetryAsync(daemon);
-        await daemon.StopAllAsync();
+        await store.WaitForProjectionAsync();
 
         // Verify progress was recorded
         var highestSeq = await store.Database.FetchHighestEventSequenceNumber(CancellationToken.None);
@@ -139,11 +117,7 @@ public class async_daemon_tests : IntegrationContext
             new MembersJoined(1, "Town", ["Hero"]));
         await session.SaveChangesAsync();
 
-        // Start daemon and catch up
-        using var daemon = (IProjectionDaemon)await store.BuildProjectionDaemonAsync();
-        await daemon.StartAllAsync();
-        await CatchUpWithRetryAsync(daemon);
-        await daemon.StopAllAsync();
+        await store.WaitForProjectionAsync();
 
         await using var query = store.QuerySession();
         var party = await query.LoadAsync<QuestParty>(streamId);
@@ -170,11 +144,7 @@ public class async_daemon_tests : IntegrationContext
             new ArrivedAtLocation("Mountain", 2));
         await session2.SaveChangesAsync();
 
-        // Start daemon and catch up to all events
-        using var daemon = (IProjectionDaemon)await store.BuildProjectionDaemonAsync();
-        await daemon.StartAllAsync();
-        await CatchUpWithRetryAsync(daemon);
-        await daemon.StopAllAsync();
+        await store.WaitForProjectionAsync();
 
         await using var query = store.QuerySession();
         var party = await query.LoadAsync<QuestParty>(streamId);
@@ -202,10 +172,7 @@ public class async_daemon_tests : IntegrationContext
             new MembersJoined(1, "Town B", ["B1"]));
         await session.SaveChangesAsync();
 
-        using var daemon = (IProjectionDaemon)await store.BuildProjectionDaemonAsync();
-        await daemon.StartAllAsync();
-        await CatchUpWithRetryAsync(daemon);
-        await daemon.StopAllAsync();
+        await store.WaitForProjectionAsync();
 
         await using var query = store.QuerySession();
         var party1 = await query.LoadAsync<QuestParty>(stream1);

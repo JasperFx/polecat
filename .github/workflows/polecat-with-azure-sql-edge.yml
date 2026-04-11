@@ -1,0 +1,15 @@
+name: polecat-with-azure-sql-edge
+
+on:
+  push:
+  #  branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  call-test-template:
+    uses: ./.github/workflows/test-template.yml
+    with:
+      TEST_PROJECT_PATH: src/Polecat.Tests/Polecat.Tests.csproj
+      USE_AZURE_SQL_EDGE: true

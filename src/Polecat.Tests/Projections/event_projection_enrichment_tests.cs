@@ -15,8 +15,7 @@ public class event_projection_enrichment_tests : OneOffConfigurationsContext
         {
             opts.Projections.Add(new SimpleEnrichmentProjection(), ProjectionLifecycle.Inline);
         });
-
-
+        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync();
 
         var taskId = Guid.NewGuid();
         await using (var session = theStore.LightweightSession())
@@ -26,27 +25,23 @@ public class event_projection_enrichment_tests : OneOffConfigurationsContext
             await session.SaveChangesAsync();
         }
 
-        await using (var query = theStore.QuerySession())
-        {
-            var summary = await query.LoadAsync<EnrichmentTaskSummary>(taskId);
-            summary.ShouldNotBeNull();
-            summary.AssignedUserName.ShouldBe("Enriched User");
-        }
+        await using var query = theStore.QuerySession();
+        var summary = await query.LoadAsync<EnrichmentTaskSummary>(taskId);
+        summary.ShouldNotBeNull();
+        summary.AssignedUserName.ShouldBe("Enriched User");
     }
 
     [Fact]
     public async Task enrichment_is_called_before_apply()
     {
         var callOrder = new List<string>();
-
         ConfigureStore(opts =>
         {
             opts.Projections.Add(
                 new EnrichmentCallOrderProjection(callOrder),
                 ProjectionLifecycle.Inline);
         });
-
-
+        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync();
 
         var streamId = Guid.NewGuid();
         await using var session = theStore.LightweightSession();
@@ -64,8 +59,7 @@ public class event_projection_enrichment_tests : OneOffConfigurationsContext
         {
             opts.Projections.Add(new DbLookupEnrichmentProjection(), ProjectionLifecycle.Inline);
         });
-
-
+        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync();
 
         // Pre-store a lookup document
         var userId = Guid.NewGuid();
@@ -83,12 +77,10 @@ public class event_projection_enrichment_tests : OneOffConfigurationsContext
             await session.SaveChangesAsync();
         }
 
-        await using (var query = theStore.QuerySession())
-        {
-            var summary = await query.LoadAsync<EnrichmentTaskSummary>(taskId);
-            summary.ShouldNotBeNull();
-            summary.AssignedUserName.ShouldBe("Alice Smith");
-        }
+        await using var query = theStore.QuerySession();
+        var summary = await query.LoadAsync<EnrichmentTaskSummary>(taskId);
+        summary.ShouldNotBeNull();
+        summary.AssignedUserName.ShouldBe("Alice Smith");
     }
 }
 

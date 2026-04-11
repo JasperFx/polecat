@@ -2,6 +2,8 @@
 
     <PropertyGroup>
         <IsPackable>false</IsPackable>
+        <NoDefaultLaunchSettingsFile>true</NoDefaultLaunchSettingsFile>
+        <NoWarn>CS7022</NoWarn>
     </PropertyGroup>
 
     <ItemGroup>
@@ -16,7 +18,7 @@
     </ItemGroup>
 
     <ItemGroup>
-        <ProjectReference Include="..\Polecat.AspNetCore\Polecat.AspNetCore.csproj"/>
+        <ProjectReference Include="..\Polecat.AspNetCore\Polecat.AspNetCore.csproj" />
     </ItemGroup>
 
 </Project>

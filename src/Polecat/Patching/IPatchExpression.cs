@@ -104,7 +104,7 @@ public interface IPatchExpression<T>
     /// <summary>
     ///     Rename a property or field in the persisted JSON document.
     /// </summary>
-    IPatchExpression<T> Rename(string oldName, Expression<Func<T, object>> expression);
+    IPatchExpression<T> Rename<TElement>(string oldName, Expression<Func<T, TElement>> expression);
 
     /// <summary>
     ///     Delete a property by name from the persisted JSON data.

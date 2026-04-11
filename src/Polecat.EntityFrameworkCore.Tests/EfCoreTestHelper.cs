@@ -1,17 +1,9 @@
 using JasperFx.Events.Projections;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
-
-using JasperFx;
+using Polecat.TestUtils;
 
 namespace Polecat.EntityFrameworkCore.Tests;
-
-public static class ConnectionSource
-{
-    public static readonly string ConnectionString =
-        Environment.GetEnvironmentVariable("POLECAT_TESTING_DATABASE")
-        ?? "Server=localhost,11433;Database=polecat_testing;User Id=sa;Password=Polecat#Dev2025;TrustServerCertificate=true";
-}
 
 public static class EfCoreTestHelper
 {

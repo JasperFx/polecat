@@ -71,7 +71,7 @@ public class soft_delete_operations : IntegrationContext
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = "SELECT COUNT(*) FROM [soft_delete_ops].[pc_doc_softdeleteddoc] WHERE id = @id";
         cmd.Parameters.AddWithValue("@id", doc.Id);
-        var count = (int)await cmd.ExecuteScalarAsync()!;
+        var count = await cmd.ExecuteScalarAsync();
         count.ShouldBe(0);
     }
 
@@ -91,7 +91,7 @@ public class soft_delete_operations : IntegrationContext
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = "SELECT COUNT(*) FROM [soft_delete_ops].[pc_doc_softdeleteddoc] WHERE id = @id";
         cmd.Parameters.AddWithValue("@id", doc.Id);
-        var count = (int)await cmd.ExecuteScalarAsync()!;
+        var count = await cmd.ExecuteScalarAsync();
         count.ShouldBe(0);
     }
 

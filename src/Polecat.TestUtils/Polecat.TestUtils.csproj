@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <IsPackable>false</IsPackable>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Microsoft.Data.SqlClient" />
+        <PackageReference Include="xunit" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <ProjectReference Include="..\Polecat\Polecat.csproj" />
+    </ItemGroup>
+
+</Project>

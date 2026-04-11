@@ -1,6 +1,7 @@
 using JasperFx.Events.Daemon;
 using JasperFx.Events.Projections;
 using Microsoft.Data.SqlClient;
+using Polecat.TestUtils;
 
 namespace Polecat.EntityFrameworkCore.Tests;
 
@@ -21,7 +22,7 @@ public abstract class ef_core_single_stream_projection_tests_base : IAsyncLifeti
 
     protected virtual Task WaitForProjectionAsync() => Task.CompletedTask;
 
-    [Fact]
+    [RequiresNativeJsonFact(true)]
     public async Task single_stream_projection_writes_aggregate_on_create()
     {
         var orderId = Guid.NewGuid();
@@ -43,7 +44,7 @@ public abstract class ef_core_single_stream_projection_tests_base : IAsyncLifeti
         ((int)row["item_count"]!).ShouldBe(5);
     }
 
-    [Fact]
+    [RequiresNativeJsonFact(true)]
     public async Task single_stream_projection_evolves_aggregate_with_subsequent_events()
     {
         var orderId = Guid.NewGuid();
@@ -69,7 +70,7 @@ public abstract class ef_core_single_stream_projection_tests_base : IAsyncLifeti
         ((bool)row["is_shipped"]!).ShouldBeTrue();
     }
 
-    [Fact]
+    [RequiresNativeJsonFact(true)]
     public async Task single_stream_projection_handles_multiple_events_in_one_append()
     {
         var orderId = Guid.NewGuid();
@@ -91,7 +92,7 @@ public abstract class ef_core_single_stream_projection_tests_base : IAsyncLifeti
         ((bool)row["is_shipped"]!).ShouldBeTrue();
     }
 
-    [Fact]
+    [RequiresNativeJsonFact(true)]
     public async Task single_stream_projection_writes_ef_core_side_effects()
     {
         var orderId = Guid.NewGuid();
@@ -121,32 +122,8 @@ public class ef_core_single_stream_inline_tests : ef_core_single_stream_projecti
 public class ef_core_single_stream_async_tests : ef_core_single_stream_projection_tests_base
 {
     protected override ProjectionLifecycle Lifecycle => ProjectionLifecycle.Async;
-    private IProjectionDaemon? _daemon;
 
-    protected override async Task WaitForProjectionAsync()
-    {
-        if (_daemon == null)
-        {
-            SqlConnection.ClearAllPools();
-            _daemon = (IProjectionDaemon)await Store.BuildProjectionDaemonAsync();
-            await _daemon.StartAllAsync();
-        }
-
-        // Retry on transient SQL Server connection errors from daemon internals
-        for (var attempt = 0; attempt < 3; attempt++)
-        {
-            try
-            {
-                await _daemon.CatchUpAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
-                return;
-            }
-            catch (AggregateException) when (attempt < 2)
-            {
-                SqlConnection.ClearAllPools();
-                await Task.Delay(200);
-            }
-        }
-    }
+    protected override Task WaitForProjectionAsync() => Store.WaitForProjectionAsync();
 }
 
 public class ef_core_single_stream_live_tests : IAsyncLifetime
@@ -164,7 +141,7 @@ public class ef_core_single_stream_live_tests : IAsyncLifetime
         return Task.CompletedTask;
     }
 
-    [Fact]
+    [RequiresNativeJsonFact(true)]
     public async Task live_aggregation_builds_aggregate_on_the_fly()
     {
         var orderId = Guid.NewGuid();
@@ -183,7 +160,7 @@ public class ef_core_single_stream_live_tests : IAsyncLifetime
         order.IsShipped.ShouldBeTrue();
     }
 
-    [Fact]
+    [RequiresNativeJsonFact(true)]
     public async Task live_aggregation_returns_null_for_unknown_stream()
     {
         await using var query = _store.QuerySession();

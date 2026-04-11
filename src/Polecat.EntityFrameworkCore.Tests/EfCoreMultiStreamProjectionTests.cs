@@ -1,6 +1,5 @@
-using JasperFx.Events.Daemon;
 using JasperFx.Events.Projections;
-using Microsoft.Data.SqlClient;
+using Polecat.TestUtils;
 
 namespace Polecat.EntityFrameworkCore.Tests;
 
@@ -21,7 +20,7 @@ public abstract class ef_core_multi_stream_projection_tests_base : IAsyncLifetim
 
     protected virtual Task WaitForProjectionAsync() => Task.CompletedTask;
 
-    [Fact]
+    [RequiresNativeJsonFact(true)]
     public async Task multi_stream_projection_aggregates_across_streams()
     {
         var orderId1 = Guid.NewGuid();
@@ -45,7 +44,7 @@ public abstract class ef_core_multi_stream_projection_tests_base : IAsyncLifetim
         ((decimal)row["total_spent"]!).ShouldBe(300.00m);
     }
 
-    [Fact]
+    [RequiresNativeJsonFact(true)]
     public async Task multi_stream_projection_creates_separate_aggregates_per_identity()
     {
         var orderId1 = Guid.NewGuid();
@@ -76,7 +75,7 @@ public abstract class ef_core_multi_stream_projection_tests_base : IAsyncLifetim
         ((decimal)charlieRow["total_spent"]!).ShouldBe(75.00m);
     }
 
-    [Fact]
+    [RequiresNativeJsonFact(true)]
     public async Task multi_stream_projection_handles_subsequent_appends()
     {
         var orderId1 = Guid.NewGuid();
@@ -114,30 +113,10 @@ public class ef_core_multi_stream_inline_tests : ef_core_multi_stream_projection
 public class ef_core_multi_stream_async_tests : ef_core_multi_stream_projection_tests_base
 {
     protected override ProjectionLifecycle Lifecycle => ProjectionLifecycle.Async;
-    private IProjectionDaemon? _daemon;
 
     protected override async Task WaitForProjectionAsync()
     {
-        if (_daemon == null)
-        {
-            SqlConnection.ClearAllPools();
-            _daemon = (IProjectionDaemon)await Store.BuildProjectionDaemonAsync();
-            await _daemon.StartAllAsync();
-        }
-
-        for (var attempt = 0; attempt < 3; attempt++)
-        {
-            try
-            {
-                await _daemon.CatchUpAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
-                return;
-            }
-            catch (AggregateException) when (attempt < 2)
-            {
-                SqlConnection.ClearAllPools();
-                await Task.Delay(200);
-            }
-        }
+        await Store.WaitForProjectionAsync();
     }
 }
 
@@ -156,7 +135,7 @@ public class ef_core_multi_stream_live_tests : IAsyncLifetime
         return Task.CompletedTask;
     }
 
-    [Fact]
+    [RequiresNativeJsonFact(true)]
     public async Task can_store_events_without_error()
     {
         var orderId = Guid.NewGuid();

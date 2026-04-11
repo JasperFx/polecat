@@ -1,5 +1,4 @@
 using JasperFx.Events;
-using JasperFx.Events.Aggregation;
 using JasperFx.Events.Daemon;
 using Microsoft.EntityFrameworkCore;
 
@@ -16,6 +15,7 @@ internal class EfCoreProjectionStorage<TDoc, TId, TDbContext> : IProjectionStora
     where TDbContext : DbContext
 {
     private readonly TDbContext _dbContext;
+    private readonly SemaphoreSlim _dbContextLock = new(1, 1);
 
     public EfCoreProjectionStorage(TDbContext dbContext, string tenantId)
     {
@@ -32,6 +32,19 @@ internal class EfCoreProjectionStorage<TDoc, TId, TDbContext> : IProjectionStora
 
     public void SetIdentity(TDoc document, TId identity)
     {
+        _dbContextLock.Wait();
+        try
+        {
+            SetIdentityUnsafe(document, identity);
+        }
+        finally
+        {
+            _dbContextLock.Release();
+        }
+    }
+
+    private void SetIdentityUnsafe(TDoc document, TId identity)
+    {
         var entry = _dbContext.Entry(document);
         var pk = entry.Metadata.FindPrimaryKey();
         if (pk != null)
@@ -42,6 +55,19 @@ internal class EfCoreProjectionStorage<TDoc, TId, TDbContext> : IProjectionStora
     }
 
     public TId Identity(TDoc document)
+    {
+        _dbContextLock.Wait();
+        try
+        {
+            return IdentityUnsafe(document);
+        }
+        finally
+        {
+            _dbContextLock.Release();
+        }
+    }
+
+    private TId IdentityUnsafe(TDoc document)
     {
         var entry = _dbContext.Entry(document);
         var pk = entry.Metadata.FindPrimaryKey();
@@ -56,21 +82,43 @@ internal class EfCoreProjectionStorage<TDoc, TId, TDbContext> : IProjectionStora
 
     public void Store(TDoc snapshot)
     {
-        AddOrUpdate(snapshot);
+        _dbContextLock.Wait();
+        try
+        {
+            AddOrUpdateUnsafe(snapshot);
+        }
+        finally
+        {
+            _dbContextLock.Release();
+        }
     }
 
     public void Store(TDoc snapshot, TId id, string tenantId)
     {
-        SetIdentity(snapshot, id);
-        AddOrUpdate(snapshot);
+        _dbContextLock.Wait();
+        try
+        {
+            SetIdentityUnsafe(snapshot, id);
+            AddOrUpdateUnsafe(snapshot);
+        }
+        finally
+        {
+            _dbContextLock.Release();
+        }
     }
 
     public void Delete(TId identity)
     {
-        var existing = _dbContext.Find<TDoc>(identity);
-        if (existing != null)
+        _dbContextLock.Wait();
+        try
         {
-            _dbContext.Remove(existing);
+            var existing = _dbContext.Find<TDoc>(identity);
+            if (existing != null)
+                _dbContext.Remove(existing);
+        }
+        finally
+        {
+            _dbContextLock.Release();
         }
     }
 
@@ -81,12 +129,20 @@ internal class EfCoreProjectionStorage<TDoc, TId, TDbContext> : IProjectionStora
 
     public void HardDelete(TDoc snapshot)
     {
-        _dbContext.Remove(snapshot);
+        _dbContextLock.Wait();
+        try
+        {
+            _dbContext.Remove(snapshot);
+        }
+        finally
+        {
+            _dbContextLock.Release();
+        }
     }
 
     public void HardDelete(TDoc snapshot, string tenantId)
     {
-        _dbContext.Remove(snapshot);
+        HardDelete(snapshot);
     }
 
     public void UnDelete(TDoc snapshot)
@@ -101,28 +157,51 @@ internal class EfCoreProjectionStorage<TDoc, TId, TDbContext> : IProjectionStora
 
     public async Task<TDoc> LoadAsync(TId id, CancellationToken cancellation)
     {
-        return (await _dbContext.FindAsync<TDoc>([id], cancellation))!;
+        await _dbContextLock.WaitAsync(cancellation);
+        try
+        {
+            return (await _dbContext.FindAsync<TDoc>([id], cancellation))!;
+        }
+        finally
+        {
+            _dbContextLock.Release();
+        }
     }
 
     public async Task<IReadOnlyDictionary<TId, TDoc>> LoadManyAsync(TId[] identities,
         CancellationToken cancellationToken)
     {
-        var dict = new Dictionary<TId, TDoc>();
-        foreach (var id in identities)
+        await _dbContextLock.WaitAsync(cancellationToken);
+        try
         {
-            var doc = await _dbContext.FindAsync<TDoc>([id], cancellationToken);
-            if (doc != null)
+            var dict = new Dictionary<TId, TDoc>();
+            foreach (var id in identities)
             {
-                dict[id] = doc;
+                var doc = await _dbContext.FindAsync<TDoc>([id], cancellationToken);
+                if (doc != null)
+                {
+                    dict[id] = doc;
+                }
             }
+            return dict;
         }
-
-        return dict;
+        finally
+        {
+            _dbContextLock.Release();
+        }
     }
 
     public void StoreProjection(TDoc aggregate, IEvent? lastEvent, AggregationScope scope)
     {
-        AddOrUpdate(aggregate);
+        _dbContextLock.Wait();
+        try
+        {
+            AddOrUpdateUnsafe(aggregate);
+        }
+        finally
+        {
+            _dbContextLock.Release();
+        }
     }
 
     public void ArchiveStream(TId sliceId, string tenantId)
@@ -130,7 +209,7 @@ internal class EfCoreProjectionStorage<TDoc, TId, TDbContext> : IProjectionStora
         // Not applicable for EF Core projection storage
     }
 
-    private void AddOrUpdate(TDoc entity)
+    private void AddOrUpdateUnsafe(TDoc entity)
     {
         var entry = _dbContext.Entry(entity);
         switch (entry.State)
@@ -158,7 +237,7 @@ internal class EfCoreProjectionStorage<TDoc, TId, TDbContext> : IProjectionStora
             case EntityState.Unchanged:
                 entry.State = EntityState.Modified;
                 break;
-            // Added, Modified — already tracked correctly
+                // Added, Modified — already tracked correctly
         }
     }
 }

@@ -3,6 +3,7 @@ using JasperFx.Events.Projections;
 using Microsoft.Data.SqlClient;
 using Polecat.Events.Daemon;
 using Polecat.Tests.Harness;
+using Polecat.TestUtils;
 
 namespace Polecat.Tests.Daemon;
 
@@ -79,7 +80,7 @@ public class event_loader_resiliency_tests : IntegrationContext
 
     // ===== SkipSerializationErrors =====
 
-    [Fact]
+    [RequiresNativeJsonFact(false)]
     public async Task skip_serialization_errors_skips_corrupted_json()
     {
         // Insert a valid event
@@ -103,7 +104,7 @@ public class event_loader_resiliency_tests : IntegrationContext
         page.Count.ShouldBe(1);
     }
 
-    [Fact]
+    [RequiresNativeJsonFact(false)]
     public async Task serialization_errors_throw_when_not_skipped()
     {
         // Insert a valid event
@@ -128,7 +129,7 @@ public class event_loader_resiliency_tests : IntegrationContext
 
     // ===== Both skip options enabled =====
 
-    [Fact]
+    [RequiresNativeJsonFact(false)]
     public async Task skip_both_unknown_and_serialization_errors()
     {
         // Insert valid events

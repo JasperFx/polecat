@@ -77,30 +77,26 @@ internal class EventBoundary<T> : IEventBoundary<T> where T : class
             var streamId = registration.ExtractValue(tag.Value);
             if (streamId is Guid guidId)
             {
-                if (!_session.WorkTracker.TryFindStream(guidId, out stream))
+                if (_session.WorkTracker.TryFindStream(guidId, out stream))
+                    stream!.AddEvent(wrapped);
+                else
                 {
-                    stream = StreamAction.Start(guidId, new[] { wrapped });
+                    stream = StreamAction.Start(guidId, [wrapped]);
                     stream.AggregateType = registration.AggregateType;
                     stream.TenantId = _session.TenantId;
                     _session.WorkTracker.AddStream(stream);
-                }
-                else
-                {
-                    stream.AddEvent(wrapped);
                 }
             }
             else if (streamId is string stringId)
             {
-                if (!_session.WorkTracker.TryFindStream(stringId, out stream))
+                if (_session.WorkTracker.TryFindStream(stringId, out stream))
+                    stream!.AddEvent(wrapped);
+                else
                 {
-                    stream = StreamAction.Start(stringId, new[] { wrapped });
+                    stream = StreamAction.Start(stringId, [wrapped]);
                     stream.AggregateType = registration.AggregateType;
                     stream.TenantId = _session.TenantId;
                     _session.WorkTracker.AddStream(stream);
-                }
-                else
-                {
-                    stream.AddEvent(wrapped);
                 }
             }
 

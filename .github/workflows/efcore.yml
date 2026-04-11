@@ -1,0 +1,14 @@
+name: efcore
+
+on:
+  push:
+  #  branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  call-test-template:
+    uses: ./.github/workflows/test-template.yml
+    with:
+      TEST_PROJECT_PATH: src/Polecat.EntityFrameworkCore.Tests/Polecat.EntityFrameworkCore.Tests.csproj

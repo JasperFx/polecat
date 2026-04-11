@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Polecat.Internal;
 using Polecat.Tests.Harness;
+using Polecat.TestUtils;
 
 namespace Polecat.Tests.DependencyInjection;
 

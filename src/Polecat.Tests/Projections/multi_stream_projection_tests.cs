@@ -2,6 +2,7 @@ using JasperFx.Events.Daemon;
 using JasperFx.Events.Projections;
 using Polecat.Projections;
 using Polecat.Tests.Harness;
+using Polecat.TestUtils;
 
 namespace Polecat.Tests.Projections;
 
@@ -164,11 +165,7 @@ public class multi_stream_projection_tests : IntegrationContext
             new OrderPlaced(customerId, 75.00m));
         await session.SaveChangesAsync();
 
-        // Run daemon
-        using var daemon = (IProjectionDaemon)await store.BuildProjectionDaemonAsync();
-        await daemon.StartAllAsync();
-        await daemon.CatchUpAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
-        await daemon.StopAllAsync();
+        await store.WaitForProjectionAsync();
 
         // Verify
         await using var query = store.QuerySession();

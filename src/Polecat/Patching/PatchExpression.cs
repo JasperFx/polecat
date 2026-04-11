@@ -1,8 +1,8 @@
+using Polecat.Internal;
+using Polecat.Serialization;
 using System.Linq.Expressions;
 using System.Text.Json;
-using Polecat.Internal;
 using Weasel.SqlServer;
-using Polecat.Serialization;
 
 namespace Polecat.Patching;
 
@@ -93,7 +93,8 @@ internal class PatchExpression<T> : IPatchExpression<T>
 
         var sourcePath = ToPath(expression);
         var destPaths = destinations.Select(d => ToPath(d)).ToArray();
-        _actions.Add(PatchOperation.DuplicateProperty(sourcePath, destPaths));
+        var isScalarType = PatchOperation.IsScalarType(typeof(TElement));
+        _actions.Add(PatchOperation.DuplicateProperty(sourcePath, destPaths, isScalarType));
         return this;
     }
 
@@ -245,7 +246,7 @@ internal class PatchExpression<T> : IPatchExpression<T>
         return this;
     }
 
-    public IPatchExpression<T> Rename(string oldName, Expression<Func<T, object>> expression)
+    public IPatchExpression<T> Rename<TElement>(string oldName, Expression<Func<T, TElement>> expression)
     {
         var newPath = ToPath(expression);
         var parts = newPath.Split('.');
@@ -253,7 +254,8 @@ internal class PatchExpression<T> : IPatchExpression<T>
         parts[^1] = FormatName(oldName);
         var oldPath = string.Join(".", parts);
 
-        _actions.Add(PatchOperation.RenameProperty(oldPath, newPath));
+        var isScalarType = PatchOperation.IsScalarType(typeof(TElement));
+        _actions.Add(PatchOperation.RenameProperty(oldPath, newPath, isScalarType));
         return this;
     }
 

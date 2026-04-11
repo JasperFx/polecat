@@ -477,38 +477,38 @@ internal class LinqQueryParser : ExpressionVisitor
     {
         IsDeletedOnly = true;
         var value = WhereClauseParser.ExtractValue(node.Arguments[1]);
-        DeletedSinceTimestamp = (DateTimeOffset)value;
+        DeletedSinceTimestamp = (DateTimeOffset?)value;
     }
 
     private void HandleDeletedBefore(MethodCallExpression node)
     {
         IsDeletedOnly = true;
         var value = WhereClauseParser.ExtractValue(node.Arguments[1]);
-        DeletedBeforeTimestamp = (DateTimeOffset)value;
+        DeletedBeforeTimestamp = (DateTimeOffset?)value;
     }
 
     private void HandleModifiedSince(MethodCallExpression node)
     {
         var value = WhereClauseParser.ExtractValue(node.Arguments[1]);
-        ModifiedSinceTimestamp = (DateTimeOffset)value;
+        ModifiedSinceTimestamp = (DateTimeOffset?)value;
     }
 
     private void HandleModifiedBefore(MethodCallExpression node)
     {
         var value = WhereClauseParser.ExtractValue(node.Arguments[1]);
-        ModifiedBeforeTimestamp = (DateTimeOffset)value;
+        ModifiedBeforeTimestamp = (DateTimeOffset?)value;
     }
 
     private void HandleCreatedSince(MethodCallExpression node)
     {
         var value = WhereClauseParser.ExtractValue(node.Arguments[1]);
-        CreatedSinceTimestamp = (DateTimeOffset)value;
+        CreatedSinceTimestamp = (DateTimeOffset?)value;
     }
 
     private void HandleCreatedBefore(MethodCallExpression node)
     {
         var value = WhereClauseParser.ExtractValue(node.Arguments[1]);
-        CreatedBeforeTimestamp = (DateTimeOffset)value;
+        CreatedBeforeTimestamp = (DateTimeOffset?)value;
     }
 
     private void HandleQueryForNonStaleData(MethodCallExpression node)
@@ -516,7 +516,7 @@ internal class LinqQueryParser : ExpressionVisitor
         if (node.Arguments.Count > 1)
         {
             var value = WhereClauseParser.ExtractValue(node.Arguments[1]);
-            NonStaleDataTimeout = (TimeSpan)value;
+            NonStaleDataTimeout = (TimeSpan?)value;
         }
         else
         {
