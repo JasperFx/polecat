@@ -38,7 +38,7 @@ public partial class DocumentStore : IDocumentStore
         // Auto-discover aggregate types with source-generated evolvers
         options.Projections.DiscoverGeneratedEvolvers(AppDomain.CurrentDomain.GetAssemblies());
 
-        // Initialize projection graph — builds async shard registry
+        // Initialize projection graph - builds async shard registry
         options.Projections.AssertValidity(options);
 
         _inlineProjections = new Lazy<IInlineProjection<IDocumentSession>[]>(
@@ -92,7 +92,7 @@ public partial class DocumentStore : IDocumentStore
         return Options.Tenancy!.GetConnectionFactory(tenantId);
     }
 
-    private DocumentTableEnsurer ResolveTableEnsurer(string tenantId)
+    internal DocumentTableEnsurer ResolveTableEnsurer(string tenantId)
     {
         var factory = ResolveConnectionFactory(tenantId);
         // For default tenancy, the factory is the same so we reuse the shared ensurer

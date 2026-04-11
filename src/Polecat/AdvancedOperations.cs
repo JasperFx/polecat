@@ -53,8 +53,7 @@ public class AdvancedOperations
         var serializer = _store.Options.Serializer;
 
         // Ensure the table exists
-        var ensurer = new DocumentTableEnsurer(
-            _store.Options.Tenancy!.GetConnectionFactory(tenantId), _store.Options);
+        var ensurer = _store.ResolveTableEnsurer(tenantId);
         await ensurer.EnsureTableAsync(provider, token);
 
         // Pre-process: assign IDs, sync metadata, serialize
@@ -87,7 +86,7 @@ public class AdvancedOperations
             // Sync metadata
             if (doc is ITracked tracked)
             {
-                // No session-level correlation for bulk insert â€” leave as-is
+                // No session-level correlation for bulk insert — leave as-is
             }
 
             if (doc is ITenanted tenanted)
