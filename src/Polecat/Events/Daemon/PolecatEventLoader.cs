@@ -46,7 +46,7 @@ internal class PolecatEventLoader : IEventLoader
             var page = new EventPage(state.Floor);
 
             await using var conn = new SqlConnection(_connectionString);
-            await conn.OpenAsync(CancellationToken.None);
+            await conn.OpenAsync(ct);
 
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = $"""
@@ -63,10 +63,8 @@ internal class PolecatEventLoader : IEventLoader
 
             var skippedEvents = 0;
 
-            if (ct.IsCancellationRequested)
-                return page;
-            await using var reader = await cmd.ExecuteReaderAsync(CancellationToken.None);
-            while (!ct.IsCancellationRequested && await reader.ReadAsync(CancellationToken.None))
+            await using var reader = await cmd.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct))
             {
                 var seqId = reader.GetInt64(0);
                 var eventId = reader.GetGuid(1);
