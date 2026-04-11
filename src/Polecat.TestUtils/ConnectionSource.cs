@@ -31,18 +31,11 @@ public static class ConnectionSource
 
     private static bool DetectNativeJsonSupport()
     {
-        try
-        {
-            using var conn = new SqlConnection(ConnectionString);
-            conn.Open();
-            using var cmd = conn.CreateCommand();
-            cmd.CommandText = "DECLARE @x json = '{}'; SELECT 1;";
-            cmd.ExecuteScalar();
-            return true;
-        }
-        catch (SqlException)
-        {
-            return false;
-        }
+        using var conn = new SqlConnection(ConnectionString);
+        conn.Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT COUNT(*) FROM sys.types WHERE name = 'json'";
+        var result = cmd.ExecuteScalar();
+        return result != null && (int)result > 0;
     }
 }
