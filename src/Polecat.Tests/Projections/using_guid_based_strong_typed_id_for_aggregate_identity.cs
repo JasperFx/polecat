@@ -1,9 +1,9 @@
 using System.Text.Json.Serialization;
 using JasperFx.Events;
-using JasperFx.Events.Daemon;
 using JasperFx.Events.Projections;
 using Polecat.Projections;
 using Polecat.Tests.Harness;
+using Polecat.TestUtils;
 using StronglyTypedIds;
 
 namespace Polecat.Tests.Projections;
@@ -168,9 +168,7 @@ public class using_guid_based_strong_typed_id_for_aggregate_identity : Integrati
             new PaymentVerified(DateTimeOffset.UtcNow));
         await session.SaveChangesAsync();
 
-        using var daemon = (IProjectionDaemon)await theStore.BuildProjectionDaemonAsync();
-        await daemon.StartAllAsync();
-        await daemon.CatchUpAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
+        await theStore.WaitForProjectionAsync();
 
         await using var query = theStore.QuerySession();
         var payment = await query.LoadAsync<Payment>(streamId);
@@ -183,7 +181,7 @@ public class using_guid_based_strong_typed_id_for_aggregate_identity : Integrati
         session2.Events.Append(streamId, new PaymentCanceled(DateTimeOffset.UtcNow));
         await session2.SaveChangesAsync();
 
-        await daemon.CatchUpAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
+        await theStore.WaitForProjectionAsync();
 
         await using var query2 = theStore.QuerySession();
         var updated = await query2.LoadAsync<Payment>(streamId);

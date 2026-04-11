@@ -9,4 +9,8 @@
         <PackageReference Include="xunit" />
     </ItemGroup>
 
+    <ItemGroup>
+      <ProjectReference Include="..\Polecat\Polecat.csproj" />
+    </ItemGroup>
+
 </Project>

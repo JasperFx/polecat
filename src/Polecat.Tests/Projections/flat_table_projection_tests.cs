@@ -1,8 +1,7 @@
-using JasperFx.Events.Daemon;
 using JasperFx.Events.Projections;
-using Microsoft.Data.SqlClient;
 using Polecat.Projections.Flattened;
 using Polecat.Tests.Harness;
+using Polecat.TestUtils;
 
 namespace Polecat.Tests.Projections;
 
@@ -190,11 +189,7 @@ public class flat_table_projection_tests : IntegrationContext
             new MembersJoined(1, "Castle", ["Knight", "Wizard"]));
         await session.SaveChangesAsync();
 
-        // Run daemon
-        using var daemon = (IProjectionDaemon)await store.BuildProjectionDaemonAsync();
-        await daemon.StartAllAsync();
-        await daemon.CatchUpAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
-        await daemon.StopAllAsync();
+        await store.WaitForProjectionAsync();
 
         var questName = await ReadMetric<string>("quest_name", streamId);
         questName.ShouldBe("Async Flat Quest");

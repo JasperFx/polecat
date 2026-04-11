@@ -1,7 +1,7 @@
-using JasperFx.Events.Daemon;
 using JasperFx.Events.Projections;
 using Polecat.Projections;
 using Polecat.Tests.Harness;
+using Polecat.TestUtils;
 
 namespace Polecat.Tests.Projections;
 
@@ -153,11 +153,7 @@ public class event_projection_tests : IntegrationContext
             new QuestStarted("Async Quest"));
         await session.SaveChangesAsync();
 
-        // Run daemon
-        using var daemon = (IProjectionDaemon)await theStore.BuildProjectionDaemonAsync();
-        await daemon.StartAllAsync();
-        await daemon.CatchUpAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
-        await daemon.StopAllAsync();
+        await theStore.WaitForProjectionAsync();
 
         // Verify QuestLog was created
         await using var conn = await OpenConnectionAsync();
