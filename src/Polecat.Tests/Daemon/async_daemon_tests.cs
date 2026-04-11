@@ -1,7 +1,4 @@
-using JasperFx;
-using JasperFx.Events.Daemon;
 using JasperFx.Events.Projections;
-using Microsoft.Data.SqlClient;
 using Polecat.Projections;
 using Polecat.Tests.Harness;
 using Polecat.Tests.Projections;
@@ -9,20 +6,16 @@ using Polecat.TestUtils;
 
 namespace Polecat.Tests.Daemon;
 
-[Collection("integration")]
-public class async_daemon_tests : IntegrationContext
+public class async_daemon_tests : OneOffConfigurationsContext
 {
-    public async_daemon_tests(DefaultStoreFixture fixture) : base(fixture)
-    {
-    }
-
     private async Task<DocumentStore> CreateStoreWithAsyncProjection()
     {
-        await StoreOptions(opts =>
+        ConfigureStore(opts =>
         {
-            opts.DatabaseSchemaName = "async_daemon";
             opts.Projections.Snapshot<QuestParty>(SnapshotLifecycle.Async);
         });
+        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync();
+
         return theStore;
     }
 
@@ -95,7 +88,7 @@ public class async_daemon_tests : IntegrationContext
         var highestSeq = await store.Database.FetchHighestEventSequenceNumber(CancellationToken.None);
         var allProgress = await store.Database.AllProjectionProgress(CancellationToken.None);
 
-        // Filter out HighWaterMark â€” look for projection-specific progress
+        // Filter out HighWaterMark — look for projection-specific progress
         var projectionProgress = allProgress
             .Where(p => p.ShardName != "HighWaterMark")
             .ToList();

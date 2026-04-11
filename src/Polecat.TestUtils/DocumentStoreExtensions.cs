@@ -8,24 +8,36 @@ public static class DocumentStoreExtensions
     {
         public async Task WaitForProjectionAsync()
         {
-            SqlConnection.ClearAllPools();
+            const int maxRetries = 3;
             using var daemon = await Store.BuildProjectionDaemonAsync();
             await daemon.StartAllAsync();
 
             // Retry on transient SQL Server connection errors from daemon internals
-            for (var attempt = 0; attempt < 3; attempt++)
+            for (var attempt = 0; attempt < maxRetries; attempt++)
             {
                 try
                 {
                     await daemon.CatchUpAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
                     return;
                 }
-                catch (AggregateException) when (attempt < 2)
+                catch (AggregateException ex) when (IsTransientErrorFromDeamonInternals(ex))
                 {
                     SqlConnection.ClearAllPools();
-                    await Task.Delay(200);
+                    if (attempt < maxRetries - 1)
+                        await Task.Delay(200);
+                    else
+                        throw;
                 }
             }
+        }
+
+        private static bool IsTransientErrorFromDeamonInternals(AggregateException ex)
+        {
+            return ex.Flatten().InnerExceptions.Any(ex =>
+                ex is SqlException || 
+                ex is OperationCanceledException ||
+                ex is InvalidOperationException && ex.Message.Contains("Operation cancelled by user")
+            );
         }
     }
 }

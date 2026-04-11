@@ -1,4 +1,3 @@
-using JasperFx.Events.Daemon;
 using JasperFx.Events.Projections;
 using Polecat.Projections;
 using Polecat.Tests.Harness;
@@ -41,28 +40,27 @@ public class CustomerSummaryProjection : MultiStreamProjection<CustomerSummary, 
     }
 }
 
-[Collection("integration")]
-public class multi_stream_projection_tests : IntegrationContext
+public class multi_stream_projection_tests : OneOffConfigurationsContext
 {
-    public multi_stream_projection_tests(DefaultStoreFixture fixture) : base(fixture)
-    {
-    }
-
     private async Task<DocumentStore> CreateStoreWithInlineMultiStream()
     {
-        await StoreOptions(opts =>
+        ConfigureStore(opts =>
         {
-            opts.Projections.Add<CustomerSummaryProjection>(ProjectionLifecycle.Inline);
+            opts.Projections.Add(new CustomerSummaryProjection(), ProjectionLifecycle.Inline);
         });
+        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync();
+
         return theStore;
     }
 
     private async Task<DocumentStore> CreateStoreWithAsyncMultiStream()
     {
-        await StoreOptions(opts =>
+        ConfigureStore(opts =>
         {
-            opts.Projections.Add<CustomerSummaryProjection>(ProjectionLifecycle.Async);
+            opts.Projections.Add(new CustomerSummaryProjection(), ProjectionLifecycle.Async);
         });
+        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync();
+
         return theStore;
     }
 

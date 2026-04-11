@@ -1,23 +1,12 @@
 using Polecat.Tests.Harness;
-using Shouldly;
 
 namespace Polecat.Tests.HiLo;
 
 /// <summary>
 ///     Stress tests for HiLo ID generation under concurrent load.
 /// </summary>
-[Collection("integration")]
-public class hilo_concurrency_tests : IntegrationContext
+public class hilo_concurrency_tests : OneOffConfigurationsContext
 {
-    public hilo_concurrency_tests(DefaultStoreFixture fixture) : base(fixture)
-    {
-    }
-
-    public override async Task InitializeAsync()
-    {
-        await StoreOptions(opts => { opts.DatabaseSchemaName = "hilo_stress"; });
-    }
-
     [Fact]
     public async Task concurrent_sessions_get_unique_int_ids()
     {
