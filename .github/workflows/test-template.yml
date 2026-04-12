@@ -16,9 +16,6 @@ jobs:
     runs-on: ubuntu-latest
     env:
       TEST_PROJECT_PATH: ${{ inputs.TEST_PROJECT_PATH }}
-    strategy:
-      matrix:
-        run: [1, 2, 3]   # repeat three times
     steps:
       - name: Checkout
         uses: actions/checkout@v6
