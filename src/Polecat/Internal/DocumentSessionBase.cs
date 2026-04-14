@@ -318,13 +318,8 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             await _tableEnsurer.EnsureTablesAsync(typesNeeded, token);
         }
 
-        bool createdTx = _transactional.Transaction == null;
-        if (createdTx)
-        {
-            await _transactional.BeginTransactionAsync(token);
-        }
-
-        var tx = _transactional.Transaction!;
+        await _transactional.BeginTransactionAsync(token);
+        using var tx = _transactional.Transaction!;
 
         try
         {
@@ -487,18 +482,9 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
                 await listener.AfterCommitAsync(this, token);
             }
         }
-        catch
-        {
-            await tx.RollbackAsync(token);
-            throw;
-        }
         finally
         {
-            if (createdTx)
-            {
-                await tx.DisposeAsync();
-                _transactional.Transaction = null;
-            }
+            _transactional.Transaction = null;
         }
     }
 
