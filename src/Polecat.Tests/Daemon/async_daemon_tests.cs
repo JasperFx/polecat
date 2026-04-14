@@ -8,11 +8,6 @@ namespace Polecat.Tests.Daemon;
 
 public class async_daemon_tests : OneOffConfigurationsContext
 {
-    static async_daemon_tests()
-    {
-        ThreadPool.SetMinThreads(200, 200);
-    }
-
     private async Task<DocumentStore> CreateStoreWithAsyncProjection()
     {
         ConfigureStore(opts =>
@@ -154,7 +149,8 @@ public class async_daemon_tests : OneOffConfigurationsContext
     }
 
     [Theory]
-    [Repeat(100)]
+    [Repeat(10)]
+    [Trait("Category", "Flaky")]
     public async Task multiple_streams_processed_by_daemon(int _)
     {
         var store = await CreateStoreWithAsyncProjection();

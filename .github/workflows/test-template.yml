@@ -10,6 +10,10 @@ on:
         required: false
         type: boolean
         default: false
+      TEST_FILTERS:
+        required: false
+        type: string
+        default: "Category!=Flaky"
 
 jobs:
   test:
@@ -54,7 +58,7 @@ jobs:
           exit 1
 
       - name: Test
-        run: dotnet test ${{ env.TEST_PROJECT_PATH }} -c Release --no-build --framework net9.0 --logger "trx;LogFileName=test-results.trx"
+        run: dotnet test ${{ env.TEST_PROJECT_PATH }} -c Release --no-build --framework net9.0 --logger "trx;LogFileName=test-results.trx" --filter "${{ inputs.TEST_FILTERS }}"  
 
       - name: Report results
         uses: dorny/test-reporter@v3

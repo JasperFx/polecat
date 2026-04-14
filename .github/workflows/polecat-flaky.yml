@@ -1,0 +1,20 @@
+name: polecat-flaky
+
+on:
+  push:
+  #  branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  call-test-template:
+    uses: ./.github/workflows/test-template.yml
+    strategy:
+      fail-fast: false
+      matrix:
+        use_azure_sql_edge: [true, false]
+    with:
+      TEST_PROJECT_PATH: src/Polecat.Tests/Polecat.Tests.csproj
+      USE_AZURE_SQL_EDGE: ${{ matrix.use_azure_sql_edge }}
+      TEST_FILTERS: "Category=Flaky"
