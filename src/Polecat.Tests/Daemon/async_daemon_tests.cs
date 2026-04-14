@@ -8,6 +8,11 @@ namespace Polecat.Tests.Daemon;
 
 public class async_daemon_tests : OneOffConfigurationsContext
 {
+    static async_daemon_tests()
+    {
+        ThreadPool.SetMinThreads(200, 200);
+    }
+
     private async Task<DocumentStore> CreateStoreWithAsyncProjection()
     {
         ConfigureStore(opts =>
@@ -148,8 +153,9 @@ public class async_daemon_tests : OneOffConfigurationsContext
         party.Location.ShouldBe("Mountain");
     }
 
-    [Fact]
-    public async Task multiple_streams_processed_by_daemon()
+    [Theory]
+    [Repeat(100)]
+    public async Task multiple_streams_processed_by_daemon(int _)
     {
         var store = await CreateStoreWithAsyncProjection();
 
@@ -165,15 +171,11 @@ public class async_daemon_tests : OneOffConfigurationsContext
             new MembersJoined(1, "Town B", ["B1"]));
         await session.SaveChangesAsync();
 
-        QuestParty? party1 = null;
-        QuestParty? party2 = null;
+        await store.WaitForProjectionAsync();
+
         await using var query = store.QuerySession();
-        await store.WaitForConditionAsync(async () =>
-        {
-            party1 = await query.LoadAsync<QuestParty>(stream1);
-            party2 = await query.LoadAsync<QuestParty>(stream2);
-            return party1 != null && party2 != null;
-        }, TimeSpan.FromMinutes(5));
+        var party1 = await query.LoadAsync<QuestParty>(stream1);
+        var party2 = await query.LoadAsync<QuestParty>(stream2);
 
         party1.ShouldNotBeNull();
         party1.Name.ShouldBe("Quest Alpha");

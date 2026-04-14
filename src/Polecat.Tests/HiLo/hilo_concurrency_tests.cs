@@ -1,4 +1,5 @@
 using Polecat.Tests.Harness;
+using Polecat.TestUtils;
 
 namespace Polecat.Tests.HiLo;
 
@@ -7,8 +8,14 @@ namespace Polecat.Tests.HiLo;
 /// </summary>
 public class hilo_concurrency_tests : OneOffConfigurationsContext
 {
-    [Fact]
-    public async Task concurrent_sessions_get_unique_int_ids()
+    static hilo_concurrency_tests()
+    {
+        ThreadPool.SetMinThreads(200, 200);
+    }
+
+    [Theory]
+    [Repeat(100)]
+    public async Task concurrent_sessions_get_unique_int_ids(int _)
     {
         const int concurrency = 10;
         const int docsPerTask = 5;
@@ -47,8 +54,9 @@ public class hilo_concurrency_tests : OneOffConfigurationsContext
         idList.ShouldAllBe(id => id > 0);
     }
 
-    [Fact]
-    public async Task concurrent_sessions_get_unique_long_ids()
+    [Theory]
+    [Repeat(100)]
+    public async Task concurrent_sessions_get_unique_long_ids(int _)
     {
         const int concurrency = 10;
         const int docsPerTask = 5;
@@ -83,8 +91,9 @@ public class hilo_concurrency_tests : OneOffConfigurationsContext
         idList.ShouldAllBe(id => id > 0);
     }
 
-    [Fact]
-    public async Task concurrent_bulk_inserts_get_unique_ids()
+    [Theory]
+    [Repeat(100)]
+    public async Task concurrent_bulk_inserts_get_unique_ids(int _)
     {
         const int concurrency = 5;
         const int docsPerBatch = 10;
@@ -113,8 +122,9 @@ public class hilo_concurrency_tests : OneOffConfigurationsContext
         idList.ShouldAllBe(id => id > 0);
     }
 
-    [Fact]
-    public async Task sequential_hilo_ids_are_monotonically_increasing_within_session()
+    [Theory]
+    [Repeat(100)]
+    public async Task sequential_hilo_ids_are_monotonically_increasing_within_session(int _)
     {
         await using var session = theStore.LightweightSession();
         var docs = new List<IntDoc>();
