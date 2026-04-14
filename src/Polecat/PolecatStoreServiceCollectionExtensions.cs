@@ -47,6 +47,8 @@ public static class PolecatStoreServiceCollectionExtensions
             return (T)(IDocumentStore)store;
         });
 
+        services.AddSingleton<Lazy<T>>(sp => new Lazy<T>(() => sp.GetRequiredService<T>()));
+
         return new PolecatStoreExpression<T>(services);
     }
 

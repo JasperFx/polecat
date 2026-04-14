@@ -120,6 +120,7 @@ const config: UserConfig<DefaultTheme.Config> = {
                 { text: 'Composite Projections', link: '/events/projections/composite' },
                 { text: 'Asynchronous Projections', link: '/events/projections/async-daemon' },
                 { text: 'EF Core Projections', link: '/events/projections/efcore' },
+                { text: 'Ancillary Stores in Projections', link: '/events/projections/ancillary-stores' },
               ]
             },
             {
