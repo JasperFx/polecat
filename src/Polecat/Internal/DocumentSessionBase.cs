@@ -320,7 +320,6 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
 
         await _transactional.BeginTransactionAsync(token);
         using var tx = _transactional.Transaction!;
-
         try
         {
             // Run DCB consistency checks BEFORE inserting new events,
