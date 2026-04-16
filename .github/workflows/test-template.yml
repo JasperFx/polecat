@@ -18,6 +18,14 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # Run on workflow_dispatch or pull_request. 
+    # Run on push to main only in upstream repo (to prevent duplicated runs if commits are pushed to a feature branch with open PR).
+    # Run on any push in forks (to allow testing in a feature branch before opening a PR to upstream).
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'push' &&
+        (github.ref_name == 'main' || github.repository != 'JasperFx/polecat'))
     env:
       TEST_PROJECT_PATH: ${{ inputs.TEST_PROJECT_PATH }}
     steps:
