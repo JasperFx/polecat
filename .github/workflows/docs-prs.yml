@@ -16,15 +16,15 @@ jobs:
     name: "lint and build"
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         name: Check out the code
 
       - name: Lint Code Base
         uses: docker://ghcr.io/igorshubovych/markdownlint-cli:latest
         with:
-          args: "--disable MD009 MD013 -- docs/**/*.md"
+          args: "--config docs/.markdownlint.json docs/**/*.md"
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         name: Install Node.js
         with:
           node-version: ${{ env.node_version }}

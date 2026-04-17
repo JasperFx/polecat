@@ -123,12 +123,12 @@ public partial class ImportSqlProjection: EventProjection
 
 A couple notes about the `EventProjection` approach:
 
-* **Batched execution** -- The `QueueSqlCommand()` method doesn't execute inline. Instead, it adds the SQL to be executed
+- **Batched execution** -- The `QueueSqlCommand()` method doesn't execute inline. Instead, it adds the SQL to be executed
   in a batch when you call `IDocumentSession.SaveChangesAsync()`. This batching reduces network round trips to the
   database and is a consistent performance win.
-* **Event metadata access** -- The `Project()` methods use `IEvent<T>` envelope types, giving you access to event metadata
+- **Event metadata access** -- The `Project()` methods use `IEvent<T>` envelope types, giving you access to event metadata
   like timestamps, version information, and stream identity. This is something the declarative `FlatTableProjection`
   cannot currently provide.
-* **Full SQL control** -- You can write any SQL you need: inserts, updates, deletes, or even complex statements with
+- **Full SQL control** -- You can write any SQL you need: inserts, updates, deletes, or even complex statements with
   subqueries. This is useful when your projection logic doesn't fit the `Map`/`Increment`/`SetValue` patterns of
   `FlatTableProjection`.
