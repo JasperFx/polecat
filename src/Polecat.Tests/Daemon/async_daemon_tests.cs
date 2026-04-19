@@ -149,7 +149,6 @@ public class async_daemon_tests : OneOffConfigurationsContext
 
     [Theory]
     [Repeat(10)]
-    [Trait("Category", "Flaky")]
     public async Task multiple_streams_processed_by_daemon(int _)
     {
         var store = await CreateStoreWithAsyncProjection();
