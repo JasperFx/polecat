@@ -105,8 +105,8 @@ public class StreamCompactingRequest<T> where T : class
         }
 
         // 5. Replace the last event with the Compacted<T> snapshot
-        var compacted = new Compacted<T>(aggregate,
-            StreamId.HasValue ? StreamId.Value : Guid.Empty, StreamKey ?? string.Empty);
+        var compacted = new Compacted<T>(aggregate!, 
+            StreamId ?? Guid.Empty, StreamKey ?? string.Empty);
 
         var serializedData = session.Serializer.ToJson(compacted);
         var mapping = session.Options.EventGraph.EventMappingFor(typeof(Compacted<T>));

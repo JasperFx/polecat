@@ -66,7 +66,7 @@ public class TenantedOrder : Metadata.ITenanted
     public int ItemCount { get; set; }
     public bool IsShipped { get; set; }
     public bool IsCancelled { get; set; }
-    public string? TenantId { get; set; }
+    public string TenantId { get; set; } = string.Empty;
 }
 
 // Non-tenanted aggregate (for validation tests)

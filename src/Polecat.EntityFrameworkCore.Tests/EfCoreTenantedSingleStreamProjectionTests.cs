@@ -1,8 +1,4 @@
-using JasperFx.Events.Daemon;
 using JasperFx.Events.Projections;
-using Microsoft.Data.SqlClient;
-
-using JasperFx;
 
 namespace Polecat.EntityFrameworkCore.Tests;
 
@@ -37,7 +33,7 @@ public abstract class ef_core_tenanted_single_stream_tests_base : IAsyncLifetime
 
     protected virtual Task WaitForProjectionAsync() => Task.CompletedTask;
 
-    [Fact]
+    [RequiresNativeJsonFact(true)]
     public async Task tenant_id_is_written_to_ef_core_table()
     {
         var orderId = Guid.NewGuid();
@@ -57,7 +53,7 @@ public abstract class ef_core_tenanted_single_stream_tests_base : IAsyncLifetime
         row["tenant_id"].ShouldBe("tenant-a");
     }
 
-    [Fact]
+    [RequiresNativeJsonFact(true)]
     public async Task different_tenants_get_isolated_data()
     {
         var orderId1 = Guid.NewGuid();
@@ -91,7 +87,7 @@ public abstract class ef_core_tenanted_single_stream_tests_base : IAsyncLifetime
         rowY["tenant_id"].ShouldBe("tenant-y");
     }
 
-    [Fact]
+    [RequiresNativeJsonFact(true)]
     public async Task subsequent_appends_preserve_tenant_id()
     {
         var orderId = Guid.NewGuid();
@@ -128,29 +124,6 @@ public class ef_core_tenanted_inline_tests : ef_core_tenanted_single_stream_test
 public class ef_core_tenanted_async_tests : ef_core_tenanted_single_stream_tests_base
 {
     protected override ProjectionLifecycle Lifecycle => ProjectionLifecycle.Async;
-    private IProjectionDaemon? _daemon;
 
-    protected override async Task WaitForProjectionAsync()
-    {
-        if (_daemon == null)
-        {
-            SqlConnection.ClearAllPools();
-            _daemon = (IProjectionDaemon)await Store.BuildProjectionDaemonAsync();
-            await _daemon.StartAllAsync();
-        }
-
-        for (var attempt = 0; attempt < 3; attempt++)
-        {
-            try
-            {
-                await _daemon.CatchUpAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
-                return;
-            }
-            catch (AggregateException) when (attempt < 2)
-            {
-                SqlConnection.ClearAllPools();
-                await Task.Delay(200);
-            }
-        }
-    }
+    protected override Task WaitForProjectionAsync() => Store.WaitForProjectionAsync();
 }

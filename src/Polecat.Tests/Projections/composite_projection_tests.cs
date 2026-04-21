@@ -1,8 +1,4 @@
-using JasperFx.Events.Daemon;
-using JasperFx.Events.Projections;
-using Polecat.Projections;
 using Polecat.Tests.Harness;
-using Shouldly;
 
 namespace Polecat.Tests.Projections;
 
@@ -68,10 +64,7 @@ public class composite_projection_tests : IntegrationContext
             new MembersJoined(1, "Town", ["Frodo", "Sam"]));
         await session.SaveChangesAsync();
 
-        using var daemon = (IProjectionDaemon)await theStore.BuildProjectionDaemonAsync();
-        await daemon.StartAllAsync();
-        await daemon.CatchUpAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
-        await daemon.StopAllAsync();
+        await theStore.WaitForProjectionAsync();
 
         await using var query = theStore.QuerySession();
         var party = await query.LoadAsync<CompositeQuestParty>(streamId);
@@ -103,10 +96,7 @@ public class composite_projection_tests : IntegrationContext
             new MembersDeparted(2, "Village", ["Legolas"]));
         await session.SaveChangesAsync();
 
-        using var daemon = (IProjectionDaemon)await theStore.BuildProjectionDaemonAsync();
-        await daemon.StartAllAsync();
-        await daemon.CatchUpAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
-        await daemon.StopAllAsync();
+        await theStore.WaitForProjectionAsync();
 
         await using var query = theStore.QuerySession();
         var party = await query.LoadAsync<CompositeQuestParty>(streamId);
@@ -142,10 +132,7 @@ public class composite_projection_tests : IntegrationContext
             new MembersJoined(1, "Forest", ["Gandalf"]));
         await session.SaveChangesAsync();
 
-        using var daemon = (IProjectionDaemon)await theStore.BuildProjectionDaemonAsync();
-        await daemon.StartAllAsync();
-        await daemon.CatchUpAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
-        await daemon.StopAllAsync();
+        await theStore.WaitForProjectionAsync();
 
         await using var query = theStore.QuerySession();
         var party = await query.LoadAsync<CompositeQuestParty>(streamId);
@@ -177,17 +164,14 @@ public class composite_projection_tests : IntegrationContext
         await session1.SaveChangesAsync();
 
         // Process initial events
-        using var daemon = (IProjectionDaemon)await theStore.BuildProjectionDaemonAsync();
-        await daemon.StartAllAsync();
-        await daemon.CatchUpAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
+        await theStore.WaitForProjectionAsync();
 
         // Append more events
         await using var session2 = theStore.LightweightSession();
         session2.Events.Append(streamId, new MembersJoined(2, "Cave", ["Bilbo"]));
         await session2.SaveChangesAsync();
 
-        await daemon.CatchUpAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
-        await daemon.StopAllAsync();
+        await theStore.WaitForProjectionAsync();
 
         await using var query = theStore.QuerySession();
         var party = await query.LoadAsync<CompositeQuestParty>(streamId);

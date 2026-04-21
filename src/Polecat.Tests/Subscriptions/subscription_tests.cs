@@ -1,7 +1,5 @@
-using JasperFx;
 using JasperFx.Events.Daemon;
 using JasperFx.Events.Projections;
-using Polecat.Projections;
 using Polecat.Subscriptions;
 using Polecat.Tests.Harness;
 
@@ -37,10 +35,7 @@ public class subscription_tests : IntegrationContext
             new MembersJoined(1, "Town", ["Hero"]));
         await session.SaveChangesAsync();
 
-        using var daemon = (IProjectionDaemon)await store.BuildProjectionDaemonAsync();
-        await daemon.StartAllAsync();
-        await daemon.CatchUpAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
-        await daemon.StopAllAsync();
+        await store.WaitForProjectionAsync();
 
         RecordingSubscription.ProcessedEvents.ShouldNotBeEmpty();
         RecordingSubscription.ProcessedEvents.Count.ShouldBeGreaterThanOrEqualTo(2);
@@ -59,13 +54,7 @@ public class subscription_tests : IntegrationContext
             new MembersJoined(1, "Village", ["Scout"]));
         await session.SaveChangesAsync();
 
-        using var daemon = (IProjectionDaemon)await store.BuildProjectionDaemonAsync();
-        await daemon.StartAllAsync();
-        await daemon.CatchUpAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
-
-        // Allow a moment for final progress writes to commit
-        await Task.Delay(250);
-        await daemon.StopAllAsync();
+        await store.WaitForProjectionAsync();
 
         // Verify the subscription actually received events (primary concern)
         RecordingSubscription.ProcessedEvents.ShouldNotBeEmpty();
@@ -91,10 +80,7 @@ public class subscription_tests : IntegrationContext
             await session.SaveChangesAsync();
         }
 
-        using var daemon = (IProjectionDaemon)await store.BuildProjectionDaemonAsync();
-        await daemon.StartAllAsync();
-        await daemon.CatchUpAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
-        await daemon.StopAllAsync();
+        await store.WaitForProjectionAsync();
 
         // Should have received events from both batches (at least 4 events total)
         RecordingSubscription.ProcessedEvents.Count.ShouldBeGreaterThanOrEqualTo(4);
@@ -126,10 +112,7 @@ public class subscription_tests : IntegrationContext
         session.Events.StartStream(streamId, new QuestStarted("Raw Quest"));
         await session.SaveChangesAsync();
 
-        using var daemon = (IProjectionDaemon)await theStore.BuildProjectionDaemonAsync();
-        await daemon.StartAllAsync();
-        await daemon.CatchUpAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
-        await daemon.StopAllAsync();
+        await theStore.WaitForProjectionAsync();
 
         RawSubscription.ProcessedCount.ShouldBeGreaterThan(0);
     }

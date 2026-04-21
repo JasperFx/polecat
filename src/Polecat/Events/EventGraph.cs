@@ -243,7 +243,7 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
     ///     Register a policy for how to remove or mask protected information
     ///     for an event type T or series of event types that can be cast to T.
     /// </summary>
-    public void AddMaskingRuleForProtectedInformation<T>(Action<T> action)
+    public void AddMaskingRuleForProtectedInformation<T>(Action<T> action) where T : notnull
     {
         ArgumentNullException.ThrowIfNull(action);
         _maskers.Add(new ActionMasker<T>(action));
@@ -253,7 +253,7 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
     ///     Register a policy for how to remove or mask protected information
     ///     for an event type T, replacing the event data with a new instance.
     /// </summary>
-    public void AddMaskingRuleForProtectedInformation<T>(Func<T, T> func)
+    public void AddMaskingRuleForProtectedInformation<T>(Func<T, T> func) where T : notnull
     {
         ArgumentNullException.ThrowIfNull(func);
         _maskers.Add(new FuncMasker<T>(func));

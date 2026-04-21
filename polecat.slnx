@@ -1,6 +1,7 @@
 <Solution>
   <Folder Name="/SolutionItems/">
     <File Path="Directory.Build.props" />
+    <File Path="Directory.Packages.props" />
   </Folder>
   <Folder Name="/src/">
     <Project Path="src/DcbLoadTest/DcbLoadTest.csproj" />
@@ -10,6 +11,7 @@
     <Project Path="src/Polecat.EntityFrameworkCore.Tests/Polecat.EntityFrameworkCore.Tests.csproj" />
     <Project Path="src/Polecat.EntityFrameworkCore/Polecat.EntityFrameworkCore.csproj" />
     <Project Path="src/Polecat.Tests/Polecat.Tests.csproj" />
+    <Project Path="src/Polecat.TestUtils/Polecat.TestUtils.csproj" />
     <Project Path="src/Polecat/Polecat.csproj" />
   </Folder>
 </Solution>

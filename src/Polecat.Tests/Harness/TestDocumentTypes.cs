@@ -47,6 +47,8 @@ public class Target
 
     // Recursive nested property for deep patching
     public Target? Inner { get; set; }
+    public Target? Inner2 { get; set; }
+    public Target? Inner3 { get; set; }
 
     // Array properties for append/insert/remove tests
     public int[] NumberArray { get; set; } = [];
@@ -86,6 +88,8 @@ public class Target
         if (withChildren)
         {
             target.Inner = Random();
+            target.Inner2 = Random();
+            target.Inner3 = Random();
             target.Children = [Random(), Random(), Random()];
             target.NestedObject = new TargetNested([Random(), Random()]);
         }

@@ -1,43 +1,21 @@
-using JasperFx;
-using JasperFx.Events.Daemon;
 using JasperFx.Events.Projections;
-using Microsoft.Data.SqlClient;
 using Polecat.Projections;
 using Polecat.Tests.Harness;
 using Polecat.Tests.Projections;
 
 namespace Polecat.Tests.Daemon;
 
-[Collection("integration")]
-public class async_daemon_tests : IntegrationContext
+public class async_daemon_tests : OneOffConfigurationsContext
 {
-    public async_daemon_tests(DefaultStoreFixture fixture) : base(fixture)
-    {
-    }
-
     private async Task<DocumentStore> CreateStoreWithAsyncProjection()
     {
-        await StoreOptions(opts =>
+        ConfigureStore(opts =>
         {
-            opts.DatabaseSchemaName = "async_daemon";
             opts.Projections.Snapshot<QuestParty>(SnapshotLifecycle.Async);
         });
-        return theStore;
-    }
+        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync();
 
-    private static async Task CatchUpWithRetryAsync(IProjectionDaemon daemon)
-    {
-        try
-        {
-            await daemon.CatchUpAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
-        }
-        catch (AggregateException)
-        {
-            // Transient SQL Server connection error — clear pools and retry once
-            SqlConnection.ClearAllPools();
-            await Task.Delay(500);
-            await daemon.CatchUpAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
-        }
+        return theStore;
     }
 
     [Fact]
@@ -57,7 +35,7 @@ public class async_daemon_tests : IntegrationContext
     public async Task daemon_can_start_and_stop()
     {
         var store = await CreateStoreWithAsyncProjection();
-        using var daemon = (IProjectionDaemon)await store.BuildProjectionDaemonAsync();
+        using var daemon = await store.BuildProjectionDaemonAsync();
 
         await daemon.StartAllAsync();
         daemon.IsRunning.ShouldBeTrue();
@@ -78,11 +56,7 @@ public class async_daemon_tests : IntegrationContext
             new MembersJoined(1, "Rivendell", ["Aragorn", "Legolas", "Gimli"]));
         await session.SaveChangesAsync();
 
-        // Run daemon to completion
-        using var daemon = (IProjectionDaemon)await store.BuildProjectionDaemonAsync();
-        await daemon.StartAllAsync();
-        await CatchUpWithRetryAsync(daemon);
-        await daemon.StopAllAsync();
+        await store.WaitForProjectionAsync();
 
         // Verify projected document
         await using var query = store.QuerySession();
@@ -107,17 +81,13 @@ public class async_daemon_tests : IntegrationContext
             new MembersJoined(1, "Rivendell", ["Aragorn"]));
         await session.SaveChangesAsync();
 
-        // Run daemon
-        using var daemon = (IProjectionDaemon)await store.BuildProjectionDaemonAsync();
-        await daemon.StartAllAsync();
-        await CatchUpWithRetryAsync(daemon);
-        await daemon.StopAllAsync();
+        await store.WaitForProjectionAsync();
 
         // Verify progress was recorded
         var highestSeq = await store.Database.FetchHighestEventSequenceNumber(CancellationToken.None);
         var allProgress = await store.Database.AllProjectionProgress(CancellationToken.None);
 
-        // Filter out HighWaterMark — look for projection-specific progress
+        // Filter out HighWaterMark � look for projection-specific progress
         var projectionProgress = allProgress
             .Where(p => p.ShardName != "HighWaterMark")
             .ToList();
@@ -139,11 +109,7 @@ public class async_daemon_tests : IntegrationContext
             new MembersJoined(1, "Town", ["Hero"]));
         await session.SaveChangesAsync();
 
-        // Start daemon and catch up
-        using var daemon = (IProjectionDaemon)await store.BuildProjectionDaemonAsync();
-        await daemon.StartAllAsync();
-        await CatchUpWithRetryAsync(daemon);
-        await daemon.StopAllAsync();
+        await store.WaitForProjectionAsync();
 
         await using var query = store.QuerySession();
         var party = await query.LoadAsync<QuestParty>(streamId);
@@ -170,11 +136,7 @@ public class async_daemon_tests : IntegrationContext
             new ArrivedAtLocation("Mountain", 2));
         await session2.SaveChangesAsync();
 
-        // Start daemon and catch up to all events
-        using var daemon = (IProjectionDaemon)await store.BuildProjectionDaemonAsync();
-        await daemon.StartAllAsync();
-        await CatchUpWithRetryAsync(daemon);
-        await daemon.StopAllAsync();
+        await store.WaitForProjectionAsync();
 
         await using var query = store.QuerySession();
         var party = await query.LoadAsync<QuestParty>(streamId);
@@ -185,8 +147,9 @@ public class async_daemon_tests : IntegrationContext
         party.Location.ShouldBe("Mountain");
     }
 
-    [Fact]
-    public async Task multiple_streams_processed_by_daemon()
+    [Theory]
+    [Repeat(10)]
+    public async Task multiple_streams_processed_by_daemon(int _)
     {
         var store = await CreateStoreWithAsyncProjection();
 
@@ -202,10 +165,7 @@ public class async_daemon_tests : IntegrationContext
             new MembersJoined(1, "Town B", ["B1"]));
         await session.SaveChangesAsync();
 
-        using var daemon = (IProjectionDaemon)await store.BuildProjectionDaemonAsync();
-        await daemon.StartAllAsync();
-        await CatchUpWithRetryAsync(daemon);
-        await daemon.StopAllAsync();
+        await store.WaitForProjectionAsync();
 
         await using var query = store.QuerySession();
         var party1 = await query.LoadAsync<QuestParty>(stream1);

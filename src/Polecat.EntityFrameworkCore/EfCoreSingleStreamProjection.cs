@@ -42,7 +42,6 @@ public abstract class EfCoreSingleStreamProjection<TDoc, TDbContext>
         CancellationToken cancellation)
     {
         TDbContext? dbContext = null;
-        SqlConnection? placeholderConnection = null;
 
         // Try to extract DbContext from EfCoreProjectionStorage
         if (identitySetter is EfCoreProjectionStorage<TDoc, Guid, TDbContext> efStorage)
@@ -55,7 +54,6 @@ public abstract class EfCoreSingleStreamProjection<TDoc, TDbContext>
         {
             var (ctx, placeholder) = EfCoreDbContextFactory.Create<TDbContext>(_connectionString);
             dbContext = ctx;
-            placeholderConnection = placeholder;
 
             // Register participant so DbContext flushes in same transaction
             if (session is ITransactionParticipantRegistrar registrar)

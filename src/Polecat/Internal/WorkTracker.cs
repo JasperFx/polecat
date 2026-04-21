@@ -1,4 +1,5 @@
 using JasperFx.Events;
+using System.Collections.Immutable;
 
 namespace Polecat.Internal;
 
@@ -7,50 +8,111 @@ namespace Polecat.Internal;
 /// </summary>
 internal class WorkTracker : IWorkTracker
 {
-    private readonly List<IStorageOperation> _operations = new();
-    private readonly List<StreamAction> _streams = new();
+    private readonly List<IStorageOperation> _operations = [];
+    private ImmutableList<IStorageOperation>? _operationsSnapshot;
 
-    public IReadOnlyList<IStorageOperation> Operations => _operations;
-    public IReadOnlyList<StreamAction> Streams => _streams;
+    private readonly List<StreamAction> _streams = [];
+    private ImmutableList<StreamAction>? _streamsSnapshot;
+    private readonly Lock _stateLock = new();
 
-    public bool HasOutstandingWork() => _operations.Count > 0 || _streams.Any(x => x.Events.Count > 0 || x.AlwaysEnforceConsistency);
+    public IReadOnlyList<IStorageOperation> Operations
+    {
+        get
+        {
+            lock (_stateLock)
+            {
+                _operationsSnapshot ??= [.. _operations];
+                return _operationsSnapshot;
+            }
+        }
+    }
+
+    public IReadOnlyList<StreamAction> Streams
+    {
+        get
+        {
+            lock (_stateLock)
+            {
+                _streamsSnapshot ??= [.. _streams];
+                return _streamsSnapshot;
+            }
+        }
+    }
+
+    public bool HasOutstandingWork()
+    {
+        lock (_stateLock)
+            return _operations.Count > 0
+                || _streams.Any(x =>
+                    x.Events.Count > 0 || x.AlwaysEnforceConsistency);
+    }
 
     public void Add(IStorageOperation operation)
     {
-        _operations.Add(operation);
+        lock (_stateLock)
+        {
+            _operations.Add(operation);
+            _operationsSnapshot = null;
+        }
     }
 
     public void AddStream(StreamAction stream)
     {
-        _streams.Add(stream);
+        lock (_stateLock)
+        {
+            _streams.Add(stream);
+            _streamsSnapshot = null;
+        }
     }
 
     public bool TryFindStream(Guid id, out StreamAction? stream)
     {
-        stream = _streams.FirstOrDefault(s => s.Id == id);
+        lock (_stateLock)
+            stream = _streams.FirstOrDefault(s => s.Id == id);
         return stream != null;
     }
 
     public bool TryFindStream(string key, out StreamAction? stream)
     {
-        stream = _streams.FirstOrDefault(s => s.Key == key);
+        lock (_stateLock)
+            stream = _streams.FirstOrDefault(s => s.Key == key);
         return stream != null;
     }
 
     public void Reset()
     {
-        _operations.Clear();
-        _streams.Clear();
+        lock (_stateLock)
+        {
+            _operations.Clear();
+            _operationsSnapshot = null;
+
+            _streams.Clear();
+            _streamsSnapshot = null;
+        }
     }
 
     public void EjectDocument(Type documentType, object id)
     {
-        _operations.RemoveAll(op =>
-            op.DocumentType == documentType && op.DocumentId != null && op.DocumentId.Equals(id));
+        lock (_stateLock)
+        {
+            var removed = _operations.RemoveAll(op =>
+                op.DocumentType == documentType
+                && op.DocumentId != null
+                && op.DocumentId.Equals(id));
+
+            if (removed > 0)
+                _operationsSnapshot = null;
+        }
     }
 
     public void EjectAllOfType(Type documentType)
     {
-        _operations.RemoveAll(op => op.DocumentType == documentType);
+        lock (_stateLock)
+        {
+            var removed = _operations.RemoveAll(op => op.DocumentType == documentType);
+            
+            if (removed > 0)
+                _operationsSnapshot = null;
+        }
     }
 }

@@ -176,7 +176,7 @@ public class EfCoreSchemaTests
         // Entity has a FK to EntityType
         entityTable.ForeignKeys.Count.ShouldBeGreaterThan(0);
         entityTable.ForeignKeys.ShouldContain(fk =>
-            fk.LinkedTable.Name == "entity_type");
+            fk.LinkedTable!.Name == "entity_type");
     }
 
     [Fact]

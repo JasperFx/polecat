@@ -345,18 +345,18 @@ internal class PatchOperation : Polecat.Internal.IStorageOperation
         return builder => { builder.Append($"JSON_MODIFY(data, '$.{jsonPath}', NULL)"); };
     }
 
-    internal static Action<ICommandBuilder> RenameProperty(string oldJsonPath, string newJsonPath)
+    internal static Action<ICommandBuilder> RenameProperty(string oldJsonPath, string newJsonPath, bool isScalarType)
     {
         return builder =>
         {
             builder.Append($"JSON_MODIFY(JSON_MODIFY(data, '$.{newJsonPath}', ");
-            builder.Append(
-                $"COALESCE(JSON_QUERY(data, '$.{oldJsonPath}'), JSON_VALUE(data, '$.{oldJsonPath}'))), ");
+            var jsonFunc = isScalarType ? "JSON_VALUE" : "JSON_QUERY";
+            builder.Append($"{jsonFunc}(data, '$.{oldJsonPath}')), ");
             builder.Append($"'$.{oldJsonPath}', NULL)");
         };
     }
 
-    internal static Action<ICommandBuilder> DuplicateProperty(string sourcePath, string[] destPaths)
+    internal static Action<ICommandBuilder> DuplicateProperty(string sourcePath, string[] destPaths, bool isScalarType)
     {
         return builder =>
         {
@@ -370,8 +370,9 @@ internal class PatchOperation : Polecat.Internal.IStorageOperation
             for (var i = 0; i < destPaths.Length; i++)
             {
                 builder.Append($", '$.{destPaths[i]}', ");
-                builder.Append(
-                    $"COALESCE(JSON_QUERY(data, '$.{sourcePath}'), JSON_VALUE(data, '$.{sourcePath}')))");
+
+                var jsonFunc = isScalarType ? "JSON_VALUE" : "JSON_QUERY";
+                builder.Append($"{jsonFunc}(data, '$.{sourcePath}'))");
             }
         };
     }

@@ -126,8 +126,8 @@ public class event_snapshot_tests : IntegrationContext
         // Snapshot version should update
         var (json, v2) = await ReadSnapshotFromDb(streamId, "snapshot_tests");
         v2.ShouldBe(3); // 1 initial + 2 appended
-        json.ShouldContain("Gandalf");
-        json.ShouldContain("Gimli");
+        json!.ShouldContain("Gandalf");
+        json!.ShouldContain("Gimli");
     }
 
     [Fact]

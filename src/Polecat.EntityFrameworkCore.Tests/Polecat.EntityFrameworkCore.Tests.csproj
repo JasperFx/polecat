@@ -1,7 +1,6 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
     <PropertyGroup>
-        <TargetFrameworks>net10.0</TargetFrameworks>
         <IsPackable>false</IsPackable>
     </PropertyGroup>
 
@@ -18,9 +17,11 @@
         <Using Include="Xunit" />
         <Using Include="Shouldly" />
         <Using Include="JasperFx" />
+        <Using Include="Polecat.TestUtils" />
     </ItemGroup>
 
     <ItemGroup>
+        <ProjectReference Include="..\Polecat.TestUtils\Polecat.TestUtils.csproj" />
         <ProjectReference Include="..\Polecat\Polecat.csproj" />
         <ProjectReference Include="..\Polecat.EntityFrameworkCore\Polecat.EntityFrameworkCore.csproj" />
         <PackageReference Include="Weasel.SqlServer" />

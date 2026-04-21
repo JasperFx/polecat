@@ -1,0 +1,20 @@
+name: efcore
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  test:
+    uses: ./.github/workflows/test-template.yml
+    strategy:
+      fail-fast: false
+      matrix:
+        storage_type: [default, edge]
+        run: [1, 2, 3, 4, 5]   # repeat
+    with:
+      TEST_PROJECT_PATH: src/Polecat.EntityFrameworkCore.Tests/Polecat.EntityFrameworkCore.Tests.csproj
+      STORAGE_TYPE: ${{ matrix.storage_type }}

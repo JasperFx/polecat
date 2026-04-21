@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using JasperFx;
 using JasperFx.Events;
-using JasperFx.Events.Tags;
 using Microsoft.Data.SqlClient;
 using Polecat;
 
@@ -13,9 +12,9 @@ const int BENCH_EVENTS_PER_STREAM = 10;
 
 var connectionString =
     Environment.GetEnvironmentVariable("POLECAT_TESTING_DATABASE")
-    ?? "Server=localhost,11433;Database=polecat_testing;User Id=sa;Password=Polecat#Dev2025;TrustServerCertificate=true";
+    ?? "Server=localhost,11433;User Id=sa;Password=P@55w0rd;Timeout=5;MultipleActiveResultSets=True;Initial Catalog=master;Encrypt=False";    ;
 
-Console.WriteLine("DCB Load Test — Append into large database (SQL Server)");
+Console.WriteLine("DCB Load Test - Append into large database (SQL Server)");
 Console.WriteLine($"  Seed: {SEED_STREAMS} streams x {SEED_EVENTS_PER_STREAM} events = {SEED_STREAMS * SEED_EVENTS_PER_STREAM} events");
 Console.WriteLine($"  Bench: {BENCH_STREAMS} streams x {BENCH_EVENTS_PER_STREAM} events = {BENCH_STREAMS * BENCH_EVENTS_PER_STREAM} events");
 Console.WriteLine(new string('-', 90));

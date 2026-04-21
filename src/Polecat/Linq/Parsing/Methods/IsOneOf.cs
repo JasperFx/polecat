@@ -82,7 +82,7 @@ internal class InFilter : ISqlFragment
         for (var i = 0; i < _values.Count; i++)
         {
             if (i > 0) builder.Append(", ");
-            builder.AppendParameter(_member.ConvertValue(_values[i]));
+            builder.AppendParameter(_member.ConvertValue(_values[i])!);
         }
 
         builder.Append(")");
