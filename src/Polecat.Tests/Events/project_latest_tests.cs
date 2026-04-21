@@ -26,6 +26,8 @@ public class project_latest_tests : IntegrationContext
     {
     }
 
+    #region sample_polecat_project_latest_example
+
     [Fact]
     public async Task includes_pending_events_from_start_stream()
     {
@@ -33,24 +35,34 @@ public class project_latest_tests : IntegrationContext
 
         await using var session = theStore.LightweightSession();
 
+        // Append events without committing
         session.Events.StartStream(streamId,
             new ReportCreated("Q1 Report"),
             new SectionAdded("Revenue"),
             new SectionAdded("Costs")
         );
 
+        // ProjectLatest includes the pending events above
         var report = await session.Events.ProjectLatest<Report>(streamId);
 
         report.ShouldNotBeNull();
         report.Title.ShouldBe("Q1 Report");
         report.SectionCount.ShouldBe(2);
+
+        // SaveChangesAsync can happen later
+        await session.SaveChangesAsync();
     }
+
+    #endregion
+
+    #region sample_polecat_project_latest_merge_example
 
     [Fact]
     public async Task includes_pending_events_after_committed_events()
     {
         var streamId = Guid.NewGuid();
 
+        // First, commit some events
         await using (var session = theStore.LightweightSession())
         {
             session.Events.StartStream(streamId,
@@ -60,6 +72,7 @@ public class project_latest_tests : IntegrationContext
             await session.SaveChangesAsync();
         }
 
+        // In a new session, append more events without committing
         await using (var session = theStore.LightweightSession())
         {
             session.Events.Append(streamId,
@@ -68,14 +81,17 @@ public class project_latest_tests : IntegrationContext
                 new ReportPublished()
             );
 
+            // ProjectLatest merges the committed state with pending events
             var report = await session.Events.ProjectLatest<Report>(streamId);
 
             report.ShouldNotBeNull();
             report.Title.ShouldBe("Q1 Report");
-            report.SectionCount.ShouldBe(3);
-            report.IsPublished.ShouldBeTrue();
+            report.SectionCount.ShouldBe(3);       // 1 committed + 2 pending
+            report.IsPublished.ShouldBeTrue();      // from pending ReportPublished
         }
     }
+
+    #endregion
 
     [Fact]
     public async Task no_pending_events_behaves_like_fetch_latest()
