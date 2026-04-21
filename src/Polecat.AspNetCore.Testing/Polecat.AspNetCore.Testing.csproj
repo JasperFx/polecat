@@ -19,6 +19,7 @@
 
     <ItemGroup>
         <ProjectReference Include="..\Polecat.AspNetCore\Polecat.AspNetCore.csproj" />
+        <ProjectReference Include="..\Polecat.TestUtils\Polecat.TestUtils.csproj" />
     </ItemGroup>
 
 </Project>
