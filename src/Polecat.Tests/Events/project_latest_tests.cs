@@ -110,4 +110,70 @@ public class project_latest_tests : IntegrationContext
         var report = await session.Events.ProjectLatest<Report>(Guid.NewGuid());
         report.ShouldBeNull();
     }
+
+    [Fact]
+    public async Task project_latest_with_string_key_includes_pending_events()
+    {
+        // Reconfigure for string-keyed streams with isolated schema
+        await StoreOptions(opts =>
+        {
+            opts.DatabaseSchemaName = "project_latest_str";
+            opts.Events.StreamIdentity = StreamIdentity.AsString;
+        });
+
+        var key = "report-" + Guid.NewGuid().ToString("N");
+
+        await using var session = theStore.LightweightSession();
+        session.Events.StartStream(key,
+            new ReportCreated("Quarterly Report"),
+            new SectionAdded("Revenue"),
+            new SectionAdded("Costs"),
+            new ReportPublished()
+        );
+
+        var report = await session.Events.ProjectLatest<Report>(key);
+
+        report.ShouldNotBeNull();
+        report.Title.ShouldBe("Quarterly Report");
+        report.SectionCount.ShouldBe(2);
+        report.IsPublished.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task project_latest_merges_committed_and_pending_for_string_key()
+    {
+        await StoreOptions(opts =>
+        {
+            opts.DatabaseSchemaName = "project_latest_str2";
+            opts.Events.StreamIdentity = StreamIdentity.AsString;
+        });
+
+        var key = "report-" + Guid.NewGuid().ToString("N");
+
+        // Commit initial events
+        await using (var session = theStore.LightweightSession())
+        {
+            session.Events.StartStream(key,
+                new ReportCreated("Annual Report"),
+                new SectionAdded("Overview")
+            );
+            await session.SaveChangesAsync();
+        }
+
+        // Append more events without committing, then project
+        await using (var session = theStore.LightweightSession())
+        {
+            session.Events.Append(key,
+                new SectionAdded("Financials"),
+                new ReportPublished()
+            );
+
+            var report = await session.Events.ProjectLatest<Report>(key);
+
+            report.ShouldNotBeNull();
+            report.Title.ShouldBe("Annual Report");
+            report.SectionCount.ShouldBe(2);
+            report.IsPublished.ShouldBeTrue();
+        }
+    }
 }
