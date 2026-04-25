@@ -9,6 +9,10 @@ on:
       - 'package-lock.json'
   workflow_dispatch:
 
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   DOTNET_CLI_TELEMETRY_OPTOUT: 1
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 1
@@ -16,16 +20,15 @@ env:
   NUKE_TELEMETRY_OPTOUT: true
 
 jobs:
-  build:
+  deploy:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      deployments: write
     steps:
       - uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.node_version }}
-          cache: npm
+          fetch-depth: 0
 
       - name: Install .NET 10.0.x
         uses: actions/setup-dotnet@v5
@@ -35,15 +38,22 @@ jobs:
       - name: Install mdsnippets
         run: dotnet tool install -g MarkdownSnippets.Tool
 
-      - name: Npm install
-        run: npm install
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.node_version }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
 
       - name: Build docs
         run: npm run docs-build
 
-      - name: Deploy docs
-        run: npm run deploy
-        env:
-          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
-          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
-
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          packageManager: npm
+          command: pages deploy docs/.vitepress/dist --project-name=polecat --branch=main

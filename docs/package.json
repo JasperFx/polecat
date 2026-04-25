@@ -1,0 +1,16 @@
+{
+  "name": "polecat-docs",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vitepress dev",
+    "build": "vitepress build",
+    "preview": "vitepress preview"
+  },
+  "devDependencies": {
+    "markdown-it-block-embed": "^0.0.3",
+    "vitepress": "1.6.4",
+    "vitepress-plugin-llms": "^1.5.1",
+    "vitepress-plugin-mermaid": "^2.0.17"
+  }
+}

@@ -2,16 +2,14 @@
   "private": true,
   "scripts": {
     "docs": "concurrently --group mdsnippets \"vitepress dev docs --port 5173 --open\"",
-    "docs-build": "concurrently --group mdsnippets \"vitepress build docs\"",
-    "deploy-preview": "netlify deploy",
-    "deploy": "netlify deploy --prod"
+    "docs-build": "concurrently --group mdsnippets \"vitepress build docs\""
   },
   "devDependencies": {
     "concurrently": "^9.2.1",
     "markdown-it-block-embed": "^0.0.3",
-    "netlify-cli": "^23.14.0",
     "vitepress": "1.6.4",
     "vitepress-plugin-llms": "^1.5.1",
-    "vitepress-plugin-mermaid": "^2.0.17"
+    "vitepress-plugin-mermaid": "^2.0.17",
+    "wrangler": "^4.0.0"
   }
 }
