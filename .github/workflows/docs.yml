@@ -1,12 +1,6 @@
 name: Deploy docs
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'docs/**'
-      - 'package.json'
-      - 'package-lock.json'
   workflow_dispatch:
 
 concurrency:
@@ -56,4 +50,4 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           packageManager: npm
-          command: pages deploy docs/.vitepress/dist --project-name=polecat --branch=main
+          command: pages deploy docs/.vitepress/dist --project-name=jasperfx-polecat --branch=main
