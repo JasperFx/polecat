@@ -1,3 +1,5 @@
+using JasperFx.Events;
+using JasperFx.Events.Projections;
 using Polecat.Projections;
 using Polecat.Tests.Harness;
 
@@ -27,7 +29,7 @@ public class projection_scenario_tests : IntegrationContext
         await StoreOptions(opts =>
         {
             opts.DatabaseSchemaName = "scenario_inline";
-            opts.Projections.Snapshot<ScenarioQuestParty>(SnapshotLifecycle.Inline);
+            opts.Projections.Add<SingleStreamProjection<ScenarioQuestParty, Guid>>(ProjectionLifecycle.Inline);
         });
 
         var questId = Guid.NewGuid();
@@ -48,7 +50,7 @@ public class projection_scenario_tests : IntegrationContext
         await StoreOptions(opts =>
         {
             opts.DatabaseSchemaName = "scenario_multi";
-            opts.Projections.Snapshot<ScenarioQuestParty>(SnapshotLifecycle.Inline);
+            opts.Projections.Add<SingleStreamProjection<ScenarioQuestParty, Guid>>(ProjectionLifecycle.Inline);
         });
 
         var questId = Guid.NewGuid();
@@ -89,7 +91,7 @@ public class projection_scenario_tests : IntegrationContext
         await StoreOptions(opts =>
         {
             opts.DatabaseSchemaName = "scenario_notexist";
-            opts.Projections.Snapshot<ScenarioQuestParty>(SnapshotLifecycle.Inline);
+            opts.Projections.Add<SingleStreamProjection<ScenarioQuestParty, Guid>>(ProjectionLifecycle.Inline);
         });
 
         var missingId = Guid.NewGuid();
@@ -106,7 +108,7 @@ public class projection_scenario_tests : IntegrationContext
         await StoreOptions(opts =>
         {
             opts.DatabaseSchemaName = "scenario_lambda";
-            opts.Projections.Snapshot<ScenarioQuestParty>(SnapshotLifecycle.Inline);
+            opts.Projections.Add<SingleStreamProjection<ScenarioQuestParty, Guid>>(ProjectionLifecycle.Inline);
         });
 
         var questId = Guid.NewGuid();
@@ -133,7 +135,7 @@ public class projection_scenario_tests : IntegrationContext
         await StoreOptions(opts =>
         {
             opts.DatabaseSchemaName = "scenario_fail";
-            opts.Projections.Snapshot<ScenarioQuestParty>(SnapshotLifecycle.Inline);
+            opts.Projections.Add<SingleStreamProjection<ScenarioQuestParty, Guid>>(ProjectionLifecycle.Inline);
         });
 
         var missingId = Guid.NewGuid();

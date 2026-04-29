@@ -11,7 +11,7 @@ Every projection runs with one of three lifecycle strategies:
 Projections run in the **same transaction** as the event append. This provides strong consistency -- the read model is always up to date:
 
 ```cs
-opts.Projections.Snapshot<OrderSummary>(SnapshotLifecycle.Inline);
+opts.Projections.Add<SingleStreamProjection<OrderSummary, Guid>>(ProjectionLifecycle.Inline);
 ```
 
 ### Async
@@ -19,7 +19,7 @@ opts.Projections.Snapshot<OrderSummary>(SnapshotLifecycle.Inline);
 Projections run in the **background** via the async daemon. The read model is eventually consistent:
 
 ```cs
-opts.Projections.Snapshot<OrderSummary>(SnapshotLifecycle.Async);
+opts.Projections.Add<SingleStreamProjection<OrderSummary, Guid>>(ProjectionLifecycle.Async);
 ```
 
 ### Live
@@ -80,8 +80,8 @@ var store = DocumentStore.For(opts =>
 {
     opts.Connection("...");
 
-    // Single stream projection as inline snapshot
-    opts.Projections.Snapshot<OrderSummary>(SnapshotLifecycle.Inline);
+    // Single stream projection (inline)
+    opts.Projections.Add<SingleStreamProjection<OrderSummary, Guid>>(ProjectionLifecycle.Inline);
 
     // Multi stream projection as async
     opts.Projections.Add<DashboardProjection>(ProjectionLifecycle.Async);

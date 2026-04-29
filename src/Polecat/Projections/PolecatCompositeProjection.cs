@@ -20,29 +20,6 @@ public class PolecatCompositeProjection : CompositeProjection<IDocumentSession, 
     }
 
     /// <summary>
-    ///     Add a snapshot (self-aggregating) projection with explicit identity type to this composite.
-    /// </summary>
-    public void Snapshot<T, TId>(int stageNumber = 1)
-        where T : notnull, new()
-        where TId : notnull
-    {
-        var source = new SingleStreamProjection<T, TId>();
-        source.Lifecycle = ProjectionLifecycle.Async;
-        source.AssembleAndAssertValidity();
-
-        StageFor(stageNumber).Add((IProjectionSource<IDocumentSession, IQuerySession>)source);
-    }
-
-    /// <summary>
-    ///     Add a snapshot (self-aggregating) projection to this composite.
-    ///     Uses Guid as the default stream identity type.
-    /// </summary>
-    public void Snapshot<T>(int stageNumber = 1) where T : notnull, new()
-    {
-        Snapshot<T, Guid>(stageNumber);
-    }
-
-    /// <summary>
     ///     Add a projection source to be executed within this composite.
     /// </summary>
     public void Add(IProjectionSource<IDocumentSession, IQuerySession> projection, int stageNumber = 1)

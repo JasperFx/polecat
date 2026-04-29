@@ -92,7 +92,7 @@ For strong consistency, register an inline projection that updates automatically
 var store = DocumentStore.For(opts =>
 {
     opts.Connection("...");
-    opts.Projections.Snapshot<QuestParty>(SnapshotLifecycle.Inline);
+    opts.Projections.Add<SingleStreamProjection<QuestParty, Guid>>(ProjectionLifecycle.Inline);
 });
 
 // Now QuestParty is automatically updated in the same transaction

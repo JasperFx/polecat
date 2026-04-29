@@ -604,21 +604,29 @@ internal class EventOperations : QueryEventStore, IEventOperations
         if (definition != null) return definition;
 
         // Auto-discover natural key from [NaturalKey] attribute on the aggregate type
-        // and register an Inline snapshot projection if none exists
-        var naturalKeyProp = typeof(T).GetProperties(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)
+        // and register an inline single-stream projection if none exists
+        var naturalKeyProp = typeof(T).GetProperties(BindingFlags.Public | BindingFlags.Instance)
             .FirstOrDefault(p => p.GetCustomAttribute<NaturalKeyAttribute>() != null);
 
         if (naturalKeyProp != null)
         {
-            _sessionBase.Options.Projections.Snapshot<T>(SnapshotLifecycle.Inline);
+            var projections = _sessionBase.Options.Projections;
+            var projection = new SingleStreamProjection<T, Guid>();
+            projection.Lifecycle = JasperFx.Events.Projections.ProjectionLifecycle.Inline;
+            projection.AssembleAndAssertValidity();
 
-            definition = _sessionBase.Options.Projections.FindNaturalKeyDefinition(typeof(T));
+            foreach (var eventType in projection.IncludedEventTypes)
+                _events.AddEventType(eventType);
+
+            projections.All.Add((JasperFx.Events.Projections.IProjectionSource<IDocumentSession, IQuerySession>)projection);
+
+            definition = projections.FindNaturalKeyDefinition(typeof(T));
             if (definition != null) return definition;
         }
 
         throw new InvalidOperationException(
             $"No natural key definition found for aggregate type '{typeof(T).Name}'. " +
-            "Configure a natural key via NaturalKey() in a SingleStreamProjection or Snapshot registration.");
+            "Configure a natural key via NaturalKey() in a SingleStreamProjection registration.");
     }
 
     public async Task CompactStreamAsync<T>(Guid streamId, Action<StreamCompactingRequest<T>>? configure = null)

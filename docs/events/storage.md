@@ -33,8 +33,6 @@ Stream metadata:
 | `version` | `int` | Current stream version |
 | `timestamp` | `datetimeoffset` | Last event timestamp |
 | `created` | `datetimeoffset` | Stream creation time |
-| `snapshot` | `json` | Latest snapshot data |
-| `snapshot_version` | `int` | Snapshot version |
 | `tenant_id` | `nvarchar(250)` | Tenant identifier |
 | `is_archived` | `bit` | Archive flag |
 

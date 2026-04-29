@@ -19,7 +19,7 @@ Under the hood, Polecat is built on top of [SQL Server 2025](https://www.microso
 - a [document database](/documents/),
 - an [event store](/events/).
 
-Polecat uses SQL Server 2025's native `JSON` data type for storing document bodies, event data, headers, and snapshots. Combined with modern T-SQL features, this provides strong data consistency for both document storage and event sourcing approaches.
+Polecat uses SQL Server 2025's native `JSON` data type for storing document bodies, event data, and headers. Combined with modern T-SQL features, this provides strong data consistency for both document storage and event sourcing approaches.
 
 ## Main Features
 

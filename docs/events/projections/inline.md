@@ -19,8 +19,8 @@ If any step fails, the entire transaction rolls back -- events and projections a
 Register a projection for inline processing:
 
 ```cs
-// Single stream snapshot
-opts.Projections.Snapshot<OrderSummary>(SnapshotLifecycle.Inline);
+// Single stream projection
+opts.Projections.Add<SingleStreamProjection<OrderSummary, Guid>>(ProjectionLifecycle.Inline);
 
 // Event projection
 opts.Projections.Add<AuditLogProjection>(ProjectionLifecycle.Inline);

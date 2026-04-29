@@ -240,40 +240,11 @@ internal class QueryEventStore : IQueryEventStore
         DateTimeOffset? timestamp, T? state, long fromVersion,
         CancellationToken token) where T : class, new()
     {
-        var effectiveFromVersion = fromVersion;
-
-        // Try loading a cached snapshot from pc_streams if no explicit state or fromVersion was provided
-        if (state == null && fromVersion == 0 && timestamp == null)
-        {
-            var (snapshot, snapshotVersion) = await TryLoadSnapshotAsync<T>(streamId, token);
-            if (snapshot != null && snapshotVersion > 0)
-            {
-                // If a max version was requested and it's less than snapshot version,
-                // we can't use the snapshot — fall back to full event replay
-                if (version > 0 && version < snapshotVersion)
-                {
-                    // Don't use snapshot, let full replay happen below
-                }
-                else if (version > 0 && version == snapshotVersion)
-                {
-                    // Snapshot exactly matches requested version
-                    TrySetIdentity(snapshot, streamId);
-                    return snapshot;
-                }
-                else
-                {
-                    // Snapshot is valid; replay only events after snapshot
-                    state = snapshot;
-                    effectiveFromVersion = snapshotVersion + 1;
-                }
-            }
-        }
-
         IReadOnlyList<IEvent> events;
         if (streamId is Guid guid)
-            events = await FetchStreamAsync(guid, version, timestamp, effectiveFromVersion, token);
+            events = await FetchStreamAsync(guid, version, timestamp, fromVersion, token);
         else
-            events = await FetchStreamAsync((string)streamId, version, timestamp, effectiveFromVersion, token);
+            events = await FetchStreamAsync((string)streamId, version, timestamp, fromVersion, token);
 
         if (events.Count == 0) return state;
 
@@ -283,30 +254,6 @@ internal class QueryEventStore : IQueryEventStore
 
         TrySetIdentity(aggregate, streamId);
         return aggregate;
-    }
-
-    private async Task<(T? snapshot, long version)> TryLoadSnapshotAsync<T>(object streamId,
-        CancellationToken token) where T : class
-    {
-        await using var cmd = new SqlCommand();
-        cmd.CommandText = $"""
-            SELECT snapshot, snapshot_version
-            FROM {_events.StreamsTableName}
-            WHERE id = @id AND tenant_id = @tenant_id AND snapshot IS NOT NULL;
-            """;
-        cmd.Parameters.AddWithValue("@id", streamId);
-        cmd.Parameters.AddWithValue("@tenant_id", _session.TenantId);
-
-        await using var reader = await _session.ExecuteReaderAsync(cmd, token);
-        if (await reader.ReadAsync(token))
-        {
-            var json = reader.GetString(0);
-            var snapshotVersion = reader.GetInt32(1);
-            var snapshot = _session.Serializer.FromJson<T>(json);
-            return (snapshot, snapshotVersion);
-        }
-
-        return (null, 0);
     }
 
     public async Task<T?> AggregateStreamToLastKnownAsync<T>(Guid streamId, long version = 0,

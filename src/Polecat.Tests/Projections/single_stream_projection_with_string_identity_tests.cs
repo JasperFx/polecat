@@ -1,4 +1,5 @@
 using JasperFx.Events;
+using JasperFx.Events.Projections;
 using Polecat.Projections;
 using Polecat.Tests.Harness;
 
@@ -220,14 +221,14 @@ public class single_stream_projection_with_string_identity_tests : IntegrationCo
     }
 
     [Fact]
-    public async Task snapshot_with_string_identity_via_snapshot_api()
+    public async Task self_aggregating_projection_with_string_identity()
     {
-        // Use the Snapshot<T, TId> overload with a self-aggregating type
+        // Use SingleStreamProjection<T, TId> with a self-aggregating type
         await StoreOptions(opts =>
         {
             opts.DatabaseSchemaName = "string_snap";
             opts.Events.StreamIdentity = StreamIdentity.AsString;
-            opts.Projections.Snapshot<SelfAggregatingStringQuest, string>(SnapshotLifecycle.Inline);
+            opts.Projections.Add<SingleStreamProjection<SelfAggregatingStringQuest, string>>(ProjectionLifecycle.Inline);
         });
 
         var streamKey = "snap-" + Guid.NewGuid();

@@ -50,7 +50,7 @@ All Polecat tables use the `pc_` prefix:
 
 ## Native JSON Column Type
 
-By default, Polecat uses SQL Server 2025's native `json` data type for document bodies, event data, headers, and snapshots. To fall back to `nvarchar(max)` for pre-2025 SQL Server instances:
+By default, Polecat uses SQL Server 2025's native `json` data type for document bodies, event data, and headers. To fall back to `nvarchar(max)` for pre-2025 SQL Server instances:
 
 ```cs
 opts.UseNativeJsonType = false;

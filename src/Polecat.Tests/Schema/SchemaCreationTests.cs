@@ -74,8 +74,6 @@ public class SchemaCreationTests : IAsyncLifetime
         names.ShouldContain("version");
         names.ShouldContain("timestamp");
         names.ShouldContain("created");
-        names.ShouldContain("snapshot");
-        names.ShouldContain("snapshot_version");
         names.ShouldContain("tenant_id");
         names.ShouldContain("is_archived");
     }

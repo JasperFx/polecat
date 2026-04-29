@@ -38,16 +38,6 @@ var orderAtTime = await session.Events.AggregateStreamAsync<OrderSummary>(
 );
 ```
 
-## With Snapshots
-
-If a snapshot exists for the stream, `AggregateStreamAsync` automatically uses it to optimize replay:
-
-1. Load the snapshot from `pc_streams`
-2. Only replay events after the snapshot version
-3. Return the hydrated aggregate
-
-See [Snapshots](/events/snapshots) for details on configuring snapshot storage.
-
 ## UseIdentityMapForAggregates
 
 Polecat offers a performance optimization that caches aggregates in a session-level identity map when using `FetchForWriting()`. When enabled, subsequent calls to `FetchLatest()` within the same session will return the cached instance instead of re-querying the database.

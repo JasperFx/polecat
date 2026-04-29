@@ -1,5 +1,6 @@
 using JasperFx.Events;
 using JasperFx.Events.Aggregation;
+using JasperFx.Events.Projections;
 using JasperFx.Events.Tags;
 using Polecat.Events.Dcb;
 using Polecat.Projections;
@@ -35,7 +36,7 @@ public class conjoined_tenancy_dcb_and_natural_key_tests : OneOffConfigurationsC
         ConfigureStore(opts =>
         {
             opts.Events.TenancyStyle = TenancyStyle.Conjoined;
-            opts.Projections.Snapshot<OrderAggregate>(SnapshotLifecycle.Inline);
+            opts.Projections.Add<SingleStreamProjection<OrderAggregate, Guid>>(ProjectionLifecycle.Inline);
         });
     }
 

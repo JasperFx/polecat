@@ -98,14 +98,11 @@ internal class PolecatProjectionStorage<TDoc, TId> : IProjectionStorage<TDoc, TI
         _session.WorkTracker.Add(op);
     }
 
-    public void Store(TDoc snapshot, TId id, string tenantId)
+    public void Store(TDoc document, TId id, string tenantId)
     {
-        SetIdentity(snapshot, id);
-        var op = _provider.BuildUpsert(snapshot, _session.Serializer, tenantId);
+        SetIdentity(document, id);
+        var op = _provider.BuildUpsert(document, _session.Serializer, tenantId);
         _session.WorkTracker.Add(op);
-
-        // Cache snapshot on pc_streams for fast AggregateStreamAsync
-        QueueSnapshotUpdate(snapshot, id, tenantId);
     }
 
     public void Delete(TId identity)
@@ -211,52 +208,6 @@ internal class PolecatProjectionStorage<TDoc, TId> : IProjectionStorage<TDoc, TI
     public void StoreProjection(TDoc aggregate, IEvent? lastEvent, AggregationScope scope)
     {
         Store(aggregate);
-
-        // Also cache the snapshot on pc_streams for fast AggregateStreamAsync
-        if (lastEvent != null)
-        {
-            var streamId = GetStreamId(lastEvent);
-            if (streamId != null)
-            {
-                var json = _session.Serializer.ToJson(aggregate);
-                var snapshotOp = new UpdateSnapshotOperation(
-                    _session.EventGraph, streamId, TenantId, json, lastEvent.Version);
-                _session.WorkTracker.Add(snapshotOp);
-            }
-        }
-    }
-
-    private void QueueSnapshotUpdate(TDoc snapshot, TId id, string tenantId)
-    {
-        // Find the matching stream to get the version for the snapshot
-        var stream = FindStreamForId(id);
-        if (stream == null) return;
-
-        var streamId = _session.EventGraph.StreamIdentity == JasperFx.Events.StreamIdentity.AsGuid
-            ? (object)stream.Id
-            : stream.Key!;
-
-        var json = _session.Serializer.ToJson(snapshot);
-        var snapshotOp = new UpdateSnapshotOperation(
-            _session.EventGraph, streamId, tenantId, json, stream.Version);
-        _session.WorkTracker.Add(snapshotOp);
-    }
-
-    private StreamAction? FindStreamForId(TId id)
-    {
-        foreach (var stream in _session.WorkTracker.Streams)
-        {
-            if (id is Guid guidId && stream.Id == guidId) return stream;
-            if (id is string stringId && stream.Key == stringId) return stream;
-        }
-        return null;
-    }
-
-    private static object? GetStreamId(IEvent @event)
-    {
-        if (@event.StreamId != Guid.Empty) return @event.StreamId;
-        if (!string.IsNullOrEmpty(@event.StreamKey)) return @event.StreamKey;
-        return null;
     }
 
     public void ArchiveStream(TId sliceId, string tenantId)

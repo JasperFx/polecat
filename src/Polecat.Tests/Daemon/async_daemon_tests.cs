@@ -1,4 +1,5 @@
 using JasperFx;
+using JasperFx.Events;
 using JasperFx.Events.Daemon;
 using JasperFx.Events.Projections;
 using Microsoft.Data.SqlClient;
@@ -20,7 +21,7 @@ public class async_daemon_tests : IntegrationContext
         await StoreOptions(opts =>
         {
             opts.DatabaseSchemaName = "async_daemon";
-            opts.Projections.Snapshot<QuestParty>(SnapshotLifecycle.Async);
+            opts.Projections.Add<SingleStreamProjection<QuestParty, Guid>>(ProjectionLifecycle.Async);
         });
         return theStore;
     }

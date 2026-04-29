@@ -1,5 +1,6 @@
 using JasperFx.Events;
 using JasperFx.Events.Aggregation;
+using JasperFx.Events.Projections;
 using Polecat.Projections;
 using Polecat.Tests.Harness;
 
@@ -77,7 +78,7 @@ public class natural_key_inline_guid_tests : OneOffConfigurationsContext
     {
         ConfigureStore(opts =>
         {
-            opts.Projections.Snapshot<OrderAggregate>(SnapshotLifecycle.Inline);
+            opts.Projections.Add<SingleStreamProjection<OrderAggregate, Guid>>(ProjectionLifecycle.Inline);
         });
         await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync();
     }
@@ -265,7 +266,7 @@ public class natural_key_inline_guid_tests : OneOffConfigurationsContext
     {
         ConfigureStore(opts =>
         {
-            opts.Projections.Snapshot<InvoiceAggregate>(SnapshotLifecycle.Inline);
+            opts.Projections.Add<SingleStreamProjection<InvoiceAggregate, Guid>>(ProjectionLifecycle.Inline);
         });
         await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync();
 
@@ -298,7 +299,7 @@ public class natural_key_inline_guid_tests : OneOffConfigurationsContext
 
 #endregion
 
-#region Live lifecycle (no snapshot, aggregate built from events each time)
+#region Live lifecycle (aggregate built from events each time)
 
 public class natural_key_live_tests : OneOffConfigurationsContext
 {
@@ -308,7 +309,7 @@ public class natural_key_live_tests : OneOffConfigurationsContext
         {
             // Register as Inline so the natural key projection is created,
             // but FetchForWriting always replays from events anyway
-            opts.Projections.Snapshot<OrderAggregate>(SnapshotLifecycle.Inline);
+            opts.Projections.Add<SingleStreamProjection<OrderAggregate, Guid>>(ProjectionLifecycle.Inline);
         });
         await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync();
     }
@@ -373,7 +374,7 @@ public class natural_key_string_identity_tests : OneOffConfigurationsContext
         ConfigureStore(opts =>
         {
             opts.Events.StreamIdentity = StreamIdentity.AsString;
-            opts.Projections.Snapshot<OrderAggregate>(SnapshotLifecycle.Inline);
+            opts.Projections.Add<SingleStreamProjection<OrderAggregate, Guid>>(ProjectionLifecycle.Inline);
         });
         await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync();
     }

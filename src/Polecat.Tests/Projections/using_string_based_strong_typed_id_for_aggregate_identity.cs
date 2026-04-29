@@ -76,7 +76,7 @@ public class using_string_based_strong_typed_id_for_aggregate_identity : Integra
         {
             opts.DatabaseSchemaName = "str_stid_inline";
             opts.Events.StreamIdentity = StreamIdentity.AsString;
-            opts.Projections.Snapshot<Payment2, Payment2Id>(SnapshotLifecycle.Inline);
+            opts.Projections.Add<SingleStreamProjection<Payment2, Payment2Id>>(ProjectionLifecycle.Inline);
         });
 
         var id = Guid.NewGuid().ToString();
@@ -155,7 +155,7 @@ public class using_string_based_strong_typed_id_for_aggregate_identity : Integra
         {
             opts.DatabaseSchemaName = "str_stid_async";
             opts.Events.StreamIdentity = StreamIdentity.AsString;
-            opts.Projections.Snapshot<Payment2, Payment2Id>(SnapshotLifecycle.Async);
+            opts.Projections.Add<SingleStreamProjection<Payment2, Payment2Id>>(ProjectionLifecycle.Async);
         });
 
         var id = Guid.NewGuid().ToString();

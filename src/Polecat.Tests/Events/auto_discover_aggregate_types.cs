@@ -5,7 +5,7 @@ namespace Polecat.Tests.Events;
 /// <summary>
 /// Tests that verify self-aggregating types with source-generated evolvers
 /// are automatically discovered and registered in StoreOptions.Projections
-/// even without explicit Snapshot&lt;T&gt;() registration.
+/// even without explicit Add&lt;SingleStreamProjection&lt;T, Guid&gt;&gt;() registration.
 /// </summary>
 [Collection("integration")]
 public class auto_discover_aggregate_types : IntegrationContext

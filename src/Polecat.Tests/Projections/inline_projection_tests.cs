@@ -1,3 +1,5 @@
+using JasperFx.Events;
+using JasperFx.Events.Projections;
 using Polecat.Projections;
 using Polecat.Tests.Harness;
 
@@ -62,13 +64,13 @@ public class inline_projection_tests : IntegrationContext
     {
         await StoreOptions(opts =>
         {
-            opts.Projections.Snapshot<QuestParty>(SnapshotLifecycle.Inline);
+            opts.Projections.Add<SingleStreamProjection<QuestParty, Guid>>(ProjectionLifecycle.Inline);
         });
         return theStore;
     }
 
     [Fact]
-    public async Task snapshot_is_created_on_start_stream()
+    public async Task projection_is_created_on_start_stream()
     {
         var store = await CreateStoreWithProjections();
 
@@ -87,7 +89,7 @@ public class inline_projection_tests : IntegrationContext
     }
 
     [Fact]
-    public async Task snapshot_applies_multiple_events_in_start()
+    public async Task projection_applies_multiple_events_in_start()
     {
         var store = await CreateStoreWithProjections();
 
@@ -108,7 +110,7 @@ public class inline_projection_tests : IntegrationContext
     }
 
     [Fact]
-    public async Task snapshot_updates_on_append()
+    public async Task projection_updates_on_append()
     {
         var store = await CreateStoreWithProjections();
 
@@ -134,7 +136,7 @@ public class inline_projection_tests : IntegrationContext
     }
 
     [Fact]
-    public async Task snapshot_handles_members_departed()
+    public async Task projection_handles_members_departed()
     {
         var store = await CreateStoreWithProjections();
 
@@ -158,7 +160,7 @@ public class inline_projection_tests : IntegrationContext
     }
 
     [Fact]
-    public async Task should_delete_removes_snapshot()
+    public async Task should_delete_removes_projection()
     {
         var store = await CreateStoreWithProjections();
 
@@ -231,7 +233,7 @@ public class inline_projection_tests : IntegrationContext
     }
 
     [Fact]
-    public async Task snapshot_with_version_tracking()
+    public async Task projection_with_version_tracking()
     {
         var store = await CreateStoreWithProjections();
 

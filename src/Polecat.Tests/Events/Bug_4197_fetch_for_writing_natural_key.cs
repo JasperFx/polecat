@@ -1,4 +1,6 @@
+using JasperFx.Events;
 using JasperFx.Events.Aggregation;
+using JasperFx.Events.Projections;
 using Polecat.Projections;
 using Polecat.Tests.Harness;
 
@@ -29,16 +31,13 @@ public class Bug_4197_fetch_for_writing_natural_key : OneOffConfigurationsContex
     public async Task fetch_for_writing_with_natural_key_without_explicit_projection_registration()
     {
         // No explicit projection registration — relying on auto-discovery.
-        // Trigger auto-discovery by creating a lightweight session that forces
-        // the FindNaturalKeyDefinition path to register a snapshot projection.
+        // Trigger auto-discovery by manually registering the inline projection,
+        // simulating what FindNaturalKeyDefinition auto-discovery does.
         ConfigureStore(opts => { });
 
-        // Force auto-discovery: the first FetchForWriting call with a natural key type
-        // will auto-register the Inline snapshot projection. But the natural key table
-        // won't exist yet, so we need to apply schema changes first.
-        // We accomplish this by manually registering the snapshot (simulating what
-        // auto-discovery does), then applying schema.
-        theStore.Options.Projections.Snapshot<Bug4197Aggregate>(SnapshotLifecycle.Inline);
+        // Manually register (simulating auto-discovery) then apply schema so
+        // the natural key table exists before the first FetchForWriting call.
+        theStore.Options.Projections.Add<SingleStreamProjection<Bug4197Aggregate, Guid>>(ProjectionLifecycle.Inline);
         await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync();
 
         await using var session = theStore.LightweightSession();
@@ -63,7 +62,7 @@ public class Bug_4197_fetch_for_writing_natural_key : OneOffConfigurationsContex
     {
         ConfigureStore(opts =>
         {
-            opts.Projections.Snapshot<Bug4197Aggregate>(SnapshotLifecycle.Inline);
+            opts.Projections.Add<SingleStreamProjection<Bug4197Aggregate, Guid>>(ProjectionLifecycle.Inline);
         });
 
         await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync();

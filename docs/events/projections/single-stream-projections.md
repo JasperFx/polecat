@@ -36,18 +36,18 @@ public class OrderSummary
 
 ## Registration
 
-### As a Snapshot (Inline)
+### Inline
 
 ```cs
-opts.Projections.Snapshot<OrderSummary>(SnapshotLifecycle.Inline);
+opts.Projections.Add<SingleStreamProjection<OrderSummary, Guid>>(ProjectionLifecycle.Inline);
 ```
 
 The projection runs in the same transaction as event appending. The aggregate is stored in `pc_doc_ordersummary`.
 
-### As a Snapshot (Async)
+### Async
 
 ```cs
-opts.Projections.Snapshot<OrderSummary>(SnapshotLifecycle.Async);
+opts.Projections.Add<SingleStreamProjection<OrderSummary, Guid>>(ProjectionLifecycle.Async);
 ```
 
 The async daemon processes events in the background.
@@ -75,12 +75,6 @@ var order = await session.Events.AggregateStreamAsync<OrderSummary>(streamId);
 ```
 
 This replays all events in the stream through the `Create` and `Apply` methods.
-
-## With Snapshots
-
-When registered as a snapshot, the aggregate state is stored in `pc_streams.snapshot`. Future `AggregateStreamAsync` calls load the snapshot and only replay events after the snapshot version.
-
-See [Snapshots](/events/snapshots) for details.
 
 ## Custom SingleStreamProjection Class
 

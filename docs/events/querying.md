@@ -25,7 +25,7 @@ Replay events to build the current aggregate state:
 var party = await session.Events.AggregateStreamAsync<QuestParty>(streamId);
 ```
 
-If snapshots are enabled, Polecat loads the latest snapshot and only replays events after the snapshot version.
+Polecat replays all events in the stream through the aggregate's `Apply`/`Create` methods to build the current state.
 
 ### With Version Cap
 

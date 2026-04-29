@@ -56,38 +56,6 @@ public class PolecatProjectionOptions
     }
 
     /// <summary>
-    ///     Register a self-aggregating type for snapshot projection with explicit identity type.
-    ///     The aggregate type must have Apply/Create methods matching event types.
-    /// </summary>
-    public void Snapshot<T, TId>(SnapshotLifecycle lifecycle)
-        where T : notnull, new()
-        where TId : notnull
-    {
-        var projection = new SingleStreamProjection<T, TId>();
-        var mapped = lifecycle.Map();
-        projection.Lifecycle = mapped;
-        projection.AssembleAndAssertValidity();
-
-        foreach (var eventType in projection.IncludedEventTypes)
-        {
-            _events.AddEventType(eventType);
-        }
-
-        All.Add((IProjectionSource<IDocumentSession, IQuerySession>)projection);
-    }
-
-    /// <summary>
-    ///     Register a self-aggregating type for snapshot projection.
-    ///     Uses Guid as the default stream identity type.
-    ///     The aggregate type must have Apply/Create methods matching event types.
-    /// </summary>
-    public void Snapshot<T>(SnapshotLifecycle lifecycle)
-        where T : notnull, new()
-    {
-        Snapshot<T, Guid>(lifecycle);
-    }
-
-    /// <summary>
     ///     Register a composite projection that orchestrates multiple projections
     ///     in ordered stages. Stages run sequentially; projections within a stage
     ///     run in parallel. Composite projections always run asynchronously.
@@ -185,21 +153,3 @@ public class PolecatProjectionOptions
     }
 }
 
-/// <summary>
-///     Lifecycle for snapshot projections, mirroring Marten's SnapshotLifecycle.
-/// </summary>
-public enum SnapshotLifecycle
-{
-    Inline,
-    Async
-}
-
-public static class SnapshotLifecycleExtensions
-{
-    public static ProjectionLifecycle Map(this SnapshotLifecycle lifecycle) => lifecycle switch
-    {
-        SnapshotLifecycle.Inline => ProjectionLifecycle.Inline,
-        SnapshotLifecycle.Async => ProjectionLifecycle.Async,
-        _ => throw new ArgumentOutOfRangeException(nameof(lifecycle))
-    };
-}

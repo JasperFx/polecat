@@ -32,6 +32,6 @@ features:
   - title: Document Database
     details: A full-featured document database with LINQ querying, soft deletes, optimistic concurrency, patching, and bulk operations.
   - title: Event Store
-    details: Complete event sourcing support with projections, subscriptions, snapshots, and an async daemon for eventual consistency.
+    details: Complete event sourcing support with projections, subscriptions, and an async daemon for eventual consistency.
 footer: MIT Licensed | Copyright &copy; Jeremy D. Miller and contributors.
 ---

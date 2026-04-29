@@ -28,7 +28,7 @@ Polecat manages these SQL Server objects:
 ### Event Store Tables
 
 - `pc_events` -- Global event log
-- `pc_streams` -- Stream metadata and snapshots
+- `pc_streams` -- Stream metadata
 - `pc_event_progression` -- Async daemon progress
 
 ### Support Tables

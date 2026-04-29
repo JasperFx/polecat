@@ -1,4 +1,5 @@
 using JasperFx.Events;
+using JasperFx.Events.Projections;
 using Polecat.Projections;
 using Polecat.Tests.Harness;
 
@@ -162,7 +163,7 @@ public class self_aggregating_evolve_method : IntegrationContext
         await StoreOptions(opts =>
         {
             opts.DatabaseSchemaName = "evolve_tests";
-            opts.Projections.Snapshot<MutableIEventEvolveAggregate>(SnapshotLifecycle.Inline);
+            opts.Projections.Add<SingleStreamProjection<MutableIEventEvolveAggregate, Guid>>(ProjectionLifecycle.Inline);
         });
 
         var streamId = Guid.NewGuid();
@@ -182,7 +183,7 @@ public class self_aggregating_evolve_method : IntegrationContext
         await StoreOptions(opts =>
         {
             opts.DatabaseSchemaName = "evolve_tests";
-            opts.Projections.Snapshot<MutableObjectEvolveAggregate>(SnapshotLifecycle.Inline);
+            opts.Projections.Add<SingleStreamProjection<MutableObjectEvolveAggregate, Guid>>(ProjectionLifecycle.Inline);
         });
 
         var streamId = Guid.NewGuid();
@@ -202,7 +203,7 @@ public class self_aggregating_evolve_method : IntegrationContext
         await StoreOptions(opts =>
         {
             opts.DatabaseSchemaName = "evolve_tests";
-            opts.Projections.Snapshot<ImmutableIEventEvolveAggregate>(SnapshotLifecycle.Inline);
+            opts.Projections.Add<SingleStreamProjection<ImmutableIEventEvolveAggregate, Guid>>(ProjectionLifecycle.Inline);
         });
 
         var streamId = Guid.NewGuid();
@@ -222,7 +223,7 @@ public class self_aggregating_evolve_method : IntegrationContext
         await StoreOptions(opts =>
         {
             opts.DatabaseSchemaName = "evolve_tests";
-            opts.Projections.Snapshot<ImmutableObjectEvolveAggregate>(SnapshotLifecycle.Inline);
+            opts.Projections.Add<SingleStreamProjection<ImmutableObjectEvolveAggregate, Guid>>(ProjectionLifecycle.Inline);
         });
 
         var streamId = Guid.NewGuid();
@@ -242,7 +243,7 @@ public class self_aggregating_evolve_method : IntegrationContext
         await StoreOptions(opts =>
         {
             opts.DatabaseSchemaName = "evolve_tests";
-            opts.Projections.Snapshot<AsyncEvolveAggregate>(SnapshotLifecycle.Inline);
+            opts.Projections.Add<SingleStreamProjection<AsyncEvolveAggregate, Guid>>(ProjectionLifecycle.Inline);
         });
 
         var streamId = Guid.NewGuid();
@@ -261,7 +262,7 @@ public class self_aggregating_evolve_method : IntegrationContext
         await StoreOptions(opts =>
         {
             opts.DatabaseSchemaName = "evolve_tests";
-            opts.Projections.Snapshot<ImmutableAsyncEvolveAggregate>(SnapshotLifecycle.Inline);
+            opts.Projections.Add<SingleStreamProjection<ImmutableAsyncEvolveAggregate, Guid>>(ProjectionLifecycle.Inline);
         });
 
         var streamId = Guid.NewGuid();
@@ -280,7 +281,7 @@ public class self_aggregating_evolve_method : IntegrationContext
         await StoreOptions(opts =>
         {
             opts.DatabaseSchemaName = "evolve_tests";
-            opts.Projections.Snapshot<MutableIEventEvolveAggregate>(SnapshotLifecycle.Inline);
+            opts.Projections.Add<SingleStreamProjection<MutableIEventEvolveAggregate, Guid>>(ProjectionLifecycle.Inline);
         });
 
         var streamId = Guid.NewGuid();

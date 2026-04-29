@@ -16,7 +16,7 @@ Polecat uses three core tables (all prefixed with `pc_`):
 | Table | Purpose |
 | :--- | :--- |
 | `pc_events` | All events with sequence IDs, stream references, JSON data |
-| `pc_streams` | Stream metadata: version, type, timestamps, snapshots |
+| `pc_streams` | Stream metadata: version, type, timestamps |
 | `pc_event_progression` | Async daemon progress tracking per projection |
 
 ## Stream Identity
