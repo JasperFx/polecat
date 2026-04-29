@@ -64,6 +64,7 @@ public class inline_projection_tests : IntegrationContext
     {
         await StoreOptions(opts =>
         {
+            opts.DatabaseSchemaName = "inline_proj";
             opts.Projections.Add<SingleStreamProjection<QuestParty, Guid>>(ProjectionLifecycle.Inline);
         });
         return theStore;
