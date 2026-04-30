@@ -54,7 +54,7 @@ public class composite_projection_tests : IntegrationContext
             opts.DatabaseSchemaName = "composite_test1";
             opts.Projections.CompositeProjectionFor("SingleStageComposite", composite =>
             {
-                composite.Add<SingleStreamProjection<CompositeQuestParty, Guid>>();
+                composite.Snapshot<CompositeQuestParty>();
             });
         });
 
@@ -84,8 +84,8 @@ public class composite_projection_tests : IntegrationContext
             opts.DatabaseSchemaName = "composite_test2";
             opts.Projections.CompositeProjectionFor("TwoStageComposite", composite =>
             {
-                composite.Add<SingleStreamProjection<CompositeQuestParty, Guid>>(1);  // stage 1
-                composite.Add<SingleStreamProjection<QuestStats, Guid>>(2);            // stage 2
+                composite.Snapshot<CompositeQuestParty>(1);  // stage 1
+                composite.Snapshot<QuestStats>(2);            // stage 2
             });
         });
 
@@ -121,8 +121,8 @@ public class composite_projection_tests : IntegrationContext
             opts.DatabaseSchemaName = "composite_test3";
             opts.Projections.CompositeProjectionFor("ParallelComposite", composite =>
             {
-                composite.Add<SingleStreamProjection<CompositeQuestParty, Guid>>();
-                composite.Add<SingleStreamProjection<QuestStats, Guid>>();
+                composite.Snapshot<CompositeQuestParty>();
+                composite.Snapshot<QuestStats>();
             });
         });
 
@@ -155,7 +155,7 @@ public class composite_projection_tests : IntegrationContext
             opts.DatabaseSchemaName = "composite_test4";
             opts.Projections.CompositeProjectionFor("AppendComposite", composite =>
             {
-                composite.Add<SingleStreamProjection<CompositeQuestParty, Guid>>();
+                composite.Snapshot<CompositeQuestParty>();
             });
         });
 
