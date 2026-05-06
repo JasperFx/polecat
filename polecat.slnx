@@ -1,8 +1,4 @@
 <Solution>
-  <Folder Name="/Attached/">
-    <Project Path="../jasperfx/src/JasperFx.Events.SourceGenerator/JasperFx.Events.SourceGenerator.csproj" />
-    <Project Path="../jasperfx/src/JasperFx.SourceGeneration/JasperFx.SourceGeneration.csproj" />
-  </Folder>
   <Folder Name="/SolutionItems/">
     <File Path="Directory.Build.props" />
     <File Path="Directory.Packages.props" />

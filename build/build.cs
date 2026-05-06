@@ -245,6 +245,12 @@ class Build : NukeBuild
             }
         }
 
+        // dotnet sln add can transitively pull in additional projects
+        // (e.g. JasperFx.SourceGeneration when adding JasperFx) that we
+        // never explicitly attached. Strip any remaining /Attached/ folder
+        // from the slnx so detach is fully reversible.
+        StripAttachedFolderFromSlnx();
+
         foreach (var nuget in Nugets)
         {
             if (!NugetConsumers.TryGetValue(nuget, out var consumers)) continue;
@@ -254,6 +260,24 @@ class Build : NukeBuild
             }
         }
     });
+
+    private void StripAttachedFolderFromSlnx()
+    {
+        var slnxPath = (string)Solution.Path;
+        if (!File.Exists(slnxPath)) return;
+
+        var content = File.ReadAllText(slnxPath);
+        // Match the entire <Folder Name="/Attached/"> ... </Folder> block, including any
+        // surrounding whitespace + line breaks so the file stays clean.
+        var pattern = @"\s*<Folder Name=""/Attached/"">(?:[\s\S]*?)</Folder>";
+        var stripped = System.Text.RegularExpressions.Regex.Replace(content, pattern, string.Empty);
+
+        if (stripped != content)
+        {
+            File.WriteAllText(slnxPath, stripped);
+            Log.Information("Removed /Attached/ folder from {Slnx}", slnxPath);
+        }
+    }
 
     private void addProject(string repository, string projectName)
     {
