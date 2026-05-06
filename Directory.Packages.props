@@ -5,8 +5,8 @@
 
     <ItemGroup>
         <!-- Core dependencies -->
-        <PackageVersion Include="JasperFx" Version="1.23.0" />
-        <PackageVersion Include="JasperFx.Events" Version="1.26.0" />
+        <PackageVersion Include="JasperFx" Version="1.29.1" />
+        <PackageVersion Include="JasperFx.Events" Version="1.33.2" />
         <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
@@ -25,8 +25,8 @@
         <PackageVersion Include="Shouldly" Version="4.3.0" />
         <PackageVersion Include="xunit" Version="2.9.3" />
         <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.4" />
-        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="8.12.1" />
-        <PackageVersion Include="Weasel.SqlServer" Version="8.12.1" />
+        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="8.14.1" />
+        <PackageVersion Include="Weasel.SqlServer" Version="8.14.1" />
 
         <!-- Strongly typed IDs -->
         <PackageVersion Include="StronglyTypedId" Version="1.0.0-beta08" />

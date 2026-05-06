@@ -1,12 +1,7 @@
 <Solution>
   <Folder Name="/Attached/">
     <Project Path="../jasperfx/src/JasperFx.Events.SourceGenerator/JasperFx.Events.SourceGenerator.csproj" />
-    <Project Path="../jasperfx/src/JasperFx.Events/JasperFx.Events.csproj" />
     <Project Path="../jasperfx/src/JasperFx.SourceGeneration/JasperFx.SourceGeneration.csproj" />
-    <Project Path="../jasperfx/src/JasperFx/JasperFx.csproj" />
-    <Project Path="../weasel/src/Weasel.Core/Weasel.Core.csproj" />
-    <Project Path="../weasel/src/Weasel.EntityFrameworkCore/Weasel.EntityFrameworkCore.csproj" />
-    <Project Path="../weasel/src/Weasel.SqlServer/Weasel.SqlServer.csproj" />
   </Folder>
   <Folder Name="/SolutionItems/">
     <File Path="Directory.Build.props" />
