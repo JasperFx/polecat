@@ -163,6 +163,20 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
         hilo.AddValue(nameof(Options.HiloSequenceDefaults.MaxAdvanceToNextHiAttempts), Options.HiloSequenceDefaults.MaxAdvanceToNextHiAttempts);
         usage.Children["HiloSequenceDefaults"] = hilo;
 
+        // DCB tag-type registrations — first-class typed list mirroring
+        // Marten's plumbing. Polecat doesn't expose a GlobalAggregates surface
+        // yet; that list stays empty until the equivalent lands.
+        foreach (var registration in Options.EventGraph.TagTypes)
+        {
+            usage.TagTypes.Add(new JasperFx.Events.Descriptors.TagTypeDescriptor
+            {
+                TagType = registration.TagType.FullName ?? registration.TagType.Name,
+                SimpleType = registration.SimpleType.FullName ?? registration.SimpleType.Name,
+                TableSuffix = registration.TableSuffix,
+                AggregateType = registration.AggregateType?.FullName,
+            });
+        }
+
         Options.Projections.Describe(usage, this);
         return usage;
     }

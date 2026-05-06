@@ -49,6 +49,12 @@ public static class PolecatStoreServiceCollectionExtensions
 
         services.AddSingleton<Lazy<T>>(sp => new Lazy<T>(() => sp.GetRequiredService<T>()));
 
+        // Bridge so monitoring tools discover the ancillary store via
+        // GetServices<IDocumentStoreUsageSource>(). Mirrors the bridge in
+        // PolecatServiceCollectionExtensions.AddPolecat for the primary store.
+        services.AddSingleton<JasperFx.Events.IDocumentStoreUsageSource>(sp =>
+            sp.GetRequiredService<T>());
+
         return new PolecatStoreExpression<T>(services);
     }
 

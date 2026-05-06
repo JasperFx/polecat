@@ -1,10 +1,12 @@
+using JasperFx.Events;
+
 namespace Polecat;
 
 /// <summary>
 ///     The main entry point for Polecat. Creates sessions for document and event operations.
 ///     Typically registered as a singleton in DI.
 /// </summary>
-public interface IDocumentStore : IDisposable, IAsyncDisposable
+public interface IDocumentStore : IDisposable, IAsyncDisposable, IDocumentStoreUsageSource
 {
     /// <summary>
     ///     The configuration options for this store.

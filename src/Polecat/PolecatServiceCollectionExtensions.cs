@@ -65,6 +65,13 @@ public static class PolecatServiceCollectionExtensions
             return new DocumentStore(options);
         });
 
+        // Bridge so monitoring tools (CritterWatch / Wolverine
+        // ServiceCapabilities.readDocumentStores) can discover this store via
+        // GetServices<IDocumentStoreUsageSource>(). Mirrors Marten's parallel
+        // bridge for IEventStore.
+        services.AddSingleton<JasperFx.Events.IDocumentStoreUsageSource>(sp =>
+            sp.GetRequiredService<IDocumentStore>());
+
         // Default session factory: lightweight sessions
         services.TryAddSingleton<ISessionFactory>(sp =>
             new DefaultSessionFactory(sp.GetRequiredService<IDocumentStore>()));

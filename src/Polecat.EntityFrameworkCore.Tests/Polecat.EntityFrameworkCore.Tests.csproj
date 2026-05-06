@@ -24,11 +24,14 @@
         <ProjectReference Include="..\Polecat.TestUtils\Polecat.TestUtils.csproj" />
         <ProjectReference Include="..\Polecat\Polecat.csproj" />
         <ProjectReference Include="..\Polecat.EntityFrameworkCore\Polecat.EntityFrameworkCore.csproj" />
-        <PackageReference Include="Weasel.SqlServer" />
     </ItemGroup>
 
     <ItemGroup>
         <Content Include="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <ProjectReference Include="..\..\..\weasel\src\Weasel.SqlServer\Weasel.SqlServer.csproj" />
     </ItemGroup>
 
 </Project>
