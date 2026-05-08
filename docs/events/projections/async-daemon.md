@@ -23,7 +23,26 @@ var store = DocumentStore.For(opts =>
 });
 ```
 
-The daemon starts automatically when the .NET host starts.
+When wired up through `AddPolecat()`, opt the daemon into the host's lifetime
+explicitly with `AddAsyncDaemon(DaemonMode)`:
+
+```cs
+builder.Services.AddPolecat(opts =>
+{
+    opts.Connection("...");
+
+    opts.Projections.Snapshot<OrderSummary>(SnapshotLifecycle.Async);
+    opts.Projections.Add<DashboardProjection>(ProjectionLifecycle.Async);
+})
+.AddAsyncDaemon(DaemonMode.Solo)        // start the daemon as IHostedService
+.ApplyAllDatabaseChangesOnStartup();    // run schema migration at boot
+```
+
+::: tip
+Async projections do **not** run unless you call `AddAsyncDaemon(...)`. Use
+`DaemonMode.Solo` for single-node deployments and `DaemonMode.HotCold` for
+multi-node deployments where only one host should own each projection shard.
+:::
 
 ## Daemon Settings
 

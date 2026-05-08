@@ -54,6 +54,16 @@ public class StoreOptions
     }
 
     /// <summary>
+    ///     Supply the connection string to the SQL Server database. Provided for API
+    ///     parity with Marten's <c>StoreOptions.Connection(string)</c> — equivalent to
+    ///     setting <see cref="ConnectionString"/> directly.
+    /// </summary>
+    public void Connection(string connectionString)
+    {
+        ConnectionString = connectionString;
+    }
+
+    /// <summary>
     ///     The default database schema name. Defaults to "dbo".
     /// </summary>
     public string DatabaseSchemaName

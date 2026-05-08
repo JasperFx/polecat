@@ -44,13 +44,37 @@ builder.Services.AddPolecat(options =>
 
     // Optionally change the default schema (default is "dbo")
     options.DatabaseSchemaName = "myschema";
-});
+})
+// Run Weasel schema migration on startup so the pc_* tables exist
+// before the first session is opened. Recommended in development;
+// in production you'll typically generate scripts ahead of time instead.
+.ApplyAllDatabaseChangesOnStartup();
+```
+
+If you have async projections registered, also opt the daemon into the host:
+
+```cs
+builder.Services.AddPolecat(options =>
+{
+    options.Connection("...");
+    options.Projections.Add<MyProjection>(ProjectionLifecycle.Async);
+})
+.ApplyAllDatabaseChangesOnStartup()
+.AddAsyncDaemon(DaemonMode.Solo);
 ```
 
 See [Bootstrapping Polecat](/configuration/hostbuilder) for more options.
 
 ::: tip
 `AddPolecat()` registers `IDocumentStore` as a singleton, and `IDocumentSession` / `IQuerySession` as scoped services. In most cases you should inject a session directly.
+:::
+
+::: warning
+`AddPolecat()` only registers services. The pc_* event store and document
+tables are not created until either `ApplyAllDatabaseChangesOnStartup()`
+runs (recommended) or the first session triggers `AutoCreateSchemaObjects`.
+Calling `store.Advanced.CleanAllEventDataAsync()` before either has happened
+on a brand-new database is a no-op rather than an error.
 :::
 
 ## Working with Documents

@@ -59,6 +59,14 @@ public class StoreOptionsTests
     }
 
     [Fact]
+    public void connection_method_sets_connection_string()
+    {
+        var options = new StoreOptions();
+        options.Connection("Server=localhost;Database=test;");
+        options.ConnectionString.ShouldBe("Server=localhost;Database=test;");
+    }
+
+    [Fact]
     public void create_connection_factory_throws_without_connection_string()
     {
         var options = new StoreOptions();

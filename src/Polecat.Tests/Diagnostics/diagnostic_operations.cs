@@ -65,6 +65,39 @@ public class diagnostic_operations : IntegrationContext
     }
 
     [Fact]
+    public async Task clean_all_event_data_is_safe_when_tables_do_not_exist()
+    {
+        // Repro for a bootstrap pain point reported in #42: calling
+        // CleanAllEventDataAsync() against a fresh database (no pc_events /
+        // pc_streams / pc_event_progression yet) should be a no-op rather
+        // than blowing up with "Invalid object name".
+        var schema = $"clean_missing_{Guid.NewGuid():N}".Substring(0, 24);
+
+        // Create an empty schema but do NOT migrate any tables into it.
+        await using (var conn = new Microsoft.Data.SqlClient.SqlConnection(ConnectionSource.ConnectionString))
+        {
+            await conn.OpenAsync();
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText =
+                $"IF SCHEMA_ID('{schema}') IS NULL EXEC('CREATE SCHEMA [{schema}]');";
+            await cmd.ExecuteNonQueryAsync();
+        }
+
+        var options = new StoreOptions
+        {
+            ConnectionString = ConnectionSource.ConnectionString,
+            AutoCreateSchemaObjects = JasperFx.AutoCreate.None,
+            DatabaseSchemaName = schema,
+            UseNativeJsonType = ConnectionSource.SupportsNativeJson
+        };
+
+        await using var pristineStore = new DocumentStore(options);
+
+        // Should not throw — every DELETE is now guarded by IF OBJECT_ID(...) IS NOT NULL.
+        await Should.NotThrowAsync(() => pristineStore.Advanced.CleanAllEventDataAsync());
+    }
+
+    [Fact]
     public async Task to_sql_returns_expected_query()
     {
         await using var query = theStore.QuerySession();

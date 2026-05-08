@@ -86,7 +86,7 @@ public class AdvancedOperations
             // Sync metadata
             if (doc is ITracked tracked)
             {
-                // No session-level correlation for bulk insert — leave as-is
+                // No session-level correlation for bulk insert ï¿½ leave as-is
             }
 
             if (doc is ITenanted tenanted)
@@ -413,22 +413,24 @@ public class AdvancedOperations
                 }
             }
 
-            // Delete in FK-safe order: events first, then streams, then progression
+            // Delete in FK-safe order: events first, then streams, then progression.
+            // Guard against missing tables so this is safe to call before the event
+            // store schema has been created (e.g. during bootstrap of a fresh database).
             await using (var cmd = conn.CreateCommand())
             {
-                cmd.CommandText = $"DELETE FROM {evtTable};";
+                cmd.CommandText = $"IF OBJECT_ID('{evtTable}', 'U') IS NOT NULL DELETE FROM {evtTable};";
                 await cmd.ExecuteNonQueryAsync(ct);
             }
 
             await using (var cmd = conn.CreateCommand())
             {
-                cmd.CommandText = $"DELETE FROM {strmTable};";
+                cmd.CommandText = $"IF OBJECT_ID('{strmTable}', 'U') IS NOT NULL DELETE FROM {strmTable};";
                 await cmd.ExecuteNonQueryAsync(ct);
             }
 
             await using (var cmd = conn.CreateCommand())
             {
-                cmd.CommandText = $"DELETE FROM {progTable};";
+                cmd.CommandText = $"IF OBJECT_ID('{progTable}', 'U') IS NOT NULL DELETE FROM {progTable};";
                 await cmd.ExecuteNonQueryAsync(ct);
             }
         }, (connStr, schema, eventsTable, streamsTable, progressionTable), token);
