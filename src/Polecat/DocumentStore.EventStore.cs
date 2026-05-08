@@ -175,6 +175,22 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
                 TableSuffix = registration.TableSuffix,
                 AggregateType = registration.AggregateType?.FullName,
             });
+
+            usage.DcbTagTypes.Add(new DcbTagDescriptor(
+                Name: registration.TagType.Name,
+                SimpleType: registration.SimpleType.FullName ?? registration.SimpleType.Name,
+                TagType: TypeDescriptor.For(registration.TagType),
+                Description: null!));
+        }
+
+        // Event-type registry — populates the explorer's "known event types"
+        // panel without forcing operators to crack open assembly metadata.
+        foreach (var registered in Options.EventGraph.AllKnownEventTypes())
+        {
+            usage.RegisteredEventTypes.Add(new EventTypeDescriptor(
+                EventType: TypeDescriptor.For(registered.EventType),
+                Alias: registered.EventTypeName,
+                Description: null!));
         }
 
         Options.Projections.Describe(usage, this);
