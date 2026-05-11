@@ -4,7 +4,7 @@
         <TargetFrameworks>net9.0;net10.0</TargetFrameworks>
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
-        <Version>3.2.1</Version>
+        <Version>4.0.0-alpha.1</Version>
         <LangVersion>latest</LangVersion>
         <Authors>Jeremy D. Miller</Authors>
         <PackageIcon>logo.png</PackageIcon>
