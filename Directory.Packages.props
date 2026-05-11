@@ -5,7 +5,7 @@
 
     <ItemGroup>
         <!-- Core dependencies -->
-        <PackageVersion Include="JasperFx" Version="2.0.0-alpha.3" />
+        <PackageVersion Include="JasperFx" Version="2.0.0-alpha.4" />
         <PackageVersion Include="JasperFx.Events" Version="2.0.0-alpha.2" />
         <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
