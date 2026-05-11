@@ -1,4 +1,5 @@
 using JasperFx.Descriptors;
+using JasperFx.MultiTenancy;
 using Polecat.Internal;
 
 namespace Polecat.Storage;
@@ -70,7 +71,7 @@ public class SeparateDatabaseTenancy : ITenancy
     ConnectionFactory ITenancy.GetConnectionFactory(string tenantId)
     {
         if (_factories.TryGetValue(tenantId, out var factory)) return factory;
-        throw new Exceptions.UnknownTenantException(tenantId);
+        throw new UnknownTenantIdException(tenantId);
     }
 
     PolecatDatabase ITenancy.GetDatabase(string tenantId)
@@ -78,7 +79,7 @@ public class SeparateDatabaseTenancy : ITenancy
         if (_databases.TryGetValue(tenantId, out var database)) return database;
 
         if (!_factories.TryGetValue(tenantId, out var factory))
-            throw new Exceptions.UnknownTenantException(tenantId);
+            throw new UnknownTenantIdException(tenantId);
 
         database = new PolecatDatabase(_options, factory.ConnectionString, $"Polecat_{tenantId}");
         _databases[tenantId] = database;
