@@ -167,7 +167,13 @@ public class composite_try_find_upstream_cache_tests : IntegrationContext
         notification.Carrier.ShouldBe("UPS");
     }
 
-    [Fact]
+    [Fact(Skip = "Tracks JasperFx/jasperfx#226 — RecentlyUsedCache.Store is not thread-safe; "
+                + "concurrent Store() calls under the daemon's 10-way Block parallelism lose entries "
+                + "via a field-level lost-update race. Independent of the deferred-compaction fix this "
+                + "test was originally written for (#206). Un-skip once Polecat consumes the JasperFx "
+                + "version that fixes the cache race — likely arrives with the Polecat 4 cutover onto "
+                + "JasperFx 2.x. See JasperFx/polecat#53 for the original CI failure and "
+                + "JasperFx/jasperfx#226 for the root-cause analysis.")]
     public async Task tiny_upstream_cache_limit_does_not_starve_downstream_stage()
     {
         // Regression coverage from JasperFx/jasperfx#206. Before that fix,
@@ -176,6 +182,9 @@ public class composite_try_find_upstream_cache_tests : IntegrationContext
         // producing zero-data downstream notifications even though every upstream
         // write succeeded. With JasperFx.Events 1.35.0 in place, the upstream
         // cache is held until *all* composite stages have run.
+        //
+        // Currently skipped — see [Fact(Skip = ...)] above for the JasperFx-side
+        // race that prevents this test from running reliably on Polecat 3.x.
         await StoreOptions(opts =>
         {
             opts.DatabaseSchemaName = "composite_tiny_cache";
