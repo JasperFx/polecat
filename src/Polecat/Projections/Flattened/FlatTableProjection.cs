@@ -116,7 +116,7 @@ public abstract class FlatTableProjection : ProjectionBase,
     }
 
     // IInlineProjection<IDocumentSession>
-    public async Task ApplyAsync(IDocumentSession operations, IReadOnlyList<StreamAction> streams,
+    public async Task ApplyAsync(IDocumentSession operations, IEnumerable<StreamAction> streams,
         CancellationToken cancellation)
     {
         if (operations is not DocumentSessionBase sessionBase) return;

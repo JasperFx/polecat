@@ -2,6 +2,7 @@ using Microsoft.Data.SqlClient;
 using Polecat.Metadata;
 using Polecat.Tests.Harness;
 using Shouldly;
+using Weasel.Core;
 
 namespace Polecat.Tests.BulkInsert;
 

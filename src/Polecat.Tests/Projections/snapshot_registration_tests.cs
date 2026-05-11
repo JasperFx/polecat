@@ -1,6 +1,11 @@
 using JasperFx.Events.Projections;
 using Polecat.Projections;
 using Polecat.Tests.Harness;
+// JasperFx.Events 2.0.0-alpha.2 added JasperFx.Events.Projections.SnapshotLifecycle —
+// collides with Polecat.Projections.SnapshotLifecycle when both namespaces are
+// imported. Stopgap alias keeps this test pointing at the local enum until
+// polecat#52 migrates the codebase off the local copy.
+using SnapshotLifecycle = Polecat.Projections.SnapshotLifecycle;
 
 namespace Polecat.Tests.Projections;
 
