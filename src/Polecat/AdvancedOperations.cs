@@ -6,6 +6,7 @@ using Polecat.Internal;
 using Polecat.Metadata;
 using Polecat.Schema.Identity.Sequences;
 using Polecat.Storage;
+using Weasel.Core;
 
 namespace Polecat;
 
@@ -210,6 +211,19 @@ public class AdvancedOperations
                 }
 
                 break;
+
+            case BulkInsertMode.OverwriteIfVersionMatches:
+                // Polecat consumes Weasel.Core.BulkInsertMode after the
+                // BulkInsertMode promotion (audit row JasperFx/weasel#264),
+                // which adds this fourth mode. Implementation requires a
+                // per-document expected-version metadata source that
+                // Polecat's bulk-insert API does not yet expose — tracked
+                // as Polecat #48.
+                throw new NotSupportedException(
+                    "BulkInsertMode.OverwriteIfVersionMatches is not yet implemented in Polecat. " +
+                    "The bulk-insert API needs to expose per-document expected-version metadata first. " +
+                    "Tracked as https://github.com/JasperFx/polecat/issues/48. " +
+                    "Use OverwriteExisting in the meantime if optimistic concurrency on bulk inserts is not required.");
         }
 
         cmd.CommandText = sb.ToString();

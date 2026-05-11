@@ -27,7 +27,7 @@ internal class NaturalKeyProjection : IInlineProjection<IDocumentSession>
         _isConjoined = events.TenancyStyle == TenancyStyle.Conjoined;
     }
 
-    public Task ApplyAsync(IDocumentSession operations, IReadOnlyList<StreamAction> streams,
+    public Task ApplyAsync(IDocumentSession operations, IEnumerable<StreamAction> streams,
         CancellationToken cancellation)
     {
         if (operations is not DocumentSessionBase sessionBase) return Task.CompletedTask;
