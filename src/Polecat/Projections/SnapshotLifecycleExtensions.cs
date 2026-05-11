@@ -3,22 +3,13 @@ using JasperFx.Events.Projections;
 namespace Polecat.Projections;
 
 /// <summary>
-///     Lifecycle for snapshot (self-aggregating) projections registered via
-///     <see cref="PolecatProjectionOptions.Snapshot{T}(SnapshotLifecycle)"/>.
+/// Maps the canonical <see cref="SnapshotLifecycle"/> (defined in
+/// <c>JasperFx.Events.Projections</c>) onto Polecat's projection-registration
+/// <see cref="ProjectionLifecycle"/>. Kept product-local because the broader
+/// <see cref="ProjectionLifecycle"/> is a projection-registration concern,
+/// not a shared event-sourcing concept (per the dedup audit row
+/// JasperFx/jasperfx#220 / pillar #214).
 /// </summary>
-public enum SnapshotLifecycle
-{
-    /// <summary>
-    ///     The snapshot will be updated in the same transaction as the events being captured.
-    /// </summary>
-    Inline,
-
-    /// <summary>
-    ///     The snapshot will be made asynchronously within the async projection daemon.
-    /// </summary>
-    Async
-}
-
 internal static class SnapshotLifecycleExtensions
 {
     public static ProjectionLifecycle ToProjectionLifecycle(this SnapshotLifecycle lifecycle) =>

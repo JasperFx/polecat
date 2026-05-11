@@ -1,7 +1,7 @@
 using JasperFx;
 using JasperFx.Descriptors;
+using JasperFx.MultiTenancy;
 using Microsoft.Data.SqlClient;
-using Polecat.Exceptions;
 using Polecat.Storage;
 using Polecat.Tests.Harness;
 
@@ -184,7 +184,7 @@ public class separate_database_tenancy_tests : IAsyncLifetime
     {
         using var store = CreateSeparateTenantStore();
 
-        Should.Throw<UnknownTenantException>(() =>
+        Should.Throw<UnknownTenantIdException>(() =>
         {
             store.LightweightSession(new SessionOptions { TenantId = "nonexistent" });
         });

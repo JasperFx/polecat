@@ -2,8 +2,6 @@ using JasperFx.Events.Projections;
 using Polecat.Projections;
 using Polecat.Tests.Harness;
 using Polecat.Tests.Projections;
-// See snapshot_registration_tests.cs — stopgap until polecat#52.
-using SnapshotLifecycle = Polecat.Projections.SnapshotLifecycle;
 
 namespace Polecat.Tests.Daemon;
 
