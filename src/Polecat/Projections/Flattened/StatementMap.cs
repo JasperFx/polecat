@@ -196,8 +196,13 @@ public class StatementMap<TEvent> : IFlatTableEventHandler
     private Table.ColumnExpression ResolveColumn(string columnName, Type dotnetType)
     {
         var table = _parent.Table;
-        // Check if column already exists on the table — don't add duplicates
-        var existing = table.Columns.FirstOrDefault(c => c.Name == columnName);
+        // SQL Server identifiers are case-insensitive in the default collation,
+        // so two Project<>() handlers that map to the same logical column with
+        // different casings (e.g. "Amount" and "amount") must resolve to a
+        // single column rather than producing duplicate-column DDL — see
+        // issue #45.
+        var existing = table.Columns.FirstOrDefault(c =>
+            string.Equals(c.Name, columnName, StringComparison.OrdinalIgnoreCase));
         if (existing != null)
         {
             return new Table.ColumnExpression(table, existing);

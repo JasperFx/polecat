@@ -29,6 +29,32 @@ public class QuestMetricsProjection : FlatTableProjection
     }
 }
 
+// Repro for issue #45 — PascalCase column names should be preserved on SQL Server,
+// and the same logical column referenced with different casing should not produce
+// duplicate-column DDL or duplicate INSERT/UPDATE clauses.
+public record OrderCreated(decimal Amount);
+public record OrderShipped(decimal Amount);
+
+public class PascalCaseFlatProjection : FlatTableProjection
+{
+    public PascalCaseFlatProjection() : base("order_history")
+    {
+        // PK uses the default stream id setter — matches user's scenario in #45
+        Table.AddColumn("Id", "uniqueidentifier").AsPrimaryKey();
+
+        Project<OrderCreated>(map =>
+        {
+            map.Map(e => e.Amount, "Amount");
+        });
+
+        Project<OrderShipped>(map =>
+        {
+            // Same logical column, different casing — should NOT add a duplicate.
+            map.Map(e => e.Amount, "amount");
+        });
+    }
+}
+
 [Collection("integration")]
 public class flat_table_projection_tests : IntegrationContext
 {
@@ -174,6 +200,57 @@ public class flat_table_projection_tests : IntegrationContext
         // SetValue("member_count", 0) should set the initial value
         var memberCount = await ReadMetric<int>("member_count", streamId);
         memberCount.ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task flat_table_preserves_pascal_case_column_names()
+    {
+        // Mirrors issue #45 — user wants to keep PascalCase column names
+        // for compatibility with legacy SQL Server tables. Weasel previously
+        // force-lowercased column names which produced duplicate-column DDL
+        // errors when two events mapped to the same logical column with
+        // different casing.
+        await StoreOptions(opts =>
+        {
+            opts.Projections.Add<PascalCaseFlatProjection>(ProjectionLifecycle.Inline);
+        });
+
+        await using (var conn = await OpenConnectionAsync())
+        await using (var dropCmd = conn.CreateCommand())
+        {
+            dropCmd.CommandText = "IF OBJECT_ID('dbo.order_history', 'U') IS NOT NULL DROP TABLE dbo.order_history;";
+            await dropCmd.ExecuteNonQueryAsync();
+        }
+
+        var streamId = Guid.NewGuid();
+        await using var session = theStore.LightweightSession();
+        session.Events.StartStream(streamId,
+            new OrderCreated(100m),
+            new OrderShipped(25m));
+        await session.SaveChangesAsync();
+
+        // Verify the column was created with the expected PascalCase name
+        await using var conn2 = await OpenConnectionAsync();
+        await using var cmd = conn2.CreateCommand();
+        cmd.CommandText = """
+            SELECT COLUMN_NAME
+            FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = 'dbo' AND TABLE_NAME = 'order_history'
+            ORDER BY COLUMN_NAME;
+            """;
+        var columns = new List<string>();
+        await using (var reader = await cmd.ExecuteReaderAsync())
+        {
+            while (await reader.ReadAsync())
+            {
+                columns.Add(reader.GetString(0));
+            }
+        }
+
+        // Column should preserve the user's "Amount" casing
+        columns.ShouldContain("Amount");
+        // And there should not be a duplicate lowercase "amount" column
+        columns.Count(c => c.Equals("amount", StringComparison.OrdinalIgnoreCase)).ShouldBe(1);
     }
 
     [Fact]
