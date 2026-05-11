@@ -153,12 +153,14 @@ public class EfCoreSchemaTests
         // Verify expected number of columns were mapped (Id, EntityTypeId, Featured, InternalName)
         entityTable.Columns.Count.ShouldBe(4);
 
-        // Weasel normalizes column names to lowercase
+        // Weasel preserves the casing supplied by EF Core's model (PascalCase by default).
+        // Lookups are case-insensitive (matches SQL Server identifier semantics in the
+        // default collation) — see JasperFx/polecat#45 / JasperFx/weasel#267.
         var columnNames = entityTable.Columns.Select(c => c.Name).ToList();
-        columnNames.ShouldContain("id");
-        columnNames.ShouldContain("entitytypeid");
-        columnNames.ShouldContain("featured");
-        columnNames.ShouldContain("internalname");
+        columnNames.ShouldContain("Id");
+        columnNames.ShouldContain("EntityTypeId");
+        columnNames.ShouldContain("Featured");
+        columnNames.ShouldContain("InternalName");
     }
 
     [Fact]
