@@ -7,6 +7,7 @@ using JasperFx.Events.Daemon;
 using JasperFx.Events.Projections;
 using Microsoft.Data.SqlClient;
 using Polecat.Events;
+using Polecat.Events.Internal;
 using Polecat.Storage;
 
 namespace Polecat;
@@ -28,8 +29,11 @@ public partial class DocumentStore
         await using var conn = new SqlConnection(Options.ConnectionString);
         await conn.OpenAsync(ct);
         await using var cmd = conn.CreateCommand();
+        // #57: share the column projection + row read with FetchStreamStateAsync
+        // and GetStreamMetadataAsync via PcStreamsRowReader so all three sites
+        // stay aligned when pc_streams' shape evolves.
         cmd.CommandText = $"""
-            SELECT TOP (@count) id, type, version, created, timestamp, tenant_id
+            SELECT TOP (@count) {PcStreamsRowReader.SelectColumns}
             FROM {Events.StreamsTableName}
             ORDER BY timestamp DESC;
             """;
@@ -38,19 +42,7 @@ public partial class DocumentStore
         await using var reader = await cmd.ExecuteReaderAsync(ct);
         while (await reader.ReadAsync(ct))
         {
-            var streamIdValue = reader.GetValue(0);
-            var streamId = streamIdValue switch
-            {
-                Guid g => g.ToString(),
-                _ => streamIdValue.ToString() ?? string.Empty
-            };
-            var streamType = reader.IsDBNull(1) ? null : reader.GetString(1);
-            var version = reader.GetInt64(2);
-            var created = reader.GetDateTimeOffset(3);
-            var lastUpdated = reader.GetDateTimeOffset(4);
-            var tenantId = reader.IsDBNull(5) ? Tenancy.DefaultTenantId : reader.GetString(5);
-
-            results.Add(new StreamSummary(streamId, streamType!, version, created, lastUpdated, tenantId));
+            results.Add(PcStreamsRowReader.ReadStreamSummary(reader, Tenancy.DefaultTenantId));
         }
 
         return results;
@@ -135,8 +127,12 @@ public partial class DocumentStore
         await using var conn = new SqlConnection(Options.ConnectionString);
         await conn.OpenAsync(ct);
         await using var cmd = conn.CreateCommand();
+        // #57: share the pc_streams column projection + row read with the
+        // other two stream-reading sites via PcStreamsRowReader. The JOIN'd
+        // first_event_at column is appended after the canonical projection
+        // (index 7) and threaded into ReadStreamMetadata explicitly.
         cmd.CommandText = $"""
-            SELECT s.id, s.type, s.version, s.created, s.timestamp, s.tenant_id, s.is_archived,
+            SELECT {PcStreamsRowReader.SelectColumnsWithAlias("s")},
                    MIN(e.timestamp) AS first_event_at
             FROM {Events.StreamsTableName} s
             LEFT JOIN {Events.EventsTableName} e ON e.stream_id = s.id AND e.tenant_id = s.tenant_id
@@ -151,31 +147,11 @@ public partial class DocumentStore
             return null;
         }
 
-        var rawId = reader.GetValue(0);
-        var streamIdString = rawId switch
-        {
-            Guid g => g.ToString(),
-            _ => rawId.ToString() ?? string.Empty
-        };
-        var streamType = reader.IsDBNull(1) ? null : reader.GetString(1);
-        var version = reader.GetInt64(2);
-        var created = reader.GetDateTimeOffset(3);
-        var lastUpdated = reader.GetDateTimeOffset(4);
-        var tenantId = reader.IsDBNull(5) ? Tenancy.DefaultTenantId : reader.GetString(5);
-        var isArchived = reader.GetBoolean(6);
-        var firstEventAt = reader.IsDBNull(7) ? created : reader.GetDateTimeOffset(7);
+        var firstEventAt = reader.IsDBNull(7)
+            ? (DateTimeOffset?)null
+            : reader.GetFieldValue<DateTimeOffset>(7);
 
-        return new StreamMetadata(
-            streamIdString,
-            streamType!,
-            version,
-            firstEventAt,
-            lastUpdated,
-            LastSnapshotAt: null,
-            LastSnapshotVersion: null,
-            IsArchived: isArchived,
-            TenantId: tenantId,
-            Tags: null!);
+        return PcStreamsRowReader.ReadStreamMetadata(reader, Tenancy.DefaultTenantId, firstEventAt);
     }
 
     IAsyncEnumerable<EventRecord> IEventStore.QueryByTagsAsync(

@@ -16,7 +16,7 @@ namespace Polecat.Events.Operations;
 ///   AND NOT EXISTS (SELECT 1 FROM [schema].[pc_event_tag_{suffix}] x WHERE x.value = @value AND x.seq_id = e.seq_id)
 /// For conjoined tenancy, includes tenant_id in INSERT and NOT EXISTS check.
 /// </summary>
-internal class AssignTagWhereOperation : Internal.IStorageOperation
+internal class AssignTagWhereOperation : Polecat.Internal.IStorageOperation
 {
     private readonly string _schemaName;
     private readonly ITagTypeRegistration _registration;

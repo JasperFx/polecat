@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Reflection;
 using JasperFx.Events;
 using Microsoft.Data.SqlClient;
+using Polecat.Events.Internal;
 using Polecat.Events.Linq;
 using Polecat.Internal;
 using Polecat.Linq;
@@ -181,42 +182,24 @@ internal class QueryEventStore : IQueryEventStore
 
     private async Task<StreamState?> FetchStreamStateInternalAsync(object streamId, CancellationToken token)
     {
+        // #57: column projection + row read live in PcStreamsRowReader so this
+        // method, GetRecentStreamsAsync, and GetStreamMetadataAsync all read
+        // pc_streams with the same shape. Note the canonical column order
+        // (created before timestamp) differs from the historical order this
+        // method used (timestamp before created) — the typed reader normalizes.
         await using var cmd = new SqlCommand();
         cmd.CommandText = $"""
-            SELECT id, type, version, timestamp, created, tenant_id, is_archived
+            SELECT {PcStreamsRowReader.SelectColumns}
             FROM {_events.StreamsTableName}
             WHERE id = @id AND tenant_id = @tenant_id;
             """;
         cmd.Parameters.AddWithValue("@id", streamId);
         cmd.Parameters.AddWithValue("@tenant_id", _session.TenantId);
 
-        await using var dbReader = await _session.ExecuteReaderAsync(cmd, token);
-        var reader = (SqlDataReader)dbReader;
+        await using var reader = await _session.ExecuteReaderAsync(cmd, token);
         if (await reader.ReadAsync(token))
         {
-            var version = reader.GetInt64(2);
-            var lastTimestamp = reader.GetDateTimeOffset(3);
-            var created = reader.GetDateTimeOffset(4);
-            var isArchived = reader.GetBoolean(6);
-
-            var state = new StreamState
-            {
-                Version = version,
-                LastTimestamp = lastTimestamp,
-                Created = created,
-                IsArchived = isArchived
-            };
-
-            if (_events.StreamIdentity == StreamIdentity.AsGuid)
-            {
-                state.Id = reader.GetGuid(0);
-            }
-            else
-            {
-                state.Key = reader.GetString(0);
-            }
-
-            return state;
+            return PcStreamsRowReader.ReadStreamState(reader, _events.StreamIdentity);
         }
 
         return null;
