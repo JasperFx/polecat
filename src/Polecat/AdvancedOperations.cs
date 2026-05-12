@@ -1,4 +1,5 @@
 using System.Text;
+using JasperFx;
 using Microsoft.Data.SqlClient;
 using Polly;
 using Polecat.Events.TestSupport;
@@ -118,6 +119,189 @@ public class AdvancedOperations
         }, (connFactory, rows, batchSize, mapping, tenantId, mode), token);
     }
 
+    /// <summary>
+    ///     Bulk insert documents with per-document expected versions, using
+    ///     <see cref="BulkInsertMode.OverwriteIfVersionMatches"/> semantics. Each
+    ///     incoming row is paired with the version the caller expects to find
+    ///     in the table; the merge updates only when the stored version equals
+    ///     the expected version, inserts when no row exists, and throws
+    ///     <see cref="ConcurrencyException"/> when a row exists but the stored
+    ///     version does not match. Closes
+    ///     <see href="https://github.com/JasperFx/polecat/issues/48">polecat#48</see>.
+    /// </summary>
+    public Task BulkInsertWithVersionAsync<T>(
+        IReadOnlyCollection<(T Document, long ExpectedVersion)> documents,
+        CancellationToken token = default) where T : notnull
+    {
+        return BulkInsertWithVersionAsync(documents, 200, Tenancy.DefaultTenantId, token);
+    }
+
+    /// <summary>
+    ///     Bulk insert documents with per-document expected versions and a
+    ///     custom batch size. See
+    ///     <see cref="BulkInsertWithVersionAsync{T}(System.Collections.Generic.IReadOnlyCollection{System.ValueTuple{T,long}},System.Threading.CancellationToken)"/>.
+    /// </summary>
+    public Task BulkInsertWithVersionAsync<T>(
+        IReadOnlyCollection<(T Document, long ExpectedVersion)> documents,
+        int batchSize,
+        CancellationToken token = default) where T : notnull
+    {
+        return BulkInsertWithVersionAsync(documents, batchSize, Tenancy.DefaultTenantId, token);
+    }
+
+    /// <summary>
+    ///     Bulk insert documents with per-document expected versions, custom
+    ///     batch size, and explicit tenant id.
+    /// </summary>
+    public async Task BulkInsertWithVersionAsync<T>(
+        IReadOnlyCollection<(T Document, long ExpectedVersion)> documents,
+        int batchSize,
+        string tenantId,
+        CancellationToken token = default) where T : notnull
+    {
+        if (documents.Count == 0) return;
+
+        var provider = _store.GetProvider(typeof(T));
+        var mapping = provider.Mapping;
+        var serializer = _store.Options.Serializer;
+
+        var ensurer = _store.ResolveTableEnsurer(tenantId);
+        await ensurer.EnsureTableAsync(provider, token);
+
+        // Pre-process. The id-assignment and metadata sync mirrors the
+        // versionless path; the only extra piece is carrying the expected
+        // version forward into the batched MERGE.
+        var rows = new List<(object Id, string Json, string DotNetType, long ExpectedVersion)>(documents.Count);
+        foreach (var (doc, expectedVersion) in documents)
+        {
+            if (mapping.IsStrongTypedId && mapping.InnerIdType == typeof(Guid))
+            {
+                var currentId = mapping.GetId(doc);
+                if ((Guid)currentId == Guid.Empty)
+                {
+                    mapping.SetId(doc, Guid.NewGuid());
+                }
+            }
+            else if (mapping.IsNumericId && provider.Sequence != null)
+            {
+                var currentId = mapping.GetId(doc);
+                if (mapping.InnerIdType == typeof(int) && (int)currentId <= 0)
+                {
+                    mapping.SetId(doc, provider.Sequence.NextInt());
+                }
+                else if (mapping.InnerIdType == typeof(long) && (long)currentId <= 0)
+                {
+                    mapping.SetId(doc, provider.Sequence.NextLong());
+                }
+            }
+
+            if (doc is ITenanted tenanted)
+            {
+                tenanted.TenantId = tenantId;
+            }
+
+            var id = mapping.GetId(doc);
+            var json = serializer.ToJson(doc);
+            rows.Add((id, json, mapping.DotNetTypeName, expectedVersion));
+        }
+
+        var connFactory = _store.Options.Tenancy!.GetConnectionFactory(tenantId);
+
+        await _resilience.ExecuteAsync(static async (state, ct) =>
+        {
+            var (factory, allRows, size, docMapping, tenant) = state;
+            await using var conn = factory.Create();
+            await conn.OpenAsync(ct);
+
+            for (var offset = 0; offset < allRows.Count; offset += size)
+            {
+                var batch = allRows.Skip(offset).Take(size).ToList();
+                await using var cmd = conn.CreateCommand();
+                BuildVersionCheckedBatchCommand(cmd, batch, docMapping, tenant);
+
+                // Read the OUTPUTed inserted.id stream to discover which rows
+                // the MERGE actually touched. Any incoming id missing from
+                // the output set is a version-mismatch (the WHEN MATCHED AND
+                // ... predicate failed and the row was neither updated nor
+                // inserted). One ConcurrencyException per batch, thrown for
+                // the first missing id we find — matches the per-row pattern
+                // in UpdateOperation / UpsertOperation rather than the
+                // aggregate pattern.
+                //
+                // Each MERGE-OUTPUT in the batched command produces its own
+                // result set; iterate all of them via NextResultAsync.
+                var touched = new HashSet<object>();
+                await using (var reader = await cmd.ExecuteReaderAsync(ct))
+                {
+                    do
+                    {
+                        while (await reader.ReadAsync(ct))
+                        {
+                            touched.Add(reader.GetValue(0));
+                        }
+                    } while (await reader.NextResultAsync(ct));
+                }
+
+                foreach (var row in batch)
+                {
+                    if (!touched.Contains(row.Id))
+                    {
+                        throw new ConcurrencyException(typeof(T), row.Id);
+                    }
+                }
+            }
+        }, (connFactory, rows, batchSize, mapping, tenantId), token);
+    }
+
+    private static void BuildVersionCheckedBatchCommand(
+        SqlCommand cmd,
+        List<(object Id, string Json, string DotNetType, long ExpectedVersion)> batch,
+        Storage.DocumentMapping mapping,
+        string tenantId)
+    {
+        var sb = new StringBuilder();
+        var paramIndex = 0;
+
+        foreach (var (id, json, dotnetType, expectedVersion) in batch)
+        {
+            var pId = $"@p{paramIndex++}";
+            var pData = $"@p{paramIndex++}";
+            var pType = $"@p{paramIndex++}";
+            var pTenant = $"@p{paramIndex++}";
+            var pExpected = $"@p{paramIndex++}";
+
+            // MERGE pattern from the polecat#48 audit body. The expected_version
+            // is part of the USING projection rather than a free-standing
+            // parameter so SQL Server's optimizer can see it as a column on the
+            // source rowset (matters when this is extended to set-based MERGEs).
+            sb.AppendLine(
+                $"MERGE INTO {mapping.QualifiedTableName} WITH (HOLDLOCK) AS target");
+            sb.AppendLine(
+                $"USING (SELECT {pId} AS id, {pTenant} AS tenant_id, {pExpected} AS expected_version) AS source");
+            sb.AppendLine(
+                "    ON target.id = source.id AND target.tenant_id = source.tenant_id");
+            sb.AppendLine("WHEN MATCHED AND target.version = source.expected_version THEN");
+            sb.AppendLine(
+                $"    UPDATE SET data = {pData}, version = target.version + 1,");
+            sb.AppendLine(
+                $"        last_modified = SYSDATETIMEOFFSET(), dotnet_type = {pType}");
+            sb.AppendLine("WHEN NOT MATCHED THEN");
+            sb.AppendLine(
+                $"    INSERT (id, data, version, last_modified, created_at, dotnet_type, tenant_id)");
+            sb.AppendLine(
+                $"    VALUES ({pId}, {pData}, 1, SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET(), {pType}, {pTenant})");
+            sb.AppendLine("OUTPUT inserted.id;");
+
+            cmd.Parameters.AddWithValue(pId, id);
+            cmd.Parameters.AddWithValue(pData, json);
+            cmd.Parameters.AddWithValue(pType, dotnetType);
+            cmd.Parameters.AddWithValue(pTenant, tenantId);
+            cmd.Parameters.AddWithValue(pExpected, expectedVersion);
+        }
+
+        cmd.CommandText = sb.ToString();
+    }
+
     private static void BuildBatchCommand(
         SqlCommand cmd,
         List<(object Id, string Json, string DotNetType)> batch,
@@ -213,17 +397,16 @@ public class AdvancedOperations
                 break;
 
             case BulkInsertMode.OverwriteIfVersionMatches:
-                // Polecat consumes Weasel.Core.BulkInsertMode after the
-                // BulkInsertMode promotion (audit row JasperFx/weasel#264),
-                // which adds this fourth mode. Implementation requires a
-                // per-document expected-version metadata source that
-                // Polecat's bulk-insert API does not yet expose — tracked
-                // as Polecat #48.
-                throw new NotSupportedException(
-                    "BulkInsertMode.OverwriteIfVersionMatches is not yet implemented in Polecat. " +
-                    "The bulk-insert API needs to expose per-document expected-version metadata first. " +
-                    "Tracked as https://github.com/JasperFx/polecat/issues/48. " +
-                    "Use OverwriteExisting in the meantime if optimistic concurrency on bulk inserts is not required.");
+                // OverwriteIfVersionMatches is not reachable through the
+                // versionless BulkInsertAsync surface — it requires a
+                // per-document expected version that this method has no
+                // way to receive. Callers should switch to
+                // BulkInsertWithVersionAsync, which threads (T, long)
+                // pairs through a sibling code path.
+                throw new InvalidOperationException(
+                    "BulkInsertMode.OverwriteIfVersionMatches requires a per-document expected version " +
+                    "and is not available through BulkInsertAsync. " +
+                    "Call BulkInsertWithVersionAsync(IReadOnlyCollection<(T document, long expectedVersion)>, ...) instead.");
         }
 
         cmd.CommandText = sb.ToString();
