@@ -5,8 +5,8 @@
 
     <ItemGroup>
         <!-- Core dependencies -->
-        <PackageVersion Include="JasperFx" Version="2.0.0-alpha.4" />
-        <PackageVersion Include="JasperFx.Events" Version="2.0.0-alpha.2" />
+        <PackageVersion Include="JasperFx" Version="2.0.0-alpha.6" />
+        <PackageVersion Include="JasperFx.Events" Version="2.0.0-alpha.3" />
         <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
@@ -32,7 +32,7 @@
         <PackageVersion Include="StronglyTypedId" Version="1.0.0-beta08" />
 
         <!-- Source generators -->
-        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.0.0-alpha.1" />
+        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.0.0-alpha.2" />
 
         <!-- Build automation -->
         <PackageVersion Include="Nuke.Common" Version="9.0.4" />
