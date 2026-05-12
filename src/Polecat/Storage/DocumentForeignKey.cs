@@ -1,5 +1,6 @@
 using System.Linq.Expressions;
 using System.Reflection;
+using Weasel.Core;
 
 namespace Polecat.Storage;
 
@@ -127,15 +128,4 @@ public class DocumentForeignKey
             $"Expression '{expression}' is not a supported foreign key expression. " +
             "Use a single property (x => x.Prop).");
     }
-}
-
-/// <summary>
-///     Cascade action for foreign key constraints.
-/// </summary>
-public enum CascadeAction
-{
-    NoAction,
-    Cascade,
-    SetNull,
-    SetDefault
 }

@@ -1,5 +1,6 @@
 using Polecat.Storage;
 using Polecat.Tests.Harness;
+using Weasel.Core;
 
 namespace Polecat.Tests.Storage;
 
