@@ -160,6 +160,10 @@ const config: UserConfig<DefaultTheme.Config> = {
             { text: 'Tearing Down Document Storage', link: '/schema/cleaning' },
           ]
         },
+        {
+          text: 'Migration Guide',
+          link: '/migration-guide',
+        },
       ]
     }
   },
