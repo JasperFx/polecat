@@ -25,6 +25,16 @@ namespace Polecat.Events.Internal;
 ///     path; the <see cref="IEvent"/> path's <c>WHERE</c> clause filters
 ///     by tenant and guarantees the column is non-null.
 ///     </para>
+///     <para>
+///     <c>EventStoreOptions</c> and <c>StreamIdentity</c> are deliberately
+///     NOT exposed here. Both are stable across a batch, so per-row reads
+///     would re-evaluate them needlessly; instead the caller hoists those
+///     decisions: <c>EventStoreOptions</c> flows through
+///     <see cref="MetadataSlots"/> (computed once), and
+///     <c>StreamIdentity</c> is dispatched once via
+///     <see cref="PcEventsRowReader.ReadEventAsGuid"/> vs
+///     <see cref="PcEventsRowReader.ReadEventAsString"/>.
+///     </para>
 /// </remarks>
 internal sealed class EventHydrationContext
 {
@@ -42,13 +52,12 @@ internal sealed class EventHydrationContext
 
     public EventGraph EventGraph { get; }
     public ISerializer Serializer { get; }
-    public EventStoreOptions Options => EventGraph.EventOptions;
-    public StreamIdentity StreamIdentity => EventGraph.StreamIdentity;
 
     /// <summary>
     ///     The stream id the caller is reading (<see cref="System.Guid"/> or
-    ///     <see cref="string"/> depending on <see cref="StreamIdentity"/>).
-    ///     Used by <see cref="PcEventsRowReader.ReadEvent"/> to set
+    ///     <see cref="string"/> depending on the active
+    ///     <see cref="JasperFx.Events.StreamIdentity"/>). Used by the
+    ///     <see cref="IEvent"/> read methods to set
     ///     <see cref="IEvent.StreamId"/> / <see cref="IEvent.StreamKey"/>;
     ///     unused by <see cref="PcEventsRowReader.ReadEventRecord"/>.
     /// </summary>

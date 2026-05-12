@@ -32,6 +32,26 @@ namespace Polecat.Events.Internal;
 ///     negligible against the readability of one canonical projection. See
 ///     polecat#57 Q2 design note.
 ///     </para>
+///     <para>
+///     <b>Per-row hot-path discipline.</b> The read methods are entered
+///     once per row in <see cref="QueryEventStore.FetchStreamAsync(System.Guid, long, System.DateTimeOffset?, long, System.Threading.CancellationToken)"/>;
+///     two flavors of state that are stable across a single read batch are
+///     hoisted into structs the caller builds once and passes in:
+///     <see cref="MetadataSlots"/> (pre-computed column ordinals for the
+///     optional metadata triple) and <see cref="EventTypeCache"/> (last-seen
+///     event-type → mapping, so streams with repeated event types don't
+///     re-dictionary-lookup per row). The per-row <c>if</c>-on-options
+///     ladder and per-row <c>EventMappingFor</c> dictionary lookup both go
+///     away in the common case.
+///     </para>
+///     <para>
+///     <b>StreamIdentity specialization.</b> <c>StreamIdentity</c> is fixed
+///     at store-construction time but the pre-#57-Q2 code branched on it
+///     per row. <see cref="ReadEventAsGuid"/> / <see cref="ReadEventAsString"/>
+///     are specializations the caller picks once at the top of its read
+///     loop — see <see cref="QueryEventStore"/>. Both delegate to
+///     <see cref="ReadEventCore"/> for the shared 95% of the work.
+///     </para>
 /// </remarks>
 internal static class PcEventsRowReader
 {
@@ -58,12 +78,54 @@ internal static class PcEventsRowReader
 
     /// <summary>
     ///     Read the row the reader is positioned on into a fully-hydrated
-    ///     <see cref="IEvent"/>. Returns <see langword="null"/> when the
-    ///     row's <c>dotnet_type</c> doesn't resolve to a known event type
-    ///     so callers can filter unresolvable rows with a single
+    ///     <see cref="IEvent"/>, assuming the active store uses
+    ///     <see cref="StreamIdentity.AsGuid"/>. Caller selects between this
+    ///     and <see cref="ReadEventAsString"/> once at the top of its read
+    ///     loop, eliminating the per-row branch on <c>StreamIdentity</c>.
+    ///     Returns <see langword="null"/> when <c>dotnet_type</c> doesn't
+    ///     resolve to a known type so callers can skip with a single
     ///     <c>continue</c>.
     /// </summary>
-    internal static IEvent? ReadEvent(DbDataReader reader, EventHydrationContext ctx)
+    internal static IEvent? ReadEventAsGuid(
+        DbDataReader reader,
+        EventHydrationContext ctx,
+        MetadataSlots slots,
+        ref EventTypeCache cache)
+    {
+        var @event = ReadEventCore(reader, ctx, slots, ref cache);
+        if (@event == null) return null;
+        @event.StreamId = ctx.StreamId is Guid g ? g : Guid.Empty;
+        return @event;
+    }
+
+    /// <summary>
+    ///     Read the row the reader is positioned on into a fully-hydrated
+    ///     <see cref="IEvent"/>, assuming the active store uses
+    ///     <see cref="StreamIdentity.AsString"/>. See <see cref="ReadEventAsGuid"/>.
+    /// </summary>
+    internal static IEvent? ReadEventAsString(
+        DbDataReader reader,
+        EventHydrationContext ctx,
+        MetadataSlots slots,
+        ref EventTypeCache cache)
+    {
+        var @event = ReadEventCore(reader, ctx, slots, ref cache);
+        if (@event == null) return null;
+        @event.StreamKey = ctx.StreamId.ToString();
+        return @event;
+    }
+
+    /// <summary>
+    ///     Shared body of <see cref="ReadEventAsGuid"/> /
+    ///     <see cref="ReadEventAsString"/>. Reads every field EXCEPT
+    ///     <c>StreamId</c> / <c>StreamKey</c>; the specialized wrappers
+    ///     pick the right id-assignment.
+    /// </summary>
+    private static IEvent? ReadEventCore(
+        DbDataReader reader,
+        EventHydrationContext ctx,
+        MetadataSlots slots,
+        ref EventTypeCache cache)
     {
         var seqId = reader.GetInt64(0);
         var eventId = reader.GetGuid(1);
@@ -79,8 +141,12 @@ internal static class PcEventsRowReader
         var resolvedType = ctx.EventGraph.ResolveEventType(dotNetTypeName);
         if (resolvedType == null) return null;
 
+        // Per-batch single-slot type→mapping cache. For streams with
+        // repeated event types (the common shape of an aggregate stream)
+        // this collapses N dictionary lookups into 1 per distinct type.
+        var mapping = cache.LookupOrAdd(ctx.EventGraph, resolvedType);
+
         var data = ctx.Serializer.FromJson(resolvedType, json);
-        var mapping = ctx.EventGraph.EventMappingFor(resolvedType);
         var @event = mapping.Wrap(data);
 
         @event.Id = eventId;
@@ -92,30 +158,25 @@ internal static class PcEventsRowReader
         @event.DotNetTypeName = dotNetTypeName!;
         @event.IsArchived = isArchived;
 
-        var metaIndex = 10;
-        if (ctx.Options.EnableCorrelationId)
+        // Per-batch pre-computed slots. Each branch tests a sentinel and is
+        // taken/not-taken the same way for every row in this batch — branch
+        // predictor pegged. The per-row metaIndex++ chain is gone.
+        if (slots.CorrelationIdx >= 0)
         {
-            @event.CorrelationId = reader.IsDBNull(metaIndex) ? null : reader.GetString(metaIndex);
-            metaIndex++;
+            @event.CorrelationId = reader.IsDBNull(slots.CorrelationIdx)
+                ? null
+                : reader.GetString(slots.CorrelationIdx);
         }
-        if (ctx.Options.EnableCausationId)
+        if (slots.CausationIdx >= 0)
         {
-            @event.CausationId = reader.IsDBNull(metaIndex) ? null : reader.GetString(metaIndex);
-            metaIndex++;
+            @event.CausationId = reader.IsDBNull(slots.CausationIdx)
+                ? null
+                : reader.GetString(slots.CausationIdx);
         }
-        if (ctx.Options.EnableHeaders && !reader.IsDBNull(metaIndex))
+        if (slots.HeadersIdx >= 0 && !reader.IsDBNull(slots.HeadersIdx))
         {
-            var headersJson = reader.GetString(metaIndex);
+            var headersJson = reader.GetString(slots.HeadersIdx);
             @event.Headers = ctx.Serializer.FromJson<Dictionary<string, object>>(headersJson);
-        }
-
-        if (ctx.StreamIdentity == StreamIdentity.AsGuid)
-        {
-            @event.StreamId = ctx.StreamId is Guid g ? g : Guid.Empty;
-        }
-        else
-        {
-            @event.StreamKey = ctx.StreamId.ToString();
         }
 
         return @event;
@@ -124,11 +185,21 @@ internal static class PcEventsRowReader
     /// <summary>
     ///     Read the row the reader is positioned on into a raw
     ///     <see cref="EventRecord"/> for the explorer surface. Unlike
-    ///     <see cref="ReadEvent"/> this returns a self-contained record
-    ///     (no <see cref="ISerializer"/> deserialization; <c>data</c> and
-    ///     <c>headers</c> are surfaced as cloned <see cref="JsonElement"/>s).
+    ///     <see cref="ReadEventAsGuid"/> / <see cref="ReadEventAsString"/>
+    ///     this returns a self-contained record (no <see cref="ISerializer"/>
+    ///     deserialization; <c>data</c> and <c>headers</c> are surfaced as
+    ///     cloned <see cref="JsonElement"/>s).
     /// </summary>
-    internal static EventRecord ReadEventRecord(DbDataReader reader, EventHydrationContext ctx)
+    /// <remarks>
+    ///     Same per-batch <see cref="MetadataSlots"/> hoisting as the
+    ///     <see cref="IEvent"/> path. The explorer doesn't need the
+    ///     <see cref="EventTypeCache"/> because it doesn't call
+    ///     <c>EventMappingFor</c>.
+    /// </remarks>
+    internal static EventRecord ReadEventRecord(
+        DbDataReader reader,
+        EventHydrationContext ctx,
+        MetadataSlots slots)
     {
         var seqId = reader.GetInt64(0);
         var eventId = reader.GetGuid(1);
@@ -144,16 +215,10 @@ internal static class PcEventsRowReader
         // SELECT because the canonical projection is shared; the diagnostic
         // path just ignores them.
 
-        // Advance metaIndex past correlation_id / causation_id when they're
-        // projected, since the explorer doesn't surface them either.
-        var metaIndex = 10;
-        if (ctx.Options.EnableCorrelationId) metaIndex++;
-        if (ctx.Options.EnableCausationId) metaIndex++;
-
         JsonElement? metadata = null;
-        if (ctx.Options.EnableHeaders && !reader.IsDBNull(metaIndex))
+        if (slots.HeadersIdx >= 0 && !reader.IsDBNull(slots.HeadersIdx))
         {
-            using var headerDoc = JsonDocument.Parse(reader.GetString(metaIndex));
+            using var headerDoc = JsonDocument.Parse(reader.GetString(slots.HeadersIdx));
             metadata = headerDoc.RootElement.Clone();
         }
 
@@ -178,4 +243,57 @@ internal static class PcEventsRowReader
         Guid g => g.ToString(),
         _ => value.ToString() ?? string.Empty
     };
+}
+
+/// <summary>
+///     Pre-computed column ordinals for the optional metadata triple
+///     (<c>correlation_id</c>, <c>causation_id</c>, <c>headers</c>). Built
+///     once at the top of a read loop from <see cref="EventStoreOptions"/>
+///     and passed by value into every <see cref="PcEventsRowReader"/> call
+///     in the batch. <c>-1</c> means the column is not projected; the
+///     reader skips it without checking the underlying flag.
+/// </summary>
+internal readonly record struct MetadataSlots(int CorrelationIdx, int CausationIdx, int HeadersIdx)
+{
+    /// <summary>
+    ///     Sentinel indicating the column is not in the projected SELECT.
+    /// </summary>
+    public const int Disabled = -1;
+
+    public static MetadataSlots Compute(EventStoreOptions options)
+    {
+        var ordinal = 10;
+        var correlation = options.EnableCorrelationId ? ordinal++ : Disabled;
+        var causation = options.EnableCausationId ? ordinal++ : Disabled;
+        var headers = options.EnableHeaders ? ordinal : Disabled;
+        return new MetadataSlots(correlation, causation, headers);
+    }
+}
+
+/// <summary>
+///     Per-batch single-slot LRU for the <c>resolved-Type → IEventType
+///     mapping</c> lookup performed inside <see cref="PcEventsRowReader.ReadEventAsGuid"/>
+///     / <see cref="PcEventsRowReader.ReadEventAsString"/>. Streams of
+///     events typically have a small set of distinct event types repeated
+///     many times — caching the last seen type and its mapping turns N
+///     dictionary lookups into 1 per distinct type in the common case.
+/// </summary>
+/// <remarks>
+///     Mutable struct, passed by <c>ref</c>. Live for the lifetime of a
+///     single batch read; never crosses thread boundaries.
+/// </remarks>
+internal struct EventTypeCache
+{
+    private Type? _lastType;
+    private IEventType? _lastMapping;
+
+    public IEventType LookupOrAdd(EventGraph eventGraph, Type resolvedType)
+    {
+        if (!ReferenceEquals(resolvedType, _lastType))
+        {
+            _lastMapping = eventGraph.EventMappingFor(resolvedType);
+            _lastType = resolvedType;
+        }
+        return _lastMapping!;
+    }
 }

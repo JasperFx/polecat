@@ -83,10 +83,14 @@ public partial class DocumentStore
             resolvedStreamId,
             defaultTenantId: Tenancy.DefaultTenantId);
 
+        // Per-batch hoist: optional-metadata column ordinals computed once.
+        // Explorer path doesn't need EventTypeCache (no EventMappingFor call).
+        var slots = MetadataSlots.Compute(Events.EventOptions);
+
         await using var reader = await cmd.ExecuteReaderAsync(ct);
         while (await reader.ReadAsync(ct))
         {
-            yield return PcEventsRowReader.ReadEventRecord(reader, ctx);
+            yield return PcEventsRowReader.ReadEventRecord(reader, ctx, slots);
         }
     }
 

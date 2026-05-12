@@ -100,13 +100,32 @@ internal class QueryEventStore : IQueryEventStore
             streamId,
             defaultTenantId: _session.TenantId);
 
+        // Per-batch hoists: compute the optional-metadata column ordinals
+        // once, declare a single-slot type→mapping cache, pick the
+        // StreamIdentity specialization once. Per-row reads have zero
+        // option-flag branches and ~1 EventMappingFor lookup per distinct
+        // event-type-in-stream.
+        var slots = MetadataSlots.Compute(_events.EventOptions);
+        var cache = new EventTypeCache();
+
         var results = new List<IEvent>();
         await using var reader = await _session.ExecuteReaderAsync(cmd, token);
 
-        while (await reader.ReadAsync(token))
+        if (_events.StreamIdentity == StreamIdentity.AsGuid)
         {
-            var @event = PcEventsRowReader.ReadEvent(reader, ctx);
-            if (@event != null) results.Add(@event);
+            while (await reader.ReadAsync(token))
+            {
+                var @event = PcEventsRowReader.ReadEventAsGuid(reader, ctx, slots, ref cache);
+                if (@event != null) results.Add(@event);
+            }
+        }
+        else
+        {
+            while (await reader.ReadAsync(token))
+            {
+                var @event = PcEventsRowReader.ReadEventAsString(reader, ctx, slots, ref cache);
+                if (@event != null) results.Add(@event);
+            }
         }
 
         return results;
