@@ -3,73 +3,13 @@ using Polecat.Internal;
 
 namespace Polecat.Events;
 
-/// <summary>
-///     A writable handle to an event stream with its current aggregate state.
-///     Returned by FetchForWriting / FetchForExclusiveWriting.
-/// </summary>
-public interface IEventStream<out T> where T : class
-{
-    /// <summary>
-    ///     The current aggregate state, or null if the stream does not exist yet.
-    /// </summary>
-    T? Aggregate { get; }
+// NOTE: The public IEventStream<T> contract moved to JasperFx.Events.IEventStream<T>
+// as part of the Polecat 4 dedupe pillar consumption (see migration guide).
+// Code that previously imported Polecat.Events.IEventStream<T> now resolves the
+// unqualified `IEventStream<T>` to the JasperFx.Events version via
+// `using JasperFx.Events;`.
 
-    /// <summary>
-    ///     The version of the stream when it was fetched (used for optimistic concurrency).
-    /// </summary>
-    long? StartingVersion { get; }
-
-    /// <summary>
-    ///     StartingVersion + count of appended events, or null if StartingVersion is null.
-    /// </summary>
-    long? CurrentVersion { get; }
-
-    /// <summary>
-    ///     The Guid identity of the stream (Guid.Empty if using string keys).
-    /// </summary>
-    Guid Id { get; }
-
-    /// <summary>
-    ///     The string key of the stream (null if using Guid identity).
-    /// </summary>
-    string? Key { get; }
-
-    /// <summary>
-    ///     The events that have been appended to this stream handle (not yet saved).
-    /// </summary>
-    IReadOnlyList<IEvent> Events { get; }
-
-    /// <summary>
-    ///     Append a single event to the stream.
-    /// </summary>
-    void AppendOne(object @event);
-
-    /// <summary>
-    ///     Append multiple events to the stream.
-    /// </summary>
-    void AppendMany(params object[] events);
-
-    /// <summary>
-    ///     Append multiple events to the stream.
-    /// </summary>
-    void AppendMany(IEnumerable<object> events);
-
-    /// <summary>
-    ///     If true, Polecat will enforce an optimistic concurrency check on this stream even if no
-    ///     events are appended at the time of calling SaveChangesAsync(). This is useful when you want
-    ///     to ensure the stream version has not advanced since it was fetched, even if the command
-    ///     handler decides not to emit any new events.
-    /// </summary>
-    bool AlwaysEnforceConsistency { get; set; }
-
-    /// <summary>
-    ///     Try to advance the expected starting version for optimistic concurrency checks to the current version
-    ///     so that you can reuse a stream object for multiple units of work.
-    /// </summary>
-    void TryFastForwardVersion();
-}
-
-internal class EventStream<T> : IEventStream<T> where T : class
+internal class EventStream<T> : JasperFx.Events.IEventStream<T> where T : class
 {
     private StreamAction _stream;
     private readonly Func<object, IEvent> _wrapper;
@@ -89,6 +29,7 @@ internal class EventStream<T> : IEventStream<T> where T : class
         _stream = stream;
         _stream.AggregateType = typeof(T);
 
+        Cancellation = cancellation;
         Aggregate = aggregate;
     }
 
@@ -106,6 +47,7 @@ internal class EventStream<T> : IEventStream<T> where T : class
         _stream = stream;
         _stream.AggregateType = typeof(T);
 
+        Cancellation = cancellation;
         Aggregate = aggregate;
     }
 
@@ -118,6 +60,8 @@ internal class EventStream<T> : IEventStream<T> where T : class
     public long? CurrentVersion => _stream.ExpectedVersionOnServer == null
         ? null
         : _stream.ExpectedVersionOnServer.Value + _stream.Events.Count;
+
+    public CancellationToken Cancellation { get; }
 
     public bool AlwaysEnforceConsistency
     {

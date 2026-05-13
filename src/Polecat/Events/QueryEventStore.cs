@@ -216,21 +216,21 @@ internal class QueryEventStore : IQueryEventStore
 
     public async Task<T?> AggregateStreamAsync<T>(Guid streamId, long version = 0,
         DateTimeOffset? timestamp = null, T? state = null, long fromVersion = 0,
-        CancellationToken token = default) where T : class, new()
+        CancellationToken token = default) where T : class
     {
         return await AggregateStreamInternalAsync<T>(streamId, version, timestamp, state, fromVersion, token);
     }
 
     public async Task<T?> AggregateStreamAsync<T>(string streamKey, long version = 0,
         DateTimeOffset? timestamp = null, T? state = null, long fromVersion = 0,
-        CancellationToken token = default) where T : class, new()
+        CancellationToken token = default) where T : class
     {
         return await AggregateStreamInternalAsync<T>(streamKey, version, timestamp, state, fromVersion, token);
     }
 
     private async Task<T?> AggregateStreamInternalAsync<T>(object streamId, long version,
         DateTimeOffset? timestamp, T? state, long fromVersion,
-        CancellationToken token) where T : class, new()
+        CancellationToken token) where T : class
     {
         IReadOnlyList<IEvent> events;
         if (streamId is Guid guid)
@@ -249,19 +249,19 @@ internal class QueryEventStore : IQueryEventStore
     }
 
     public async Task<T?> AggregateStreamToLastKnownAsync<T>(Guid streamId, long version = 0,
-        DateTimeOffset? timestamp = null, CancellationToken token = default) where T : class, new()
+        DateTimeOffset? timestamp = null, CancellationToken token = default) where T : class
     {
         return await AggregateStreamToLastKnownInternalAsync<T>(streamId, version, timestamp, token);
     }
 
     public async Task<T?> AggregateStreamToLastKnownAsync<T>(string streamKey, long version = 0,
-        DateTimeOffset? timestamp = null, CancellationToken token = default) where T : class, new()
+        DateTimeOffset? timestamp = null, CancellationToken token = default) where T : class
     {
         return await AggregateStreamToLastKnownInternalAsync<T>(streamKey, version, timestamp, token);
     }
 
     private async Task<T?> AggregateStreamToLastKnownInternalAsync<T>(object streamId, long version,
-        DateTimeOffset? timestamp, CancellationToken token) where T : class, new()
+        DateTimeOffset? timestamp, CancellationToken token) where T : class
     {
         IReadOnlyList<IEvent> events;
         if (streamId is Guid guid)
@@ -290,7 +290,7 @@ internal class QueryEventStore : IQueryEventStore
     }
 
     public async ValueTask<T?> FetchLatest<T>(Guid id, CancellationToken cancellation = default)
-        where T : class, new()
+        where T : class
     {
         if (_session.TryGetAggregateFromIdentityMap<T, Guid>(id, out var cached))
         {
@@ -301,7 +301,7 @@ internal class QueryEventStore : IQueryEventStore
     }
 
     public async ValueTask<T?> FetchLatest<T>(string key, CancellationToken cancellation = default)
-        where T : class, new()
+        where T : class
     {
         if (_session.TryGetAggregateFromIdentityMap<T, string>(key, out var cached))
         {
