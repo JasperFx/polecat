@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using System.Reflection;
 
@@ -6,6 +7,12 @@ namespace Polecat.Linq;
 /// <summary>
 ///     LINQ extension to wait for async projections to catch up before executing a query.
 /// </summary>
+[UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
+    Justification = "Class-level: LINQ extension methods reference NonStaleDataExtensions' own marker methods by name and frame them as Expression.Call(...). Markers preserved by the class.")]
+[UnconditionalSuppressMessage("Trimming", "IL2060:DynamicallyAccessedMembers",
+    Justification = "Class-level: Expression.Call(Type, string, ...) on framework Queryable / Enumerable.")]
+[UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+    Justification = "Class-level: LINQ expression construction requires runtime code generation.")]
 public static class NonStaleDataExtensions
 {
     private static readonly MethodInfo QueryForNonStaleDataMethodInfo =

@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using System.Reflection;
 
@@ -6,6 +7,10 @@ namespace Polecat.Linq.Metadata;
 /// <summary>
 ///     LINQ extension methods for filtering documents by the created_at metadata column.
 /// </summary>
+[UnconditionalSuppressMessage("Trimming", "IL2060:DynamicallyAccessedMembers",
+    Justification = "Class-level: CreatedAtExtensions' own marker methods (CreatedSince, CreatedBefore) are referenced by Expression.Call(...). Markers preserved by the class.")]
+[UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+    Justification = "Class-level: LINQ expression construction (MakeGenericMethod on markers) requires runtime code generation.")]
 public static class CreatedAtExtensions
 {
     private static readonly MethodInfo CreatedSinceMethodInfo =

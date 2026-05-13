@@ -1,4 +1,5 @@
 using System.Data.Common;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using JasperFx.Events;
 using Microsoft.Data.SqlClient;
@@ -16,6 +17,10 @@ namespace Polecat.Events.Linq;
 ///     IQueryProvider for LINQ queries against the event store.
 ///     Supports both QueryAllRawEvents (IEvent) and QueryRawEventDataOnly&lt;T&gt; (event data type).
 /// </summary>
+[UnconditionalSuppressMessage("Trimming", "IL2075:DynamicallyAccessedMembers",
+    Justification = "Class-level: Task<T>.Result property is accessed via reflection (GetType().GetProperty(\"Result\")). The framework Task<TResult> intrinsic and its Result property are preserved by the runtime.")]
+[UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+    Justification = "Class-level: dynamic LINQ over event-store rows uses Type.MakeGenericType for selector/handler types — runtime code generation. AOT consumers must register concrete query shapes per the AOT publishing guide.")]
 internal class EventLinqQueryProvider : IPolecatAsyncQueryProvider
 {
     private readonly QuerySession _session;

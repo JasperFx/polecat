@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 
 namespace Polecat.Linq;
@@ -5,6 +6,22 @@ namespace Polecat.Linq;
 /// <summary>
 ///     Async LINQ extension methods for Polecat queryables.
 /// </summary>
+/// <remarks>
+///     Every method in this class constructs LINQ expression trees that reference
+///     <see cref="System.Linq.Queryable"/> methods by string name (via
+///     <see cref="System.Linq.Expressions.Expression.Call(Type, string, Type[], Expression[])"/>).
+///     The .NET trimmer cannot statically reason about those lookups, so the
+///     class-level suppressions document the contract: AOT-publishing apps should
+///     avoid the LINQ-async wrappers and either use raw SQL (<c>session.QueryAsync</c>),
+///     compiled queries, or a source-generated query path. The Queryable / Enumerable
+///     methods referenced here are framework intrinsics that the trimmer keeps alive.
+/// </remarks>
+[UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
+    Justification = "Class-level: LINQ extension methods reference framework Queryable / Enumerable methods by name; the trimmer preserves those intrinsics.")]
+[UnconditionalSuppressMessage("Trimming", "IL2060:DynamicallyAccessedMembers",
+    Justification = "Class-level: Expression.Call(Type, string, …) on Queryable / Enumerable; trimmer-preserved framework intrinsics.")]
+[UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+    Justification = "Class-level: LINQ expression construction calls generic Queryable methods via Expression.Call which requires runtime code generation in the general case. The framework intrinsics referenced here are preserved.")]
 public static class PolecatQueryableExtensions
 {
     /// <summary>

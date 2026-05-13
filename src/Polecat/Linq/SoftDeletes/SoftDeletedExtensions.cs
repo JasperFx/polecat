@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using System.Reflection;
 
@@ -6,6 +7,12 @@ namespace Polecat.Linq.SoftDeletes;
 /// <summary>
 ///     LINQ extension methods for querying soft-deleted documents.
 /// </summary>
+[UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
+    Justification = "Class-level: LINQ extension methods reference SoftDeletedExtensions' own marker methods by name and frame them as Expression.Call(...). The marker methods are preserved by the class itself.")]
+[UnconditionalSuppressMessage("Trimming", "IL2060:DynamicallyAccessedMembers",
+    Justification = "Class-level: Expression.Call(Type, string, ...) on framework Queryable / Enumerable; trimmer-preserved intrinsics.")]
+[UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+    Justification = "Class-level: LINQ expression construction requires runtime code generation in the general case.")]
 public static class SoftDeletedExtensions
 {
     private static readonly MethodInfo MaybeDeletedMethodInfo =

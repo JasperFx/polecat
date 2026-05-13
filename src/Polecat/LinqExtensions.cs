@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using System.Reflection;
 
@@ -6,6 +7,10 @@ namespace Polecat;
 /// <summary>
 ///     Polecat-specific LINQ extension methods for use in Where() clauses.
 /// </summary>
+[UnconditionalSuppressMessage("Trimming", "IL2060:DynamicallyAccessedMembers",
+    Justification = "Class-level: LinqExtensions' own marker methods (AnyTenant, TenantIsOneOf) are referenced by Expression.Call(...). Markers are preserved by the class itself.")]
+[UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+    Justification = "Class-level: LINQ expression construction (MakeGenericMethod on markers) requires runtime code generation.")]
 public static class LinqExtensions
 {
     /// <summary>
