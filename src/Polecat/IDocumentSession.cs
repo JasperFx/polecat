@@ -17,7 +17,7 @@ public interface IDocumentSession : IDocumentOperations, IStorageOperations, ITr
     /// <summary>
     ///     Event store operations (append, start stream, fetch).
     /// </summary>
-    new IEventOperations Events { get; }
+    new Polecat.Events.IEventOperations Events { get; }
 
     /// <summary>
     ///     Flush all pending operations to the database in a single transaction.

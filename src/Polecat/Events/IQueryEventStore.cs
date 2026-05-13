@@ -4,9 +4,16 @@ using Polecat.Linq;
 namespace Polecat.Events;
 
 /// <summary>
-///     Read-only event store queries. Available from both query sessions and document sessions.
+///     Polecat's read-side event-store API.
 /// </summary>
-public interface IQueryEventStore
+/// <remarks>
+/// Polecat 4 dedupe pillar: the database-agnostic surface (FetchStreamAsync,
+/// AggregateStreamAsync, AggregateStreamToLastKnownAsync, LoadAsync,
+/// FetchStreamStateAsync) now lives in <see cref="JasperFx.Events.IQueryEventStore"/>.
+/// This interface adds the Polecat-specific LINQ-returning methods that return
+/// <see cref="IPolecatQueryable{T}"/>.
+/// </remarks>
+public interface IQueryEventStore : JasperFx.Events.IQueryEventStore
 {
     /// <summary>
     ///     Query directly against ONLY the raw event data for a specific event type.
@@ -22,77 +29,17 @@ public interface IQueryEventStore
     IPolecatQueryable<IEvent> QueryAllRawEvents();
 
     /// <summary>
-    ///     Fetch all events for a stream by Guid id.
-    /// </summary>
-    Task<IReadOnlyList<IEvent>> FetchStreamAsync(Guid streamId, long version = 0,
-        DateTimeOffset? timestamp = null, long fromVersion = 0, CancellationToken token = default);
-
-    /// <summary>
-    ///     Fetch all events for a stream by string key.
-    /// </summary>
-    Task<IReadOnlyList<IEvent>> FetchStreamAsync(string streamKey, long version = 0,
-        DateTimeOffset? timestamp = null, long fromVersion = 0, CancellationToken token = default);
-
-    /// <summary>
-    ///     Load a single event by its id, knowing the event type upfront.
-    ///     Returns null when the event id does not exist.
-    /// </summary>
-    Task<IEvent<T>?> LoadAsync<T>(Guid id, CancellationToken token = default) where T : class;
-
-    /// <summary>
-    ///     Load a single event by its id. The runtime event type is resolved through the
-    ///     event registry from the stored <c>dotnet_type</c> column. Returns null when the
-    ///     event id does not exist.
-    /// </summary>
-    Task<IEvent?> LoadAsync(Guid id, CancellationToken token = default);
-
-    /// <summary>
-    ///     Fetch stream metadata by Guid id.
-    /// </summary>
-    Task<StreamState?> FetchStreamStateAsync(Guid streamId, CancellationToken token = default);
-
-    /// <summary>
-    ///     Fetch stream metadata by string key.
-    /// </summary>
-    Task<StreamState?> FetchStreamStateAsync(string streamKey, CancellationToken token = default);
-
-    /// <summary>
-    ///     Aggregate events from a stream into a transient document of type T (not persisted).
-    /// </summary>
-    Task<T?> AggregateStreamAsync<T>(Guid streamId, long version = 0,
-        DateTimeOffset? timestamp = null, T? state = null, long fromVersion = 0,
-        CancellationToken token = default) where T : class, new();
-
-    /// <summary>
-    ///     Aggregate events from a stream into a transient document of type T (not persisted).
-    /// </summary>
-    Task<T?> AggregateStreamAsync<T>(string streamKey, long version = 0,
-        DateTimeOffset? timestamp = null, T? state = null, long fromVersion = 0,
-        CancellationToken token = default) where T : class, new();
-
-    /// <summary>
-    ///     Perform a live aggregation but return the last known non-null version of the aggregate,
-    ///     walking backwards through events if the aggregate is deleted at the current version.
-    /// </summary>
-    Task<T?> AggregateStreamToLastKnownAsync<T>(Guid streamId, long version = 0,
-        DateTimeOffset? timestamp = null, CancellationToken token = default) where T : class, new();
-
-    /// <summary>
-    ///     Perform a live aggregation but return the last known non-null version of the aggregate,
-    ///     walking backwards through events if the aggregate is deleted at the current version.
-    /// </summary>
-    Task<T?> AggregateStreamToLastKnownAsync<T>(string streamKey, long version = 0,
-        DateTimeOffset? timestamp = null, CancellationToken token = default) where T : class, new();
-
-    /// <summary>
     ///     Fetch the latest aggregate state for a stream by Guid id.
-    ///     Convenience wrapper around AggregateStreamAsync.
+    ///     Convenience wrapper around AggregateStreamAsync. Available from the
+    ///     read-only query session; the write-side equivalent on
+    ///     <see cref="IEventOperations"/> additionally includes events appended
+    ///     in the current unit of work.
     /// </summary>
-    ValueTask<T?> FetchLatest<T>(Guid id, CancellationToken cancellation = default) where T : class, new();
+    ValueTask<T?> FetchLatest<T>(Guid id, CancellationToken cancellation = default) where T : class;
 
     /// <summary>
     ///     Fetch the latest aggregate state for a stream by string key.
     ///     Convenience wrapper around AggregateStreamAsync.
     /// </summary>
-    ValueTask<T?> FetchLatest<T>(string key, CancellationToken cancellation = default) where T : class, new();
+    ValueTask<T?> FetchLatest<T>(string key, CancellationToken cancellation = default) where T : class;
 }

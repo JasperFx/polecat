@@ -21,7 +21,7 @@ internal static class NaturalKeyFetchPlanner
         NaturalKeyDefinition naturalKey,
         TId naturalKeyValue,
         string tenantId,
-        CancellationToken cancellation) where T : class, new() where TId : notnull
+        CancellationToken cancellation) where T : class where TId : notnull
     {
         var isGuidStream = events.StreamIdentity == StreamIdentity.AsGuid;
         var schema = events.DatabaseSchemaName;

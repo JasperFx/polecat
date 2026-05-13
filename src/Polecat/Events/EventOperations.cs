@@ -223,43 +223,43 @@ internal class EventOperations : QueryEventStore, IEventOperations
         => StartStream(aggregateType, events.ToArray());
 
     public async Task<IEventStream<T>> FetchForWriting<T>(Guid id, CancellationToken cancellation = default)
-        where T : class, new()
+        where T : class
     {
         return await FetchForWritingInternal<T>(id, false, null, cancellation);
     }
 
     public async Task<IEventStream<T>> FetchForWriting<T>(string key, CancellationToken cancellation = default)
-        where T : class, new()
+        where T : class
     {
         return await FetchForWritingInternal<T>(key, false, null, cancellation);
     }
 
     public async Task<IEventStream<T>> FetchForWriting<T>(Guid id, long expectedVersion, CancellationToken cancellation = default)
-        where T : class, new()
+        where T : class
     {
         return await FetchForWritingInternal<T>(id, false, expectedVersion, cancellation);
     }
 
     public async Task<IEventStream<T>> FetchForWriting<T>(string key, long expectedVersion, CancellationToken cancellation = default)
-        where T : class, new()
+        where T : class
     {
         return await FetchForWritingInternal<T>(key, false, expectedVersion, cancellation);
     }
 
     public async Task<IEventStream<T>> FetchForExclusiveWriting<T>(Guid id, CancellationToken cancellation = default)
-        where T : class, new()
+        where T : class
     {
         return await FetchForWritingInternal<T>(id, true, null, cancellation);
     }
 
     public async Task<IEventStream<T>> FetchForExclusiveWriting<T>(string key, CancellationToken cancellation = default)
-        where T : class, new()
+        where T : class
     {
         return await FetchForWritingInternal<T>(key, true, null, cancellation);
     }
 
     public async ValueTask<T?> ProjectLatest<T>(Guid id, CancellationToken cancellation = default)
-        where T : class, new()
+        where T : class
     {
         var snapshot = await _sessionBase.Events.FetchLatest<T>(id, cancellation);
 
@@ -273,7 +273,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
     }
 
     public async ValueTask<T?> ProjectLatest<T>(string key, CancellationToken cancellation = default)
-        where T : class, new()
+        where T : class
     {
         var snapshot = await _sessionBase.Events.FetchLatest<T>(key, cancellation);
 
@@ -287,7 +287,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
     }
 
     public async Task WriteToAggregate<T>(Guid id, Action<IEventStream<T>> writing, CancellationToken cancellation = default)
-        where T : class, new()
+        where T : class
     {
         var stream = await FetchForWriting<T>(id, cancellation);
         writing(stream);
@@ -295,7 +295,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
     }
 
     public async Task WriteToAggregate<T>(string key, Action<IEventStream<T>> writing, CancellationToken cancellation = default)
-        where T : class, new()
+        where T : class
     {
         var stream = await FetchForWriting<T>(key, cancellation);
         writing(stream);
@@ -303,7 +303,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
     }
 
     public async Task WriteToAggregate<T>(Guid id, Func<IEventStream<T>, Task> writing, CancellationToken cancellation = default)
-        where T : class, new()
+        where T : class
     {
         var stream = await FetchForWriting<T>(id, cancellation);
         await writing(stream);
@@ -311,7 +311,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
     }
 
     public async Task WriteToAggregate<T>(string key, Func<IEventStream<T>, Task> writing, CancellationToken cancellation = default)
-        where T : class, new()
+        where T : class
     {
         var stream = await FetchForWriting<T>(key, cancellation);
         await writing(stream);
@@ -319,7 +319,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
     }
 
     public async Task WriteToAggregate<T>(Guid id, int initialVersion, Action<IEventStream<T>> writing, CancellationToken cancellation = default)
-        where T : class, new()
+        where T : class
     {
         var stream = await FetchForWriting<T>(id, initialVersion, cancellation);
         writing(stream);
@@ -327,7 +327,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
     }
 
     public async Task WriteToAggregate<T>(Guid id, int initialVersion, Func<IEventStream<T>, Task> writing, CancellationToken cancellation = default)
-        where T : class, new()
+        where T : class
     {
         var stream = await FetchForWriting<T>(id, initialVersion, cancellation);
         await writing(stream);
@@ -335,7 +335,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
     }
 
     public async Task WriteToAggregate<T>(string key, int initialVersion, Action<IEventStream<T>> writing, CancellationToken cancellation = default)
-        where T : class, new()
+        where T : class
     {
         var stream = await FetchForWriting<T>(key, initialVersion, cancellation);
         writing(stream);
@@ -343,7 +343,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
     }
 
     public async Task WriteToAggregate<T>(string key, int initialVersion, Func<IEventStream<T>, Task> writing, CancellationToken cancellation = default)
-        where T : class, new()
+        where T : class
     {
         var stream = await FetchForWriting<T>(key, initialVersion, cancellation);
         await writing(stream);
@@ -351,7 +351,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
     }
 
     public async Task WriteExclusivelyToAggregate<T>(Guid id, Action<IEventStream<T>> writing, CancellationToken cancellation = default)
-        where T : class, new()
+        where T : class
     {
         var stream = await FetchForExclusiveWriting<T>(id, cancellation);
         writing(stream);
@@ -359,7 +359,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
     }
 
     public async Task WriteExclusivelyToAggregate<T>(string key, Action<IEventStream<T>> writing, CancellationToken cancellation = default)
-        where T : class, new()
+        where T : class
     {
         var stream = await FetchForExclusiveWriting<T>(key, cancellation);
         writing(stream);
@@ -367,7 +367,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
     }
 
     public async Task WriteExclusivelyToAggregate<T>(Guid id, Func<IEventStream<T>, Task> writing, CancellationToken cancellation = default)
-        where T : class, new()
+        where T : class
     {
         var stream = await FetchForExclusiveWriting<T>(id, cancellation);
         await writing(stream);
@@ -375,7 +375,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
     }
 
     public async Task WriteExclusivelyToAggregate<T>(string key, Func<IEventStream<T>, Task> writing, CancellationToken cancellation = default)
-        where T : class, new()
+        where T : class
     {
         var stream = await FetchForExclusiveWriting<T>(key, cancellation);
         await writing(stream);
@@ -533,7 +533,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
     }
 
     private async Task<IEventStream<T>> FetchForWritingInternal<T>(object streamId, bool forExclusive,
-        long? expectedVersion, CancellationToken cancellation) where T : class, new()
+        long? expectedVersion, CancellationToken cancellation) where T : class
     {
         if (forExclusive)
         {
@@ -654,7 +654,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
     }
 
     public async Task<IEventStream<T>> FetchForWriting<T, TId>(TId id, CancellationToken cancellation = default)
-        where T : class, new() where TId : notnull
+        where T : class where TId : notnull
     {
         var naturalKey = FindNaturalKeyDefinition<T>();
         return await NaturalKeyFetchPlanner.FetchForWritingByNaturalKey<T, TId>(
@@ -662,7 +662,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
     }
 
     public async Task<IEventStream<T>> FetchForExclusiveWriting<T, TId>(TId id, CancellationToken cancellation = default)
-        where T : class, new() where TId : notnull
+        where T : class where TId : notnull
     {
         // FetchForWritingByNaturalKey already uses UPDLOCK, HOLDLOCK for exclusive locking
         var naturalKey = FindNaturalKeyDefinition<T>();
@@ -671,7 +671,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
     }
 
     public async ValueTask<T?> FetchLatest<T, TId>(TId id, CancellationToken cancellation = default)
-        where T : class, new() where TId : notnull
+        where T : class where TId : notnull
     {
         var naturalKey = FindNaturalKeyDefinition<T>();
         var unwrapped = naturalKey.Unwrap(id);
@@ -714,7 +714,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
         }
     }
 
-    private NaturalKeyDefinition FindNaturalKeyDefinition<T>() where T : class, new()
+    private NaturalKeyDefinition FindNaturalKeyDefinition<T>() where T : class
     {
         var definition = _sessionBase.Options.Projections.FindNaturalKeyDefinition(typeof(T));
         if (definition != null) return definition;
