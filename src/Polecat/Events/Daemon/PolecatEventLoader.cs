@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using JasperFx.Events;
 using JasperFx.Events.Daemon;
 using JasperFx.Events.Projections;
@@ -11,6 +12,10 @@ namespace Polecat.Events.Daemon;
 ///     Loads event batches by seq_id range from pc_events.
 ///     All SQL execution is wrapped with Polly resilience.
 /// </summary>
+[UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
+    Justification = "Class-level: hydrates IEvent batches via EventGraph.Wrap (routed through ISerializer.FromJson). Event types are preserved by EventGraph registration on the caller side per the AOT publishing guide.")]
+[UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+    Justification = "Class-level: ISerializer.FromJson and Event<T>.MakeGenericType are annotated RDC. AOT consumers register concrete event types ahead of time.")]
 internal class PolecatEventLoader : IEventLoader
 {
     private readonly EventGraph _events;

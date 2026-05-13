@@ -1,4 +1,5 @@
 using System.Data.Common;
+using System.Diagnostics.CodeAnalysis;
 using System.Text;
 using System.Text.Json;
 using JasperFx.Descriptors;
@@ -53,6 +54,10 @@ namespace Polecat.Events.Internal;
 ///     <see cref="ReadEventCore"/> for the shared 95% of the work.
 ///     </para>
 /// </remarks>
+[UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
+    Justification = "Class-level: hydrates IEvent instances via ISerializer.FromJson on the event data column and EventGraph.Wrap. Event types are preserved by EventGraph registration on the caller side per the AOT publishing guide.")]
+[UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+    Justification = "Class-level: ISerializer.FromJson and Event<T>.MakeGenericType for envelope construction are annotated RDC. AOT consumers supply a source-generator-backed ISerializer impl and register concrete event types.")]
 internal static class PcEventsRowReader
 {
     /// <summary>

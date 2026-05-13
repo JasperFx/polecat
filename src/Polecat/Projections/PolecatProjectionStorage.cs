@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using JasperFx.Events;
 using JasperFx.Events.Aggregation;
 using JasperFx.Events.Daemon;
@@ -14,6 +15,10 @@ namespace Polecat.Projections;
 ///     that JasperFx.Events uses to persist projected documents.
 ///     All SQL execution routes through session's Polly-wrapped centralized methods.
 /// </summary>
+[UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
+    Justification = "Class-level: persists projected TDoc via ISerializer.ToJson and deserializes loaded snapshots via ISerializer.FromJson. TDoc/TId flow in from projection registration on the caller side and are preserved per the AOT publishing guide; AOT consumers supply a source-generator-backed ISerializer impl.")]
+[UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+    Justification = "Class-level: ISerializer is annotated RDC. AOT consumers supply a source-generator-backed impl.")]
 internal class PolecatProjectionStorage<TDoc, TId> : IProjectionStorage<TDoc, TId>
     where TDoc : notnull
     where TId : notnull

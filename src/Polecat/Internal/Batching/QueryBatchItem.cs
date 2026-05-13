@@ -1,10 +1,15 @@
 using System.Data.Common;
+using System.Diagnostics.CodeAnalysis;
 using Polecat.Linq.SqlGeneration;
 using Polecat.Serialization;
 using Weasel.SqlServer;
 
 namespace Polecat.Internal.Batching;
 
+[UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
+    Justification = "Class-level: deserializes batch query results via ISerializer.FromJson. T is preserved by IBatch.Query<T>() registration on the caller side per the AOT publishing guide.")]
+[UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+    Justification = "Class-level: ISerializer.FromJson is annotated RDC. AOT consumers supply a source-generator-backed impl.")]
 internal class QueryListBatchItem<T> : IBatchQueryItem where T : class
 {
     private readonly TaskCompletionSource<IReadOnlyList<T>> _tcs = new();
@@ -105,6 +110,10 @@ internal class QueryAnyBatchItem : IBatchQueryItem
     }
 }
 
+[UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
+    Justification = "Class-level: deserializes the first matching batch query result via ISerializer.FromJson. T is preserved by IBatch.Query<T>() registration on the caller side per the AOT publishing guide.")]
+[UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+    Justification = "Class-level: ISerializer.FromJson is annotated RDC. AOT consumers supply a source-generator-backed impl.")]
 internal class QueryFirstOrDefaultBatchItem<T> : IBatchQueryItem where T : class
 {
     private readonly TaskCompletionSource<T?> _tcs = new();

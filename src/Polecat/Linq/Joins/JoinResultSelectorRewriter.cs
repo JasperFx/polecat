@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 
 namespace Polecat.Linq.Joins;
@@ -7,6 +8,8 @@ namespace Polecat.Linq.Joins;
 ///     into a direct Func&lt;TOuter, TInner, TResult&gt; by resolving member accesses
 ///     through the GroupJoin result selector's mapping.
 /// </summary>
+[UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+    Justification = "Class-level: compiles a rewritten result selector via Expression.Lambda — runtime code generation. TOuter/TInner/TResult flow in from the LINQ Join registration on the caller side and are preserved per the AOT publishing guide.")]
 internal static class JoinResultSelectorRewriter
 {
     /// <summary>

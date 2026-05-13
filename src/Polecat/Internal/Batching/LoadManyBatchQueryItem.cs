@@ -1,10 +1,15 @@
 using System.Data.Common;
+using System.Diagnostics.CodeAnalysis;
 using Polecat.Metadata;
 using Polecat.Serialization;
 using Weasel.SqlServer;
 
 namespace Polecat.Internal.Batching;
 
+[UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
+    Justification = "Class-level: deserializes loaded document rows via ISerializer.FromJson. T is preserved by IBatch.LoadMany<T>() registration on the caller side per the AOT publishing guide.")]
+[UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+    Justification = "Class-level: ISerializer.FromJson is annotated RDC. AOT consumers supply a source-generator-backed impl.")]
 internal class LoadManyBatchQueryItem<T> : IBatchQueryItem where T : class
 {
     private readonly TaskCompletionSource<IReadOnlyList<T>> _tcs = new();

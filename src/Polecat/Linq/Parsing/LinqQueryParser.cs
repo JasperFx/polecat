@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using Polecat.Linq.Joins;
 using Polecat.Linq.Members;
@@ -12,6 +13,8 @@ namespace Polecat.Linq.Parsing;
 /// <summary>
 ///     Visits a LINQ expression tree and builds a Statement for SQL generation.
 /// </summary>
+[UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+    Justification = "Class-level: compiles join / order-by / select-clause sub-expressions via Expression.Lambda — runtime code generation. The expression trees originate at the LINQ registration boundary where document/event types are preserved per the AOT publishing guide.")]
 internal class LinqQueryParser : ExpressionVisitor
 {
     private readonly IMemberResolver _memberFactory;

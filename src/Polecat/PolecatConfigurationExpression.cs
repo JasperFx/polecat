@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using JasperFx.Events.Daemon;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -9,6 +10,8 @@ namespace Polecat;
 /// <summary>
 ///     Fluent builder returned by AddPolecat() for further configuration.
 /// </summary>
+[UnconditionalSuppressMessage("Trimming", "IL2087:DynamicallyAccessedMembers",
+    Justification = "Class-level: generic type-argument flow on AddPolecat()'s subsequent fluent calls — TStore / TQuerySession / TDocumentSession etc. flow in from caller registration code and are preserved by the trimmer at that boundary per the AOT publishing guide.")]
 public class PolecatConfigurationExpression
 {
     public PolecatConfigurationExpression(IServiceCollection services)
