@@ -8,13 +8,15 @@ Polecat 4.0 ships in lockstep with [Marten 9.0](https://martendb.io) and [Jasper
 
 Polecat 4 consumes the 2026-wave alpha line for the shared substrate. Update your `Directory.Packages.props` (or the equivalent in your csproj):
 
-| Package | 3.x | 4.0 |
+| Package | 3.x | 4.0 (current alpha) |
 |---|---|---|
-| `JasperFx` | `1.31.0` | `2.0.0-alpha.8` |
-| `JasperFx.Events` | `1.36.0` | `2.0.0-alpha.3` |
+| `JasperFx` | `1.31.0` | `2.0.0-alpha.11` |
+| `JasperFx.Events` | `1.36.0` | `2.0.0-alpha.4` |
 | `JasperFx.Events.SourceGenerator` | `1.4.0` | `2.0.0-alpha.2` |
-| `Weasel.SqlServer` | `8.15.2` | `9.0.0-alpha.2` |
-| `Weasel.EntityFrameworkCore` | `8.15.2` | `9.0.0-alpha.2` |
+| `Weasel.SqlServer` | `8.15.2` | `9.0.0-alpha.3` |
+| `Weasel.EntityFrameworkCore` | `8.15.2` | `9.0.0-alpha.3` |
+
+The alpha line is still rolling forward as the 2026 wave converges; the table above reflects the current Polecat 4 pins. Expect another tick or two before 4.0 GA — keep one set of bumps in your renovate/dependabot config and pin all five packages together.
 
 Target frameworks (`net9.0;net10.0`) are unchanged from late Polecat 3.x; .NET 8 was already dropped before Polecat 3.2.
 
@@ -153,7 +155,9 @@ The concurrency throw is **best-effort, not transactional.** Matched-and-updated
 Polecat 4 inherits the same AOT-friendly posture introduced in JasperFx 2.0 ([jasperfx#213](https://github.com/JasperFx/jasperfx/issues/213) AOT pillar, jasperfx#190 `ITypeLoader` abstraction). Polecat itself has been source-generator-first since 3.x — there is no Roslyn runtime-compile path to disable — so:
 
 - `PublishAot=true` is the supported posture for Polecat 4 applications, modulo the usual System.Text.Json `JsonSerializerContext` setup for your document and event types.
-- `IsAotCompatible=true` will be set on the Polecat assembly itself once the per-project audit lands as part of the AOT pillar.
+- `IsAotCompatible=true` is now set on the Polecat assembly (PR [#67](https://github.com/JasperFx/polecat/pull/67)), and the reflective surfaces of Polecat have been progressively annotated for the trimmer / AOT analyzer — Serialization ([#74](https://github.com/JasperFx/polecat/pull/74)), ProjectionReplay ([#75](https://github.com/JasperFx/polecat/pull/75)), LINQ extension/provider surface ([#76](https://github.com/JasperFx/polecat/pull/76)), and Storage / Registry / EventStoreExplorer ([#77](https://github.com/JasperFx/polecat/pull/77)).
+
+For the end-to-end "how do I publish AOT against the Critter Stack" walkthrough — recommended csproj flags, `WarningsAsErrors=IL*` setup, the source-generator-backed `ISerializer` swap, and the smoke-test pattern — see the **[Publishing AOT with JasperFx](https://jasperfx.github.io/codegen/aot)** guide on jasperfx.github.io. The guide is written for the whole Critter Stack; Polecat-specific call-outs are listed in the "Per-package status" table there.
 
 ### Out of scope (no Polecat 4 change)
 
