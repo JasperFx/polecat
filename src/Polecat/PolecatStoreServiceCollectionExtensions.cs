@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Polecat.Internal;
@@ -7,6 +8,8 @@ namespace Polecat;
 /// <summary>
 ///     Extension methods for registering secondary/ancillary Polecat document stores.
 /// </summary>
+[UnconditionalSuppressMessage("Trimming", "IL2091:DynamicallyAccessedMembers",
+    Justification = "Class-level: AddPolecatStore<T> threads T through Microsoft.Extensions.DependencyInjection registration, which has its own DAM annotations. T is constrained to interface IDocumentStore and supplied directly by caller code at registration time, so the trimmer sees and preserves it.")]
 public static class PolecatStoreServiceCollectionExtensions
 {
     /// <summary>

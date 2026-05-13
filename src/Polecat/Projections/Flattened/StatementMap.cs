@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using System.Reflection;
 using JasperFx.Events;
@@ -11,6 +12,8 @@ namespace Polecat.Projections.Flattened;
 ///     Configures column mappings for a single event type in a FlatTableProjection.
 ///     At compile time, generates a MERGE SQL statement and parameter setter array.
 /// </summary>
+[UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+    Justification = "Class-level: builds typed property accessor delegates via Expression.Lambda + Compile against TEvent's properties — runtime code generation. TEvent flows in from FlatTableProjection.Project<TEvent>() registration on the caller side and is preserved per the AOT publishing guide.")]
 public class StatementMap<TEvent> : IFlatTableEventHandler
 {
     private readonly FlatTableProjection _parent;

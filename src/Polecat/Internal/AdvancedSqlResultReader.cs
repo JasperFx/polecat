@@ -1,4 +1,5 @@
 using System.Data.Common;
+using System.Diagnostics.CodeAnalysis;
 using JasperFx;
 using Polecat.Metadata;
 using Polecat.Serialization;
@@ -80,6 +81,10 @@ internal class ScalarReader : AdvancedSqlResultReader
     }
 }
 
+[UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
+    Justification = "Class-level: ISerializer.FromJson(Type, string) for advanced SQL projections. Result types flow in from QueryAsync<T>() registration on the caller side and are preserved per the AOT publishing guide.")]
+[UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+    Justification = "Class-level: ISerializer.FromJson is annotated RDC. AOT consumers supply a source-generator-backed impl.")]
 internal class JsonReader : AdvancedSqlResultReader
 {
     private readonly Type _type;
@@ -106,6 +111,10 @@ internal class JsonReader : AdvancedSqlResultReader
     }
 }
 
+[UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
+    Justification = "Class-level: ISerializer.FromJson(Type, string) for advanced SQL document projections. Document types flow in from registration on the caller side and are preserved per the AOT publishing guide.")]
+[UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+    Justification = "Class-level: ISerializer.FromJson is annotated RDC. AOT consumers supply a source-generator-backed impl.")]
 internal class DocumentReader : AdvancedSqlResultReader
 {
     private readonly Type _type;

@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using JasperFx.Core.Reflection;
 using JasperFx.Events;
 using JasperFx.Events.Aggregation;
@@ -16,6 +17,10 @@ namespace Polecat.Projections;
 ///     Projection registration and configuration for Polecat.
 ///     Extends ProjectionGraph to integrate with the JasperFx async daemon framework.
 /// </summary>
+[UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
+    Justification = "Class-level: registers projections via the JasperFx.Events ProjectionGraph (annotated RUC). Projection / aggregate types flow in from caller registration and are preserved per the AOT publishing guide.")]
+[UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+    Justification = "Class-level: JasperFx.Events projection-registration helpers use Type.MakeGenericType — runtime code generation. AOT consumers rely on source-generated projection helpers.")]
 public class PolecatProjectionOptions
     : ProjectionGraph<IProjection, IDocumentSession, IQuerySession>
 {

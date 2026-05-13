@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using System.Reflection;
 using Polecat.Linq.Members;
@@ -9,6 +10,8 @@ namespace Polecat.Linq.Parsing;
 /// <summary>
 ///     Parses a predicate expression tree into an ISqlFragment for the WHERE clause.
 /// </summary>
+[UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+    Justification = "Class-level: evaluates constant sub-expressions in predicates via Expression.Lambda + Compile — runtime code generation. Document/event types and their property graph are preserved at the LINQ registration boundary on the caller side per the AOT publishing guide.")]
 internal class WhereClauseParser
 {
     private static readonly Dictionary<ExpressionType, string> Operators = new()

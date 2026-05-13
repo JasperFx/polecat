@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using System.Text.Json;
 using Polecat.Linq.Members;
@@ -13,6 +14,8 @@ namespace Polecat.Linq.Parsing;
 ///     Uses CONCAT with manual JSON encoding for broad SQL Server compatibility
 ///     (works on Azure SQL Edge and SQL Server 2022+).
 /// </summary>
+[UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+    Justification = "Class-level: compiles HAVING-clause sub-expressions via Expression.Lambda — runtime code generation. Document types are preserved at the LINQ registration boundary per the AOT publishing guide.")]
 internal class GroupBySelectBuilder
 {
     private readonly MemberFactory _memberFactory;

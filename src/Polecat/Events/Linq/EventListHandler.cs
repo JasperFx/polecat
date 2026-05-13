@@ -1,4 +1,5 @@
 using System.Data.Common;
+using System.Diagnostics.CodeAnalysis;
 using JasperFx.Events;
 using Microsoft.Data.SqlClient;
 using Polecat.Serialization;
@@ -9,6 +10,10 @@ namespace Polecat.Events.Linq;
 ///     Reads IEvent objects from a multi-column result set on pc_events.
 ///     Column layout: seq_id, id, stream_id, version, data, type, timestamp, tenant_id, dotnet_type, is_archived
 /// </summary>
+[UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
+    Justification = "Class-level: hydrates IEvent via EventGraph.Wrap (which routes through ISerializer.FromJson). Event types are preserved by EventGraph registration on the caller side per the AOT publishing guide.")]
+[UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+    Justification = "Class-level: ISerializer.FromJson and Event<T>.MakeGenericType for envelope construction are annotated RDC. AOT consumers register concrete event types ahead of time.")]
 internal class EventListHandler
 {
     private readonly ISerializer _serializer;

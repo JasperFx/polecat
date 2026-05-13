@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using JasperFx.Core.Reflection;
 using JasperFx.Events.Projections;
 using JasperFx.Events.Projections.Composite;
@@ -11,6 +12,10 @@ namespace Polecat.Projections;
 ///     into ordered stages. Stages run sequentially, projections within a stage
 ///     run in parallel.
 /// </summary>
+[UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
+    Justification = "Class-level: extends JasperFx.Events CompositeProjection (annotated RUC) and registers nested projection types via reflection. Projection types are preserved at the registration boundary on the caller side per the AOT publishing guide.")]
+[UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+    Justification = "Class-level: JasperFx.Events composite-projection helpers use Type.MakeGenericType — runtime code generation. AOT consumers rely on source-generated projection helpers.")]
 public class PolecatCompositeProjection : CompositeProjection<IDocumentSession, IQuerySession>
 {
     private readonly StoreOptions _options;

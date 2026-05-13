@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using System.Reflection;
 using Polecat.Linq.Members;
@@ -9,6 +10,8 @@ namespace Polecat.Events.Operations;
 ///     Parses a predicate expression against IEvent properties into an ISqlFragment
 ///     for WHERE clauses against the pc_events table.
 /// </summary>
+[UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+    Justification = "Class-level: evaluates constant sub-expressions in IEvent predicates via Expression.Lambda + Compile — runtime code generation. Event types and their property graph are preserved at the event-LINQ registration boundary on the caller side per the AOT publishing guide.")]
 internal class EventWhereClauseParser
 {
     private static readonly Dictionary<ExpressionType, string> Operators = new()

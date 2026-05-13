@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using JasperFx.Events;
 using JasperFx.Events.Aggregation;
 using Polecat.Internal;
@@ -17,6 +18,10 @@ public interface IEventsArchiver
 ///     Configuration and execution of stream compaction. Replaces all events (except the last)
 ///     with a single Compacted&lt;T&gt; snapshot event, then deletes the originals.
 /// </summary>
+[UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
+    Justification = "Class-level: drives JasperFx.Events aggregator graph (annotated RUC) to produce the Compacted<T> snapshot. Aggregate type T flows in from caller code and is preserved by projection registration on the caller side per the AOT publishing guide.")]
+[UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+    Justification = "Class-level: aggregator runtime uses Type.MakeGenericType + FastExpressionCompiler. AOT consumers rely on source-generated aggregator helpers.")]
 public class StreamCompactingRequest<T> where T : class
 {
     public StreamCompactingRequest(string? streamKey)

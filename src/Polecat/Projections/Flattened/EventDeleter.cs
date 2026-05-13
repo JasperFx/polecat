@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using System.Reflection;
 using JasperFx.Events;
@@ -9,6 +10,8 @@ namespace Polecat.Projections.Flattened;
 /// <summary>
 ///     Handles DELETE operations for a flat table when a specific event type is received.
 /// </summary>
+[UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+    Justification = "Class-level: builds typed property accessor delegates via Expression.Lambda + Compile against TEvent's primary-key properties — runtime code generation. TEvent flows in from FlatTableProjection.Delete<TEvent>() registration on the caller side and is preserved per the AOT publishing guide.")]
 internal class EventDeleter<TEvent> : IFlatTableEventHandler
 {
     private readonly FlatTableProjection _parent;
