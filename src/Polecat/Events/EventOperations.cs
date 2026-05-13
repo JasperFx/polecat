@@ -1,4 +1,5 @@
 using System.Data.Common;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using System.Reflection;
 using System.Text;
@@ -22,6 +23,12 @@ namespace Polecat.Events;
 ///     Per-session event operations. Wraps raw events and queues StreamActions
 ///     in the session's WorkTracker for execution on SaveChangesAsync.
 /// </summary>
+[UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
+    Justification = "Class-level: bridges into JasperFx.Events aggregator/projection infrastructure and the Polecat serializer for event payload (de)serialization. Event and aggregate types are preserved at the EventGraph / projection-registration boundary on the caller side per the AOT publishing guide.")]
+[UnconditionalSuppressMessage("Trimming", "IL2090:DynamicallyAccessedMembers",
+    Justification = "Class-level: FindNaturalKeyDefinition<T> reflects PublicProperties on aggregate type T. T flows in from the natural-key-aware Append API on the caller side and is preserved by projection registration.")]
+[UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+    Justification = "Class-level: routes through JasperFx.Events generic factories and serializer paths that require runtime code generation. AOT consumers register concrete event types and supply a source-generator-backed ISerializer impl.")]
 internal class EventOperations : QueryEventStore, IEventOperations
 {
     private readonly DocumentSessionBase _sessionBase;

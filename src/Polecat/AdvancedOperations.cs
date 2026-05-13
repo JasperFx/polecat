@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Text;
 using JasperFx;
 using Microsoft.Data.SqlClient;
@@ -11,6 +12,10 @@ using Weasel.Core;
 
 namespace Polecat;
 
+[UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
+    Justification = "Class-level: BulkInsertAsync / BulkInsertWithVersionAsync stream documents through ISerializer.ToJson. Document types T flow in from caller code (BulkInsertAsync<T>(docs)) and are preserved per the AOT publishing guide.")]
+[UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+    Justification = "Class-level: ISerializer.ToJson is annotated RDC. AOT consumers supply a source-generator-backed ISerializer impl.")]
 public class AdvancedOperations
 {
     private readonly DocumentStore _store;
