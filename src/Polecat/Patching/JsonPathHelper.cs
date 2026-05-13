@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using System.Reflection;
 using System.Text.Json;
@@ -8,6 +9,8 @@ namespace Polecat.Patching;
 ///     Extracts JSON paths (e.g., "$.camelCase.path") from lambda expressions,
 ///     using the serializer's JsonNamingPolicy.
 /// </summary>
+[UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+    Justification = "Class-level: builds Expression.Lambda delegates for evaluating constant sub-expressions in patch paths — runtime code generation. The targeted lambdas reference document properties whose owning types are preserved by registration on the caller side.")]
 internal static class JsonPathHelper
 {
     public static string ToPath(Expression expression, JsonNamingPolicy? namingPolicy)
