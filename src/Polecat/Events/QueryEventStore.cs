@@ -131,6 +131,54 @@ internal class QueryEventStore : IQueryEventStore
         return results;
     }
 
+    public async Task<IEvent<T>?> LoadAsync<T>(Guid id, CancellationToken token = default) where T : class
+    {
+        var @event = await LoadInternalAsync(id, token);
+        return @event as IEvent<T>;
+    }
+
+    public Task<IEvent?> LoadAsync(Guid id, CancellationToken token = default)
+        => LoadInternalAsync(id, token);
+
+    private async Task<IEvent?> LoadInternalAsync(Guid id, CancellationToken token)
+    {
+        // Mirrors FetchStreamInternalAsync but filters by the event UUID
+        // rather than stream id, and reads the row's stream_id column to
+        // assemble the context (since the caller doesn't know the stream
+        // up-front for a load-by-event-id lookup).
+        await using var cmd = new SqlCommand();
+        cmd.CommandText = $"""
+            SELECT {PcEventsRowReader.ComposeSelectColumns(_events.EventOptions)}
+            FROM {_events.EventsTableName}
+            WHERE id = @id AND tenant_id = @tenant_id AND is_archived = 0;
+            """;
+        cmd.Parameters.AddWithValue("@id", id);
+        cmd.Parameters.AddWithValue("@tenant_id", _session.TenantId);
+
+        await using var reader = await _session.ExecuteReaderAsync(cmd, token);
+        if (!await reader.ReadAsync(token)) return null;
+
+        // Pull stream_id off the row so PcEventsRowReader's stream-id
+        // assignment (driven by ctx.StreamId) gets the right value. Ordinal 2
+        // matches PcEventsRowReader.ComposeSelectColumns(...).
+        object streamId = _events.StreamIdentity == StreamIdentity.AsGuid
+            ? reader.GetGuid(2)
+            : reader.GetString(2);
+
+        var ctx = new EventHydrationContext(
+            _events,
+            _session.Serializer,
+            streamId,
+            defaultTenantId: _session.TenantId);
+
+        var slots = MetadataSlots.Compute(_events.EventOptions);
+        var cache = new EventTypeCache();
+
+        return _events.StreamIdentity == StreamIdentity.AsGuid
+            ? PcEventsRowReader.ReadEventAsGuid(reader, ctx, slots, ref cache)
+            : PcEventsRowReader.ReadEventAsString(reader, ctx, slots, ref cache);
+    }
+
     public async Task<StreamState?> FetchStreamStateAsync(Guid streamId, CancellationToken token = default)
     {
         return await FetchStreamStateInternalAsync(streamId, token);

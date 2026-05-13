@@ -34,6 +34,19 @@ public interface IQueryEventStore
         DateTimeOffset? timestamp = null, long fromVersion = 0, CancellationToken token = default);
 
     /// <summary>
+    ///     Load a single event by its id, knowing the event type upfront.
+    ///     Returns null when the event id does not exist.
+    /// </summary>
+    Task<IEvent<T>?> LoadAsync<T>(Guid id, CancellationToken token = default) where T : class;
+
+    /// <summary>
+    ///     Load a single event by its id. The runtime event type is resolved through the
+    ///     event registry from the stored <c>dotnet_type</c> column. Returns null when the
+    ///     event id does not exist.
+    /// </summary>
+    Task<IEvent?> LoadAsync(Guid id, CancellationToken token = default);
+
+    /// <summary>
     ///     Fetch stream metadata by Guid id.
     /// </summary>
     Task<StreamState?> FetchStreamStateAsync(Guid streamId, CancellationToken token = default);

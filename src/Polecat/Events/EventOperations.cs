@@ -157,6 +157,71 @@ internal class EventOperations : QueryEventStore, IEventOperations
         return StartStream<TAggregate>(Guid.NewGuid(), events);
     }
 
+    // --- IEnumerable<object> + Type-parameter overloads (issue #88) -------
+    // Thin delegators; concrete behavior lives in the params object[] impls
+    // above. These exist so the JasperFx.Events.IEventOperations contract
+    // can be satisfied without forcing callers to materialize arrays.
+
+    public StreamAction Append(Guid stream, IEnumerable<object> events)
+        => Append(stream, events.ToArray());
+
+    public StreamAction Append(string stream, IEnumerable<object> events)
+        => Append(stream, events.ToArray());
+
+    public StreamAction Append(Guid stream, long expectedVersion, IEnumerable<object> events)
+        => Append(stream, expectedVersion, events.ToArray());
+
+    public StreamAction Append(string stream, long expectedVersion, IEnumerable<object> events)
+        => Append(stream, expectedVersion, events.ToArray());
+
+    public StreamAction StartStream(Guid id, IEnumerable<object> events)
+        => StartStream(id, events.ToArray());
+
+    public StreamAction StartStream(string streamKey, IEnumerable<object> events)
+        => StartStream(streamKey, events.ToArray());
+
+    public StreamAction StartStream<TAggregate>(Guid id, IEnumerable<object> events) where TAggregate : class
+        => StartStream<TAggregate>(id, events.ToArray());
+
+    public StreamAction StartStream<TAggregate>(string streamKey, IEnumerable<object> events) where TAggregate : class
+        => StartStream<TAggregate>(streamKey, events.ToArray());
+
+    public StreamAction StartStream(IEnumerable<object> events)
+        => StartStream(events.ToArray());
+
+    public StreamAction StartStream<TAggregate>(IEnumerable<object> events) where TAggregate : class
+        => StartStream<TAggregate>(events.ToArray());
+
+    public StreamAction StartStream(Type aggregateType, Guid id, params object[] events)
+    {
+        var action = StartStream(id, events);
+        action.AggregateType = aggregateType;
+        return action;
+    }
+
+    public StreamAction StartStream(Type aggregateType, Guid id, IEnumerable<object> events)
+        => StartStream(aggregateType, id, events.ToArray());
+
+    public StreamAction StartStream(Type aggregateType, string streamKey, params object[] events)
+    {
+        var action = StartStream(streamKey, events);
+        action.AggregateType = aggregateType;
+        return action;
+    }
+
+    public StreamAction StartStream(Type aggregateType, string streamKey, IEnumerable<object> events)
+        => StartStream(aggregateType, streamKey, events.ToArray());
+
+    public StreamAction StartStream(Type aggregateType, params object[] events)
+    {
+        var action = StartStream(events);
+        action.AggregateType = aggregateType;
+        return action;
+    }
+
+    public StreamAction StartStream(Type aggregateType, IEnumerable<object> events)
+        => StartStream(aggregateType, events.ToArray());
+
     public async Task<IEventStream<T>> FetchForWriting<T>(Guid id, CancellationToken cancellation = default)
         where T : class, new()
     {
@@ -449,6 +514,22 @@ internal class EventOperations : QueryEventStore, IEventOperations
             ? _sessionBase.Serializer.ToJson(@event.Headers)
             : null;
         _workTracker.Add(new Protected.OverwriteEventOperation(_events, @event, serializedData, serializedHeaders));
+    }
+
+    public Guid CompletelyReplaceEvent<T>(long sequence, T eventBody) where T : class
+    {
+        // Register the runtime event type and resolve its mapping so the
+        // replacement row carries the right `type` / `dotnet_type` columns —
+        // the existing ReplaceEventOperation just persists what we hand it.
+        _events.AddEventType(typeof(T));
+        var mapping = _events.EventMappingFor(typeof(T));
+
+        var serializedData = _sessionBase.Serializer.ToJson(eventBody);
+        var op = new Protected.ReplaceEventOperation(
+            _events, sequence, serializedData, mapping.EventTypeName, mapping.DotNetTypeName);
+
+        _workTracker.Add(op);
+        return op.Id;
     }
 
     private async Task<IEventStream<T>> FetchForWritingInternal<T>(object streamId, bool forExclusive,
