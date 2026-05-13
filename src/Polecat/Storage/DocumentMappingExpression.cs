@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 
 namespace Polecat.Storage;
@@ -6,6 +7,8 @@ namespace Polecat.Storage;
 ///     Fluent configuration builder for a document type's mapping.
 ///     Used via StoreOptions.Schema.For&lt;T&gt;().
 /// </summary>
+[UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
+    Justification = "Class-level: AddSubClassHierarchy uses Assembly.GetTypes() to discover subclasses of T. Document hierarchies are part of the registered surface and AOT consumers must preserve subclass types (JsonSerializerContext / per-type registration) per the AOT publishing guide.")]
 public class DocumentMappingExpression<T>
 {
     internal readonly Type DocumentType = typeof(T);

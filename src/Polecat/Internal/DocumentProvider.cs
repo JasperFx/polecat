@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using JasperFx;
 using Polecat.Internal.Operations;
 using Polecat.Metadata;
@@ -11,6 +12,10 @@ namespace Polecat.Internal;
 ///     Per-document-type factory for storage operations. Caches the DocumentMapping
 ///     and generates SQL operations for a specific type.
 /// </summary>
+[UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
+    Justification = "Class-level: invokes ISerializer.ToJson, which is annotated RUC because the default STJ-reflection serializer requires unreferenced code. AOT consumers supply a source-generator-backed ISerializer impl per the AOT publishing guide.")]
+[UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+    Justification = "Class-level: ISerializer.ToJson is annotated RDC for the same reason as IL2026 above. AOT consumers supply a source-generator-backed ISerializer impl.")]
 internal class DocumentProvider
 {
     public DocumentProvider(DocumentMapping mapping)
