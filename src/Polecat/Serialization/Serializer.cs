@@ -1,4 +1,5 @@
 using System.Data.Common;
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
@@ -74,48 +75,66 @@ public class Serializer : ISerializer
         configure(_options);
     }
 
+    [RequiresUnreferencedCode("STJ JsonSerializer.Serialize uses reflection over document's runtime type.")]
+    [RequiresDynamicCode("STJ JsonSerializer.Serialize requires runtime code generation for non-source-generated types.")]
     public string ToJson(object document)
     {
         return JsonSerializer.Serialize(document, document.GetType(), _options);
     }
 
+    [RequiresUnreferencedCode("STJ JsonSerializer.Deserialize<T> uses reflection over T.")]
+    [RequiresDynamicCode("STJ JsonSerializer.Deserialize requires runtime code generation for non-source-generated types.")]
     public T FromJson<T>(string json)
     {
         return JsonSerializer.Deserialize<T>(json, _options)!;
     }
 
+    [RequiresUnreferencedCode("STJ JsonSerializer.Deserialize uses reflection over the supplied type.")]
+    [RequiresDynamicCode("STJ JsonSerializer.Deserialize requires runtime code generation for non-source-generated types.")]
     public object FromJson(Type type, string json)
     {
         return JsonSerializer.Deserialize(json, type, _options)!;
     }
 
+    [RequiresUnreferencedCode("STJ JsonSerializer.Deserialize<T> uses reflection over T.")]
+    [RequiresDynamicCode("STJ JsonSerializer.Deserialize requires runtime code generation for non-source-generated types.")]
     public T FromJson<T>(Stream stream)
     {
         return JsonSerializer.Deserialize<T>(stream, _options)!;
     }
 
+    [RequiresUnreferencedCode("STJ JsonSerializer.Deserialize uses reflection over the supplied type.")]
+    [RequiresDynamicCode("STJ JsonSerializer.Deserialize requires runtime code generation for non-source-generated types.")]
     public object FromJson(Type type, Stream stream)
     {
         return JsonSerializer.Deserialize(stream, type, _options)!;
     }
 
+    [RequiresUnreferencedCode("STJ JsonSerializer.Deserialize<T> uses reflection over T.")]
+    [RequiresDynamicCode("STJ JsonSerializer.Deserialize requires runtime code generation for non-source-generated types.")]
     public T FromJson<T>(DbDataReader reader, int index)
     {
         var json = reader.GetString(index);
         return FromJson<T>(json);
     }
 
+    [RequiresUnreferencedCode("STJ JsonSerializer.Deserialize uses reflection over the supplied type.")]
+    [RequiresDynamicCode("STJ JsonSerializer.Deserialize requires runtime code generation for non-source-generated types.")]
     public object FromJson(Type type, DbDataReader reader, int index)
     {
         var json = reader.GetString(index);
         return FromJson(type, json);
     }
 
+    [RequiresUnreferencedCode("STJ JsonSerializer.DeserializeAsync<T> uses reflection over T.")]
+    [RequiresDynamicCode("STJ JsonSerializer.DeserializeAsync requires runtime code generation for non-source-generated types.")]
     public async ValueTask<T> FromJsonAsync<T>(Stream stream, CancellationToken cancellationToken = default)
     {
         return (await JsonSerializer.DeserializeAsync<T>(stream, _options, cancellationToken))!;
     }
 
+    [RequiresUnreferencedCode("STJ JsonSerializer.DeserializeAsync uses reflection over the supplied type.")]
+    [RequiresDynamicCode("STJ JsonSerializer.DeserializeAsync requires runtime code generation for non-source-generated types.")]
     public async ValueTask<object> FromJsonAsync(Type type, Stream stream,
         CancellationToken cancellationToken = default)
     {
@@ -132,6 +151,8 @@ public class Serializer : ISerializer
         };
     }
 
+    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+        Justification = "JsonStringEnumConverter(JsonNamingPolicy, bool) requires runtime code generation for non-source-generated enum types. The default Serializer is reflection-based by design; AOT consumers should supply a custom ISerializer with the generic JsonStringEnumConverter<TEnum> per-enum.")]
     private void ApplyEnumStorage()
     {
         // Remove any existing JsonStringEnumConverter
@@ -160,6 +181,12 @@ public class Serializer : ISerializer
         };
     }
 
+    [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
+        Justification = "DefaultJsonTypeInfoResolver uses reflection. The whole NonPublicMembers feature is reflection-driven by intent; AOT consumers should supply a custom ISerializer with an STJ source-generator context.")]
+    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+        Justification = "Same as IL2026.")]
+    [UnconditionalSuppressMessage("Trimming", "IL2075:DynamicallyAccessedMembers",
+        Justification = "Falls back to scanning typeInfo.Type.GetProperties when the JSON property has no usable AttributeProvider. Reflection on user types — keeping public/non-public properties alive is the user's responsibility when opting into NonPublicMembers.")]
     private void ApplyNonPublicMembers()
     {
         if (_nonPublicMembersStorage == NonPublicMembersStorage.Default)
