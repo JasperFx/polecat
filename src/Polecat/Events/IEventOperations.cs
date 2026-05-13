@@ -65,4 +65,17 @@ public interface IEventOperations : JasperFx.Events.IEventStoreOperations, IQuer
     ///     Compact a stream by replacing its events with a single Compacted&lt;T&gt; snapshot event.
     /// </summary>
     Task CompactStreamAsync<T>(string streamKey, Action<StreamCompactingRequest<T>>? configure = null) where T : class;
+
+    // FetchLatest is declared on two parent interfaces — JasperFx.Events.IEventStoreOperations
+    // (where Marten put it canonically) and Polecat.Events.IQueryEventStore (kept on the
+    // read-side as a Polecat convenience). Both declarations have identical signatures
+    // and resolve to the same impl on EventOperations, but the C# compiler can't pick
+    // between them through Polecat.IEventOperations, so we re-declare with `new` to
+    // collapse the diamond at this level and keep the caller-facing surface unambiguous.
+
+    /// <inheritdoc cref="IQueryEventStore.FetchLatest{T}(Guid, CancellationToken)" />
+    new ValueTask<T?> FetchLatest<T>(Guid id, CancellationToken cancellation = default) where T : class;
+
+    /// <inheritdoc cref="IQueryEventStore.FetchLatest{T}(string, CancellationToken)" />
+    new ValueTask<T?> FetchLatest<T>(string key, CancellationToken cancellation = default) where T : class;
 }

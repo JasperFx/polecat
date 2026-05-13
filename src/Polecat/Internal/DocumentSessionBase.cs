@@ -54,8 +54,8 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
 
     public IWorkTracker PendingChanges => _workTracker;
 
-    IQueryEventStore IQuerySession.Events => EventOps;
-    public new IEventOperations Events => EventOps;
+    Polecat.Events.IQueryEventStore IQuerySession.Events => EventOps;
+    public new Polecat.Events.IEventOperations Events => EventOps;
 
     private EventOperations EventOps =>
         _eventOperations ??= new EventOperations(this, _eventGraph, Options, _workTracker, TenantId);

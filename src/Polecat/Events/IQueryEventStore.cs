@@ -27,4 +27,19 @@ public interface IQueryEventStore : JasperFx.Events.IQueryEventStore
     ///     Returns IEvent wrappers with full metadata.
     /// </summary>
     IPolecatQueryable<IEvent> QueryAllRawEvents();
+
+    /// <summary>
+    ///     Fetch the latest aggregate state for a stream by Guid id.
+    ///     Convenience wrapper around AggregateStreamAsync. Available from the
+    ///     read-only query session; the write-side equivalent on
+    ///     <see cref="IEventOperations"/> additionally includes events appended
+    ///     in the current unit of work.
+    /// </summary>
+    ValueTask<T?> FetchLatest<T>(Guid id, CancellationToken cancellation = default) where T : class;
+
+    /// <summary>
+    ///     Fetch the latest aggregate state for a stream by string key.
+    ///     Convenience wrapper around AggregateStreamAsync.
+    /// </summary>
+    ValueTask<T?> FetchLatest<T>(string key, CancellationToken cancellation = default) where T : class;
 }
