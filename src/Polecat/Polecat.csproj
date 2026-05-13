@@ -4,6 +4,12 @@
         <Description>SQL Server backed Event Store for the Critter Stack</Description>
         <GenerateDocumentationFile>true</GenerateDocumentationFile>
         <RootNamespace>Polecat</RootNamespace>
+        <!-- AOT pillar (Critter Stack 2026 — JasperFx#213). Surfaces IL2026 / IL2070 /
+             IL2075 / IL3050 warnings against Polecat itself so the AOT punch list shows
+             up in our own CI rather than downstream consumers'. Aligns with
+             JasperFx + JasperFx.Events 2.0.0-alpha.11 / 2.0.0-alpha.4 and Weasel.Core
+             9.0.0-alpha.2 (refresh to alpha.3 lands in a follow-up bump). -->
+        <IsAotCompatible>true</IsAotCompatible>
     </PropertyGroup>
 
     <ItemGroup>
