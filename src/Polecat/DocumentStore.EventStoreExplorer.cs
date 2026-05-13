@@ -62,56 +62,35 @@ public partial class DocumentStore
         await conn.OpenAsync(ct);
         await using var cmd = conn.CreateCommand();
 
-        var eventOptions = Events.EventOptions;
-        var selectColumns = "id, seq_id, version, stream_id, type, data, timestamp, tenant_id";
-        if (eventOptions.EnableHeaders) selectColumns += ", headers";
-
+        // #57 pc_events half: share the column projection + row hydration
+        // with QueryEventStore.FetchStreamAsync via PcEventsRowReader. The
+        // canonical SELECT projects all enabled metadata columns; the
+        // explorer's EventRecord shape ignores the columns it doesn't surface
+        // (dotnet_type, is_archived, correlation_id, causation_id) per the
+        // polecat#57 Q2 design note — wire cost is negligible against the
+        // readability of one canonical projection.
         cmd.CommandText = $"""
-            SELECT {selectColumns}
+            SELECT {PcEventsRowReader.ComposeSelectColumns(Events.EventOptions)}
             FROM {Events.EventsTableName}
             WHERE stream_id = @stream_id
             ORDER BY version;
             """;
         cmd.Parameters.AddWithValue("@stream_id", resolvedStreamId);
 
+        var ctx = new EventHydrationContext(
+            Events,
+            Options.Serializer,
+            resolvedStreamId,
+            defaultTenantId: Tenancy.DefaultTenantId);
+
+        // Per-batch hoist: optional-metadata column ordinals computed once.
+        // Explorer path doesn't need EventTypeCache (no EventMappingFor call).
+        var slots = MetadataSlots.Compute(Events.EventOptions);
+
         await using var reader = await cmd.ExecuteReaderAsync(ct);
         while (await reader.ReadAsync(ct))
         {
-            var eventId = reader.GetGuid(0);
-            var sequence = reader.GetInt64(1);
-            var version = reader.GetInt64(2);
-            var streamIdRaw = reader.GetValue(3);
-            var streamIdString = streamIdRaw switch
-            {
-                Guid g => g.ToString(),
-                _ => streamIdRaw.ToString() ?? string.Empty
-            };
-            var typeName = reader.GetString(4);
-            var rawData = reader.GetString(5);
-            var timestamp = reader.GetDateTimeOffset(6);
-            var tenantId = reader.IsDBNull(7) ? Tenancy.DefaultTenantId : reader.GetString(7);
-
-            JsonElement? metadata = null;
-            if (eventOptions.EnableHeaders && !reader.IsDBNull(8))
-            {
-                using var headerDoc = JsonDocument.Parse(reader.GetString(8));
-                metadata = headerDoc.RootElement.Clone();
-            }
-
-            using var doc = JsonDocument.Parse(rawData);
-            var data = doc.RootElement.Clone();
-
-            yield return new EventRecord(
-                eventId,
-                sequence,
-                version,
-                streamIdString,
-                typeName,
-                data,
-                metadata,
-                timestamp,
-                tenantId,
-                Tags: null!);
+            yield return PcEventsRowReader.ReadEventRecord(reader, ctx, slots);
         }
     }
 

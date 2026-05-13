@@ -59,18 +59,13 @@ internal class QueryEventStore : IQueryEventStore
     private async Task<IReadOnlyList<IEvent>> FetchStreamInternalAsync(object streamId, long version,
         DateTimeOffset? timestamp, long fromVersion, CancellationToken token)
     {
+        // #57 pc_events half: column projection + per-row hydration live in
+        // PcEventsRowReader, shared with the IEventStore explorer's
+        // ReadStreamAsync path. This method only composes WHERE / ORDER BY.
         await using var cmd = new SqlCommand();
 
-        var eventOptions = _events.EventOptions;
-
-        // Build SELECT columns dynamically for optional metadata
-        var selectColumns = "seq_id, id, stream_id, version, data, type, timestamp, tenant_id, dotnet_type, is_archived";
-        if (eventOptions.EnableCorrelationId) selectColumns += ", correlation_id";
-        if (eventOptions.EnableCausationId) selectColumns += ", causation_id";
-        if (eventOptions.EnableHeaders) selectColumns += ", headers";
-
         var sql = $"""
-            SELECT {selectColumns}
+            SELECT {PcEventsRowReader.ComposeSelectColumns(_events.EventOptions)}
             FROM {_events.EventsTableName}
             WHERE stream_id = @stream_id AND tenant_id = @tenant_id AND is_archived = 0
             """;
@@ -99,72 +94,38 @@ internal class QueryEventStore : IQueryEventStore
         sql += " ORDER BY version;";
         cmd.CommandText = sql;
 
+        var ctx = new EventHydrationContext(
+            _events,
+            _session.Serializer,
+            streamId,
+            defaultTenantId: _session.TenantId);
+
+        // Per-batch hoists: compute the optional-metadata column ordinals
+        // once, declare a single-slot type→mapping cache, pick the
+        // StreamIdentity specialization once. Per-row reads have zero
+        // option-flag branches and ~1 EventMappingFor lookup per distinct
+        // event-type-in-stream.
+        var slots = MetadataSlots.Compute(_events.EventOptions);
+        var cache = new EventTypeCache();
+
         var results = new List<IEvent>();
-        await using var dbReader = await _session.ExecuteReaderAsync(cmd, token);
-        var reader = (SqlDataReader)dbReader;
+        await using var reader = await _session.ExecuteReaderAsync(cmd, token);
 
-        while (await reader.ReadAsync(token))
+        if (_events.StreamIdentity == StreamIdentity.AsGuid)
         {
-            var seqId = reader.GetInt64(0);
-            var eventId = reader.GetGuid(1);
-            // stream_id at index 2
-            var eventVersion = reader.GetInt64(3);
-            var json = reader.GetString(4);
-            var typeName = reader.GetString(5);
-            var eventTimestamp = reader.GetDateTimeOffset(6);
-            var tenantId = reader.GetString(7);
-            var dotNetTypeName = reader.IsDBNull(8) ? null : reader.GetString(8);
-            var isArchived = reader.GetBoolean(9);
-
-            var resolvedType = _events.ResolveEventType(dotNetTypeName);
-            if (resolvedType == null) continue; // Skip events we can't resolve
-
-            var data = _session.Serializer.FromJson(resolvedType, json);
-            var mapping = _events.EventMappingFor(resolvedType);
-            var @event = mapping.Wrap(data);
-
-            @event.Id = eventId;
-            @event.Sequence = seqId;
-            @event.Version = eventVersion;
-            @event.Timestamp = eventTimestamp;
-            @event.TenantId = tenantId;
-            @event.EventTypeName = typeName;
-            @event.DotNetTypeName = dotNetTypeName!;
-            @event.IsArchived = isArchived;
-
-            // Read optional metadata columns (indices 10+ based on what's enabled)
-            var metaIndex = 10;
-            if (eventOptions.EnableCorrelationId)
+            while (await reader.ReadAsync(token))
             {
-                @event.CorrelationId = reader.IsDBNull(metaIndex) ? null : reader.GetString(metaIndex);
-                metaIndex++;
+                var @event = PcEventsRowReader.ReadEventAsGuid(reader, ctx, slots, ref cache);
+                if (@event != null) results.Add(@event);
             }
-
-            if (eventOptions.EnableCausationId)
+        }
+        else
+        {
+            while (await reader.ReadAsync(token))
             {
-                @event.CausationId = reader.IsDBNull(metaIndex) ? null : reader.GetString(metaIndex);
-                metaIndex++;
+                var @event = PcEventsRowReader.ReadEventAsString(reader, ctx, slots, ref cache);
+                if (@event != null) results.Add(@event);
             }
-
-            if (eventOptions.EnableHeaders)
-            {
-                if (!reader.IsDBNull(metaIndex))
-                {
-                    var headersJson = reader.GetString(metaIndex);
-                    @event.Headers = _session.Serializer.FromJson<Dictionary<string, object>>(headersJson);
-                }
-            }
-
-            if (_events.StreamIdentity == StreamIdentity.AsGuid)
-            {
-                @event.StreamId = streamId is Guid g ? g : Guid.Empty;
-            }
-            else
-            {
-                @event.StreamKey = streamId.ToString();
-            }
-
-            results.Add(@event);
         }
 
         return results;
