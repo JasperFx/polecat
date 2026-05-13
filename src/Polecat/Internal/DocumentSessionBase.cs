@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using JasperFx;
 using JasperFx.Events;
@@ -22,6 +23,10 @@ namespace Polecat.Internal;
 ///     processing, and SaveChangesAsync. Uses IAlwaysConnectedLifetime for
 ///     persistent connection + transaction management.
 /// </summary>
+[UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
+    Justification = "Class-level: store/update/delete operations call into ISerializer.ToJson and JasperFx.Events projection infrastructure. Document and event types flow in from caller registration and are preserved per the AOT publishing guide; AOT consumers supply a source-generator-backed ISerializer impl.")]
+[UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+    Justification = "Class-level: ISerializer.ToJson and inline projection runners use Type.MakeGenericType / FastExpressionCompiler — runtime code generation. AOT consumers rely on source-generated event/projection helpers.")]
 internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
 {
     private readonly WorkTracker _workTracker = new();

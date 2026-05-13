@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics.CodeAnalysis;
 using System.Text;
 using JasperFx.Events;
 using JasperFx.Events.Aggregation;
@@ -15,6 +16,12 @@ namespace Polecat.Events;
 ///     Analogous to Marten's EventGraph. Manages event type registration
 ///     and wrapping of raw event data into IEvent instances.
 /// </summary>
+[UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
+    Justification = "Class-level: extends JasperFx.Events.EventRegistry (annotated RUC) for type-aliased event construction; also wires aggregator sources via reflection. Event types are preserved by registration on the caller side per the AOT publishing guide.")]
+[UnconditionalSuppressMessage("Trimming", "IL2057:UnrecognizedTypeName",
+    Justification = "Class-level: AggregateTypeFor uses Type.GetType(string) as a fallback to resolve aggregate types persisted by .NET type name in event metadata. The aggregate types are preserved by projection registration on the caller side; AOT consumers should register all aggregate types ahead of time per the AOT publishing guide.")]
+[UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+    Justification = "Class-level: aggregator-source factories and event-type registration use Type.MakeGenericType — runtime code generation. AOT consumers register concrete event types ahead of time.")]
 public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession>
 {
     private readonly StoreOptions _options;
@@ -319,6 +326,8 @@ internal class FuncMasker<T> : IMasker where T : notnull
 ///     Metadata and wrapping logic for a single event type.
 ///     Implements IEventType from JasperFx.Events.
 /// </summary>
+[UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+    Justification = "Class-level: Wrap uses Type.MakeGenericType(typeof(Event<>), eventType) to construct Event<T> envelopes — runtime code generation. Event types are preserved by registration on the caller side per the AOT publishing guide.")]
 public class PolecatEventType : IEventType
 {
     private readonly Type _eventType;

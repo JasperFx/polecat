@@ -1,4 +1,5 @@
 using System.Data.Common;
+using System.Diagnostics.CodeAnalysis;
 using JasperFx;
 using Microsoft.Data.SqlClient;
 using Polly;
@@ -17,6 +18,10 @@ namespace Polecat.Internal;
 ///     Read-only query session. All SQL execution flows through Polly-wrapped
 ///     centralized methods backed by IConnectionLifetime.
 /// </summary>
+[UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
+    Justification = "Class-level (all partials): routes load/query operations through ISerializer.FromJson and per-document DocumentProvider reflection. Document types T flow in from caller registration (Schema.For<T>() / session.Load<T>) and are preserved per the AOT publishing guide.")]
+[UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+    Justification = "Class-level (all partials): ISerializer.FromJson is annotated RDC; AOT consumers supply a source-generator-backed ISerializer impl.")]
 internal partial class QuerySession : IQuerySession
 {
     internal readonly IConnectionLifetime _lifetime;
