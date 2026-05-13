@@ -1,4 +1,5 @@
 using System.Data.Common;
+using System.Diagnostics.CodeAnalysis;
 using JasperFx;
 using Polecat.Metadata;
 using Polecat.Serialization;
@@ -11,6 +12,10 @@ namespace Polecat.Linq.Selectors;
 ///     Optionally syncs version/revision properties from additional columns.
 ///     Supports polymorphic deserialization for document hierarchies via doc_type column.
 /// </summary>
+[UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
+    Justification = "Class-level: invokes ISerializer.FromJson, which is annotated RUC because the default STJ-reflection serializer requires unreferenced code. AOT consumers supply a source-generator-backed ISerializer impl per the AOT publishing guide.")]
+[UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+    Justification = "Class-level: ISerializer.FromJson is annotated RDC for the same reason as IL2026 above. AOT consumers supply a source-generator-backed ISerializer impl.")]
 internal class DeserializingSelector<T> where T : class
 {
     private readonly ISerializer _serializer;

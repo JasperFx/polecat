@@ -1,4 +1,5 @@
 using System.Data.Common;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using System.Text;
 using Microsoft.Data.SqlClient;
@@ -19,6 +20,21 @@ namespace Polecat.Linq;
 ///     IQueryProvider that translates LINQ expression trees into SQL Server queries.
 ///     All SQL execution routes through session's Polly-wrapped centralized methods.
 /// </summary>
+/// <remarks>
+///     The LINQ-to-SQL translation walks user-supplied Expression trees that reference
+///     document types' members and Queryable / Enumerable method names. The trimmer
+///     cannot reason statically about those references. AOT-publishing apps should
+///     either avoid LINQ entirely (use the raw <c>session.QueryAsync</c> path with
+///     SQL strings) or use source-generated compiled queries.
+/// </remarks>
+[UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
+    Justification = "Class-level: LINQ-to-SQL translation references framework Queryable / Enumerable methods + user document types via Expression trees. Trim invariant lives at the document-registration boundary.")]
+[UnconditionalSuppressMessage("Trimming", "IL2070:DynamicallyAccessedMembers",
+    Justification = "Class-level: reflection over user document types whose members are preserved by the document-registration surface.")]
+[UnconditionalSuppressMessage("Trimming", "IL2075:DynamicallyAccessedMembers",
+    Justification = "Class-level: same as IL2070.")]
+[UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+    Justification = "Class-level: Type.MakeGenericType / Expression.Call(Type, string, ...) for LINQ expression construction. AOT consumers should bypass this layer.")]
 internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider
 {
     private readonly QuerySession _session;
