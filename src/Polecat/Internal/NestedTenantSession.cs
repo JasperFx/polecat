@@ -112,6 +112,22 @@ internal class NestedTenantSession : ITenantOperations
         foreach (var doc in documents) Store(doc);
     }
 
+    public void StoreObjects(IEnumerable<object> documents)
+    {
+        // Per-document runtime-type dispatch through the non-generic
+        // GetProvider(Type) + BuildUpsert(object, ...) — no reflection on
+        // the hot path. Tenant scoping uses _tenantId, mirroring Store<T>.
+        foreach (var document in documents)
+        {
+            if (document is null) continue;
+
+            SyncMetadata(document);
+            var provider = _parent.Providers.GetProvider(document.GetType());
+            var op = provider.BuildUpsert(document, Serializer, _tenantId);
+            _parent.WorkTracker.Add(op);
+        }
+    }
+
     public void Insert<T>(T document) where T : notnull
     {
         SyncMetadata(document);
