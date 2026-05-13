@@ -1,4 +1,5 @@
 using System.Data.Common;
+using System.Diagnostics.CodeAnalysis;
 using Polecat.Internal;
 using Polecat.Serialization;
 using Weasel.Core;
@@ -11,6 +12,10 @@ namespace Polecat.Patching;
 ///     IStorageOperation that generates SQL UPDATE statements using JSON_MODIFY()
 ///     to patch document JSON data in-place.
 /// </summary>
+[UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
+    Justification = "Class-level: serializes patch values via ISerializer.ToJson when building the JSON_MODIFY() command. Document types are preserved at registration; AOT consumers supply a source-generator-backed ISerializer impl per the AOT publishing guide.")]
+[UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+    Justification = "Class-level: ISerializer.ToJson is annotated RDC for the same reason as IL2026 above. AOT consumers supply a source-generator-backed ISerializer impl.")]
 internal class PatchOperation : Polecat.Internal.IStorageOperation
 {
     private readonly DocumentMapping _mapping;

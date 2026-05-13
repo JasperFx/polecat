@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Polecat.Internal;
 using Polecat.Serialization;
 using System.Linq.Expressions;
@@ -6,6 +7,10 @@ using Weasel.SqlServer;
 
 namespace Polecat.Patching;
 
+[UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
+    Justification = "Class-level: invokes ISerializer.ToJson on patch values whose runtime types are derived from the document's reflected properties. Document type T flows in from the registration boundary (Schema.For<T>()) and is preserved per the AOT publishing guide; AOT consumers supply a source-generator-backed ISerializer impl.")]
+[UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+    Justification = "Class-level: ISerializer.ToJson is annotated RDC for the same reason as IL2026 above. AOT consumers supply a source-generator-backed ISerializer impl.")]
 internal class PatchExpression<T> : IPatchExpression<T>
 {
     private readonly List<Action<ICommandBuilder>> _actions = new();
