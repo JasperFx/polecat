@@ -62,6 +62,93 @@ public interface IEventOperations : IQueryEventStore
     /// </summary>
     StreamAction StartStream<TAggregate>(params object[] events) where TAggregate : class;
 
+    // --- Append IEnumerable<object> overloads ------------------------------
+    // Parallel the params object[] variants above so callers that already
+    // have an IEnumerable<object> don't have to materialize an array.
+
+    /// <summary>
+    ///     Append events to an existing stream (or create it) by Guid id.
+    /// </summary>
+    StreamAction Append(Guid stream, IEnumerable<object> events);
+
+    /// <summary>
+    ///     Append events to an existing stream (or create it) by string key.
+    /// </summary>
+    StreamAction Append(string stream, IEnumerable<object> events);
+
+    /// <summary>
+    ///     Append events with an expected version for optimistic concurrency.
+    /// </summary>
+    StreamAction Append(Guid stream, long expectedVersion, IEnumerable<object> events);
+
+    /// <summary>
+    ///     Append events with an expected version for optimistic concurrency.
+    /// </summary>
+    StreamAction Append(string stream, long expectedVersion, IEnumerable<object> events);
+
+    // --- StartStream IEnumerable<object> + Type overloads ------------------
+    // Parallel the params object[] / generic variants above.
+
+    /// <summary>
+    ///     Start a new stream with a Guid id. Throws if the stream already exists.
+    /// </summary>
+    StreamAction StartStream(Guid id, IEnumerable<object> events);
+
+    /// <summary>
+    ///     Start a new stream with a string key. Throws if the stream already exists.
+    /// </summary>
+    StreamAction StartStream(string streamKey, IEnumerable<object> events);
+
+    /// <summary>
+    ///     Start a new stream with a Guid id and aggregate type. Throws if the stream already exists.
+    /// </summary>
+    StreamAction StartStream<TAggregate>(Guid id, IEnumerable<object> events) where TAggregate : class;
+
+    /// <summary>
+    ///     Start a new stream with a string key and aggregate type. Throws if the stream already exists.
+    /// </summary>
+    StreamAction StartStream<TAggregate>(string streamKey, IEnumerable<object> events) where TAggregate : class;
+
+    /// <summary>
+    ///     Start a new stream with an auto-generated Guid id.
+    /// </summary>
+    StreamAction StartStream(IEnumerable<object> events);
+
+    /// <summary>
+    ///     Start a new stream with an auto-generated Guid id and aggregate type.
+    /// </summary>
+    StreamAction StartStream<TAggregate>(IEnumerable<object> events) where TAggregate : class;
+
+    /// <summary>
+    ///     Start a new stream with a Guid id and a runtime-resolved aggregate type.
+    /// </summary>
+    StreamAction StartStream(Type aggregateType, Guid id, IEnumerable<object> events);
+
+    /// <summary>
+    ///     Start a new stream with a Guid id and a runtime-resolved aggregate type.
+    /// </summary>
+    StreamAction StartStream(Type aggregateType, Guid id, params object[] events);
+
+    /// <summary>
+    ///     Start a new stream with a string key and a runtime-resolved aggregate type.
+    /// </summary>
+    StreamAction StartStream(Type aggregateType, string streamKey, IEnumerable<object> events);
+
+    /// <summary>
+    ///     Start a new stream with a string key and a runtime-resolved aggregate type.
+    /// </summary>
+    StreamAction StartStream(Type aggregateType, string streamKey, params object[] events);
+
+    /// <summary>
+    ///     Start a new stream with an auto-generated Guid id and a runtime-resolved aggregate type.
+    /// </summary>
+    StreamAction StartStream(Type aggregateType, IEnumerable<object> events);
+
+    /// <summary>
+    ///     Start a new stream with an auto-generated Guid id and a runtime-resolved aggregate type.
+    /// </summary>
+    StreamAction StartStream(Type aggregateType, params object[] events);
+
     /// <summary>
     ///     Fetch the aggregate state and return a writable handle for optimistic concurrency.
     /// </summary>
@@ -251,6 +338,13 @@ public interface IEventOperations : IQueryEventStore
     ///     data masking operations.
     /// </summary>
     void OverwriteEvent(IEvent @event);
+
+    /// <summary>
+    ///     Replace event data at a specified spot in the event store without changing stream
+    ///     identity or version. Resets all header information to empty. Originally intended
+    ///     for stream-compacting workflows. Returns the new event id.
+    /// </summary>
+    Guid CompletelyReplaceEvent<T>(long sequence, T eventBody) where T : class;
 
     /// <summary>
     ///     Check whether any events exist that match the given tag query, without loading the events.
