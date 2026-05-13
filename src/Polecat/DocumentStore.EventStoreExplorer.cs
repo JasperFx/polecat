@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using JasperFx.Descriptors;
@@ -17,6 +18,12 @@ namespace Polecat;
 ///     Implements the eight methods added in JasperFx.Events 1.36 against
 ///     Polecat's pc_streams / pc_events / pc_event_progression tables.
 /// </summary>
+[UnconditionalSuppressMessage("Trimming", "IL2075:DynamicallyAccessedMembers",
+    Justification = "Class-level: RehydrateAtVersionByNameAsync reflects on Task<T>.Result + .State/.Version/.EventsApplied properties of the returned strong-typed result. The framework Task<TResult> intrinsic and the strong-typed result type are preserved by the registered projection boundary.")]
+[UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
+    Justification = "Class-level: invokes ISerializer.ToJson, which is annotated RUC because the default STJ-reflection serializer requires unreferenced code. AOT consumers supply a source-generator-backed ISerializer impl per the AOT publishing guide.")]
+[UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+    Justification = "Class-level: RehydrateAtVersionByNameAsync uses MethodInfo.MakeGenericMethod with the resolved aggregate type — runtime code generation. AOT consumers should prefer the strong-typed RehydrateAtVersionAsync<T> overload (covered by the AOT publishing guide).")]
 public partial class DocumentStore
 {
     async Task<IReadOnlyList<StreamSummary>> IEventStore.GetRecentStreamsAsync(

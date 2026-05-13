@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using Polecat.Schema.Identity.Sequences;
 using Polecat.Storage;
@@ -9,6 +10,8 @@ namespace Polecat.Internal;
 ///     Thread-safe registry of DocumentProviders, one per document type.
 ///     Lazily creates mappings and providers on first access.
 /// </summary>
+[UnconditionalSuppressMessage("Trimming", "IL2075:DynamicallyAccessedMembers",
+    Justification = "Class-level: reads SubClasses/Indexes/ForeignKeys non-public fields off DocumentMappingExpression<T> via reflection. The expression type and fields are preserved by the registration boundary (Schema.For<T>()), where T flows in from caller code that trimming sees.")]
 internal class DocumentProviderRegistry
 {
     private readonly ConcurrentDictionary<Type, DocumentProvider> _providers = new();

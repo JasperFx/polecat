@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using JasperFx;
 using JasperFx.Core.Reflection;
@@ -10,6 +11,10 @@ namespace Polecat.Storage;
 /// <summary>
 ///     Discovers and caches metadata about a document type: ID property, table name, ID accessors.
 /// </summary>
+[UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
+    Justification = "Class-level: AddSubClassHierarchy uses Assembly.GetTypes() to discover subclasses; document hierarchies are part of the registered surface and AOT consumers must preserve subclass types via their JsonSerializerContext / per-type registration.")]
+[UnconditionalSuppressMessage("Trimming", "IL2070:DynamicallyAccessedMembers",
+    Justification = "Class-level: reflects PublicProperties on the document Type (FindIdProperty, DiscoverIndexAttributes). The document type is preserved at the registration boundary (Schema.For<T>()), where T flows in from caller code that trimming sees.")]
 internal class DocumentMapping
 {
     private static readonly HashSet<Type> SupportedIdTypes =
