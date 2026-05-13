@@ -1,5 +1,23 @@
+# Compose override for the `edge` matrix axis in the GitHub Actions test
+# workflows (polecat.yml / aspnetcore.yml / efcore.yml).
+#
+# Historically this pulled `mcr.microsoft.com/azure-sql-edge:latest` to
+# exercise Polecat against the smaller / Azure-shaped SQL surface. Azure
+# SQL Edge has been retired by Microsoft and the image is no longer
+# publicly available — pulls now return "The request is blocked" /
+# "pull access denied" from mcr.microsoft.com.
+#
+# Replacement: `mssql/server:2022-latest`. Keeps the `edge` matrix axis
+# meaningful as a *different SQL Server version* than the base compose's
+# `mssql/server:2025-latest`, exercising cross-version compatibility.
+# Both 2022+ images carry mssql-tools18 at /opt/mssql-tools18/bin/sqlcmd
+# and support the `-C` (Trust Server Certificate) flag, so the base
+# compose's healthcheck definition works without any override beyond
+# the image swap.
+#
+# Matrix-axis name stays `edge` to avoid renaming the cascading status
+# checks across three workflow files (polecat.yml, aspnetcore.yml,
+# efcore.yml) and any branch-protection rules that reference them.
 services:
   sqlserver:
-    image: mcr.microsoft.com/azure-sql-edge:latest
-    environment:
-      SQLCMD_PATH: "/opt/mssql-tools/bin/sqlcmd"
+    image: mcr.microsoft.com/mssql/server:2022-latest
