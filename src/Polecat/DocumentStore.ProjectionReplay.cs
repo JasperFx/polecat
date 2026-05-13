@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using System.Text.Json;
 using JasperFx.Descriptors;
@@ -15,6 +16,14 @@ namespace Polecat;
 /// </summary>
 public partial class DocumentStore
 {
+    [UnconditionalSuppressMessage("Trimming", "IL2091:DynamicallyAccessedMembers",
+        Justification = "Forwards to RunProjectionForReferenceTypeAsync<TState> via MakeGenericMethod. Projection step-through is a dev-time / diagnostic IEventStore surface (CritterWatch / projection replay); AOT-publishing apps either avoid the surface entirely or supply a source-generated dispatcher.")]
+    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+        Justification = "MakeGenericMethod is required to satisfy the aggregator's `class, new()` constraint without changing the public IEventStore.RunProjectionAsync<TState> contract.")]
+    [UnconditionalSuppressMessage("Trimming", "IL2075:DynamicallyAccessedMembers",
+        Justification = "Reads Task<T>.Result via reflection; Task<T> is a framework type whose Result property is intrinsically preserved.")]
+    [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
+        Justification = "Calls into RunProjectionForReferenceTypeAsync<TState> which is annotated [RequiresUnreferencedCode]. The explicit interface impl can't propagate the requirement because the interface contract doesn't declare it yet (tracked in jasperfx#262 for the Events-side IEventStore annotation).")]
     async Task<ProjectionTimeline<TState>> IEventStore.RunProjectionAsync<TState>(
         string projectionName, object identity, IReadOnlyList<EventRecord> events,
         TState? startingState, CancellationToken ct) where TState : default
@@ -51,6 +60,8 @@ public partial class DocumentStore
         return (ProjectionTimeline<TState>)resultTask.GetType().GetProperty("Result")!.GetValue(resultTask)!;
     }
 
+    [RequiresUnreferencedCode("Routes projection events through the aggregator graph + ToDomainEvent reflective deserialization. TState's public members must survive trimming for the aggregator to access them.")]
+    [RequiresDynamicCode("ToDomainEvent routes through ISerializer.FromJson which uses STJ runtime code generation.")]
     private async Task<ProjectionTimeline<TState>> RunProjectionForReferenceTypeAsync<TState>(
         IReadOnlyList<EventRecord> events, TState? startingState, CancellationToken ct)
         where TState : class, new()
@@ -92,6 +103,12 @@ public partial class DocumentStore
         return new ProjectionTimeline<TState>(steps, current!);
     }
 
+    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+        Justification = "MakeGenericMethod over the projection's published state type; required to dispatch into the strong-typed RunProjectionAsync<TState>. Diagnostic IEventStore surface — see RunProjectionAsync above for the rationale.")]
+    [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
+        Justification = "STJ JsonSerializer.Deserialize / SerializeToElement over the projection's published state type. AOT-publishing diagnostic-only consumers should supply an STJ source-generator context.")]
+    [UnconditionalSuppressMessage("Trimming", "IL2075:DynamicallyAccessedMembers",
+        Justification = "Reads Task<T> + ProjectionTimeline<T> properties via reflection. The closed generic types' Result / Steps / FinalState properties are intrinsically preserved by the framework / by this class' own usage.")]
     async Task<ProjectionTimelineRaw> IEventStore.RunProjectionByNameAsync(
         string projectionName, object identity, IReadOnlyList<EventRecord> events,
         JsonElement? startingState, CancellationToken ct)
@@ -154,6 +171,8 @@ public partial class DocumentStore
     ///     domain event the aggregator can apply. Returns <c>null</c> when the
     ///     event type isn't registered with the store.
     /// </summary>
+    [RequiresUnreferencedCode("Walks loaded assemblies to resolve eventTypeName → CLR Type and routes through ISerializer.FromJson which is annotated [RequiresUnreferencedCode] for STJ usage.")]
+    [RequiresDynamicCode("ISerializer.FromJson uses STJ which requires runtime code generation for non-source-generated types.")]
     private IEvent? ToDomainEvent(EventRecord record)
     {
         var clrType = ResolveEventClrType(record.EventTypeName);
@@ -185,6 +204,7 @@ public partial class DocumentStore
         return wrapped;
     }
 
+    [RequiresUnreferencedCode("Walks AppDomain.GetAssemblies() + Assembly.GetTypes() to resolve eventTypeName → CLR Type. The trimmer cannot reason about which event types survive; AOT-publishing apps should register event types explicitly via EventGraph.AddEventType or use the source-generated event registry.")]
     private Type? ResolveEventClrType(string eventTypeName)
     {
         // 1. Most common: an event-type alias registered on the EventGraph
