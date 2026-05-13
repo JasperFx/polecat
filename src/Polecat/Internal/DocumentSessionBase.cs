@@ -108,6 +108,24 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         }
     }
 
+    public void StoreObjects(IEnumerable<object> documents)
+    {
+        // Dispatch by runtime type via the non-generic GetProvider(Type) +
+        // BuildUpsert(object, ...) — no MakeGenericMethod / Activator on the
+        // hot path. Mirrors Store<T> per-document otherwise.
+        foreach (var document in documents)
+        {
+            if (document is null) continue;
+
+            var documentType = document.GetType();
+            SyncMetadata(document);
+            var provider = _providers.GetProvider(documentType);
+            var op = provider.BuildUpsert(document, Serializer, TenantId);
+            _workTracker.Add(op);
+            OnDocumentStored(documentType, provider.Mapping.GetId(document), document);
+        }
+    }
+
     public void Insert<T>(T document) where T : notnull
     {
         SyncMetadata(document);

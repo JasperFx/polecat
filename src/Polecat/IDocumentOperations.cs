@@ -19,6 +19,13 @@ public interface IDocumentOperations : IQuerySession
     void Store<T>(params T[] documents) where T : notnull;
 
     /// <summary>
+    ///     Store a heterogeneous collection of documents by their runtime type.
+    ///     Each document is routed through the document provider for its runtime
+    ///     type — there is no per-document reflection on the hot path.
+    /// </summary>
+    void StoreObjects(IEnumerable<object> documents);
+
+    /// <summary>
     ///     Insert a document. Throws if a document with the same id already exists.
     /// </summary>
     void Insert<T>(T document) where T : notnull;
