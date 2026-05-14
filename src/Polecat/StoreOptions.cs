@@ -327,6 +327,18 @@ public class EventStoreOptions
     public bool EnableExtendedProgressionTracking { get; set; }
 
     /// <summary>
+    ///     Outbox factory the projection daemon asks for an
+    ///     <see cref="Polecat.Events.Aggregation.IMessageBatch"/> when a
+    ///     projection in the current batch publishes a side-effect message.
+    ///     Defaults to <see cref="Polecat.Events.Aggregation.NulloMessageOutbox"/>
+    ///     so apps that don't integrate a message bus pay zero overhead.
+    ///     Wolverine.Polecat (and other downstream integrations) plug their
+    ///     own implementation in here.
+    /// </summary>
+    public Polecat.Events.Aggregation.IMessageOutbox MessageOutbox { get; set; }
+        = Polecat.Events.Aggregation.NulloMessageOutbox.Instance;
+
+    /// <summary>
     ///     Register a tag type for Dynamic Consistency Boundary (DCB) support.
     ///     Creates a tag table with an auto-generated suffix.
     /// </summary>
