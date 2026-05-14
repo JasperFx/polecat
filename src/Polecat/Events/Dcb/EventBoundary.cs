@@ -4,6 +4,12 @@ using Polecat.Internal;
 
 namespace Polecat.Events.Dcb;
 
+/// <summary>
+///     Polecat's concrete implementation of the lifted
+///     <see cref="JasperFx.Events.Tags.IEventBoundary{T}"/> contract. Boundary
+///     consistency checking is enforced via
+///     <see cref="DcbConcurrencyException"/> at <c>SaveChangesAsync()</c> time.
+/// </summary>
 internal class EventBoundary<T> : IEventBoundary<T> where T : class
 {
     private readonly DocumentSessionBase _session;

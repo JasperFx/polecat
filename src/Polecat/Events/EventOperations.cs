@@ -5,6 +5,7 @@ using System.Reflection;
 using System.Text;
 using JasperFx.Events;
 using JasperFx.Events.Aggregation;
+using JasperFx.Events.Protected;
 using JasperFx.Events.Tags;
 using Microsoft.Data.SqlClient;
 using Polecat.Events.Dcb;

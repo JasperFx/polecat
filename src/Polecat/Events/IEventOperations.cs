@@ -1,6 +1,6 @@
 using JasperFx.Events;
+using JasperFx.Events.Protected;
 using JasperFx.Events.Tags;
-using Polecat.Events.Dcb;
 using Polecat.Events.Protected;
 
 namespace Polecat.Events;
@@ -19,12 +19,16 @@ namespace Polecat.Events;
 /// <list type="bullet">
 ///   <item><c>UnArchiveStream</c> + <c>TombstoneStream</c> — Polecat-specific
 ///   archive-lifecycle operations not yet present in the canonical surface.</item>
-///   <item><c>FetchForWritingByTags&lt;T&gt;</c> — DCB workflow returning
-///   <see cref="IEventBoundary{T}"/>. Lifts to JFx.Events once Polecat reaches DCB
-///   parity (JasperFx/polecat#80).</item>
 ///   <item><c>CompactStreamAsync&lt;T&gt;</c> — execution depends on Polecat's
-///   <see cref="StreamCompactingRequest{T}"/>.</item>
+///   product-specific <see cref="StreamCompactingExecution.ExecuteAsync{T}"/>
+///   extension over the lifted <see cref="StreamCompactingRequest{T}"/> data
+///   shape from <c>JasperFx.Events.Protected</c>.</item>
 /// </list>
+/// Note: <c>FetchForWritingByTags&lt;T&gt;(EventTagQuery)</c> is now inherited
+/// from <see cref="JasperFx.Events.IEventStoreOperations"/> per the dedupe
+/// pillar (lifted in JasperFx/jasperfx#270 once Polecat reached DCB parity via
+/// JasperFx/polecat#80). Polecat's <c>EventOperations</c> implements the
+/// inherited declaration directly.
 /// Note: Marten's 3-tier split (IQueryEventStore + IEventOperations + IEventStoreOperations)
 /// is the canonical shape per the dedupe pillar. Polecat retains its 2-tier shape for
 /// now; the structural split is a follow-up issue (see Polecat 4 migration guide).
@@ -50,11 +54,6 @@ public interface IEventOperations : JasperFx.Events.IEventStoreOperations, IQuer
     ///     Permanently delete a stream and all its events (hard DELETE) by string key.
     /// </summary>
     void TombstoneStream(string streamKey);
-
-    /// <summary>
-    ///     Fetch events by tags and return a writable boundary with DCB consistency checking.
-    /// </summary>
-    Task<IEventBoundary<T>> FetchForWritingByTags<T>(EventTagQuery query, CancellationToken cancellation = default) where T : class;
 
     /// <summary>
     ///     Compact a stream by replacing its events with a single Compacted&lt;T&gt; snapshot event.
