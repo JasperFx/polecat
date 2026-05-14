@@ -1,8 +1,9 @@
 # Side Effects
 
 ::: tip
-Side effects only fire during _continuous_ asynchronous projection execution.
-They do not run during projection rebuilds or for `Inline` projections.
+By default, side effects only fire during _continuous_ asynchronous projection execution.
+They do not run during projection rebuilds. Inline projections can opt in via
+[`EnableSideEffectsOnInlineProjections`](#side-effects-in-inline-projections).
 :::
 
 _Sometimes_, it can be valuable to emit new events during the processing of a projection
@@ -74,7 +75,8 @@ public class TripProjection : SingleStreamProjection<Trip, Guid>
 A few important facts about this functionality:
 
 - The `RaiseSideEffects()` method is only called during _continuous_ asynchronous projection
-  execution. It is **not** called during projection rebuilds or `Inline` projection usage.
+  execution. It is **not** called during projection rebuilds. For `Inline` projections,
+  it is opt-in via [`EnableSideEffectsOnInlineProjections`](#side-effects-in-inline-projections).
 - Events emitted during the side effect method are _not_ immediately applied to the current
   projected document value by Polecat
 - You _can_ alter the aggregate value or replace it yourself in this side effect method to
@@ -112,3 +114,33 @@ messages to a database table inside the same transaction) and "best-effort" patt
 A first-class [Wolverine](https://wolverinefx.net) integration is on the roadmap that will
 plug Wolverine's outbox in via `IntegrateWithWolverine()`, mirroring the existing
 Marten/Wolverine bridge.
+
+## Side Effects in Inline Projections
+
+By default, Polecat only processes projection side effects during continuous asynchronous
+processing. To process them when running projections under the `Inline` lifecycle as well,
+flip the opt-in setting on the event store options:
+
+```cs
+builder.Services.AddPolecat(opts =>
+{
+    opts.Connection(builder.Configuration.GetConnectionString("polecat"));
+
+    // Run RaiseSideEffects() for inline projections too
+    opts.EventGraph.EnableSideEffectsOnInlineProjections = true;
+});
+```
+
+When the flag is on, `slice.PublishMessage(...)` from an inline projection's
+`RaiseSideEffects()` method enqueues the message into the configured `IMessageOutbox`'s
+batch on the active document session. `BeforeCommitAsync` fires inside the session's SQL
+transaction (right before `COMMIT`), and `AfterCommitAsync` fires once the session's
+database changes are durably committed.
+
+::: warning
+Inline `RaiseSideEffects()` may **not** call `slice.AppendEvent(...)` — appending events
+back into the same session that's currently committing them is not supported. Doing so
+throws `InvalidOperationException`. Side effects from inline projections are limited to
+published messages.
+:::
+

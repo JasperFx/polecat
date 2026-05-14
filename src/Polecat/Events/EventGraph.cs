@@ -90,6 +90,15 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
     /// </summary>
     public bool UseArchivedStreamPartitioning { get; set; }
 
+    /// <summary>
+    ///     Process projection side effects (slice.PublishMessage) when running
+    ///     projections under the Inline lifecycle. Off by default — flip on to
+    ///     route inline-projection-emitted messages through the configured
+    ///     <see cref="StoreOptions.MessageOutbox"/>. Inline appended events
+    ///     (slice.AppendEvent) are not supported and will throw at runtime.
+    /// </summary>
+    public bool EnableSideEffectsOnInlineProjections { get; set; }
+
     internal string StreamsTableName => $"[{DatabaseSchemaName}].[pc_streams]";
     internal string EventsTableName => $"[{DatabaseSchemaName}].[pc_events]";
     internal string ProgressionTableName => $"[{DatabaseSchemaName}].[pc_event_progression]";
