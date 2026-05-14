@@ -6,6 +6,7 @@ using JasperFx.Events.Daemon;
 using JasperFx.Events.Projections;
 using Microsoft.Data.SqlClient;
 using Polecat.Events;
+using Polecat.Events.Aggregation;
 using Polecat.Exceptions;
 using Polecat.Internal.Operations;
 using Polecat.Internal.Sessions;
@@ -488,6 +489,11 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
                 await participant.BeforeCommitAsync(_transactional.Connection!, tx, token);
             }
 
+            if (_inlineMessageBatch is not null)
+            {
+                await _inlineMessageBatch.BeforeCommitAsync(token);
+            }
+
             await tx.CommitAsync(token);
             _workTracker.Reset();
 
@@ -502,6 +508,11 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             foreach (var listener in _sessionListeners)
             {
                 await listener.AfterCommitAsync(this, token);
+            }
+
+            if (_inlineMessageBatch is not null)
+            {
+                await _inlineMessageBatch.AfterCommitAsync(token);
             }
         }
         finally
@@ -802,7 +813,20 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     }
 
     // IStorageOperations
-    public bool EnableSideEffectsOnInlineProjections => false;
+    public bool EnableSideEffectsOnInlineProjections => _eventGraph.EnableSideEffectsOnInlineProjections;
+
+    private IMessageBatch? _inlineMessageBatch;
+
+    public async ValueTask<IMessageSink> GetOrStartMessageSink()
+    {
+        if (_inlineMessageBatch is not null) return _inlineMessageBatch;
+
+        _inlineMessageBatch = await Options.Events.MessageOutbox
+            .CreateBatch(this)
+            .ConfigureAwait(false);
+
+        return _inlineMessageBatch;
+    }
 
     Task<IProjectionStorage<TDoc, TId>> IStorageOperations.FetchProjectionStorageAsync<TDoc, TId>(
         string tenantId, CancellationToken cancellationToken)
@@ -821,10 +845,6 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         return Task.FromResult(storage);
     }
 
-    public ValueTask<IMessageSink> GetOrStartMessageSink()
-    {
-        throw new NotSupportedException("Message sinks are not supported in Polecat.");
-    }
 
     public void Eject<T>(T document) where T : notnull
     {
