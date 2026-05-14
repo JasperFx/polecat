@@ -67,6 +67,56 @@ public class PolecatConfigurationExpression
     }
 
     /// <summary>
+    ///     Enable the multi-node-aware projection coordinator. Each Polecat node
+    ///     races for SQL Server application locks (<c>sp_getapplock</c>) per shard
+    ///     (single-tenant) or per database (multi-tenant) so a given shard runs
+    ///     on exactly one node at a time. Equivalent to Marten's hot-cold daemon
+    ///     coordination.
+    /// </summary>
+    /// <remarks>
+    ///     Mutually exclusive with <see cref="AddAsyncDaemon"/> — pick one. The
+    ///     coordinator subsumes the simple hosted-service path: it owns the
+    ///     daemon lifecycle, leader election, and per-shard agent start/stop.
+    /// </remarks>
+    public PolecatConfigurationExpression AddProjectionCoordinator(DaemonMode mode)
+    {
+        Services.ConfigurePolecat(opts => opts.DaemonSettings.AsyncMode = mode);
+        EnsureActivatorIsRegistered();
+
+        Services.AddSingleton<Polecat.Events.Daemon.Coordination.IProjectionCoordinator>(sp =>
+        {
+            var store = (DocumentStore)sp.GetRequiredService<IDocumentStore>();
+            return new Polecat.Events.Daemon.Coordination.ProjectionCoordinator(
+                store, sp.GetRequiredService<ILoggerFactory>());
+        });
+        Services.AddSingleton<IHostedService>(sp =>
+            sp.GetRequiredService<Polecat.Events.Daemon.Coordination.IProjectionCoordinator>());
+        return this;
+    }
+
+    /// <summary>
+    ///     Marker-typed variant of <see cref="AddProjectionCoordinator"/> for
+    ///     ancillary store registrations (multi-store apps where each store
+    ///     gets its own coordinator).
+    /// </summary>
+    public PolecatConfigurationExpression AddProjectionCoordinator<T>(DaemonMode mode)
+        where T : class, IDocumentStore
+    {
+        Services.ConfigurePolecat(opts => opts.DaemonSettings.AsyncMode = mode);
+        EnsureActivatorIsRegistered();
+
+        Services.AddSingleton<Polecat.Events.Daemon.Coordination.IProjectionCoordinator<T>>(sp =>
+        {
+            var store = (DocumentStore)(IDocumentStore)sp.GetRequiredService<T>();
+            return new Polecat.Events.Daemon.Coordination.ProjectionCoordinator<T>(
+                store, sp.GetRequiredService<ILoggerFactory>());
+        });
+        Services.AddSingleton<IHostedService>(sp =>
+            sp.GetRequiredService<Polecat.Events.Daemon.Coordination.IProjectionCoordinator<T>>());
+        return this;
+    }
+
+    /// <summary>
     ///     Apply all database schema changes on application startup.
     ///     Registers an IHostedService that runs Weasel schema migration.
     /// </summary>
