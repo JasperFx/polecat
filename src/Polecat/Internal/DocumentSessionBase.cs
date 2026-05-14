@@ -746,21 +746,36 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             sb.AppendLine("DECLARE @seq_id bigint = (SELECT TOP 1 seq_id FROM @new_seq);");
 
             var tagIndex = 0;
+            // When pc_events is partitioned by is_archived the tag table also carries
+            // is_archived (PK + FK columns) — see EventTagTable. Newly-appended events
+            // always start as is_archived = 0.
+            var partitioned = _eventGraph.UseArchivedStreamPartitioning;
             foreach (var tag in tags!)
             {
                 var registration = _eventGraph.FindTagType(tag.TagType);
                 if (registration == null) continue;
 
                 var valueParam = $"@tag_value_{tagIndex}";
-                if (_eventGraph.TenancyStyle == TenancyStyle.Conjoined)
+                var tagTable = $"[{schema}].[pc_event_tag_{registration.TableSuffix}]";
+                if (_eventGraph.TenancyStyle == TenancyStyle.Conjoined && partitioned)
                 {
-                    sb.AppendLine($"IF NOT EXISTS (SELECT 1 FROM [{schema}].[pc_event_tag_{registration.TableSuffix}] WHERE value = {valueParam} AND tenant_id = @tenant_id AND seq_id = @seq_id)");
-                    sb.AppendLine($"INSERT INTO [{schema}].[pc_event_tag_{registration.TableSuffix}] (value, tenant_id, seq_id) VALUES ({valueParam}, @tenant_id, @seq_id);");
+                    sb.AppendLine($"IF NOT EXISTS (SELECT 1 FROM {tagTable} WHERE value = {valueParam} AND tenant_id = @tenant_id AND seq_id = @seq_id AND is_archived = 0)");
+                    sb.AppendLine($"INSERT INTO {tagTable} (value, tenant_id, seq_id, is_archived) VALUES ({valueParam}, @tenant_id, @seq_id, 0);");
+                }
+                else if (_eventGraph.TenancyStyle == TenancyStyle.Conjoined)
+                {
+                    sb.AppendLine($"IF NOT EXISTS (SELECT 1 FROM {tagTable} WHERE value = {valueParam} AND tenant_id = @tenant_id AND seq_id = @seq_id)");
+                    sb.AppendLine($"INSERT INTO {tagTable} (value, tenant_id, seq_id) VALUES ({valueParam}, @tenant_id, @seq_id);");
+                }
+                else if (partitioned)
+                {
+                    sb.AppendLine($"IF NOT EXISTS (SELECT 1 FROM {tagTable} WHERE value = {valueParam} AND seq_id = @seq_id AND is_archived = 0)");
+                    sb.AppendLine($"INSERT INTO {tagTable} (value, seq_id, is_archived) VALUES ({valueParam}, @seq_id, 0);");
                 }
                 else
                 {
-                    sb.AppendLine($"IF NOT EXISTS (SELECT 1 FROM [{schema}].[pc_event_tag_{registration.TableSuffix}] WHERE value = {valueParam} AND seq_id = @seq_id)");
-                    sb.AppendLine($"INSERT INTO [{schema}].[pc_event_tag_{registration.TableSuffix}] (value, seq_id) VALUES ({valueParam}, @seq_id);");
+                    sb.AppendLine($"IF NOT EXISTS (SELECT 1 FROM {tagTable} WHERE value = {valueParam} AND seq_id = @seq_id)");
+                    sb.AppendLine($"INSERT INTO {tagTable} (value, seq_id) VALUES ({valueParam}, @seq_id);");
                 }
                 cmd.Parameters.AddWithValue(valueParam, registration.ExtractValue(tag.Value));
                 tagIndex++;

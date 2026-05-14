@@ -23,10 +23,12 @@ internal class AssignTagWhereOperation : Polecat.Internal.IStorageOperation
     private readonly object _value;
     private readonly ISqlFragment _whereFragment;
     private readonly bool _isConjoined;
+    private readonly bool _useArchivedPartitioning;
     private readonly string? _tenantId;
 
     public AssignTagWhereOperation(string schemaName, ITagTypeRegistration registration, object value,
-        ISqlFragment whereFragment, bool isConjoined = false, string? tenantId = null)
+        ISqlFragment whereFragment, bool isConjoined = false, string? tenantId = null,
+        bool useArchivedPartitioning = false)
     {
         _schemaName = schemaName;
         _registration = registration;
@@ -34,6 +36,7 @@ internal class AssignTagWhereOperation : Polecat.Internal.IStorageOperation
         _whereFragment = whereFragment;
         _isConjoined = isConjoined;
         _tenantId = tenantId;
+        _useArchivedPartitioning = useArchivedPartitioning;
     }
 
     public Type DocumentType => typeof(IEvent);
@@ -44,7 +47,25 @@ internal class AssignTagWhereOperation : Polecat.Internal.IStorageOperation
         var tagTable = $"[{_schemaName}].[pc_event_tag_{_registration.TableSuffix}]";
         var eventsTable = $"[{_schemaName}].[pc_events]";
 
-        if (_isConjoined)
+        // When pc_events is partitioned by is_archived the tag table also carries
+        // is_archived (PK + FK columns) — see EventTagTable. Carry the source row's
+        // is_archived through into the tag insert so the FK matches and an event
+        // that's already been archived doesn't lose its tag rows.
+        if (_isConjoined && _useArchivedPartitioning)
+        {
+            builder.Append($"INSERT INTO {tagTable} (value, tenant_id, seq_id, is_archived) SELECT ");
+            builder.AppendParameter(_value);
+            builder.Append(", ");
+            builder.AppendParameter(_tenantId!);
+            builder.Append($", e.seq_id, e.is_archived FROM {eventsTable} e WHERE ");
+            _whereFragment.Apply(builder);
+            builder.Append($" AND NOT EXISTS (SELECT 1 FROM {tagTable} x WHERE x.value = ");
+            builder.AppendParameter(_value);
+            builder.Append(" AND x.tenant_id = ");
+            builder.AppendParameter(_tenantId!);
+            builder.Append(" AND x.seq_id = e.seq_id AND x.is_archived = e.is_archived);");
+        }
+        else if (_isConjoined)
         {
             builder.Append($"INSERT INTO {tagTable} (value, tenant_id, seq_id) SELECT ");
             builder.AppendParameter(_value);
@@ -57,6 +78,16 @@ internal class AssignTagWhereOperation : Polecat.Internal.IStorageOperation
             builder.Append(" AND x.tenant_id = ");
             builder.AppendParameter(_tenantId!);
             builder.Append(" AND x.seq_id = e.seq_id);");
+        }
+        else if (_useArchivedPartitioning)
+        {
+            builder.Append($"INSERT INTO {tagTable} (value, seq_id, is_archived) SELECT ");
+            builder.AppendParameter(_value);
+            builder.Append($", e.seq_id, e.is_archived FROM {eventsTable} e WHERE ");
+            _whereFragment.Apply(builder);
+            builder.Append($" AND NOT EXISTS (SELECT 1 FROM {tagTable} x WHERE x.value = ");
+            builder.AppendParameter(_value);
+            builder.Append(" AND x.seq_id = e.seq_id AND x.is_archived = e.is_archived);");
         }
         else
         {
