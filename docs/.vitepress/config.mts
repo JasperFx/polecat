@@ -123,6 +123,7 @@ const config: UserConfig<DefaultTheme.Config> = {
                 { text: 'EF Core Projections', link: '/events/projections/efcore' },
                 { text: 'Ancillary Stores in Projections', link: '/events/projections/ancillary-stores' },
                 { text: 'ProjectLatest — Include Pending Events', link: '/events/projections/project-latest' },
+                { text: 'Side Effects', link: '/events/projections/side-effects' },
               ]
             },
             {
