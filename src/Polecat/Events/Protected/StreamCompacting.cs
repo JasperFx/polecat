@@ -1,92 +1,46 @@
-using System.Diagnostics.CodeAnalysis;
 using JasperFx.Events;
 using JasperFx.Events.Aggregation;
+using JasperFx.Events.Protected;
 using Polecat.Internal;
 
 namespace Polecat.Events.Protected;
 
 /// <summary>
-///     Callback interface for executing event archiving before stream compaction.
+///     Polecat-side execution of <see cref="StreamCompactingRequest{T}"/> (the
+///     data shape now lives in <see cref="JasperFx.Events.Protected"/> per the
+///     dedupe pillar — see jasperfx#214 and the consuming-product note on
+///     <see cref="StreamCompactingRequest{T}"/>). Each product owns its own
+///     <c>ExecuteAsync</c>; only the request shape and the
+///     <see cref="IEventsArchiver{TOperations}"/> hook are shared.
 /// </summary>
-public interface IEventsArchiver
+internal static class StreamCompactingExecution
 {
-    Task MaybeArchiveAsync<T>(IDocumentOperations operations, StreamCompactingRequest<T> request,
-        IReadOnlyList<IEvent> events, CancellationToken cancellation) where T : class;
-}
-
-/// <summary>
-///     Configuration and execution of stream compaction. Replaces all events (except the last)
-///     with a single Compacted&lt;T&gt; snapshot event, then deletes the originals.
-/// </summary>
-[UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
-    Justification = "Class-level: drives JasperFx.Events aggregator graph (annotated RUC) to produce the Compacted<T> snapshot. Aggregate type T flows in from caller code and is preserved by projection registration on the caller side per the AOT publishing guide.")]
-[UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
-    Justification = "Class-level: aggregator runtime uses Type.MakeGenericType + FastExpressionCompiler. AOT consumers rely on source-generated aggregator helpers.")]
-public class StreamCompactingRequest<T> where T : class
-{
-    public StreamCompactingRequest(string? streamKey)
-    {
-        StreamKey = streamKey;
-    }
-
-    public StreamCompactingRequest(Guid? streamId)
-    {
-        StreamId = streamId;
-    }
-
     /// <summary>
-    ///     The identity of the stream if using string identified streams.
+    ///     Drive the compaction against a Polecat <see cref="DocumentSessionBase"/>:
+    ///     fetch the events to be replaced, build a <see cref="Compacted{T}"/>
+    ///     snapshot via the aggregator, optionally invoke the archiver (if the
+    ///     request's <see cref="StreamCompactingRequest{T}.Archiver"/> closes the
+    ///     generic over Polecat's <see cref="IDocumentOperations"/>), then write the
+    ///     replacement event and delete the originals through the session's work
+    ///     tracker.
     /// </summary>
-    public string? StreamKey { get; private set; }
-
-    /// <summary>
-    ///     The identity of the stream if using Guid identified streams.
-    /// </summary>
-    public Guid? StreamId { get; private set; }
-
-    /// <summary>
-    ///     If specified, the version at which the stream is going to be compacted.
-    ///     Default 0 means the latest.
-    /// </summary>
-    public long Version { get; set; }
-
-    /// <summary>
-    ///     If specified, this operation will compact the events below the timestamp.
-    /// </summary>
-    public DateTimeOffset? Timestamp { get; set; }
-
-    /// <summary>
-    ///     Optional mechanism to carry out an archiving step for the events before the
-    ///     compacting operation is completed and these events are permanently deleted.
-    /// </summary>
-    public IEventsArchiver? Archiver { get; set; }
-
-    /// <summary>
-    ///     CancellationToken for just this operation. Default is None.
-    /// </summary>
-    public CancellationToken CancellationToken { get; set; } = CancellationToken.None;
-
-    /// <summary>
-    ///     The event sequence of the last event being compacted.
-    /// </summary>
-    public long Sequence { get; private set; }
-
-    internal async Task ExecuteAsync(DocumentSessionBase session)
+    internal static async Task ExecuteAsync<T>(this StreamCompactingRequest<T> request, DocumentSessionBase session)
+        where T : class
     {
         // 1. Find the aggregator
-        var aggregator = FindAggregator(session);
+        var aggregator = FindAggregator<T>(session);
 
         // 2. Fetch events
         IReadOnlyList<IEvent> events;
         if (session.Options.Events.StreamIdentity == StreamIdentity.AsGuid)
         {
-            events = await session.Events.FetchStreamAsync(StreamId!.Value, Version, Timestamp,
-                token: CancellationToken).ConfigureAwait(false);
+            events = await session.Events.FetchStreamAsync(request.StreamId!.Value, request.Version, request.Timestamp,
+                token: request.CancellationToken).ConfigureAwait(false);
         }
         else
         {
-            events = await session.Events.FetchStreamAsync(StreamKey!, Version, Timestamp,
-                token: CancellationToken).ConfigureAwait(false);
+            events = await session.Events.FetchStreamAsync(request.StreamKey!, request.Version, request.Timestamp,
+                token: request.CancellationToken).ConfigureAwait(false);
         }
 
         if (events.Count == 0) return;
@@ -95,29 +49,32 @@ public class StreamCompactingRequest<T> where T : class
         // Sequences of all events except the last (the last will be replaced with the compacted snapshot)
         var sequences = events.Select(x => x.Sequence).Take(events.Count - 1).ToArray();
 
-        Version = events[events.Count - 1].Version;
-        Sequence = events[events.Count - 1].Sequence;
+        request.Version = events[events.Count - 1].Version;
+        request.Sequence = events[events.Count - 1].Sequence;
 
         // 3. Aggregate to build the snapshot
-        var aggregate = await aggregator.BuildAsync(events, session, default, CancellationToken)
+        var aggregate = await aggregator.BuildAsync(events, session, default, request.CancellationToken)
             .ConfigureAwait(false);
 
-        // 4. Optional archiving
-        if (Archiver != null)
+        // 4. Optional archiving. The lifted IEventsArchiver marker is non-generic
+        //    so the data class doesn't have to flow a TOperations parameter; the
+        //    product downcasts to the closed-generic at execution time. Polecat's
+        //    callbacks close on IDocumentOperations.
+        if (request.Archiver is IEventsArchiver<IDocumentOperations> archiver)
         {
-            await Archiver.MaybeArchiveAsync(session, this, events, CancellationToken)
+            await archiver.MaybeArchiveAsync(session, request, events, request.CancellationToken)
                 .ConfigureAwait(false);
         }
 
         // 5. Replace the last event with the Compacted<T> snapshot
-        var compacted = new Compacted<T>(aggregate!, 
-            StreamId ?? Guid.Empty, StreamKey ?? string.Empty);
+        var compacted = new Compacted<T>(aggregate!,
+            request.StreamId ?? Guid.Empty, request.StreamKey ?? string.Empty);
 
         var serializedData = session.Serializer.ToJson(compacted);
         var mapping = session.Options.EventGraph.EventMappingFor(typeof(Compacted<T>));
 
         var replaceOp = new ReplaceEventOperation(
-            session.Options.EventGraph, Sequence, serializedData,
+            session.Options.EventGraph, request.Sequence, serializedData,
             mapping.EventTypeName, mapping.DotNetTypeName);
 
         session.WorkTracker.Add(replaceOp);
@@ -129,7 +86,7 @@ public class StreamCompactingRequest<T> where T : class
         }
     }
 
-    private static IAggregator<T, IQuerySession> FindAggregator(DocumentSessionBase session)
+    private static IAggregator<T, IQuerySession> FindAggregator<T>(DocumentSessionBase session) where T : class
     {
         return session.Options.Projections.AggregatorFor<T>();
     }
