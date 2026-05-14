@@ -20,15 +20,68 @@ public class archived_partitioning_dcb_tag_tests : IntegrationContext
     public override async Task InitializeAsync()
     {
         var conn = await OpenConnectionAsync();
+
+        // The partition scheme/function ps_pc_events_is_archived /
+        // pf_pc_events_is_archived are global SQL Server objects (Weasel does not
+        // schema-qualify them). Other tests that use UseArchivedStreamPartitioning
+        // (e.g. archived_stream_partitioning.cs) may leave a pc_events table in
+        // their own schema still referencing the partition scheme — when our
+        // Weasel migration later tries to drop+recreate the scheme it raises:
+        //
+        //     The partition scheme "ps_pc_events_is_archived" is currently being
+        //     used to partition one or more tables.
+        //
+        // Cleanup strategy:
+        //   1. Drop every table anywhere that uses the partition scheme (and the
+        //      FK constraints they own first so the drops don't cascade-block).
+        //   2. Drop our own schema's remaining tables / FKs and the schema itself.
+        //   3. Drop the now-unreferenced partition scheme + function so Weasel
+        //      can recreate them cleanly on apply.
         await using var dropCmd = new SqlCommand("""
+            -- 1a. Drop FK constraints owned by tables using ps_pc_events_is_archived
+            DECLARE @fkSql NVARCHAR(MAX) = '';
+            SELECT @fkSql += 'ALTER TABLE ' + QUOTENAME(SCHEMA_NAME(t.schema_id)) + '.' + QUOTENAME(t.name)
+                          + ' DROP CONSTRAINT ' + QUOTENAME(fk.name) + ';'
+            FROM sys.foreign_keys fk
+            JOIN sys.tables t ON fk.parent_object_id = t.object_id
+            JOIN sys.indexes i ON i.object_id = t.object_id AND i.index_id <= 1
+            JOIN sys.partition_schemes ps ON i.data_space_id = ps.data_space_id
+            WHERE ps.name = 'ps_pc_events_is_archived';
+            IF LEN(@fkSql) > 0 EXEC sp_executesql @fkSql;
+
+            -- 1b. Drop tables that use the partition scheme (anywhere)
+            DECLARE @ptSql NVARCHAR(MAX) = '';
+            SELECT @ptSql += 'DROP TABLE IF EXISTS ' + QUOTENAME(SCHEMA_NAME(t.schema_id)) + '.' + QUOTENAME(t.name) + ';'
+            FROM sys.tables t
+            JOIN sys.indexes i ON i.object_id = t.object_id AND i.index_id <= 1
+            JOIN sys.partition_schemes ps ON i.data_space_id = ps.data_space_id
+            WHERE ps.name = 'ps_pc_events_is_archived';
+            IF LEN(@ptSql) > 0 EXEC sp_executesql @ptSql;
+
+            -- 2a. Drop remaining FKs owned by our schema
+            DECLARE @fkSql2 NVARCHAR(MAX) = '';
+            SELECT @fkSql2 += 'ALTER TABLE [arch_dcb_tags].' + QUOTENAME(t.name)
+                           + ' DROP CONSTRAINT ' + QUOTENAME(fk.name) + ';'
+            FROM sys.foreign_keys fk
+            JOIN sys.tables t ON fk.parent_object_id = t.object_id
+            WHERE t.schema_id = SCHEMA_ID('arch_dcb_tags');
+            IF LEN(@fkSql2) > 0 EXEC sp_executesql @fkSql2;
+
+            -- 2b. Drop remaining tables in our schema
+            DECLARE @tblSql NVARCHAR(MAX) = '';
+            SELECT @tblSql += 'DROP TABLE IF EXISTS [arch_dcb_tags].' + QUOTENAME(name) + ';'
+            FROM sys.tables WHERE schema_id = SCHEMA_ID('arch_dcb_tags');
+            IF LEN(@tblSql) > 0 EXEC sp_executesql @tblSql;
+
+            -- 2c. Drop the schema itself
             IF EXISTS (SELECT 1 FROM sys.schemas WHERE name = 'arch_dcb_tags')
-            BEGIN
-                DECLARE @sql NVARCHAR(MAX) = '';
-                SELECT @sql = @sql + 'DROP TABLE IF EXISTS [arch_dcb_tags].' + QUOTENAME(name) + ';'
-                FROM sys.tables WHERE schema_id = SCHEMA_ID('arch_dcb_tags');
-                EXEC sp_executesql @sql;
-                DROP SCHEMA IF EXISTS [arch_dcb_tags];
-            END
+                DROP SCHEMA [arch_dcb_tags];
+
+            -- 3. Drop the now-unreferenced partition scheme + function
+            IF EXISTS (SELECT 1 FROM sys.partition_schemes WHERE name = 'ps_pc_events_is_archived')
+                DROP PARTITION SCHEME [ps_pc_events_is_archived];
+            IF EXISTS (SELECT 1 FROM sys.partition_functions WHERE name = 'pf_pc_events_is_archived')
+                DROP PARTITION FUNCTION [pf_pc_events_is_archived];
             """, conn);
         await dropCmd.ExecuteNonQueryAsync();
     }

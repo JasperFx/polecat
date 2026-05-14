@@ -1022,7 +1022,9 @@ internal class EventOperations : QueryEventStore, IEventOperations
         var whereFragment = parser.Parse(expression.Body);
 
         var isConjoined = _events.TenancyStyle == TenancyStyle.Conjoined;
-        var op = new AssignTagWhereOperation(schema, registration, value, whereFragment, isConjoined, _tenantId);
+        var op = new AssignTagWhereOperation(
+            schema, registration, value, whereFragment, isConjoined, _tenantId,
+            useArchivedPartitioning: _events.UseArchivedStreamPartitioning);
         _workTracker.Add(op);
     }
 
