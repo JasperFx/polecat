@@ -4,6 +4,7 @@ using JasperFx.Events.Daemon;
 using JasperFx.Events.Projections;
 using Microsoft.Data.SqlClient;
 using Polly;
+using Polecat.Events.Aggregation;
 using Polecat.Internal;
 using Polecat.Internal.Operations;
 using Weasel.SqlServer;
@@ -24,6 +25,13 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
     private readonly ResiliencePipeline _resilience;
     private readonly ConcurrentBag<IDocumentSession> _sessions = new();
     private readonly ConcurrentQueue<IStorageOperation> _progressOps = new();
+
+    // Lazily created on first PublishMessageAsync call; reused for every
+    // subsequent publish in this batch. Stays null when no projection
+    // emits a message, so the AfterCommit hook is a no-op for the common
+    // case where no message-bus integration is configured.
+    private IMessageBatch? _messageBatch;
+    private readonly SemaphoreSlim _messageBatchGate = new(1, 1);
 
     public PolecatProjectionBatch(DocumentStore store, EventGraph events, string connectionString)
     {
@@ -108,9 +116,16 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
             .SelectMany(s => s.TransactionParticipants)
             .ToList();
 
+        // Snapshot the message batch (may be null when no projection in this
+        // batch published a message). Passed via state into the resilience
+        // lambda so BeforeCommitAsync runs inside the SQL transaction; the
+        // AfterCommitAsync hook fires once below, after the resilience
+        // pipeline returns successfully.
+        var messageBatch = _messageBatch;
+
         await _resilience.ExecuteAsync(static async (state, ct) =>
         {
-            var (connectionString, ops, txParticipants) = state;
+            var (connectionString, ops, txParticipants, msgBatch) = state;
             await using var conn = new SqlConnection(connectionString);
             await conn.OpenAsync(ct);
             await using var tx = (SqlTransaction)await conn.BeginTransactionAsync(ct);
@@ -170,6 +185,11 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
                     await participant.BeforeCommitAsync(conn, tx, ct);
                 }
 
+                if (msgBatch is not null)
+                {
+                    await msgBatch.BeforeCommitAsync(ct);
+                }
+
                 await tx.CommitAsync(ct);
             }
             catch
@@ -177,7 +197,15 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
                 await tx.RollbackAsync(ct);
                 throw;
             }
-        }, (_connectionString, allOps, participants), token);
+        }, (_connectionString, allOps, participants, messageBatch), token);
+
+        // Outside the resilience pipeline so the post-commit hook does not
+        // re-fire on a transient retry — by definition the SQL transaction
+        // has committed exactly once by the time we reach here.
+        if (messageBatch is not null)
+        {
+            await messageBatch.AfterCommitAsync(token).ConfigureAwait(false);
+        }
     }
 
     public void QuickAppendEventWithVersion(StreamAction action, IEvent @event)
@@ -195,14 +223,87 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
         // Event appending from projections is not used in Polecat's current scope
     }
 
-    public Task PublishMessageAsync(object message, string tenantId)
+    public async Task PublishMessageAsync(object message, string tenantId)
     {
-        // Message bus support deferred
-        return Task.CompletedTask;
+        var batch = await CurrentMessageBatchAsync().ConfigureAwait(false);
+        await PublishToBatchAsync(batch, message, tenantId).ConfigureAwait(false);
+    }
+
+    public async Task PublishMessageAsync(object message, MessageMetadata metadata)
+    {
+        var batch = await CurrentMessageBatchAsync().ConfigureAwait(false);
+        await PublishToBatchAsync(batch, message, metadata).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    ///     Lazily obtain the per-batch <see cref="IMessageBatch"/> from the
+    ///     configured <see cref="IMessageOutbox"/>. Created on first publish;
+    ///     stays null if no projection in this batch ever publishes a message,
+    ///     which keeps the AfterCommit hook a no-op for the common case.
+    /// </summary>
+    private async ValueTask<IMessageBatch> CurrentMessageBatchAsync()
+    {
+        if (_messageBatch is not null) return _messageBatch;
+
+        await _messageBatchGate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            if (_messageBatch is not null) return _messageBatch;
+
+            var session = _sessions.FirstOrDefault()
+                ?? throw new InvalidOperationException(
+                    "Cannot publish a message from a projection batch with no document session.");
+
+            _messageBatch = await _store.Options.Events.MessageOutbox
+                .CreateBatch(session)
+                .ConfigureAwait(false);
+
+            return _messageBatch;
+        }
+        finally
+        {
+            _messageBatchGate.Release();
+        }
+    }
+
+    // Cached generic method definitions — `IMessageSink.PublishAsync<T>` takes
+    // T as the first parameter, so a `GetMethod(name, [typeof(object), …])`
+    // lookup misses (it doesn't match the generic parameter). Filter by arity
+    // and second-param type instead, then close over the runtime message type.
+    private static readonly System.Reflection.MethodInfo PublishWithTenantMethod = typeof(IMessageSink)
+        .GetMethods()
+        .First(m => m.Name == nameof(IMessageSink.PublishAsync)
+                    && m.IsGenericMethodDefinition
+                    && m.GetParameters() is { Length: 2 } parms
+                    && parms[1].ParameterType == typeof(string));
+
+    private static readonly System.Reflection.MethodInfo PublishWithMetadataMethod = typeof(IMessageSink)
+        .GetMethods()
+        .First(m => m.Name == nameof(IMessageSink.PublishAsync)
+                    && m.IsGenericMethodDefinition
+                    && m.GetParameters() is { Length: 2 } parms
+                    && parms[1].ParameterType == typeof(MessageMetadata));
+
+    private static ValueTask PublishToBatchAsync(IMessageBatch batch, object message, string tenantId)
+    {
+        // The batch's PublishAsync is generic on T but the daemon hands us
+        // the message as `object`. Route through MethodInfo.Invoke is the
+        // simplest correct path since this is off the per-event hot path —
+        // it only runs when a projection explicitly emits a side-effect.
+        var closed = PublishWithTenantMethod.MakeGenericMethod(message.GetType());
+        return (ValueTask)closed.Invoke(batch, [message, tenantId])!;
+    }
+
+    private static ValueTask PublishToBatchAsync(IMessageBatch batch, object message, MessageMetadata metadata)
+    {
+        var closed = PublishWithMetadataMethod.MakeGenericMethod(message.GetType());
+        return (ValueTask)closed.Invoke(batch, [message, metadata])!;
     }
 
     public async ValueTask DisposeAsync()
     {
+        _messageBatchGate.Dispose();
+
         foreach (var session in _sessions)
         {
             await session.DisposeAsync();
