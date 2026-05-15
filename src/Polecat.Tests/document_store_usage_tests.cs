@@ -142,6 +142,25 @@ public class document_store_usage_tests
     }
 
     [Fact]
+    public async Task max_event_sequence_is_null_when_table_unreachable()
+    {
+        // Dummy connection string + AutoCreate.None means MAX(seq_id) can't
+        // be read — the implementation tolerates the failure and leaves
+        // MaxEventSequence null so CritterWatch renders "n/a". Pins the
+        // contract; without the try/catch the lookup would bubble.
+        await using var store = BuildStore(opts =>
+        {
+            opts.DatabaseSchemaName = "doc_usage";
+            opts.Schema.For<AdvSqlDoc>();
+        });
+
+        var eventUsage = await ((IEventStore)store).TryCreateUsage(CancellationToken.None);
+
+        eventUsage.ShouldNotBeNull();
+        eventUsage.MaxEventSequence.ShouldBeNull();
+    }
+
+    [Fact]
     public async Task event_store_usage_includes_tag_types()
     {
         await using var store = BuildStore(opts =>

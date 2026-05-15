@@ -44,6 +44,10 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase
         _events = options.EventGraph;
         _connectionString = connectionString;
         Tracker = new ShardStateTracker(NullLogger.Instance);
+        // Mutates Skipped ShardStates in-place to set SkippedEventsCount.
+        // Must be subscribed before any downstream consumers so the augmented
+        // count is visible when they observe the state.
+        Tracker.Subscribe(new SkippedEventsCountAugmenter());
     }
 
     /// <summary>
