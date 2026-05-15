@@ -193,6 +193,28 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
                 Description: null!));
         }
 
+        // Highest physical seq_id in pc_events — CritterWatch#150 signal 2
+        // ("HWM is behind the actual max event sequence") renders the gap
+        // between this and the HighWaterMark. Tolerate the lookup failing
+        // (e.g. schema not yet created) by leaving null.
+        try
+        {
+            usage.MaxEventSequence = await Options.ResiliencePipeline.ExecuteAsync(static async (state, ct) =>
+            {
+                var (connString, eventsTable) = state;
+                await using var conn = new SqlConnection(connString);
+                await conn.OpenAsync(ct);
+                await using var cmd = conn.CreateCommand();
+                cmd.CommandText = $"SELECT MAX(seq_id) FROM {eventsTable};";
+                var result = await cmd.ExecuteScalarAsync(ct);
+                return result is null or DBNull ? (long?)null : (long?)Convert.ToInt64(result);
+            }, (Database.ConnectionString, Events.EventsTableName), token);
+        }
+        catch
+        {
+            usage.MaxEventSequence = null;
+        }
+
         Options.Projections.Describe(usage, this);
         return usage;
     }
