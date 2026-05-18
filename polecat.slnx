@@ -5,6 +5,7 @@
   </Folder>
   <Folder Name="/src/">
     <Project Path="src/DcbLoadTest/DcbLoadTest.csproj" />
+    <Project Path="src/Polecat.AotSmoke/Polecat.AotSmoke.csproj" />
     <Project Path="src/Polecat.AspNetCore.Testing/Polecat.AspNetCore.Testing.csproj" />
     <Project Path="src/Polecat.AspNetCore/Polecat.AspNetCore.csproj" />
     <Project Path="src/Polecat.CodeGeneration/Polecat.CodeGeneration.csproj" />

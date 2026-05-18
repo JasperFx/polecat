@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <OutputType>Exe</OutputType>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <IsPackable>false</IsPackable>
+
+        <!--
+        AOT smoke test (Polecat#46 — Critter Stack 2026 AOT pillar). Builds in CI
+        and verifies that an app consuming Polecat through the AOT-clean surfaces
+        (no JasperFx.RuntimeCompiler reference, no AddRuntimeCompilation) compiles
+        with no IL2026 / IL2046 / IL2055 / IL2065 / IL2067 / IL2070 / IL2072 /
+        IL2075 / IL2090 / IL2091 / IL2111 / IL3050 / IL3051 warnings.
+
+        If a previously-AOT-clean API in Polecat later gains a
+        [RequiresUnreferencedCode] / [RequiresDynamicCode] annotation, or sheds a
+        class-level [UnconditionalSuppressMessage] suppression, the build of this
+        project will fail and the regression is caught in our CI rather than
+        downstream consumers'. New IL warnings introduced by edits to this
+        project (e.g. someone calls into a reflective surface from Program.cs)
+        are equally caught.
+
+        Mirrors JasperFx.AotSmoke (jasperfx#213, commit d4077d8).
+        -->
+        <IsAotCompatible>true</IsAotCompatible>
+        <TrimMode>full</TrimMode>
+        <WarningsAsErrors>IL2026;IL2046;IL2055;IL2065;IL2067;IL2070;IL2072;IL2075;IL2090;IL2091;IL2111;IL3050;IL3051</WarningsAsErrors>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\Polecat\Polecat.csproj" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Microsoft.Extensions.Hosting" />
+    </ItemGroup>
+
+</Project>
