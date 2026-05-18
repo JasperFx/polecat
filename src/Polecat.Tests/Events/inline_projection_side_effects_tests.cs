@@ -13,7 +13,7 @@ namespace Polecat.Tests.Events;
 ///     IMessageOutbox round-trip on the session commit path, and the
 ///     before/after-commit lifecycle ordering.
 /// </summary>
-public class inline_projection_side_effects_tests : OneOffConfigurationsContext
+public partial class inline_projection_side_effects_tests : OneOffConfigurationsContext
 {
     [Fact]
     public async Task flag_off_means_raise_side_effects_is_not_invoked()
@@ -99,7 +99,7 @@ public class inline_projection_side_effects_tests : OneOffConfigurationsContext
         public void Apply(InlineSeStarted e) => Label = e.Label;
     }
 
-    public class InlineSeProjection : SingleStreamProjection<InlineSeAggregate, Guid>
+    public partial class InlineSeProjection : SingleStreamProjection<InlineSeAggregate, Guid>
     {
         public override ValueTask RaiseSideEffects(IDocumentSession session, IEventSlice<InlineSeAggregate> slice)
         {

@@ -34,6 +34,15 @@
 
     <ItemGroup>
         <PackageReference Include="Microsoft.Extensions.Hosting" />
+        <!--
+        JasperFx#276 (Phase 3): JasperFx.Events 2.0.0-alpha.11 removed the
+        FastExpressionCompiler fallback for projection apply-method dispatch.
+        Source-generated dispatchers ([GeneratedEvolver]) are now the only
+        path. Wire the SG analyzer so projections declared in this assembly
+        (e.g. QuestProjection in Program.cs) get a generated dispatcher and
+        don't trip DocumentStore's fail-fast InvalidProjectionException.
+        -->
+        <PackageReference Include="JasperFx.Events.SourceGenerator" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
     </ItemGroup>
 
 </Project>

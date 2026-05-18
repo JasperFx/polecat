@@ -13,7 +13,7 @@ public class CustomerSummary
     public decimal TotalPaid { get; set; }
 }
 
-public class CustomerSummaryProjection : MultiStreamProjection<CustomerSummary, Guid>
+public partial class CustomerSummaryProjection : MultiStreamProjection<CustomerSummary, Guid>
 {
     public CustomerSummaryProjection()
     {

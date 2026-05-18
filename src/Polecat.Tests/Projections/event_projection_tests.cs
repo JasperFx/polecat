@@ -12,7 +12,7 @@ public class QuestLog
     public int MemberCount { get; set; }
 }
 
-public class QuestLogProjection : EventProjection
+public partial class QuestLogProjection : EventProjection
 {
     public void Project(QuestStarted e, IDocumentSession ops)
     {
@@ -20,18 +20,7 @@ public class QuestLogProjection : EventProjection
     }
 }
 
-public class QuestLogWithLambdaProjection : EventProjection
-{
-    public QuestLogWithLambdaProjection()
-    {
-        Project<QuestStarted>((e, ops) =>
-        {
-            ops.Store(new QuestLog { Id = Guid.NewGuid(), QuestName = e.Name });
-        });
-    }
-}
-
-public class MultiEventQuestLogProjection : EventProjection
+public partial class MultiEventQuestLogProjection : EventProjection
 {
     // Store a QuestLog keyed by stream ID via event data
     public void Project(QuestStarted e, IDocumentSession ops)
@@ -75,27 +64,6 @@ public class event_projection_tests : IntegrationContext
         // The QuestLog should have been created with a new Guid
         // We can verify it exists by loading all QuestLogs
         // Since we don't know the exact Id, we use a raw query
-        await using var conn = await OpenConnectionAsync();
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"SELECT COUNT(*) FROM {theStore.Options.DatabaseSchemaName}.pc_doc_questlog;";
-        var count = (int)(await cmd.ExecuteScalarAsync())!;
-        count.ShouldBeGreaterThan(0);
-    }
-
-    [Fact]
-    public async Task event_projection_with_lambda()
-    {
-        await StoreOptions(opts =>
-        {
-            opts.Projections.Add<QuestLogWithLambdaProjection>(ProjectionLifecycle.Inline);
-        });
-
-        var streamId = Guid.NewGuid();
-        await using var session = theStore.LightweightSession();
-        session.Events.StartStream(streamId,
-            new QuestStarted("Lambda Quest"));
-        await session.SaveChangesAsync();
-
         await using var conn = await OpenConnectionAsync();
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = $"SELECT COUNT(*) FROM {theStore.Options.DatabaseSchemaName}.pc_doc_questlog;";

@@ -42,7 +42,7 @@ public class SelfAggregatingStringQuest
 ///     Custom SingleStreamProjection with TId = string, demonstrating the new
 ///     two-type-parameter signature that mirrors Marten's SingleStreamProjection&lt;TDoc, TId&gt;.
 /// </summary>
-public class StringQuestPartyProjection : SingleStreamProjection<StringQuestParty, string>
+public partial class StringQuestPartyProjection : SingleStreamProjection<StringQuestParty, string>
 {
     public StringQuestPartyProjection()
     {
