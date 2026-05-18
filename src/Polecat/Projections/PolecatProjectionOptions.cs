@@ -17,10 +17,6 @@ namespace Polecat.Projections;
 ///     Projection registration and configuration for Polecat.
 ///     Extends ProjectionGraph to integrate with the JasperFx async daemon framework.
 /// </summary>
-[UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
-    Justification = "Class-level: registers projections via the JasperFx.Events ProjectionGraph (annotated RUC). Projection / aggregate types flow in from caller registration and are preserved per the AOT publishing guide.")]
-[UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
-    Justification = "Class-level: JasperFx.Events projection-registration helpers use Type.MakeGenericType — runtime code generation. AOT consumers rely on source-generated projection helpers.")]
 public class PolecatProjectionOptions
     : ProjectionGraph<IProjection, IDocumentSession, IQuerySession>
 {
@@ -78,11 +74,15 @@ public class PolecatProjectionOptions
     ///     The snapshot lifecycle: <see cref="SnapshotLifecycle.Inline"/> updates the snapshot in the
     ///     same transaction as the events; <see cref="SnapshotLifecycle.Async"/> updates via the async daemon.
     /// </param>
+    [RequiresDynamicCode("Closes SingleStreamProjection<,> over (T, T.Id) via Type.MakeGenericType. AOT consumers should register a concrete SingleStreamProjection<TDoc, TId> subclass via Projections.Add() instead.")]
+    [RequiresUnreferencedCode("Resolves T's Id property via DocumentMapping reflection. AOT consumers must preserve T's Id member through DynamicallyAccessedMembers or source generation.")]
     public void Snapshot<T>(SnapshotLifecycle lifecycle) where T : notnull
     {
         AddSnapshotProjection<T>(lifecycle.ToProjectionLifecycle());
     }
 
+    [RequiresDynamicCode("Closes SingleStreamProjection<,> over (T, T.Id) via Type.MakeGenericType.")]
+    [RequiresUnreferencedCode("Resolves T's Id property via DocumentMapping reflection.")]
     private void AddSnapshotProjection<T>(ProjectionLifecycle lifecycle) where T : notnull
     {
         if (typeof(T).CanBeCastTo<ProjectionBase>())

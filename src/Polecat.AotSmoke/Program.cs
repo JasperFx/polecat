@@ -28,6 +28,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Polecat;
 using Polecat.AotSmoke;
+using Polecat.Projections;
 
 var builder = Host.CreateApplicationBuilder(args);
 
@@ -45,10 +46,18 @@ builder.Services.AddPolecat((StoreOptions opts) =>
         "Server=aot-smoke;Database=aot_smoke;Integrated Security=False;User Id=sa;Password=irrelevant;TrustServerCertificate=True";
     opts.DatabaseSchemaName = "aot_smoke";
 
-    // Registering the snapshot projection pulls QuestStarted into the
-    // EventGraph via ProjectionBase.IncludedEventTypes, so no separate
-    // EventGraph.AddEventType call is needed here.
-    opts.Projections.Snapshot<Quest>(SnapshotLifecycle.Inline);
+    // AOT-safe projection registration: use the new()-constrained Add<T>(...)
+    // overload with a concrete SingleStreamProjection<TDoc, TId> subclass.
+    //
+    // This is the registration shape AOT consumers must use. The reflective
+    // shortcut `opts.Projections.Snapshot<Quest>(...)` is annotated
+    // [RequiresDynamicCode] + [RequiresUnreferencedCode] (it closes
+    // SingleStreamProjection<,> over (T, T.Id) via Type.MakeGenericType and
+    // resolves T's Id property via DocumentMapping reflection) and would
+    // surface IL2026 + IL3050 here under our WarningsAsErrors. The concrete
+    // subclass below has both generic arguments closed at compile time, so the
+    // analyzer can prove AOT safety.
+    opts.Projections.Add<QuestProjection>(ProjectionLifecycle.Inline);
 });
 
 using var host = builder.Build();
@@ -67,9 +76,12 @@ var session = scope.ServiceProvider.GetRequiredService<IDocumentSession>();
 
 // --- LINQ query construction --------------------------------------------
 // Construct (but never enumerate) a Where-filtered IQueryable through the
-// LINQ provider. This exercises IQuerySession.Query<T> + the LINQ extension
-// surface (PolecatLinqQueryProvider) — both class-level RUC/RDC suppressed
-// today. Materialization (ToListAsync etc.) would require a DB.
+// LINQ provider. This exercises IQuerySession.Query<T> + the generic
+// IQueryProvider.CreateQuery<TElement>(Expression) entry on
+// PolecatLinqQueryProvider — both AOT-clean. Materialization (ToListAsync
+// etc.) routes through the reflective ExecuteAsync<TResult> path, which is
+// annotated [RequiresDynamicCode] + [RequiresUnreferencedCode] and would
+// surface here under our WarningsAsErrors.
 var query = session.Query<Quest>().Where(q => q.Title == "smoke-test");
 _ = query.Expression;
 
@@ -82,8 +94,8 @@ namespace Polecat.AotSmoke
     internal sealed record QuestStarted(string Title);
 
     /// <summary>
-    /// Self-aggregating aggregate so Projections.Snapshot&lt;T&gt; has a target.
-    /// Static Create mirrors the SingleStreamProjection convention.
+    /// Self-aggregating aggregate. Static Create mirrors the
+    /// SingleStreamProjection convention.
     /// </summary>
     internal sealed class Quest
     {
@@ -91,5 +103,13 @@ namespace Polecat.AotSmoke
         public string Title { get; set; } = string.Empty;
 
         public static Quest Create(QuestStarted e) => new() { Title = e.Title };
+    }
+
+    /// <summary>
+    /// Concrete projection with both generic args closed at compile time —
+    /// AOT-safe alternative to <c>Projections.Snapshot&lt;Quest&gt;()</c>.
+    /// </summary>
+    internal sealed class QuestProjection : SingleStreamProjection<Quest, Guid>
+    {
     }
 }
