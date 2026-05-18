@@ -8,6 +8,7 @@ using JasperFx.Events.Tags;
 using Polecat.Events.Schema;
 using Polecat.Projections;
 using Polecat.Serialization;
+using Polecat.Storage;
 
 namespace Polecat.Events;
 
@@ -147,8 +148,15 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
     /// </summary>
     IAggregatorSource<IQuerySession>? IAggregationSourceFactory<IQuerySession>.Build<TDoc>()
     {
-        // Use the appropriate identity type based on stream identity configuration
-        var idType = StreamIdentity == StreamIdentity.AsGuid ? typeof(Guid) : typeof(string);
+        // Resolve the identity type the same way Projections.Snapshot<T>() does — by
+        // inspecting TDoc's Id property via DocumentMapping. Strong-typed-id aggregates
+        // (TDoc.Id is a wrapper struct over Guid / string / int / long) must be closed
+        // with their *wrapper* type so the SG-emitted IGeneratedSyncEvolver<TDoc, TId>
+        // dispatcher matches the runtime SingleStreamProjection<TDoc, TId> instance.
+        // Falling back to typeof(Guid) / typeof(string) (the underlying stream-identity
+        // primitive) misses the wrapper and trips the post-FEC fail-fast in
+        // JasperFxAggregationProjectionBase.tryUseAssemblyRegisteredEvolver (JasperFx#276).
+        var idType = new DocumentMapping(typeof(TDoc), _options).IdType;
         var projectionType = typeof(SingleStreamProjection<,>).MakeGenericType(typeof(TDoc), idType);
 #pragma warning disable CS8714 // notnull constraint mismatch
         var projection = (ProjectionBase)Activator.CreateInstance(projectionType)!;

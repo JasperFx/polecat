@@ -84,7 +84,11 @@ public class using_guid_based_strong_typed_id_for_aggregate_identity : Integrati
         await StoreOptions(opts =>
         {
             opts.DatabaseSchemaName = "guid_stid_inline";
-            opts.Projections.Add<SingleStreamProjection<Payment, Guid>>(ProjectionLifecycle.Inline);
+            // Closed with PaymentId (the strong-typed wrapper) so the runtime instance
+            // matches the SG-emitted IGeneratedSyncEvolver<Payment, PaymentId>. Closing
+            // with Guid (the underlying primitive) misses the wrapper and trips the
+            // post-FEC fail-fast (JasperFx/jasperfx#276).
+            opts.Projections.Add<SingleStreamProjection<Payment, PaymentId>>(ProjectionLifecycle.Inline);
         });
 
         var streamId = Guid.NewGuid();
@@ -157,7 +161,7 @@ public class using_guid_based_strong_typed_id_for_aggregate_identity : Integrati
         await StoreOptions(opts =>
         {
             opts.DatabaseSchemaName = "guid_stid_async";
-            opts.Projections.Add<SingleStreamProjection<Payment, Guid>>(ProjectionLifecycle.Async);
+            opts.Projections.Add<SingleStreamProjection<Payment, PaymentId>>(ProjectionLifecycle.Async);
         });
 
         var streamId = Guid.NewGuid();
