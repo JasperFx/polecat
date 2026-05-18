@@ -12,10 +12,6 @@ namespace Polecat.Projections;
 ///     into ordered stages. Stages run sequentially, projections within a stage
 ///     run in parallel.
 /// </summary>
-[UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
-    Justification = "Class-level: extends JasperFx.Events CompositeProjection (annotated RUC) and registers nested projection types via reflection. Projection types are preserved at the registration boundary on the caller side per the AOT publishing guide.")]
-[UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
-    Justification = "Class-level: JasperFx.Events composite-projection helpers use Type.MakeGenericType — runtime code generation. AOT consumers rely on source-generated projection helpers.")]
 public class PolecatCompositeProjection : CompositeProjection<IDocumentSession, IQuerySession>
 {
     private readonly StoreOptions _options;
@@ -71,6 +67,8 @@ public class PolecatCompositeProjection : CompositeProjection<IDocumentSession, 
     /// <param name="stageNumber">
     ///     Optionally move the execution of this snapshot projection to a later stage. The default is 1.
     /// </param>
+    [RequiresDynamicCode("Closes SingleStreamProjection<,> over (T, T.Id) via Type.MakeGenericType. AOT consumers should register a concrete SingleStreamProjection<TDoc, TId> subclass via composite.Add() instead.")]
+    [RequiresUnreferencedCode("Resolves T's Id property via DocumentMapping reflection. AOT consumers must preserve T's Id member through DynamicallyAccessedMembers or source generation.")]
     public void Snapshot<T>(int stageNumber = 1) where T : notnull
     {
         if (typeof(T).CanBeCastTo<ProjectionBase>())
