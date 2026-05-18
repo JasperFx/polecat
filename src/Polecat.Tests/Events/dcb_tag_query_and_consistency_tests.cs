@@ -27,7 +27,7 @@ public record SystemNotification(string Message);
 
 #region sample_polecat_dcb_aggregate
 // Aggregate for DCB
-public class StudentCourseEnrollment
+public partial class StudentCourseEnrollment
 {
     public Guid Id { get; set; }
     public string StudentName { get; set; } = "";

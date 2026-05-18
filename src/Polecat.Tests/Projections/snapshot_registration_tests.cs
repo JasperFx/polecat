@@ -9,7 +9,7 @@ namespace Polecat.Tests.Projections;
 public record SnapshotPartyStarted(string Name);
 public record SnapshotMemberJoined(string Name);
 
-public class SnapshotParty
+public partial class SnapshotParty
 {
     public Guid Id { get; set; }
     public string Name { get; set; } = "";
@@ -19,7 +19,7 @@ public class SnapshotParty
     public void Apply(SnapshotMemberJoined e) => Members.Add(e.Name);
 }
 
-public class SnapshotPartyByString
+public partial class SnapshotPartyByString
 {
     public string Id { get; set; } = "";
     public string Name { get; set; } = "";

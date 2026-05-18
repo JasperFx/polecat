@@ -5,7 +5,7 @@ using Polecat.Tests.Harness;
 
 namespace Polecat.Tests.Events;
 
-public class ScenarioQuestParty
+public partial class ScenarioQuestParty
 {
     public Guid Id { get; set; }
     public List<string> Members { get; set; } = [];

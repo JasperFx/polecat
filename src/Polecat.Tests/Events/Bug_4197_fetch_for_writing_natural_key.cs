@@ -10,7 +10,7 @@ public sealed record Bug4197AggregateKey(string Value);
 
 public sealed record Bug4197AggregateCreatedEvent(Guid Id, string Key);
 
-public sealed class Bug4197Aggregate
+public sealed partial class Bug4197Aggregate
 {
     public Guid Id { get; set; }
 

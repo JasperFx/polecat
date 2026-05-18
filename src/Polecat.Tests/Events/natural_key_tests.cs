@@ -10,7 +10,7 @@ namespace Polecat.Tests.Events;
 
 public record OrderNumber(string Value);
 
-public class OrderAggregate
+public partial class OrderAggregate
 {
     public Guid Id { get; set; }
 
@@ -45,7 +45,7 @@ public class OrderAggregate
     }
 }
 
-public class InvoiceAggregate
+public partial class InvoiceAggregate
 {
     public Guid Id { get; set; }
 

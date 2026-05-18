@@ -4,7 +4,7 @@ using Polecat.Tests.Harness;
 
 namespace Polecat.Tests.Projections;
 
-public class CustomerSummary
+public partial class CustomerSummary
 {
     public Guid Id { get; set; }
     public string Name { get; set; } = string.Empty;

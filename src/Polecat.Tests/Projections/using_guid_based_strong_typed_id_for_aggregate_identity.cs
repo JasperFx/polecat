@@ -22,7 +22,7 @@ public record PaymentCreated(DateTimeOffset CreatedAt);
 public record PaymentCanceled(DateTimeOffset CanceledAt);
 public record PaymentVerified(DateTimeOffset VerifiedAt);
 
-public class Payment
+public partial class Payment
 {
     [JsonInclude] public PaymentId Id { get; private set; }
     [JsonInclude] public DateTimeOffset CreatedAt { get; private set; }

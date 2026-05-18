@@ -3,7 +3,7 @@ using Polecat.Tests.Harness;
 
 namespace Polecat.Tests.Events;
 
-public class QuestAggregate
+public partial class QuestAggregate
 {
     public Guid Id { get; set; }
     public string Name { get; set; } = string.Empty;

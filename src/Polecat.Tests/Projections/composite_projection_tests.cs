@@ -4,7 +4,7 @@ using Polecat.Tests.Harness;
 namespace Polecat.Tests.Projections;
 
 // Aggregate for stage 1: track quest party
-public class CompositeQuestParty
+public partial class CompositeQuestParty
 {
     public Guid Id { get; set; }
     public string Name { get; set; } = string.Empty;
@@ -21,7 +21,7 @@ public class CompositeQuestParty
 }
 
 // Aggregate for stage 2: depends on quest party being projected first
-public class QuestStats
+public partial class QuestStats
 {
     public Guid Id { get; set; }
     public int EventCount { get; set; }

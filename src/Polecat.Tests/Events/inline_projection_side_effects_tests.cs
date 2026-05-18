@@ -91,7 +91,7 @@ public partial class inline_projection_side_effects_tests : OneOffConfigurations
     public record InlineSeStarted(string Label);
     public record InlineSeNotice(string Label);
 
-    public class InlineSeAggregate
+    public partial class InlineSeAggregate
     {
         public Guid Id { get; set; }
         public string Label { get; set; } = "";

@@ -7,7 +7,7 @@ public record ReportCreated(string Title);
 public record SectionAdded(string SectionName);
 public record ReportPublished;
 
-public class Report
+public partial class Report
 {
     public Guid Id { get; set; }
     public string Title { get; set; } = "";

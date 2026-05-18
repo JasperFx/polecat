@@ -16,7 +16,7 @@ public record AccountCredited(decimal Amount, string Description);
 
 #region sample_polecat_monthly_account_activity_document
 
-public class MonthlyAccountActivity
+public partial class MonthlyAccountActivity
 {
     public string Id { get; set; } = "";
     public Guid AccountId { get; set; }
