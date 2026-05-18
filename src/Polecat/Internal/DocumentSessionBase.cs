@@ -24,10 +24,6 @@ namespace Polecat.Internal;
 ///     processing, and SaveChangesAsync. Uses IAlwaysConnectedLifetime for
 ///     persistent connection + transaction management.
 /// </summary>
-[UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
-    Justification = "Class-level: store/update/delete operations call into ISerializer.ToJson and JasperFx.Events projection infrastructure. Document and event types flow in from caller registration and are preserved per the AOT publishing guide; AOT consumers supply a source-generator-backed ISerializer impl.")]
-[UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
-    Justification = "Class-level: ISerializer.ToJson and inline projection runners use Type.MakeGenericType / FastExpressionCompiler — runtime code generation. AOT consumers rely on source-generated event/projection helpers.")]
 internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
 {
     private readonly WorkTracker _workTracker = new();
@@ -692,6 +688,18 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         }
     }
 
+    // IL2026 / IL3050 here originate from two Serializer.ToJson(object) call
+    // sites below (@event.Data ~line 796, @event.Headers ~line 816). Promoting
+    // [RequiresUnreferencedCode] / [RequiresDynamicCode] up the call chain would
+    // propagate to IDocumentSession.SaveChangesAsync — out of scope for #46's
+    // reflective-callsite tightening (which targets the four projection/LINQ
+    // classes). The AOT escape hatch remains: AOT consumers supply a
+    // source-generator-backed ISerializer implementation; the default reflective
+    // STJ serializer is the only thing that trips RUC/RDC here.
+    [UnconditionalSuppressMessage("Trimming", "IL2026",
+        Justification = "Serializer.ToJson(@event.Data) + Serializer.ToJson(@event.Headers). Default STJ ISerializer reflects over event types; AOT consumers supply a source-generator-backed ISerializer.")]
+    [UnconditionalSuppressMessage("AOT", "IL3050",
+        Justification = "Serializer.ToJson uses STJ runtime codegen by default; AOT consumers supply a source-generator-backed ISerializer.")]
     private async Task InsertEventAsync(IEvent @event, StreamAction stream, CancellationToken token)
     {
         var streamId = _eventGraph.StreamIdentity == JasperFx.Events.StreamIdentity.AsGuid
