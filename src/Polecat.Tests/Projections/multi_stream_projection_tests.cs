@@ -4,7 +4,7 @@ using Polecat.Tests.Harness;
 
 namespace Polecat.Tests.Projections;
 
-public class CustomerSummary
+public partial class CustomerSummary
 {
     public Guid Id { get; set; }
     public string Name { get; set; } = string.Empty;
@@ -13,7 +13,7 @@ public class CustomerSummary
     public decimal TotalPaid { get; set; }
 }
 
-public class CustomerSummaryProjection : MultiStreamProjection<CustomerSummary, Guid>
+public partial class CustomerSummaryProjection : MultiStreamProjection<CustomerSummary, Guid>
 {
     public CustomerSummaryProjection()
     {

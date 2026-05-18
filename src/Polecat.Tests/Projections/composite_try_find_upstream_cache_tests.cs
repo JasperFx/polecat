@@ -34,7 +34,7 @@ public class OrderShippingNotification
 
 #endregion
 
-public class CompositeOrderProjection : SingleStreamProjection<CompositeOrder, Guid>
+public partial class CompositeOrderProjection : SingleStreamProjection<CompositeOrder, Guid>
 {
     public CompositeOrderProjection()
     {
@@ -65,7 +65,7 @@ public class CompositeOrderProjection : SingleStreamProjection<CompositeOrder, G
 
 #region sample_polecat_try_find_upstream_cache
 
-public class OrderShippingNotificationProjection : MultiStreamProjection<OrderShippingNotification, Guid>
+public partial class OrderShippingNotificationProjection : MultiStreamProjection<OrderShippingNotification, Guid>
 {
     public OrderShippingNotificationProjection()
     {

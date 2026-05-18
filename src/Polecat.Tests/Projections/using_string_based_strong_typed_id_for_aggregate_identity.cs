@@ -10,7 +10,7 @@ namespace Polecat.Tests.Projections;
 [StronglyTypedId(Template.String)]
 public readonly partial struct Payment2Id;
 
-public class Payment2
+public partial class Payment2
 {
     [JsonInclude] public Payment2Id Id { get; private set; }
     [JsonInclude] public DateTimeOffset CreatedAt { get; private set; }

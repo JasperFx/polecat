@@ -5,7 +5,7 @@ namespace Polecat.Tests.Events;
 
 // An aggregate that can be "deleted" — ShouldDelete returns true when the aggregate
 // should be considered removed, causing the aggregator to return null.
-public class DeletableAggregate
+public partial class DeletableAggregate
 {
     public Guid Id { get; set; }
     public string Name { get; set; } = string.Empty;

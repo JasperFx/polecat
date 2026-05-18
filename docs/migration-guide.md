@@ -10,9 +10,9 @@ Polecat 4 consumes the 2026-wave alpha line for the shared substrate. Update you
 
 | Package | 3.x | 4.0 (current alpha) |
 |---|---|---|
-| `JasperFx` | `1.31.0` | `2.0.0-alpha.11` |
-| `JasperFx.Events` | `1.36.0` | `2.0.0-alpha.4` |
-| `JasperFx.Events.SourceGenerator` | `1.4.0` | `2.0.0-alpha.2` |
+| `JasperFx` | `1.31.0` | `2.0.0-alpha.13` |
+| `JasperFx.Events` | `1.36.0` | `2.0.0-alpha.12` |
+| `JasperFx.Events.SourceGenerator` | `1.4.0` | `2.0.0-alpha.5` |
 | `Weasel.SqlServer` | `8.15.2` | `9.0.0-alpha.3` |
 | `Weasel.EntityFrameworkCore` | `8.15.2` | `9.0.0-alpha.3` |
 
@@ -83,6 +83,104 @@ catch (JasperFx.MultiTenancy.UnknownTenantIdException ex)
 ```
 
 ### Event-sourcing API changes
+
+#### Projections and self-aggregating documents must be `partial`
+
+[JasperFx/jasperfx#276](https://github.com/JasperFx/jasperfx/issues/276) (FEC elimination, Phase 1) removed the FastExpressionCompiler fallback in `JasperFx.Events`'s projection apply-method dispatch. Source-generated dispatchers emitted by [`JasperFx.Events.SourceGenerator`](https://www.nuget.org/packages/JasperFx.Events.SourceGenerator) are now the only path — runtime registration **fails fast** when no `[GeneratedEvolver]` is found for a projection that uses conventional `Apply` / `Create` / `ShouldDelete` methods:
+
+```
+JasperFx.Events.Projections.InvalidProjectionException:
+  No source-generated dispatcher found for MyApp.MyProjection.
+  When using conventional Apply/Create/ShouldDelete methods, the projection class must be
+  declared `partial` in an assembly that references the JasperFx.Events.SourceGenerator analyzer,
+  or alternatively override Evolve / EvolveAsync / DetermineAction / DetermineActionAsync directly.
+```
+
+To clear this exception, **every projection class that uses conventional apply-method discovery must be `partial`**, including:
+
+- Subclasses of `SingleStreamProjection<TDoc, TId>`, `MultiStreamProjection<TDoc, TId>`, `EventProjection`, and `PolecatCompositeProjection`.
+- **Self-aggregating document types** registered via `opts.Projections.Snapshot<T>(...)`, queried via `session.Events.AggregateStreamAsync<T>(...)`, or live-projected via `session.Events.FetchLatest<T>(...)` / `FetchForWriting<T>(...)`. The source generator emits a standalone `TEvolver` class for the closed `SingleStreamProjection<T, T.IdType>` runtime instance, and it can only do that when `T` is `partial`.
+
+```csharp
+// before (Polecat 3.x — works because of FEC fallback)
+public class QuestParty
+{
+    public Guid Id { get; set; }
+    public List<string> Members { get; } = [];
+
+    public static QuestParty Create(QuestStarted e) => new();
+    public void Apply(MembersJoined e) => Members.AddRange(e.Members);
+}
+
+// after (Polecat 4.0 — `partial` required)
+public partial class QuestParty
+{
+    public Guid Id { get; set; }
+    public List<string> Members { get; } = [];
+
+    public static QuestParty Create(QuestStarted e) => new();
+    public void Apply(MembersJoined e) => Members.AddRange(e.Members);
+}
+```
+
+Every assembly that defines such a projection or aggregate also needs to reference the `JasperFx.Events.SourceGenerator` NuGet as an **analyzer-only** package — Polecat itself already pulls it in through `JasperFx.Events` for projection types declared in your store-host project, but any sibling assembly that declares its own projection / aggregate types needs its own reference:
+
+```xml
+<ItemGroup>
+  <PackageReference Include="JasperFx.Events.SourceGenerator"
+                    OutputItemType="Analyzer"
+                    ReferenceOutputAssembly="false" />
+</ItemGroup>
+```
+
+If you have a projection that **cannot** be made `partial` (e.g. a sealed class from a third-party library, or one you want to keep as a non-source-generator path), the escape hatch is to override the dispatch methods directly:
+
+```csharp
+public class MyProjection : SingleStreamProjection<MyAggregate, Guid>
+{
+    public override ValueTask<MyAggregate?> EvolveAsync(
+        MyAggregate? snapshot, Guid id, IEvent e, CancellationToken ct)
+    {
+        // hand-written dispatch — no SG, no FEC
+    }
+}
+```
+
+This matches Marten 9's adoption story for the same JasperFx.Events Phase-1 change.
+
+##### Surfaces unaffected by the partial requirement
+
+- **`FlatTableProjection`** — has its own dictionary-keyed dispatch via `Project<TEvent>(...)` / `Delete<TEvent>(...)`, doesn't go through JasperFx.Events apply-method discovery. No `partial` required.
+- **`EfCoreSingleStreamProjection<TDoc, TDbContext>` / `EfCoreEventProjection<TDbContext>`** (from `Polecat.EntityFrameworkCore`) — override `DetermineActionAsync` directly, also bypass the SG-required path.
+
+#### Inline-lambda projection registration APIs removed
+
+[JasperFx/jasperfx#276](https://github.com/JasperFx/jasperfx/issues/276) / [#286](https://github.com/JasperFx/jasperfx/issues/286) removed the inline-lambda registration overloads on `EventProjection`, `IAggregationSteps<T, TQuerySession>`, and `JasperFxAggregationProjectionBase` — the source generator cannot dispatch a runtime closure, so these were the last thing keeping FEC reachable. Migrate to conventional method declarations on the projection class:
+
+```csharp
+// before (Polecat 3.x)
+public class MyEventProjection : EventProjection
+{
+    public MyEventProjection()
+    {
+        Project<OrderPlaced>((e, ops) =>
+        {
+            ops.Store(new OrderSummary { Id = e.OrderId, ... });
+        });
+    }
+}
+
+// after (Polecat 4.0)
+public partial class MyEventProjection : EventProjection
+{
+    public void Project(OrderPlaced e, IDocumentSession ops)
+    {
+        ops.Store(new OrderSummary { Id = e.OrderId, ... });
+    }
+}
+```
+
+The same shape — `public void Project(TEvent, IDocumentSession)` for inline mutation, plus the conventional `Create` / `Apply` / `ShouldDelete` methods for aggregations — covers everything the lambda APIs used to do. `DeleteEvent<TEvent>()` (no-args, populates the internal delete-types list) and `TransformsEvent<TEvent>()` remain available; only the lambda-taking overloads were dropped.
 
 #### `IInlineProjection.ApplyAsync` parameter widening
 
@@ -155,7 +253,9 @@ The concurrency throw is **best-effort, not transactional.** Matched-and-updated
 Polecat 4 inherits the same AOT-friendly posture introduced in JasperFx 2.0 ([jasperfx#213](https://github.com/JasperFx/jasperfx/issues/213) AOT pillar, jasperfx#190 `ITypeLoader` abstraction). Polecat itself has been source-generator-first since 3.x — there is no Roslyn runtime-compile path to disable — so:
 
 - `PublishAot=true` is the supported posture for Polecat 4 applications, modulo the usual System.Text.Json `JsonSerializerContext` setup for your document and event types.
-- `IsAotCompatible=true` is now set on the Polecat assembly (PR [#67](https://github.com/JasperFx/polecat/pull/67)), and the reflective surfaces of Polecat have been progressively annotated for the trimmer / AOT analyzer — Serialization ([#74](https://github.com/JasperFx/polecat/pull/74)), ProjectionReplay ([#75](https://github.com/JasperFx/polecat/pull/75)), LINQ extension/provider surface ([#76](https://github.com/JasperFx/polecat/pull/76)), and Storage / Registry / EventStoreExplorer ([#77](https://github.com/JasperFx/polecat/pull/77)).
+- `IsAotCompatible=true` is now set on the Polecat assembly (PR [#67](https://github.com/JasperFx/polecat/pull/67)), and the reflective surfaces of Polecat have been progressively annotated for the trimmer / AOT analyzer — Serialization ([#74](https://github.com/JasperFx/polecat/pull/74)), ProjectionReplay ([#75](https://github.com/JasperFx/polecat/pull/75)), LINQ extension/provider surface ([#76](https://github.com/JasperFx/polecat/pull/76)), Storage / Registry / EventStoreExplorer ([#77](https://github.com/JasperFx/polecat/pull/77)), and the class-level → call-site refactor of the remaining reflective surface ([#107](https://github.com/JasperFx/polecat/pull/107)).
+- **FastExpressionCompiler is no longer pulled in transitively** through `JasperFx.Events` ([jasperfx#276](https://github.com/JasperFx/jasperfx/issues/276)). Projection apply-method dispatch routes exclusively through `[GeneratedEvolver]` outputs from `JasperFx.Events.SourceGenerator` — see the **"Projections and self-aggregating documents must be `partial`"** section above for the consumer-side migration.
+- An AOT smoke-test consumer ([Polecat.AotSmoke](https://github.com/JasperFx/polecat/tree/main/src/Polecat.AotSmoke), PR [#106](https://github.com/JasperFx/polecat/pull/106)) ships with the repo and runs in CI with `WarningsAsErrors` covering `IL2026 / IL2046 / IL2055 / IL2065 / IL2067 / IL2070 / IL2072 / IL2075 / IL2090 / IL2091 / IL2111 / IL3050 / IL3051`. Regressions in Polecat's AOT-clean surface fail the build.
 
 For the end-to-end "how do I publish AOT against the Critter Stack" walkthrough — recommended csproj flags, `WarningsAsErrors=IL*` setup, the source-generator-backed `ISerializer` swap, and the smoke-test pattern — see the **[Publishing AOT with JasperFx](https://jasperfx.github.io/codegen/aot)** guide on jasperfx.github.io. The guide is written for the whole Critter Stack; Polecat-specific call-outs are listed in the "Per-package status" table there.
 

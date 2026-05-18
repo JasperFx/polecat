@@ -108,8 +108,14 @@ namespace Polecat.AotSmoke
     /// <summary>
     /// Concrete projection with both generic args closed at compile time —
     /// AOT-safe alternative to <c>Projections.Snapshot&lt;Quest&gt;()</c>.
+    ///
+    /// `partial` so JasperFx.Events.SourceGenerator (wired in the csproj as
+    /// an Analyzer-only PackageReference) emits the [GeneratedEvolver]
+    /// dispatcher. JasperFx#276 / Phase 3 removed the FEC fallback for
+    /// projection apply dispatch — without `partial` + the SG analyzer,
+    /// DocumentStore construction throws InvalidProjectionException at boot.
     /// </summary>
-    internal sealed class QuestProjection : SingleStreamProjection<Quest, Guid>
+    internal sealed partial class QuestProjection : SingleStreamProjection<Quest, Guid>
     {
     }
 }

@@ -9,7 +9,7 @@ namespace Polecat.Tests.Projections;
 ///     Self-aggregating document type for testing inline projections.
 ///     Uses conventional Apply/Create methods.
 /// </summary>
-public class QuestParty
+public partial class QuestParty
 {
     public Guid Id { get; set; }
     public string Name { get; set; } = string.Empty;

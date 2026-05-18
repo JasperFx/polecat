@@ -7,7 +7,7 @@ public record ReportCreated(string Title);
 public record SectionAdded(string SectionName);
 public record ReportPublished;
 
-public class Report
+public partial class Report
 {
     public Guid Id { get; set; }
     public string Title { get; set; } = "";
@@ -15,6 +15,23 @@ public class Report
     public bool IsPublished { get; set; }
 
     public static Report Create(ReportCreated e) => new Report { Title = e.Title };
+    public void Apply(SectionAdded e) => SectionCount++;
+    public void Apply(ReportPublished e) => IsPublished = true;
+}
+
+// String-keyed variant of Report. Has its own Id type so the source generator
+// emits a distinct `IGeneratedSyncEvolver<StringReport, string>` for it — the
+// SG keys the generated evolver on the document's `Id` property type, so a
+// single Report class can't double-serve Guid- and string-keyed streams the
+// way it did under Polecat 3.x's FEC fallback.
+public partial class StringReport
+{
+    public string Id { get; set; } = "";
+    public string Title { get; set; } = "";
+    public int SectionCount { get; set; }
+    public bool IsPublished { get; set; }
+
+    public static StringReport Create(ReportCreated e) => new StringReport { Title = e.Title };
     public void Apply(SectionAdded e) => SectionCount++;
     public void Apply(ReportPublished e) => IsPublished = true;
 }
@@ -147,7 +164,7 @@ public class project_latest_tests : IntegrationContext
             new ReportPublished()
         );
 
-        var report = await session.Events.ProjectLatest<Report>(key);
+        var report = await session.Events.ProjectLatest<StringReport>(key);
 
         report.ShouldNotBeNull();
         report.Title.ShouldBe("Quarterly Report");
@@ -184,7 +201,7 @@ public class project_latest_tests : IntegrationContext
                 new ReportPublished()
             );
 
-            var report = await session.Events.ProjectLatest<Report>(key);
+            var report = await session.Events.ProjectLatest<StringReport>(key);
 
             report.ShouldNotBeNull();
             report.Title.ShouldBe("Annual Report");

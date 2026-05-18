@@ -20,6 +20,11 @@
     <ItemGroup>
         <ProjectReference Include="..\Polecat.AspNetCore\Polecat.AspNetCore.csproj" />
         <ProjectReference Include="..\Polecat.TestUtils\Polecat.TestUtils.csproj" />
+        <!-- JasperFx#276 Phase 3: any assembly that registers projections (or
+             live-aggregates self-aggregating document types via AggregateStream)
+             must reference the SG analyzer so [GeneratedEvolver] dispatchers
+             are emitted for partial document classes. -->
+        <PackageReference Include="JasperFx.Events.SourceGenerator" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
     </ItemGroup>
 
 </Project>

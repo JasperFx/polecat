@@ -3,6 +3,21 @@ using Polecat.Tests.Harness;
 
 namespace Polecat.Tests.Events;
 
+// String-keyed sibling of QuestAggregate. The SG keys the generated evolver on
+// the document's `Id` property type, so a Guid-id aggregate can't double-serve
+// string-keyed streams under Polecat 4 the way it did under 3.x's FEC fallback.
+public partial class StringQuestAggregate
+{
+    public string Id { get; set; } = "";
+    public string Name { get; set; } = "";
+    public List<string> Members { get; } = [];
+    public int MonstersSlain { get; set; }
+
+    public static StringQuestAggregate Create(QuestStarted e) => new() { Name = e.Name };
+    public void Apply(MembersJoined e) => Members.AddRange(e.Members);
+    public void Apply(MonsterSlain e) => MonstersSlain++;
+}
+
 [Collection("integration")]
 public class always_enforce_consistency_tests : IntegrationContext
 {
@@ -111,7 +126,7 @@ public class always_enforce_consistency_tests : IntegrationContext
         await session1.SaveChangesAsync();
 
         await using var session2 = theStore.LightweightSession();
-        var stream = await session2.Events.FetchForWriting<QuestAggregate>(key);
+        var stream = await session2.Events.FetchForWriting<StringQuestAggregate>(key);
         stream.AlwaysEnforceConsistency = true;
 
         // Modify the stream in another session

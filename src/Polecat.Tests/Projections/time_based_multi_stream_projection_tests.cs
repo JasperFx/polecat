@@ -16,7 +16,7 @@ public record AccountCredited(decimal Amount, string Description);
 
 #region sample_polecat_monthly_account_activity_document
 
-public class MonthlyAccountActivity
+public partial class MonthlyAccountActivity
 {
     public string Id { get; set; } = "";
     public Guid AccountId { get; set; }
@@ -31,7 +31,7 @@ public class MonthlyAccountActivity
 
 #region sample_polecat_monthly_account_activity_projection
 
-public class MonthlyAccountActivityProjection : MultiStreamProjection<MonthlyAccountActivity, string>
+public partial class MonthlyAccountActivityProjection : MultiStreamProjection<MonthlyAccountActivity, string>
 {
     public MonthlyAccountActivityProjection()
     {

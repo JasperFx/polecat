@@ -109,17 +109,14 @@ public class EnrichmentUser
 
 #region Projections
 
-public class SimpleEnrichmentProjection : EventProjection
+public partial class SimpleEnrichmentProjection : EventProjection
 {
-    public SimpleEnrichmentProjection()
+    public void Project(EnrichmentTaskAssigned e, IDocumentSession ops)
     {
-        Project<EnrichmentTaskAssigned>((e, ops) =>
+        ops.Store(new EnrichmentTaskSummary
         {
-            ops.Store(new EnrichmentTaskSummary
-            {
-                Id = e.TaskId,
-                AssignedUserName = e.UserName
-            });
+            Id = e.TaskId,
+            AssignedUserName = e.UserName
         });
     }
 
@@ -134,18 +131,18 @@ public class SimpleEnrichmentProjection : EventProjection
     }
 }
 
-public class EnrichmentCallOrderProjection : EventProjection
+public partial class EnrichmentCallOrderProjection : EventProjection
 {
     private readonly List<string> _callOrder;
 
     public EnrichmentCallOrderProjection(List<string> callOrder)
     {
         _callOrder = callOrder;
+    }
 
-        Project<EnrichmentTaskAssigned>((e, ops) =>
-        {
-            _callOrder.Add($"Apply:{nameof(EnrichmentTaskAssigned)}");
-        });
+    public void Project(EnrichmentTaskAssigned e, IDocumentSession ops)
+    {
+        _callOrder.Add($"Apply:{nameof(EnrichmentTaskAssigned)}");
     }
 
     public override Task EnrichEventsAsync(IQuerySession querySession,
@@ -156,17 +153,14 @@ public class EnrichmentCallOrderProjection : EventProjection
     }
 }
 
-public class DbLookupEnrichmentProjection : EventProjection
+public partial class DbLookupEnrichmentProjection : EventProjection
 {
-    public DbLookupEnrichmentProjection()
+    public void Project(EnrichmentTaskAssigned e, IDocumentSession ops)
     {
-        Project<EnrichmentTaskAssigned>((e, ops) =>
+        ops.Store(new EnrichmentTaskSummary
         {
-            ops.Store(new EnrichmentTaskSummary
-            {
-                Id = e.TaskId,
-                AssignedUserName = e.UserName
-            });
+            Id = e.TaskId,
+            AssignedUserName = e.UserName
         });
     }
 

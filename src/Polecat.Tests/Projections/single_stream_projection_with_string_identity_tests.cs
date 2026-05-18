@@ -8,7 +8,7 @@ namespace Polecat.Tests.Projections;
 /// <summary>
 ///     Aggregate document with a string identity, for use with string-keyed streams.
 /// </summary>
-public class StringQuestParty
+public partial class StringQuestParty
 {
     public string Id { get; set; } = string.Empty;
     public string Name { get; set; } = string.Empty;
@@ -21,7 +21,7 @@ public class StringQuestParty
 ///     Self-aggregating document type with string identity, for use with
 ///     the Snapshot&lt;T, TId&gt; API (conventional Apply/Create methods on the type itself).
 /// </summary>
-public class SelfAggregatingStringQuest
+public partial class SelfAggregatingStringQuest
 {
     public string Id { get; set; } = string.Empty;
     public string Name { get; set; } = string.Empty;
@@ -42,7 +42,7 @@ public class SelfAggregatingStringQuest
 ///     Custom SingleStreamProjection with TId = string, demonstrating the new
 ///     two-type-parameter signature that mirrors Marten's SingleStreamProjection&lt;TDoc, TId&gt;.
 /// </summary>
-public class StringQuestPartyProjection : SingleStreamProjection<StringQuestParty, string>
+public partial class StringQuestPartyProjection : SingleStreamProjection<StringQuestParty, string>
 {
     public StringQuestPartyProjection()
     {

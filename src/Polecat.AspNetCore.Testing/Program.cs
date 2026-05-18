@@ -50,7 +50,7 @@ namespace Polecat.AspNetCore.Testing
     }
 
     // Aggregate type for StreamAggregate tests
-    public class StreamingQuestParty
+    public partial class StreamingQuestParty
     {
         public Guid Id { get; set; }
         public string Name { get; set; } = "";
