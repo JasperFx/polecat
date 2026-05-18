@@ -11,8 +11,8 @@ Polecat 4 consumes the 2026-wave alpha line for the shared substrate. Update you
 | Package | 3.x | 4.0 (current alpha) |
 |---|---|---|
 | `JasperFx` | `1.31.0` | `2.0.0-alpha.13` |
-| `JasperFx.Events` | `1.36.0` | `2.0.0-alpha.11` |
-| `JasperFx.Events.SourceGenerator` | `1.4.0` | `2.0.0-alpha.4` |
+| `JasperFx.Events` | `1.36.0` | `2.0.0-alpha.12` |
+| `JasperFx.Events.SourceGenerator` | `1.4.0` | `2.0.0-alpha.5` |
 | `Weasel.SqlServer` | `8.15.2` | `9.0.0-alpha.3` |
 | `Weasel.EntityFrameworkCore` | `8.15.2` | `9.0.0-alpha.3` |
 
