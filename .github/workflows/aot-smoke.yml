@@ -1,0 +1,47 @@
+name: aot-smoke
+
+# AOT smoke gate (Polecat#46 — Critter Stack 2026 AOT pillar).
+# Builds src/Polecat.AotSmoke, which references Polecat as a static-mode AOT
+# consumer (no JasperFx.RuntimeCompiler, no AddRuntimeCompilation). The
+# project's csproj sets IsAotCompatible=true + WarningsAsErrors for the AOT
+# analyzer warning codes (IL2026/IL2046/IL2055/IL2065/IL2067/IL2070/IL2072/
+# IL2075/IL2090/IL2091/IL2111/IL3050/IL3051), so any regression in Polecat's
+# AOT-clean surface fails this build.
+#
+# No SQL Server needed — the smoke test never opens a connection.
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: 1
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 1
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install .NET 9.0.x
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Install .NET 10.0.x
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        run: dotnet restore src/Polecat.AotSmoke/Polecat.AotSmoke.csproj
+
+      - name: Build (Polecat.AotSmoke — fails on IL2026/IL2046/IL2055/IL2065/IL2067/IL2070/IL2072/IL2075/IL2090/IL2091/IL2111/IL3050/IL3051)
+        run: dotnet build src/Polecat.AotSmoke/Polecat.AotSmoke.csproj -c Release --no-restore
