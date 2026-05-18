@@ -27,14 +27,6 @@ namespace Polecat.Linq;
 ///     either avoid LINQ entirely (use the raw <c>session.QueryAsync</c> path with
 ///     SQL strings) or use source-generated compiled queries.
 /// </remarks>
-[UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
-    Justification = "Class-level: LINQ-to-SQL translation references framework Queryable / Enumerable methods + user document types via Expression trees. Trim invariant lives at the document-registration boundary.")]
-[UnconditionalSuppressMessage("Trimming", "IL2070:DynamicallyAccessedMembers",
-    Justification = "Class-level: reflection over user document types whose members are preserved by the document-registration surface.")]
-[UnconditionalSuppressMessage("Trimming", "IL2075:DynamicallyAccessedMembers",
-    Justification = "Class-level: same as IL2070.")]
-[UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
-    Justification = "Class-level: Type.MakeGenericType / Expression.Call(Type, string, ...) for LINQ expression construction. AOT consumers should bypass this layer.")]
 internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider
 {
     private readonly QuerySession _session;
@@ -51,6 +43,17 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider
         _tableEnsurer = tableEnsurer;
     }
 
+    // IL2046 — IQueryProvider.CreateQuery(Expression) is not annotated [RUC]/[RDC]
+    // in the BCL, but the only AOT-safe implementation is the generic
+    // CreateQuery<TElement>(Expression) overload below. The non-generic
+    // implementation requires runtime codegen + reflection on the element type;
+    // the (necessary) annotation mismatch with the interface is suppressed here.
+    [UnconditionalSuppressMessage("Trimming", "IL2046",
+        Justification = "IQueryProvider.CreateQuery(Expression) lacks RUC; the AOT-safe entry is the generic CreateQuery<TElement>(Expression).")]
+    [UnconditionalSuppressMessage("AOT", "IL3051",
+        Justification = "IQueryProvider.CreateQuery(Expression) lacks RDC; the AOT-safe entry is the generic CreateQuery<TElement>(Expression).")]
+    [RequiresDynamicCode("Closes PolecatLinqQueryable<> over the element type via Type.MakeGenericType. AOT consumers should call CreateQuery<TElement>(Expression) instead.")]
+    [RequiresUnreferencedCode("Activator.CreateInstance reflects over the constructor of PolecatLinqQueryable<>. AOT consumers should call CreateQuery<TElement>(Expression) instead.")]
     public IQueryable CreateQuery(Expression expression)
     {
         var elementType = GetElementType(expression);
@@ -173,6 +176,8 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider
         return sb.ToString();
     }
 
+    [RequiresDynamicCode("LINQ-to-SQL execution closes ListQueryHandler<>/DeserializingSelector<>/etc. over the document type via Type.MakeGenericType.")]
+    [RequiresUnreferencedCode("LINQ-to-SQL execution reflects over the document type (Activator.CreateInstance on handler types, MethodInfo.Invoke on HandleAsync). AOT consumers must preserve handler + document members through DAM or source generation.")]
     public async Task<TResult> ExecuteAsync<TResult>(Expression expression, CancellationToken token)
     {
         var documentType = FindDocumentType(expression);
@@ -294,6 +299,8 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider
             isHierarchy ? provider.Mapping : null);
     }
 
+    [RequiresDynamicCode("GroupBy execution closes GroupByListHandler<>/ScalarListHandler<> over the projected type via Type.MakeGenericType.")]
+    [RequiresUnreferencedCode("GroupBy execution reflects over handler types (Activator.CreateInstance + MethodInfo.Invoke).")]
     private async Task<TResult> ExecuteGroupByAsync<TResult>(
         LinqQueryParser parser, MemberFactory memberFactory, CancellationToken token)
     {
@@ -366,6 +373,8 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider
         return await InvokeScalarListHandlerAsync<TResult>(reader, token);
     }
 
+    [RequiresDynamicCode("Closes GroupByListHandler<> over TResult's element type via Type.MakeGenericType.")]
+    [RequiresUnreferencedCode("Reflects over GroupByListHandler<>.HandleAsync via MethodInfo.Invoke and Task<>.Result via GetProperty.")]
     private async Task<TResult> InvokeGroupByListHandlerAsync<TResult>(
         System.Data.Common.DbDataReader reader, LambdaExpression selectExpression,
         CancellationToken token)
@@ -406,6 +415,8 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider
         }
     }
 
+    [RequiresDynamicCode("GroupJoin execution closes JoinListHandler<,,> + Func<,,> over outer/inner/result types via Type.MakeGenericType.")]
+    [RequiresUnreferencedCode("GroupJoin execution reflects over handler types and the result selector. AOT consumers must preserve outer/inner/result type members through DAM or source generation.")]
     private async Task<TResult> ExecuteGroupJoinAsync<TResult>(LinqQueryParser parser, CancellationToken token)
     {
         var joinData = parser.GroupJoinData!;
@@ -676,6 +687,7 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider
     ///     Finds the original MemberExpression on the document type for an anonymous type member.
     ///     Traces through the SelectMany result selector to find the source expression.
     /// </summary>
+    [RequiresUnreferencedCode("Routes through FindDeepestMemberExpression which reflects over the document type's members.")]
     private static MemberExpression? FindOriginalProperty(GroupJoinData joinData, string memberName, bool isOuter)
     {
         if (joinData.SelectManyResultSelector?.Body is not NewExpression resultNew || resultNew.Members == null)
@@ -693,6 +705,7 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider
         return null;
     }
 
+    [RequiresUnreferencedCode("Reflects over the document type's properties/fields via Type.GetProperty/GetField when rebuilding member access for join order-by translation.")]
     private static MemberExpression? FindDeepestMemberExpression(Expression expr)
     {
         // Walk through member chains to find the deepest member on a document type
@@ -724,6 +737,7 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider
         return lastType;
     }
 
+    [RequiresUnreferencedCode("Reflects over param.Type's public properties/fields via Type.GetProperty/GetField when rebuilding join order-by member access.")]
     private static MemberExpression? RebuildMemberAccess(MemberExpression original, ParameterExpression param)
     {
         // Collect the member chain from innermost to outermost
@@ -773,6 +787,8 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider
             $"Join key selector must be a member expression, got: {keyBody.NodeType}");
     }
 
+    [RequiresDynamicCode("Closes Func<,,> + JoinListHandler<,,> over outer/inner/result types via Type.MakeGenericType.")]
+    [RequiresUnreferencedCode("Reflects over JoinListHandler<,,>.HandleAsync via MethodInfo.Invoke and Task<>.Result via GetProperty.")]
     private async Task<TResult> InvokeJoinHandlerAsync<TResult>(
         Type outerType, Type innerType,
         LambdaExpression rewrittenSelector, bool isLeftJoin,
@@ -904,6 +920,8 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider
         }
     }
 
+    [RequiresDynamicCode("Routes to handler invocations that close generic handler types over the document/result type via Type.MakeGenericType.")]
+    [RequiresUnreferencedCode("Routes to handler invocations that reflect over handler/result types.")]
     private async Task<TResult> HandleResultAsync<TResult>(
         DbDataReader reader, LinqQueryParser parser, Type documentType, CancellationToken token,
         bool syncRevision = false, bool syncGuidVersion = false, DocumentMapping? hierarchyMapping = null)
@@ -964,6 +982,8 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider
         }
     }
 
+    [RequiresDynamicCode("Closes DeserializingSelector<> + ListQueryHandler<> over itemType via Type.MakeGenericType.")]
+    [RequiresUnreferencedCode("Reflects over handler/selector types (Activator.CreateInstance, MethodInfo.Invoke on HandleAsync, GetProperty on Task<>.Result).")]
     private async Task<TResult> InvokeListHandlerAsync<TResult>(
         Type itemType, DbDataReader reader, CancellationToken token,
         bool syncRevision = false, bool syncGuidVersion = false, DocumentMapping? hierarchyMapping = null)
@@ -983,6 +1003,8 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider
         return (TResult)resultProperty.GetValue(task)!;
     }
 
+    [RequiresDynamicCode("Closes ScalarListHandler<> over TResult's element type via Type.MakeGenericType.")]
+    [RequiresUnreferencedCode("Reflects over ScalarListHandler<>.HandleAsync via MethodInfo.Invoke and Task<>.Result via GetProperty.")]
     private async Task<TResult> InvokeScalarListHandlerAsync<TResult>(
         DbDataReader reader, CancellationToken token)
     {
@@ -999,6 +1021,8 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider
         return (TResult)resultProperty.GetValue(task)!;
     }
 
+    [RequiresDynamicCode("Closes ProjectionListHandler<,> over (sourceType, TResult's projected type) via Type.MakeGenericType.")]
+    [RequiresUnreferencedCode("Reflects over ProjectionListHandler<,>.HandleAsync via MethodInfo.Invoke and Task<>.Result via GetProperty.")]
     private async Task<TResult> InvokeProjectionHandlerAsync<TResult>(
         Type sourceType, DbDataReader reader, LambdaExpression selectExpression,
         CancellationToken token)
@@ -1016,6 +1040,8 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider
         return (TResult)resultProperty.GetValue(task)!;
     }
 
+    [RequiresDynamicCode("Closes DeserializingSelector<> + OneResultHandler<> over documentType via Type.MakeGenericType.")]
+    [RequiresUnreferencedCode("Reflects over handler/selector types (Activator.CreateInstance, MethodInfo.Invoke on HandleAsync, GetProperty on Task<>.Result).")]
     private async Task<TResult> InvokeOneResultHandlerAsync<TResult>(
         Type documentType, DbDataReader reader, CancellationToken token,
         bool canBeNull, bool canBeMultiples,

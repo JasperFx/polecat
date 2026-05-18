@@ -17,10 +17,6 @@ namespace Polecat.Events.Linq;
 ///     IQueryProvider for LINQ queries against the event store.
 ///     Supports both QueryAllRawEvents (IEvent) and QueryRawEventDataOnly&lt;T&gt; (event data type).
 /// </summary>
-[UnconditionalSuppressMessage("Trimming", "IL2075:DynamicallyAccessedMembers",
-    Justification = "Class-level: Task<T>.Result property is accessed via reflection (GetType().GetProperty(\"Result\")). The framework Task<TResult> intrinsic and its Result property are preserved by the runtime.")]
-[UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
-    Justification = "Class-level: dynamic LINQ over event-store rows uses Type.MakeGenericType for selector/handler types — runtime code generation. AOT consumers must register concrete query shapes per the AOT publishing guide.")]
 internal class EventLinqQueryProvider : IPolecatAsyncQueryProvider
 {
     private readonly QuerySession _session;
@@ -58,6 +54,12 @@ internal class EventLinqQueryProvider : IPolecatAsyncQueryProvider
         _eventDataType = eventDataType;
     }
 
+    [UnconditionalSuppressMessage("Trimming", "IL2046",
+        Justification = "IQueryProvider.CreateQuery(Expression) lacks RUC; the AOT-safe entry is the generic CreateQuery<TElement>(Expression).")]
+    [UnconditionalSuppressMessage("AOT", "IL3051",
+        Justification = "IQueryProvider.CreateQuery(Expression) lacks RDC; the AOT-safe entry is the generic CreateQuery<TElement>(Expression).")]
+    [RequiresDynamicCode("Closes PolecatLinqQueryable<> over the element type via Type.MakeGenericType. AOT consumers should call CreateQuery<TElement>(Expression) instead.")]
+    [RequiresUnreferencedCode("Activator.CreateInstance reflects over the constructor of PolecatLinqQueryable<>.")]
     public IQueryable CreateQuery(Expression expression)
     {
         var elementType = GetElementType(expression);
@@ -82,6 +84,8 @@ internal class EventLinqQueryProvider : IPolecatAsyncQueryProvider
             "Polecat does not support synchronous LINQ execution. Use async methods (ToListAsync, etc.) instead.");
     }
 
+    [RequiresDynamicCode("Event-store LINQ execution closes ListQueryHandler<>/DeserializingSelector<>/etc. over the event/event-data type via Type.MakeGenericType.")]
+    [RequiresUnreferencedCode("Event-store LINQ execution reflects over the event type (Activator.CreateInstance on handler types, MethodInfo.Invoke on HandleAsync). AOT consumers must preserve event + handler members through DAM or source generation.")]
     public async Task<TResult> ExecuteAsync<TResult>(Expression expression, CancellationToken token)
     {
         var parser = new LinqQueryParser(_memberFactory, _eventsTable);
@@ -147,6 +151,8 @@ internal class EventLinqQueryProvider : IPolecatAsyncQueryProvider
         return await HandleResultAsync<TResult>(reader, parser, token);
     }
 
+    [RequiresDynamicCode("Routes to handler invocations that close generic handler types over the event/event-data type via Type.MakeGenericType.")]
+    [RequiresUnreferencedCode("Routes to handler invocations that reflect over handler types.")]
     private async Task<TResult> HandleResultAsync<TResult>(
         DbDataReader reader, LinqQueryParser parser, CancellationToken token)
     {
@@ -235,6 +241,8 @@ internal class EventLinqQueryProvider : IPolecatAsyncQueryProvider
         return typeof(IEvent);
     }
 
+    [RequiresDynamicCode("Closes DeserializingSelector<> + ListQueryHandler<> over itemType via Type.MakeGenericType.")]
+    [RequiresUnreferencedCode("Reflects over handler/selector types (Activator.CreateInstance, MethodInfo.Invoke on HandleAsync, GetProperty on Task<>.Result).")]
     private async Task<TResult> InvokeListHandlerAsync<TResult>(
         Type itemType, DbDataReader reader, CancellationToken token)
     {
@@ -252,6 +260,8 @@ internal class EventLinqQueryProvider : IPolecatAsyncQueryProvider
         return (TResult)resultProperty.GetValue(task)!;
     }
 
+    [RequiresDynamicCode("Closes ScalarListHandler<> over TResult's element type via Type.MakeGenericType.")]
+    [RequiresUnreferencedCode("Reflects over ScalarListHandler<>.HandleAsync via MethodInfo.Invoke and Task<>.Result via GetProperty.")]
     private async Task<TResult> InvokeScalarListHandlerAsync<TResult>(
         DbDataReader reader, CancellationToken token)
     {
@@ -267,6 +277,8 @@ internal class EventLinqQueryProvider : IPolecatAsyncQueryProvider
         return (TResult)resultProperty.GetValue(task)!;
     }
 
+    [RequiresDynamicCode("Closes DeserializingSelector<> + OneResultHandler<> over documentType via Type.MakeGenericType.")]
+    [RequiresUnreferencedCode("Reflects over handler/selector types (Activator.CreateInstance, MethodInfo.Invoke on HandleAsync, GetProperty on Task<>.Result).")]
     private async Task<TResult> InvokeOneResultHandlerAsync<TResult>(
         Type documentType, DbDataReader reader, CancellationToken token,
         bool canBeNull, bool canBeMultiples)
