@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using JasperFx.Events;
 using JasperFx.Events.Daemon;
 using Microsoft.EntityFrameworkCore;
@@ -9,7 +10,24 @@ namespace Polecat.EntityFrameworkCore;
 ///     All mutations go through DbContext change tracking and are flushed
 ///     at commit time by the DbContextTransactionParticipant.
 /// </summary>
-internal class EfCoreProjectionStorage<TDoc, TId, TDbContext> : IProjectionStorage<TDoc, TId>
+/// <remarks>
+///     The <c>TDoc</c> DAM constraint mirrors the requirements
+///     <see cref="DbContext.Find{TEntity}(object[])"/> and
+///     <see cref="DbContext.FindAsync{TEntity}(object[], System.Threading.CancellationToken)"/>
+///     declare on their generic argument — Constructors / Fields / Properties /
+///     Interfaces, both public and non-public — so the trimmer keeps the
+///     entity members EF Core's change-tracker reaches. Callers that close
+///     <c>TDoc</c> with a concrete entity type satisfy it implicitly.
+/// </remarks>
+internal class EfCoreProjectionStorage<
+    [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors
+        | DynamicallyAccessedMemberTypes.NonPublicConstructors
+        | DynamicallyAccessedMemberTypes.PublicFields
+        | DynamicallyAccessedMemberTypes.NonPublicFields
+        | DynamicallyAccessedMemberTypes.PublicProperties
+        | DynamicallyAccessedMemberTypes.NonPublicProperties
+        | DynamicallyAccessedMemberTypes.Interfaces)]
+    TDoc, TId, TDbContext> : IProjectionStorage<TDoc, TId>
     where TDoc : class
     where TId : notnull
     where TDbContext : DbContext

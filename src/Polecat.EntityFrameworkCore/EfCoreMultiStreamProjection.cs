@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using JasperFx.Events;
 using JasperFx.Events.Aggregation;
 using JasperFx.Events.Daemon;
@@ -17,7 +18,17 @@ namespace Polecat.EntityFrameworkCore;
 /// <typeparam name="TDoc">The aggregate document type (EF Core entity).</typeparam>
 /// <typeparam name="TId">The identity type used to route events to aggregates.</typeparam>
 /// <typeparam name="TDbContext">The EF Core DbContext type.</typeparam>
-public abstract class EfCoreMultiStreamProjection<TDoc, TId, TDbContext>
+public abstract class EfCoreMultiStreamProjection<
+    [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors
+        | DynamicallyAccessedMemberTypes.NonPublicConstructors
+        | DynamicallyAccessedMemberTypes.PublicFields
+        | DynamicallyAccessedMemberTypes.NonPublicFields
+        | DynamicallyAccessedMemberTypes.PublicProperties
+        | DynamicallyAccessedMemberTypes.NonPublicProperties
+        | DynamicallyAccessedMemberTypes.Interfaces)]
+    TDoc, TId,
+    [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)]
+    TDbContext>
     : MultiStreamProjection<TDoc, TId>, IValidatedProjection<StoreOptions>
     where TDoc : class
     where TId : notnull

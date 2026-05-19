@@ -4,6 +4,13 @@
         <Description>Helpers for Polecat-backed AspNetCore applications</Description>
         <GenerateDocumentationFile>true</GenerateDocumentationFile>
         <RootNamespace>Polecat.AspNetCore</RootNamespace>
+        <!-- AOT pillar (JasperFx#213, Polecat#46) — extension-package coverage.
+             Mirrors Marten PR #4468's per-extension audit pattern. Warning
+             list matches Polecat.AotSmoke.csproj — any IL2026/IL2046/IL2055/
+             IL2065/IL2067/IL2070/IL2072/IL2075/IL2090/IL2091/IL2111/IL3050/
+             IL3051 in this project's compilation surface fails the build. -->
+        <IsAotCompatible>true</IsAotCompatible>
+        <WarningsAsErrors>IL2026;IL2046;IL2055;IL2065;IL2067;IL2070;IL2072;IL2075;IL2090;IL2091;IL2111;IL3050;IL3051</WarningsAsErrors>
     </PropertyGroup>
 
     <ItemGroup>

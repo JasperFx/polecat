@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using JasperFx.Events;
@@ -10,6 +11,8 @@ using Polecat.Events;
 
 namespace Polecat.AspNetCore;
 
+[RequiresDynamicCode("MCP endpoint handlers serialize / deserialize JSON-RPC request and response payloads through System.Text.Json's reflective overloads (JsonRpcRequest, McpTextContent, config dictionaries). AOT consumers should not call MapPolecatMcp on the consumer-facing surface; route MCP traffic through a manually-implemented endpoint that threads a JsonSerializerContext instead.")]
+[RequiresUnreferencedCode("MCP endpoint handlers reflect over the JSON-RPC payload types via STJ. AOT consumers should preserve those types or replace this extension with a source-generator-backed endpoint.")]
 public static class McpEndpointExtensions
 {
     private const string McpProtocolVersion = "2025-03-26";

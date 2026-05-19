@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using JasperFx.Events.Projections;
 using Microsoft.EntityFrameworkCore;
 using Polecat.Internal;
@@ -15,7 +16,17 @@ public static class EfCoreProjectionExtensions
     /// <summary>
     ///     Register an EF Core single-stream projection.
     /// </summary>
-    public static void Add<TProjection, TDoc, TDbContext>(
+    public static void Add<TProjection,
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors
+            | DynamicallyAccessedMemberTypes.NonPublicConstructors
+            | DynamicallyAccessedMemberTypes.PublicFields
+            | DynamicallyAccessedMemberTypes.NonPublicFields
+            | DynamicallyAccessedMemberTypes.PublicProperties
+            | DynamicallyAccessedMemberTypes.NonPublicProperties
+            | DynamicallyAccessedMemberTypes.Interfaces)]
+        TDoc,
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)]
+        TDbContext>(
         this PolecatProjectionOptions projections,
         StoreOptions options,
         TProjection projection,
@@ -35,7 +46,17 @@ public static class EfCoreProjectionExtensions
     /// <summary>
     ///     Register an EF Core multi-stream projection.
     /// </summary>
-    public static void Add<TProjection, TDoc, TId, TDbContext>(
+    public static void Add<TProjection,
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors
+            | DynamicallyAccessedMemberTypes.NonPublicConstructors
+            | DynamicallyAccessedMemberTypes.PublicFields
+            | DynamicallyAccessedMemberTypes.NonPublicFields
+            | DynamicallyAccessedMemberTypes.PublicProperties
+            | DynamicallyAccessedMemberTypes.NonPublicProperties
+            | DynamicallyAccessedMemberTypes.Interfaces)]
+        TDoc, TId,
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)]
+        TDbContext>(
         this PolecatProjectionOptions projections,
         StoreOptions options,
         TProjection projection,
@@ -56,7 +77,9 @@ public static class EfCoreProjectionExtensions
     /// <summary>
     ///     Register an EF Core event projection.
     /// </summary>
-    public static void Add<TProjection, TDbContext>(
+    public static void Add<TProjection,
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)]
+        TDbContext>(
         this PolecatProjectionOptions projections,
         StoreOptions options,
         TProjection projection,
@@ -83,7 +106,9 @@ public static class EfCoreProjectionExtensions
     ///     an explicit schema will use the SQL Server default ("dbo").
     ///     </para>
     /// </summary>
-    public static void AddEntityTablesFromDbContext<TDbContext>(this StoreOptions options,
+    public static void AddEntityTablesFromDbContext<
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)]
+        TDbContext>(this StoreOptions options,
         Action<DbContextOptionsBuilder<TDbContext>>? configure = null)
         where TDbContext : DbContext
     {
@@ -109,7 +134,17 @@ public static class EfCoreProjectionExtensions
     ///     When the JasperFx projection pipeline requests storage for TDoc,
     ///     it will get an EfCoreProjectionStorage backed by TDbContext.
     /// </summary>
-    internal static void RegisterEfCoreStorage<TDoc, TId, TDbContext>(StoreOptions options)
+    internal static void RegisterEfCoreStorage<
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors
+            | DynamicallyAccessedMemberTypes.NonPublicConstructors
+            | DynamicallyAccessedMemberTypes.PublicFields
+            | DynamicallyAccessedMemberTypes.NonPublicFields
+            | DynamicallyAccessedMemberTypes.PublicProperties
+            | DynamicallyAccessedMemberTypes.NonPublicProperties
+            | DynamicallyAccessedMemberTypes.Interfaces)]
+        TDoc, TId,
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)]
+        TDbContext>(StoreOptions options)
         where TDoc : class
         where TId : notnull
         where TDbContext : DbContext
