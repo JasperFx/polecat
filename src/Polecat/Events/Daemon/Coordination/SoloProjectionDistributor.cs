@@ -1,3 +1,5 @@
+using JasperFx.Events.Daemon;
+
 namespace Polecat.Events.Daemon.Coordination;
 
 /// <summary>
@@ -14,14 +16,14 @@ internal sealed class SoloProjectionDistributor : IProjectionDistributor
         _store = store;
     }
 
-    public ValueTask<IReadOnlyList<ProjectionSet>> BuildDistributionAsync()
+    public ValueTask<IReadOnlyList<IProjectionSet>> BuildDistributionAsync()
     {
         var databases = _store.Options.Tenancy?.AllDatabases() ?? [];
         var allShards = _store.Options.Projections.AllShards()
             .Select(s => s.Name)
             .ToList();
 
-        IReadOnlyList<ProjectionSet> sets = databases
+        IReadOnlyList<IProjectionSet> sets = databases
             .Select(db => new ProjectionSet(
                 lockId: _store.Options.DaemonSettings.DaemonLockId,
                 database: db,
@@ -33,12 +35,12 @@ internal sealed class SoloProjectionDistributor : IProjectionDistributor
 
     public Task RandomWait(CancellationToken token) => Task.CompletedTask;
 
-    public bool HasLock(ProjectionSet set) => true;
+    public bool HasLock(IProjectionSet set) => true;
 
-    public Task<bool> TryAttainLockAsync(ProjectionSet set, CancellationToken token) =>
+    public Task<bool> TryAttainLockAsync(IProjectionSet set, CancellationToken token) =>
         Task.FromResult(true);
 
-    public Task ReleaseLockAsync(ProjectionSet set) => Task.CompletedTask;
+    public Task ReleaseLockAsync(IProjectionSet set) => Task.CompletedTask;
 
     public Task ReleaseAllLocks() => Task.CompletedTask;
 

@@ -1,4 +1,4 @@
-using JasperFx.Core;
+using JasperFx.Events.Daemon;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Logging;
 using Polecat.Storage;
@@ -25,7 +25,7 @@ internal sealed class SingleTenantProjectionDistributor : IProjectionDistributor
         _logger = loggerFactory.CreateLogger<SingleTenantProjectionDistributor>();
     }
 
-    public ValueTask<IReadOnlyList<ProjectionSet>> BuildDistributionAsync()
+    public ValueTask<IReadOnlyList<IProjectionSet>> BuildDistributionAsync()
     {
         var databases = _store.Options.Tenancy?.AllDatabases() ?? [];
         var schema = _store.Options.DatabaseSchemaName;
@@ -33,16 +33,17 @@ internal sealed class SingleTenantProjectionDistributor : IProjectionDistributor
 
         var allShards = _store.Options.Projections.AllShards();
 
-        IReadOnlyList<ProjectionSet> sets = databases
+        IReadOnlyList<IProjectionSet> sets = databases
             .SelectMany(db => allShards.Select(shard =>
             {
-                // Deterministic per (database, schema, shard) — every node in
-                // the deployment computes the same id and races for the same
-                // SQL Server application lock.
-                var lockId = Math.Abs($"{db.Identifier}:{schema}:{shard.Name.Identity}".GetDeterministicHashCode())
-                             + baseLockId;
+                // Deterministic per (schema, shard) via JasperFx.Events'
+                // ProjectionLockIds.Compute — same formula Marten's
+                // SingleTenantProjectionDistributor uses, so Marten and Polecat
+                // nodes co-deployed against the same SQL Server instance
+                // negotiate identical lock ids. (Issue #117.)
+                var lockId = ProjectionLockIds.Compute(schema, shard.Name, baseLockId);
 
-                return new ProjectionSet(lockId, db, [shard.Name]);
+                return (IProjectionSet)new ProjectionSet(lockId, db, [shard.Name]);
             }))
             // Random ordering so multiple nodes coming up together stagger
             // their lock-acquisition attempts.
@@ -55,14 +56,14 @@ internal sealed class SingleTenantProjectionDistributor : IProjectionDistributor
     public Task RandomWait(CancellationToken token) =>
         Task.Delay(TimeSpan.FromMilliseconds(Random.Shared.Next(0, 500)), token);
 
-    public bool HasLock(ProjectionSet set) =>
+    public bool HasLock(IProjectionSet set) =>
         _locks.TryGetValue(set.Database.Identifier, out var l) && l.HasLock(set.LockId);
 
-    public Task<bool> TryAttainLockAsync(ProjectionSet set, CancellationToken token) =>
-        LockFor(set.Database).TryAttainLockAsync(set.LockId, token);
+    public Task<bool> TryAttainLockAsync(IProjectionSet set, CancellationToken token) =>
+        LockFor((PolecatDatabase)set.Database).TryAttainLockAsync(set.LockId, token);
 
-    public Task ReleaseLockAsync(ProjectionSet set) =>
-        LockFor(set.Database).ReleaseLockAsync(set.LockId);
+    public Task ReleaseLockAsync(IProjectionSet set) =>
+        LockFor((PolecatDatabase)set.Database).ReleaseLockAsync(set.LockId);
 
     public async Task ReleaseAllLocks()
     {
