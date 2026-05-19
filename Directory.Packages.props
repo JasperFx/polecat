@@ -5,16 +5,16 @@
 
     <ItemGroup>
         <!-- Core dependencies -->
-        <PackageVersion Include="JasperFx" Version="2.0.0-alpha.16" />
-        <PackageVersion Include="JasperFx.Events" Version="2.0.0-alpha.15" />
+        <PackageVersion Include="JasperFx" Version="2.0.0-alpha.17" />
+        <PackageVersion Include="JasperFx.Events" Version="2.0.0-alpha.16" />
         <!-- Pin the sibling JasperFx packages for parity with Marten 9's matrix
              even though Polecat doesn't currently reference them directly —
              keeps the lockstep matrix coherent when transitive resolution
              surfaces them through JasperFx / JasperFx.Events updates. The
              RuntimeCompiler 5.x line is the active continuation of the 4.x
              lineage; do not pin against the parallel stale 2.0.x series. -->
-        <PackageVersion Include="JasperFx.RuntimeCompiler" Version="5.0.0-alpha.4" />
-        <PackageVersion Include="JasperFx.SourceGeneration" Version="2.0.0-alpha.5" />
+        <PackageVersion Include="JasperFx.RuntimeCompiler" Version="5.0.0-alpha.5" />
+        <PackageVersion Include="JasperFx.SourceGeneration" Version="2.0.0-alpha.6" />
         <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
@@ -33,14 +33,14 @@
         <PackageVersion Include="Shouldly" Version="4.3.0" />
         <PackageVersion Include="xunit" Version="2.9.3" />
         <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.4" />
-        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.0.0-alpha.5" />
-        <PackageVersion Include="Weasel.SqlServer" Version="9.0.0-alpha.5" />
+        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.0.0-alpha.6" />
+        <PackageVersion Include="Weasel.SqlServer" Version="9.0.0-alpha.6" />
 
         <!-- Strongly typed IDs -->
         <PackageVersion Include="StronglyTypedId" Version="1.0.0-beta08" />
 
         <!-- Source generators -->
-        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.0.0-alpha.8" />
+        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.0.0-alpha.9" />
 
         <!-- Build automation -->
         <PackageVersion Include="Nuke.Common" Version="9.0.4" />

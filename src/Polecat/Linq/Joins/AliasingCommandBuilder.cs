@@ -1,4 +1,5 @@
 using System.Data;
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Data.SqlClient;
 using Weasel.SqlServer;
 
@@ -43,6 +44,12 @@ internal class AliasingCommandBuilder : ICommandBuilder
     public SqlParameter[] AppendWithParameters(string text) => _inner.AppendWithParameters(JoinStatement.AliasLocator(text, _alias));
     public SqlParameter[] AppendWithParameters(string text, char placeholder) => _inner.AppendWithParameters(JoinStatement.AliasLocator(text, _alias), placeholder);
     public void StartNewCommand() => _inner.StartNewCommand();
+
+    // Mirror the RUC annotation that Weasel.SqlServer's ICommandBuilder.AddParameters(object)
+    // declaration carries (added in Weasel 9.0.0-alpha.6). The AOT-trim-clean route is the
+    // IDictionary<string, T> overload below; this override exists so AliasingCommandBuilder
+    // satisfies the interface contract verbatim.
+    [RequiresUnreferencedCode("AddParameters(object) reflects on the parameters object's public properties via Type.GetProperties(). Use the IDictionary<string, T> overload when publishing AOT-trim-clean.")]
     public void AddParameters(object parameters) => _inner.AddParameters(parameters);
     public void AddParameters(IDictionary<string, object?> parameters) => _inner.AddParameters(parameters);
     public void AddParameters<T>(IDictionary<string, T> parameters) => _inner.AddParameters(parameters);
