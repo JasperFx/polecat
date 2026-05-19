@@ -11,12 +11,18 @@ Polecat 4 consumes the 2026-wave alpha line for the shared substrate. Update you
 | Package | 3.x | 4.0 (current alpha) |
 |---|---|---|
 | `JasperFx` | `1.31.0` | `2.0.0-alpha.16` |
-| `JasperFx.Events` | `1.36.0` | `2.0.0-alpha.12` |
-| `JasperFx.Events.SourceGenerator` | `1.4.0` | `2.0.0-alpha.5` |
+| `JasperFx.Events` | `1.36.0` | `2.0.0-alpha.15` |
+| `JasperFx.Events.SourceGenerator` | `1.4.0` | `2.0.0-alpha.8` |
+| `JasperFx.RuntimeCompiler` *(transitive, but pin centrally for matrix coherence)* | *(no equivalent)* | `5.0.0-alpha.4` |
+| `JasperFx.SourceGeneration` *(transitive, but pin centrally)* | *(no equivalent)* | `2.0.0-alpha.5` |
 | `Weasel.SqlServer` | `8.15.2` | `9.0.0-alpha.5` |
 | `Weasel.EntityFrameworkCore` | `8.15.2` | `9.0.0-alpha.5` |
 
-The alpha line is still rolling forward as the 2026 wave converges; the table above reflects the current Polecat 4 pins. Expect another tick or two before 4.0 GA — keep one set of bumps in your renovate/dependabot config and pin all five packages together.
+The alpha line is still rolling forward as the 2026 wave converges; the table above reflects the current Polecat 4 pins (matched against the same set Marten 9.0.0-alpha.\* consumes). Expect another tick or two before 4.0 GA — keep one set of bumps in your renovate/dependabot config and pin all seven packages together.
+
+::: warning
+Pin the **`5.x` line** of `JasperFx.RuntimeCompiler` — that's the active continuation of the 4.x lineage. A parallel `2.0.x` series exists on NuGet but is **stale**; don't pin against it.
+:::
 
 Target frameworks (`net9.0;net10.0`) are unchanged from late Polecat 3.x; .NET 8 was already dropped before Polecat 3.2.
 
@@ -146,7 +152,63 @@ public class MyProjection : SingleStreamProjection<MyAggregate, Guid>
 }
 ```
 
-This matches Marten 9's adoption story for the same JasperFx.Events Phase-1 change.
+This matches Marten 9's adoption story for the same JasperFx.Events Phase-1 change. The shared consumer-side contract is documented at greater length in [Marten's migration guide — "Projection apply dispatch is now source-generator-only"](https://martendb.io/migration-guide#projection-apply-dispatch); the Polecat-side adoption tracking lives in [Polecat#46](https://github.com/JasperFx/polecat/issues/46), with the audit harness from [#110](https://github.com/JasperFx/polecat/pull/110) standing as the pre-release gate against future SG regressions.
+
+##### Convention-method visibility, identity, and required members
+
+The source generator inspects only **public** instance / static methods. `Apply` / `Create` / `ShouldDelete` methods that were `private` / `internal` / `protected` under Polecat 3.x (the reflective FEC path picked those up) are silently skipped by the SG and trip the fail-fast above. Make them `public`:
+
+```csharp
+// before (Polecat 3.x — FEC reflected over non-public members too)
+public partial class Quest
+{
+    public Guid Id { get; set; }
+    private void Apply(MembersJoined e) { /* ... */ }   // <-- skipped by SG
+}
+
+// after (Polecat 4.0)
+public partial class Quest
+{
+    public Guid Id { get; set; }
+    public void Apply(MembersJoined e) { /* ... */ }    // <-- discovered
+}
+```
+
+Aggregate identity discovery follows the same convention rule as Marten — by default, the SG looks for a property literally named `Id` (or `<TypeName>Id`). If your aggregate's identity uses a different member name, annotate it with `[Identity]` from `JasperFx.Events`:
+
+```csharp
+using JasperFx.Events;
+
+public partial class Quest
+{
+    [Identity]
+    public Guid QuestKey { get; set; }   // <-- explicit identity slot
+
+    public static Quest Create(QuestStarted e) => new() { QuestKey = e.QuestId };
+    public void Apply(MembersJoined e) { /* ... */ }
+}
+```
+
+For aggregates with `required` members, the SG's null-snapshot "create-from-default + apply" branch can't `new T()` directly — `required` members would leave the compiler complaining. Either provide a static `Create(TEvent e)` factory (preferred — gives full control) or use the `default!` init-pattern Marten's guide documents:
+
+```csharp
+public partial class Account
+{
+    public Guid Id { get; set; }
+    public required string Owner { get; init; }
+
+    // Preferred: explicit factory — SG calls this, no default! required.
+    public static Account Create(AccountOpened e) => new()
+    {
+        Id = e.AccountId,
+        Owner = e.Owner,
+    };
+
+    public void Apply(Deposited e) { /* ... */ }
+}
+```
+
+If no `Create` factory is supplied and the SG falls back to the create-from-default path, the emitted code is `var s = new Account { Owner = default! }; Apply(e, s);` — semantically valid, but the `default!` hands the aggregate over to your `Apply` methods in a partially-initialized state. The factory route is cleaner.
 
 ##### Surfaces unaffected by the partial requirement
 
@@ -181,6 +243,8 @@ public partial class MyEventProjection : EventProjection
 ```
 
 The same shape — `public void Project(TEvent, IDocumentSession)` for inline mutation, plus the conventional `Create` / `Apply` / `ShouldDelete` methods for aggregations — covers everything the lambda APIs used to do. `DeleteEvent<TEvent>()` (no-args, populates the internal delete-types list) and `TransformsEvent<TEvent>()` remain available; only the lambda-taking overloads were dropped.
+
+The migration recipe is identical between Polecat and Marten — see [Marten's migration guide — "Inline-lambda projection registration APIs removed"](https://martendb.io/migration-guide#inline-lambda-removed) for the same content + a longer worked example.
 
 #### `IInlineProjection.ApplyAsync` parameter widening
 
@@ -257,7 +321,18 @@ Polecat 4 inherits the same AOT-friendly posture introduced in JasperFx 2.0 ([ja
 - **FastExpressionCompiler is no longer pulled in transitively** through `JasperFx.Events` ([jasperfx#276](https://github.com/JasperFx/jasperfx/issues/276)). Projection apply-method dispatch routes exclusively through `[GeneratedEvolver]` outputs from `JasperFx.Events.SourceGenerator` — see the **"Projections and self-aggregating documents must be `partial`"** section above for the consumer-side migration.
 - An AOT smoke-test consumer ([Polecat.AotSmoke](https://github.com/JasperFx/polecat/tree/main/src/Polecat.AotSmoke), PR [#106](https://github.com/JasperFx/polecat/pull/106)) ships with the repo and runs in CI with `WarningsAsErrors` covering `IL2026 / IL2046 / IL2055 / IL2065 / IL2067 / IL2070 / IL2072 / IL2075 / IL2090 / IL2091 / IL2111 / IL3050 / IL3051`. Regressions in Polecat's AOT-clean surface fail the build.
 
-For the end-to-end "how do I publish AOT against the Critter Stack" walkthrough — recommended csproj flags, `WarningsAsErrors=IL*` setup, the source-generator-backed `ISerializer` swap, and the smoke-test pattern — see the **[Publishing AOT with JasperFx](https://jasperfx.github.io/codegen/aot)** guide on jasperfx.github.io. The guide is written for the whole Critter Stack; Polecat-specific call-outs are listed in the "Per-package status" table there.
+### Publishing AOT
+
+Polecat 4 applications target the same Critter Stack 2026 AOT pre-gen flow Marten 9 uses — Polecat is a thin consumer of `JasperFx.Events`, so the consumer-side recipe (csproj flags, `WarningsAsErrors=IL*` set, source-generator-backed `ISerializer` swap, projection-class partial requirement, smoke-test pattern) lives in JasperFx's docs rather than being forked here:
+
+- **[Publishing AOT with JasperFx](https://jasperfx.github.io/codegen/aot)** — the end-to-end Critter Stack guide. Read this first.
+- **[Marten's AOT publishing walkthrough](https://martendb.io/configuration/aot-publishing)** — longer worked example with full csproj + program snippets. Polecat-applicable apart from the Marten-specific service registrations.
+
+Polecat-specific call-outs:
+
+- **`Polecat.AotSmoke`** ([source](https://github.com/JasperFx/polecat/tree/main/src/Polecat.AotSmoke), originally [PR #106](https://github.com/JasperFx/polecat/pull/106)) ships in-tree as the canonical AOT consumer example. The csproj sets `IsAotCompatible=true` + `TrimMode=full` and promotes IL2026 / IL2046 / IL2055 / IL2065 / IL2067 / IL2070 / IL2072 / IL2075 / IL2090 / IL2091 / IL2111 / IL3050 / IL3051 to errors — any regression in Polecat's AOT-clean surface fails the build.
+- **`IsAotCompatible=true`** is set on `Polecat.csproj` itself.
+- The **post-#276 fail-fast** semantics apply identically to AOT consumers — a projection registered without a `[GeneratedEvolver]` dispatcher throws `InvalidProjectionException` at host build (not at runtime via FEC fallback like Polecat 3.x). The remediation is the same as the non-AOT story — see the [SG-only projection apply dispatch](#projections-and-self-aggregating-documents-must-be-partial) section above.
 
 ### Out of scope (no Polecat 4 change)
 
