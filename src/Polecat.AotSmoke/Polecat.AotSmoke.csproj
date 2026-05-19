@@ -30,6 +30,15 @@
 
     <ItemGroup>
         <ProjectReference Include="..\Polecat\Polecat.csproj" />
+        <!-- Extension-package AOT audit (Polecat#46) — exercise both
+             Polecat.AspNetCore and Polecat.EntityFrameworkCore from this
+             consumer-side regression gate so a future annotation regression
+             in either extension trips the smoke build before downstream
+             consumers see it. The Program.cs surface is intentionally
+             minimal (constructor / typeof touches) — just enough to bind
+             the closed generics against the wrapper's DAM constraints. -->
+        <ProjectReference Include="..\Polecat.AspNetCore\Polecat.AspNetCore.csproj" />
+        <ProjectReference Include="..\Polecat.EntityFrameworkCore\Polecat.EntityFrameworkCore.csproj" />
     </ItemGroup>
 
     <ItemGroup>

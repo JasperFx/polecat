@@ -85,6 +85,31 @@ var session = scope.ServiceProvider.GetRequiredService<IDocumentSession>();
 var query = session.Query<Quest>().Where(q => q.Title == "smoke-test");
 _ = query.Expression;
 
+// --- Polecat.AspNetCore extension surface -------------------------------
+// Touch a StreamMany<T> / StreamOne<T> constructor. These IResult wrappers
+// carry method-level [RequiresDynamicCode] / [RequiresUnreferencedCode] on
+// ExecuteAsync (System.Text.Json reflective serialize) but the constructor
+// itself is AOT-clean. Consumers building a Minimal-API endpoint will
+// instantiate via `return new StreamMany<Quest>(query);` — the construction
+// site stays in the AOT-clean lane; the framework's ExecuteAsync invocation
+// is the part that requires consumer-side STJ source-gen.
+var streamMany = new Polecat.AspNetCore.StreamMany<Quest>(query);
+var streamOne = new Polecat.AspNetCore.StreamOne<Quest>(query);
+_ = streamMany.ContentType;
+_ = streamOne.ContentType;
+
+// --- Polecat.EntityFrameworkCore extension surface ----------------------
+// Reference the EfCoreSingleStreamProjection<TDoc, TDbContext> closed
+// generic via typeof(). The base class's TDoc / TDbContext type parameters
+// carry the same EF-Core-shape DAM constraints
+// (PublicConstructors|NonPublicConstructors|PublicFields|...|Interfaces on
+// TDoc; PublicConstructors on TDbContext) that DbContext.Find<TEntity> and
+// Activator.CreateInstance(typeof(TDbContext), ...) require downstream.
+// Concrete types (closed-generic instantiations) satisfy DAM implicitly,
+// so this typeof() is AOT-clean.
+_ = typeof(Polecat.EntityFrameworkCore.EfCoreSingleStreamProjection<,>);
+_ = typeof(Polecat.EntityFrameworkCore.EfCoreEventProjection<>);
+
 Console.WriteLine("Polecat AOT smoke OK.");
 return 0;
 
