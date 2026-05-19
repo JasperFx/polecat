@@ -1,5 +1,8 @@
+using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Logging;
 using Polecat.Storage;
+using Weasel.Core;
+using Weasel.SqlServer;
 
 namespace Polecat.Events.Daemon.Coordination;
 
@@ -13,7 +16,7 @@ internal sealed class MultiTenantedProjectionDistributor : IProjectionDistributo
 {
     private readonly DocumentStore _store;
     private readonly ILogger _logger;
-    private readonly Dictionary<string, SqlServerAppLock> _locks = new();
+    private readonly Dictionary<string, IAdvisoryLock> _locks = new();
 
     public MultiTenantedProjectionDistributor(DocumentStore store, ILoggerFactory loggerFactory)
     {
@@ -70,11 +73,19 @@ internal sealed class MultiTenantedProjectionDistributor : IProjectionDistributo
         await ReleaseAllLocks().ConfigureAwait(false);
     }
 
-    private SqlServerAppLock LockFor(PolecatDatabase database)
+    private IAdvisoryLock LockFor(PolecatDatabase database)
     {
         if (!_locks.TryGetValue(database.Identifier, out var l))
         {
-            l = new SqlServerAppLock(database.ConnectionString, database.Identifier, _logger);
+            // Weasel.SqlServer.AdvisoryLock holds a single dedicated SqlConnection
+            // for the lifetime of the lock owner — sp_getapplock with
+            // @LockOwner='Session' is bound to the connection, so the connection
+            // must stay open as long as we hold any lock. The factory delegate
+            // is invoked once on first acquisition.
+            l = new AdvisoryLock(
+                () => new SqlConnection(database.ConnectionString),
+                _logger,
+                database.Identifier);
             _locks[database.Identifier] = l;
         }
         return l;

@@ -166,7 +166,8 @@ internal class ProjectionCoordinator : IProjectionCoordinator
     /// <summary>
     ///     The leadership-election + agent-lifecycle loop. Mirrors Marten's
     ///     <c>ProjectionCoordinator.executeAsync</c> body slot-for-slot
-    ///     (modulo SQL Server idioms via <see cref="SqlServerAppLock"/>).
+    ///     (modulo SQL Server idioms via <c>Weasel.SqlServer.AdvisoryLock</c>,
+    ///     plumbed through <see cref="IProjectionDistributor"/>).
     /// </summary>
     private async Task ExecuteAsync(CancellationToken stoppingToken)
     {
