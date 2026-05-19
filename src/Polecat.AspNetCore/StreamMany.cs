@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
@@ -41,6 +42,18 @@ public sealed class StreamMany<T> : IResult, IEndpointMetadataProvider
     public string ContentType { get; init; } = "application/json";
 
     /// <inheritdoc />
+    // IResult.ExecuteAsync isn't annotated [RequiresDynamicCode] / [RequiresUnreferencedCode]
+    // in the BCL, so propagating the contract from our override produces IL2046 / IL3051
+    // "annotations must match across all interface implementations" warnings. The contract
+    // is genuinely required here (default STJ reflective serialization over T); suppress
+    // the interface-mismatch codes with explicit justification + carry the consumer-facing
+    // RUC/RDC on the override.
+    [UnconditionalSuppressMessage("Trimming", "IL2046",
+        Justification = "IResult.ExecuteAsync is not RUC-annotated; the contract lives on this override.")]
+    [UnconditionalSuppressMessage("AOT", "IL3051",
+        Justification = "IResult.ExecuteAsync is not RDC-annotated; the contract lives on this override.")]
+    [RequiresDynamicCode("StreamMany<T>.ExecuteAsync calls JsonSerializer.SerializeToUtf8Bytes(IReadOnlyList<T>) which uses STJ runtime codegen. AOT consumers must supply a JsonSerializerContext for T (e.g. via a custom IResult implementation that threads a JsonTypeInfo<T>) or switch to a source-generator-backed serializer.")]
+    [RequiresUnreferencedCode("StreamMany<T>.ExecuteAsync reflects over T's properties via STJ. AOT consumers must preserve T's serialized members through DynamicallyAccessedMembers or source generation.")]
     public async Task ExecuteAsync(HttpContext httpContext)
     {
         ArgumentNullException.ThrowIfNull(httpContext);

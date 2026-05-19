@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
@@ -64,6 +65,12 @@ public sealed class StreamAggregate<T> : IResult, IEndpointMetadataProvider wher
     public string ContentType { get; init; } = "application/json";
 
     /// <inheritdoc />
+    [UnconditionalSuppressMessage("Trimming", "IL2046",
+        Justification = "IResult.ExecuteAsync is not RUC-annotated; the contract lives on this override.")]
+    [UnconditionalSuppressMessage("AOT", "IL3051",
+        Justification = "IResult.ExecuteAsync is not RDC-annotated; the contract lives on this override.")]
+    [RequiresDynamicCode("StreamAggregate<T>.ExecuteAsync calls JsonSerializer.SerializeToUtf8Bytes(T) on the live-projected aggregate, which uses STJ runtime codegen. AOT consumers must supply a JsonSerializerContext for T or switch to a source-generator-backed serializer.")]
+    [RequiresUnreferencedCode("StreamAggregate<T>.ExecuteAsync reflects over T's properties via STJ. AOT consumers must preserve T's serialized members through DynamicallyAccessedMembers or source generation. The underlying FetchLatest<T> call also goes through the source-generated projection dispatcher — see the partial-class requirement on aggregate document types.")]
     public async Task ExecuteAsync(HttpContext httpContext)
     {
         ArgumentNullException.ThrowIfNull(httpContext);
