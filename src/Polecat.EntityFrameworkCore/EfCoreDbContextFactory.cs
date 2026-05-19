@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 
@@ -14,7 +15,9 @@ public static class EfCoreDbContextFactory
     ///     The placeholder is never opened — EF Core creates its own for reads.
     ///     At commit time, the DbContextTransactionParticipant swaps to the real connection.
     /// </summary>
-    public static (TDbContext DbContext, SqlConnection PlaceholderConnection) Create<TDbContext>(
+    public static (TDbContext DbContext, SqlConnection PlaceholderConnection) Create<
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)]
+        TDbContext>(
         string connectionString)
         where TDbContext : DbContext
     {

@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using JasperFx.Events;
 using JasperFx.Events.Aggregation;
 using JasperFx.Events.Daemon;
@@ -16,7 +17,17 @@ namespace Polecat.EntityFrameworkCore;
 /// </summary>
 /// <typeparam name="TDoc">The aggregate document type (EF Core entity).</typeparam>
 /// <typeparam name="TDbContext">The EF Core DbContext type.</typeparam>
-public abstract class EfCoreSingleStreamProjection<TDoc, TDbContext>
+public abstract class EfCoreSingleStreamProjection<
+    [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors
+        | DynamicallyAccessedMemberTypes.NonPublicConstructors
+        | DynamicallyAccessedMemberTypes.PublicFields
+        | DynamicallyAccessedMemberTypes.NonPublicFields
+        | DynamicallyAccessedMemberTypes.PublicProperties
+        | DynamicallyAccessedMemberTypes.NonPublicProperties
+        | DynamicallyAccessedMemberTypes.Interfaces)]
+    TDoc,
+    [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)]
+    TDbContext>
     : SingleStreamProjection<TDoc, Guid>, IValidatedProjection<StoreOptions>
     where TDoc : class
     where TDbContext : DbContext

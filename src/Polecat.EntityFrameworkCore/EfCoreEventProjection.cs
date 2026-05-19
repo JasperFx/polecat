@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using JasperFx.Events;
 using JasperFx.Events.Projections;
 using Microsoft.EntityFrameworkCore;
@@ -11,7 +12,9 @@ namespace Polecat.EntityFrameworkCore;
 ///     and registers it as a transaction participant for atomic commits.
 /// </summary>
 /// <typeparam name="TDbContext">The EF Core DbContext type.</typeparam>
-public abstract class EfCoreEventProjection<TDbContext> : ProjectionBase, IProjection
+public abstract class EfCoreEventProjection<
+    [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)]
+    TDbContext> : ProjectionBase, IProjection
     where TDbContext : DbContext
 {
     private string? _connectionString;

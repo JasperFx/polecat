@@ -3,6 +3,13 @@
     <PropertyGroup>
         <Description>EF Core integration for Polecat event store projections</Description>
         <RootNamespace>Polecat.EntityFrameworkCore</RootNamespace>
+        <!-- AOT pillar (JasperFx#213, Polecat#46) — extension-package coverage.
+             Mirrors Marten PR #4468's per-extension audit pattern. EF Core's
+             LINQ-to-Entity translation surface is unavoidably AOT-hostile;
+             wrapper-side annotations name the upstream APIs and propagate
+             the contract to consumers. Warning list matches Polecat.AotSmoke. -->
+        <IsAotCompatible>true</IsAotCompatible>
+        <WarningsAsErrors>IL2026;IL2046;IL2055;IL2065;IL2067;IL2070;IL2072;IL2075;IL2090;IL2091;IL2111;IL3050;IL3051</WarningsAsErrors>
     </PropertyGroup>
 
     <ItemGroup>
