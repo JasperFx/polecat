@@ -21,7 +21,7 @@ namespace Polecat.Storage;
 ///     Handles auto-creation and migration of event store tables.
 ///     Implements IEventDatabase for async daemon infrastructure.
 /// </summary>
-public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase
+public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IProjectionDatabase
 {
     private readonly StoreOptions _options;
     private readonly EventGraph _events;

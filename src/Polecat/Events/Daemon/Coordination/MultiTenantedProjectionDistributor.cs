@@ -1,3 +1,4 @@
+using JasperFx.Events.Daemon;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Logging;
 using Polecat.Storage;
@@ -24,7 +25,7 @@ internal sealed class MultiTenantedProjectionDistributor : IProjectionDistributo
         _logger = loggerFactory.CreateLogger<MultiTenantedProjectionDistributor>();
     }
 
-    public ValueTask<IReadOnlyList<ProjectionSet>> BuildDistributionAsync()
+    public ValueTask<IReadOnlyList<IProjectionSet>> BuildDistributionAsync()
     {
         var databases = _store.Options.Tenancy?.AllDatabases() ?? [];
         var allShards = _store.Options.Projections.AllShards()
@@ -32,8 +33,8 @@ internal sealed class MultiTenantedProjectionDistributor : IProjectionDistributo
             .ToList();
         var lockId = _store.Options.DaemonSettings.DaemonLockId;
 
-        IReadOnlyList<ProjectionSet> sets = databases
-            .Select(db => new ProjectionSet(lockId, db, allShards))
+        IReadOnlyList<IProjectionSet> sets = databases
+            .Select(db => (IProjectionSet)new ProjectionSet(lockId, db, allShards))
             .OrderBy(_ => Random.Shared.NextDouble())
             .ToList();
 
@@ -43,14 +44,14 @@ internal sealed class MultiTenantedProjectionDistributor : IProjectionDistributo
     public Task RandomWait(CancellationToken token) =>
         Task.Delay(TimeSpan.FromMilliseconds(Random.Shared.Next(0, 500)), token);
 
-    public bool HasLock(ProjectionSet set) =>
+    public bool HasLock(IProjectionSet set) =>
         _locks.TryGetValue(set.Database.Identifier, out var l) && l.HasLock(set.LockId);
 
-    public Task<bool> TryAttainLockAsync(ProjectionSet set, CancellationToken token) =>
-        LockFor(set.Database).TryAttainLockAsync(set.LockId, token);
+    public Task<bool> TryAttainLockAsync(IProjectionSet set, CancellationToken token) =>
+        LockFor((PolecatDatabase)set.Database).TryAttainLockAsync(set.LockId, token);
 
-    public Task ReleaseLockAsync(ProjectionSet set) =>
-        LockFor(set.Database).ReleaseLockAsync(set.LockId);
+    public Task ReleaseLockAsync(IProjectionSet set) =>
+        LockFor((PolecatDatabase)set.Database).ReleaseLockAsync(set.LockId);
 
     public async Task ReleaseAllLocks()
     {

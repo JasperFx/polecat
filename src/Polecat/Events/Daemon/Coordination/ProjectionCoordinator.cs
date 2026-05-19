@@ -185,9 +185,14 @@ internal class ProjectionCoordinator : IProjectionCoordinator
                 {
                     if (stoppingToken.IsCancellationRequested) return;
 
+                    // set.Database is typed IProjectionDatabase on the lifted
+                    // contract; Polecat's distributors only ever publish
+                    // PolecatDatabase-backed sets, so the cast is safe.
+                    var database = (PolecatDatabase)set.Database;
+
                     if (distributor.HasLock(set))
                     {
-                        var daemon = DaemonFor(set.Database);
+                        var daemon = DaemonFor(database);
                         await StartAgentsIfNecessaryAsync(set, daemon, stoppingToken).ConfigureAwait(false);
                         continue;
                     }
@@ -196,7 +201,7 @@ internal class ProjectionCoordinator : IProjectionCoordinator
                     {
                         if (await distributor.TryAttainLockAsync(set, stoppingToken).ConfigureAwait(false))
                         {
-                            var daemon = DaemonFor(set.Database);
+                            var daemon = DaemonFor(database);
                             await StartAgentsIfNecessaryAsync(set, daemon, stoppingToken).ConfigureAwait(false);
                         }
                         else
@@ -204,7 +209,7 @@ internal class ProjectionCoordinator : IProjectionCoordinator
                             // Don't hold the lock — make sure we're not still
                             // running these shards from a previous round where
                             // we did own them.
-                            var daemon = DaemonFor(set.Database);
+                            var daemon = DaemonFor(database);
                             await StopAgentsIfNecessaryAsync(set, daemon).ConfigureAwait(false);
                         }
                     }
@@ -246,7 +251,7 @@ internal class ProjectionCoordinator : IProjectionCoordinator
     }
 
     private static async Task StartAgentsIfNecessaryAsync(
-        ProjectionSet set, PolecatProjectionDaemon daemon, CancellationToken token)
+        IProjectionSet set, PolecatProjectionDaemon daemon, CancellationToken token)
     {
         foreach (var name in set.Names)
         {
@@ -257,7 +262,7 @@ internal class ProjectionCoordinator : IProjectionCoordinator
     }
 
     private static async Task StopAgentsIfNecessaryAsync(
-        ProjectionSet set, PolecatProjectionDaemon daemon)
+        IProjectionSet set, PolecatProjectionDaemon daemon)
     {
         foreach (var name in set.Names)
         {
