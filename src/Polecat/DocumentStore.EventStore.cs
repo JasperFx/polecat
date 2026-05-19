@@ -314,14 +314,10 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
         }, (connStr, Events.ProgressionTableName, shardName, sequenceFloor), token);
     }
 
-#pragma warning disable CS0618 // Obsolete member
-    async Task IEventStore<IDocumentSession, IQuerySession>.TeardownExistingProjectionProgressAsync(
-        IEventDatabase database, string subscriptionName, CancellationToken token)
-    {
-        await TeardownProjectionStateAsync(database, subscriptionName, token);
-    }
-#pragma warning restore CS0618
-
+    // TeardownExistingProjectionProgressAsync was removed from
+    // IEventStore<,> in JasperFx.Events 2.0.0-alpha.13/.14/.15 — it had
+    // been [Obsolete] in earlier alphas. Callers now use
+    // TeardownExistingProjectionStateAsync (below).
     async Task IEventStore<IDocumentSession, IQuerySession>.TeardownExistingProjectionStateAsync(
         IEventDatabase database, string subscriptionName, CancellationToken token)
     {

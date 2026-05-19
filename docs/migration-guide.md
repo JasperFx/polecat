@@ -10,11 +10,11 @@ Polecat 4 consumes the 2026-wave alpha line for the shared substrate. Update you
 
 | Package | 3.x | 4.0 (current alpha) |
 |---|---|---|
-| `JasperFx` | `1.31.0` | `2.0.0-alpha.13` |
+| `JasperFx` | `1.31.0` | `2.0.0-alpha.16` |
 | `JasperFx.Events` | `1.36.0` | `2.0.0-alpha.12` |
 | `JasperFx.Events.SourceGenerator` | `1.4.0` | `2.0.0-alpha.5` |
-| `Weasel.SqlServer` | `8.15.2` | `9.0.0-alpha.3` |
-| `Weasel.EntityFrameworkCore` | `8.15.2` | `9.0.0-alpha.3` |
+| `Weasel.SqlServer` | `8.15.2` | `9.0.0-alpha.5` |
+| `Weasel.EntityFrameworkCore` | `8.15.2` | `9.0.0-alpha.5` |
 
 The alpha line is still rolling forward as the 2026 wave converges; the table above reflects the current Polecat 4 pins. Expect another tick or two before 4.0 GA — keep one set of bumps in your renovate/dependabot config and pin all five packages together.
 
