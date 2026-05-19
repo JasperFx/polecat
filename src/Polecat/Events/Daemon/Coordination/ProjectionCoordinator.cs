@@ -2,10 +2,13 @@ using JasperFx;
 using JasperFx.Core;
 using JasperFx.Descriptors;
 using JasperFx.Events.Daemon;
+using JasperFx.Events.Projections;
+using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Polecat.Storage;
+using Weasel.SqlServer;
 
 namespace Polecat.Events.Daemon.Coordination;
 
@@ -314,11 +317,60 @@ internal class ProjectionCoordinator : IProjectionCoordinator
         // but not auto-selected — production single-node deployments
         // benefit from the lock-based coordination too because it's the
         // only safe path when a second instance shows up unexpectedly.
+        //
+        // Polecat#119 (Critter Stack 2026 dedupe pillar): the distributor
+        // concretes themselves were lifted into JasperFx.Events.Daemon in
+        // jasperfx#318/#319/#320. Polecat wires them with closures over
+        // store-specific state (tenancy / shards / advisory-lock factory /
+        // ProjectionSet factory / schema / base lock id) rather than
+        // shipping its own near-identical concretes.
         var cardinality = _options.Tenancy?.Cardinality ?? DatabaseCardinality.Single;
 
-        return cardinality == DatabaseCardinality.StaticMultiple
-            ? new MultiTenantedProjectionDistributor(_store, _loggerFactory)
-            : new SingleTenantProjectionDistributor(_store, _loggerFactory);
+        // Shared closures — both branches need shard accessor + set factory
+        // backed by Polecat's IProjectionSet impl (ProjectionSet.cs, retained
+        // per Polecat#117 / PR #118).
+        Func<IEnumerable<ShardName>> allShards =
+            () => _options.Projections.AllShards().Select(s => s.Name);
+
+        Func<IProjectionDatabase, IReadOnlyList<ShardName>, int, IProjectionSet> setFactory =
+            (db, names, lockId) => new ProjectionSet(lockId, (PolecatDatabase)db, names);
+
+        // sp_getapplock is session-bound and shared by both multi-node
+        // distributors. Weasel.SqlServer.AdvisoryLock (weasel#284 / α7)
+        // satisfies the lifted JasperFx.Events.Daemon.IAdvisoryLock contract
+        // directly, so this closure is the only Polecat-side bridge needed.
+        var lockLogger = _loggerFactory.CreateLogger<AdvisoryLock>();
+        Func<IProjectionDatabase, IAdvisoryLock> lockFactory =
+            db => new AdvisoryLock(
+                () => new SqlConnection(((PolecatDatabase)db).ConnectionString),
+                lockLogger,
+                db.Identifier);
+
+        var baseLockId = _options.DaemonSettings.DaemonLockId;
+
+        if (cardinality == DatabaseCardinality.StaticMultiple)
+        {
+            return new MultiTenantedProjectionDistributor(
+                databaseSource: () => ValueTask.FromResult<IReadOnlyList<IProjectionDatabase>>(
+                    _options.Tenancy?.AllDatabases().Cast<IProjectionDatabase>().ToList() ?? []),
+                allShards: allShards,
+                lockFactory: lockFactory,
+                setFactory: setFactory,
+                baseLockId: baseLockId);
+        }
+
+        // Single-database tenancy → exactly one PolecatDatabase. The lifted
+        // SingleTenant distributor takes a `Func<IProjectionDatabase>` (single,
+        // not list); .Single() asserts the cardinality invariant — a
+        // misconfigured deployment surfaces here with a useful exception
+        // rather than silently no-opping.
+        return new SingleTenantProjectionDistributor(
+            databaseAccessor: () => _options.Tenancy!.AllDatabases().Single(),
+            allShards: allShards,
+            lockFactory: lockFactory,
+            setFactory: setFactory,
+            schemaQualifier: _options.DatabaseSchemaName,
+            baseLockId: baseLockId);
     }
 }
 
