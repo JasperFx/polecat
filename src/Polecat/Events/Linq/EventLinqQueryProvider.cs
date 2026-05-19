@@ -1,6 +1,7 @@
 using System.Data.Common;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
+using JasperFx.Core.Reflection;
 using JasperFx.Events;
 using Microsoft.Data.SqlClient;
 using Polecat.Internal;
@@ -8,7 +9,9 @@ using Polecat.Linq;
 using Polecat.Linq.Members;
 using Polecat.Linq.Parsing;
 using Polecat.Linq.QueryHandlers;
+using Polecat.Linq.Selectors;
 using Polecat.Linq.SqlGeneration;
+using Polecat.Serialization;
 using Weasel.SqlServer;
 
 namespace Polecat.Events.Linq;
@@ -246,12 +249,24 @@ internal class EventLinqQueryProvider : IPolecatAsyncQueryProvider
     private async Task<TResult> InvokeListHandlerAsync<TResult>(
         Type itemType, DbDataReader reader, CancellationToken token)
     {
-        var selectorType = typeof(Polecat.Linq.Selectors.DeserializingSelector<>).MakeGenericType(itemType);
-        var selector = Activator.CreateInstance(selectorType, _session.Serializer)!;
+        // Polecat#46 cold-start row: per-call MakeGenericType + Activator.CreateInstance
+        // routed through JasperFx.Core.Reflection.GenericFactoryCache. Each
+        // (openType, itemType) tuple builds an Activator delegate once; steady-state
+        // calls skip both the Type.MakeGenericType lookup and the reflective ctor
+        // invocation. Sibling of Marten#4308 / PR #4329.
+        var selector = GenericFactoryCache.BuildAs<object>(
+            typeof(DeserializingSelector<>),
+            itemType,
+            _session.Serializer,
+            static closed => arg => Activator.CreateInstance(closed, arg)!);
 
-        var handlerType = typeof(ListQueryHandler<>).MakeGenericType(itemType);
-        var handler = Activator.CreateInstance(handlerType, selector)!;
+        var handler = GenericFactoryCache.BuildAs<object>(
+            typeof(ListQueryHandler<>),
+            itemType,
+            selector,
+            static closed => arg => Activator.CreateInstance(closed, arg)!);
 
+        var handlerType = handler.GetType();
         var handleMethod = handlerType.GetMethod("HandleAsync")!;
         var task = (Task)handleMethod.Invoke(handler, [reader, token])!;
         await task;
@@ -266,9 +281,15 @@ internal class EventLinqQueryProvider : IPolecatAsyncQueryProvider
         DbDataReader reader, CancellationToken token)
     {
         var scalarType = typeof(TResult).GetGenericArguments()[0];
-        var handlerType = typeof(ScalarListHandler<>).MakeGenericType(scalarType);
-        var handler = Activator.CreateInstance(handlerType)!;
 
+        // Polecat#46 cold-start: cache the parameterless ctor delegate for
+        // ScalarListHandler<TScalar> per scalarType via GenericFactoryCache.
+        var handler = GenericFactoryCache.BuildAs<object>(
+            typeof(ScalarListHandler<>),
+            scalarType,
+            static closed => () => Activator.CreateInstance(closed)!);
+
+        var handlerType = handler.GetType();
         var handleMethod = handlerType.GetMethod("HandleAsync")!;
         var task = (Task)handleMethod.Invoke(handler, [reader, token])!;
         await task;
@@ -283,12 +304,25 @@ internal class EventLinqQueryProvider : IPolecatAsyncQueryProvider
         Type documentType, DbDataReader reader, CancellationToken token,
         bool canBeNull, bool canBeMultiples)
     {
-        var selectorType = typeof(Polecat.Linq.Selectors.DeserializingSelector<>).MakeGenericType(documentType);
-        var selector = Activator.CreateInstance(selectorType, _session.Serializer)!;
+        // Polecat#46 cold-start: cache both factories per documentType. The
+        // canBeNull / canBeMultiples booleans are invocation arguments, not
+        // cache-key components — the same OneResultHandler<TDoc> ctor delegate
+        // serves all (canBeNull, canBeMultiples) combinations for a given TDoc.
+        var selector = GenericFactoryCache.BuildAs<object>(
+            typeof(DeserializingSelector<>),
+            documentType,
+            _session.Serializer,
+            static closed => arg => Activator.CreateInstance(closed, arg)!);
 
-        var handlerType = typeof(OneResultHandler<>).MakeGenericType(documentType);
-        var handler = Activator.CreateInstance(handlerType, selector, canBeNull, canBeMultiples)!;
+        var handler = GenericFactoryCache.BuildAs<object>(
+            typeof(OneResultHandler<>),
+            documentType,
+            selector,
+            canBeNull,
+            canBeMultiples,
+            static closed => (a, b, c) => Activator.CreateInstance(closed, a, b, c)!);
 
+        var handlerType = handler.GetType();
         var handleMethod = handlerType.GetMethod("HandleAsync")!;
         var task = (Task)handleMethod.Invoke(handler, [reader, token])!;
         await task;

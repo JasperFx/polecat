@@ -1,4 +1,6 @@
 using System.Collections.Concurrent;
+using System.Linq.Expressions;
+using FastExpressionCompiler;
 using JasperFx.Events;
 using JasperFx.Events.Daemon;
 using JasperFx.Events.Projections;
@@ -284,20 +286,77 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
                     && m.GetParameters() is { Length: 2 } parms
                     && parms[1].ParameterType == typeof(MessageMetadata));
 
-    private static ValueTask PublishToBatchAsync(IMessageBatch batch, object message, string tenantId)
+    // Polecat#46 cold-start row: per-message-type delegate caches for the
+    // batch-publish dispatch. Each closes IMessageSink.PublishAsync<T> over
+    // the runtime message type exactly once, then reuses the compiled delegate
+    // for every subsequent publish of the same type. Replaces the prior
+    // MakeGenericMethod + MethodInfo.Invoke per call. Sibling pattern to
+    // Marten#4308's LINQ handler-factory cache, applied to method-closing
+    // (rather than type-closing) generics.
+    private static readonly ConcurrentDictionary<Type, Func<IMessageBatch, object, string, ValueTask>>
+        _publishWithTenantDelegates = new();
+
+    private static readonly ConcurrentDictionary<Type, Func<IMessageBatch, object, MessageMetadata, ValueTask>>
+        _publishWithMetadataDelegates = new();
+
+    [System.Diagnostics.CodeAnalysis.RequiresDynamicCode(
+        "Closes IMessageSink.PublishAsync<T> over runtime message type via MethodInfo.MakeGenericMethod for the per-type cache miss; cached delegate amortizes the cost across subsequent calls.")]
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026",
+        Justification = "FastExpressionCompiler.CompileFast inside the cache-miss path; AOT consumers must pre-register the message types they publish per the Polecat AOT publishing guide so this method is never reached at runtime under trimming.")]
+    private static Func<IMessageBatch, object, string, ValueTask> BuildPublishWithTenantDelegate(Type messageType)
     {
-        // The batch's PublishAsync is generic on T but the daemon hands us
-        // the message as `object`. Route through MethodInfo.Invoke is the
-        // simplest correct path since this is off the per-event hot path —
-        // it only runs when a projection explicitly emits a side-effect.
-        var closed = PublishWithTenantMethod.MakeGenericMethod(message.GetType());
-        return (ValueTask)closed.Invoke(batch, [message, tenantId])!;
+        var closed = PublishWithTenantMethod.MakeGenericMethod(messageType);
+        var batchParam = Expression.Parameter(typeof(IMessageBatch), "batch");
+        var messageParam = Expression.Parameter(typeof(object), "message");
+        var tenantParam = Expression.Parameter(typeof(string), "tenantId");
+
+        var call = Expression.Call(
+            batchParam,
+            closed,
+            Expression.Convert(messageParam, messageType),
+            tenantParam);
+
+        return Expression.Lambda<Func<IMessageBatch, object, string, ValueTask>>(
+            call, batchParam, messageParam, tenantParam).CompileFast();
     }
 
+    [System.Diagnostics.CodeAnalysis.RequiresDynamicCode(
+        "Closes IMessageSink.PublishAsync<T> over runtime message type via MethodInfo.MakeGenericMethod for the per-type cache miss; cached delegate amortizes the cost across subsequent calls.")]
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026",
+        Justification = "FastExpressionCompiler.CompileFast inside the cache-miss path; AOT consumers must pre-register the message types they publish per the Polecat AOT publishing guide so this method is never reached at runtime under trimming.")]
+    private static Func<IMessageBatch, object, MessageMetadata, ValueTask> BuildPublishWithMetadataDelegate(Type messageType)
+    {
+        var closed = PublishWithMetadataMethod.MakeGenericMethod(messageType);
+        var batchParam = Expression.Parameter(typeof(IMessageBatch), "batch");
+        var messageParam = Expression.Parameter(typeof(object), "message");
+        var metadataParam = Expression.Parameter(typeof(MessageMetadata), "metadata");
+
+        var call = Expression.Call(
+            batchParam,
+            closed,
+            Expression.Convert(messageParam, messageType),
+            metadataParam);
+
+        return Expression.Lambda<Func<IMessageBatch, object, MessageMetadata, ValueTask>>(
+            call, batchParam, messageParam, metadataParam).CompileFast();
+    }
+
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("AOT", "IL3050",
+        Justification = "Forwards a method-group reference to BuildPublishWithTenantDelegate, which is [RequiresDynamicCode]. The cascade stops here because IProjectionBatch.PublishMessageAsync (the interface boundary) is not RDC-annotated; propagating the constraint upward would be a downstream API break. Cache-miss path is at most once per message type — AOT consumers pre-register message types per the Polecat AOT publishing guide.")]
+    private static ValueTask PublishToBatchAsync(IMessageBatch batch, object message, string tenantId)
+    {
+        // Lookup-or-compile the per-message-type dispatch delegate; steady-state
+        // calls hit the ConcurrentDictionary directly with no reflective work.
+        var dispatch = _publishWithTenantDelegates.GetOrAdd(message.GetType(), BuildPublishWithTenantDelegate);
+        return dispatch(batch, message, tenantId);
+    }
+
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("AOT", "IL3050",
+        Justification = "Forwards a method-group reference to BuildPublishWithMetadataDelegate, which is [RequiresDynamicCode]. The cascade stops here because IProjectionBatch.PublishMessageAsync (the interface boundary) is not RDC-annotated; propagating the constraint upward would be a downstream API break. Cache-miss path is at most once per message type — AOT consumers pre-register message types per the Polecat AOT publishing guide.")]
     private static ValueTask PublishToBatchAsync(IMessageBatch batch, object message, MessageMetadata metadata)
     {
-        var closed = PublishWithMetadataMethod.MakeGenericMethod(message.GetType());
-        return (ValueTask)closed.Invoke(batch, [message, metadata])!;
+        var dispatch = _publishWithMetadataDelegates.GetOrAdd(message.GetType(), BuildPublishWithMetadataDelegate);
+        return dispatch(batch, message, metadata);
     }
 
     public async ValueTask DisposeAsync()
