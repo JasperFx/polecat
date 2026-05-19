@@ -17,7 +17,7 @@ internal sealed class SingleTenantProjectionDistributor : IProjectionDistributor
 {
     private readonly DocumentStore _store;
     private readonly ILogger _logger;
-    private readonly Dictionary<string, IAdvisoryLock> _locks = new();
+    private readonly Dictionary<string, Weasel.Core.IAdvisoryLock> _locks = new();
 
     public SingleTenantProjectionDistributor(DocumentStore store, ILoggerFactory loggerFactory)
     {
@@ -86,7 +86,7 @@ internal sealed class SingleTenantProjectionDistributor : IProjectionDistributor
         await ReleaseAllLocks().ConfigureAwait(false);
     }
 
-    private IAdvisoryLock LockFor(PolecatDatabase database)
+    private Weasel.Core.IAdvisoryLock LockFor(PolecatDatabase database)
     {
         if (!_locks.TryGetValue(database.Identifier, out var l))
         {
