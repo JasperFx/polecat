@@ -134,6 +134,18 @@ public class StoreOptions
     /// </summary>
     public OpenTelemetryOptions OpenTelemetry { get; } = new();
 
+    private JasperFx.Events.IDocumentSchemaResolver? _schema;
+
+    /// <summary>
+    ///     Resolves the database table name backing a document, projection, or event-store
+    ///     table — qualified (<c>[schema].[table]</c>) or bare. The single cross-store
+    ///     "where does this document live" surface (jasperfx#333) for schema inspection,
+    ///     diagnostics, and projection-coordinator activity tags. (Named SchemaResolver
+    ///     because <see cref="Schema"/> is already Polecat's SchemaConfiguration.)
+    /// </summary>
+    public JasperFx.Events.IDocumentSchemaResolver SchemaResolver
+        => _schema ??= new Internal.PolecatDocumentSchemaResolver(this);
+
     /// <summary>
     ///     Collection of IInitialData instances that will be populated on startup
     ///     after schema migration completes.

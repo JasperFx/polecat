@@ -161,6 +161,15 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
         otel.AddValue(nameof(Options.OpenTelemetry.TrackConnections), Options.OpenTelemetry.TrackConnections);
         usage.Children["OpenTelemetry"] = otel;
 
+        // Schema child — event-store table locations resolved through the lifted
+        // IDocumentSchemaResolver (jasperfx#333), the cross-store schema-diagnostics surface.
+        var schema = new OptionsDescription { Subject = "Polecat.Schema" };
+        schema.AddValue(nameof(Options.SchemaResolver.DatabaseSchemaName), Options.SchemaResolver.DatabaseSchemaName);
+        schema.AddValue("Events", Options.SchemaResolver.ForEvents());
+        schema.AddValue("Streams", Options.SchemaResolver.ForStreams());
+        schema.AddValue("EventProgression", Options.SchemaResolver.ForEventProgression());
+        usage.Children["Schema"] = schema;
+
         // HiloSettings child
         var hilo = new OptionsDescription { Subject = "Polecat.HiloSettings" };
         hilo.AddValue(nameof(Options.HiloSequenceDefaults.MaxLo), Options.HiloSequenceDefaults.MaxLo);
