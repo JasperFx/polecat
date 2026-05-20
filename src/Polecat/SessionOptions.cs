@@ -16,7 +16,7 @@ public class SessionOptions
     /// <summary>
     ///     Optionally set the tenant id for this session.
     /// </summary>
-    public string TenantId { get; set; } = Tenancy.DefaultTenantId;
+    public string TenantId { get; set; } = JasperFx.StorageConstants.DefaultTenantId;
 
     /// <summary>
     ///     Override the transaction isolation level for this session.

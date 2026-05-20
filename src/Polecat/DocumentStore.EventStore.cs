@@ -82,7 +82,12 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
         AsyncOptions shardOptions)
     {
         var connStr = database is PolecatDatabase pdb ? pdb.ConnectionString : Options.ConnectionString;
-        return new PolecatEventLoader(Events, Options, connStr, filtering);
+        // The bare PolecatEventLoader is wrapped by the lifted ResilientEventLoader
+        // (jasperfx#329), which runs it through Options.ResiliencePipeline and reports
+        // loading metrics via EventRequest.Metrics.TrackLoading() — parity Polecat
+        // lacked when it inlined the Polly call inside the loader.
+        var inner = new PolecatEventLoader(Events, Options, connStr, filtering);
+        return new ResilientEventLoader(Options.ResiliencePipeline, inner, database);
     }
 
     async ValueTask<IProjectionBatch<IDocumentSession, IQuerySession>>
@@ -155,6 +160,15 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
         var otel = new OptionsDescription { Subject = "Polecat.OpenTelemetryOptions" };
         otel.AddValue(nameof(Options.OpenTelemetry.TrackConnections), Options.OpenTelemetry.TrackConnections);
         usage.Children["OpenTelemetry"] = otel;
+
+        // Schema child — event-store table locations resolved through the lifted
+        // IDocumentSchemaResolver (jasperfx#333), the cross-store schema-diagnostics surface.
+        var schema = new OptionsDescription { Subject = "Polecat.Schema" };
+        schema.AddValue(nameof(Options.SchemaResolver.DatabaseSchemaName), Options.SchemaResolver.DatabaseSchemaName);
+        schema.AddValue("Events", Options.SchemaResolver.ForEvents());
+        schema.AddValue("Streams", Options.SchemaResolver.ForStreams());
+        schema.AddValue("EventProgression", Options.SchemaResolver.ForEventProgression());
+        usage.Children["Schema"] = schema;
 
         // HiloSettings child
         var hilo = new OptionsDescription { Subject = "Polecat.HiloSettings" };

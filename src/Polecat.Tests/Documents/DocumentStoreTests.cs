@@ -73,7 +73,7 @@ public class DocumentStoreTests
     {
         using var store = DocumentStore.For(ConnectionSource.ConnectionString);
         var session = store.LightweightSession();
-        session.TenantId.ShouldBe(Tenancy.DefaultTenantId);
+        session.TenantId.ShouldBe(JasperFx.StorageConstants.DefaultTenantId);
     }
 
     [Fact]

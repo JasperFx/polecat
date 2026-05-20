@@ -76,11 +76,18 @@ internal class InsertOperation : IStorageOperation
     {
         if (await reader.ReadAsync(token))
         {
-            var newVersion = reader.GetInt32(0);
+            var newVersion = reader.GetInt64(0);
 
-            if (_mapping.UseNumericRevisions && _document is IRevisioned revisioned)
+            if (_mapping.UseNumericRevisions)
             {
-                revisioned.Version = newVersion;
+                if (_document is ILongVersioned longVersioned)
+                {
+                    longVersioned.Version = newVersion;
+                }
+                else if (_document is IRevisioned revisioned)
+                {
+                    revisioned.Version = (int)newVersion;
+                }
             }
 
             if (_mapping.UseOptimisticConcurrency && _document is IVersioned versioned)

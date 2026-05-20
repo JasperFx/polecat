@@ -78,10 +78,14 @@ internal class DocumentProvider
         var id = Mapping.GetId(document);
         var json = serializer.ToJson(document);
 
-        int expectedRevision = 0;
+        long expectedRevision = 0;
         Guid? expectedGuidVersion = null;
 
-        if (Mapping.UseNumericRevisions && document is IRevisioned revisioned)
+        if (Mapping.UseNumericRevisions && document is ILongVersioned longVersioned)
+        {
+            expectedRevision = longVersioned.Version;
+        }
+        else if (Mapping.UseNumericRevisions && document is IRevisioned revisioned)
         {
             expectedRevision = revisioned.Version;
         }
@@ -106,10 +110,14 @@ internal class DocumentProvider
         var id = Mapping.GetId(document);
         var json = serializer.ToJson(document);
 
-        int expectedRevision = 0;
+        long expectedRevision = 0;
         Guid? expectedGuidVersion = null;
 
-        if (Mapping.UseNumericRevisions && document is IRevisioned revisioned)
+        if (Mapping.UseNumericRevisions && document is ILongVersioned longVersioned)
+        {
+            expectedRevision = longVersioned.Version;
+        }
+        else if (Mapping.UseNumericRevisions && document is IRevisioned revisioned)
         {
             expectedRevision = revisioned.Version;
         }

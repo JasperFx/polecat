@@ -14,12 +14,12 @@ internal class UpdateOperation : IStorageOperation
     private readonly string _json;
     private readonly DocumentMapping _mapping;
     private readonly string _tenantId;
-    private readonly int _expectedRevision;
+    private readonly long _expectedRevision;
     private readonly Guid? _expectedGuidVersion;
     private readonly Guid _newGuidVersion;
 
     public UpdateOperation(object document, object id, string json, DocumentMapping mapping, string tenantId,
-        int expectedRevision = 0, Guid? expectedGuidVersion = null)
+        long expectedRevision = 0, Guid? expectedGuidVersion = null)
     {
         _document = document;
         _id = id;
@@ -108,11 +108,18 @@ internal class UpdateOperation : IStorageOperation
     {
         if (await reader.ReadAsync(token))
         {
-            var newVersion = reader.GetInt32(0);
+            var newVersion = reader.GetInt64(0);
 
-            if (_mapping.UseNumericRevisions && _document is IRevisioned revisioned)
+            if (_mapping.UseNumericRevisions)
             {
-                revisioned.Version = newVersion;
+                if (_document is ILongVersioned longVersioned)
+                {
+                    longVersioned.Version = newVersion;
+                }
+                else if (_document is IRevisioned revisioned)
+                {
+                    revisioned.Version = (int)newVersion;
+                }
             }
 
             if (_mapping.UseOptimisticConcurrency && _document is IVersioned versioned)

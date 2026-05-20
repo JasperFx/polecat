@@ -82,7 +82,7 @@ internal class DocumentMapping
             DeleteStyle = DeleteStyle.SoftDelete;
         }
 
-        // Detect optimistic concurrency: IVersioned (Guid) or IRevisioned (int)
+        // Detect optimistic concurrency: IVersioned (Guid), IRevisioned (int), or ILongVersioned (long)
         if (typeof(IVersioned).IsAssignableFrom(documentType))
         {
             UseOptimisticConcurrency = true;
@@ -90,6 +90,11 @@ internal class DocumentMapping
         else if (typeof(IRevisioned).IsAssignableFrom(documentType))
         {
             UseNumericRevisions = true;
+        }
+        else if (typeof(ILongVersioned).IsAssignableFrom(documentType))
+        {
+            UseNumericRevisions = true;
+            UseLongRevisions = true;
         }
     }
 
@@ -129,9 +134,16 @@ internal class DocumentMapping
     public bool UseOptimisticConcurrency { get; }
 
     /// <summary>
-    ///     When true, uses int-based numeric revision tracking (IRevisioned interface).
+    ///     When true, uses numeric revision tracking (IRevisioned int or ILongVersioned long interface).
     /// </summary>
     public bool UseNumericRevisions { get; }
+
+    /// <summary>
+    ///     When true, the numeric revision is tracked as a 64-bit long (ILongVersioned) rather than a
+    ///     32-bit int (IRevisioned). Only meaningful when <see cref="UseNumericRevisions" /> is true.
+    ///     Recommended for MultiStreamProjection-derived views where Version is the global event sequence.
+    /// </summary>
+    public bool UseLongRevisions { get; }
 
     /// <summary>
     ///     Registered subclass types for this document hierarchy.
@@ -282,16 +294,21 @@ internal class DocumentMapping
 
     public static PropertyInfo? FindIdProperty(Type type)
     {
-        // Priority:
-        // 1) Property with [Identity] attribute
-        // 2) Conventional "Id" property (case-insensitive)
-        var properties = type.GetProperties(BindingFlags.Public | BindingFlags.Instance);
+        // Polecat#135 (jasperfx#335): delegate to the lifted, side-effect-free
+        // JasperFx.DocumentIdentity.FindIdMember. We pass Polecat's own valid-id-type
+        // predicate (canonical scalars + strong-typed-id wrappers via TryResolveValueTypeId)
+        // so strong-typed-id "Id" members are recognized as candidates — the shared helper's
+        // default ValidIdTypes set is scalar-only and would skip them. The result is filtered
+        // to PropertyInfo to preserve Polecat's property-only contract (both call sites need
+        // PropertyInfo for .PropertyType / .SetValue); the shared helper also finds fields,
+        // which Polecat does not use.
+        return DocumentIdentity.FindIdMember(type, IsValidIdType) as PropertyInfo;
+    }
 
-        var identityProperty = properties.FirstOrDefault(p =>
-            p.GetCustomAttribute<IdentityAttribute>() != null);
-        if (identityProperty != null) return identityProperty;
-
-        return type.GetProperty("Id", BindingFlags.Public | BindingFlags.Instance);
+    private static bool IsValidIdType(Type candidate)
+    {
+        var underlying = Nullable.GetUnderlyingType(candidate) ?? candidate;
+        return SupportedIdTypes.Contains(underlying) || TryResolveValueTypeId(underlying) != null;
     }
 
     /// <summary>

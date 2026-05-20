@@ -46,8 +46,10 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
         Tracker = new ShardStateTracker(NullLogger.Instance);
         // Mutates Skipped ShardStates in-place to set SkippedEventsCount.
         // Must be subscribed before any downstream consumers so the augmented
-        // count is visible when they observe the state.
-        Tracker.Subscribe(new SkippedEventsCountAugmenter());
+        // count is visible when they observe the state. The lifted observer
+        // (jasperfx#329) adds a ShardName == HighWaterMark guard — harmless here
+        // since Polecat only ever subscribes it for the HWM tracker.
+        Tracker.Subscribe(new SkippedEventsCountObserver());
     }
 
     /// <summary>

@@ -46,10 +46,13 @@ deleted_at datetimeoffset NULL
 guid_version uniqueidentifier NULL
 ```
 
-### Numeric Revisions (IRevisioned)
+### Numeric Revisions (IRevisioned / ILongVersioned)
+
+The `version` column is always `bigint` (Decision D2), carrying both `IRevisioned` (int, downcast on
+read) and `ILongVersioned` (long) revisions. Every write sets it explicitly, so it has no default.
 
 ```sql
-version int NOT NULL DEFAULT 0
+version bigint NOT NULL
 ```
 
 ### Conjoined Tenancy

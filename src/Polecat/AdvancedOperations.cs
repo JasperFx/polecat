@@ -35,7 +35,7 @@ public class AdvancedOperations
     public Task BulkInsertAsync<T>(IReadOnlyCollection<T> documents, CancellationToken token = default)
         where T : notnull
     {
-        return BulkInsertAsync(documents, BulkInsertMode.InsertsOnly, 200, Tenancy.DefaultTenantId, token);
+        return BulkInsertAsync(documents, BulkInsertMode.InsertsOnly, 200, JasperFx.StorageConstants.DefaultTenantId, token);
     }
 
     /// <summary>
@@ -44,7 +44,7 @@ public class AdvancedOperations
     public Task BulkInsertAsync<T>(IReadOnlyCollection<T> documents, BulkInsertMode mode,
         int batchSize = 200, CancellationToken token = default) where T : notnull
     {
-        return BulkInsertAsync(documents, mode, batchSize, Tenancy.DefaultTenantId, token);
+        return BulkInsertAsync(documents, mode, batchSize, JasperFx.StorageConstants.DefaultTenantId, token);
     }
 
     /// <summary>
@@ -138,7 +138,7 @@ public class AdvancedOperations
         IReadOnlyCollection<(T Document, long ExpectedVersion)> documents,
         CancellationToken token = default) where T : notnull
     {
-        return BulkInsertWithVersionAsync(documents, 200, Tenancy.DefaultTenantId, token);
+        return BulkInsertWithVersionAsync(documents, 200, JasperFx.StorageConstants.DefaultTenantId, token);
     }
 
     /// <summary>
@@ -151,7 +151,7 @@ public class AdvancedOperations
         int batchSize,
         CancellationToken token = default) where T : notnull
     {
-        return BulkInsertWithVersionAsync(documents, batchSize, Tenancy.DefaultTenantId, token);
+        return BulkInsertWithVersionAsync(documents, batchSize, JasperFx.StorageConstants.DefaultTenantId, token);
     }
 
     /// <summary>

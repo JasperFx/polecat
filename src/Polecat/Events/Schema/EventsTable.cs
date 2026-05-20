@@ -42,9 +42,9 @@ internal class EventsTable : Table
             .DefaultValueByExpression("SYSDATETIMEOFFSET()");
 
         // Tenant id
-        AddColumn("tenant_id", "varchar(250)")
+        AddColumn(JasperFx.StorageConstants.TenantIdColumn, "varchar(250)")
             .NotNull()
-            .DefaultValueByString(Tenancy.DefaultTenantId);
+            .DefaultValueByString(JasperFx.StorageConstants.DefaultTenantId);
 
         // .NET type for deserialization
         AddColumn("dotnet_type", "varchar(500)").AllowNulls();
@@ -89,8 +89,8 @@ internal class EventsTable : Table
         if (events.TenancyStyle == TenancyStyle.Conjoined)
         {
             var uniqueColumns = events.UseArchivedStreamPartitioning
-                ? new[] { "tenant_id", "stream_id", "version", "is_archived" }
-                : new[] { "tenant_id", "stream_id", "version" };
+                ? new[] { JasperFx.StorageConstants.TenantIdColumn, "stream_id", "version", "is_archived" }
+                : new[] { JasperFx.StorageConstants.TenantIdColumn, "stream_id", "version" };
 
             Indexes.Add(new IndexDefinition("ix_pc_events_stream_and_version")
             {

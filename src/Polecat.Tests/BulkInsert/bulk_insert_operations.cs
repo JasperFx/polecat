@@ -177,7 +177,7 @@ public class bulk_insert_operations : IntegrationContext
         // ITenanted.TenantId should have been set to the default tenant
         foreach (var doc in docs)
         {
-            doc.TenantId.ShouldBe(Tenancy.DefaultTenantId);
+            doc.TenantId.ShouldBe(JasperFx.StorageConstants.DefaultTenantId);
         }
     }
 

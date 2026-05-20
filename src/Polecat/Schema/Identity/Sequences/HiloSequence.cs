@@ -1,59 +1,36 @@
 using JasperFx;
 using Microsoft.Data.SqlClient;
 using Polly;
-using Polecat.Exceptions;
 using Polecat.Internal;
 using Weasel.Core;
+using Weasel.Core.Sequences;
 using Weasel.SqlServer;
 
 namespace Polecat.Schema.Identity.Sequences;
 
-internal class HiloSequence : ISequence
+/// <summary>
+///     SQL Server Hi-Lo sequence. The dialect-agnostic hi/lo state and client-side
+///     id arithmetic live on <see cref="HiloSequenceBase" /> (lifted into Weasel.Core
+///     in weasel#287); this subclass supplies only the SQL Server I/O — an optimistic
+///     UPDATE/INSERT against <c>pc_hilo</c>, wrapped in a resilience pipeline.
+/// </summary>
+internal class HiloSequence : HiloSequenceBase
 {
     private readonly ConnectionFactory _connectionFactory;
     private readonly string _schemaName;
-    private readonly HiloSettings _settings;
     private readonly ResiliencePipeline _resilience;
-    private readonly object _lock = new();
     private bool _tableEnsured;
 
     public HiloSequence(ConnectionFactory connectionFactory, string schemaName, string entityName,
         HiloSettings settings, ResiliencePipeline resilience)
+        : base(entityName, settings)
     {
         _connectionFactory = connectionFactory;
         _schemaName = schemaName;
-        EntityName = entityName;
-        CurrentHi = -1;
-        CurrentLo = 1;
-        MaxLo = settings.MaxLo;
-        _settings = settings;
         _resilience = resilience;
     }
 
-    public string EntityName { get; }
-    public long CurrentHi { get; private set; }
-    public int CurrentLo { get; private set; }
-    public int MaxLo { get; }
-
-    public int NextInt()
-    {
-        return (int)NextLong();
-    }
-
-    public long NextLong()
-    {
-        lock (_lock)
-        {
-            if (ShouldAdvanceHi())
-            {
-                AdvanceToNextHiSync();
-            }
-
-            return AdvanceValue();
-        }
-    }
-
-    public async Task SetFloor(long floor)
+    public override async Task SetFloor(long floor)
     {
         var numberOfPages = (long)Math.Ceiling((double)floor / MaxLo);
 
@@ -77,7 +54,7 @@ internal class HiloSequence : ISequence
         await AdvanceToNextHi();
     }
 
-    public async Task AdvanceToNextHi(CancellationToken ct = default)
+    public override async Task AdvanceToNextHi(CancellationToken ct = default)
     {
         await _resilience.ExecuteAsync(async (_, cancellation) =>
         {
@@ -86,7 +63,7 @@ internal class HiloSequence : ISequence
 
             await EnsureHiloTableAsync(conn, cancellation);
 
-            for (var attempts = 0; attempts < _settings.MaxAdvanceToNextHiAttempts; attempts++)
+            for (var attempts = 0; attempts < Settings.MaxAdvanceToNextHiAttempts; attempts++)
             {
                 var result = await TryGetNextHiAsync(conn, cancellation);
                 if (TrySetCurrentHi(result))
@@ -99,14 +76,14 @@ internal class HiloSequence : ISequence
         }, ct);
     }
 
-    private void AdvanceToNextHiSync()
+    protected override void AdvanceToNextHiSync()
     {
         using var conn = _connectionFactory.Create();
         conn.Open();
 
         EnsureHiloTableSync(conn);
 
-        for (var attempts = 0; attempts < _settings.MaxAdvanceToNextHiAttempts; attempts++)
+        for (var attempts = 0; attempts < Settings.MaxAdvanceToNextHiAttempts; attempts++)
         {
             var result = TryGetNextHiSync(conn);
             if (TrySetCurrentHi(result))
@@ -227,29 +204,5 @@ internal class HiloSequence : ISequence
             var rows = updateCmd.ExecuteNonQuery();
             return rows == 0 ? -1 : nextHi;
         }
-    }
-
-    private bool TrySetCurrentHi(long raw)
-    {
-        CurrentHi = raw;
-        if (CurrentHi >= 0)
-        {
-            CurrentLo = 1;
-            return true;
-        }
-
-        return false;
-    }
-
-    public long AdvanceValue()
-    {
-        var result = (CurrentHi * MaxLo) + CurrentLo;
-        CurrentLo++;
-        return result;
-    }
-
-    public bool ShouldAdvanceHi()
-    {
-        return CurrentHi < 0 || CurrentLo > MaxLo;
     }
 }

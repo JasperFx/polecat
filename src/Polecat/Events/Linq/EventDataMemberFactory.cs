@@ -3,6 +3,7 @@ using System.Reflection;
 using System.Text.Json;
 using Polecat.Linq.Members;
 using Polecat.Serialization;
+using Weasel.Core;
 
 namespace Polecat.Events.Linq;
 

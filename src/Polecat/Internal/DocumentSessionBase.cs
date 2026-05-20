@@ -283,6 +283,20 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         {
             revisioned.Version = revision;
         }
+        else if (document is ILongVersioned longVersioned)
+        {
+            longVersioned.Version = revision;
+        }
+
+        Store(document);
+    }
+
+    public void UpdateRevision<T>(T document, long revision) where T : notnull
+    {
+        if (document is ILongVersioned longVersioned)
+        {
+            longVersioned.Version = revision;
+        }
 
         Store(document);
     }
@@ -917,7 +931,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
 
     private void SyncMetadata(object document)
     {
-        if (document is Metadata.ITracked tracked)
+        if (document is ITracked tracked)
         {
             tracked.CorrelationId = CorrelationId;
             tracked.CausationId = CausationId;

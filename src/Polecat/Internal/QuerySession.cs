@@ -163,7 +163,7 @@ internal partial class QuerySession : IQuerySession
 
         await using var cmd = new SqlCommand();
 
-        var softDeleteFilter = provider.Mapping.DeleteStyle == Metadata.DeleteStyle.SoftDelete
+        var softDeleteFilter = provider.Mapping.DeleteStyle == DeleteStyle.SoftDelete
             ? " AND is_deleted = 0"
             : "";
 
@@ -360,7 +360,7 @@ internal partial class QuerySession : IQuerySession
 
         await using var cmd = new SqlCommand();
 
-        var softDeleteFilter = provider.Mapping.DeleteStyle == Metadata.DeleteStyle.SoftDelete
+        var softDeleteFilter = provider.Mapping.DeleteStyle == DeleteStyle.SoftDelete
             ? " AND is_deleted = 0"
             : "";
 
@@ -399,9 +399,17 @@ internal partial class QuerySession : IQuerySession
     /// </summary>
     internal static void SyncVersionProperties<T>(T doc, DbDataReader reader, DocumentProvider provider) where T : class
     {
-        if (provider.Mapping.UseNumericRevisions && doc is IRevisioned revisioned)
+        if (provider.Mapping.UseNumericRevisions)
         {
-            revisioned.Version = reader.GetInt32(2); // version column
+            var version = reader.GetInt64(2); // version column
+            if (doc is ILongVersioned longVersioned)
+            {
+                longVersioned.Version = version;
+            }
+            else if (doc is IRevisioned revisioned)
+            {
+                revisioned.Version = (int)version;
+            }
         }
 
         if (provider.Mapping.UseOptimisticConcurrency && doc is IVersioned versioned)

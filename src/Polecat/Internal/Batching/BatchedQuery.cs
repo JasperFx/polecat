@@ -94,7 +94,7 @@ internal class BatchedQuery : IBatchedQuery
             ? docSession.Options.EventGraph
             : throw new InvalidOperationException("EventsExist requires a document session.");
 
-        var tenantId = _session is DocumentSessionBase ds ? ds.TenantId : Tenancy.DefaultTenantId;
+        var tenantId = _session is DocumentSessionBase ds ? ds.TenantId : JasperFx.StorageConstants.DefaultTenantId;
         var item = new EventsExistBatchItem(eventGraph, query, tenantId);
         _items.Add(item);
         return item.Result;

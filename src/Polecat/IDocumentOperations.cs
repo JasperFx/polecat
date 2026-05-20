@@ -120,6 +120,12 @@ public interface IDocumentOperations : IQuerySession
     void UpdateRevision<T>(T document, int revision) where T : notnull;
 
     /// <summary>
+    ///     Store an ILongVersioned document with an explicitly expected long revision
+    ///     for optimistic concurrency checking.
+    /// </summary>
+    void UpdateRevision<T>(T document, long revision) where T : notnull;
+
+    /// <summary>
     ///     Registers a SQL command to be executed with the underlying unit of work as part of the batched command.
     ///     The '?' character is used as a placeholder for positional parameters.
     /// </summary>

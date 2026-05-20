@@ -125,7 +125,7 @@ public class DocumentIndex
         var indexColumns = new List<string>();
         if (TenancyScope == TenancyScope.PerTenant)
         {
-            indexColumns.Add("tenant_id");
+            indexColumns.Add(JasperFx.StorageConstants.TenantIdColumn);
         }
 
         foreach (var path in JsonPaths)

@@ -33,7 +33,7 @@ internal class DefaultTenancy : ITenancy
     }
 
     public DatabaseCardinality Cardinality => DatabaseCardinality.Single;
-    public string DefaultTenantId => Tenancy.DefaultTenantId;
+    public string DefaultTenantId => JasperFx.StorageConstants.DefaultTenantId;
     public ConnectionFactory GetConnectionFactory(string tenantId) => _factory;
     public PolecatDatabase GetDatabase(string tenantId) => _database;
     public IReadOnlyList<PolecatDatabase> AllDatabases() => [_database];
@@ -55,7 +55,7 @@ public class SeparateDatabaseTenancy : ITenancy
     }
 
     DatabaseCardinality ITenancy.Cardinality => DatabaseCardinality.StaticMultiple;
-    string ITenancy.DefaultTenantId => Tenancy.DefaultTenantId;
+    string ITenancy.DefaultTenantId => JasperFx.StorageConstants.DefaultTenantId;
 
     /// <summary>
     ///     Register a tenant with its connection string.

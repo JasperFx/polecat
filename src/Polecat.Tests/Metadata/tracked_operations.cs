@@ -148,9 +148,11 @@ public class TrackedDoc : ITracked
 {
     public Guid Id { get; set; }
     public string Name { get; set; } = string.Empty;
-    public string? CorrelationId { get; set; }
-    public string? CausationId { get; set; }
-    public string? LastModifiedBy { get; set; }
+    // Non-nullable to match the lifted JasperFx.Metadata.ITracked (jasperfx#330);
+    // SyncMetadata always copies non-null session values onto these.
+    public string CorrelationId { get; set; } = string.Empty;
+    public string CausationId { get; set; } = string.Empty;
+    public string LastModifiedBy { get; set; } = string.Empty;
 }
 
 public class TenantedDoc : ITenanted
@@ -164,8 +166,10 @@ public class FullMetadataDoc : ITracked, ITenanted
 {
     public Guid Id { get; set; }
     public string Name { get; set; } = string.Empty;
-    public string? CorrelationId { get; set; }
-    public string? CausationId { get; set; }
-    public string? LastModifiedBy { get; set; }
+    // Non-nullable to match the lifted JasperFx.Metadata.ITracked (jasperfx#330);
+    // SyncMetadata always copies non-null session values onto these.
+    public string CorrelationId { get; set; } = string.Empty;
+    public string CausationId { get; set; } = string.Empty;
+    public string LastModifiedBy { get; set; } = string.Empty;
     public string TenantId { get; set; } = string.Empty;
 }

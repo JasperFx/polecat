@@ -109,7 +109,7 @@ public class fetch_stream_tests : IntegrationContext
         await using var query = theStore.QuerySession();
         var events = await query.Events.FetchStreamAsync(streamId);
 
-        events[0].TenantId.ShouldBe(Tenancy.DefaultTenantId);
+        events[0].TenantId.ShouldBe(JasperFx.StorageConstants.DefaultTenantId);
     }
 
     [Fact]

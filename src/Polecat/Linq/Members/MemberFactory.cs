@@ -4,6 +4,7 @@ using System.Text.Json;
 using JasperFx.Core.Reflection;
 using Polecat.Serialization;
 using Polecat.Storage;
+using Weasel.Core;
 
 namespace Polecat.Linq.Members;
 

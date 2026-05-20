@@ -72,6 +72,42 @@ Explicitly set the expected revision:
 session.UpdateRevision(order, expectedRevision: 3);
 ```
 
+## Long Numeric Revisions (ILongVersioned)
+
+`ILongVersioned` is the 64-bit counterpart of `IRevisioned` — identical behavior, but the revision is
+a `long` instead of an `int`:
+
+```cs
+public class CustomerOrderHistory : ILongVersioned
+{
+    public Guid Id { get; set; }
+    public long Version { get; set; }
+    public string Description { get; set; } = "";
+}
+```
+
+Usage mirrors `IRevisioned`, with a `long` overload of `UpdateRevision` for explicit checks:
+
+```cs
+var view = await session.LoadAsync<CustomerOrderHistory>(id);
+view.Description = "Updated";
+session.UpdateRevision(view, expectedRevision: 4_000_000_000L);
+await session.SaveChangesAsync();
+```
+
+::: tip
+Prefer `ILongVersioned` over `IRevisioned` for `MultiStreamProjection`-derived views whose `Version`
+tracks the **global event sequence number**. That sequence is monotonic across every stream the view
+folds in and can climb past `Int32.MaxValue` (~2.1 billion) on a busy store, where an `int` revision
+would overflow. A plain single-stream aggregate, whose `Version` is just that stream's event count,
+is fine with `IRevisioned`.
+:::
+
+Both interfaces persist into the same `version` column, which is always `bigint` (Decision D2) so the
+two are storage-compatible: `IRevisioned` values fit and are downcast on read, while `ILongVersioned`
+carries the full 64-bit value. Existing tables with an `int` version column are widened to `bigint`
+in place on the next schema migration — a non-destructive `ALTER COLUMN`, never a drop/recreate.
+
 ## Configuration
 
 ### Auto-Detection
@@ -79,7 +115,8 @@ session.UpdateRevision(order, expectedRevision: 3);
 Polecat automatically detects concurrency mode from interfaces:
 
 - Implements `IVersioned` → Guid-based versioning
-- Implements `IRevisioned` → Numeric revisions
+- Implements `IRevisioned` → Numeric revisions (int)
+- Implements `ILongVersioned` → Numeric revisions (long)
 
 ### Manual Configuration
 

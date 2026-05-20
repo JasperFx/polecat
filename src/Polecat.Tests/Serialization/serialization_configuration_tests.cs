@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Polecat.Serialization;
 using Polecat.Tests.Harness;
+using Weasel.Core;
 
 namespace Polecat.Tests.Serialization;
 

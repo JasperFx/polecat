@@ -201,7 +201,7 @@ public class DocumentMappingTests
 
     private class NonStandardWithProp
     {
-        [Polecat.Attributes.Identity]
+        [JasperFx.Identity]
         public string Name { get; set; } = string.Empty;
 
         public string Other { get; set; } = string.Empty;
@@ -211,19 +211,19 @@ public class DocumentMappingTests
     {
         public Guid Id { get; set; }
 
-        [Polecat.Attributes.Identity]
+        [JasperFx.Identity]
         public string DocumentId { get; set; } = string.Empty;
     }
 
     private class GuidIdentityDoc
     {
-        [Polecat.Attributes.Identity]
+        [JasperFx.Identity]
         public Guid UniqueId { get; set; }
     }
 
     private class IntIdentityDoc
     {
-        [Polecat.Attributes.Identity]
+        [JasperFx.Identity]
         public int Number { get; set; }
     }
 }

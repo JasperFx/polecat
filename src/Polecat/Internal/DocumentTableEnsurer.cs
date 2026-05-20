@@ -66,6 +66,13 @@ internal class DocumentTableEnsurer
                 _hiloTableEnsured = true;
             }
 
+            // Decision D2 widened the document `version` column to bigint. Existing tables created
+            // before this carry an int column; widen it in place before Weasel diffs the table.
+            // SQL Server rejects ALTER COLUMN while a default constraint references the column, and
+            // Weasel's diff emits only a bare ALTER COLUMN — so this drops the default, widens (data
+            // preserved — never a drop/recreate), then restores the default. No-op once bigint.
+            await WidenVersionColumnIfNeededAsync(conn, provider.Mapping.QualifiedTableName, token);
+
             // Use Weasel SchemaMigration to create or update the document table
             var table = new DocumentTable(provider.Mapping);
             var migration = await SchemaMigration.DetermineAsync(conn, token, table);
@@ -135,6 +142,42 @@ internal class DocumentTableEnsurer
         {
             _semaphore.Release();
         }
+    }
+
+    /// <summary>
+    ///     Normalizes an existing document <c>version</c> column to the Decision D2 shape:
+    ///     <c>bigint NOT NULL</c> with no default constraint. Drops any lingering default (the model
+    ///     carries none, and a default would block the ALTER below), then widens an int column to
+    ///     bigint in place — never a drop/recreate, so rows are preserved. Idempotent: a no-op once
+    ///     the table is absent or already bigint with no default.
+    /// </summary>
+    private static async Task WidenVersionColumnIfNeededAsync(SqlConnection conn, string qualifiedTableName,
+        CancellationToken token)
+    {
+        // The table name is derived from the document type (not user input), so it is inlined
+        // directly; only the discovered default-constraint name needs dynamic SQL (and SQL Server
+        // forbids function calls inside EXEC(...), hence the SET-then-EXEC pattern).
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"""
+            DECLARE @oid int = OBJECT_ID('{qualifiedTableName}');
+            IF @oid IS NOT NULL
+            BEGIN
+                DECLARE @df sysname, @sql nvarchar(max);
+                SELECT @df = dc.name FROM sys.default_constraints dc
+                    JOIN sys.columns col ON col.default_object_id = dc.object_id
+                    WHERE dc.parent_object_id = @oid AND col.name = 'version';
+                IF @df IS NOT NULL
+                BEGIN
+                    SET @sql = 'ALTER TABLE {qualifiedTableName} DROP CONSTRAINT ' + QUOTENAME(@df);
+                    EXEC(@sql);
+                END
+                IF EXISTS (
+                    SELECT 1 FROM sys.columns c
+                    WHERE c.object_id = @oid AND c.name = 'version' AND TYPE_NAME(c.system_type_id) = 'int')
+                    ALTER TABLE {qualifiedTableName} ALTER COLUMN [version] bigint NOT NULL;
+            END
+            """;
+        await cmd.ExecuteNonQueryAsync(token);
     }
 
     public async Task EnsureTablesAsync(IEnumerable<DocumentProvider> providers, CancellationToken token)
