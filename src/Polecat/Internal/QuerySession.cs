@@ -163,7 +163,7 @@ internal partial class QuerySession : IQuerySession
 
         await using var cmd = new SqlCommand();
 
-        var softDeleteFilter = provider.Mapping.DeleteStyle == Metadata.DeleteStyle.SoftDelete
+        var softDeleteFilter = provider.Mapping.DeleteStyle == DeleteStyle.SoftDelete
             ? " AND is_deleted = 0"
             : "";
 
@@ -360,7 +360,7 @@ internal partial class QuerySession : IQuerySession
 
         await using var cmd = new SqlCommand();
 
-        var softDeleteFilter = provider.Mapping.DeleteStyle == Metadata.DeleteStyle.SoftDelete
+        var softDeleteFilter = provider.Mapping.DeleteStyle == DeleteStyle.SoftDelete
             ? " AND is_deleted = 0"
             : "";
 

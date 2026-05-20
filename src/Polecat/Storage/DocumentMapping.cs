@@ -282,16 +282,21 @@ internal class DocumentMapping
 
     public static PropertyInfo? FindIdProperty(Type type)
     {
-        // Priority:
-        // 1) Property with [Identity] attribute
-        // 2) Conventional "Id" property (case-insensitive)
-        var properties = type.GetProperties(BindingFlags.Public | BindingFlags.Instance);
+        // Polecat#135 (jasperfx#335): delegate to the lifted, side-effect-free
+        // JasperFx.DocumentIdentity.FindIdMember. We pass Polecat's own valid-id-type
+        // predicate (canonical scalars + strong-typed-id wrappers via TryResolveValueTypeId)
+        // so strong-typed-id "Id" members are recognized as candidates — the shared helper's
+        // default ValidIdTypes set is scalar-only and would skip them. The result is filtered
+        // to PropertyInfo to preserve Polecat's property-only contract (both call sites need
+        // PropertyInfo for .PropertyType / .SetValue); the shared helper also finds fields,
+        // which Polecat does not use.
+        return DocumentIdentity.FindIdMember(type, IsValidIdType) as PropertyInfo;
+    }
 
-        var identityProperty = properties.FirstOrDefault(p =>
-            p.GetCustomAttribute<IdentityAttribute>() != null);
-        if (identityProperty != null) return identityProperty;
-
-        return type.GetProperty("Id", BindingFlags.Public | BindingFlags.Instance);
+    private static bool IsValidIdType(Type candidate)
+    {
+        var underlying = Nullable.GetUnderlyingType(candidate) ?? candidate;
+        return SupportedIdTypes.Contains(underlying) || TryResolveValueTypeId(underlying) != null;
     }
 
     /// <summary>

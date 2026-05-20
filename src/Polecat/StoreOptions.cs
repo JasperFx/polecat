@@ -355,19 +355,3 @@ public class EventStoreOptions
         return EventGraph!.RegisterTagType<TTag>(tableSuffix);
     }
 }
-
-/// <summary>
-///     Controls how event store tables handle multi-tenancy.
-/// </summary>
-public enum TenancyStyle
-{
-    /// <summary>
-    ///     Single tenant, no tenant_id filtering.
-    /// </summary>
-    Single,
-
-    /// <summary>
-    ///     All tenants share the same tables with tenant_id column discrimination.
-    /// </summary>
-    Conjoined
-}

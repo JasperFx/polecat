@@ -1,6 +1,5 @@
 using System.Data.Common;
 using JasperFx.Events.Projections;
-using Polecat.Exceptions;
 using Polecat.Internal;
 using Weasel.Core;
 using Weasel.SqlServer;
