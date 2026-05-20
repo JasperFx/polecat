@@ -1,5 +1,6 @@
 using System.Data.Common;
 using System.Diagnostics.CodeAnalysis;
+using Weasel.Core;
 
 namespace Polecat.Serialization;
 

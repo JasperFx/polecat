@@ -1,4 +1,4 @@
-using Polecat.Serialization;
+using Weasel.Core;
 
 namespace Polecat.Linq.Members;
 

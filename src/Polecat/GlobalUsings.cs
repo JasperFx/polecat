@@ -21,3 +21,10 @@ global using ITracked = JasperFx.Metadata.ITracked;
 global using RemoveAction = JasperFx.Events.RemoveAction;
 //   #132 (jasperfx#332): TrackLevel -> JasperFx.OpenTelemetry (OpenTelemetryOptions base subclassed in-place)
 global using TrackLevel = JasperFx.OpenTelemetry.TrackLevel;
+//   #137 (weasel#287): Hi-Lo sequence contract + settings lifted to Weasel.Core.Sequences.
+//     HiloSequence now derives from Weasel.Core.Sequences.HiloSequenceBase; these aliases
+//     keep SequenceFactory / StoreOptions / DocumentMapping / AdvancedOperations resolving
+//     ISequence / IReadOnlyHiloSettings / HiloSettings by their old unqualified names.
+global using ISequence = Weasel.Core.Sequences.ISequence;
+global using IReadOnlyHiloSettings = Weasel.Core.Sequences.IReadOnlyHiloSettings;
+global using HiloSettings = Weasel.Core.Sequences.HiloSettings;

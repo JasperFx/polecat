@@ -14,6 +14,7 @@ using Polecat.Internal.OpenTelemetry;
 using Polecat.Logging;
 using Polecat.Metadata;
 using Polecat.Storage;
+using Weasel.Core;
 
 namespace Polecat;
 
