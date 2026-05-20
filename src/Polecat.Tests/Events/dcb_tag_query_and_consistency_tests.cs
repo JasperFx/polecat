@@ -287,6 +287,35 @@ public class dcb_tag_query_and_consistency_tests : IntegrationContext
     }
 
     [Fact]
+    public async Task fetch_for_writing_appends_to_existing_tag_derived_stream_without_collision()
+    {
+        // Seed the student's stream using the tag value as the stream id, so the boundary's
+        // tag-derived routing targets this PRE-EXISTING stream on save. Before the fix the boundary
+        // used StreamAction.Start here (TryFindStream only sees the current session's pending work),
+        // throwing ExistingStreamIdCollisionException.
+        var studentId = new StudentId(Guid.NewGuid());
+
+        var enrolled = theSession.Events.BuildEvent(new StudentEnrolled("Alice", "Math"));
+        enrolled.WithTag(studentId);
+        theSession.Events.Append(studentId.Value, enrolled);
+        await theSession.SaveChangesAsync();
+
+        await using var session2 = theStore.LightweightSession();
+        var query = new EventTagQuery().Or<StudentId>(studentId);
+        var boundary = await session2.Events.FetchForWritingByTags<StudentCourseEnrollment>(query);
+
+        var submitted = session2.Events.BuildEvent(new AssignmentSubmitted("HW1", 95));
+        submitted.WithTag(studentId);
+        boundary.AppendOne(submitted);
+
+        await Should.NotThrowAsync(async () => await session2.SaveChangesAsync());
+
+        await using var session3 = theStore.LightweightSession();
+        var events = await session3.Events.QueryByTagsAsync(new EventTagQuery().Or<StudentId>(studentId));
+        events.ShouldContain(e => e.Data is AssignmentSubmitted);
+    }
+
+    [Fact]
     public async Task fetch_for_writing_by_tags_detects_concurrency_violation()
     {
         var studentId = new StudentId(Guid.NewGuid());

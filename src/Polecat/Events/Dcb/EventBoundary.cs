@@ -87,7 +87,10 @@ internal class EventBoundary<T> : IEventBoundary<T> where T : class
                     stream!.AddEvent(wrapped);
                 else
                 {
-                    stream = StreamAction.Start(guidId, [wrapped]);
+                    // Append, not Start: the tag-derived stream for an aggregate ordinarily already
+                    // exists in the database (TryFindStream only sees this session's pending work).
+                    // StreamAction.Start would throw ExistingStreamIdCollisionException on save.
+                    stream = StreamAction.Append(guidId, [wrapped]);
                     stream.AggregateType = registration.AggregateType;
                     stream.TenantId = _session.TenantId;
                     _session.WorkTracker.AddStream(stream);
@@ -99,7 +102,10 @@ internal class EventBoundary<T> : IEventBoundary<T> where T : class
                     stream!.AddEvent(wrapped);
                 else
                 {
-                    stream = StreamAction.Start(stringId, [wrapped]);
+                    // Append, not Start: the tag-derived stream for an aggregate ordinarily already
+                    // exists in the database (TryFindStream only sees this session's pending work).
+                    // StreamAction.Start would throw ExistingStreamIdCollisionException on save.
+                    stream = StreamAction.Append(stringId, [wrapped]);
                     stream.AggregateType = registration.AggregateType;
                     stream.TenantId = _session.TenantId;
                     _session.WorkTracker.AddStream(stream);
