@@ -6,3 +6,6 @@ global using TenancyStyle = JasperFx.MultiTenancy.TenancyStyle;
 global using DeleteStyle = JasperFx.DeleteStyle;
 global using DcbConcurrencyException = JasperFx.Events.DcbConcurrencyException;
 global using ProgressionProgressOutOfOrderException = JasperFx.Events.Daemon.ProgressionProgressOutOfOrderException;
+global using ISoftDeleted = JasperFx.Metadata.ISoftDeleted;
+global using IVersioned = JasperFx.Metadata.IVersioned;
+global using ITracked = JasperFx.Metadata.ITracked;

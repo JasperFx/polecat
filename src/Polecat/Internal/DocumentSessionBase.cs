@@ -917,7 +917,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
 
     private void SyncMetadata(object document)
     {
-        if (document is Metadata.ITracked tracked)
+        if (document is ITracked tracked)
         {
             tracked.CorrelationId = CorrelationId;
             tracked.CausationId = CausationId;
