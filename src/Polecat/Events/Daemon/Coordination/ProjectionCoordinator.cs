@@ -1,5 +1,3 @@
-using JasperFx;
-using JasperFx.Core;
 using JasperFx.Descriptors;
 using JasperFx.Events.Daemon;
 using JasperFx.Events.Projections;
@@ -18,46 +16,56 @@ namespace Polecat.Events.Daemon.Coordination;
 ///     the application lifetime.
 /// </summary>
 /// <remarks>
-///     Owns a <see cref="IProjectionDistributor"/> chosen at construction
-///     based on <see cref="ITenancy.Cardinality"/> (Solo / SingleTenant /
-///     MultiTenanted). The execute loop polls the distributor for the
-///     current view of (database × shards) sets and:
-///
-///     <list type="bullet">
-///       <item>If we already hold a set's lock — keep its agents running.</item>
-///       <item>If not, race for the lock; on success start the agents,
-///       on failure stop any agents we used to run for that set
-///       (recovery-from-lost-lock).</item>
-///     </list>
-///
-///     Mirrors the Marten executeAsync loop slot-for-slot; the differences
-///     are SQL Server (sp_getapplock) and Polecat tenancy types.
+///     The leadership-election + agent-lifecycle loop lives in the lifted
+///     <see cref="ProjectionCoordinatorBase"/> (jasperfx#326) — Polecat's old
+///     <c>ExecuteAsync</c> was a slot-for-slot mirror of Marten's, so this
+///     subclass only supplies the store-specific seams: the distributor
+///     (chosen by <see cref="ITenancy.Cardinality"/>), the per-database daemon
+///     cache, and the three tenancy-aware daemon accessors. Adopting the base
+///     also gives Polecat Marten's resilient agent-start — a failed
+///     <c>StartAgentAsync</c> now ejects the paused shard and releases the
+///     set's lock so another node can pick it up (Polecat previously started
+///     agents raw with no lock-release-on-failure).
 /// </remarks>
-internal class ProjectionCoordinator : IProjectionCoordinator
+internal class ProjectionCoordinator : ProjectionCoordinatorBase, IProjectionCoordinator
 {
     private readonly DocumentStore _store;
     private readonly StoreOptions _options;
     private readonly ILoggerFactory _loggerFactory;
-    private readonly ILogger<ProjectionCoordinator> _logger;
 
+    // Per-database daemon cache. Kept in the subclass per the base's contract
+    // (each store keeps its own cache + concurrency model); the coordinator loop
+    // is single-threaded so a plain dictionary is sufficient.
     private readonly Dictionary<string, PolecatProjectionDaemon> _daemons = new();
-    private IProjectionDistributor? _distributor;
-    private CancellationTokenSource? _runCts;
-    private Task? _runTask;
-    private volatile bool _paused;
 
     public ProjectionCoordinator(DocumentStore store, ILoggerFactory? loggerFactory = null)
+        : base(
+            BuildDistributor(store, loggerFactory ?? NullLoggerFactory.Instance),
+            (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<ProjectionCoordinator>(),
+            store.Options.ResiliencePipeline,
+            TimeProvider.System,
+            // LeadershipPollingTime is an int (milliseconds); the other two are already TimeSpans.
+            TimeSpan.FromMilliseconds(store.Options.DaemonSettings.LeadershipPollingTime),
+            store.Options.DaemonSettings.AgentPauseTime,
+            store.Options.DaemonSettings.HealthCheckPollingTime)
     {
         _store = store;
         _options = store.Options;
         _loggerFactory = loggerFactory ?? NullLoggerFactory.Instance;
-        _logger = _loggerFactory.CreateLogger<ProjectionCoordinator>();
     }
 
-    internal IProjectionDistributor Distributor => _distributor
-        ??= BuildDistributor();
+    protected override IProjectionDaemon ResolveDaemon(IProjectionSet set)
+    {
+        // set.Database is typed IProjectionDatabase on the lifted contract;
+        // Polecat's distributors only ever publish PolecatDatabase-backed sets,
+        // so the cast is safe.
+        return DaemonFor((PolecatDatabase)set.Database);
+    }
 
-    public IProjectionDaemon DaemonForMainDatabase()
+    protected override IReadOnlyList<IProjectionDaemon> ResolvedDaemons()
+        => _daemons.Values.Cast<IProjectionDaemon>().ToList();
+
+    public override IProjectionDaemon DaemonForMainDatabase()
     {
         var main = _options.Tenancy?.AllDatabases().FirstOrDefault()
             ?? throw new InvalidOperationException(
@@ -65,7 +73,7 @@ internal class ProjectionCoordinator : IProjectionCoordinator
         return DaemonFor(main);
     }
 
-    public ValueTask<IProjectionDaemon> DaemonForDatabase(string databaseIdentifier)
+    public override ValueTask<IProjectionDaemon> DaemonForDatabase(string databaseIdentifier)
     {
         var match = _options.Tenancy?.AllDatabases()
             .FirstOrDefault(d => string.Equals(d.Identifier, databaseIdentifier, StringComparison.Ordinal))
@@ -74,227 +82,11 @@ internal class ProjectionCoordinator : IProjectionCoordinator
         return ValueTask.FromResult<IProjectionDaemon>(DaemonFor(match));
     }
 
-    public ValueTask<IReadOnlyList<IProjectionDaemon>> AllDaemonsAsync()
+    public override ValueTask<IReadOnlyList<IProjectionDaemon>> AllDaemonsAsync()
     {
         var databases = _options.Tenancy?.AllDatabases() ?? [];
         IReadOnlyList<IProjectionDaemon> daemons = databases.Select(DaemonFor).Cast<IProjectionDaemon>().ToList();
         return ValueTask.FromResult(daemons);
-    }
-
-    public Task StartAsync(CancellationToken cancellationToken)
-    {
-        if (_runTask is not null) return Task.CompletedTask;
-
-        _paused = false;
-        _runCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        _runTask = Task.Run(() => ExecuteAsync(_runCts.Token), CancellationToken.None);
-        return Task.CompletedTask;
-    }
-
-    public async Task StopAsync(CancellationToken cancellationToken)
-    {
-        try
-        {
-            if (_runCts is not null)
-            {
-                await _runCts.CancelAsync().ConfigureAwait(false);
-            }
-
-            if (_runTask is not null)
-            {
-                try
-                {
-                    await _runTask.WaitAsync(cancellationToken).ConfigureAwait(false);
-                }
-                catch (OperationCanceledException)
-                {
-                    // Graceful shutdown — nothing to do.
-                }
-            }
-        }
-        finally
-        {
-            await StopAllAgentsAsync().ConfigureAwait(false);
-
-            if (_distributor is not null)
-            {
-                await _distributor.DisposeAsync().ConfigureAwait(false);
-                _distributor = null;
-            }
-
-            _runTask = null;
-            _runCts?.Dispose();
-            _runCts = null;
-        }
-    }
-
-    public async Task PauseAsync()
-    {
-        _paused = true;
-
-        if (_runCts is not null)
-        {
-            await _runCts.CancelAsync().ConfigureAwait(false);
-        }
-
-        if (_runTask is not null)
-        {
-            try
-            {
-                await _runTask.ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
-                // Expected
-            }
-        }
-
-        await StopAllAgentsAsync().ConfigureAwait(false);
-
-        _runTask = null;
-        _runCts?.Dispose();
-        _runCts = null;
-    }
-
-    public Task ResumeAsync()
-    {
-        if (!_paused) return Task.CompletedTask;
-        _paused = false;
-
-        _runCts = new CancellationTokenSource();
-        _runTask = Task.Run(() => ExecuteAsync(_runCts.Token), CancellationToken.None);
-        return Task.CompletedTask;
-    }
-
-    /// <summary>
-    ///     The leadership-election + agent-lifecycle loop. Mirrors Marten's
-    ///     <c>ProjectionCoordinator.executeAsync</c> body slot-for-slot
-    ///     (modulo SQL Server idioms via <c>Weasel.SqlServer.AdvisoryLock</c>,
-    ///     plumbed through <see cref="IProjectionDistributor"/>).
-    /// </summary>
-    private async Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        var distributor = Distributor;
-
-        await distributor.RandomWait(stoppingToken).ConfigureAwait(false);
-
-        while (!stoppingToken.IsCancellationRequested)
-        {
-            try
-            {
-                var sets = await distributor.BuildDistributionAsync().ConfigureAwait(false);
-
-                foreach (var set in sets)
-                {
-                    if (stoppingToken.IsCancellationRequested) return;
-
-                    // set.Database is typed IProjectionDatabase on the lifted
-                    // contract; Polecat's distributors only ever publish
-                    // PolecatDatabase-backed sets, so the cast is safe.
-                    var database = (PolecatDatabase)set.Database;
-
-                    if (distributor.HasLock(set))
-                    {
-                        var daemon = DaemonFor(database);
-                        await StartAgentsIfNecessaryAsync(set, daemon, stoppingToken).ConfigureAwait(false);
-                        continue;
-                    }
-
-                    try
-                    {
-                        if (await distributor.TryAttainLockAsync(set, stoppingToken).ConfigureAwait(false))
-                        {
-                            var daemon = DaemonFor(database);
-                            await StartAgentsIfNecessaryAsync(set, daemon, stoppingToken).ConfigureAwait(false);
-                        }
-                        else
-                        {
-                            // Don't hold the lock — make sure we're not still
-                            // running these shards from a previous round where
-                            // we did own them.
-                            var daemon = DaemonFor(database);
-                            await StopAgentsIfNecessaryAsync(set, daemon).ConfigureAwait(false);
-                        }
-                    }
-                    catch (Exception e)
-                    {
-                        _logger.LogError(e,
-                            "Error attempting lock for set {Names} (lock id {LockId}). Will retry next cycle.",
-                            string.Join(", ", set.Names.Select(n => n.Identity)), set.LockId);
-
-                        await Task.Delay(TimeSpan.FromMilliseconds(_options.DaemonSettings.LeadershipPollingTime),
-                            stoppingToken).ConfigureAwait(false);
-                    }
-                }
-            }
-            catch (Exception e) when (!stoppingToken.IsCancellationRequested)
-            {
-                _logger.LogError(e, "Error resolving the projection distribution.");
-            }
-
-            if (stoppingToken.IsCancellationRequested) return;
-
-            try
-            {
-                var anyPaused = _daemons.Values.Any(d => d.HasAnyPaused());
-                var delay = anyPaused
-                    ? _options.DaemonSettings.AgentPauseTime
-                    : TimeSpan.FromMilliseconds(_options.DaemonSettings.LeadershipPollingTime);
-                await Task.Delay(delay, stoppingToken).ConfigureAwait(false);
-            }
-            catch (TaskCanceledException)
-            {
-                // graceful shutdown
-            }
-            catch (OperationCanceledException)
-            {
-                // graceful shutdown
-            }
-        }
-    }
-
-    private static async Task StartAgentsIfNecessaryAsync(
-        IProjectionSet set, PolecatProjectionDaemon daemon, CancellationToken token)
-    {
-        foreach (var name in set.Names)
-        {
-            if (token.IsCancellationRequested) return;
-            if (daemon.StatusFor(name.Identity) == AgentStatus.Running) continue;
-            await daemon.StartAgentAsync(name.Identity, token).ConfigureAwait(false);
-        }
-    }
-
-    private static async Task StopAgentsIfNecessaryAsync(
-        IProjectionSet set, PolecatProjectionDaemon daemon)
-    {
-        foreach (var name in set.Names)
-        {
-            if (daemon.StatusFor(name.Identity) == AgentStatus.Stopped) continue;
-            try
-            {
-                await daemon.StopAgentAsync(name).ConfigureAwait(false);
-            }
-            catch
-            {
-                // Best-effort — losing the lock is not exceptional, but
-                // we don't want a stop failure to take down the loop.
-            }
-        }
-    }
-
-    private async Task StopAllAgentsAsync()
-    {
-        foreach (var daemon in _daemons.Values)
-        {
-            try
-            {
-                await daemon.StopAllAsync().ConfigureAwait(false);
-            }
-            catch
-            {
-                // Best-effort during shutdown
-            }
-        }
     }
 
     private PolecatProjectionDaemon DaemonFor(PolecatDatabase database)
@@ -307,16 +99,12 @@ internal class ProjectionCoordinator : IProjectionCoordinator
         return daemon;
     }
 
-    private IProjectionDistributor BuildDistributor()
+    private static IProjectionDistributor BuildDistributor(DocumentStore store, ILoggerFactory loggerFactory)
     {
         // Mirrors Marten's pick: tenancy with multiple databases →
         // MultiTenantedProjectionDistributor; single-database tenancy →
         // SingleTenantProjectionDistributor (per-shard hot-cold locks via
-        // sp_getapplock). SoloProjectionDistributor is reachable via
-        // ProjectionCoordinator subclassing for tests / opt-out scenarios
-        // but not auto-selected — production single-node deployments
-        // benefit from the lock-based coordination too because it's the
-        // only safe path when a second instance shows up unexpectedly.
+        // sp_getapplock).
         //
         // Polecat#119 (Critter Stack 2026 dedupe pillar): the distributor
         // concretes themselves were lifted into JasperFx.Events.Daemon in
@@ -324,13 +112,14 @@ internal class ProjectionCoordinator : IProjectionCoordinator
         // store-specific state (tenancy / shards / advisory-lock factory /
         // ProjectionSet factory / schema / base lock id) rather than
         // shipping its own near-identical concretes.
-        var cardinality = _options.Tenancy?.Cardinality ?? DatabaseCardinality.Single;
+        var options = store.Options;
+        var cardinality = options.Tenancy?.Cardinality ?? DatabaseCardinality.Single;
 
         // Shared closures — both branches need shard accessor + set factory
         // backed by Polecat's IProjectionSet impl (ProjectionSet.cs, retained
         // per Polecat#117 / PR #118).
         Func<IEnumerable<ShardName>> allShards =
-            () => _options.Projections.AllShards().Select(s => s.Name);
+            () => options.Projections.AllShards().Select(s => s.Name);
 
         Func<IProjectionDatabase, IReadOnlyList<ShardName>, int, IProjectionSet> setFactory =
             (db, names, lockId) => new ProjectionSet(lockId, (PolecatDatabase)db, names);
@@ -339,20 +128,20 @@ internal class ProjectionCoordinator : IProjectionCoordinator
         // distributors. Weasel.SqlServer.AdvisoryLock (weasel#284 / α7)
         // satisfies the lifted JasperFx.Events.Daemon.IAdvisoryLock contract
         // directly, so this closure is the only Polecat-side bridge needed.
-        var lockLogger = _loggerFactory.CreateLogger<AdvisoryLock>();
+        var lockLogger = loggerFactory.CreateLogger<AdvisoryLock>();
         Func<IProjectionDatabase, IAdvisoryLock> lockFactory =
             db => new AdvisoryLock(
                 () => new SqlConnection(((PolecatDatabase)db).ConnectionString),
                 lockLogger,
                 db.Identifier);
 
-        var baseLockId = _options.DaemonSettings.DaemonLockId;
+        var baseLockId = options.DaemonSettings.DaemonLockId;
 
         if (cardinality == DatabaseCardinality.StaticMultiple)
         {
             return new MultiTenantedProjectionDistributor(
                 databaseSource: () => ValueTask.FromResult<IReadOnlyList<IProjectionDatabase>>(
-                    _options.Tenancy?.AllDatabases().Cast<IProjectionDatabase>().ToList() ?? []),
+                    options.Tenancy?.AllDatabases().Cast<IProjectionDatabase>().ToList() ?? []),
                 allShards: allShards,
                 lockFactory: lockFactory,
                 setFactory: setFactory,
@@ -365,11 +154,11 @@ internal class ProjectionCoordinator : IProjectionCoordinator
         // misconfigured deployment surfaces here with a useful exception
         // rather than silently no-opping.
         return new SingleTenantProjectionDistributor(
-            databaseAccessor: () => _options.Tenancy!.AllDatabases().Single(),
+            databaseAccessor: () => options.Tenancy!.AllDatabases().Single(),
             allShards: allShards,
             lockFactory: lockFactory,
             setFactory: setFactory,
-            schemaQualifier: _options.DatabaseSchemaName,
+            schemaQualifier: options.DatabaseSchemaName,
             baseLockId: baseLockId);
     }
 }
