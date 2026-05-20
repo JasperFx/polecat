@@ -19,3 +19,5 @@ global using IVersioned = JasperFx.Metadata.IVersioned;
 global using ITracked = JasperFx.Metadata.ITracked;
 //   #131 (jasperfx#331): IPatchExpression<T> (Marten superset) + RemoveAction -> JasperFx.Events
 global using RemoveAction = JasperFx.Events.RemoveAction;
+//   #132 (jasperfx#332): TrackLevel -> JasperFx.OpenTelemetry (OpenTelemetryOptions base subclassed in-place)
+global using TrackLevel = JasperFx.OpenTelemetry.TrackLevel;
