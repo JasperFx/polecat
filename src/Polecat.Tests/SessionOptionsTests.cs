@@ -15,7 +15,7 @@ public class SessionOptionsTests
     public void default_tenant_id()
     {
         var options = new SessionOptions();
-        options.TenantId.ShouldBe(Tenancy.DefaultTenantId);
+        options.TenantId.ShouldBe(JasperFx.StorageConstants.DefaultTenantId);
     }
 
     [Fact]

@@ -379,7 +379,7 @@ internal class ProjectionCoordinator : IProjectionCoordinator
 ///     ancillary store registrations in DI.
 /// </summary>
 internal sealed class ProjectionCoordinator<T> : ProjectionCoordinator, IProjectionCoordinator<T>
-    where T : IDocumentStore
+    where T : class, IDocumentStore
 {
     public ProjectionCoordinator(DocumentStore store, ILoggerFactory? loggerFactory = null)
         : base(store, loggerFactory)

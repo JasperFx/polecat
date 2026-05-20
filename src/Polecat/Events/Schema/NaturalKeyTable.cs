@@ -30,7 +30,7 @@ internal class NaturalKeyTable : Table
         // Tenancy support - tenant_id is part of PK so same natural key can exist in different tenants
         if (isConjoined)
         {
-            AddColumn("tenant_id", "varchar(250)").NotNull().AsPrimaryKey();
+            AddColumn(JasperFx.StorageConstants.TenantIdColumn, "varchar(250)").NotNull().AsPrimaryKey();
         }
 
         AddColumn("is_archived", "bit").NotNull().DefaultValue(0);

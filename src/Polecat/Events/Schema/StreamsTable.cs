@@ -15,7 +15,7 @@ internal class StreamsTable : Table
     {
         if (events.TenancyStyle == TenancyStyle.Conjoined)
         {
-            AddColumn("tenant_id", "varchar(250)").AsPrimaryKey().NotNull();
+            AddColumn(JasperFx.StorageConstants.TenantIdColumn, "varchar(250)").AsPrimaryKey().NotNull();
         }
 
         var idType = events.StreamIdentity == JasperFx.Events.StreamIdentity.AsGuid
@@ -37,9 +37,9 @@ internal class StreamsTable : Table
 
         if (events.TenancyStyle != TenancyStyle.Conjoined)
         {
-            AddColumn("tenant_id", "varchar(250)")
+            AddColumn(JasperFx.StorageConstants.TenantIdColumn, "varchar(250)")
                 .NotNull()
-                .DefaultValueByString(Tenancy.DefaultTenantId);
+                .DefaultValueByString(JasperFx.StorageConstants.DefaultTenantId);
         }
 
         AddColumn("is_archived", "bit").NotNull().DefaultValue(0);

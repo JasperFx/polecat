@@ -1,45 +1,22 @@
-using JasperFx.Events.Daemon;
-using Microsoft.Extensions.Hosting;
-
 namespace Polecat.Events.Daemon.Coordination;
 
 /// <summary>
-///     Coordinates the lifecycle of asynchronous projection and subscription daemons.
-///     Used by Wolverine's agent framework for distributed event processing.
+///     Polecat's projection coordinator marker. The canonical contract — member-for-member
+///     identical — lives in <see cref="JasperFx.Events.Daemon.IProjectionCoordinator"/>
+///     (lifted from Marten in the Critter Stack 2026 dedupe pass, jasperfx#214); this empty
+///     inheriting interface preserves source compatibility for the
+///     <c>Polecat.Events.Daemon.Coordination</c> namespace.
 /// </summary>
-public interface IProjectionCoordinator : IHostedService
+public interface IProjectionCoordinator : JasperFx.Events.Daemon.IProjectionCoordinator
 {
-    /// <summary>
-    ///     Get the projection daemon for the main database
-    /// </summary>
-    IProjectionDaemon DaemonForMainDatabase();
-
-    /// <summary>
-    ///     Get the projection daemon for a specific database by its identifier
-    /// </summary>
-    ValueTask<IProjectionDaemon> DaemonForDatabase(string databaseIdentifier);
-
-    /// <summary>
-    ///     Get all active projection daemons across all databases
-    /// </summary>
-    ValueTask<IReadOnlyList<IProjectionDaemon>> AllDaemonsAsync();
-
-    /// <summary>
-    ///     Stops the projection coordinator's automatic restart logic and stops all running agents
-    ///     across all daemons. Does not release any held locks.
-    /// </summary>
-    Task PauseAsync();
-
-    /// <summary>
-    ///     Resumes the projection coordinator's automatic restart logic and starts all running agents
-    ///     across all daemons. Intended to be used after <see cref="PauseAsync" />
-    /// </summary>
-    Task ResumeAsync();
 }
 
 /// <summary>
-///     Typed projection coordinator for use with specific document store types
+///     Typed projection coordinator marker for ancillary store registrations in DI.
+///     Inherits the lifted generic variant; the marker constraint is the shared
+///     <c>where T : class</c> (relaxed from Polecat's former <c>IDocumentStore</c>).
 /// </summary>
-public interface IProjectionCoordinator<T> : IProjectionCoordinator where T : IDocumentStore
+public interface IProjectionCoordinator<T> : IProjectionCoordinator, JasperFx.Events.Daemon.IProjectionCoordinator<T>
+    where T : class
 {
 }

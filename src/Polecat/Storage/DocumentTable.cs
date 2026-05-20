@@ -15,7 +15,7 @@ internal class DocumentTable : Table
     {
         if (mapping.TenancyStyle == TenancyStyle.Conjoined)
         {
-            AddColumn("tenant_id", "varchar(250)").AsPrimaryKey().NotNull();
+            AddColumn(JasperFx.StorageConstants.TenantIdColumn, "varchar(250)").AsPrimaryKey().NotNull();
         }
 
         var idColumnType = mapping.IdType == typeof(Guid) ? "uniqueidentifier"
@@ -60,9 +60,9 @@ internal class DocumentTable : Table
 
         if (mapping.TenancyStyle != TenancyStyle.Conjoined)
         {
-            AddColumn("tenant_id", "varchar(250)")
+            AddColumn(JasperFx.StorageConstants.TenantIdColumn, "varchar(250)")
                 .NotNull()
-                .DefaultValueByString(Tenancy.DefaultTenantId);
+                .DefaultValueByString(JasperFx.StorageConstants.DefaultTenantId);
         }
     }
 }

@@ -22,7 +22,7 @@ internal class EventTagTable : Table
         // Add tenant_id to PK for conjoined tenancy to enable tenant-scoped tag queries
         if (isConjoined)
         {
-            AddColumn("tenant_id", "varchar(250)").NotNull().AsPrimaryKey();
+            AddColumn(JasperFx.StorageConstants.TenantIdColumn, "varchar(250)").NotNull().AsPrimaryKey();
         }
 
         AddColumn("seq_id", "bigint").NotNull().AsPrimaryKey();

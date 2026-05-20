@@ -188,7 +188,7 @@ public partial class DocumentStore
         wrapped.Sequence = record.Sequence;
         wrapped.Version = record.StreamVersion;
         wrapped.Timestamp = record.Timestamp;
-        wrapped.TenantId = record.TenantId ?? Tenancy.DefaultTenantId;
+        wrapped.TenantId = record.TenantId ?? JasperFx.StorageConstants.DefaultTenantId;
         wrapped.EventTypeName = record.EventTypeName;
         wrapped.DotNetTypeName = clrType.AssemblyQualifiedName ?? clrType.FullName!;
 

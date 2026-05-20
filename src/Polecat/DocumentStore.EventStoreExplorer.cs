@@ -49,7 +49,7 @@ public partial class DocumentStore
         await using var reader = await cmd.ExecuteReaderAsync(ct);
         while (await reader.ReadAsync(ct))
         {
-            results.Add(PcStreamsRowReader.ReadStreamSummary(reader, Tenancy.DefaultTenantId));
+            results.Add(PcStreamsRowReader.ReadStreamSummary(reader, JasperFx.StorageConstants.DefaultTenantId));
         }
 
         return results;
@@ -88,7 +88,7 @@ public partial class DocumentStore
             Events,
             Options.Serializer,
             resolvedStreamId,
-            defaultTenantId: Tenancy.DefaultTenantId);
+            defaultTenantId: JasperFx.StorageConstants.DefaultTenantId);
 
         // Per-batch hoist: optional-metadata column ordinals computed once.
         // Explorer path doesn't need EventTypeCache (no EventMappingFor call).
@@ -137,7 +137,7 @@ public partial class DocumentStore
             ? (DateTimeOffset?)null
             : reader.GetFieldValue<DateTimeOffset>(7);
 
-        return PcStreamsRowReader.ReadStreamMetadata(reader, Tenancy.DefaultTenantId, firstEventAt);
+        return PcStreamsRowReader.ReadStreamMetadata(reader, JasperFx.StorageConstants.DefaultTenantId, firstEventAt);
     }
 
     IAsyncEnumerable<EventRecord> IEventStore.QueryByTagsAsync(
