@@ -1,4 +1,5 @@
 using System.Linq.Expressions;
+using JasperFx.Events;
 using Polecat.Internal;
 
 namespace Polecat.Patching;

@@ -17,3 +17,5 @@ global using IdentityAttribute = JasperFx.IdentityAttribute;
 global using ISoftDeleted = JasperFx.Metadata.ISoftDeleted;
 global using IVersioned = JasperFx.Metadata.IVersioned;
 global using ITracked = JasperFx.Metadata.ITracked;
+//   #131 (jasperfx#331): IPatchExpression<T> (Marten superset) + RemoveAction -> JasperFx.Events
+global using RemoveAction = JasperFx.Events.RemoveAction;

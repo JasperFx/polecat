@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using JasperFx.Events;
 using Polecat.Internal;
 using Polecat.Serialization;
 using System.Linq.Expressions;
@@ -251,17 +252,50 @@ internal class PatchExpression<T> : IPatchExpression<T>
         return this;
     }
 
-    public IPatchExpression<T> Rename<TElement>(string oldName, Expression<Func<T, TElement>> expression)
+    public IPatchExpression<T> Rename(string oldName, Expression<Func<T, object>> expression)
     {
+        // Lifted IPatchExpression<T> (jasperfx#331) uses the object-shaped Rename;
+        // Polecat formerly exposed a generic Rename<TElement>. ToPath already unwraps
+        // the boxing Convert in Func<T, object>; we recover the real member type the
+        // same way to drive the scalar/complex JSON_MODIFY distinction.
         var newPath = ToPath(expression);
         var parts = newPath.Split('.');
-        var to = parts[^1];
         parts[^1] = FormatName(oldName);
         var oldPath = string.Join(".", parts);
 
-        var isScalarType = PatchOperation.IsScalarType(typeof(TElement));
+        var isScalarType = PatchOperation.IsScalarType(UnwrapMemberType(expression.Body));
         _actions.Add(PatchOperation.RenameProperty(oldPath, newPath, isScalarType));
         return this;
+    }
+
+    public IPatchExpression<T> AppendIfNotExists<TElement>(Expression<Func<T, IEnumerable<TElement>>> expression,
+        TElement element, Expression<Func<TElement, bool>> predicate)
+        => throw new NotSupportedException(
+            "Predicate-based AppendIfNotExists is not yet supported by Polecat's SQL Server JSON_MODIFY patch " +
+            "translation (the predicate would need to be translated into a JSON array search). Use the " +
+            "AppendIfNotExists(expression, element) overload instead.");
+
+    public IPatchExpression<T> InsertIfNotExists<TElement>(Expression<Func<T, IEnumerable<TElement>>> expression,
+        TElement element, Expression<Func<TElement, bool>> predicate, int? index = null)
+        => throw new NotSupportedException(
+            "Predicate-based InsertIfNotExists is not yet supported by Polecat's SQL Server JSON_MODIFY patch " +
+            "translation (the predicate would need to be translated into a JSON array search). Use the " +
+            "InsertIfNotExists(expression, element, index) overload instead.");
+
+    public IPatchExpression<T> Remove<TElement>(Expression<Func<T, IEnumerable<TElement>>> expression,
+        Expression<Func<TElement, bool>> predicate, RemoveAction action = RemoveAction.RemoveFirst)
+        => throw new NotSupportedException(
+            "Predicate-based Remove is not yet supported by Polecat's SQL Server JSON_MODIFY patch translation " +
+            "(the predicate would need to be translated into a JSON array search). Use the " +
+            "Remove(expression, element, action) overload instead.");
+
+    private static Type UnwrapMemberType(Expression body)
+    {
+        while (body is UnaryExpression { NodeType: ExpressionType.Convert } unary)
+        {
+            body = unary.Operand;
+        }
+        return body.Type;
     }
 
     public IPatchExpression<T> Delete(string name)
