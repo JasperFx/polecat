@@ -131,6 +131,39 @@ public class dcb_tag_query_and_consistency_tests : IntegrationContext
     }
 
     [Fact]
+    public async Task can_query_events_across_distinct_tag_types_with_or()
+    {
+        // The core DCB boundary case: events on different streams carry DIFFERENT single tags, and the
+        // query OR-combines distinct tag types. Each matching event carries only one of the queried tag
+        // types — a regression guard against the INNER JOIN bug that required every event to carry all
+        // queried tag types (which collapsed this query to zero rows).
+        var studentId = new StudentId(Guid.NewGuid());
+        var courseId = new CourseId(Guid.NewGuid());
+
+        // Tagged with ONLY the student
+        var enrolled = theSession.Events.BuildEvent(new StudentEnrolled("Alice", "Math"));
+        enrolled.WithTag(studentId);
+        theSession.Events.Append(Guid.NewGuid(), enrolled);
+
+        // Tagged with ONLY the course
+        var submitted = theSession.Events.BuildEvent(new AssignmentSubmitted("HW1", 95));
+        submitted.WithTag(courseId);
+        theSession.Events.Append(Guid.NewGuid(), submitted);
+
+        await theSession.SaveChangesAsync();
+
+        await using var session2 = theStore.LightweightSession();
+        var query = new EventTagQuery()
+            .Or<StudentId>(studentId)
+            .Or<CourseId>(courseId);
+
+        var events = await session2.Events.QueryByTagsAsync(query);
+        events.Count.ShouldBe(2);
+        events.ShouldContain(e => e.Data is StudentEnrolled);
+        events.ShouldContain(e => e.Data is AssignmentSubmitted);
+    }
+
+    [Fact]
     public async Task can_query_events_by_tag_with_event_type_filter()
     {
         var studentId = new StudentId(Guid.NewGuid());

@@ -868,7 +868,11 @@ internal class EventOperations : QueryEventStore, IEventOperations
         var sb = new StringBuilder();
         sb.Append($"SELECT {selectColumns} FROM [{schema}].[pc_events] e");
 
-        // INNER JOINs to tag tables
+        // LEFT JOINs to tag tables. The WHERE clause OR-combines the per-condition tag predicates,
+        // so an event that carries only one of several queried tag types (the normal DCB case where
+        // different streams emit differently-tagged events) must still be returned. An INNER JOIN to
+        // every distinct tag table would instead require each event to carry *all* queried tag types,
+        // collapsing any cross-tag-type OR query to zero rows.
         for (var i = 0; i < distinctTagTypes.Count; i++)
         {
             var tagType = distinctTagTypes[i];
@@ -876,7 +880,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
                                ?? throw new InvalidOperationException(
                                    $"Tag type '{tagType.Name}' is not registered.");
 
-            sb.Append($" INNER JOIN [{schema}].[pc_event_tag_{registration.TableSuffix}] t{i} ON e.seq_id = t{i}.seq_id");
+            sb.Append($" LEFT JOIN [{schema}].[pc_event_tag_{registration.TableSuffix}] t{i} ON e.seq_id = t{i}.seq_id");
         }
 
         // WHERE clause
@@ -1058,6 +1062,10 @@ internal class EventOperations : QueryEventStore, IEventOperations
 
         builder.Append($"SELECT {selectColumns} FROM [{schema}].[pc_events] e");
 
+        // LEFT JOIN (not INNER) so an event carrying only one of several queried tag types still
+        // matches the OR'd WHERE clause below. INNER JOIN would require each event to carry *all*
+        // queried tag types, collapsing any cross-tag-type OR query (the normal DCB boundary case)
+        // to zero rows.
         for (var i = 0; i < distinctTagTypes.Count; i++)
         {
             var tagType = distinctTagTypes[i];
@@ -1065,7 +1073,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
                                ?? throw new InvalidOperationException(
                                    $"Tag type '{tagType.Name}' is not registered.");
 
-            builder.Append($" INNER JOIN [{schema}].[pc_event_tag_{registration.TableSuffix}] t{i} ON e.seq_id = t{i}.seq_id");
+            builder.Append($" LEFT JOIN [{schema}].[pc_event_tag_{registration.TableSuffix}] t{i} ON e.seq_id = t{i}.seq_id");
         }
 
         builder.Append(" WHERE (");
