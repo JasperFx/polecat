@@ -27,7 +27,12 @@ internal class DocumentTable : Table
 
         AddColumn("data", mapping.JsonColumnType).NotNull();
 
-        AddColumn("version", "int").NotNull().DefaultValue(1);
+        // Always bigint (Decision D2): natively carries ILongVersioned (long) revisions, with
+        // IRevisioned (int) values fitting and downcast on read. No default constraint — every
+        // write sets version explicitly (INSERT => 1, UPDATE => version + 1), and a default would
+        // both be dead weight and block the in-place int->bigint widening of pre-D2 tables
+        // (handled in DocumentTableEnsurer.WidenVersionColumnIfNeededAsync).
+        AddColumn("version", "bigint").NotNull();
 
         AddColumn("last_modified", "datetimeoffset")
             .NotNull()

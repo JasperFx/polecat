@@ -62,9 +62,17 @@ internal class DeserializingSelector<T> where T : class
             doc = _serializer.FromJson<T>(json);
         }
 
-        if (_syncRevision && doc is IRevisioned revisioned)
+        if (_syncRevision)
         {
-            revisioned.Version = reader.GetInt32(1); // version column at index 1
+            var version = reader.GetInt64(1); // version column at index 1
+            if (doc is ILongVersioned longVersioned)
+            {
+                longVersioned.Version = version;
+            }
+            else if (doc is IRevisioned revisioned)
+            {
+                revisioned.Version = (int)version;
+            }
         }
 
         if (_syncGuidVersion && doc is IVersioned versioned)

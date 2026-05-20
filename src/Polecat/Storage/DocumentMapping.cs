@@ -82,7 +82,7 @@ internal class DocumentMapping
             DeleteStyle = DeleteStyle.SoftDelete;
         }
 
-        // Detect optimistic concurrency: IVersioned (Guid) or IRevisioned (int)
+        // Detect optimistic concurrency: IVersioned (Guid), IRevisioned (int), or ILongVersioned (long)
         if (typeof(IVersioned).IsAssignableFrom(documentType))
         {
             UseOptimisticConcurrency = true;
@@ -90,6 +90,11 @@ internal class DocumentMapping
         else if (typeof(IRevisioned).IsAssignableFrom(documentType))
         {
             UseNumericRevisions = true;
+        }
+        else if (typeof(ILongVersioned).IsAssignableFrom(documentType))
+        {
+            UseNumericRevisions = true;
+            UseLongRevisions = true;
         }
     }
 
@@ -129,9 +134,16 @@ internal class DocumentMapping
     public bool UseOptimisticConcurrency { get; }
 
     /// <summary>
-    ///     When true, uses int-based numeric revision tracking (IRevisioned interface).
+    ///     When true, uses numeric revision tracking (IRevisioned int or ILongVersioned long interface).
     /// </summary>
     public bool UseNumericRevisions { get; }
+
+    /// <summary>
+    ///     When true, the numeric revision is tracked as a 64-bit long (ILongVersioned) rather than a
+    ///     32-bit int (IRevisioned). Only meaningful when <see cref="UseNumericRevisions" /> is true.
+    ///     Recommended for MultiStreamProjection-derived views where Version is the global event sequence.
+    /// </summary>
+    public bool UseLongRevisions { get; }
 
     /// <summary>
     ///     Registered subclass types for this document hierarchy.

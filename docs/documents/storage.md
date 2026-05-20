@@ -35,7 +35,7 @@ Depending on configuration, additional columns may be present:
 | `is_deleted` | `bit` | Soft deletes enabled |
 | `deleted_at` | `datetimeoffset` | Soft deletes enabled |
 | `guid_version` | `uniqueidentifier` | `IVersioned` interface |
-| `version` | `int` | `IRevisioned` interface |
+| `version` | `bigint` | Revision counter (`IRevisioned` int / `ILongVersioned` long) |
 | `correlation_id` | `nvarchar(250)` | Metadata tracking |
 | `causation_id` | `nvarchar(250)` | Metadata tracking |
 

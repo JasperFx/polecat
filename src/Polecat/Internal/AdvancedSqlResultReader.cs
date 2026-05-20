@@ -156,8 +156,19 @@ internal class DocumentReader : AdvancedSqlResultReader
     {
         var fieldCount = reader.FieldCount;
 
-        // Try to sync version if the document implements IRevisioned and there's a 3rd column
-        if (startColumn + 2 < fieldCount && doc is IRevisioned revisioned)
+        // Try to sync version if the document implements ILongVersioned (long) and there's a 3rd column
+        if (startColumn + 2 < fieldCount && doc is ILongVersioned longVersioned)
+        {
+            try
+            {
+                var val = reader.GetValue(startColumn + 2);
+                if (val is long lv) longVersioned.Version = lv;
+                else if (val is int iv) longVersioned.Version = iv;
+            }
+            catch { /* column type mismatch, skip */ }
+        }
+        // Try to sync version if the document implements IRevisioned (int) and there's a 3rd column
+        else if (startColumn + 2 < fieldCount && doc is IRevisioned revisioned)
         {
             try
             {

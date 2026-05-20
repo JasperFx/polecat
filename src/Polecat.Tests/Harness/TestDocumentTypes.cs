@@ -160,6 +160,18 @@ public class RevisionedDoc : IRevisioned
 }
 
 /// <summary>
+///     Document with long-based revision tracking via ILongVersioned. Recommended for
+///     MultiStreamProjection-derived views where Version is the global event sequence number,
+///     which can exceed Int32.MaxValue.
+/// </summary>
+public class LongVersionedDoc : ILongVersioned
+{
+    public Guid Id { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public long Version { get; set; }
+}
+
+/// <summary>
 ///     Document with Guid-based optimistic concurrency via IVersioned.
 /// </summary>
 public class VersionedDoc : IVersioned
