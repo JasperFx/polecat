@@ -73,6 +73,58 @@ Then aggregate across streams by tag query:
 
 Returns `null` if no matching events are found.
 
+### Identity-less Boundary Aggregates
+
+The `StudentCourseEnrollment` aggregate above carries an `Id` property, so Polecat's source generator emits its evolver automatically and no extra annotation is needed.
+
+Some DCB aggregates, though, are *pure boundary aggregates*: they span streams only by tag and have **no single-stream identity** -- no `Id` property and no `[AggregateIdentity]`. For these, mark the aggregate type with `[BoundaryAggregate]` (from `JasperFx.Events.Aggregation`) so the source generator emits an evolver for it:
+
+```csharp
+using JasperFx.Events.Aggregation;
+
+[BoundaryAggregate]
+public partial class CourseEnrollmentSummary
+{
+    public int EnrolledCount { get; private set; }
+    public List<string> Students { get; } = new();
+
+    public void Apply(StudentEnrolled e)
+    {
+        Students.Add(e.StudentName);
+        EnrolledCount++;
+    }
+
+    public void Apply(StudentDropped e)
+    {
+        EnrolledCount--;
+    }
+}
+```
+
+Register it exactly like any other DCB aggregate -- the registration API is unchanged:
+
+```csharp
+opts.Events.RegisterTagType<CourseId>("course")
+    .ForAggregate<CourseEnrollmentSummary>();
+```
+
+**Why the marker is required.** Without a single-stream identity the source generator can't infer a `TId`, so it *intentionally* emits nothing. A bare no-`Id` aggregate is far more often a forgotten `Id` property than a deliberate boundary aggregate, and silently generating an evolver would mask that mistake -- so `[BoundaryAggregate]` is the explicit opt-in. Without it, the DCB fetch/aggregate path fails fast at runtime:
+
+```
+InvalidProjectionException: No source-generated dispatcher found
+for SingleStreamProjection<CourseEnrollmentSummary, string>
+```
+
+(The `string` type argument is vestigial -- it matches the `SingleStreamProjection<T, string>` the DCB aggregator builds and is never used by boundary-aggregate dispatch.)
+
+**Placement.** Put `[BoundaryAggregate]` on the aggregate type itself, and keep the type `partial` so the generator can attach the emitted dispatcher. The attribute must sit on the type **in its own defining assembly** -- that is the compilation the generator emits the `[assembly: GeneratedEvolver]` into, and it is the assembly the runtime scans (`typeof(T).Assembly`) when resolving the evolver.
+
+**Aggregates with an `Id` need no marker** and keep working unchanged -- `[BoundaryAggregate]` is only for the identity-less case.
+
+::: tip
+`[BoundaryAggregate]` requires JasperFx.Events 2.0.0-alpha.21 / JasperFx.Events.SourceGenerator 2.0.0-alpha.13 or later. The marker is a JasperFx.Events source-generator concern, so its behavior is backend-agnostic -- it works identically across the Critter Stack event stores; only the surrounding `RegisterTagType<...>().ForAggregate<T>()` registration is Polecat's SQL Server-backed API.
+:::
+
 ## Fetch for Writing (Consistency Boundary)
 
 `FetchForWritingByTags` loads the aggregate and establishes a consistency boundary. At `SaveChangesAsync` time, Polecat checks whether any new events matching the query have been appended since the read, throwing `DcbConcurrencyException` if so:
