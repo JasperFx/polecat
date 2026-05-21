@@ -2,23 +2,23 @@
 
 ## Key Changes in 4.0.0
 
-Polecat 4.0 ships in lockstep with [Marten 9.0](https://martendb.io) and [JasperFx 2.0](https://github.com/JasperFx/jasperfx/issues/215) as part of the [Critter Stack 2026](https://github.com/JasperFx/jasperfx/issues/217) release wave. The 4.0 line builds on the same JasperFx 2.0 / JasperFx.Events 2.0 / Weasel 9.0 alphas that Marten 9 consumes — this is the consolidation cycle, not a rewrite. Most upgrades are pin bumps; the breaking surface is small and localized.
+Polecat 4.0 ships in lockstep with [Marten 9.0](https://martendb.io) and [JasperFx 2.0](https://github.com/JasperFx/jasperfx/issues/215) as part of the [Critter Stack 2026](https://github.com/JasperFx/jasperfx/issues/217) release wave. The 4.0 line builds on the same JasperFx 2.0 / JasperFx.Events 2.0 / Weasel 9.0 release-candidate matrix that Marten 9 consumes — this is the consolidation cycle, not a rewrite. Most upgrades are pin bumps; the breaking surface is small and localized, and the bulk of the rc-line dedup work is source-compatible for typical applications (see [rc dedup-wave relocations](#rc-dedup-wave-relocations)).
 
 ### Foundation pin bumps
 
-Polecat 4 consumes the 2026-wave alpha line for the shared substrate. Update your `Directory.Packages.props` (or the equivalent in your csproj):
+Polecat 4 consumes the 2026-wave release-candidate line for the shared substrate. Update your `Directory.Packages.props` (or the equivalent in your csproj):
 
-| Package | 3.x | 4.0 (current alpha) |
+| Package | 3.x | 4.0 (current rc) |
 |---|---|---|
-| `JasperFx` | `1.31.0` | `2.0.0-alpha.16` |
-| `JasperFx.Events` | `1.36.0` | `2.0.0-alpha.15` |
-| `JasperFx.Events.SourceGenerator` | `1.4.0` | `2.0.0-alpha.8` |
-| `JasperFx.RuntimeCompiler` *(transitive, but pin centrally for matrix coherence)* | *(no equivalent)* | `5.0.0-alpha.4` |
-| `JasperFx.SourceGeneration` *(transitive, but pin centrally)* | *(no equivalent)* | `2.0.0-alpha.5` |
-| `Weasel.SqlServer` | `8.15.2` | `9.0.0-alpha.5` |
-| `Weasel.EntityFrameworkCore` | `8.15.2` | `9.0.0-alpha.5` |
+| `JasperFx` | `1.31.0` | `2.0.0-rc.3` |
+| `JasperFx.Events` | `1.36.0` | `2.0.0-rc.3` |
+| `JasperFx.Events.SourceGenerator` | `1.4.0` | `2.0.0-rc.3` |
+| `JasperFx.RuntimeCompiler` *(transitive, but pin centrally for matrix coherence)* | *(no equivalent)* | `5.0.0-rc.3` |
+| `JasperFx.SourceGeneration` *(transitive, but pin centrally)* | *(no equivalent)* | `2.0.0-rc.3` |
+| `Weasel.SqlServer` | `8.15.2` | `9.0.0-alpha.8` |
+| `Weasel.EntityFrameworkCore` | `8.15.2` | `9.0.0-alpha.8` |
 
-The alpha line is still rolling forward as the 2026 wave converges; the table above reflects the current Polecat 4 pins (matched against the same set Marten 9.0.0-alpha.\* consumes). Expect another tick or two before 4.0 GA — keep one set of bumps in your renovate/dependabot config and pin all seven packages together.
+Polecat 4 itself is at `4.0.0-rc.2` (the consolidation wave converged through an alpha series into the rc line). The five `JasperFx.*` packages move as a matrix and must be pinned to the **same** rc together; the two `Weasel.*` packages share their own version and currently trail one wave behind on `alpha.8` (the rc.3 line resolves cleanly against them). Keep all seven in one renovate/dependabot group. Expect a final tick to the matched `9.0`/`2.0` GA set as the 2026 wave closes out.
 
 ::: warning
 Pin the **`5.x` line** of `JasperFx.RuntimeCompiler` — that's the active continuation of the 4.x lineage. A parallel `2.0.x` series exists on NuGet but is **stale**; don't pin against it.
@@ -87,6 +87,62 @@ catch (JasperFx.MultiTenancy.UnknownTenantIdException ex)
     var id = ex.TenantId;
 }
 ```
+
+### rc dedup-wave relocations
+
+The rc.1 → rc.3 cycle finished the [Critter Stack 2026 dedup pillar](https://github.com/JasperFx/jasperfx/issues/214): a batch of types that Polecat and Marten each declared in parallel were consolidated into the canonical JasperFx / Weasel homes ([Polecat #125–#141](https://github.com/JasperFx/polecat/issues/46)). The values, members, and ordinals are unchanged — only the namespace moved.
+
+Inside Polecat the old unqualified names keep resolving (the assembly carries `global using` aliases / empty inheriting interfaces), so the framework's own API surface is unaffected. **The break, if any, is in your code**: if you referenced one of these types by its old `Polecat.*` name — most often by implementing a marker interface on a document class, or by a fully-qualified `catch` / config reference — update the `using` directive (or the fully-qualified name) to the new home.
+
+| Old name (Polecat 3.x / early 4.0) | New canonical home | PR |
+|---|---|---|
+| `TenancyStyle` *(inline in `StoreOptions`)* | `JasperFx.MultiTenancy.TenancyStyle` | [#127](https://github.com/JasperFx/polecat/issues/127) |
+| `Polecat.Metadata.DeleteStyle` | `JasperFx.DeleteStyle` | [#127](https://github.com/JasperFx/polecat/issues/127) |
+| `Polecat.Events.Dcb.DcbConcurrencyException` | `JasperFx.Events.DcbConcurrencyException` | [#128](https://github.com/JasperFx/polecat/issues/128) |
+| `Polecat.Exceptions.ProgressionProgressOutOfOrderException` | `JasperFx.Events.Daemon.ProgressionProgressOutOfOrderException` | [#128](https://github.com/JasperFx/polecat/issues/128) |
+| `Polecat.Metadata.ISoftDeleted` | `JasperFx.Metadata.ISoftDeleted` | [#130](https://github.com/JasperFx/polecat/issues/130) |
+| `Polecat.Metadata.IVersioned` | `JasperFx.Metadata.IVersioned` | [#130](https://github.com/JasperFx/polecat/issues/130) |
+| `Polecat.Metadata.ITracked` ⚠️ | `JasperFx.Metadata.ITracked` *(non-nullable members — see below)* | [#130](https://github.com/JasperFx/polecat/issues/130) |
+| `Polecat.Patching.RemoveAction` | `JasperFx.Events.RemoveAction` | [#131](https://github.com/JasperFx/polecat/issues/131) |
+| `Polecat.Patching.IPatchExpression<T>` ⚠️ | `JasperFx.Events.IPatchExpression<T>` *(predicate overloads — see below)* | [#131](https://github.com/JasperFx/polecat/issues/131) |
+| `Polecat.Internal.OpenTelemetry.TrackLevel` | `JasperFx.OpenTelemetry.TrackLevel` | [#132](https://github.com/JasperFx/polecat/issues/132) |
+| `Polecat.Attributes.IdentityAttribute` *(document `[Identity]` — marks a non-`Id` identity member on a plain document)* | `JasperFx.IdentityAttribute` | [#135](https://github.com/JasperFx/polecat/issues/135) |
+| `Polecat.Schema.Identity.Sequences.{ISequence, HiloSettings, IReadOnlyHiloSettings}` | `Weasel.Core.Sequences.*` | [#137](https://github.com/JasperFx/polecat/issues/137) |
+| `Polecat.Serialization.{Casing, CollectionStorage, NonPublicMembersStorage, EnumStorage}` | `Weasel.Core.*` | [#137](https://github.com/JasperFx/polecat/issues/137) |
+| `Polecat.Exceptions.DocumentAlreadyExistsException` ⚠️ | `JasperFx.DocumentAlreadyExistsException` *(message text — see below)* | [#140](https://github.com/JasperFx/polecat/issues/140) |
+
+The two you are most likely to touch directly are the **document marker interfaces** (`ISoftDeleted` / `IVersioned` / `ITracked` — you implement these on your own document classes) and the **serialization-config enums** (`Casing` / `CollectionStorage` / `NonPublicMembersStorage` / `EnumStorage`, set via `StoreOptions`). Both just need their `using` swapped:
+
+```csharp
+// before (Polecat 3.x)
+using Polecat.Metadata;
+public class Invoice : ISoftDeleted { /* ... */ }
+
+// after (Polecat 4.0)
+using JasperFx.Metadata;
+public class Invoice : ISoftDeleted { /* ... */ }
+```
+
+Three of the relocations carry a behavior change beyond the namespace move:
+
+#### `ITracked` members are now non-nullable
+
+[#130](https://github.com/JasperFx/polecat/issues/130). The lifted `JasperFx.Metadata.ITracked` declares `CorrelationId` / `CausationId` / `LastModifiedBy` as non-nullable `string` (Marten's canonical shape); Polecat's old interface declared them `string?`. If your document class declared those members nullable to match the old interface, the compiler now warns (`CS8766`) that the nullability doesn't line up with the interface. Drop the `?` (and add a default) on the implementing class — the session always copies non-null values onto them:
+
+```csharp
+// before
+public string? CorrelationId { get; set; }
+// after
+public string CorrelationId { get; set; } = string.Empty;
+```
+
+#### `IPatchExpression<T>` predicate overloads throw on SQL Server
+
+[#131](https://github.com/JasperFx/polecat/issues/131). Polecat adopted Marten's superset `IPatchExpression<T>`, which adds predicate-based overloads — `AppendIfNotExists(expr, element, predicate)`, `InsertIfNotExists(expr, element, predicate, index)`, `Remove(expr, predicate, action)` — and the object-shaped `Rename(string, Expression<Func<T, object>>)` (replacing Polecat's generic `Rename<TElement>`). The predicate variants require translating the predicate into a JSON-array search, which Polecat's `JSON_MODIFY` patch translation does not implement yet, so **they throw `NotSupportedException`** with a message pointing at the supported non-predicate overload. The element/key/index overloads you were already using are unchanged; only the new predicate forms are unimplemented.
+
+#### `DocumentAlreadyExistsException` message text changed
+
+[#140](https://github.com/JasperFx/polecat/issues/140). The lifted `JasperFx.DocumentAlreadyExistsException` keeps Polecat's `DocumentType` (Type) and `Id` properties and the `(Type, object)` ctor, so the duplicate-key `catch` path is a near-no-op rebind. But the thrown **`Message`** now uses Marten's FullName-based format — `"Document already exists {FullName}: {id}"` (was `"A document of type '{Name}' with id '{id}' already exists."`). If you assert on or parse `.Message`, update the expectation; assertions on `.DocumentType` / `.Id` are unaffected.
 
 ### Event-sourcing API changes
 
@@ -312,6 +368,38 @@ The concurrency throw is **best-effort, not transactional.** Matched-and-updated
 
 [#49](https://github.com/JasperFx/polecat/pull/49) (Weasel side: `99e40f0 fix(SqlServer): preserve user casing on TableColumn names`, shipped as Weasel 9.0.0-alpha.2). `TableColumn` names declared on a `FlatTableProjection` now preserve the casing you wrote in code; pre-fix the projection was silently lower-casing column names, breaking case-sensitive collations. No user action required — the projection schema is regenerated on next migration.
 
+#### `ILongVersioned` — 64-bit document revisions
+
+[#136](https://github.com/JasperFx/polecat/issues/136) / [#138](https://github.com/JasperFx/polecat/issues/138) (consumes [jasperfx#348](https://github.com/JasperFx/jasperfx/issues/348)). Polecat already supported `JasperFx.IRevisioned` (an `int Version` optimistic-concurrency counter). 4.0 adds the new `JasperFx.ILongVersioned` (`long Version`) for documents whose version is a global event sequence number that can exceed `Int32.MaxValue` — typically `MultiStreamProjection`-derived views. Implement `ILongVersioned` instead of `IRevisioned` on those document types; the store, concurrency check, and read-back all flow the 64-bit value end to end. `IRevisioned` (int) keeps working unchanged for ordinary per-document revision counters.
+
+This required a one-time **schema change** — see below.
+
+#### `StoreOptions.SchemaResolver` — table-name diagnostics surface
+
+[#133](https://github.com/JasperFx/polecat/issues/133) (implements the lifted `JasperFx.Events.IDocumentSchemaResolver`). A new `StoreOptions.SchemaResolver` resolves the database table backing any document, projection, or event-store table — qualified (`[schema].[table]`) or bare. Useful for schema inspection, diagnostics, and projection-coordinator activity tags:
+
+```csharp
+var resolver = store.Options.SchemaResolver;
+resolver.For<Customer>();          // "[dbo].[pc_doc_customer]"
+resolver.ForEvents(qualified: false); // "pc_events"
+```
+
+(Named `SchemaResolver` rather than `Schema` because `StoreOptions.Schema` is already Polecat's `SchemaConfiguration`.)
+
+#### Projection-emitted side-effect messages
+
+[#84](https://github.com/JasperFx/polecat/issues/84) / [#98](https://github.com/JasperFx/polecat/pull/98) / [#100](https://github.com/JasperFx/polecat/pull/100). Aggregation projections can now publish side-effect messages through an `IMessageOutbox` / `IMessageBatch`, flushed in the same transaction as the projection's storage writes. This is the foundation for Wolverine integration where a projection raises follow-on messages. Inline projections gained the same side-effect support in [#99](https://github.com/JasperFx/polecat/issues/99) / [#101](https://github.com/JasperFx/polecat/pull/101).
+
+#### Hot-cold async-daemon coordination
+
+[#96](https://github.com/JasperFx/polecat/pull/96), refined through the rc wave ([#117](https://github.com/JasperFx/polecat/issues/117)–[#120](https://github.com/JasperFx/polecat/pull/120), [#126](https://github.com/JasperFx/polecat/issues/126), [#141](https://github.com/JasperFx/polecat/issues/141)). The async daemon now coordinates across nodes: a `ProjectionCoordinator` (built on the lifted `JasperFx.Events.Daemon.ProjectionCoordinatorBase`) negotiates per-shard / per-database leadership via SQL Server `sp_getapplock` (through `Weasel.SqlServer.AdvisoryLock`), so multiple instances of your app run each projection on exactly one node with automatic failover. No configuration change is required for single-node deployments; multi-node deployments get safe hot-cold handover for free. When the daemon is disabled (`DaemonMode.Disabled`, the default), no coordinator distributor is built at all.
+
+### Schema changes
+
+Unlike the 3.x → early-4.0 transition (which touched no table shapes), the `ILongVersioned` work introduced one DDL change:
+
+- **Revision column widened `int` → `bigint`.** [#136](https://github.com/JasperFx/polecat/issues/136). The `version` column on document tables (`pc_doc_*`) is now `bigint` to hold 64-bit `ILongVersioned` values. `IRevisioned` (int) reads downcast transparently. The change ships as a **non-destructive widening migration** — existing `int` columns are `ALTER`ed in place (no drop/recreate, no data loss) on the next schema migration. Run your normal `ApplyAllConfiguredChangesToDatabaseAsync()` / migration step after upgrading; no manual SQL is required.
+
 ### AOT / codegen posture
 
 Polecat 4 inherits the same AOT-friendly posture introduced in JasperFx 2.0 ([jasperfx#213](https://github.com/JasperFx/jasperfx/issues/213) AOT pillar, jasperfx#190 `ITypeLoader` abstraction). Polecat itself has been source-generator-first since 3.x — there is no Roslyn runtime-compile path to disable — so:
@@ -340,7 +428,7 @@ Polecat-specific call-outs:
 ### Out of scope (no Polecat 4 change)
 
 - **Obsolete API removals.** A grep of the 3.x codebase for `[Obsolete]` declarations returned no matches; the 4.0 release does not remove any APIs that were obsoleted in 3.x.
-- **Schema migrations.** No `pc_*` table shape changes between 3.x and 4.0. The same database that ran against 3.x continues to work against 4.0 without DDL changes.
+- **Schema migrations.** The only `pc_*` table-shape change in the whole 3.x → 4.0 line is the document `version` column widening to `bigint` — covered in [Schema changes](#schema-changes) above, applied non-destructively by the normal migration step. Everything else (event store, streams, tags, hilo, snapshots) is unchanged; a 3.x database upgrades in place.
 
 ### Dependency lockstep
 
