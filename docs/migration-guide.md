@@ -230,10 +230,10 @@ public partial class Quest
 }
 ```
 
-Aggregate identity discovery follows the same convention rule as Marten — by default, the SG looks for a property literally named `Id` (or `<TypeName>Id`). If your aggregate's identity uses a different member name, annotate it with `[Identity]` from `JasperFx.Events`:
+Aggregate identity discovery follows the same convention rule as Marten — by default, the SG looks for a property literally named `Id` (or `<TypeName>Id`). If your aggregate's identity uses a different member name, annotate that member with `[Identity]` from **`JasperFx`** (the same `JasperFx.IdentityAttribute` Polecat uses for document identity — see the [rc dedup-wave relocations](#rc-dedup-wave-relocations) table; it moved out of `Polecat.Attributes` in [#135](https://github.com/JasperFx/polecat/issues/135)):
 
 ```csharp
-using JasperFx.Events;
+using JasperFx;   // JasperFx.IdentityAttribute — NOT JasperFx.Events
 
 public partial class Quest
 {
@@ -244,6 +244,8 @@ public partial class Quest
     public void Apply(MembersJoined e) { /* ... */ }
 }
 ```
+
+The source generator matches the identity attribute by simple name, so any attribute named `IdentityAttribute` works — but `JasperFx.IdentityAttribute` is the canonical one. As an alternative to a member-level `[Identity]`, you can declare the identity type explicitly at the class level with `[AggregateIdentity(typeof(TId))]` from `JasperFx.Events.Aggregation` — useful when the identity is a strong-typed id or isn't a simple property.
 
 For aggregates with `required` members, the SG's null-snapshot "create-from-default + apply" branch can't `new T()` directly — `required` members would leave the compiler complaining. Either provide a static `Create(TEvent e)` factory (preferred — gives full control) or use the `default!` init-pattern Marten's guide documents:
 
