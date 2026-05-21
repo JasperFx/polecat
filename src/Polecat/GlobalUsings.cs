@@ -12,6 +12,8 @@
 global using TenancyStyle = JasperFx.MultiTenancy.TenancyStyle;
 global using DeleteStyle = JasperFx.DeleteStyle;
 global using DcbConcurrencyException = JasperFx.Events.DcbConcurrencyException;
+//   #140 (jasperfx#338): DocumentAlreadyExistsException -> JasperFx (message format now FullName-based)
+global using DocumentAlreadyExistsException = JasperFx.DocumentAlreadyExistsException;
 global using ProgressionProgressOutOfOrderException = JasperFx.Events.Daemon.ProgressionProgressOutOfOrderException;
 global using IdentityAttribute = JasperFx.IdentityAttribute;
 global using ISoftDeleted = JasperFx.Metadata.ISoftDeleted;

@@ -99,7 +99,7 @@ internal class ProjectionCoordinator : ProjectionCoordinatorBase, IProjectionCoo
         return daemon;
     }
 
-    private static IProjectionDistributor BuildDistributor(DocumentStore store, ILoggerFactory loggerFactory)
+    private static IProjectionDistributor? BuildDistributor(DocumentStore store, ILoggerFactory loggerFactory)
     {
         // Mirrors Marten's pick: tenancy with multiple databases →
         // MultiTenantedProjectionDistributor; single-database tenancy →
@@ -113,6 +113,18 @@ internal class ProjectionCoordinator : ProjectionCoordinatorBase, IProjectionCoo
         // ProjectionSet factory / schema / base lock id) rather than
         // shipping its own near-identical concretes.
         var options = store.Options;
+
+        // Polecat#141 (jasperfx#352): nothing to coordinate when the async daemon
+        // is disabled, so don't build a distributor that would never be used. The
+        // lifted ProjectionCoordinatorBase now tolerates a null distributor — its
+        // ctor no longer throws, StartAsync no-ops, and StopAsync guards
+        // ReleaseAllLocks — so returning null here is the "nothing to coordinate"
+        // signal. Mirrors Marten's intended end state (marten#4537).
+        if (options.DaemonSettings.AsyncMode == DaemonMode.Disabled)
+        {
+            return null;
+        }
+
         var cardinality = options.Tenancy?.Cardinality ?? DatabaseCardinality.Single;
 
         // Shared closures — both branches need shard accessor + set factory
