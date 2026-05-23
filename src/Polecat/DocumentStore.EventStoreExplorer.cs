@@ -33,9 +33,10 @@ public partial class DocumentStore
 
         var results = new List<StreamSummary>(capacity: count);
 
-        await using var conn = new SqlConnection(Options.ConnectionString);
-        await conn.OpenAsync(ct);
-        await using var cmd = conn.CreateCommand();
+        // #148: run through a QuerySession so the command is covered by
+        // Options.ResiliencePipeline (Polly) like the rest of the read path.
+        await using var session = (Internal.QuerySession)QuerySession();
+        await using var cmd = new SqlCommand();
         // #57: share the column projection + row read with FetchStreamStateAsync
         // and GetStreamMetadataAsync via PcStreamsRowReader so all three sites
         // stay aligned when pc_streams' shape evolves.
@@ -46,7 +47,7 @@ public partial class DocumentStore
             """;
         cmd.Parameters.AddWithValue("@count", count);
 
-        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        await using var reader = await session.ExecuteReaderAsync(cmd, ct);
         while (await reader.ReadAsync(ct))
         {
             results.Add(PcStreamsRowReader.ReadStreamSummary(reader, JasperFx.StorageConstants.DefaultTenantId));
@@ -65,9 +66,11 @@ public partial class DocumentStore
             ? Guid.Parse(streamId)
             : streamId;
 
-        await using var conn = new SqlConnection(Options.ConnectionString);
-        await conn.OpenAsync(ct);
-        await using var cmd = conn.CreateCommand();
+        // #148: run through a QuerySession so the command is covered by
+        // Options.ResiliencePipeline (Polly). The session is kept alive for the
+        // duration of the enumeration via await using.
+        await using var session = (Internal.QuerySession)QuerySession();
+        await using var cmd = new SqlCommand();
 
         // #57 pc_events half: share the column projection + row hydration
         // with QueryEventStore.FetchStreamAsync via PcEventsRowReader. The
@@ -94,7 +97,7 @@ public partial class DocumentStore
         // Explorer path doesn't need EventTypeCache (no EventMappingFor call).
         var slots = MetadataSlots.Compute(Events.EventOptions);
 
-        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        await using var reader = await session.ExecuteReaderAsync(cmd, ct);
         while (await reader.ReadAsync(ct))
         {
             yield return PcEventsRowReader.ReadEventRecord(reader, ctx, slots);
@@ -110,9 +113,10 @@ public partial class DocumentStore
             ? Guid.Parse(streamId)
             : streamId;
 
-        await using var conn = new SqlConnection(Options.ConnectionString);
-        await conn.OpenAsync(ct);
-        await using var cmd = conn.CreateCommand();
+        // #148: run through a QuerySession so the command is covered by
+        // Options.ResiliencePipeline (Polly).
+        await using var session = (Internal.QuerySession)QuerySession();
+        await using var cmd = new SqlCommand();
         // #57: share the pc_streams column projection + row read with the
         // other two stream-reading sites via PcStreamsRowReader. The JOIN'd
         // first_event_at column is appended after the canonical projection
@@ -127,7 +131,7 @@ public partial class DocumentStore
             """;
         cmd.Parameters.AddWithValue("@id", resolvedStreamId);
 
-        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        await using var reader = await session.ExecuteReaderAsync(cmd, ct);
         if (!await reader.ReadAsync(ct))
         {
             return null;
@@ -223,12 +227,13 @@ public partial class DocumentStore
         var progress = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
         long highWater = 0;
 
-        await using (var conn = new SqlConnection(Options.ConnectionString))
+        // #148: run through a QuerySession so the command is covered by
+        // Options.ResiliencePipeline (Polly).
+        await using (var session = (Internal.QuerySession)QuerySession())
         {
-            await conn.OpenAsync(ct);
-            await using var cmd = conn.CreateCommand();
+            await using var cmd = new SqlCommand();
             cmd.CommandText = $"SELECT name, last_seq_id FROM {Events.ProgressionTableName};";
-            await using var reader = await cmd.ExecuteReaderAsync(ct);
+            await using var reader = await session.ExecuteReaderAsync(cmd, ct);
             while (await reader.ReadAsync(ct))
             {
                 var name = reader.GetString(0);

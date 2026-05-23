@@ -78,21 +78,27 @@ internal class HiloSequence : HiloSequenceBase
 
     protected override void AdvanceToNextHiSync()
     {
-        using var conn = _connectionFactory.Create();
-        conn.Open();
-
-        EnsureHiloTableSync(conn);
-
-        for (var attempts = 0; attempts < Settings.MaxAdvanceToNextHiAttempts; attempts++)
+        // #148: the async AdvanceToNextHi wraps its work in the resilience
+        // pipeline; the synchronous path must do the same (via the pipeline's
+        // synchronous Execute) so all pc_hilo access is covered.
+        _resilience.Execute(() =>
         {
-            var result = TryGetNextHiSync(conn);
-            if (TrySetCurrentHi(result))
-            {
-                return;
-            }
-        }
+            using var conn = _connectionFactory.Create();
+            conn.Open();
 
-        throw new HiloSequenceAdvanceToNextHiAttemptsExceededException();
+            EnsureHiloTableSync(conn);
+
+            for (var attempts = 0; attempts < Settings.MaxAdvanceToNextHiAttempts; attempts++)
+            {
+                var result = TryGetNextHiSync(conn);
+                if (TrySetCurrentHi(result))
+                {
+                    return;
+                }
+            }
+
+            throw new HiloSequenceAdvanceToNextHiAttemptsExceededException();
+        });
     }
 
     private async Task EnsureHiloTableAsync(SqlConnection conn, CancellationToken ct)

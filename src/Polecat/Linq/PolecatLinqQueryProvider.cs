@@ -1131,47 +1131,57 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider
         {
             token.ThrowIfCancellationRequested();
 
-            // Use auto-closing connections for polling (independent of session lifetime)
-            await using var conn = new SqlConnection(options.ConnectionString);
-            await conn.OpenAsync(token);
-
-            // Get high water mark
-            long highWater;
-            await using (var cmd = conn.CreateCommand())
+            // #148: poll on a fresh connection (independent of the session lifetime),
+            // but route each probe through Options.ResiliencePipeline so the staleness
+            // check is covered like the rest of the database access. Returns true once
+            // the registered async shards have caught up to the high-water mark.
+            var nonStale = await options.ResiliencePipeline.ExecuteAsync(static async (state, ct) =>
             {
-                cmd.CommandText = $"SELECT ISNULL(MAX(seq_id), 0) FROM {eventGraph.EventsTableName};";
-                var result = await cmd.ExecuteScalarAsync(token);
-                highWater = result is long seq ? seq : 0;
-            }
+                var (connectionString, eventGraph, asyncShardNames) = state;
 
-            if (highWater == 0) return;
+                await using var conn = new SqlConnection(connectionString);
+                await conn.OpenAsync(ct);
 
-            // Check only the registered async projection shards
-            var allCaughtUp = true;
-            await using (var cmd = conn.CreateCommand())
-            {
-                cmd.CommandText = $"SELECT name, last_seq_id FROM {eventGraph.ProgressionTableName};";
-                await using var reader = await cmd.ExecuteReaderAsync(token);
-                var foundShards = new HashSet<string>();
-                while (await reader.ReadAsync(token))
+                // Get high water mark
+                long highWater;
+                await using (var cmd = conn.CreateCommand())
                 {
-                    var name = reader.GetString(0);
-                    if (name == "HighWaterMark") continue;
-                    // Only check shards registered in this store
-                    if (!asyncShardNames.Contains(name)) continue;
-
-                    foundShards.Add(name);
-                    var seq = reader.GetInt64(1);
-                    if (seq < highWater)
-                    {
-                        allCaughtUp = false;
-                        break;
-                    }
+                    cmd.CommandText = $"SELECT ISNULL(MAX(seq_id), 0) FROM {eventGraph.EventsTableName};";
+                    var result = await cmd.ExecuteScalarAsync(ct);
+                    highWater = result is long seq ? seq : 0;
                 }
 
-                // All registered shards must exist and be caught up
-                if (allCaughtUp && foundShards.SetEquals(asyncShardNames)) return;
-            }
+                if (highWater == 0) return true;
+
+                // Check only the registered async projection shards
+                var allCaughtUp = true;
+                await using (var cmd = conn.CreateCommand())
+                {
+                    cmd.CommandText = $"SELECT name, last_seq_id FROM {eventGraph.ProgressionTableName};";
+                    await using var reader = await cmd.ExecuteReaderAsync(ct);
+                    var foundShards = new HashSet<string>();
+                    while (await reader.ReadAsync(ct))
+                    {
+                        var name = reader.GetString(0);
+                        if (name == "HighWaterMark") continue;
+                        // Only check shards registered in this store
+                        if (!asyncShardNames.Contains(name)) continue;
+
+                        foundShards.Add(name);
+                        var seq = reader.GetInt64(1);
+                        if (seq < highWater)
+                        {
+                            allCaughtUp = false;
+                            break;
+                        }
+                    }
+
+                    // All registered shards must exist and be caught up
+                    return allCaughtUp && foundShards.SetEquals(asyncShardNames);
+                }
+            }, (options.ConnectionString, eventGraph, asyncShardNames), token);
+
+            if (nonStale) return;
 
             await Task.Delay(100, token);
         }
