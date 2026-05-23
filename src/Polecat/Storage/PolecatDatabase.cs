@@ -12,6 +12,7 @@ using Polecat.Events;
 using Polecat.Events.Daemon;
 using Polecat.Events.Schema;
 using Polecat.Linq;
+using Polly;
 using Weasel.Core.Migrations;
 using Weasel.SqlServer;
 
@@ -27,6 +28,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
     private readonly StoreOptions _options;
     private readonly EventGraph _events;
     private readonly string _connectionString;
+    private readonly ResiliencePipeline _resilience;
 
     public PolecatDatabase(StoreOptions options)
         : this(options, options.ConnectionString, "Polecat")
@@ -44,6 +46,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
         _options = options;
         _events = options.EventGraph;
         _connectionString = connectionString;
+        _resilience = options.ResiliencePipeline;
         Tracker = new ShardStateTracker(NullLogger.Instance);
         // Mutates Skipped ShardStates in-place to set SkippedEventsCount.
         // Must be subscribed before any downstream consumers so the augmented
@@ -126,91 +129,105 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
 
     public async Task<long> ProjectionProgressFor(ShardName name, CancellationToken token = default)
     {
-        await using var conn = new SqlConnection(_connectionString);
-        await conn.OpenAsync(token);
+        // #148: route through Options.ResiliencePipeline like the rest of the
+        // database access. PolecatDatabase owns its own connection (it has no
+        // session), so it wraps the work in the pipeline directly.
+        return await _resilience.ExecuteAsync(static async (state, ct) =>
+        {
+            var (connectionString, progressionTable, identity) = state;
+            await using var conn = new SqlConnection(connectionString);
+            await conn.OpenAsync(ct);
 
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"""
-            SELECT last_seq_id FROM {_events.ProgressionTableName}
-            WHERE name = @name;
-            """;
-        cmd.Parameters.AddWithValue("@name", name.Identity);
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = $"""
+                SELECT last_seq_id FROM {progressionTable}
+                WHERE name = @name;
+                """;
+            cmd.Parameters.AddWithValue("@name", identity);
 
-        var result = await cmd.ExecuteScalarAsync(token);
-        return result is long seq ? seq : 0;
+            var result = await cmd.ExecuteScalarAsync(ct);
+            return result is long seq ? seq : 0;
+        }, (_connectionString, _events.ProgressionTableName, name.Identity), token);
     }
 
     public async Task<IReadOnlyList<ShardState>> AllProjectionProgress(CancellationToken token = default)
     {
-        var list = new List<ShardState>();
-
-        await using var conn = new SqlConnection(_connectionString);
-        await conn.OpenAsync(token);
-
-        await using var cmd = conn.CreateCommand();
-        if (_events.EnableExtendedProgressionTracking)
+        return await _resilience.ExecuteAsync(static async (state, ct) =>
         {
-            cmd.CommandText = $"SELECT name, last_seq_id, heartbeat, agent_status, pause_reason, running_on_node, warning_behind_threshold, critical_behind_threshold FROM {_events.ProgressionTableName};";
-        }
-        else
-        {
-            cmd.CommandText = $"SELECT name, last_seq_id FROM {_events.ProgressionTableName};";
-        }
+            var (connectionString, events) = state;
+            var list = new List<ShardState>();
 
-        await using var reader = await cmd.ExecuteReaderAsync(token);
-        while (await reader.ReadAsync(token))
-        {
-            var name = reader.GetString(0);
-            var seq = reader.GetInt64(1);
-            var state = new ShardState(name, seq);
+            await using var conn = new SqlConnection(connectionString);
+            await conn.OpenAsync(ct);
 
-            if (_events.EnableExtendedProgressionTracking)
+            await using var cmd = conn.CreateCommand();
+            if (events.EnableExtendedProgressionTracking)
             {
-                if (!reader.IsDBNull(2)) state.LastHeartbeat = reader.GetDateTimeOffset(2);
-                if (!reader.IsDBNull(3)) state.AgentStatus = reader.GetString(3);
-                if (!reader.IsDBNull(4)) state.PauseReason = reader.GetString(4);
-                if (!reader.IsDBNull(5)) state.RunningOnNode = reader.GetInt32(5);
-                if (!reader.IsDBNull(6)) state.WarningBehindThreshold = reader.GetInt64(6);
-                if (!reader.IsDBNull(7)) state.CriticalBehindThreshold = reader.GetInt64(7);
+                cmd.CommandText = $"SELECT name, last_seq_id, heartbeat, agent_status, pause_reason, running_on_node, warning_behind_threshold, critical_behind_threshold FROM {events.ProgressionTableName};";
+            }
+            else
+            {
+                cmd.CommandText = $"SELECT name, last_seq_id FROM {events.ProgressionTableName};";
             }
 
-            list.Add(state);
-        }
+            await using var reader = await cmd.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct))
+            {
+                var name = reader.GetString(0);
+                var seq = reader.GetInt64(1);
+                var shardState = new ShardState(name, seq);
 
-        return list;
+                if (events.EnableExtendedProgressionTracking)
+                {
+                    if (!reader.IsDBNull(2)) shardState.LastHeartbeat = reader.GetDateTimeOffset(2);
+                    if (!reader.IsDBNull(3)) shardState.AgentStatus = reader.GetString(3);
+                    if (!reader.IsDBNull(4)) shardState.PauseReason = reader.GetString(4);
+                    if (!reader.IsDBNull(5)) shardState.RunningOnNode = reader.GetInt32(5);
+                    if (!reader.IsDBNull(6)) shardState.WarningBehindThreshold = reader.GetInt64(6);
+                    if (!reader.IsDBNull(7)) shardState.CriticalBehindThreshold = reader.GetInt64(7);
+                }
+
+                list.Add(shardState);
+            }
+
+            return (IReadOnlyList<ShardState>)list;
+        }, (_connectionString, _events), token);
     }
 
     public async Task<long> FetchHighestEventSequenceNumber(CancellationToken token)
     {
-        await using var conn = new SqlConnection(_connectionString);
-        await conn.OpenAsync(token);
+        return await _resilience.ExecuteAsync(static async (state, ct) =>
+        {
+            var (connectionString, eventsTable) = state;
+            await using var conn = new SqlConnection(connectionString);
+            await conn.OpenAsync(ct);
 
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"SELECT ISNULL(MAX(seq_id), 0) FROM {_events.EventsTableName};";
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = $"SELECT ISNULL(MAX(seq_id), 0) FROM {eventsTable};";
 
-        var result = await cmd.ExecuteScalarAsync(token);
-        return result is long seq ? seq : 0;
+            var result = await cmd.ExecuteScalarAsync(ct);
+            return result is long seq ? seq : 0;
+        }, (_connectionString, _events.EventsTableName), token);
     }
 
     public async Task<long?> FindEventStoreFloorAtTimeAsync(DateTimeOffset timestamp, CancellationToken token)
     {
-        await using var conn = new SqlConnection(_connectionString);
-        await conn.OpenAsync(token);
-
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"""
-            SELECT MAX(seq_id) FROM {_events.EventsTableName}
-            WHERE timestamp <= @ts;
-            """;
-        cmd.Parameters.AddWithValue("@ts", timestamp);
-
-        var result = await cmd.ExecuteScalarAsync(token);
-        if (result is long seq)
+        return await _resilience.ExecuteAsync(static async (state, ct) =>
         {
-            return seq;
-        }
+            var (connectionString, eventsTable, ts) = state;
+            await using var conn = new SqlConnection(connectionString);
+            await conn.OpenAsync(ct);
 
-        return null;
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = $"""
+                SELECT MAX(seq_id) FROM {eventsTable}
+                WHERE timestamp <= @ts;
+                """;
+            cmd.Parameters.AddWithValue("@ts", ts);
+
+            var result = await cmd.ExecuteScalarAsync(ct);
+            return result is long seq ? (long?)seq : null;
+        }, (_connectionString, _events.EventsTableName, timestamp), token);
     }
 
     public async Task StoreDeadLetterEventAsync(object storage, DeadLetterEvent deadLetterEvent,
