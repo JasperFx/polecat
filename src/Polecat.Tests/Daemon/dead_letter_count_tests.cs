@@ -48,14 +48,9 @@ public class dead_letter_count_tests : OneOffConfigurationsContext
     // Dead letters are stored as the DeadLetterEvent document (pc_doc_deadletterevent).
     // The fixed test schema is not truncated by schema migration, so rows persist
     // across test runs — clear them up front so the count assertions are deterministic.
-    private async Task ClearDeadLetters(string schema)
-    {
-        await using var conn = new Microsoft.Data.SqlClient.SqlConnection(theStore.Options.ConnectionString);
-        await conn.OpenAsync();
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"IF OBJECT_ID('[{schema}].[pc_doc_deadletterevent]', 'U') IS NOT NULL DELETE FROM [{schema}].[pc_doc_deadletterevent];";
-        await cmd.ExecuteNonQueryAsync();
-    }
+    // Goes through Advanced.CleanAsync (covered by the resilience pipeline) rather than a
+    // raw SqlConnection, per the "all DB access goes through the resilience pipeline" rule.
+    private Task ClearDeadLetters() => theStore.Advanced.CleanAsync<DeadLetterEvent>();
 
     [Fact]
     public async Task records_and_counts_dead_letters_per_shard()
@@ -68,7 +63,7 @@ public class dead_letter_count_tests : OneOffConfigurationsContext
             opts.Projections.Add<PoisonEventProjection>(ProjectionLifecycle.Async);
         });
         await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync();
-        await ClearDeadLetters("dead_letters");
+        await ClearDeadLetters();
 
         var goodId = Guid.NewGuid();
         var poisonId = Guid.NewGuid();
@@ -127,7 +122,7 @@ public class dead_letter_count_tests : OneOffConfigurationsContext
     {
         ConfigureStore(opts => opts.DatabaseSchemaName = "dead_letters_direct");
         await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync();
-        await ClearDeadLetters("dead_letters_direct");
+        await ClearDeadLetters();
 
         var db = (IEventDatabase)theDatabase;
         await db.StoreDeadLetterEventAsync(null!, new DeadLetterEvent
