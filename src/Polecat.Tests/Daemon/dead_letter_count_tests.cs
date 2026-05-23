@@ -15,9 +15,10 @@ namespace Polecat.Tests.Daemon;
 
 // Regression for Polecat#146 (jasperfx#356): under SkipApplyErrors (the
 // JasperFx.Events 2.0 default), a projection Project/Apply failure is recorded as
-// a DeadLetterEvent and the shard keeps advancing. This exercises Polecat's
-// now-real dead-letter storage (pc_dead_letters) plus the IEventDatabase count
-// reads CountDeadLetterEventsAsync / FetchDeadLetterCountsAsync. Mirrors Marten's
+// a DeadLetterEvent and the shard keeps advancing. DeadLetterEvent is a Polecat
+// document (pc_doc_deadletterevent); this exercises that document-backed storage
+// plus the IEventDatabase count reads CountDeadLetterEventsAsync /
+// FetchDeadLetterCountsAsync (LINQ queries over the document). Mirrors Marten's
 // when_skipping_events_in_daemon recipe (EventProjection that throws on a poison
 // event, both error options set to skip).
 
@@ -44,15 +45,15 @@ public partial class PoisonEventProjection : EventProjection
 
 public class dead_letter_count_tests : OneOffConfigurationsContext
 {
-    // The pc_dead_letters table uses a fixed test schema and is not truncated by
-    // schema migration, so rows persist across test runs. Clear it up front so the
-    // count assertions are deterministic regardless of prior runs.
+    // Dead letters are stored as the DeadLetterEvent document (pc_doc_deadletterevent).
+    // The fixed test schema is not truncated by schema migration, so rows persist
+    // across test runs — clear them up front so the count assertions are deterministic.
     private async Task ClearDeadLetters(string schema)
     {
         await using var conn = new Microsoft.Data.SqlClient.SqlConnection(theStore.Options.ConnectionString);
         await conn.OpenAsync();
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"IF OBJECT_ID('[{schema}].[pc_dead_letters]', 'U') IS NOT NULL DELETE FROM [{schema}].[pc_dead_letters];";
+        cmd.CommandText = $"IF OBJECT_ID('[{schema}].[pc_doc_deadletterevent]', 'U') IS NOT NULL DELETE FROM [{schema}].[pc_doc_deadletterevent];";
         await cmd.ExecuteNonQueryAsync();
     }
 

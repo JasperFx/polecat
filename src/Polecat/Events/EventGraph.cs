@@ -103,7 +103,6 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
     internal string StreamsTableName => $"[{DatabaseSchemaName}].[pc_streams]";
     internal string EventsTableName => $"[{DatabaseSchemaName}].[pc_events]";
     internal string ProgressionTableName => $"[{DatabaseSchemaName}].[pc_event_progression]";
-    internal string DeadLettersTableName => $"[{DatabaseSchemaName}].[pc_dead_letters]";
 
     public override EventAppendMode AppendMode
     {
@@ -203,11 +202,6 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
     internal EventProgressionTable BuildEventProgressionTable()
     {
         return new EventProgressionTable(this);
-    }
-
-    internal DeadLettersTable BuildDeadLettersTable()
-    {
-        return new DeadLettersTable(this);
     }
 
     public ITagTypeRegistration RegisterTagType<TTag>() where TTag : notnull

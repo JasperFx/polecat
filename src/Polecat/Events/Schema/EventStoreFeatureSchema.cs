@@ -34,10 +34,6 @@ internal class EventStoreFeatureSchema : FeatureSchemaBase
         yield return _events.BuildEventsTable();
         yield return _events.BuildEventProgressionTable();
 
-        // Dead-letter store — projection/subscription Apply failures recorded under
-        // SkipApplyErrors; the jasperfx#356 count read aggregates this table.
-        yield return _events.BuildDeadLettersTable();
-
         // Tag tables for DCB support
         foreach (var tagRegistration in _events.TagTypes)
         {

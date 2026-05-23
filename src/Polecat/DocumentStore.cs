@@ -1,3 +1,4 @@
+using JasperFx.Events.Daemon;
 using JasperFx.Events.Projections;
 using Polecat.Events;
 using Polecat.Internal;
@@ -31,6 +32,16 @@ public partial class DocumentStore : IDocumentStore
         Sequences = new SequenceFactory(options, _connectionFactory);
         _providers.SetSequenceFactory(Sequences);
         options.Providers = _providers;
+
+        // Projection/subscription dead letters are stored as a Polecat document
+        // (pc_doc_deadletterevent), mirroring Marten. Register the provider eagerly
+        // so the document table is created by schema migration and the IEventDatabase
+        // dead-letter count reads can LINQ-query it (jasperfx#356).
+        _providers.GetProvider<DeadLetterEvent>();
+
+        // Back-reference so the database can open sessions for the dead-letter
+        // document store/queries (it has no store/session of its own otherwise).
+        Database.Store = this;
 
         // Initialize default tenancy if not already configured
         Options.Tenancy ??= new DefaultTenancy(_connectionFactory, Database);

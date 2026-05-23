@@ -11,6 +11,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Polecat.Events;
 using Polecat.Events.Daemon;
 using Polecat.Events.Schema;
+using Polecat.Linq;
 using Weasel.Core.Migrations;
 using Weasel.SqlServer;
 
@@ -58,6 +59,17 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
     public string ConnectionString => _connectionString;
 
     internal EventGraph Events => _events;
+
+    /// <summary>
+    ///     Back-reference to the owning store, set by <see cref="DocumentStore" /> during
+    ///     construction. Lets the database open sessions for the dead-letter document
+    ///     store / count queries (it has no store or session of its own otherwise).
+    /// </summary>
+    internal DocumentStore? Store { get; set; }
+
+    private DocumentStore RequireStore() =>
+        Store ?? throw new InvalidOperationException(
+            "PolecatDatabase.Store has not been wired; dead-letter document operations require the owning DocumentStore.");
 
     public ShardStateTracker Tracker { get; internal set; }
 
@@ -204,78 +216,46 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
     public async Task StoreDeadLetterEventAsync(object storage, DeadLetterEvent deadLetterEvent,
         CancellationToken token)
     {
-        await using var conn = new SqlConnection(_connectionString);
-        await conn.OpenAsync(token);
-
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"""
-            INSERT INTO {_events.DeadLettersTableName}
-                (id, projection_name, shard_name, event_sequence, timestamp, exception_type, exception_message)
-            VALUES (@id, @projection, @shard, @seq, @timestamp, @exceptionType, @exceptionMessage);
-            """;
-        // DeadLetterEvent.Id is left default by the framework ctor; assign one if unset.
-        cmd.Parameters.AddWithValue("@id",
-            deadLetterEvent.Id == Guid.Empty ? Guid.NewGuid() : deadLetterEvent.Id);
-        cmd.Parameters.AddWithValue("@projection", deadLetterEvent.ProjectionName);
-        cmd.Parameters.AddWithValue("@shard", deadLetterEvent.ShardName);
-        cmd.Parameters.AddWithValue("@seq", deadLetterEvent.EventSequence);
-        cmd.Parameters.AddWithValue("@timestamp", deadLetterEvent.Timestamp);
-        cmd.Parameters.AddWithValue("@exceptionType", (object?)deadLetterEvent.ExceptionType ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@exceptionMessage", (object?)deadLetterEvent.ExceptionMessage ?? DBNull.Value);
-
-        await cmd.ExecuteNonQueryAsync(token);
+        // DeadLetterEvent is a Polecat document (pc_doc_deadletterevent). Store it
+        // through a session; Polecat assigns the Guid id when the framework leaves it
+        // default. Mirrors Marten's document-backed dead-letter storage.
+        await using var session = RequireStore().LightweightSession();
+        session.Store(deadLetterEvent);
+        await session.SaveChangesAsync(token);
     }
 
     /// <summary>
-    ///     Count stored dead-letter events for a single shard (jasperfx#356). The
-    ///     <see cref="DeadLetterEvent" /> records <see cref="ShardName.Name" /> as
-    ///     <c>projection_name</c> and <see cref="ShardName.ShardKey" /> as <c>shard_name</c>.
+    ///     Count stored dead-letter events for a single shard (jasperfx#356) via a LINQ
+    ///     query over the <see cref="DeadLetterEvent" /> document. The event records
+    ///     <see cref="ShardName.Name" /> as <c>ProjectionName</c> and
+    ///     <see cref="ShardName.ShardKey" /> as <c>ShardName</c>.
     /// </summary>
     public async Task<long> CountDeadLetterEventsAsync(ShardName shard, CancellationToken token = default)
     {
-        await using var conn = new SqlConnection(_connectionString);
-        await conn.OpenAsync(token);
+        var projectionName = shard.Name;
+        var shardKey = shard.ShardKey;
 
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"""
-            SELECT COUNT_BIG(*) FROM {_events.DeadLettersTableName}
-            WHERE projection_name = @name AND shard_name = @key;
-            """;
-        cmd.Parameters.AddWithValue("@name", shard.Name);
-        cmd.Parameters.AddWithValue("@key", shard.ShardKey);
-
-        var result = await cmd.ExecuteScalarAsync(token);
-        return result is long l ? l : 0;
+        await using var session = RequireStore().QuerySession();
+        return await session.Query<DeadLetterEvent>()
+            .Where(x => x.ProjectionName == projectionName && x.ShardName == shardKey)
+            .LongCountAsync(token);
     }
 
     /// <summary>
-    ///     Count stored dead-letter events grouped by shard across all projections (jasperfx#356).
+    ///     Count stored dead-letter events grouped by shard across all projections
+    ///     (jasperfx#356). Dead letters are typically few, so the rows are materialized
+    ///     and grouped in memory rather than relying on a SQL GROUP BY translation.
     /// </summary>
     public async Task<IReadOnlyList<DeadLetterShardCount>> FetchDeadLetterCountsAsync(
         CancellationToken token = default)
     {
-        var list = new List<DeadLetterShardCount>();
+        await using var session = RequireStore().QuerySession();
+        var all = await session.Query<DeadLetterEvent>().ToListAsync(token);
 
-        await using var conn = new SqlConnection(_connectionString);
-        await conn.OpenAsync(token);
-
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"""
-            SELECT projection_name, shard_name, COUNT_BIG(*)
-            FROM {_events.DeadLettersTableName}
-            GROUP BY projection_name, shard_name;
-            """;
-
-        await using var reader = await cmd.ExecuteReaderAsync(token);
-        while (await reader.ReadAsync(token))
-        {
-            list.Add(new DeadLetterShardCount(
-                reader.GetString(0),
-                reader.GetString(1),
-                reader.GetInt64(2)));
-        }
-
-        return list;
+        return all
+            .GroupBy(x => (x.ProjectionName, x.ShardName))
+            .Select(g => new DeadLetterShardCount(g.Key.ProjectionName, g.Key.ShardName, g.LongCount()))
+            .ToList();
     }
 
     public new async Task EnsureStorageExistsAsync(Type storageType, CancellationToken token)
