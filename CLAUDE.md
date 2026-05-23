@@ -114,3 +114,5 @@ Critical path for MVP: Stages 1–5, 7–8, 10–11
 - Opt into the Critter Stack stateful resource model via Weasel's DatabaseResource
 - Keep it simple: QuickAppend only, no dirty tracking, STJ only
 - Lean on SQL Server 2025 features (JSON type, modern T-SQL) rather than workarounds
+- **All database command execution must be covered by `StoreOptions.ResiliencePipeline` (Polly).** Prefer executing through a session (`QuerySession` / `IDocumentSession`), whose `Execute*` methods wrap every command in the pipeline automatically. A component that legitimately owns its own connection/transaction (e.g. the async daemon's high-water detector, projection batch, event loader, bulk insert, HiLo sequence) must wrap its work in `Options.ResiliencePipeline.ExecuteAsync(...)` directly. Do **not** open ad-hoc `SqlConnection`s that run commands outside the pipeline.
+  - Documented exceptions: one-time schema/DDL via `DocumentTableEnsurer` and Weasel migration (runs at startup), and test-support helpers.

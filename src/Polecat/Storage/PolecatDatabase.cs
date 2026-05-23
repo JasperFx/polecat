@@ -11,6 +11,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Polecat.Events;
 using Polecat.Events.Daemon;
 using Polecat.Events.Schema;
+using Polecat.Linq;
 using Weasel.Core.Migrations;
 using Weasel.SqlServer;
 
@@ -58,6 +59,17 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
     public string ConnectionString => _connectionString;
 
     internal EventGraph Events => _events;
+
+    /// <summary>
+    ///     Back-reference to the owning store, set by <see cref="DocumentStore" /> during
+    ///     construction. Lets the database open sessions for the dead-letter document
+    ///     store / count queries (it has no store or session of its own otherwise).
+    /// </summary>
+    internal DocumentStore? Store { get; set; }
+
+    private DocumentStore RequireStore() =>
+        Store ?? throw new InvalidOperationException(
+            "PolecatDatabase.Store has not been wired; dead-letter document operations require the owning DocumentStore.");
 
     public ShardStateTracker Tracker { get; internal set; }
 
@@ -201,11 +213,49 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
         return null;
     }
 
-    public Task StoreDeadLetterEventAsync(object storage, DeadLetterEvent deadLetterEvent,
+    public async Task StoreDeadLetterEventAsync(object storage, DeadLetterEvent deadLetterEvent,
         CancellationToken token)
     {
-        // No-op for now — dead letter storage deferred to a future stage
-        return Task.CompletedTask;
+        // DeadLetterEvent is a Polecat document (pc_doc_deadletterevent). Store it
+        // through a session; Polecat assigns the Guid id when the framework leaves it
+        // default. Mirrors Marten's document-backed dead-letter storage.
+        await using var session = RequireStore().LightweightSession();
+        session.Store(deadLetterEvent);
+        await session.SaveChangesAsync(token);
+    }
+
+    /// <summary>
+    ///     Count stored dead-letter events for a single shard (jasperfx#356) via a LINQ
+    ///     query over the <see cref="DeadLetterEvent" /> document. The event records
+    ///     <see cref="ShardName.Name" /> as <c>ProjectionName</c> and
+    ///     <see cref="ShardName.ShardKey" /> as <c>ShardName</c>.
+    /// </summary>
+    public async Task<long> CountDeadLetterEventsAsync(ShardName shard, CancellationToken token = default)
+    {
+        var projectionName = shard.Name;
+        var shardKey = shard.ShardKey;
+
+        await using var session = RequireStore().QuerySession();
+        return await session.Query<DeadLetterEvent>()
+            .Where(x => x.ProjectionName == projectionName && x.ShardName == shardKey)
+            .LongCountAsync(token);
+    }
+
+    /// <summary>
+    ///     Count stored dead-letter events grouped by shard across all projections
+    ///     (jasperfx#356). Dead letters are typically few, so the rows are materialized
+    ///     and grouped in memory rather than relying on a SQL GROUP BY translation.
+    /// </summary>
+    public async Task<IReadOnlyList<DeadLetterShardCount>> FetchDeadLetterCountsAsync(
+        CancellationToken token = default)
+    {
+        await using var session = RequireStore().QuerySession();
+        var all = await session.Query<DeadLetterEvent>().ToListAsync(token);
+
+        return all
+            .GroupBy(x => (x.ProjectionName, x.ShardName))
+            .Select(g => new DeadLetterShardCount(g.Key.ProjectionName, g.Key.ShardName, g.LongCount()))
+            .ToList();
     }
 
     public new async Task EnsureStorageExistsAsync(Type storageType, CancellationToken token)
