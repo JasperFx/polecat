@@ -1,5 +1,6 @@
 using JasperFx;
 using JasperFx.Descriptors;
+using JasperFx.Events;
 using JasperFx.MultiTenancy;
 using Microsoft.Data.SqlClient;
 using Polecat.Storage;
@@ -197,6 +198,19 @@ public class separate_database_tenancy_tests : IAsyncLifetime
 
         var databases = store.Options.Tenancy!.AllDatabases();
         databases.Count.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task event_store_all_databases_returns_one_per_configured_database()
+    {
+        using var store = CreateSeparateTenantStore();
+
+        // The store-agnostic IEventStore.AllDatabases() (jasperfx#387) must surface every
+        // configured database as an IEventDatabase, matching the tenancy accessor.
+        var databases = await ((IEventStore)store).AllDatabases();
+
+        databases.Count.ShouldBe(2);
+        databases.ShouldAllBe(db => db is PolecatDatabase);
     }
 
     [Fact]

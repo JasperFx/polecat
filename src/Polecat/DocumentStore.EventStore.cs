@@ -61,6 +61,15 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
 
     Uri IEventStore.Subject => Database.DatabaseUri;
 
+    // Store-agnostic accessor for every IEventDatabase backing this store (jasperfx#387).
+    // Monitoring/tooling (e.g. CritterWatch) resolves IEventStore from DI and enumerates the
+    // databases through this member rather than referencing concrete store types. The tenancy
+    // accessor is synchronous and PolecatDatabase implements IEventDatabase, so we project and
+    // wrap in a completed ValueTask — mirroring the ProjectionCoordinator's IProjectionDatabase cast.
+    ValueTask<IReadOnlyList<IEventDatabase>> IEventStore.AllDatabases() =>
+        ValueTask.FromResult<IReadOnlyList<IEventDatabase>>(
+            Options.Tenancy?.AllDatabases().Cast<IEventDatabase>().ToList() ?? []);
+
     Type IEventStore<IDocumentSession, IQuerySession>.IdentityTypeForProjectedType(Type aggregateType) =>
         Events.StreamIdentity == StreamIdentity.AsGuid ? typeof(Guid) : typeof(string);
 
