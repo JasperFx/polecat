@@ -233,6 +233,9 @@ internal class LinqQueryParser : ExpressionVisitor
             case "Distinct":
                 IsDistinct = true;
                 break;
+            case "DistinctBy":
+                HandleDistinctBy(node);
+                break;
             case "AnyTenant" when node.Method.DeclaringType == typeof(LinqExtensions):
                 IsAnyTenant = true;
                 break;
@@ -431,6 +434,83 @@ internal class LinqQueryParser : ExpressionVisitor
     ///     Whether the Select is a simple scalar member access.
     /// </summary>
     public bool IsScalarSelect { get; private set; }
+
+    private void HandleDistinctBy(MethodCallExpression node)
+    {
+        // DistinctBy(keySelector). SQL Server has no DISTINCT ON, so we resolve the key to a SQL
+        // locator and let Statement emit a ROW_NUMBER() windowed subquery. The source visit
+        // (Arguments[0]) ran before this case, so a preceding Select(...) has already populated
+        // SelectExpression and we can map the projected key back to its document member.
+        var keyLambda = GetLambda(node.Arguments[1]);
+        var keyBody = StripConvert(keyLambda.Body);
+
+        var documentMember = ResolveDistinctByKeyMember(keyBody);
+        var member = _memberFactory.ResolveMember(documentMember);
+        Statement.DistinctByLocator = member.TypedLocator;
+    }
+
+    private MemberExpression ResolveDistinctByKeyMember(Expression keyBody)
+    {
+        if (keyBody is not MemberExpression memberExpr)
+        {
+            throw new NotSupportedException(
+                $"DistinctBy() requires a member key selector (e.g. x => x.GroupId), got: {keyBody}");
+        }
+
+        // Called directly on the document collection: resolve the member access as-is.
+        if (SelectExpression == null)
+        {
+            if (IsDocumentMember(memberExpr)) return memberExpr;
+
+            throw new NotSupportedException(
+                $"DistinctBy() could not translate the key selector: {keyBody}");
+        }
+
+        // Called after a Select(...) projection: map the projected member name back to the
+        // underlying document member expression the projection assigned it from.
+        return MapProjectedMemberToDocument(memberExpr.Member.Name)
+               ?? throw new NotSupportedException(
+                   $"DistinctBy() key '{memberExpr.Member.Name}' must reference a member of the preceding " +
+                   "Select(...) projection (anonymous type or object initializer).");
+    }
+
+    private MemberExpression? MapProjectedMemberToDocument(string projectedMemberName)
+    {
+        var body = SelectExpression!.Body;
+        if (body is UnaryExpression { NodeType: ExpressionType.Convert } convert)
+        {
+            body = convert.Operand;
+        }
+
+        switch (body)
+        {
+            // Select(x => new { x.GroupId, x.Name }) — anonymous type
+            case NewExpression newExpr when newExpr.Members != null:
+                for (var i = 0; i < newExpr.Members.Count; i++)
+                {
+                    if (newExpr.Members[i].Name == projectedMemberName)
+                    {
+                        return StripConvert(newExpr.Arguments[i]) as MemberExpression;
+                    }
+                }
+
+                break;
+
+            // Select(x => new Dto { GroupId = x.GroupId }) — object initializer
+            case MemberInitExpression memberInit:
+                foreach (var binding in memberInit.Bindings)
+                {
+                    if (binding is MemberAssignment assignment && assignment.Member.Name == projectedMemberName)
+                    {
+                        return StripConvert(assignment.Expression) as MemberExpression;
+                    }
+                }
+
+                break;
+        }
+
+        return null;
+    }
 
     private void HandleSingleValue(MethodCallExpression node, SingleValueMode mode)
     {

@@ -146,6 +146,14 @@ var uniqueNames = await session.Query<User>()
     .Select(x => x.Name)
     .Distinct()
     .ToListAsync();
+
+// DistinctBy — one row per distinct key
+// SQL Server has no DISTINCT ON, so this becomes a ROW_NUMBER() windowed subquery
+// partitioned by the key. Any OrderBy() decides which row survives per key.
+var onePerGroup = await session.Query<User>()
+    .Select(x => new { x.GroupId, x.Name })
+    .DistinctBy(x => x.GroupId)
+    .ToListAsync();
 ```
 
 ### Collection Queries (OPENJSON)
