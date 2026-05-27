@@ -33,6 +33,8 @@ public class AuditLogProjection : EventProjection
 }
 ```
 
+The examples name the event parameter `@event`, but that is not required: Polecat identifies the event argument **by type**. In `Project(IEvent<OrderCreated> @event, IDocumentOperations ops)`, the `IEvent<OrderCreated>` parameter is the event regardless of its name (`IDocumentOperations` is an interface and is never treated as the event). You only need a conventional event parameter **name** — `@event`, `event`, `e`, or `ev` — to disambiguate a signature in which more than one parameter could be the event. This is the same rule used by aggregate projections; see [Identifying the Event Parameter](/events/projections/single-stream-projections#identifying-the-event-parameter).
+
 ## Registration
 
 ```cs

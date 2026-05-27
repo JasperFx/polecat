@@ -66,6 +66,15 @@ public void Apply(IEvent<OrderCreated> @event)
 }
 ```
 
+## Identifying the Event Parameter
+
+Notice that the examples above name the event parameter `e` in some methods and `@event` in others — both work. Polecat identifies the event argument of a conventional `Create` / `Apply` / `ShouldDelete` method (and an [event projection](/events/projections/event-projections)'s `Project` / `Transform` methods) **by type, not by name**, using the same rule for every projection type:
+
+1. A parameter typed `IEvent<T>` is always the event, and `T` is the event type — use this when you need event metadata such as `Timestamp` or `Headers`.
+2. Otherwise the single **concrete** parameter that is not an interface (`IQuerySession`, `IDocumentOperations`), not `IEvent`, not `CancellationToken`, and not the aggregate type is the event.
+
+So `Apply(OrderShipped e)` and `Apply(OrderShipped shipped)` are equivalent — the parameter name is incidental. A conventional event parameter **name** is only consulted to disambiguate an unusual signature in which more than one parameter could be the event; the recognized names are `@event`, `event`, `e`, and `ev`.
+
 ## Live Aggregation
 
 Use a single stream projection for on-demand replay without persisting:

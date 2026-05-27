@@ -230,6 +230,8 @@ public partial class Quest
 }
 ```
 
+The event argument of those conventional methods is identified **by type, not by parameter name**: a parameter typed `IEvent<T>` is the event, otherwise the single concrete parameter that isn't an interface (`IQuerySession` / `IDocumentOperations`), `IEvent`, `CancellationToken`, or the aggregate type. You do **not** need to name it `@event` — `Apply(MembersJoined e)` and `Apply(MembersJoined joined)` are equivalent. A conventional name (`@event`, `event`, `e`, or `ev`) is only consulted to disambiguate a signature with more than one candidate parameter. See [Identifying the Event Parameter](/events/projections/single-stream-projections#identifying-the-event-parameter).
+
 Aggregate identity discovery follows the same convention rule as Marten — by default, the SG looks for a property literally named `Id` (or `<TypeName>Id`). If your aggregate's identity uses a different member name, annotate that member with `[Identity]` from **`JasperFx`** (the same `JasperFx.IdentityAttribute` Polecat uses for document identity — see the [rc dedup-wave relocations](#rc-dedup-wave-relocations) table; it moved out of `Polecat.Attributes` in [#135](https://github.com/JasperFx/polecat/issues/135)):
 
 ```csharp
