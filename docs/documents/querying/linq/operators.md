@@ -144,6 +144,22 @@ var results = await session.Query<LinqTarget>()
 - `g.Max(x => x.Property)` -- `MAX(property)`
 - `g.Average(x => x.Property)` -- `AVG(property)`
 
+## CountBy(), AggregateBy(), and Index() (.NET 9)
+
+The `CountBy`, `AggregateBy`, and `Index` operators added in .NET 9 are **not translated to SQL by Polecat**, because .NET only added them to `Enumerable` (there are no `IQueryable` overloads, so a query provider never sees them). Calling them on a Polecat query therefore **runs client-side**: the full result set is pulled into memory first and the operator is applied there with LINQ to Objects -- the same behavior you get with EF Core.
+
+For large tables, express a `CountBy` as `GroupBy(...).Select(...)`, which Polecat does translate to a SQL `GROUP BY`:
+
+```cs
+// Translated to SQL: select count(*), color ... group by color
+var counts = await session.Query<Target>()
+    .GroupBy(x => x.Color)
+    .Select(g => new { Color = g.Key, Count = g.Count() })
+    .ToListAsync();
+```
+
+There is no efficient SQL equivalent for `AggregateBy`'s arbitrary accumulator function; `Index` corresponds to a window `ROW_NUMBER()` but is likewise only an in-memory operator today. If/when .NET ships `Queryable` overloads for these, Polecat can revisit native translation.
+
 ## Paging
 
 ```cs
