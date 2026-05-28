@@ -309,7 +309,17 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
 
     public async Task SaveChangesAsync(CancellationToken token = default)
     {
-        if (!_workTracker.HasOutstandingWork()) return;
+        // _workTracker tracks document operations and event streams - it does NOT include
+        // ITransactionParticipants registered via AddTransactionParticipant. Skipping the entire
+        // SaveChangesAsync pipeline when _workTracker is empty therefore silently drops queued
+        // participants whose BeforeCommitAsync would otherwise run inside the same SQL transaction.
+        //
+        // This bit Wolverine.Polecat's scheduled-cascade outbox path (JasperFx/wolverine GH-2941):
+        // a handler that emits only a DeliveryMessage<T>.DelayedFor(...) cascade has Wolverine
+        // call Session.StoreIncoming(...), which registers a StoreIncomingEnvelopeParticipant
+        // whose BeforeCommitAsync inserts the scheduled envelope row. With no doc ops on the
+        // session, SaveChangesAsync early-returned and the row never got written.
+        if (!_workTracker.HasOutstandingWork() && _transactionParticipants.Count == 0) return;
 
         using var activity = OpenTelemetry.TracingSessionDecorator.StartSessionActivity(
             "polecat.save_changes", TenantId, Options.OpenTelemetry);
