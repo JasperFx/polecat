@@ -49,6 +49,9 @@ public partial class DocumentStore : IDocumentStore
         // Auto-discover aggregate types with source-generated evolvers
         options.Projections.DiscoverGeneratedEvolvers(AppDomain.CurrentDomain.GetAssemblies());
 
+        // Fail fast on an incoherent per-tenant partitioning configuration (#163 Phase 1).
+        options.EventGraph.AssertTenantPartitioningValidity();
+
         // Initialize projection graph - builds async shard registry
         options.Projections.AssertValidity(options);
 

@@ -124,6 +124,44 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
     internal string StreamsTableName => $"[{DatabaseSchemaName}].[pc_streams]";
     internal string EventsTableName => $"[{DatabaseSchemaName}].[pc_events]";
     internal string ProgressionTableName => $"[{DatabaseSchemaName}].[pc_event_progression]";
+    internal string TenantPartitionsTableName => $"[{DatabaseSchemaName}].[pc_tenant_partitions]";
+
+    private TenantEventSequenceRegistry? _tenantSequences;
+
+    /// <summary>
+    ///     Resolves (and lazily provisions) per-tenant event sequences when
+    ///     <see cref="UseTenantPartitionedEvents" /> is enabled. Conjoined tenancy is a precondition,
+    ///     so all tenants share the one configured connection.
+    /// </summary>
+    internal TenantEventSequenceRegistry TenantSequences =>
+        _tenantSequences ??= new TenantEventSequenceRegistry(
+            _options.ConnectionString, DatabaseSchemaName, _options.ResiliencePipeline);
+
+    /// <summary>
+    ///     Validate the per-tenant partitioning configuration (#163 Phase 1). Per-tenant event
+    ///     sequencing only makes sense with conjoined event tenancy (there must be a tenant to slice
+    ///     by), and Phase 1 does not yet combine it with the physical <c>is_archived</c> partitioning
+    ///     scheme (a SQL Server table can carry only one partition scheme — tracked by polecat#171).
+    /// </summary>
+    internal void AssertTenantPartitioningValidity()
+    {
+        if (!UseTenantPartitionedEvents) return;
+
+        if (TenancyStyle != TenancyStyle.Conjoined)
+        {
+            throw new InvalidOperationException(
+                "Events.UseTenantPartitionedEvents requires Events.TenancyStyle = TenancyStyle.Conjoined " +
+                "— there is nothing to partition by when every event lives in the default tenant.");
+        }
+
+        if (UseArchivedStreamPartitioning)
+        {
+            throw new InvalidOperationException(
+                "Events.UseTenantPartitionedEvents cannot currently be combined with " +
+                "Events.UseArchivedStreamPartitioning — a SQL Server table supports only one partition " +
+                "scheme. Physical per-tenant partitioning is tracked separately in polecat#171.");
+        }
+    }
 
     public override EventAppendMode AppendMode
     {
@@ -223,6 +261,11 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
     internal EventProgressionTable BuildEventProgressionTable()
     {
         return new EventProgressionTable(this);
+    }
+
+    internal TenantPartitionsTable BuildTenantPartitionsTable()
+    {
+        return new TenantPartitionsTable(this);
     }
 
     public ITagTypeRegistration RegisterTagType<TTag>() where TTag : notnull
