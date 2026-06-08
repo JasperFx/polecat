@@ -120,3 +120,39 @@ await store.Advanced.CleanAllEventDataAsync();
 ::: warning
 These cleanup methods permanently delete data. They are intended for testing and development, not production use.
 :::
+
+## Projection Daemon Monitoring
+
+### Extended Progression Tracking
+
+Polecat can extend its event-progression table (`pc_event_progression`) with additional
+columns that the asynchronous projection daemon uses to report per-shard health — the same
+surface monitoring tools such as **CritterWatch** read to show heartbeat liveness, agent
+status, pause reasons, and per-shard alert thresholds.
+
+Opt in via the event store options:
+
+```cs
+var store = DocumentStore.For(opts =>
+{
+    opts.Connection("...");
+    opts.Events.EnableExtendedProgressionTracking = true;
+});
+```
+
+When enabled, the next schema apply adds six nullable columns to `pc_event_progression`
+(`heartbeat`, `agent_status`, `pause_reason`, `running_on_node`, `warning_behind_threshold`,
+`critical_behind_threshold`); the daemon writes its runtime agent state to them, and they are
+read back into `JasperFx.Events.Projections.ShardState`. The default is `false`, in which case
+no extra columns are created.
+
+`StoreOptions.Events` also implements the storage-agnostic
+`JasperFx.Events.IEventStoreInstrumentation` interface, whose `ExtendedProgressionEnabled`
+property is an alias for `EnableExtendedProgressionTracking`. This lets store-agnostic tooling
+toggle the same monitoring fidelity across Marten and Polecat without referencing store-specific
+types:
+
+```cs
+IEventStoreInstrumentation instrumentation = store.Options.Events;
+instrumentation.ExtendedProgressionEnabled = true;
+```

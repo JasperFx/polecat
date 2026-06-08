@@ -315,7 +315,7 @@ public class StoreOptions
 /// <summary>
 ///     Configuration specific to the event store.
 /// </summary>
-public class EventStoreOptions
+public class EventStoreOptions : IEventStoreInstrumentation
 {
     internal EventGraph? EventGraph { get; set; }
 
@@ -354,9 +354,23 @@ public class EventStoreOptions
 
     /// <summary>
     ///     Opt into extended columns on the event progression table for CritterWatch alerting.
-    ///     Adds nullable heartbeat, agent_status, pause_reason, and running_on_node columns.
+    ///     Adds nullable heartbeat, agent_status, pause_reason, running_on_node,
+    ///     warning_behind_threshold, and critical_behind_threshold columns. This is the
+    ///     Polecat-named alias for <see cref="IEventStoreInstrumentation.ExtendedProgressionEnabled" />;
+    ///     both read and write the same setting.
     /// </summary>
     public bool EnableExtendedProgressionTracking { get; set; }
+
+    /// <summary>
+    ///     <see cref="JasperFx.Events.IEventStoreInstrumentation" /> surface (jasperfx#424). The
+    ///     storage-agnostic toggle CritterWatch uses to enable extended projection-daemon monitoring
+    ///     without referencing Polecat types. Backed by <see cref="EnableExtendedProgressionTracking" />.
+    /// </summary>
+    bool IEventStoreInstrumentation.ExtendedProgressionEnabled
+    {
+        get => EnableExtendedProgressionTracking;
+        set => EnableExtendedProgressionTracking = value;
+    }
 
     /// <summary>
     ///     Outbox factory the projection daemon asks for an
