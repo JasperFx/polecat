@@ -1,5 +1,7 @@
+using System.Text.Json;
 using JasperFx.Events.Daemon;
 using JasperFx.Events.Daemon.HighWater;
+using JasperFx.Events.Projections;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Logging;
 using Polly;
@@ -232,5 +234,114 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
             cmd.Parameters.AddWithValue("@mark", markValue);
             await cmd.ExecuteNonQueryAsync(ct);
         }, (_connectionString, _events, mark), token);
+    }
+
+    // ── #163 Phase 2: vectorized per-tenant high-water ──────────────────────
+
+    /// <summary>
+    ///     Opt the running daemon into per-tenant high-water + per-tenant rebuilds when the store uses
+    ///     per-tenant event sequencing. Off (default) keeps the single store-global mark, byte-for-byte.
+    /// </summary>
+    public bool SupportsTenantPartitioning => _events.UseTenantPartitionedEvents;
+
+    public async Task<HighWaterVector> DetectForTenantsAsync(
+        IReadOnlyCollection<string> tenantIds, CancellationToken token)
+    {
+        if (!_events.UseTenantPartitionedEvents)
+        {
+            return HighWaterVector.ForGlobal(await Detect(token));
+        }
+
+        if (tenantIds.Count == 0) return new HighWaterVector([]);
+
+        return new HighWaterVector(await LoadPerTenantStatisticsAsync(tenantIds, token));
+    }
+
+    public async Task<HighWaterVector> DetectInSafeZoneForTenantsAsync(
+        IReadOnlyCollection<string> tenantIds, CancellationToken token)
+    {
+        if (!_events.UseTenantPartitionedEvents)
+        {
+            return HighWaterVector.ForGlobal(await DetectInSafeZone(token));
+        }
+
+        if (tenantIds.Count == 0) return new HighWaterVector([]);
+
+        // The vectorized poll is the same shape as the normal one; the daemon-level safe-zone gap
+        // skipping is layered on top by the base VectorizedHighWaterMonitor — the store's job is one
+        // round-trip per poll regardless of mode. Mirrors Marten's per-tenant detector.
+        return new HighWaterVector(await LoadPerTenantStatisticsAsync(tenantIds, token));
+    }
+
+    /// <summary>
+    ///     One round-trip vectorized per-tenant high-water read: for each requested tenant, join
+    ///     pc_tenant_partitions → sys.sequences (that tenant's pc_events_sequence_{partition_id} current
+    ///     value) → pc_event_progression (the per-tenant high-water row, keyed "HighWaterMark:{tenant}").
+    ///     LEFT JOINs keep a row per input tenant even before its partition/sequence/progression exist
+    ///     (resolved to 0). The SQL Server analogue of Marten's pg_sequences join.
+    /// </summary>
+    private async Task<IReadOnlyList<HighWaterStatistics>> LoadPerTenantStatisticsAsync(
+        IReadOnlyCollection<string> tenantIds, CancellationToken token)
+    {
+        var schema = _events.DatabaseSchemaName;
+        var tenantsJson = JsonSerializer.Serialize(tenantIds);
+        var highWaterPrefix = ShardState.HighWaterMark + ":";
+
+        return await _resilience.ExecuteAsync(static async (state, ct) =>
+        {
+            var (connectionString, events, schema, tenantsJson, prefix) = state;
+
+            await using var conn = new SqlConnection(connectionString);
+            await conn.OpenAsync(ct);
+
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = $"""
+                WITH inputs AS (SELECT value AS tenant_id FROM OPENJSON(@tenants))
+                SELECT
+                    i.tenant_id,
+                    CAST(ISNULL(sq.current_value, 0) AS bigint) AS last_value,
+                    ISNULL(prog.last_seq_id, 0)                 AS last_seq_id,
+                    prog.last_updated
+                FROM inputs i
+                LEFT JOIN {events.TenantPartitionsTableName} p
+                    ON p.tenant_id = i.tenant_id
+                LEFT JOIN sys.sequences sq
+                    ON sq.name = 'pc_events_sequence_' + CAST(p.partition_id AS varchar(20))
+                    AND sq.schema_id = SCHEMA_ID(@schema)
+                LEFT JOIN {events.ProgressionTableName} prog
+                    ON prog.name = @prefix + i.tenant_id;
+                """;
+            cmd.Parameters.AddWithValue("@tenants", tenantsJson);
+            cmd.Parameters.AddWithValue("@schema", schema);
+            cmd.Parameters.AddWithValue("@prefix", prefix);
+
+            var results = new List<HighWaterStatistics>();
+            await using var reader = await cmd.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct))
+            {
+                var tenantId = reader.GetString(0);
+                var lastValue = reader.GetInt64(1);
+                var lastSeqId = reader.GetInt64(2);
+                DateTimeOffset? lastUpdated = reader.IsDBNull(3) ? null : reader.GetDateTimeOffset(3);
+
+                // Seed the mark from the saved per-tenant high-water row when present, else from the
+                // tenant's sequence value (highest issued). Per-tenant gap detection is a later
+                // refinement, matching Marten's current Phase 2 behavior.
+                var currentMark = lastSeqId > 0 ? lastSeqId : lastValue;
+
+                results.Add(new HighWaterStatistics
+                {
+                    TenantId = tenantId,
+                    HighestSequence = lastValue,
+                    LastMark = lastSeqId,
+                    SafeStartMark = currentMark,
+                    CurrentMark = currentMark,
+                    LastUpdated = lastUpdated,
+                    Timestamp = DateTimeOffset.UtcNow
+                });
+            }
+
+            return (IReadOnlyList<HighWaterStatistics>)results;
+        }, (_connectionString, _events, schema, tenantsJson, highWaterPrefix), token);
     }
 }

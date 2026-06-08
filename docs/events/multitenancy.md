@@ -111,15 +111,38 @@ blue.Events.StartStream(blueStream, new QuestStarted("Blue")); // Blue seq_id 1 
 await blue.SaveChangesAsync();
 ```
 
+### Tenant-aware async daemon
+
+The asynchronous projection daemon is per-tenant aware under this flag. Rather than one database-wide
+high-water scan, it polls a **per-tenant high-water vector** in a single round-trip (joining
+`pc_tenant_partitions` → each tenant's `pc_events_sequence` value → `pc_event_progression`), and tracks
+each tenant's projection progress independently. The headline benefit is **bounded, isolated
+per-tenant rebuilds**:
+
+```cs
+using var daemon = (IProjectionDaemon)await store.BuildProjectionDaemonAsync();
+
+// Rebuild a projection for ONE tenant — replays only that tenant's bounded sequence range and
+// resets only that tenant's (projection, tenant) progression. Other tenants keep running untouched.
+await daemon.RebuildProjectionAsync("QuestParty", "Red", CancellationToken.None);
+
+// Or fan out an isolated rebuild across every registered tenant:
+await CrossTenantRebuild.RebuildEverywhereAsync(
+    daemon, "QuestParty", timeout: 1.Minutes(), CancellationToken.None);
+```
+
+A tenant-scoped rebuild never pays for a database-wide event scan and never disturbs other tenants —
+exactly the [#209](https://github.com/JasperFx/CritterWatch/issues/209) win for very large
+multi-tenanted stores.
+
 ::: warning
 `UseTenantPartitionedEvents` defaults to `false`; existing stores keep the global `IDENTITY` append
 path byte-for-byte. The flag **requires** `TenancyStyle.Conjoined` (there is nothing to partition by
 otherwise) and is currently incompatible with `UseArchivedStreamPartitioning` — a SQL Server table
 supports only one partition scheme; both raise an error at store construction.
 
-This first phase delivers per-tenant **sequencing** (the bounded-scan win). The tenant-aware async
-daemon (per-tenant high-water + per-tenant rebuild) and physical per-tenant table partitioning land
-in follow-ups — [polecat#163](https://github.com/JasperFx/polecat/issues/163) and
-[polecat#171](https://github.com/JasperFx/polecat/issues/171). Until the daemon phase ships, treat
-the flag as experimental for asynchronous projections.
+**Physical** per-tenant table partitioning is a further optimization still in progress
+([polecat#171](https://github.com/JasperFx/polecat/issues/171), pending a managed per-tenant
+partitioning API in Weasel.SqlServer). The per-tenant sequencing + tenant-aware daemon above already
+deliver the bounded-scan and isolated-rebuild benefits without it.
 :::

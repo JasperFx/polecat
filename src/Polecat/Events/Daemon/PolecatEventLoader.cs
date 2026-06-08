@@ -24,13 +24,17 @@ internal class PolecatEventLoader : IEventLoader
     private readonly StoreOptions _options;
     private readonly string _connectionString;
     private readonly HashSet<string>? _allowedDotNetTypes;
+    private readonly string? _tenantFilter;
 
     public PolecatEventLoader(EventGraph events, StoreOptions options, string connectionString,
-        EventFilterable? filtering = null)
+        EventFilterable? filtering = null, string? tenantFilter = null)
     {
         _events = events;
         _options = options;
         _connectionString = connectionString;
+        // #163 Phase 2: a per-tenant rebuild/subscription shard scopes the load to one tenant so it
+        // reads only that tenant's bounded sequence range, not the whole store. Null = store-global.
+        _tenantFilter = tenantFilter;
 
         // Build an allow list of dotnet_type names from the included event types
         if (filtering?.IncludedEventTypes is { Count: > 0 } includedTypes)
@@ -51,18 +55,21 @@ internal class PolecatEventLoader : IEventLoader
         await using var conn = new SqlConnection(_connectionString);
         await conn.OpenAsync(token);
 
+        var tenantPredicate = _tenantFilter != null ? " AND tenant_id = @tenant" : "";
+
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = $"""
             SELECT TOP(@batchSize) seq_id, id, stream_id, version, data, type, timestamp,
                 tenant_id, dotnet_type, is_archived
             FROM {_events.EventsTableName}
-            WHERE seq_id > @floor AND seq_id <= @ceiling AND is_archived = 0
+            WHERE seq_id > @floor AND seq_id <= @ceiling AND is_archived = 0{tenantPredicate}
             ORDER BY seq_id;
             """;
 
         cmd.Parameters.AddWithValue("@batchSize", request.BatchSize);
         cmd.Parameters.AddWithValue("@floor", request.Floor);
         cmd.Parameters.AddWithValue("@ceiling", request.HighWater);
+        if (_tenantFilter != null) cmd.Parameters.AddWithValue("@tenant", _tenantFilter);
 
         var skippedEvents = 0;
 

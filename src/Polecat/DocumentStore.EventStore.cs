@@ -89,13 +89,31 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
     IEventLoader IEventStore<IDocumentSession, IQuerySession>.BuildEventLoader(
         IEventDatabase database, ILogger loggerFactory, EventFilterable filtering,
         AsyncOptions shardOptions)
+        => BuildEventLoaderInternal(database, filtering, shardName: null);
+
+    // #163 Phase 2 — the 5-arg overload (jasperfx#407 Phase 2c) threads the ShardName, and thus the
+    // tenant, into loader construction. The base daemon composes a per-tenant rebuild shard
+    // (ShardName.TenantId != null) under per-tenant partitioning, so the loader can bound the scan to
+    // that single tenant. When the flag is off (or the shard has no tenant) the load stays store-global.
+    IEventLoader IEventStore<IDocumentSession, IQuerySession>.BuildEventLoader(
+        IEventDatabase database, ILogger loggerFactory, EventFilterable filtering,
+        AsyncOptions shardOptions, ShardName shardName)
+        => BuildEventLoaderInternal(database, filtering, shardName);
+
+    private IEventLoader BuildEventLoaderInternal(
+        IEventDatabase database, EventFilterable filtering, ShardName? shardName)
     {
         var connStr = database is PolecatDatabase pdb ? pdb.ConnectionString : Options.ConnectionString;
+
+        var tenantFilter = (shardName?.TenantId != null && Events.UseTenantPartitionedEvents)
+            ? shardName.TenantId
+            : null;
+
         // The bare PolecatEventLoader is wrapped by the lifted ResilientEventLoader
         // (jasperfx#329), which runs it through Options.ResiliencePipeline and reports
         // loading metrics via EventRequest.Metrics.TrackLoading() — parity Polecat
         // lacked when it inlined the Polly call inside the loader.
-        var inner = new PolecatEventLoader(Events, Options, connStr, filtering);
+        var inner = new PolecatEventLoader(Events, Options, connStr, filtering, tenantFilter);
         return new ResilientEventLoader(Options.ResiliencePipeline, inner, database);
     }
 
@@ -362,6 +380,64 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
             cmd.Parameters.AddWithValue("@name", name + "%");
             await cmd.ExecuteNonQueryAsync(ct);
         }, (connStr, Events.ProgressionTableName, subscriptionName), token);
+    }
+
+    // #163 Phase 2 — per-tenant rebuild teardown (jasperfx#407 Phase 2b). A non-null tenantId scopes the
+    // reset to a single tenant: delete only that tenant's projection-progress rows (the composed
+    // {Proj}:{ShardKey}:{tenant} identities) and DELETE the projection's doc rows WHERE tenant_id =
+    // tenant, instead of the store-global TRUNCATE. A null tenantId delegates to the store-global path.
+    async Task IEventStore<IDocumentSession, IQuerySession>.DeleteProjectionProgressAsync(
+        IEventDatabase database, string subscriptionName, string? tenantId, CancellationToken token)
+    {
+        if (tenantId == null)
+        {
+            await ((IEventStore<IDocumentSession, IQuerySession>)this)
+                .DeleteProjectionProgressAsync(database, subscriptionName, token);
+            return;
+        }
+
+        var connStr = ResolveConnectionString(database, Options);
+
+        var publishedTableNames = Array.Empty<string>();
+        var shardIdentities = Array.Empty<string>();
+        if (Options.Projections.TryFindProjection(subscriptionName, out var source))
+        {
+            publishedTableNames = source.PublishedTypes()
+                .Select(t => GetProvider(t).QualifiedTableName)
+                .ToArray();
+
+            // The exact per-tenant progression rows to delete: each shard's identity composed for
+            // this tenant (carries the trailing :tenantId).
+            shardIdentities = source.Shards()
+                .Select(s => s.Name.ForTenant(tenantId).Identity)
+                .ToArray();
+        }
+
+        await Options.ResiliencePipeline.ExecuteAsync(static async (state, ct) =>
+        {
+            var (connString, progressionTable, identities, tableNames, tenant) = state;
+            await using var conn = new SqlConnection(connString);
+            await conn.OpenAsync(ct);
+
+            foreach (var identity in identities)
+            {
+                await using var delProg = conn.CreateCommand();
+                delProg.CommandText = $"DELETE FROM {progressionTable} WHERE name = @id;";
+                delProg.Parameters.AddWithValue("@id", identity);
+                await delProg.ExecuteNonQueryAsync(ct);
+            }
+
+            foreach (var tableName in tableNames)
+            {
+                await using var delDocs = conn.CreateCommand();
+                // The projection's doc table is created lazily on first write, so on a first-ever
+                // rebuild it may not exist yet — guard the tenant-scoped delete accordingly.
+                delDocs.CommandText =
+                    $"IF OBJECT_ID('{tableName}', 'U') IS NOT NULL DELETE FROM {tableName} WHERE tenant_id = @tenant;";
+                delDocs.Parameters.AddWithValue("@tenant", tenant);
+                await delDocs.ExecuteNonQueryAsync(ct);
+            }
+        }, (connStr, Events.ProgressionTableName, shardIdentities, publishedTableNames, tenantId), token);
     }
 
     // ISubscriptionRunner<ISubscription>

@@ -23,7 +23,8 @@ namespace Polecat.Storage;
 ///     Handles auto-creation and migration of event store tables.
 ///     Implements IEventDatabase for async daemon infrastructure.
 /// </summary>
-public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IProjectionDatabase
+public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IProjectionDatabase,
+    ICrossTenantRebuildSource
 {
     private readonly StoreOptions _options;
     private readonly EventGraph _events;
@@ -228,6 +229,39 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
             var result = await cmd.ExecuteScalarAsync(ct);
             return result is long seq ? (long?)seq : null;
         }, (_connectionString, _events.EventsTableName, timestamp), token);
+    }
+
+    /// <summary>
+    ///     #163 Phase 2 — <see cref="ICrossTenantRebuildSource" />: the tenants to rebuild when
+    ///     rebuilding <paramref name="projectionName" /> across all tenants. Source of truth is the
+    ///     registered partitions in <c>pc_tenant_partitions</c> (every tenant that has appended events
+    ///     has a partition). Returns empty when per-tenant partitioning is off. Mirrors Marten's
+    ///     <c>MartenDatabase.FindRebuildTenantsAsync</c>.
+    /// </summary>
+    public async Task<IReadOnlyList<string>> FindRebuildTenantsAsync(string projectionName,
+        CancellationToken token)
+    {
+        if (!_events.UseTenantPartitionedEvents) return [];
+
+        return await _resilience.ExecuteAsync(static async (state, ct) =>
+        {
+            var (connectionString, tenantPartitionsTable) = state;
+            var tenants = new List<string>();
+
+            await using var conn = new SqlConnection(connectionString);
+            await conn.OpenAsync(ct);
+
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = $"SELECT tenant_id FROM {tenantPartitionsTable} ORDER BY tenant_id;";
+
+            await using var reader = await cmd.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct))
+            {
+                tenants.Add(reader.GetString(0));
+            }
+
+            return (IReadOnlyList<string>)tenants;
+        }, (_connectionString, _events.TenantPartitionsTableName), token);
     }
 
     public async Task StoreDeadLetterEventAsync(object storage, DeadLetterEvent deadLetterEvent,
