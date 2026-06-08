@@ -50,6 +50,24 @@ internal class PolecatEventLoader : IEventLoader
 
     public async Task<EventPage> LoadAsync(EventRequest request, CancellationToken token)
     {
+        try
+        {
+            return await LoadInternalAsync(request, token);
+        }
+        catch (Exception ex) when (token.IsCancellationRequested && ex is not OperationCanceledException)
+        {
+            // The daemon cancelled this load mid-flight — e.g. shutting the shard down after a
+            // CatchUpAsync reaches the high-water mark. SqlClient surfaces that cancellation as a
+            // SqlException ("Operation cancelled by user" / "the batch is aborted ... the session is
+            // busy") rather than a clean OperationCanceledException, and the async daemon's recorder
+            // would otherwise treat it as a real shard error. Translate it to a cooperative
+            // cancellation so the daemon ignores it as the benign shutdown it is.
+            throw new OperationCanceledException("Event loading was cancelled.", ex, token);
+        }
+    }
+
+    private async Task<EventPage> LoadInternalAsync(EventRequest request, CancellationToken token)
+    {
         var page = new EventPage(request.Floor);
 
         await using var conn = new SqlConnection(_connectionString);
