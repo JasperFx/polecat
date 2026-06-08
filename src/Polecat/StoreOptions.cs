@@ -243,6 +243,25 @@ public class StoreOptions
     }
 
     /// <summary>
+    ///     Configure dynamic separate-database multi-tenancy backed by a master "control plane" table.
+    ///     The master table on <paramref name="masterConnectionString" /> maps each tenant id to its
+    ///     connection string, and tenants can be added/removed/enabled/disabled at runtime via the
+    ///     returned <see cref="MasterTableTenancy" />. This is the Polecat equivalent of Marten's
+    ///     <c>MultiTenantedDatabasesViaMasterTable</c>.
+    /// </summary>
+    /// <param name="masterConnectionString">Connection string to the control-plane database that holds the tenant registry.</param>
+    /// <param name="schemaName">Schema for the master table; defaults to <see cref="DatabaseSchemaName" />.</param>
+    /// <param name="configure">Optional hook to configure the tenancy before it is assigned.</param>
+    public MasterTableTenancy MultiTenantedMasterTable(string masterConnectionString,
+        string? schemaName = null, Action<MasterTableTenancy>? configure = null)
+    {
+        var tenancy = new MasterTableTenancy(this, masterConnectionString, schemaName ?? DatabaseSchemaName);
+        configure?.Invoke(tenancy);
+        Tenancy = tenancy;
+        return tenancy;
+    }
+
+    /// <summary>
     ///     Configure the serialization settings for the document store.
     /// </summary>
     public void ConfigureSerialization(
