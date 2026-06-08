@@ -15,8 +15,19 @@ internal class EventsTable : Table
     public EventsTable(EventGraph events)
         : base(new SqlServerObjectName(events.DatabaseSchemaName, TableName))
     {
-        // Global sequence — auto-incrementing primary key
-        AddColumn("seq_id", "bigint").AsPrimaryKey().AutoNumber();
+        // Event position. By default a global auto-incrementing IDENTITY primary key. When per-tenant
+        // partitioning is enabled (#163 Phase 1) seq_id is instead supplied from that tenant's
+        // pc_events_sequence_{id} (NEXT VALUE FOR in the append path), so it is no longer IDENTITY and
+        // no longer globally unique — the primary key becomes composite (tenant_id, seq_id) below.
+        var seqColumn = AddColumn("seq_id", "bigint");
+        if (events.UseTenantPartitionedEvents)
+        {
+            seqColumn.NotNull().AsPrimaryKey();
+        }
+        else
+        {
+            seqColumn.AsPrimaryKey().AutoNumber();
+        }
 
         // Event identity
         AddColumn("id", "uniqueidentifier").NotNull();
@@ -42,9 +53,16 @@ internal class EventsTable : Table
             .DefaultValueByExpression("SYSDATETIMEOFFSET()");
 
         // Tenant id
-        AddColumn(JasperFx.StorageConstants.TenantIdColumn, "varchar(250)")
+        var tenantColumn = AddColumn(JasperFx.StorageConstants.TenantIdColumn, "varchar(250)")
             .NotNull()
             .DefaultValueByString(JasperFx.StorageConstants.DefaultTenantId);
+
+        // Per-tenant partitioning makes seq_id unique only within a tenant, so the tenant id joins the
+        // primary key to keep (tenant_id, seq_id) globally unique.
+        if (events.UseTenantPartitionedEvents)
+        {
+            tenantColumn.AsPrimaryKey();
+        }
 
         // .NET type for deserialization
         AddColumn("dotnet_type", "varchar(500)").AllowNulls();

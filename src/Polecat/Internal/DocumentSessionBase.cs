@@ -742,6 +742,18 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         var columns = "id, stream_id, version, data, type, timestamp, tenant_id, dotnet_type";
         var values = "@id, @stream_id, @version, @data, @type, SYSDATETIMEOFFSET(), @tenant_id, @dotnet_type";
 
+        // Per-tenant partitioning (#163 Phase 1): seq_id is no longer a global IDENTITY — it is drawn
+        // from this tenant's own pc_events_sequence_{id} (provisioned on first use). Off-flag this whole
+        // block is skipped and seq_id keeps its IDENTITY default, leaving the append path byte-for-byte.
+        if (_eventGraph.UseTenantPartitionedEvents)
+        {
+            var eventTenantId = @event.TenantId ?? TenantId;
+            var sequenceName = await _eventGraph.TenantSequences
+                .ResolveSequenceNameAsync(eventTenantId, token);
+            columns = "seq_id, " + columns;
+            values = $"NEXT VALUE FOR {sequenceName}, " + values;
+        }
+
         if (eventOptions.EnableCorrelationId)
         {
             columns += ", correlation_id";

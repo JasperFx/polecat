@@ -34,6 +34,14 @@ internal class EventStoreFeatureSchema : FeatureSchemaBase
         yield return _events.BuildEventsTable();
         yield return _events.BuildEventProgressionTable();
 
+        // Per-tenant partitioning registry (#163 Phase 1). Only materialized when the feature is on,
+        // so off-flag stores see no schema delta. The per-tenant pc_events_sequence_{id} objects are
+        // created on demand at first append (TenantEventSequenceRegistry), not here.
+        if (_events.UseTenantPartitionedEvents)
+        {
+            yield return _events.BuildTenantPartitionsTable();
+        }
+
         // Tag tables for DCB support
         foreach (var tagRegistration in _events.TagTypes)
         {
