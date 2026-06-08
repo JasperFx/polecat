@@ -92,6 +92,27 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
     public bool UseArchivedStreamPartitioning { get; set; }
 
     /// <summary>
+    ///     Master switch for per-tenant event partitioning (Polecat #163 / CritterWatch #209).
+    ///     When enabled, the SQL Server append path moves from a global
+    ///     <c>seq_id BIGINT IDENTITY</c> to per-tenant <c>pc_events_sequence_{suffix}</c>
+    ///     SEQUENCE objects, and the async daemon's high-water detector returns
+    ///     <see cref="JasperFx.Events.Daemon.HighWater.IHighWaterDetector.SupportsTenantPartitioning"/> = true
+    ///     so tenant-scoped rebuilds and high-water reads run bounded by a single
+    ///     tenant's sequence ceiling rather than the database-wide event-sequence scan.
+    ///     <para>
+    ///     <b>Default is false</b> — existing stores keep the global IDENTITY path
+    ///     byte-for-byte. The per-tenant SEQUENCE + tenant-registry + daemon-side
+    ///     surface land in subsequent phases (#163 Phase 1 + Phase 2); Phase 0 only
+    ///     introduces this flag so downstream phases can gate cleanly.
+    ///     </para>
+    ///     <para>
+    ///     Polecat is single-append-path (QuickAppend only — direct INSERTs, no stored
+    ///     procedures), so no append-mode compatibility guard is needed.
+    ///     </para>
+    /// </summary>
+    public bool UseTenantPartitionedEvents { get; set; }
+
+    /// <summary>
     ///     Process projection side effects (slice.PublishMessage) when running
     ///     projections under the Inline lifecycle. Off by default — flip on to
     ///     route inline-projection-emitted messages through the configured
