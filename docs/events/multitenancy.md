@@ -93,12 +93,16 @@ var store = DocumentStore.For(opts =>
 
 When enabled, Polecat:
 
-* **Maintains a tenant registry** — `pc_tenant_partitions` maps each `tenant_id` to a compact
-  `partition_id`, populated the first time a tenant appends events.
+* **Maintains a tenant registry** — `pc_tenant_partitions` maps each `tenant_id` to a compact integer
+  `ordinal`, populated the first time a tenant appends events (via Weasel.SqlServer's managed tenant
+  partitioning).
 * **Gives each tenant its own sequence** — `seq_id` is drawn from a per-tenant
-  `pc_events_sequence_{partition_id}` object (created on demand) via `NEXT VALUE FOR`, rather than a
-  single global `IDENTITY`. `seq_id` is therefore unique only *within* a tenant, so the `pc_events`
-  primary key becomes composite `(tenant_id, seq_id)`.
+  `pc_events_sequence_{ordinal}` object (created on demand) via `NEXT VALUE FOR`, rather than a single
+  global `IDENTITY`. `seq_id` is therefore unique only *within* a tenant, so the `pc_events` primary
+  key becomes composite `(tenant_ordinal, seq_id)`.
+* **Physically partitions `pc_events` by tenant** — the table is `RANGE RIGHT` partitioned on the
+  tenant `ordinal`, and a new partition is split in as each tenant registers. A tenant's events live
+  in their own physical partition, so per-tenant scans and rebuilds touch only that partition.
 
 ```cs
 // Each tenant's seq_id starts at 1 and advances independently
@@ -141,8 +145,7 @@ path byte-for-byte. The flag **requires** `TenancyStyle.Conjoined` (there is not
 otherwise) and is currently incompatible with `UseArchivedStreamPartitioning` — a SQL Server table
 supports only one partition scheme; both raise an error at store construction.
 
-**Physical** per-tenant table partitioning is a further optimization still in progress
-([polecat#171](https://github.com/JasperFx/polecat/issues/171), pending a managed per-tenant
-partitioning API in Weasel.SqlServer). The per-tenant sequencing + tenant-aware daemon above already
-deliver the bounded-scan and isolated-rebuild benefits without it.
+Physical partitioning applies to `pc_events` (the table that drives the bounded per-tenant scan);
+`pc_streams` is accessed by point lookup and is left unpartitioned. The partition function/scheme are
+database-global objects, so a single database should host one tenant-partitioned event store.
 :::

@@ -11,6 +11,7 @@ namespace Polecat.Tests.Events;
 ///     the pc_tenant_partitions registry + per-tenant pc_events_sequence objects, per-tenant sequence
 ///     isolation, append/read round-trip under the flag, and off-flag regression.
 /// </summary>
+[Collection("tenant-partitioning")]
 public class per_tenant_event_sequence_tests : IAsyncLifetime
 {
     private const string PartitionedSchema = "pt_on";
@@ -20,6 +21,7 @@ public class per_tenant_event_sequence_tests : IAsyncLifetime
     {
         await DropSchemaTablesAsync(PartitionedSchema);
         await DropSchemaTablesAsync(DefaultSchema);
+        await PartitionTestCleanup.DropEventsPartitionObjectsAsync();
         await DropSequencesAsync(PartitionedSchema);
     }
 
@@ -123,9 +125,9 @@ public class per_tenant_event_sequence_tests : IAsyncLifetime
             await blue.SaveChangesAsync();
         }
 
-        // The registry assigned a distinct partition id to each tenant.
+        // The registry assigned a distinct ordinal to each tenant.
         var partitionIds = await QueryAsync(
-            $"SELECT tenant_id, partition_id FROM [{PartitionedSchema}].[pc_tenant_partitions] ORDER BY tenant_id");
+            $"SELECT tenant_id, ordinal FROM [{PartitionedSchema}].[pc_tenant_partitions] ORDER BY tenant_id");
         partitionIds.Count.ShouldBe(2);
         partitionIds.Select(r => r[1]).Distinct().Count().ShouldBe(2);
 
@@ -144,6 +146,39 @@ public class per_tenant_event_sequence_tests : IAsyncLifetime
 
         await using var blueQuery = store.QuerySession(new SessionOptions { TenantId = "Blue" });
         (await blueQuery.Events.FetchStreamAsync(blueStream)).Count.ShouldBe(3);
+    }
+
+    [Fact]
+    public async Task events_are_physically_partitioned_by_tenant()
+    {
+        using var store = CreatePartitionedStore();
+        await store.Database.ApplyAllConfiguredChangesToDatabaseAsync();
+
+        await using (var red = store.LightweightSession(new SessionOptions { TenantId = "Red" }))
+        {
+            red.Events.StartStream(Guid.NewGuid(), new QuestStarted("Red"), new MonsterSlain("a", 1));
+            await red.SaveChangesAsync();
+        }
+
+        await using (var blue = store.LightweightSession(new SessionOptions { TenantId = "Blue" }))
+        {
+            blue.Events.StartStream(Guid.NewGuid(), new QuestStarted("Blue"));
+            await blue.SaveChangesAsync();
+        }
+
+        // Each tenant's rows carry that tenant's ordinal and physically land in a distinct partition of
+        // pc_events (computed via the partition function over tenant_ordinal).
+        var rows = await QueryAsync($"""
+            SELECT $PARTITION.pf_pc_events_tenant_ordinal(tenant_ordinal) AS p, tenant_id, COUNT(*) AS c
+            FROM [{PartitionedSchema}].[pc_events]
+            GROUP BY $PARTITION.pf_pc_events_tenant_ordinal(tenant_ordinal), tenant_id
+            ORDER BY tenant_id
+            """);
+
+        rows.Count.ShouldBe(2);                                   // Red + Blue
+        rows.Select(r => r[0]).Distinct().Count().ShouldBe(2);    // in different physical partitions
+        rows.Single(r => (string)r[1] == "Red")[2].ShouldBe(2);  // Red has 2 events
+        rows.Single(r => (string)r[1] == "Blue")[2].ShouldBe(1); // Blue has 1 event
     }
 
     private static async Task<long[]> SeqIdsForTenantAsync(string tenantId)

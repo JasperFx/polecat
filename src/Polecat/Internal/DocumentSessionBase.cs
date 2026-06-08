@@ -742,16 +742,19 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         var columns = "id, stream_id, version, data, type, timestamp, tenant_id, dotnet_type";
         var values = "@id, @stream_id, @version, @data, @type, SYSDATETIMEOFFSET(), @tenant_id, @dotnet_type";
 
-        // Per-tenant partitioning (#163 Phase 1): seq_id is no longer a global IDENTITY — it is drawn
-        // from this tenant's own pc_events_sequence_{id} (provisioned on first use). Off-flag this whole
-        // block is skipped and seq_id keeps its IDENTITY default, leaving the append path byte-for-byte.
+        // Per-tenant partitioning (#163 / polecat#171): seq_id is no longer a global IDENTITY — it is
+        // drawn from this tenant's own pc_events_sequence_{ordinal}, and the row carries the tenant's
+        // physical-partition ordinal. Both are provisioned on first use (partition SPLIT + sequence
+        // create). Off-flag this whole block is skipped and seq_id keeps its IDENTITY default, leaving
+        // the append path byte-for-byte.
+        int? tenantOrdinal = null;
         if (_eventGraph.UseTenantPartitionedEvents)
         {
             var eventTenantId = @event.TenantId ?? TenantId;
-            var sequenceName = await _eventGraph.TenantSequences
-                .ResolveSequenceNameAsync(eventTenantId, token);
-            columns = "seq_id, " + columns;
-            values = $"NEXT VALUE FOR {sequenceName}, " + values;
+            var storage = await _eventGraph.TenantSequences.ResolveAsync(eventTenantId, token);
+            tenantOrdinal = storage.Ordinal;
+            columns = $"seq_id, {_eventGraph.TenantPartitionManager.Column}, " + columns;
+            values = $"NEXT VALUE FOR {storage.SequenceName}, @tenant_ordinal, " + values;
         }
 
         if (eventOptions.EnableCorrelationId)
@@ -841,6 +844,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         cmd.Parameters.AddWithValue("@id", @event.Id);
         cmd.Parameters.AddWithValue("@stream_id", streamId);
         cmd.Parameters.AddWithValue("@version", @event.Version);
+        if (tenantOrdinal.HasValue) cmd.Parameters.AddWithValue("@tenant_ordinal", tenantOrdinal.Value);
         cmd.Parameters.AddWithValue("@data", Serializer.ToJson(@event.Data));
         cmd.Parameters.AddWithValue("@type", @event.EventTypeName);
         cmd.Parameters.AddWithValue("@tenant_id", @event.TenantId ?? TenantId);

@@ -306,7 +306,7 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
                 LEFT JOIN {events.TenantPartitionsTableName} p
                     ON p.tenant_id = i.tenant_id
                 LEFT JOIN sys.sequences sq
-                    ON sq.name = 'pc_events_sequence_' + CAST(p.partition_id AS varchar(20))
+                    ON sq.name = 'pc_events_sequence_' + CAST(p.ordinal AS varchar(20))
                     AND sq.schema_id = SCHEMA_ID(@schema)
                 LEFT JOIN {events.ProgressionTableName} prog
                     ON prog.name = @prefix + i.tenant_id;
