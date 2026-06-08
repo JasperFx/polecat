@@ -1,6 +1,24 @@
-# Multi-Tenancy with Database per Tenant
+# Multi-Tenancy
 
-Polecat supports multiple multi-tenancy strategies for isolating data between tenants.
+Polecat supports several multi-tenancy strategies for isolating data between tenants — from a single
+shared table to a database per tenant. They differ in **where** a tenant's data lives, **how** the
+tenant set is managed, and **how** the async projection daemon scales.
+
+## Choosing a Tenancy Strategy
+
+| Strategy | Isolation | Tenant set | Best for |
+| --- | --- | --- | --- |
+| [Single tenant](#single-tenant-default) | None (shared tables) | n/a | Single-tenant apps |
+| [Conjoined](#conjoined-tenancy) | `tenant_id` column, shared tables | Open (any id) | Many tenants, shared schema, simplest ops |
+| [Separate database (static)](#separate-database-tenancy) | One database per tenant | Fixed at startup (`AddTenant`) | Strong isolation, known tenant list |
+| [Master-table (dynamic)](#dynamic-tenant-management-master-table-tenancy) | One database per tenant | Managed at runtime via a control table | Strong isolation + add/remove/enable/disable tenants without a restart |
+| [Per-tenant event partitioning](/events/multitenancy#per-tenant-event-partitioning) | Conjoined + per-tenant event sequence | Open (any id) | Very large multi-tenant **event** stores needing bounded, isolated per-tenant projection rebuilds |
+
+Conjoined and the two separate-database strategies are mutually exclusive choices for **where data
+lives**. Per-tenant event partitioning is an **opt-in optimization layered on conjoined event
+tenancy** — see [Per-Tenant Event Partitioning](/events/multitenancy#per-tenant-event-partitioning).
+For event-store specifics (tenanted streams, the default tenant), see
+[Event Multi-Tenancy](/events/multitenancy).
 
 ## Tenancy Styles
 
