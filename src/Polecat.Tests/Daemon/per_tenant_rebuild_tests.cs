@@ -15,6 +15,7 @@ namespace Polecat.Tests.Daemon;
 ///     projected documents and progression rows stay untouched. Mirrors Marten's
 ///     use_tenant_partitioned_events_per_tenant_rebuild.
 /// </summary>
+[Collection("tenant-partitioning")]
 public class per_tenant_rebuild_tests : IAsyncLifetime
 {
     private const string Schema = "pt_rebuild";
@@ -23,6 +24,7 @@ public class per_tenant_rebuild_tests : IAsyncLifetime
     public async Task InitializeAsync()
     {
         await DropSchemaTablesAsync(Schema);
+        await PartitionTestCleanup.DropEventsPartitionObjectsAsync();
         await DropSequencesAsync(Schema);
     }
 

@@ -9,6 +9,9 @@ using Polecat.Events.Schema;
 using Polecat.Projections;
 using Polecat.Serialization;
 using Polecat.Storage;
+using Weasel.Core;
+using Weasel.Core.Migrations;
+using Weasel.SqlServer.Tables.Partitioning;
 
 namespace Polecat.Events;
 
@@ -126,22 +129,49 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
     internal string ProgressionTableName => $"[{DatabaseSchemaName}].[pc_event_progression]";
     internal string TenantPartitionsTableName => $"[{DatabaseSchemaName}].[pc_tenant_partitions]";
 
+    private ManagedTenantPartitions? _tenantPartitions;
+
+    /// <summary>
+    ///     The single Weasel.SqlServer managed per-tenant partition strategy (polecat#171) — maps each
+    ///     tenant to a compact integer ordinal, owns the <c>pc_tenant_partitions</c> registry, and
+    ///     physically partitions <c>pc_events</c> by that ordinal (RANGE RIGHT). One instance is shared
+    ///     between the events-table DDL (<see cref="EventsTable" />) and the runtime partition split
+    ///     (<see cref="TenantEventSequenceRegistry" />) so Weasel can match the table to this strategy
+    ///     by reference. Only built when <see cref="UseTenantPartitionedEvents" /> is enabled.
+    /// </summary>
+    internal ManagedTenantPartitions TenantPartitionManager =>
+        _tenantPartitions ??= new ManagedTenantPartitions(
+            "pc_events_tenants",
+            new DbObjectName(DatabaseSchemaName, "pc_tenant_partitions"),
+            column: "tenant_ordinal");
+
+    private PolecatDatabase? _tenantPartitionDatabase;
     private TenantEventSequenceRegistry? _tenantSequences;
 
     /// <summary>
-    ///     Resolves (and lazily provisions) per-tenant event sequences when
-    ///     <see cref="UseTenantPartitionedEvents" /> is enabled. Conjoined tenancy is a precondition,
-    ///     so all tenants share the one configured connection.
+    ///     Wire the owning database so per-tenant provisioning can SPLIT physical partitions at runtime.
+    ///     Set by <see cref="DocumentStore" /> during construction.
+    /// </summary>
+    internal void AttachTenantPartitionDatabase(PolecatDatabase database)
+        => _tenantPartitionDatabase = database;
+
+    /// <summary>
+    ///     Resolves (and lazily provisions) each tenant's ordinal, physical partition, and per-tenant
+    ///     event sequence when <see cref="UseTenantPartitionedEvents" /> is enabled. Conjoined tenancy
+    ///     is a precondition, so all tenants share the one configured connection/database.
     /// </summary>
     internal TenantEventSequenceRegistry TenantSequences =>
         _tenantSequences ??= new TenantEventSequenceRegistry(
+            TenantPartitionManager,
+            _tenantPartitionDatabase ?? throw new InvalidOperationException(
+                "The owning database has not been attached for per-tenant partitioning."),
             _options.ConnectionString, DatabaseSchemaName, _options.ResiliencePipeline);
 
     /// <summary>
-    ///     Validate the per-tenant partitioning configuration (#163 Phase 1). Per-tenant event
+    ///     Validate the per-tenant partitioning configuration (#163 / polecat#171). Per-tenant event
     ///     sequencing only makes sense with conjoined event tenancy (there must be a tenant to slice
-    ///     by), and Phase 1 does not yet combine it with the physical <c>is_archived</c> partitioning
-    ///     scheme (a SQL Server table can carry only one partition scheme — tracked by polecat#171).
+    ///     by), and it physically partitions <c>pc_events</c> by tenant — which a SQL Server table can
+    ///     only do under one partition scheme, so it cannot also use the <c>is_archived</c> scheme.
     /// </summary>
     internal void AssertTenantPartitioningValidity()
     {
@@ -157,9 +187,9 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
         if (UseArchivedStreamPartitioning)
         {
             throw new InvalidOperationException(
-                "Events.UseTenantPartitionedEvents cannot currently be combined with " +
+                "Events.UseTenantPartitionedEvents cannot be combined with " +
                 "Events.UseArchivedStreamPartitioning — a SQL Server table supports only one partition " +
-                "scheme. Physical per-tenant partitioning is tracked separately in polecat#171.");
+                "scheme, and per-tenant partitioning already uses it for pc_events.");
         }
     }
 
@@ -261,11 +291,6 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
     internal EventProgressionTable BuildEventProgressionTable()
     {
         return new EventProgressionTable(this);
-    }
-
-    internal TenantPartitionsTable BuildTenantPartitionsTable()
-    {
-        return new TenantPartitionsTable(this);
     }
 
     public ITagTypeRegistration RegisterTagType<TTag>() where TTag : notnull

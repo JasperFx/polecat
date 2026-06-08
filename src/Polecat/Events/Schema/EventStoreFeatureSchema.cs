@@ -34,12 +34,18 @@ internal class EventStoreFeatureSchema : FeatureSchemaBase
         yield return _events.BuildEventsTable();
         yield return _events.BuildEventProgressionTable();
 
-        // Per-tenant partitioning registry (#163 Phase 1). Only materialized when the feature is on,
-        // so off-flag stores see no schema delta. The per-tenant pc_events_sequence_{id} objects are
-        // created on demand at first append (TenantEventSequenceRegistry), not here.
+        // Per-tenant partitioning registry (#163 / polecat#171). Only materialized when the feature is
+        // on, so off-flag stores see no schema delta. The registry (pc_tenant_partitions: tenant_id ->
+        // ordinal) is owned by the Weasel.SqlServer ManagedTenantPartitions strategy; the physical
+        // partition function/scheme are emitted as part of the partitioned pc_events DDL above, and the
+        // per-tenant pc_events_sequence_{ordinal} objects are created on demand at first append.
         if (_events.UseTenantPartitionedEvents)
         {
-            yield return _events.BuildTenantPartitionsTable();
+            foreach (var schemaObject in
+                     ((Weasel.Core.Migrations.IFeatureSchema)_events.TenantPartitionManager).Objects)
+            {
+                yield return schemaObject;
+            }
         }
 
         // Tag tables for DCB support

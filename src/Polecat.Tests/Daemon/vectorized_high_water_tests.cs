@@ -13,6 +13,7 @@ namespace Polecat.Tests.Daemon;
 ///     pc_tenant_partitions → sys.sequences → pc_event_progression read). Mirrors Marten's
 ///     vectorized_high_water_detection / _flag_off.
 /// </summary>
+[Collection("tenant-partitioning")]
 public class vectorized_high_water_tests : IAsyncLifetime
 {
     private const string Schema = "pt_hw";
@@ -20,6 +21,7 @@ public class vectorized_high_water_tests : IAsyncLifetime
     public async Task InitializeAsync()
     {
         await DropSchemaTablesAsync(Schema);
+        await PartitionTestCleanup.DropEventsPartitionObjectsAsync();
         await DropSequencesAsync(Schema);
     }
 

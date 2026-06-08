@@ -38,8 +38,8 @@
         <PackageVersion Include="Shouldly" Version="4.3.0" />
         <PackageVersion Include="xunit" Version="2.9.3" />
         <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.4" />
-        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.0.1" />
-        <PackageVersion Include="Weasel.SqlServer" Version="9.0.1" />
+        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.1.0" />
+        <PackageVersion Include="Weasel.SqlServer" Version="9.1.0" />
 
         <!-- Strongly typed IDs -->
         <PackageVersion Include="StronglyTypedId" Version="1.0.0-beta08" />

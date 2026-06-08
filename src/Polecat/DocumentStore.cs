@@ -43,6 +43,9 @@ public partial class DocumentStore : IDocumentStore
         // document store/queries (it has no store/session of its own otherwise).
         Database.Store = this;
 
+        // Wire the database so per-tenant partitioning can SPLIT physical partitions at runtime (polecat#171).
+        options.EventGraph.AttachTenantPartitionDatabase(Database);
+
         // Initialize default tenancy if not already configured
         Options.Tenancy ??= new DefaultTenancy(_connectionFactory, Database);
 

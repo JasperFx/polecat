@@ -57,11 +57,16 @@ internal class EventsTable : Table
             .NotNull()
             .DefaultValueByString(JasperFx.StorageConstants.DefaultTenantId);
 
-        // Per-tenant partitioning makes seq_id unique only within a tenant, so the tenant id joins the
-        // primary key to keep (tenant_id, seq_id) globally unique.
+        // Per-tenant partitioning (polecat#171): physically partition pc_events by a compact tenant
+        // ordinal via Weasel.SqlServer's ManagedTenantPartitions, and number seq_id from the tenant's
+        // own sequence. SQL Server requires the partition column in the clustered index, so
+        // tenant_ordinal joins the primary key; seq_id is unique within a tenant, making
+        // (tenant_ordinal, seq_id) globally unique. tenant_id stays (not in the PK) for query filters.
         if (events.UseTenantPartitionedEvents)
         {
-            tenantColumn.AsPrimaryKey();
+            _ = tenantColumn; // tenant_id remains a plain NOT NULL column under this mode
+            AddColumn(events.TenantPartitionManager.Column, "int").NotNull().AsPrimaryKey();
+            this.PartitionByManagedTenants(events.TenantPartitionManager);
         }
 
         // .NET type for deserialization
@@ -106,9 +111,13 @@ internal class EventsTable : Table
         // column (is_archived) to be included in all unique indexes.
         if (events.TenancyStyle == TenancyStyle.Conjoined)
         {
-            var uniqueColumns = events.UseArchivedStreamPartitioning
-                ? new[] { JasperFx.StorageConstants.TenantIdColumn, "stream_id", "version", "is_archived" }
-                : new[] { JasperFx.StorageConstants.TenantIdColumn, "stream_id", "version" };
+            // SQL Server requires every partition column to appear in a unique index, so under
+            // per-tenant partitioning the unique key keys on tenant_ordinal (1:1 with tenant_id).
+            var uniqueColumns = events.UseTenantPartitionedEvents
+                ? new[] { events.TenantPartitionManager.Column, "stream_id", "version" }
+                : events.UseArchivedStreamPartitioning
+                    ? new[] { JasperFx.StorageConstants.TenantIdColumn, "stream_id", "version", "is_archived" }
+                    : new[] { JasperFx.StorageConstants.TenantIdColumn, "stream_id", "version" };
 
             Indexes.Add(new IndexDefinition("ix_pc_events_stream_and_version")
             {

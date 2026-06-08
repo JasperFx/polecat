@@ -410,3 +410,6 @@ docs/.vitepress/cache/
 # Nuke build
 .nuke/temp/
 results/
+
+# Claude Code session data / worktrees
+.claude/
