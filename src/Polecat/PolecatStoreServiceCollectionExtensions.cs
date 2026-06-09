@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using JasperFx.Events;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Polecat.Internal;
@@ -36,6 +37,14 @@ public static class PolecatStoreServiceCollectionExtensions
         this IServiceCollection services, Func<IServiceProvider, StoreOptions> optionSource)
         where T : class, IDocumentStore
     {
+        // #177: register IEventStoreInstrumentation alongside the per-T IConfigurePolecat<T>
+        // chain so external tooling can resolve every store's instrumentation through
+        // GetServices<IEventStoreInstrumentation>() and toggle them in one pass. Mirrors
+        // SetEventStoreInstrumentation<T> wiring in Marten's AddMartenStore<T>.
+        var instrument = new SetEventStoreInstrumentation<T>();
+        services.AddSingleton<IConfigurePolecat<T>>(instrument);
+        services.AddSingleton<IEventStoreInstrumentation>(instrument);
+
         services.AddSingleton<T>(sp =>
         {
             var options = optionSource(sp);
