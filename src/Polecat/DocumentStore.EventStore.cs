@@ -204,6 +204,24 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
         hilo.AddValue(nameof(Options.HiloSequenceDefaults.MaxAdvanceToNextHiAttempts), Options.HiloSequenceDefaults.MaxAdvanceToNextHiAttempts);
         usage.Children["HiloSequenceDefaults"] = hilo;
 
+        // JasperFx/ProductSupport#3 — surface the async-daemon error-handling
+        // policy on the wire so monitoring tools (CritterWatch) can render the
+        // right "shard halts on error" vs "view related dead letters" affordance.
+        // Mirror of the Marten companion so the descriptor is populated identically
+        // regardless of which store backs the monitored service.
+        usage.ProjectionErrors = new ProjectionErrorHandlingDescriptor
+        {
+            SkipApplyErrors = Options.Projections.Errors.SkipApplyErrors,
+            SkipUnknownEvents = Options.Projections.Errors.SkipUnknownEvents,
+            SkipSerializationErrors = Options.Projections.Errors.SkipSerializationErrors
+        };
+        usage.ProjectionRebuildErrors = new ProjectionErrorHandlingDescriptor
+        {
+            SkipApplyErrors = Options.Projections.RebuildErrors.SkipApplyErrors,
+            SkipUnknownEvents = Options.Projections.RebuildErrors.SkipUnknownEvents,
+            SkipSerializationErrors = Options.Projections.RebuildErrors.SkipSerializationErrors
+        };
+
         // DCB tag-type registrations — first-class typed list mirroring
         // Marten's plumbing. Polecat doesn't expose a GlobalAggregates surface
         // yet; that list stays empty until the equivalent lands.

@@ -66,4 +66,35 @@ public class event_store_usage_integration_tests : IntegrationContext
         usage.ShouldNotBeNull();
         usage.MaxEventSequence.ShouldBeNull();
     }
+
+    [Fact]
+    public async Task projection_error_handling_descriptors_mirror_store_options()
+    {
+        // JasperFx/ProductSupport#3 — the projection error policy needs to ride
+        // along on EventStoreUsage so monitoring tools can render the right
+        // affordance (DLQ button vs "shard halts on error" indicator) without
+        // sniffing into Polecat internals. Asserts the descriptors carry the
+        // exact policy values configured on the store, rather than pinning
+        // specific defaults (which can drift across JasperFx.Events releases).
+        var usage = await ((IEventStore)theStore).TryCreateUsage(CancellationToken.None);
+
+        usage.ShouldNotBeNull();
+
+        // Both descriptors must be populated so monitoring tools can render
+        // policy-driven UI on every store.
+        usage.ProjectionErrors.ShouldNotBeNull();
+        usage.ProjectionRebuildErrors.ShouldNotBeNull();
+
+        // Mirror assertions — the descriptors must exactly reflect the
+        // ErrorHandlingOptions on the store, whatever the upstream defaults are.
+        var storeErrors = theStore.Options.Projections.Errors;
+        usage.ProjectionErrors.SkipApplyErrors.ShouldBe(storeErrors.SkipApplyErrors);
+        usage.ProjectionErrors.SkipUnknownEvents.ShouldBe(storeErrors.SkipUnknownEvents);
+        usage.ProjectionErrors.SkipSerializationErrors.ShouldBe(storeErrors.SkipSerializationErrors);
+
+        var storeRebuildErrors = theStore.Options.Projections.RebuildErrors;
+        usage.ProjectionRebuildErrors.SkipApplyErrors.ShouldBe(storeRebuildErrors.SkipApplyErrors);
+        usage.ProjectionRebuildErrors.SkipUnknownEvents.ShouldBe(storeRebuildErrors.SkipUnknownEvents);
+        usage.ProjectionRebuildErrors.SkipSerializationErrors.ShouldBe(storeRebuildErrors.SkipSerializationErrors);
+    }
 }
