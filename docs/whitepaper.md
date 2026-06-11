@@ -108,7 +108,7 @@ The canonical Critter Stack pattern is Wolverine on the front edge, Polecat on t
 - **Wolverine** — the message bus and HTTP/handler runtime from the same author. Handlers are plain methods. Code generation produces the wiring.
 - **Polecat** — the unit-of-work for state changes. Documents, events, and outgoing Wolverine messages all commit in one SQL Server transaction.
 
-`Wolverine.Polecat` (the native integration package, structurally identical to `Wolverine.Marten`) gives you:
+`WolverineFx.Polecat` (the NuGet package — the namespace and library identity stays `Wolverine.Polecat`, historical naming quirk; structurally identical to `WolverineFx.Marten`) gives you:
 
 - **A transactional outbox** (`IPolecatOutbox`) — Wolverine messages emitted during a handler are written to the Polecat outbox in the same transaction as your document/event changes. Either everything commits, or nothing does. There's no "wrote to the database but the message wasn't published" failure mode.
 - **Aggregate handler codegen** — annotate a handler with `[WriteAggregate]` or `[ReadAggregate]` and Wolverine.Polecat generates the `FetchForWriting`/`SaveChangesAsync` plumbing. The handler stays a pure command-to-events function.
@@ -133,7 +133,7 @@ public class PlaceOrderHandler
 
 There is no `IDocumentSession` parameter, no `session.SaveChangesAsync()`, no `Events.Append(...)`. Wolverine.Polecat's code generation handles the fetch-aggregate / apply-events / save-changes / publish-outgoing-messages dance. The handler is a function from command to event(s).
 
-Wired up at composition time:
+Wired up at composition time, after `dotnet add package WolverineFx.Polecat`:
 
 ```csharp
 builder.Services.AddPolecat(opts =>
