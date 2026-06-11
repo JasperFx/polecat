@@ -431,31 +431,50 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
                 .ToArray();
         }
 
-        await Options.ResiliencePipeline.ExecuteAsync(static async (state, ct) =>
+        try
         {
-            var (connString, progressionTable, identities, tableNames, tenant) = state;
-            await using var conn = new SqlConnection(connString);
-            await conn.OpenAsync(ct);
-
-            foreach (var identity in identities)
+            await Options.ResiliencePipeline.ExecuteAsync(static async (state, ct) =>
             {
-                await using var delProg = conn.CreateCommand();
-                delProg.CommandText = $"DELETE FROM {progressionTable} WHERE name = @id;";
-                delProg.Parameters.AddWithValue("@id", identity);
-                await delProg.ExecuteNonQueryAsync(ct);
-            }
+                var (connString, progressionTable, identities, tableNames, tenant) = state;
+                await using var conn = new SqlConnection(connString);
+                await conn.OpenAsync(ct);
 
-            foreach (var tableName in tableNames)
-            {
-                await using var delDocs = conn.CreateCommand();
-                // The projection's doc table is created lazily on first write, so on a first-ever
-                // rebuild it may not exist yet — guard the tenant-scoped delete accordingly.
-                delDocs.CommandText =
-                    $"IF OBJECT_ID('{tableName}', 'U') IS NOT NULL DELETE FROM {tableName} WHERE tenant_id = @tenant;";
-                delDocs.Parameters.AddWithValue("@tenant", tenant);
-                await delDocs.ExecuteNonQueryAsync(ct);
-            }
-        }, (connStr, Events.ProgressionTableName, shardIdentities, publishedTableNames, tenantId), token);
+                // #180: do the whole tenant teardown in one transaction so a cancellation can only leave
+                // it fully applied or fully rolled back — never a half-reset (progression deleted but
+                // docs kept, or vice versa). pc_event_progression therefore stays consistent on cancel.
+                await using var tx = (SqlTransaction)await conn.BeginTransactionAsync(ct);
+
+                foreach (var identity in identities)
+                {
+                    await using var delProg = conn.CreateCommand();
+                    delProg.Transaction = tx;
+                    delProg.CommandText = $"DELETE FROM {progressionTable} WHERE name = @id;";
+                    delProg.Parameters.AddWithValue("@id", identity);
+                    await delProg.ExecuteNonQueryAsync(ct);
+                }
+
+                foreach (var tableName in tableNames)
+                {
+                    await using var delDocs = conn.CreateCommand();
+                    delDocs.Transaction = tx;
+                    // The projection's doc table is created lazily on first write, so on a first-ever
+                    // rebuild it may not exist yet — guard the tenant-scoped delete accordingly.
+                    delDocs.CommandText =
+                        $"IF OBJECT_ID('{tableName}', 'U') IS NOT NULL DELETE FROM {tableName} WHERE tenant_id = @tenant;";
+                    delDocs.Parameters.AddWithValue("@tenant", tenant);
+                    await delDocs.ExecuteNonQueryAsync(ct);
+                }
+
+                await tx.CommitAsync(ct);
+            }, (connStr, Events.ProgressionTableName, shardIdentities, publishedTableNames, tenantId), token);
+        }
+        catch (Exception ex) when (token.IsCancellationRequested && ex is not OperationCanceledException)
+        {
+            // SqlClient surfaces a cancelled command as a raw SqlException ("Operation cancelled by
+            // user" / "a severe error occurred"); translate it so a cancelled rebuild reports clean
+            // cancellation. The transaction above has already rolled back, leaving state consistent.
+            throw new OperationCanceledException("Per-tenant projection teardown was cancelled.", ex, token);
+        }
     }
 
     // ISubscriptionRunner<ISubscription>

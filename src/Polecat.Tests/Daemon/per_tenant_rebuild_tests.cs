@@ -115,6 +115,67 @@ public class per_tenant_rebuild_tests : IAsyncLifetime
         (await ProgressRowsForTenantAsync("Green")).ShouldBe(greenProgressBefore);
     }
 
+    // polecat#180 (item 2) — cancelling a per-tenant rebuild must leave pc_event_progression in a
+    // consistent state: other tenants untouched, and the cancelled tenant never advanced past the
+    // events that exist (progress + projected data are committed atomically per batch).
+    [Fact]
+    public async Task cancelling_a_per_tenant_rebuild_keeps_progression_consistent()
+    {
+        using var store = CreateStore();
+        await store.Database.ApplyAllConfiguredChangesToDatabaseAsync();
+
+        // Red gets a longer stream so its rebuild has real work to interrupt.
+        const int redEventCount = 26; // QuestStarted + 25 MembersJoined
+        await using (var red = store.LightweightSession(new SessionOptions { TenantId = "Red" }))
+        {
+            var events = new List<object> { new QuestStarted("Red Quest") };
+            for (var i = 1; i <= 25; i++) events.Add(new MembersJoined(i, "Town", [$"H{i}"]));
+            red.Events.StartStream(Guid.NewGuid(), events.ToArray());
+            await red.SaveChangesAsync();
+        }
+
+        foreach (var tenant in new[] { "Blue", "Green" })
+        {
+            await using var s = store.LightweightSession(new SessionOptions { TenantId = tenant });
+            s.Events.StartStream(Guid.NewGuid(), new QuestStarted($"{tenant} Quest"));
+            await s.SaveChangesAsync();
+        }
+
+        var projectionName = store.Options.Projections.All.Single().Name;
+        using var daemon = (IProjectionDaemon)await store.BuildProjectionDaemonAsync();
+
+        foreach (var tenant in Tenants)
+        {
+            await daemon.RebuildProjectionAsync(projectionName, tenant, CancellationToken.None);
+        }
+
+        var blueBefore = await ProgressRowsForTenantAsync("Blue");
+        var greenBefore = await ProgressRowsForTenantAsync("Green");
+
+        // Cancel a rebuild of Red. The token may win the race (rebuild aborts) or lose it (rebuild
+        // completes) — either outcome must leave a consistent state, so the test tolerates both.
+        using var cts = new CancellationTokenSource();
+        cts.CancelAfter(TimeSpan.FromMilliseconds(20));
+        try
+        {
+            await daemon.RebuildProjectionAsync(projectionName, "Red", cts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+
+        // Red's cancelled rebuild left the other tenants' progression completely untouched.
+        (await ProgressRowsForTenantAsync("Blue")).ShouldBe(blueBefore);
+        (await ProgressRowsForTenantAsync("Green")).ShouldBe(greenBefore);
+
+        // Red's progression is never advanced past the events that exist — a cancelled rebuild can only
+        // leave a valid intermediate (or fully reset) mark, never an over-advanced one.
+        foreach (var seq in (await ProgressRowsForTenantAsync("Red")).Values)
+        {
+            seq.ShouldBeLessThanOrEqualTo(redEventCount);
+        }
+    }
+
     // Progression rows (name -> last_seq_id) whose composed identity targets the given tenant.
     private static async Task<Dictionary<string, long>> ProgressRowsForTenantAsync(string tenantId)
     {
