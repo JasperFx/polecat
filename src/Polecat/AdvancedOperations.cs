@@ -6,6 +6,7 @@ using Polly;
 using Polecat.Events.TestSupport;
 using Polecat.Internal;
 using Polecat.Metadata;
+using Polecat.Projections.Flattened;
 using Polecat.Schema.Identity.Sequences;
 using Polecat.Storage;
 using Weasel.Core;
@@ -424,15 +425,18 @@ public class AdvancedOperations
     }
 
     /// <summary>
-    ///     Delete all rows from all pc_doc_* tables in the configured schema.
+    ///     Delete all rows from all pc_doc_* tables in the configured schema, plus the custom tables
+    ///     owned by any registered <see cref="FlatTableProjection" /> (their projected document-like
+    ///     data is not stored in pc_doc_* tables, so it is cleaned explicitly — polecat#181).
     /// </summary>
     public async Task CleanAllDocumentsAsync(CancellationToken token = default)
     {
         var schema = _store.Options.DatabaseSchemaName;
         var connStr = _store.Options.ConnectionString;
+        var flatTables = CollectFlatTableNames();
         await _resilience.ExecuteAsync(static async (state, ct) =>
         {
-            var (connectionString, schemaName) = state;
+            var (connectionString, schemaName, flatTableNames) = state;
             await using var conn = new SqlConnection(connectionString);
             await conn.OpenAsync(ct);
 
@@ -460,7 +464,33 @@ public class AdvancedOperations
                 deleteCmd.CommandText = $"DELETE FROM [{schemaName}].[{table}];";
                 await deleteCmd.ExecuteNonQueryAsync(ct);
             }
-        }, (connStr, schema), token);
+
+            await DeleteFlatTablesAsync(conn, flatTableNames, ct);
+        }, (connStr, schema, flatTables), token);
+    }
+
+    /// <summary>
+    ///     The schema-qualified tables owned by registered <see cref="FlatTableProjection" /> sources.
+    /// </summary>
+    private string[] CollectFlatTableNames()
+    {
+        return _store.Options.Projections.All
+            .OfType<FlatTableProjection>()
+            .Select(p => p.Table.Identifier.QualifiedName)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    private static async Task DeleteFlatTablesAsync(SqlConnection conn, string[] qualifiedNames,
+        CancellationToken ct)
+    {
+        foreach (var qualified in qualifiedNames)
+        {
+            await using var cmd = conn.CreateCommand();
+            // Guard against the table not existing yet (the projection ensures it lazily).
+            cmd.CommandText = $"IF OBJECT_ID('{qualified}', 'U') IS NOT NULL DELETE FROM {qualified};";
+            await cmd.ExecuteNonQueryAsync(ct);
+        }
     }
 
     /// <summary>
@@ -581,12 +611,17 @@ public class AdvancedOperations
         var eventsTable = events.EventsTableName;
         var streamsTable = events.StreamsTableName;
         var progressionTable = events.ProgressionTableName;
+        var flatTables = CollectFlatTableNames();
 
         await _resilience.ExecuteAsync(static async (state, ct) =>
         {
-            var (connectionString, schemaName, evtTable, strmTable, progTable) = state;
+            var (connectionString, schemaName, evtTable, strmTable, progTable, flatTableNames) = state;
             await using var conn = new SqlConnection(connectionString);
             await conn.OpenAsync(ct);
+
+            // Flat-table projection output is derived from events; clear it alongside the event data
+            // so a reset leaves no stale projected rows (mirrors the natural-key table cleanup below).
+            await DeleteFlatTablesAsync(conn, flatTableNames, ct);
 
             // Delete natural key tables first (they reference streams)
             await using (var findCmd = conn.CreateCommand())
@@ -635,7 +670,7 @@ public class AdvancedOperations
                 cmd.CommandText = $"IF OBJECT_ID('{progTable}', 'U') IS NOT NULL DELETE FROM {progTable};";
                 await cmd.ExecuteNonQueryAsync(ct);
             }
-        }, (connStr, schema, eventsTable, streamsTable, progressionTable), token);
+        }, (connStr, schema, eventsTable, streamsTable, progressionTable, flatTables), token);
     }
 
     /// <summary>
