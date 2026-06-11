@@ -19,6 +19,7 @@ const config: UserConfig<DefaultTheme.Config> = {
     logo: '/logo.png',
 
     nav: [
+      { text: 'Why Polecat?', link: '/whitepaper' },
       { text: 'Intro', link: '/introduction' },
       { text: 'Document DB', link: '/documents/', activeMatch: '/documents/' },
       { text: 'Event Store', link: '/events/', activeMatch: '/events/' },
@@ -49,6 +50,7 @@ const config: UserConfig<DefaultTheme.Config> = {
           text: 'Introduction',
           collapsed: true,
           items: [
+            { text: 'Why Polecat?', link: '/whitepaper' },
             { text: 'What is Polecat?', link: '/introduction' },
             { text: 'Getting Started', link: '/getting-started' },
           ]
