@@ -273,4 +273,41 @@ public class flat_table_projection_tests : IntegrationContext
         var memberCount = await ReadMetric<int>("member_count", streamId);
         memberCount.ShouldBe(2);
     }
+
+    // polecat#181 — flat-table projection data must be erasable via the Clean* admin helpers.
+    [Fact]
+    public async Task clean_all_documents_erases_flat_table_projection_data()
+    {
+        var store = await CreateStoreWithFlatTable();
+
+        await using (var session = store.LightweightSession())
+        {
+            session.Events.StartStream(Guid.NewGuid(), new QuestStarted("Cleanup Quest"));
+            await session.SaveChangesAsync();
+        }
+
+        (await CountMetrics()).ShouldBeGreaterThan(0);
+
+        await store.Advanced.CleanAllDocumentsAsync();
+
+        (await CountMetrics()).ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task clean_all_event_data_erases_flat_table_projection_data()
+    {
+        var store = await CreateStoreWithFlatTable();
+
+        await using (var session = store.LightweightSession())
+        {
+            session.Events.StartStream(Guid.NewGuid(), new QuestStarted("Cleanup Quest"));
+            await session.SaveChangesAsync();
+        }
+
+        (await CountMetrics()).ShouldBeGreaterThan(0);
+
+        await store.Advanced.CleanAllEventDataAsync();
+
+        (await CountMetrics()).ShouldBe(0);
+    }
 }
