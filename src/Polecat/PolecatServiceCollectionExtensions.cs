@@ -1,3 +1,4 @@
+using JasperFx.CommandLine.Descriptions;
 using JasperFx.Events;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -75,6 +76,13 @@ public static class PolecatServiceCollectionExtensions
             var options = sp.GetRequiredService<StoreOptions>();
             return new DocumentStore(options);
         });
+
+        // #187: expose the Polecat database(s) to JasperFx's resource model so the
+        // idiomatic services.AddResourceSetupOnStartup() provisions the Polecat
+        // schema with no Polecat-specific call (matching Marten's MartenSystemPart).
+        // The "resources" CLI commands also discover the Polecat database through this.
+        services.AddSingleton<ISystemPart>(sp =>
+            new PolecatSystemPart(sp.GetRequiredService<IDocumentStore>()));
 
         // Bridge so monitoring tools (CritterWatch / Wolverine
         // ServiceCapabilities.readDocumentStores) can discover this store via

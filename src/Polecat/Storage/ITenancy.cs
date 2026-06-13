@@ -15,6 +15,16 @@ public interface ITenancy
     ConnectionFactory GetConnectionFactory(string tenantId);
     PolecatDatabase GetDatabase(string tenantId);
     IReadOnlyList<PolecatDatabase> AllDatabases();
+
+    /// <summary>
+    ///     Asynchronously resolve every tenant database. Dynamic tenancies
+    ///     (e.g. <see cref="MasterTableTenancy" />) query their control table
+    ///     here; static tenancies just return <see cref="AllDatabases" />. Mirrors
+    ///     Marten's <c>ITenancy.BuildDatabases()</c> and is used by
+    ///     <c>PolecatSystemPart.FindResources()</c> so JasperFx's
+    ///     <c>AddResourceSetupOnStartup()</c> can provision every tenant schema.
+    /// </summary>
+    Task<IReadOnlyList<PolecatDatabase>> BuildDatabasesAsync(CancellationToken token = default);
 }
 
 /// <summary>
@@ -37,6 +47,9 @@ internal class DefaultTenancy : ITenancy
     public ConnectionFactory GetConnectionFactory(string tenantId) => _factory;
     public PolecatDatabase GetDatabase(string tenantId) => _database;
     public IReadOnlyList<PolecatDatabase> AllDatabases() => [_database];
+
+    public Task<IReadOnlyList<PolecatDatabase>> BuildDatabasesAsync(CancellationToken token = default) =>
+        Task.FromResult(AllDatabases());
 }
 
 /// <summary>
@@ -96,4 +109,7 @@ public class SeparateDatabaseTenancy : ITenancy
 
         return _databases.Values.ToList();
     }
+
+    Task<IReadOnlyList<PolecatDatabase>> ITenancy.BuildDatabasesAsync(CancellationToken token) =>
+        Task.FromResult(((ITenancy)this).AllDatabases());
 }

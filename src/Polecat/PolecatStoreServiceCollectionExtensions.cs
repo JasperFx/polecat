@@ -61,6 +61,12 @@ public static class PolecatStoreServiceCollectionExtensions
 
         services.AddSingleton<Lazy<T>>(sp => new Lazy<T>(() => sp.GetRequiredService<T>()));
 
+        // #187: contribute this ancillary store's database(s) to JasperFx's resource
+        // model so AddResourceSetupOnStartup() / the "resources" CLI provision its
+        // schema. Mirrors AddMartenStore<T>'s MartenSystemPart<T> registration.
+        services.AddSingleton<JasperFx.CommandLine.Descriptions.ISystemPart>(sp =>
+            new PolecatSystemPart<T>(sp.GetRequiredService<T>()));
+
         // Bridge so monitoring tools discover the ancillary store via
         // GetServices<IDocumentStoreUsageSource>(). Mirrors the bridge in
         // PolecatServiceCollectionExtensions.AddPolecat for the primary store.
