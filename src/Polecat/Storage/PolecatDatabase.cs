@@ -333,6 +333,31 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
             .ToList();
     }
 
+    /// <summary>
+    ///     CritterWatch#369: fetch the stored dead-letter event rows for a single shard — the drill-in
+    ///     companion to <see cref="CountDeadLetterEventsAsync" />. Most recent failures first (by event
+    ///     sequence), paged. A null <paramref name="tenantId" /> spans every tenant; otherwise scopes to
+    ///     one partition. Dead letters are few, so rows are materialized then ordered/paged in memory
+    ///     (consistent with <see cref="FetchDeadLetterCountsAsync(CancellationToken)" />).
+    /// </summary>
+    public async Task<IReadOnlyList<DeadLetterEvent>> QueryDeadLetterEventsAsync(ShardName shard,
+        string? tenantId, int offset, int limit, CancellationToken token = default)
+    {
+        var projectionName = shard.Name;
+        var shardKey = shard.ShardKey;
+
+        await using var session = RequireStore().QuerySession();
+        var all = await session.Query<DeadLetterEvent>().ToListAsync(token);
+
+        return all
+            .Where(x => x.ProjectionName == projectionName && x.ShardName == shardKey
+                && (tenantId == null || x.TenantId == tenantId))
+            .OrderByDescending(x => x.EventSequence)
+            .Skip(offset)
+            .Take(limit)
+            .ToList();
+    }
+
     public new async Task EnsureStorageExistsAsync(Type storageType, CancellationToken token)
     {
         await ApplyAllConfiguredChangesToDatabaseAsync(ct: token);
