@@ -309,6 +309,30 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
             .ToList();
     }
 
+    /// <summary>
+    ///     Per-tenant dead-letter counts (CritterWatch#381 / jasperfx#450). The dead-letter table is
+    ///     store-global, but each row records the failing event's <see cref="DeadLetterEvent.TenantId" />,
+    ///     so counts that would otherwise collide on <c>{ProjectionName}:{ShardName}</c> are separated
+    ///     per tenant. A null <paramref name="tenantId" /> falls back to the store-global shape.
+    /// </summary>
+    public async Task<IReadOnlyList<DeadLetterShardCount>> FetchDeadLetterCountsAsync(
+        string? tenantId, CancellationToken token = default)
+    {
+        if (tenantId == null)
+        {
+            return await FetchDeadLetterCountsAsync(token);
+        }
+
+        await using var session = RequireStore().QuerySession();
+        var all = await session.Query<DeadLetterEvent>().ToListAsync(token);
+
+        return all
+            .Where(x => x.TenantId == tenantId)
+            .GroupBy(x => (x.ProjectionName, x.ShardName))
+            .Select(g => new DeadLetterShardCount(g.Key.ProjectionName, g.Key.ShardName, g.LongCount(), tenantId))
+            .ToList();
+    }
+
     public new async Task EnsureStorageExistsAsync(Type storageType, CancellationToken token)
     {
         await ApplyAllConfiguredChangesToDatabaseAsync(ct: token);
