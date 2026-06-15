@@ -61,8 +61,13 @@ public static class PolecatStoreServiceCollectionExtensions
             // is not clobbered by per-store instrumentation defaults. Mirrors Marten PR #4741.
             options.ReadJasperFxOptions(sp.GetService<JasperFx.JasperFxOptions>());
 
-            var store = new DocumentStore(options);
-            return (T)(IDocumentStore)store;
+            // T is a user-supplied marker interface (T : IDocumentStore) that the concrete
+            // DocumentStore does NOT implement, so a direct (T)store cast would throw
+            // InvalidCastException. Build a thin runtime subclass `class TImplementation :
+            // DocumentStore, T` and instantiate that instead. Mirrors Marten's
+            // SecondaryStoreConfig<T>.Build / SecondaryStoreProxyFactory.
+            var storeType = SecondaryStoreProxyFactory.GetOrCreate(typeof(T));
+            return (T)Activator.CreateInstance(storeType, options)!;
         });
 
         services.AddSingleton<Lazy<T>>(sp => new Lazy<T>(() => sp.GetRequiredService<T>()));
