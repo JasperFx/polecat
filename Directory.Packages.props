@@ -22,7 +22,6 @@
              IEventDatabase.QueryDeadLetterEventsAsync (dead-letter row drill-in), DeadLetterEvent.TenantId,
              and the tenant-aware daemon surface. Polecat implements the dead-letter row query + per-tenant
              FetchDeadLetterCountsAsync below. -->
-
         <PackageVersion Include="JasperFx" Version="2.12.0" />
         <PackageVersion Include="JasperFx.Events" Version="2.12.0" />
         <!-- Pin the sibling JasperFx packages for parity with Marten 9's matrix
