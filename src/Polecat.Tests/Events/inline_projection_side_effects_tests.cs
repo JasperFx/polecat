@@ -46,7 +46,7 @@ public partial class inline_projection_side_effects_tests : OneOffConfigurations
         {
             opts.DatabaseSchemaName = "inline_se_on";
             opts.Events.MessageOutbox = outbox;
-            opts.EventGraph.EnableSideEffectsOnInlineProjections = true;
+            opts.Events.EnableSideEffectsOnInlineProjections = true;
             opts.Projections.Add(
                 new InlineSeProjection(),
                 ProjectionLifecycle.Inline);
@@ -73,7 +73,7 @@ public partial class inline_projection_side_effects_tests : OneOffConfigurations
         {
             opts.DatabaseSchemaName = "inline_se_hooks";
             opts.Events.MessageOutbox = outbox;
-            opts.EventGraph.EnableSideEffectsOnInlineProjections = true;
+            opts.Events.EnableSideEffectsOnInlineProjections = true;
             opts.Projections.Add(
                 new InlineSeProjection(),
                 ProjectionLifecycle.Inline);

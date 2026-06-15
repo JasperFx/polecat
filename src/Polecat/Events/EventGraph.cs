@@ -122,7 +122,10 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
     ///     <see cref="StoreOptions.MessageOutbox"/>. Inline appended events
     ///     (slice.AppendEvent) are not supported and will throw at runtime.
     /// </summary>
-    public bool EnableSideEffectsOnInlineProjections { get; set; }
+    // Read from the configured StoreOptions.Events so it can be set in AddPolecat(...)/DocumentStore.For
+    // config (m.Events.EnableSideEffectsOnInlineProjections = true), mirroring EnableCorrelationId etc.
+    // and Marten's StoreOptions.Events.EnableSideEffectsOnInlineProjections.
+    public bool EnableSideEffectsOnInlineProjections => _options.Events.EnableSideEffectsOnInlineProjections;
 
     internal string StreamsTableName => $"[{DatabaseSchemaName}].[pc_streams]";
     internal string EventsTableName => $"[{DatabaseSchemaName}].[pc_events]";

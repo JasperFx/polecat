@@ -374,6 +374,14 @@ public class EventStoreOptions : IEventStoreInstrumentation
     public bool EnableHeaders { get; set; }
 
     /// <summary>
+    ///     Run inline projections' RaiseSideEffects (and other projection side effects) when an inline
+    ///     projection is applied during SaveChangesAsync. Off by default; mirrors Marten's
+    ///     <c>StoreOptions.Events.EnableSideEffectsOnInlineProjections</c>. CritterWatch relies on this so
+    ///     its inline ServiceSummary projection can publish SignalR notifications via the Wolverine outbox.
+    /// </summary>
+    public bool EnableSideEffectsOnInlineProjections { get; set; }
+
+    /// <summary>
     ///     Opt into extended columns on the event progression table for CritterWatch alerting.
     ///     Adds nullable heartbeat, agent_status, pause_reason, running_on_node,
     ///     warning_behind_threshold, and critical_behind_threshold columns. This is the

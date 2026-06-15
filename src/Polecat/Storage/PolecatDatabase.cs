@@ -309,6 +309,55 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
             .ToList();
     }
 
+    /// <summary>
+    ///     Per-tenant dead-letter counts (CritterWatch#381 / jasperfx#450). The dead-letter table is
+    ///     store-global, but each row records the failing event's <see cref="DeadLetterEvent.TenantId" />,
+    ///     so counts that would otherwise collide on <c>{ProjectionName}:{ShardName}</c> are separated
+    ///     per tenant. A null <paramref name="tenantId" /> falls back to the store-global shape.
+    /// </summary>
+    public async Task<IReadOnlyList<DeadLetterShardCount>> FetchDeadLetterCountsAsync(
+        string? tenantId, CancellationToken token = default)
+    {
+        if (tenantId == null)
+        {
+            return await FetchDeadLetterCountsAsync(token);
+        }
+
+        await using var session = RequireStore().QuerySession();
+        var all = await session.Query<DeadLetterEvent>().ToListAsync(token);
+
+        return all
+            .Where(x => x.TenantId == tenantId)
+            .GroupBy(x => (x.ProjectionName, x.ShardName))
+            .Select(g => new DeadLetterShardCount(g.Key.ProjectionName, g.Key.ShardName, g.LongCount(), tenantId))
+            .ToList();
+    }
+
+    /// <summary>
+    ///     CritterWatch#369: fetch the stored dead-letter event rows for a single shard — the drill-in
+    ///     companion to <see cref="CountDeadLetterEventsAsync" />. Most recent failures first (by event
+    ///     sequence), paged. A null <paramref name="tenantId" /> spans every tenant; otherwise scopes to
+    ///     one partition. Dead letters are few, so rows are materialized then ordered/paged in memory
+    ///     (consistent with <see cref="FetchDeadLetterCountsAsync(CancellationToken)" />).
+    /// </summary>
+    public async Task<IReadOnlyList<DeadLetterEvent>> QueryDeadLetterEventsAsync(ShardName shard,
+        string? tenantId, int offset, int limit, CancellationToken token = default)
+    {
+        var projectionName = shard.Name;
+        var shardKey = shard.ShardKey;
+
+        await using var session = RequireStore().QuerySession();
+        var all = await session.Query<DeadLetterEvent>().ToListAsync(token);
+
+        return all
+            .Where(x => x.ProjectionName == projectionName && x.ShardName == shardKey
+                && (tenantId == null || x.TenantId == tenantId))
+            .OrderByDescending(x => x.EventSequence)
+            .Skip(offset)
+            .Take(limit)
+            .ToList();
+    }
+
     public new async Task EnsureStorageExistsAsync(Type storageType, CancellationToken token)
     {
         await ApplyAllConfiguredChangesToDatabaseAsync(ct: token);

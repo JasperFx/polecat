@@ -16,9 +16,12 @@
              behaviour. See JasperFx/ProductSupport#3.
              JasperFx 2.9.8/2.9.9/2.9.12/2.9.13: roll forward to the latest released 2.9.x line.
              JasperFx 2.10.0: rolled forward to the released 2.10.x line.
-             JasperFx 2.12.0: carries JasperFxOptions.EnableAdvancedTracking (the CritterWatch
-             advanced-tooling host opt-in). Polecat propagates it to every store's
-             Events.EnableExtendedProgressionTracking, mirroring Marten PR #4741. -->
+             JasperFx 2.12.0: (a) carries JasperFxOptions.EnableAdvancedTracking (the CritterWatch
+             advanced-tooling host opt-in) which Polecat propagates to every store's
+             Events.EnableExtendedProgressionTracking, mirroring Marten PR #4741; and (b) jasperfx#453 —
+             IEventDatabase.QueryDeadLetterEventsAsync (dead-letter row drill-in), DeadLetterEvent.TenantId,
+             and the tenant-aware daemon surface. Polecat implements the dead-letter row query + per-tenant
+             FetchDeadLetterCountsAsync below. -->
         <PackageVersion Include="JasperFx" Version="2.12.0" />
         <PackageVersion Include="JasperFx.Events" Version="2.12.0" />
         <!-- Pin the sibling JasperFx packages for parity with Marten 9's matrix
