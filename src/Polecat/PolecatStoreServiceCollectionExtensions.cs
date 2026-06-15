@@ -55,6 +55,12 @@ public static class PolecatStoreServiceCollectionExtensions
                 configure.Configure(sp, options);
             }
 
+            // Apply host-level JasperFxOptions (e.g. EnableAdvancedTracking →
+            // Events.EnableExtendedProgressionTracking) before the ancillary store is
+            // constructed. Runs after the IConfigurePolecat<T> chain so the host opt-in
+            // is not clobbered by per-store instrumentation defaults. Mirrors Marten PR #4741.
+            options.ReadJasperFxOptions(sp.GetService<JasperFx.JasperFxOptions>());
+
             var store = new DocumentStore(options);
             return (T)(IDocumentStore)store;
         });

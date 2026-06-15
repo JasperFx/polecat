@@ -62,11 +62,19 @@ public static class PolecatServiceCollectionExtensions
         services.AddSingleton(sp =>
         {
             var options = optionSource(sp);
+
             var configures = sp.GetServices<IConfigurePolecat>();
             foreach (var configure in configures)
             {
                 configure.Configure(sp, options);
             }
+
+            // Apply host-level JasperFxOptions (e.g. EnableAdvancedTracking →
+            // Events.EnableExtendedProgressionTracking) before the IDocumentStore
+            // singleton is constructed. Runs after the IConfigurePolecat chain so the
+            // host opt-in is not clobbered by per-store instrumentation defaults.
+            // Mirrors Marten PR #4741.
+            options.ReadJasperFxOptions(sp.GetService<JasperFx.JasperFxOptions>());
 
             return options;
         });

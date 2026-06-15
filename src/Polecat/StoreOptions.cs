@@ -84,6 +84,27 @@ public class StoreOptions
     }
 
     /// <summary>
+    ///     Apply host-level <see cref="JasperFxOptions" /> (registered via
+    ///     <c>AddJasperFx</c>) to this store before the <see cref="DocumentStore" /> is
+    ///     constructed. Called from both the primary (<c>AddPolecat</c>) and ancillary
+    ///     (<c>AddPolecatStore&lt;T&gt;</c>) registration paths. Mirrors Marten's
+    ///     <c>StoreOptions.ReadJasperFxOptions</c>.
+    /// </summary>
+    internal void ReadJasperFxOptions(JasperFxOptions? options)
+    {
+        if (options == null) return;
+
+        // CritterWatch / advanced-tooling opt-in: when the JasperFx host turns on
+        // EnableAdvancedTracking, every Polecat DocumentStore in the container
+        // (primary + ancillary) opts into extended progression tracking so downstream
+        // tools (CritterWatch in particular) see the richer per-shard state.
+        if (options.EnableAdvancedTracking)
+        {
+            Events.EnableExtendedProgressionTracking = true;
+        }
+    }
+
+    /// <summary>
     ///     Default command timeout in seconds.
     /// </summary>
     public int CommandTimeout { get; set; } = DefaultTimeout;
