@@ -21,6 +21,7 @@ public class AdvancedOperations
 {
     private readonly DocumentStore _store;
     private readonly ResiliencePipeline _resilience;
+    private IDocumentCleaner? _cleaner;
 
     internal AdvancedOperations(DocumentStore store)
     {
@@ -29,6 +30,31 @@ public class AdvancedOperations
     }
 
     public HiloSettings HiloSequenceDefaults => _store.Options.HiloSequenceDefaults;
+
+    /// <summary>
+    ///     The schema-scoped clean/reset surface for this store. Mirrors Marten's
+    ///     <c>AdvancedOperations.Clean</c>. All operations target only this store's
+    ///     configured schema (<see cref="StoreOptions.DatabaseSchemaName" />).
+    /// </summary>
+    public IDocumentCleaner Clean => _cleaner ??= new Internal.PolecatDocumentCleaner(this);
+
+    /// <summary>
+    ///     Delete all current document and event data for this store (scoped to the store's
+    ///     configured schema), then re-apply any registered <see cref="StoreOptions.InitialData" />.
+    ///     Mirrors Marten's <c>AdvancedOperations.ResetAllData</c>. The per-store scoping is what
+    ///     lets an ancillary store (<c>AddPolecatStore&lt;T&gt;</c> with its own schema) reset its
+    ///     own data on boot without touching the host application's data (polecat#191).
+    /// </summary>
+    public async Task ResetAllData(CancellationToken cancellation = default)
+    {
+        await CleanAllDocumentsAsync(cancellation).ConfigureAwait(false);
+        await CleanAllEventDataAsync(cancellation).ConfigureAwait(false);
+
+        foreach (var initialData in _store.Options.InitialData)
+        {
+            await initialData.Populate(_store, cancellation).ConfigureAwait(false);
+        }
+    }
 
     /// <summary>
     ///     Bulk insert documents with default settings (InsertsOnly, batch size 200, default tenant).
@@ -466,6 +492,76 @@ public class AdvancedOperations
             }
 
             await DeleteFlatTablesAsync(conn, flatTableNames, ct);
+        }, (connStr, schema, flatTables), token);
+    }
+
+    /// <summary>
+    ///     Drop all Polecat schema objects in this store's configured schema — every
+    ///     <c>pc_*</c> table plus any <see cref="FlatTableProjection" /> table. Unlike the
+    ///     <c>CleanAll*</c> methods (which only delete rows), this removes the tables
+    ///     themselves. Mirrors Marten's <c>IDocumentCleaner.CompletelyRemoveAllAsync</c>
+    ///     (polecat#191). Foreign keys are dropped first so the tables can be removed in any
+    ///     order; missing tables are ignored so this is safe to call repeatedly.
+    /// </summary>
+    public async Task CompletelyRemoveAllAsync(CancellationToken token = default)
+    {
+        var schema = _store.Options.DatabaseSchemaName;
+        var connStr = _store.Options.ConnectionString;
+        var flatTables = CollectFlatTableNames();
+        await _resilience.ExecuteAsync(static async (state, ct) =>
+        {
+            var (connectionString, schemaName, flatTableNames) = state;
+            await using var conn = new SqlConnection(connectionString);
+            await conn.OpenAsync(ct);
+
+            // Drop every foreign key on pc_* tables first so the tables themselves can be
+            // dropped in any order ([_] escapes the LIKE wildcard to mean a literal underscore).
+            await using (var dropFks = conn.CreateCommand())
+            {
+                dropFks.CommandText = """
+                    DECLARE @sql nvarchar(max) = N'';
+                    SELECT @sql += N'ALTER TABLE [' + s.name + N'].[' + t.name + N'] DROP CONSTRAINT [' + fk.name + N'];'
+                    FROM sys.foreign_keys fk
+                    JOIN sys.tables t ON fk.parent_object_id = t.object_id
+                    JOIN sys.schemas s ON t.schema_id = s.schema_id
+                    WHERE s.name = @schema AND t.name LIKE 'pc[_]%';
+                    IF @sql <> N'' EXEC sp_executesql @sql;
+                    """;
+                dropFks.Parameters.AddWithValue("@schema", schemaName);
+                await dropFks.ExecuteNonQueryAsync(ct);
+            }
+
+            // Find every pc_* base table in the schema and drop it.
+            var tables = new List<string>();
+            await using (var findCmd = conn.CreateCommand())
+            {
+                findCmd.CommandText = """
+                    SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES
+                    WHERE TABLE_SCHEMA = @schema AND TABLE_TYPE = 'BASE TABLE' AND TABLE_NAME LIKE 'pc[_]%'
+                    ORDER BY TABLE_NAME;
+                    """;
+                findCmd.Parameters.AddWithValue("@schema", schemaName);
+                await using var reader = await findCmd.ExecuteReaderAsync(ct);
+                while (await reader.ReadAsync(ct))
+                {
+                    tables.Add(reader.GetString(0));
+                }
+            }
+
+            foreach (var table in tables)
+            {
+                await using var dropCmd = conn.CreateCommand();
+                dropCmd.CommandText = $"DROP TABLE IF EXISTS [{schemaName}].[{table}];";
+                await dropCmd.ExecuteNonQueryAsync(ct);
+            }
+
+            // FlatTableProjection tables may live outside the pc_ prefix; drop them explicitly.
+            foreach (var qualified in flatTableNames)
+            {
+                await using var dropCmd = conn.CreateCommand();
+                dropCmd.CommandText = $"IF OBJECT_ID('{qualified}', 'U') IS NOT NULL DROP TABLE {qualified};";
+                await dropCmd.ExecuteNonQueryAsync(ct);
+            }
         }, (connStr, schema, flatTables), token);
     }
 
