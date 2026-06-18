@@ -27,11 +27,46 @@
     <ItemGroup>
         <PackageReference Include="JasperFx" />
         <PackageReference Include="JasperFx.Events" />
+        <!-- #196: Reference the projection-dispatcher source generator so it runs over
+             Polecat itself, and (via the bundling target below) so it is forwarded to
+             downstream consumers inside the published Polecat package. PrivateAssets=all
+             keeps it a development-only dependency that does NOT flow as a normal
+             transitive PackageReference. -->
+        <PackageReference Include="JasperFx.Events.SourceGenerator" GeneratePathProperty="true">
+          <PrivateAssets>all</PrivateAssets>
+          <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+        </PackageReference>
         <PackageReference Include="Microsoft.Data.SqlClient" />
         <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
         <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
         <PackageReference Include="Polly.Core" />
         <PackageReference Include="Weasel.SqlServer" />
     </ItemGroup>
+
+    <!-- #196 (mirrors JasperFx/marten#4557): Bundle the JasperFx.Events.SourceGenerator
+         analyzer into Polecat's own NuGet package (analyzers/dotnet/cs) so it is applied
+         to every consuming project automatically. The 2.0 wave source-generates projection
+         dispatch with no runtime reflection fallback — a convention-method projection
+         subclass must be partial or it fail-fasts at registration with
+         "No source-generated dispatcher found ...". The generator ships as a
+         DevelopmentDependency that does NOT flow transitively, so a consumer that only
+         references the Polecat package never ran it. Carrying the analyzer DLL inside
+         Polecat's package is the self-contained fix. -->
+    <PropertyGroup>
+        <TargetsForTfmSpecificContentInPackage>$(TargetsForTfmSpecificContentInPackage);_BundleEventsSourceGeneratorAnalyzer</TargetsForTfmSpecificContentInPackage>
+    </PropertyGroup>
+
+    <!-- Runs per-TFM (where the $(Pkg...) path property is resolved, unlike the outer
+         pack evaluation). The analyzer is TFM-agnostic and goes to analyzers/dotnet/cs,
+         so it must be contributed exactly once — guard on a single TFM to avoid a
+         duplicate-package-file conflict. -->
+    <Target Name="_BundleEventsSourceGeneratorAnalyzer"
+            Condition="'$(TargetFramework)' == 'net9.0' And '$(PkgJasperFx_Events_SourceGenerator)' != ''">
+        <ItemGroup>
+            <TfmSpecificPackageFile Include="$(PkgJasperFx_Events_SourceGenerator)\analyzers\dotnet\cs\JasperFx.Events.SourceGenerator.dll">
+                <PackagePath>analyzers/dotnet/cs</PackagePath>
+            </TfmSpecificPackageFile>
+        </ItemGroup>
+    </Target>
 
 </Project>
