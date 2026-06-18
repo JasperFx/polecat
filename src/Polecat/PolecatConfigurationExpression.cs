@@ -91,6 +91,11 @@ public class PolecatConfigurationExpression
         });
         Services.AddSingleton<IHostedService>(sp =>
             sp.GetRequiredService<Polecat.Events.Daemon.Coordination.IProjectionCoordinator>());
+        // jasperfx#430 — also resolve the JasperFx.Events base interface, so a stock host can
+        // GetService<JasperFx.Events.Daemon.IProjectionCoordinator>() directly instead of walking
+        // the registered IHostedServices for one.
+        Services.AddSingleton<JasperFx.Events.Daemon.IProjectionCoordinator>(sp =>
+            sp.GetRequiredService<Polecat.Events.Daemon.Coordination.IProjectionCoordinator>());
         return this;
     }
 
