@@ -201,6 +201,36 @@ public class event_store_explorer_tests : IntegrationContext
     }
 
     [Fact]
+    public async Task get_projection_statuses_reports_real_lifecycle()
+    {
+        // #200 — GetProjectionStatusesAsync hardcoded every projection's
+        // lifecycle to "Unknown" instead of resolving it from the registered
+        // source. Register one Inline and one Async projection and assert the
+        // reported lifecycle strings (and unquoted names) are correct.
+        await StoreOptions(opts =>
+        {
+            opts.DatabaseSchemaName = "explorer_lifecycle";
+            opts.Projections.Add<SingleStreamProjection<QuestParty, Guid>>(ProjectionLifecycle.Inline);
+            opts.Projections.Add<QuestLogProjection>(ProjectionLifecycle.Async);
+        });
+
+        IEventStore es = theStore;
+        var statuses = await es.GetProjectionStatusesAsync(CancellationToken.None);
+
+        // Names must be reported unquoted — AllProjectionNames() wraps them in
+        // single quotes, which also broke shard matching.
+        statuses.ShouldAllBe(s => !s.ProjectionName.StartsWith("'"));
+
+        var inline = statuses.Where(s => s.ProjectionName == nameof(QuestParty)).ShouldHaveSingleItem();
+        inline.Lifecycle.ShouldBe(ProjectionLifecycle.Inline.ToString());
+
+        var async = statuses.Where(s => s.ProjectionName.EndsWith(nameof(QuestLogProjection))).ShouldHaveSingleItem();
+        async.Lifecycle.ShouldBe(ProjectionLifecycle.Async.ToString());
+
+        statuses.ShouldAllBe(s => s.Lifecycle != "Unknown");
+    }
+
+    [Fact]
     public async Task try_create_usage_populates_registered_event_types()
     {
         var store = await CreateStoreAsync();
