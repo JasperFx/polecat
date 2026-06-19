@@ -73,9 +73,11 @@ src/Polecat.CodeGeneration/     — source generator (netstandard2.0)
 
 ## Development Environment
 
-- Docker Compose provides SQL Server 2025 on port **11433**
-- Connection: `Server=localhost,11433;User Id=sa;Password=Polecat#Dev2025;TrustServerCertificate=True`
-- Test database: `polecat_testing`
+- Docker Compose (`docker-compose.yml`) provides SQL Server 2025 (`mcr.microsoft.com/mssql/server:2025-latest`) on port **11433**
+- SA password: `P@55w0rd`
+- Connection (see `Polecat.TestUtils/ConnectionSource.cs`): `Server=localhost,11433;User Id=sa;Password=P@55w0rd;Timeout=5;MultipleActiveResultSets=True;Initial Catalog=master;Encrypt=False`
+- Override the connection string via the `POLECAT_TESTING_DATABASE` environment variable (used in CI)
+- Tests run against the `master` database, isolated per-test by `DatabaseSchemaName` — there is no dedicated `polecat_testing` database
 
 ## Development Stages (ordered by priority)
 
