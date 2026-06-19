@@ -249,13 +249,14 @@ public partial class DocumentStore
             }
         }
 
-        var allShards = Options.Projections.AllShards();
+        // #200: drive off the registered projection sources (not
+        // AllProjectionNames(), which quote-wraps each name for SQL-list
+        // display). Each source exposes its real Lifecycle and ShardNames,
+        // mirroring Marten's DocumentStore.EventStoreExplorer.GetProjectionStatusesAsync.
         var statuses = new List<ProjectionStatus>();
-        foreach (var projectionName in Options.Projections.AllProjectionNames())
+        foreach (var source in Options.Projections.All)
         {
-            var lifecycle = "Unknown";
-            var shards = allShards
-                .Where(s => s.Name.Name.Equals(projectionName, StringComparison.Ordinal))
+            var shards = source.Shards()
                 .Select(shard =>
                 {
                     var shardName = shard.Name.Identity;
@@ -268,11 +269,11 @@ public partial class DocumentStore
             {
                 shards = new List<ShardStatus>
                 {
-                    new(projectionName, lifecycle, 0, highWater, Error: null!)
+                    new(source.Name, source.Lifecycle.ToString(), 0, highWater, Error: null!)
                 };
             }
 
-            statuses.Add(new ProjectionStatus(projectionName, lifecycle, shards));
+            statuses.Add(new ProjectionStatus(source.Name, source.Lifecycle.ToString(), shards));
         }
 
         return statuses;
