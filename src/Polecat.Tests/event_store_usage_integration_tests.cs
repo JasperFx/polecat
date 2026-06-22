@@ -1,5 +1,9 @@
+using JasperFx.Descriptors;
 using JasperFx.Events;
+using JasperFx.Events.Projections;
+using Polecat.Projections;
 using Polecat.Tests.Harness;
+using Polecat.Tests.Projections;
 
 namespace Polecat.Tests;
 
@@ -96,5 +100,38 @@ public class event_store_usage_integration_tests : IntegrationContext
         usage.ProjectionRebuildErrors.SkipApplyErrors.ShouldBe(storeRebuildErrors.SkipApplyErrors);
         usage.ProjectionRebuildErrors.SkipUnknownEvents.ShouldBe(storeRebuildErrors.SkipUnknownEvents);
         usage.ProjectionRebuildErrors.SkipSerializationErrors.ShouldBe(storeRebuildErrors.SkipSerializationErrors);
+    }
+
+    [Fact]
+    public async Task subscription_descriptors_carry_implementation_and_aggregate_types()
+    {
+        // polecat#203 — JasperFx.Events enriched SubscriptionDescriptor with ImplementationType
+        // (the CLR type that implements the projection/subscription) and, for self-aggregating
+        // projections, AggregateType (the document type). Polecat projections funnel through the
+        // shared SubscriptionDescriptor(ISubscriptionSource, IEventStore) ctor via
+        // ProjectionGraph.Describe, so this should populate with no Polecat production change —
+        // this guards parity with Marten.
+        await StoreOptions(opts =>
+        {
+            opts.DatabaseSchemaName = "descriptor_enrichment";
+            opts.Projections.Add<SingleStreamProjection<QuestParty, Guid>>(ProjectionLifecycle.Inline);
+            opts.Projections.Add<QuestLogProjection>(ProjectionLifecycle.Async);
+        });
+
+        var usage = await ((IEventStore)theStore).TryCreateUsage(CancellationToken.None);
+        usage.ShouldNotBeNull();
+
+        // Single-stream (self-aggregating) projection: ImplementationType is the projection class,
+        // AggregateType is the document type.
+        var singleStream = usage.Subscriptions
+            .Single(x => x.Name == nameof(QuestParty));
+        singleStream.ImplementationType.ShouldBe(TypeDescriptor.For(typeof(SingleStreamProjection<QuestParty, Guid>)));
+        singleStream.AggregateType.ShouldBe(TypeDescriptor.For(typeof(QuestParty)));
+
+        // Event projection: ImplementationType set, but it is not an aggregation so AggregateType is null.
+        var eventProjection = usage.Subscriptions
+            .Single(x => x.Name.EndsWith(nameof(QuestLogProjection)));
+        eventProjection.ImplementationType.ShouldBe(TypeDescriptor.For(typeof(QuestLogProjection)));
+        eventProjection.AggregateType.ShouldBeNull();
     }
 }
