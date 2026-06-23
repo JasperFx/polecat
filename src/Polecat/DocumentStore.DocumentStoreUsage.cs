@@ -144,8 +144,10 @@ public partial class DocumentStore : IDocumentStoreUsageSource
             UseOptimisticConcurrency = mapping.UseOptimisticConcurrency,
             UseNumericRevisions = mapping.UseNumericRevisions,
             SubClassCount = mapping.SubClasses.Count,
-            // Polecat doesn't have a partition strategy today — leave null.
+            SubClasses = mapping.SubClasses.Select(x => TypeDescriptor.For(x.DocumentType)).ToArray(),
+            // Polecat doesn't have a partition strategy today — leave both null.
             PartitioningStrategy = null,
+            Partitioning = null,
             Ddl = ddl,
         };
     }

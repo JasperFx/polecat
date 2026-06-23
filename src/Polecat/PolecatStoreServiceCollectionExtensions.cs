@@ -89,6 +89,8 @@ public static class PolecatStoreServiceCollectionExtensions
         // PolecatServiceCollectionExtensions.AddPolecat for the primary store.
         services.AddSingleton<JasperFx.Events.IDocumentStoreUsageSource>(sp =>
             sp.GetRequiredService<T>());
+        services.AddSingleton<JasperFx.Documents.IDocumentStoreDiagnostics>(sp =>
+            (JasperFx.Documents.IDocumentStoreDiagnostics)sp.GetRequiredService<T>());
 
         return new PolecatStoreExpression<T>(services);
     }
