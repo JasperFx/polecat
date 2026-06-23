@@ -1,3 +1,5 @@
+using JasperFx.Events;
+using Microsoft.Extensions.DependencyInjection;
 using Polecat.Tests.Harness;
 
 namespace Polecat.Tests.Documents;
@@ -83,4 +85,46 @@ public class DocumentStoreTests
         var session = store.LightweightSession(new SessionOptions { TenantId = "tenant-a" });
         session.TenantId.ShouldBe("tenant-a");
     }
+
+    // polecat#207: IEventStore.Identity must vary by StoreName so multiple stores are distinguishable.
+    [Fact]
+    public void event_store_identity_defaults_to_store_name_main()
+    {
+        using var store = DocumentStore.For(ConnectionSource.ConnectionString);
+        var identity = ((IEventStore)store).Identity;
+        identity.Name.ShouldBe("main"); // "Main".ToLowerInvariant()
+        identity.Type.ShouldBe("SqlServer");
+    }
+
+    [Fact]
+    public void event_store_identity_varies_by_store_name()
+    {
+        using var primary = DocumentStore.For(ConnectionSource.ConnectionString);
+        using var named = DocumentStore.For(opts =>
+        {
+            opts.ConnectionString = ConnectionSource.ConnectionString;
+            opts.StoreName = "Invoicing";
+        });
+
+        var a = ((IEventStore)primary).Identity;
+        var b = ((IEventStore)named).Identity;
+
+        b.Name.ShouldBe("invoicing");
+        a.ToString().ShouldNotBe(b.ToString());
+    }
+
+    [Fact]
+    public void ancillary_store_takes_store_name_from_marker_type()
+    {
+        var services = new ServiceCollection();
+        services.AddPolecatStore<IInvoiceStore>(opts => opts.ConnectionString = ConnectionSource.ConnectionString);
+
+        using var provider = services.BuildServiceProvider();
+        var store = provider.GetRequiredService<IInvoiceStore>();
+
+        store.Options.StoreName.ShouldBe(nameof(IInvoiceStore));
+        ((IEventStore)store).Identity.Name.ShouldBe("iinvoicestore");
+    }
 }
+
+public interface IInvoiceStore : IDocumentStore;

@@ -31,10 +31,9 @@ public partial class DocumentStore : IDocumentStoreUsageSource
                 Cardinality = DatabaseCardinality.Single,
                 MainDatabase = Database.Describe(),
             },
-            // Polecat doesn't carry a separate StoreName concept yet — fall back
-            // to the database identifier so the descriptor still has a stable
-            // identity.
-            StoreName = Database.Identifier,
+            // Per-store logical name (default "Main"; the marker type name for ancillary stores) so the
+            // descriptor is distinguishable across stores, mirroring Marten. See polecat#207.
+            StoreName = Options.StoreName,
             DatabaseSchemaName = Options.DatabaseSchemaName,
             AutoCreateSchemaObjects = Options.AutoCreateSchemaObjects.ToString(),
             // Polecat's serializer-resident EnumStorage isn't exposed at the
