@@ -57,7 +57,10 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
         Options.Events.TenancyStyle == TenancyStyle.Conjoined
         || Options.Tenancy?.Cardinality == DatabaseCardinality.StaticMultiple;
 
-    EventStoreIdentity IEventStore.Identity => new("Polecat", "SqlServer");
+    // Vary the identity Name by the logical store name so multiple Polecat stores (primary + ancillary)
+    // are distinguishable — mirrors Marten's `new(Options.StoreName.ToLowerInvariant(), "marten")`. The
+    // Type stays the provider ("SqlServer"). See polecat#207.
+    EventStoreIdentity IEventStore.Identity => new(Options.StoreName.ToLowerInvariant(), "SqlServer");
 
     Uri IEventStore.Subject => Database.DatabaseUri;
 

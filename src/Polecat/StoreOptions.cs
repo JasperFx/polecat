@@ -74,6 +74,14 @@ public class StoreOptions
     }
 
     /// <summary>
+    ///     A logical name for this store, used to build a distinct <see cref="JasperFx.Events.IEventStore" />
+    ///     identity (and the store-usage descriptor) so multiple Polecat stores in one application are
+    ///     distinguishable. Defaults to "Main"; ancillary stores registered via <c>AddPolecatStore&lt;T&gt;</c>
+    ///     set this to the marker type name. Mirrors Marten's <c>StoreOptions.StoreName</c>.
+    /// </summary>
+    public string StoreName { get; set; } = "Main";
+
+    /// <summary>
     ///     Whether Polecat should attempt to create or update database schema objects at runtime.
     ///     Defaults to CreateOrUpdate for development convenience.
     /// </summary>

@@ -49,6 +49,12 @@ public static class PolecatStoreServiceCollectionExtensions
         {
             var options = optionSource(sp);
 
+            // polecat#207: give this ancillary store a distinct logical StoreName (its marker type) so its
+            // IEventStore.Identity / usage descriptor are distinguishable from the primary and other
+            // ancillary stores. Mirrors Marten's SecondaryStoreConfig (options.StoreName = typeof(T).Name).
+            // Set before the IConfigurePolecat<T> chain so a user override still wins.
+            options.StoreName = typeof(T).Name;
+
             var configures = sp.GetServices<IConfigurePolecat<T>>();
             foreach (var configure in configures)
             {
