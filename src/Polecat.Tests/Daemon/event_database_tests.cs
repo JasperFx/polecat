@@ -79,4 +79,32 @@ public class event_database_tests : IntegrationContext
         floor.ShouldNotBeNull();
         floor.Value.ShouldBe(highest);
     }
+
+    [Fact]
+    public async Task find_floor_at_time_before_all_events_returns_earliest()
+    {
+        // polecat#205 — a ToTimestamp rewind targeting a time BEFORE all events must
+        // resolve the floor to the earliest event's seq_id (not NULL), so the rewind
+        // re-applies the full stream. Mirrors Marten's earliest-at-or-after semantics.
+        long? firstSeq = null;
+        for (var i = 0; i < 5; i++)
+        {
+            var streamId = Guid.NewGuid();
+            theSession.Events.StartStream(streamId, new QuestStarted($"Quest {i + 1}"));
+            await theSession.SaveChangesAsync();
+        }
+
+        await using (var conn = await OpenConnectionAsync())
+        await using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = "SELECT MIN(seq_id) FROM [dbo].[pc_events];";
+            firstSeq = (long)(await cmd.ExecuteScalarAsync())!;
+        }
+
+        var floor = await theStore.Database.FindEventStoreFloorAtTimeAsync(
+            DateTimeOffset.UtcNow.AddHours(-1), CancellationToken.None);
+
+        floor.ShouldNotBeNull();
+        floor.Value.ShouldBe(firstSeq!.Value);
+    }
 }
