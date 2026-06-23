@@ -220,11 +220,16 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
             await conn.OpenAsync(ct);
 
             await using var cmd = conn.CreateCommand();
+            // Mirror Marten's MartenDatabase.FindEventStoreFloorAtTimeAsync: the floor is the
+            // earliest event at or AFTER the target timestamp (the first sequence the rewind
+            // re-applies from). A target before all events therefore resolves to the earliest
+            // event's seq_id rather than NULL, so a ToTimestamp rewind re-applies the full stream
+            // (within the documented one-event daemon floor boundary). See polecat#205.
             cmd.CommandText = $"""
-                SELECT MAX(seq_id) FROM {eventsTable}
-                WHERE timestamp <= @ts;
+                SELECT MIN(seq_id) FROM {eventsTable}
+                WHERE timestamp >= @ts;
                 """;
-            cmd.Parameters.AddWithValue("@ts", ts);
+            cmd.Parameters.AddWithValue("@ts", ts.ToUniversalTime());
 
             var result = await cmd.ExecuteScalarAsync(ct);
             return result is long seq ? (long?)seq : null;

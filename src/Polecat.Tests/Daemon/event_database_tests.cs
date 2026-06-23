@@ -64,19 +64,51 @@ public class event_database_tests : IntegrationContext
             await theSession.SaveChangesAsync();
         }
 
-        var highest = await theStore.Database.FetchHighestEventSequenceNumber(CancellationToken.None);
-
-        // Get the timestamp of the last event
+        // The floor is the EARLIEST event at-or-after the target (Marten semantics, polecat#205).
+        // Querying at the max event timestamp therefore resolves to the earliest seq_id sharing
+        // that timestamp — when fast inserts land on the same datetimeoffset (as in CI) that is
+        // NOT necessarily the highest seq_id.
         await using var conn = await OpenConnectionAsync();
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = "SELECT MAX(timestamp) FROM [dbo].[pc_events];";
         var maxTimestamp = (DateTimeOffset)(await cmd.ExecuteScalarAsync())!;
 
-        // Find floor at that timestamp — should include all events up to max
+        cmd.CommandText = "SELECT MIN(seq_id) FROM [dbo].[pc_events] WHERE timestamp >= @ts;";
+        cmd.Parameters.AddWithValue("@ts", maxTimestamp);
+        var expectedFloor = (long)(await cmd.ExecuteScalarAsync())!;
+
         var floor = await theStore.Database.FindEventStoreFloorAtTimeAsync(
             maxTimestamp, CancellationToken.None);
 
         floor.ShouldNotBeNull();
-        floor.Value.ShouldBe(highest);
+        floor.Value.ShouldBe(expectedFloor);
+    }
+
+    [Fact]
+    public async Task find_floor_at_time_before_all_events_returns_earliest()
+    {
+        // polecat#205 — a ToTimestamp rewind targeting a time BEFORE all events must
+        // resolve the floor to the earliest event's seq_id (not NULL), so the rewind
+        // re-applies the full stream. Mirrors Marten's earliest-at-or-after semantics.
+        long? firstSeq = null;
+        for (var i = 0; i < 5; i++)
+        {
+            var streamId = Guid.NewGuid();
+            theSession.Events.StartStream(streamId, new QuestStarted($"Quest {i + 1}"));
+            await theSession.SaveChangesAsync();
+        }
+
+        await using (var conn = await OpenConnectionAsync())
+        await using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = "SELECT MIN(seq_id) FROM [dbo].[pc_events];";
+            firstSeq = (long)(await cmd.ExecuteScalarAsync())!;
+        }
+
+        var floor = await theStore.Database.FindEventStoreFloorAtTimeAsync(
+            DateTimeOffset.UtcNow.AddHours(-1), CancellationToken.None);
+
+        floor.ShouldNotBeNull();
+        floor.Value.ShouldBe(firstSeq!.Value);
     }
 }
