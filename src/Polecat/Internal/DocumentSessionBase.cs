@@ -515,6 +515,11 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             }
 
             await tx.CommitAsync(token);
+
+            // Runtime append observation (polecat#213 / CritterWatch#500) — capture the committed
+            // events before the work tracker is reset, then notify best-effort.
+            NotifyAppendObserver();
+
             _workTracker.Reset();
 
             Logger.RecordSavedChanges(this);
@@ -541,6 +546,30 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         }
     }
 
+    /// <summary>
+    ///     Notify the storage-agnostic <see cref="IEventStoreInstrumentation.AppendObserver" /> with the
+    ///     events appended in the just-committed unit of work (polecat#213 / CritterWatch#500). Must be
+    ///     called after commit but before the work tracker is reset. Best-effort: the events are already
+    ///     durable, so an observer fault is logged rather than surfaced as a SaveChanges failure.
+    /// </summary>
+    private void NotifyAppendObserver()
+    {
+        var observer = Options.Events.AppendObserver;
+        if (observer == null) return;
+
+        var events = _workTracker.Streams.SelectMany(s => s.Events).ToList();
+        if (events.Count == 0) return;
+
+        try
+        {
+            observer(events);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogFailure("IEventStoreInstrumentation.AppendObserver threw", ex);
+        }
+    }
+
     private async Task ProcessStartStreamAsync(StreamAction stream, CancellationToken token)
     {
         var events = stream.Events;
@@ -552,6 +581,8 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             if (events[i].Id == Guid.Empty) events[i].Id = Guid.NewGuid();
             events[i].Timestamp = DateTimeOffset.UtcNow;
             events[i].TenantId = stream.TenantId;
+            events[i].StreamId = stream.Id;
+            events[i].StreamKey = stream.Key;
         }
 
         stream.Version = events.Count;
@@ -673,6 +704,8 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             if (events[i].Id == Guid.Empty) events[i].Id = Guid.NewGuid();
             events[i].Timestamp = DateTimeOffset.UtcNow;
             events[i].TenantId = stream.TenantId;
+            events[i].StreamId = stream.Id;
+            events[i].StreamKey = stream.Key;
         }
 
         var newVersion = currentVersion + events.Count;
