@@ -108,6 +108,11 @@ Critical path for MVP: Stages 1–5, 7–8, 10–11
 - **Test naming**: snake_case file names (e.g., `start_stream_tests.cs`)
 - **Assertions**: Shouldly (or similar fluent assertions)
 
+## Naming Conventions
+
+- **Pascal casing** for all `public` and `internal` members (types, methods, properties, fields, events).
+- **camelCasing** for all `protected` and `private` members (methods, properties, fields, locals, parameters).
+
 ## Engineering Principles
 
 - Mirror Marten's public API surface where possible for user familiarity
