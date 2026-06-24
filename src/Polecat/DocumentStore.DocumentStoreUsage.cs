@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.IO;
 using JasperFx.Descriptors;
 using JasperFx.Events;
@@ -145,11 +146,29 @@ public partial class DocumentStore : IDocumentStoreUsageSource
             UseNumericRevisions = mapping.UseNumericRevisions,
             SubClassCount = mapping.SubClasses.Count,
             SubClasses = mapping.SubClasses.Select(x => TypeDescriptor.For(x.DocumentType)).ToArray(),
-            // Polecat doesn't have a partition strategy today — leave both null.
-            PartitioningStrategy = null,
-            Partitioning = null,
+            PartitioningStrategy = mapping.Partitioning == null ? null : "Range",
+            Partitioning = BuildPartitioning(mapping.Partitioning),
             Ddl = ddl,
         };
+    }
+
+    /// <summary>
+    ///     Project Polecat's declarative RANGE partitioning (#211) into the structured
+    ///     <see cref="PartitioningDescriptor" /> CritterWatch renders. SQL Server partitions are
+    ///     anonymous, so the boundary values stand in for the partition names.
+    /// </summary>
+    private static PartitioningDescriptor? BuildPartitioning(Storage.DocumentPartitioning? partitioning)
+    {
+        if (partitioning == null)
+        {
+            return null;
+        }
+
+        var names = partitioning.Boundaries
+            .Select(b => Convert.ToString(b, CultureInfo.InvariantCulture) ?? string.Empty)
+            .ToArray();
+
+        return new PartitioningDescriptor { Strategy = "Range", PartitionNames = names };
     }
 
     private static string WriteSchemaCreationDdl(
