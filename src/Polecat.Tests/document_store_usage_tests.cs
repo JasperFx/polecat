@@ -176,6 +176,46 @@ public class document_store_usage_tests
         eventUsage.TagTypes.ShouldContain(t => t.TagType.Contains(nameof(TestTag)));
     }
 
+    [Fact]
+    public async Task mapping_descriptor_carries_structured_range_partitioning()
+    {
+        await using var store = BuildStore(opts =>
+        {
+            opts.DatabaseSchemaName = "doc_usage";
+            opts.Schema.For<PartitionedUsageDoc>()
+                .PartitionByRange(x => x.BucketEnd,
+                    new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero),
+                    new DateTimeOffset(2026, 2, 1, 0, 0, 0, TimeSpan.Zero));
+        });
+
+        var usage = await GetUsageAsync(store);
+        var mapping = usage.Documents.First(d => d.DocumentType.Name == nameof(PartitionedUsageDoc));
+
+        // Structured partitioning lets CritterWatch render the actual partitions (#209/#211).
+        mapping.PartitioningStrategy.ShouldBe("Range");
+        mapping.Partitioning.ShouldNotBeNull();
+        mapping.Partitioning!.Strategy.ShouldBe("Range");
+        mapping.Partitioning.PartitionNames.Count().ShouldBe(2);
+        // ...and the DDL surfaces the partition function/scheme too.
+        mapping.Ddl.ShouldContain("PARTITION FUNCTION", Case.Insensitive);
+    }
+
+    [Fact]
+    public async Task mapping_descriptor_partitioning_is_null_when_not_partitioned()
+    {
+        await using var store = BuildStore(opts =>
+        {
+            opts.DatabaseSchemaName = "doc_usage";
+            opts.Schema.For<AdvSqlDoc>();
+        });
+
+        var usage = await GetUsageAsync(store);
+        var mapping = usage.Documents.First(d => d.DocumentType.Name == nameof(AdvSqlDoc));
+
+        mapping.PartitioningStrategy.ShouldBeNull();
+        mapping.Partitioning.ShouldBeNull();
+    }
+
     private static DocumentStore BuildStore(Action<StoreOptions> configure)
     {
         var options = new StoreOptions
@@ -206,3 +246,13 @@ public class document_store_usage_tests
 /// canonical shape.
 /// </summary>
 public readonly record struct TestTag(Guid Value);
+
+/// <summary>
+/// A range-partitioned document used to assert the structured partitioning descriptor (#209/#211).
+/// </summary>
+public class PartitionedUsageDoc
+{
+    public Guid Id { get; set; }
+    public DateTimeOffset BucketEnd { get; set; }
+    public double Value { get; set; }
+}
