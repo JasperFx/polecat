@@ -98,6 +98,8 @@ public static class PolecatServiceCollectionExtensions
         // bridge for IEventStore.
         services.AddSingleton<JasperFx.Events.IDocumentStoreUsageSource>(sp =>
             sp.GetRequiredService<IDocumentStore>());
+        services.AddSingleton<JasperFx.Documents.IDocumentStoreDiagnostics>(sp =>
+            (JasperFx.Documents.IDocumentStoreDiagnostics)sp.GetRequiredService<IDocumentStore>());
 
         // Default session factory: lightweight sessions
         services.TryAddSingleton<ISessionFactory>(sp =>
