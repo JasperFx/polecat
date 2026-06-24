@@ -109,6 +109,13 @@ public class StoreOptions
         if (options.EnableAdvancedTracking)
         {
             Events.EnableExtendedProgressionTracking = true;
+
+            // Auto-apply the runtime event-append observation listener (polecat#213) so CritterWatch's
+            // satellite receives append observations via IEventStoreInstrumentation.AppendObserver.
+            if (!Listeners.OfType<Internal.EventAppendObservationListener>().Any())
+            {
+                Listeners.Add(new Internal.EventAppendObservationListener(this));
+            }
         }
     }
 
@@ -408,6 +415,21 @@ public class EventStoreOptions : IEventStoreInstrumentation
         get => EnableExtendedProgressionTracking;
         set => EnableExtendedProgressionTracking = value;
     }
+
+    /// <summary>
+    ///     <see cref="IEventStoreInstrumentation.AppendObserver" /> (jasperfx 2.15.0). Optional observer
+    ///     of the events appended in each unit of work, so storage-agnostic lifecycle tooling
+    ///     (CritterWatch#500) can record runtime-observed "appends" edges. Each <see cref="IEvent" />
+    ///     carries its event type and stream id/key. Combine observers with <c>+=</c>.
+    /// </summary>
+    /// <remarks>
+    ///     Delivery is via the built-in <c>EventAppendObservationListener</c>, which Polecat
+    ///     auto-registers on every store (primary and ancillary) when
+    ///     <c>JasperFxOptions.EnableAdvancedTracking</c> is enabled. Without that opt-in the observer is
+    ///     not invoked even if set. Invocation is best-effort — an observer fault is logged, never
+    ///     surfaced as a <c>SaveChanges</c> failure.
+    /// </remarks>
+    public Action<IReadOnlyList<IEvent>>? AppendObserver { get; set; }
 
     /// <summary>
     ///     Outbox factory the projection daemon asks for an
