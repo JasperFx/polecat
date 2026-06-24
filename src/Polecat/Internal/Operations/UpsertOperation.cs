@@ -54,6 +54,10 @@ internal class UpsertOperation : IStorageOperation
 
     private void ConfigureStandardCommand(ICommandBuilder builder)
     {
+        var pCols = _mapping.PartitionInsertColumns;
+        var pVals = _mapping.PartitionInsertValues;
+        var pSet = _mapping.PartitionUpdateSet;
+
         if (_mapping.IsHierarchy())
         {
             builder.Append($"""
@@ -62,10 +66,10 @@ internal class UpsertOperation : IStorageOperation
                     ON target.id = source.id AND target.tenant_id = source.tenant_id
                 WHEN MATCHED THEN
                   UPDATE SET data = @data, version = target.version + 1,
-                    last_modified = SYSDATETIMEOFFSET(), dotnet_type = @dotnet_type, doc_type = @doc_type
+                    last_modified = SYSDATETIMEOFFSET(), dotnet_type = @dotnet_type, doc_type = @doc_type{pSet}
                 WHEN NOT MATCHED THEN
-                  INSERT (id, data, version, last_modified, created_at, dotnet_type, tenant_id, doc_type)
-                  VALUES (@id, @data, 1, SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET(), @dotnet_type, @tenant_id, @doc_type)
+                  INSERT (id, data, version, last_modified, created_at, dotnet_type, tenant_id, doc_type{pCols})
+                  VALUES (@id, @data, 1, SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET(), @dotnet_type, @tenant_id, @doc_type{pVals})
                 OUTPUT inserted.version;
                 """);
         }
@@ -77,10 +81,10 @@ internal class UpsertOperation : IStorageOperation
                     ON target.id = source.id AND target.tenant_id = source.tenant_id
                 WHEN MATCHED THEN
                   UPDATE SET data = @data, version = target.version + 1,
-                    last_modified = SYSDATETIMEOFFSET(), dotnet_type = @dotnet_type
+                    last_modified = SYSDATETIMEOFFSET(), dotnet_type = @dotnet_type{pSet}
                 WHEN NOT MATCHED THEN
-                  INSERT (id, data, version, last_modified, created_at, dotnet_type, tenant_id)
-                  VALUES (@id, @data, 1, SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET(), @dotnet_type, @tenant_id)
+                  INSERT (id, data, version, last_modified, created_at, dotnet_type, tenant_id{pCols})
+                  VALUES (@id, @data, 1, SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET(), @dotnet_type, @tenant_id{pVals})
                 OUTPUT inserted.version;
                 """);
         }
@@ -90,6 +94,10 @@ internal class UpsertOperation : IStorageOperation
 
     private void ConfigureRevisionCommand(ICommandBuilder builder)
     {
+        var pCols = _mapping.PartitionInsertColumns;
+        var pVals = _mapping.PartitionInsertValues;
+        var pSet = _mapping.PartitionUpdateSet;
+
         if (_mapping.IsHierarchy())
         {
             builder.Append($"""
@@ -98,10 +106,10 @@ internal class UpsertOperation : IStorageOperation
                     ON target.id = source.id AND target.tenant_id = source.tenant_id
                 WHEN MATCHED AND (@expected_version = 0 OR target.version = @expected_version) THEN
                   UPDATE SET data = @data, version = target.version + 1,
-                    last_modified = SYSDATETIMEOFFSET(), dotnet_type = @dotnet_type, doc_type = @doc_type
+                    last_modified = SYSDATETIMEOFFSET(), dotnet_type = @dotnet_type, doc_type = @doc_type{pSet}
                 WHEN NOT MATCHED THEN
-                  INSERT (id, data, version, last_modified, created_at, dotnet_type, tenant_id, doc_type)
-                  VALUES (@id, @data, 1, SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET(), @dotnet_type, @tenant_id, @doc_type)
+                  INSERT (id, data, version, last_modified, created_at, dotnet_type, tenant_id, doc_type{pCols})
+                  VALUES (@id, @data, 1, SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET(), @dotnet_type, @tenant_id, @doc_type{pVals})
                 OUTPUT inserted.version;
                 """);
         }
@@ -113,10 +121,10 @@ internal class UpsertOperation : IStorageOperation
                     ON target.id = source.id AND target.tenant_id = source.tenant_id
                 WHEN MATCHED AND (@expected_version = 0 OR target.version = @expected_version) THEN
                   UPDATE SET data = @data, version = target.version + 1,
-                    last_modified = SYSDATETIMEOFFSET(), dotnet_type = @dotnet_type
+                    last_modified = SYSDATETIMEOFFSET(), dotnet_type = @dotnet_type{pSet}
                 WHEN NOT MATCHED THEN
-                  INSERT (id, data, version, last_modified, created_at, dotnet_type, tenant_id)
-                  VALUES (@id, @data, 1, SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET(), @dotnet_type, @tenant_id)
+                  INSERT (id, data, version, last_modified, created_at, dotnet_type, tenant_id{pCols})
+                  VALUES (@id, @data, 1, SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET(), @dotnet_type, @tenant_id{pVals})
                 OUTPUT inserted.version;
                 """);
         }
@@ -127,6 +135,10 @@ internal class UpsertOperation : IStorageOperation
 
     private void ConfigureGuidVersionCommand(ICommandBuilder builder)
     {
+        var pCols = _mapping.PartitionInsertColumns;
+        var pVals = _mapping.PartitionInsertValues;
+        var pSet = _mapping.PartitionUpdateSet;
+
         if (_mapping.IsHierarchy())
         {
             builder.Append($"""
@@ -135,10 +147,10 @@ internal class UpsertOperation : IStorageOperation
                     ON target.id = source.id AND target.tenant_id = source.tenant_id
                 WHEN MATCHED AND (@expected_guid_version IS NULL OR target.guid_version = @expected_guid_version) THEN
                   UPDATE SET data = @data, version = target.version + 1, guid_version = @new_guid_version,
-                    last_modified = SYSDATETIMEOFFSET(), dotnet_type = @dotnet_type, doc_type = @doc_type
+                    last_modified = SYSDATETIMEOFFSET(), dotnet_type = @dotnet_type, doc_type = @doc_type{pSet}
                 WHEN NOT MATCHED THEN
-                  INSERT (id, data, version, guid_version, last_modified, created_at, dotnet_type, tenant_id, doc_type)
-                  VALUES (@id, @data, 1, @new_guid_version, SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET(), @dotnet_type, @tenant_id, @doc_type)
+                  INSERT (id, data, version, guid_version, last_modified, created_at, dotnet_type, tenant_id, doc_type{pCols})
+                  VALUES (@id, @data, 1, @new_guid_version, SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET(), @dotnet_type, @tenant_id, @doc_type{pVals})
                 OUTPUT inserted.version, inserted.guid_version;
                 """);
         }
@@ -150,10 +162,10 @@ internal class UpsertOperation : IStorageOperation
                     ON target.id = source.id AND target.tenant_id = source.tenant_id
                 WHEN MATCHED AND (@expected_guid_version IS NULL OR target.guid_version = @expected_guid_version) THEN
                   UPDATE SET data = @data, version = target.version + 1, guid_version = @new_guid_version,
-                    last_modified = SYSDATETIMEOFFSET(), dotnet_type = @dotnet_type
+                    last_modified = SYSDATETIMEOFFSET(), dotnet_type = @dotnet_type{pSet}
                 WHEN NOT MATCHED THEN
-                  INSERT (id, data, version, guid_version, last_modified, created_at, dotnet_type, tenant_id)
-                  VALUES (@id, @data, 1, @new_guid_version, SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET(), @dotnet_type, @tenant_id)
+                  INSERT (id, data, version, guid_version, last_modified, created_at, dotnet_type, tenant_id{pCols})
+                  VALUES (@id, @data, 1, @new_guid_version, SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET(), @dotnet_type, @tenant_id{pVals})
                 OUTPUT inserted.version, inserted.guid_version;
                 """);
         }
@@ -215,6 +227,14 @@ internal class UpsertOperation : IStorageOperation
             builder.AddParameters(new Dictionary<string, object?>
             {
                 ["doc_type"] = _mapping.AliasFor(_document.GetType())
+            });
+        }
+
+        if (_mapping.HasPartitionColumn)
+        {
+            builder.AddParameters(new Dictionary<string, object?>
+            {
+                ["partition_value"] = _mapping.Partitioning!.GetValue(_document)
             });
         }
     }

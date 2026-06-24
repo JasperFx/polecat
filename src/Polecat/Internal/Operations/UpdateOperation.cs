@@ -55,10 +55,11 @@ internal class UpdateOperation : IStorageOperation
     private void ConfigureStandardCommand(ICommandBuilder builder)
     {
         var docTypeSet = _mapping.IsHierarchy() ? ", doc_type = @doc_type" : "";
+        var pSet = _mapping.PartitionUpdateSet;
         builder.Append($"""
             UPDATE {_mapping.QualifiedTableName}
             SET data = @data, version = version + 1,
-                last_modified = SYSDATETIMEOFFSET(), dotnet_type = @dotnet_type{docTypeSet}
+                last_modified = SYSDATETIMEOFFSET(), dotnet_type = @dotnet_type{docTypeSet}{pSet}
             OUTPUT inserted.version
             WHERE id = @id AND tenant_id = @tenant_id;
             """);
@@ -69,10 +70,11 @@ internal class UpdateOperation : IStorageOperation
     private void ConfigureRevisionCommand(ICommandBuilder builder)
     {
         var docTypeSet = _mapping.IsHierarchy() ? ", doc_type = @doc_type" : "";
+        var pSet = _mapping.PartitionUpdateSet;
         builder.Append($"""
             UPDATE {_mapping.QualifiedTableName}
             SET data = @data, version = version + 1,
-                last_modified = SYSDATETIMEOFFSET(), dotnet_type = @dotnet_type{docTypeSet}
+                last_modified = SYSDATETIMEOFFSET(), dotnet_type = @dotnet_type{docTypeSet}{pSet}
             OUTPUT inserted.version
             WHERE id = @id AND tenant_id = @tenant_id
                 AND (@expected_version = 0 OR version = @expected_version);
@@ -85,10 +87,11 @@ internal class UpdateOperation : IStorageOperation
     private void ConfigureGuidVersionCommand(ICommandBuilder builder)
     {
         var docTypeSet = _mapping.IsHierarchy() ? ", doc_type = @doc_type" : "";
+        var pSet = _mapping.PartitionUpdateSet;
         builder.Append($"""
             UPDATE {_mapping.QualifiedTableName}
             SET data = @data, version = version + 1, guid_version = @new_guid_version,
-                last_modified = SYSDATETIMEOFFSET(), dotnet_type = @dotnet_type{docTypeSet}
+                last_modified = SYSDATETIMEOFFSET(), dotnet_type = @dotnet_type{docTypeSet}{pSet}
             OUTPUT inserted.version, inserted.guid_version
             WHERE id = @id AND tenant_id = @tenant_id
                 AND (@expected_guid_version IS NULL OR guid_version = @expected_guid_version);
@@ -151,6 +154,14 @@ internal class UpdateOperation : IStorageOperation
             builder.AddParameters(new Dictionary<string, object?>
             {
                 ["doc_type"] = _mapping.AliasFor(_document.GetType())
+            });
+        }
+
+        if (_mapping.HasPartitionColumn)
+        {
+            builder.AddParameters(new Dictionary<string, object?>
+            {
+                ["partition_value"] = _mapping.Partitioning!.GetValue(_document)
             });
         }
     }

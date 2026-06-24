@@ -39,6 +39,10 @@ public partial class DocumentStore : IDocumentStore
         // dead-letter count reads can LINQ-query it (jasperfx#356).
         _providers.GetProvider<DeadLetterEvent>();
 
+        // Validate + eagerly register RANGE-partitioned document types (#211) so their partition
+        // function/scheme and table are created and rolled forward by schema migration at activation.
+        _providers.ConfigurePartitionedDocuments();
+
         // Back-reference so the database can open sessions for the dead-letter
         // document store/queries (it has no store/session of its own otherwise).
         Database.Store = this;

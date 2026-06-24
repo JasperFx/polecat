@@ -92,6 +92,7 @@ const config: UserConfig<DefaultTheme.Config> = {
               ]
             },
             { text: 'Multi-Tenanted Documents', link: '/documents/multi-tenancy' },
+            { text: 'Table Partitioning', link: '/documents/partitioning' },
             { text: 'Initial Baseline Data', link: '/documents/initial-data' },
             { text: 'Optimistic Concurrency', link: '/documents/concurrency' },
             { text: 'Partial Updates/Patching', link: '/documents/partial-updates-patching' },

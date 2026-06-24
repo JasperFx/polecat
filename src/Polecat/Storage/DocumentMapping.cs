@@ -161,6 +161,25 @@ internal class DocumentMapping
     public List<DocumentForeignKey> ForeignKeys { get; } = new();
 
     /// <summary>
+    ///     Declarative SQL Server RANGE partitioning for this document's table, or null when the table
+    ///     is not partitioned. Configured via <see cref="DocumentMappingExpression{T}.PartitionByRange" />.
+    /// </summary>
+    public DocumentPartitioning? Partitioning { get; set; }
+
+    /// <summary>True when a promoted partition column must be written on every upsert.</summary>
+    public bool HasPartitionColumn => Partitioning is { RequiresDuplicatedColumn: true };
+
+    /// <summary>SQL fragment appended to an INSERT column list for the partition column (or empty).</summary>
+    public string PartitionInsertColumns => HasPartitionColumn ? $", {Partitioning!.ColumnName}" : string.Empty;
+
+    /// <summary>SQL fragment appended to an INSERT VALUES list for the partition column (or empty).</summary>
+    public string PartitionInsertValues => HasPartitionColumn ? ", @partition_value" : string.Empty;
+
+    /// <summary>SQL fragment appended to an UPDATE SET clause for the partition column (or empty).</summary>
+    public string PartitionUpdateSet =>
+        HasPartitionColumn ? $", {Partitioning!.ColumnName} = @partition_value" : string.Empty;
+
+    /// <summary>
     ///     The alias used in the doc_type discriminator column for the base type.
     /// </summary>
     public string Alias { get; set; } = "base";

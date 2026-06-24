@@ -69,5 +69,28 @@ internal class DocumentTable : Table
                 .NotNull()
                 .DefaultValueByString(JasperFx.StorageConstants.DefaultTenantId);
         }
+
+        // Declarative SQL Server RANGE partitioning (#211). The partition column must be part of the
+        // table's unique (clustered) index, so a promoted member joins the primary key.
+        if (mapping.Partitioning is { } partitioning)
+        {
+            if (mapping.TenancyStyle == TenancyStyle.Conjoined)
+            {
+                throw new NotSupportedException(
+                    "RANGE partitioning of document tables is currently supported for single-tenant tables " +
+                    $"only, but '{mapping.DocumentType.Name}' uses conjoined tenancy.");
+            }
+
+            if (partitioning.RequiresDuplicatedColumn)
+            {
+                AddColumn(partitioning.ColumnName, partitioning.SqlDataType).AsPrimaryKey().NotNull();
+            }
+
+            var range = PartitionByRange(partitioning.ColumnName, partitioning.SqlDataType);
+            foreach (var boundary in partitioning.Boundaries)
+            {
+                range.AddBoundary(boundary);
+            }
+        }
     }
 }
