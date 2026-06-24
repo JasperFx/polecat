@@ -410,6 +410,15 @@ public class EventStoreOptions : IEventStoreInstrumentation
     }
 
     /// <summary>
+    ///     <see cref="IEventStoreInstrumentation.AppendObserver" /> (jasperfx 2.15.0). Optional observer
+    ///     invoked, best-effort after each successful <c>SaveChanges</c> commit, with the events appended
+    ///     in that unit of work — so storage-agnostic lifecycle tooling (CritterWatch#500) can record
+    ///     runtime-observed "appends" edges. Each <see cref="IEvent" /> carries event type, stream
+    ///     id/key, aggregate type, tenant id, and timestamp. Combine observers with <c>+=</c>.
+    /// </summary>
+    public Action<IReadOnlyList<IEvent>>? AppendObserver { get; set; }
+
+    /// <summary>
     ///     Outbox factory the projection daemon asks for an
     ///     <see cref="Polecat.Events.Aggregation.IMessageBatch"/> when a
     ///     projection in the current batch publishes a side-effect message.
