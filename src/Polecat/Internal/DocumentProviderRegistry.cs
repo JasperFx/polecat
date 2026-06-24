@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
+using JasperFx;
 using Polecat.Schema.Identity.Sequences;
 using Polecat.Storage;
 
@@ -115,8 +116,45 @@ internal class DocumentProviderRegistry
                     mapping.ForeignKeys.Add(fk);
                 }
             }
+
+            // Apply RANGE partitioning
+            var partitioningField = exprType.GetField("Partitioning", BindingFlags.NonPublic | BindingFlags.Instance);
+            if (partitioningField?.GetValue(expr) is Storage.DocumentPartitioning partitioning)
+            {
+                mapping.Partitioning = partitioning;
+            }
         }
     }
 
     public IEnumerable<DocumentProvider> AllProviders => _providers.Values;
+
+    /// <summary>
+    ///     Validates and eagerly registers explicitly RANGE-partitioned document types so their
+    ///     partition function/scheme and table are created (and rolled forward via SPLIT RANGE) by
+    ///     schema migration at activation time, rather than lazily on the first write. Fails fast when
+    ///     partitioning is combined with conjoined tenancy, which is not yet supported.
+    /// </summary>
+    public void ConfigurePartitionedDocuments()
+    {
+        foreach (var expr in _options.Schema.Expressions)
+        {
+            var exprType = expr.GetType();
+            if (!exprType.IsGenericType) continue;
+
+            var partitioningField = exprType.GetField("Partitioning", BindingFlags.NonPublic | BindingFlags.Instance);
+            if (partitioningField?.GetValue(expr) is not DocumentPartitioning) continue;
+
+            var docType = exprType.GetGenericArguments()[0];
+
+            if (_options.Events.TenancyStyle == TenancyStyle.Conjoined)
+            {
+                throw new NotSupportedException(
+                    "RANGE partitioning of document tables is currently supported for single-tenant tables " +
+                    $"only, but '{docType.Name}' uses conjoined tenancy.");
+            }
+
+            // Materialize the provider so DocumentFeatureSchema yields its (partitioned) table.
+            GetProvider(docType);
+        }
+    }
 }

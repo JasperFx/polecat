@@ -15,6 +15,7 @@ public class DocumentMappingExpression<T>
     internal readonly List<(Type SubClass, string? Alias)> SubClasses = new();
     internal readonly List<DocumentIndex> Indexes = new();
     internal readonly List<DocumentForeignKey> ForeignKeys = new();
+    internal DocumentPartitioning? Partitioning;
 
     /// <summary>
     ///     Register a subclass of T for document hierarchy (single-table inheritance).
@@ -106,6 +107,27 @@ public class DocumentMappingExpression<T>
     public DocumentMappingExpression<T> AddForeignKey(DocumentForeignKey foreignKey)
     {
         ForeignKeys.Add(foreignKey);
+        return this;
+    }
+
+    /// <summary>
+    ///     Declaratively RANGE-partition this document's table on a member — the SQL Server companion to
+    ///     Marten's <c>PartitionOn</c>. The classic use is a date member (e.g. <c>x =&gt; x.BucketEnd</c>)
+    ///     partitioned monthly so old data can be pruned by dropping a partition. The boundaries are the
+    ///     RANGE RIGHT split points (N boundaries → N+1 partitions); add new boundaries over time and
+    ///     Weasel rolls them forward in place via <c>SPLIT RANGE</c>.
+    /// </summary>
+    /// <remarks>
+    ///     Unless the member is the identity, its value is promoted into a real column written on every
+    ///     upsert and added to the primary key (SQL Server requires the partition column in the table's
+    ///     unique index). Currently supported for single-tenant document tables only.
+    /// </remarks>
+    public DocumentMappingExpression<T> PartitionByRange<TValue>(
+        Expression<Func<T, TValue>> member,
+        params TValue[] boundaries)
+    {
+        var idMemberName = DocumentMapping.FindIdProperty(typeof(T))?.Name ?? "Id";
+        Partitioning = DocumentPartitioning.For(member, boundaries, idMemberName);
         return this;
     }
 }
