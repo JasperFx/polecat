@@ -180,6 +180,11 @@ internal class DocumentMapping
     public List<DocumentIndex> Indexes { get; } = new();
 
     /// <summary>
+    ///     Native SQL Server 2025 JSON indexes (CREATE JSON INDEX) configured for this document type.
+    /// </summary>
+    public List<JsonIndex> JsonIndexes { get; } = new();
+
+    /// <summary>
     ///     Foreign key constraints configured for this document type.
     /// </summary>
     public List<DocumentForeignKey> ForeignKeys { get; } = new();

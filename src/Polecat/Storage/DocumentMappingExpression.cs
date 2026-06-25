@@ -14,6 +14,7 @@ public class DocumentMappingExpression<T>
     internal readonly Type DocumentType = typeof(T);
     internal readonly List<(Type SubClass, string? Alias)> SubClasses = new();
     internal readonly List<DocumentIndex> Indexes = new();
+    internal readonly List<JsonIndex> JsonIndexes = new();
     internal readonly List<DocumentForeignKey> ForeignKeys = new();
     internal DocumentPartitioning? Partitioning;
 
@@ -85,6 +86,33 @@ public class DocumentMappingExpression<T>
     public DocumentMappingExpression<T> AddIndex(DocumentIndex index)
     {
         Indexes.Add(index);
+        return this;
+    }
+
+    /// <summary>
+    ///     Add a native SQL Server 2025 JSON index (<c>CREATE JSON INDEX</c>) over one or more JSON
+    ///     paths in the document. A single JSON index covers all the given paths and accelerates
+    ///     JSON_VALUE (=) / JSON_PATH_EXISTS / JSON_CONTAINS predicates. Requires
+    ///     <c>UseNativeJsonType = true</c>. See <see cref="JsonIndex" /> for the constraints.
+    /// </summary>
+    public DocumentMappingExpression<T> JsonIndex(Expression<Func<T, object?>> expression,
+        Action<JsonIndex>? configure = null)
+    {
+        var paths = Storage.JsonIndex.ResolveJsonPaths(expression);
+        var index = new JsonIndex(paths);
+        configure?.Invoke(index);
+        JsonIndexes.Add(index);
+        return this;
+    }
+
+    /// <summary>
+    ///     Add a native JSON index over the entire JSON document (no <c>FOR</c> path filter).
+    /// </summary>
+    public DocumentMappingExpression<T> JsonIndex(Action<JsonIndex>? configure = null)
+    {
+        var index = new JsonIndex([]);
+        configure?.Invoke(index);
+        JsonIndexes.Add(index);
         return this;
     }
 
