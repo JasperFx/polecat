@@ -158,8 +158,12 @@ internal class DocumentProvider
 
     private void AssignIdIfNeeded(object document)
     {
-        // Auto-assign Guid for strongly typed Guid wrappers when default
-        if (Mapping.IsStrongTypedId && Mapping.InnerIdType == typeof(Guid))
+        // #218: auto-assign a new Guid when the id is default. This applies to BOTH a plain
+        // `Guid Id` property and strongly typed Guid wrappers — GetId/SetId already resolve the
+        // inner Guid for either, so gating on InnerIdType (not IsStrongTypedId) is what was missing:
+        // previously a plain Guid id fell through to the numeric branch and was never assigned,
+        // so documents persisted with Guid.Empty.
+        if (Mapping.InnerIdType == typeof(Guid))
         {
             var currentId = Mapping.GetId(document);
             if ((Guid)currentId == Guid.Empty)
