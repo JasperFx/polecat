@@ -92,6 +92,17 @@ internal class DocumentTableEnsurer
                 }
             }
 
+            // Native SQL Server 2025 JSON indexes (CREATE JSON INDEX) on the json data column.
+            foreach (var jsonIndex in provider.Mapping.JsonIndexes)
+            {
+                foreach (var statement in jsonIndex.ToDdlStatements(provider.Mapping))
+                {
+                    await using var jsonIndexCmd = conn.CreateCommand();
+                    jsonIndexCmd.CommandText = statement;
+                    await jsonIndexCmd.ExecuteNonQueryAsync(token);
+                }
+            }
+
             _ensured.TryAdd(docType, true);
         }
         finally

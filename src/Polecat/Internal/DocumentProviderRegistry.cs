@@ -107,6 +107,16 @@ internal class DocumentProviderRegistry
                 }
             }
 
+            // Apply JSON indexes
+            var jsonIndexesField = exprType.GetField("JsonIndexes", BindingFlags.NonPublic | BindingFlags.Instance);
+            if (jsonIndexesField?.GetValue(expr) is IEnumerable<Storage.JsonIndex> jsonIndexes)
+            {
+                foreach (var jsonIndex in jsonIndexes)
+                {
+                    mapping.JsonIndexes.Add(jsonIndex);
+                }
+            }
+
             // Apply foreign keys
             var fkField = exprType.GetField("ForeignKeys", BindingFlags.NonPublic | BindingFlags.Instance);
             if (fkField?.GetValue(expr) is IEnumerable<Storage.DocumentForeignKey> foreignKeys)
