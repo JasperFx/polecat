@@ -38,7 +38,10 @@ public class json_value_returning_tests : OneOffConfigurationsContext
     [Fact]
     public async Task native_json_uses_returning_for_numeric()
     {
-        ConfigureStore(_ => { }); // UseNativeJsonType defaults to true (native json on SQL 2025)
+        // Force native json so the RETURNING branch is exercised regardless of the test server's
+        // capability (BuildSql is pure text generation — no json column is created here). This makes
+        // the assertion deterministic on Azure SQL Edge too, which lacks the native json type.
+        ConfigureStore(opts => opts.UseNativeJsonType = true);
         await using var session = theStore.QuerySession();
         var sql = SqlFor(session, session.Query<Doc>().Where(x => x.Count == 5));
 
@@ -49,7 +52,7 @@ public class json_value_returning_tests : OneOffConfigurationsContext
     [Fact]
     public async Task native_json_uses_returning_for_decimal_and_datetimeoffset()
     {
-        ConfigureStore(_ => { });
+        ConfigureStore(opts => opts.UseNativeJsonType = true);
         var cutoff = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
         await using var session = theStore.QuerySession();
         var sql = SqlFor(session,
@@ -62,7 +65,7 @@ public class json_value_returning_tests : OneOffConfigurationsContext
     [Fact]
     public async Task guid_member_keeps_cast_because_returning_has_no_uniqueidentifier()
     {
-        ConfigureStore(_ => { });
+        ConfigureStore(opts => opts.UseNativeJsonType = true);
         var someGuid = Guid.NewGuid();
         await using var session = theStore.QuerySession();
         var sql = SqlFor(session, session.Query<Doc>().Where(x => x.Ref == someGuid));
@@ -74,7 +77,11 @@ public class json_value_returning_tests : OneOffConfigurationsContext
     [Fact]
     public async Task enum_as_integer_uses_returning_int()
     {
-        ConfigureStore(opts => opts.ConfigureSerialization(EnumStorage.AsInteger));
+        ConfigureStore(opts =>
+        {
+            opts.UseNativeJsonType = true;
+            opts.ConfigureSerialization(EnumStorage.AsInteger);
+        });
         await using var session = theStore.QuerySession();
         var sql = SqlFor(session, session.Query<Doc>().Where(x => x.Status == Status.Inactive));
 

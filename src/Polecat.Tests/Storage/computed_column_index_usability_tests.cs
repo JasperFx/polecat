@@ -150,8 +150,11 @@ public class computed_column_index_usability_tests : OneOffConfigurationsContext
         var query = session.Query<IndexedMetric>().Where(x => x.Count == 5);
 
         var sql = SqlFor(session, query);
-        sql.ShouldContain("JSON_VALUE(data, '$.count' RETURNING int)");
-        sql.ShouldNotContain("cc_"); // no computed column reference, no rewrite of unrelated members
+        // Form-agnostic: this test applies schema (so it runs on servers without native json too,
+        // e.g. Azure SQL Edge → CAST instead of #217 RETURNING). The point is that the member is
+        // referenced by its raw JSON path and NOT rewritten to the index's computed column (cc_).
+        sql.ShouldContain("JSON_VALUE(data, '$.count'");
+        sql.ShouldNotContain("cc_");
     }
 
     // ---- gap 3: composite index types each column independently ----------------------------------
