@@ -362,6 +362,14 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             await _tableEnsurer.EnsureTablesAsync(typesNeeded, token);
         }
 
+        // #219: ensure the event store schema exists before appending — the event-sourcing analogue
+        // of ensuring document tables above. Runs outside the data transaction (it opens its own
+        // connection) and only when there are events to write.
+        if (_workTracker.Streams.Any(s => s.Events.Any()))
+        {
+            await _tableEnsurer.EnsureEventStoreSchemaAsync(token);
+        }
+
         await _transactional.BeginTransactionAsync(token);
         using var tx = _transactional.Transaction!;
         try

@@ -132,16 +132,25 @@ public class PolecatConfigurationExpression
         return this;
     }
 
-    private void EnsureActivatorIsRegistered()
+    private void EnsureActivatorIsRegistered() => EnsureActivatorIsRegistered(Services);
+
+    /// <summary>
+    ///     Registers the PolecatActivator hosted service exactly once. The activator applies schema
+    ///     changes on startup (when ApplyAllDatabaseChangesOnStartup is set) and ALWAYS runs the
+    ///     configured InitialData seeders — so #219: it is registered unconditionally by AddPolecat
+    ///     so that InitialData runs even when the app never calls ApplyAllDatabaseChangesOnStartup /
+    ///     AddAsyncDaemon / AddProjectionCoordinator.
+    /// </summary>
+    internal static void EnsureActivatorIsRegistered(IServiceCollection services)
     {
-        if (Services.Any(x =>
+        if (services.Any(x =>
                 x.ServiceType == typeof(IHostedService) &&
                 x.ImplementationType == typeof(PolecatActivator)))
         {
             return;
         }
 
-        Services.Insert(0,
+        services.Insert(0,
             new ServiceDescriptor(typeof(IHostedService), typeof(PolecatActivator),
                 ServiceLifetime.Singleton));
     }
