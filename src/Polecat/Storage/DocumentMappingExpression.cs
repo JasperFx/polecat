@@ -55,26 +55,31 @@ public class DocumentMappingExpression<T>
 
     /// <summary>
     ///     Add a computed index on one or more document properties.
-    ///     Properties are extracted via JSON_VALUE from the data column.
+    ///     Properties are extracted via JSON_VALUE from the data column. Pass <paramref name="include" />
+    ///     (a member or anonymous type) to carry those members as non-key INCLUDE columns for a
+    ///     covering index that avoids key lookups.
     /// </summary>
     public DocumentMappingExpression<T> Index(Expression<Func<T, object?>> expression,
-        Action<DocumentIndex>? configure = null)
+        Action<DocumentIndex>? configure = null, Expression<Func<T, object?>>? include = null)
     {
         var paths = DocumentIndex.ResolveJsonPaths(expression);
         var index = new DocumentIndex(paths);
+        if (include != null) index.IncludePaths = DocumentIndex.ResolveJsonPaths(include);
         configure?.Invoke(index);
         Indexes.Add(index);
         return this;
     }
 
     /// <summary>
-    ///     Add a unique index on one or more document properties.
+    ///     Add a unique index on one or more document properties. Pass <paramref name="include" /> to
+    ///     carry extra members as non-key INCLUDE columns (covering index).
     /// </summary>
     public DocumentMappingExpression<T> UniqueIndex(Expression<Func<T, object?>> expression,
-        Action<DocumentIndex>? configure = null)
+        Action<DocumentIndex>? configure = null, Expression<Func<T, object?>>? include = null)
     {
         var paths = DocumentIndex.ResolveJsonPaths(expression);
         var index = new DocumentIndex(paths) { IsUnique = true };
+        if (include != null) index.IncludePaths = DocumentIndex.ResolveJsonPaths(include);
         configure?.Invoke(index);
         Indexes.Add(index);
         return this;
