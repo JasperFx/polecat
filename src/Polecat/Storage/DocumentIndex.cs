@@ -64,6 +64,13 @@ public class DocumentIndex
     public string[] IncludePaths { get; set; } = [];
 
     /// <summary>
+    ///     When set, the index targets a real table column directly (e.g. the metadata columns
+    ///     created_at / last_modified / tenant_id) instead of a JSON path, so no computed column is
+    ///     generated. Used by the IndexCreatedAt / IndexLastModified / IndexTenantId helpers.
+    /// </summary>
+    internal string? RawColumn { get; set; }
+
+    /// <summary>
     ///     Sort order for the index columns.
     /// </summary>
     public SortOrder SortOrder { get; set; } = SortOrder.Ascending;
@@ -150,6 +157,29 @@ public class DocumentIndex
         var name = GetIndexName(table);
         var unique = IsUnique ? "UNIQUE " : "";
 
+        // A real-column index (metadata columns) needs no computed columns — index the column directly.
+        if (RawColumn != null)
+        {
+            var rawCols = new List<string>();
+            if (TenancyScope == TenancyScope.PerTenant)
+            {
+                rawCols.Add(JasperFx.StorageConstants.TenantIdColumn);
+            }
+
+            var rawSortDir = SortOrder == SortOrder.Descending ? " DESC" : "";
+            rawCols.Add($"[{RawColumn}]{rawSortDir}");
+            var rawWhere = !string.IsNullOrEmpty(Predicate) ? $" WHERE {Predicate}" : "";
+
+            return
+            [
+                $"""
+                 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = '{name}'
+                                AND object_id = OBJECT_ID('{qualifiedTable}'))
+                     CREATE {unique}NONCLUSTERED INDEX [{name}] ON {qualifiedTable} ({string.Join(", ", rawCols)}){rawWhere};
+                 """
+            ];
+        }
+
         var statements = new List<string>();
 
         // Add persisted computed columns for each key JSON path
@@ -211,6 +241,11 @@ public class DocumentIndex
     private string DeriveIndexName(string tableName)
     {
         var prefix = IsUnique ? "ux" : "ix";
+        if (RawColumn != null)
+        {
+            return $"{prefix}_{tableName}_{RawColumn.ToLowerInvariant()}";
+        }
+
         var pathSuffix = string.Join("_", JsonPaths.Select(p =>
             p.Replace("$.", "").Replace(".", "_").ToLowerInvariant()));
         var casingSuffix = Casing switch
