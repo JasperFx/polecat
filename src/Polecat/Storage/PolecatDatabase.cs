@@ -151,6 +151,28 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
         }, (_connectionString, _events.ProgressionTableName, name.Identity), token);
     }
 
+    // #220 (jasperfx#473 / #474, JasperFx.Events 2.16.0): exact-identity progression delete.
+    // The JasperFx.Events default throws NotSupportedException, so Polecat must override this or
+    // the operation is inert. Unlike the prefix-LIKE DeleteProjectionProgressAsync path on
+    // DocumentStore.EventStore.cs, this matches the *raw* ShardName.Identity with exact equality so
+    // ejecting (e.g.) "claim_lines:V9:All" cannot drop "claim_lines:V9:AllOther"-style siblings.
+    // No registration check by design: the abstraction targets orphaned/unregistered shards too
+    // (CritterWatch #476 "Eject Shard"). A non-existent identity is a clean zero-row no-op.
+    public async Task DeleteProjectionProgressByShardNameAsync(string shardIdentity, CancellationToken token = default)
+    {
+        await _resilience.ExecuteAsync(static async (state, ct) =>
+        {
+            var (connectionString, progressionTable, identity) = state;
+            await using var conn = new SqlConnection(connectionString);
+            await conn.OpenAsync(ct);
+
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = $"DELETE FROM {progressionTable} WHERE name = @identity;";
+            cmd.Parameters.AddWithValue("@identity", identity);
+            await cmd.ExecuteNonQueryAsync(ct);
+        }, (_connectionString, _events.ProgressionTableName, shardIdentity), token);
+    }
+
     public async Task<IReadOnlyList<ShardState>> AllProjectionProgress(CancellationToken token = default)
     {
         return await _resilience.ExecuteAsync(static async (state, ct) =>
