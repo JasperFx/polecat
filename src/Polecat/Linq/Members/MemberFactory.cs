@@ -18,6 +18,7 @@ internal class MemberFactory : IMemberResolver
     private readonly Type _idType;
     private readonly ValueTypeInfo? _valueTypeId;
     private readonly DocumentMapping _mapping;
+    private readonly bool _useReturning;
 
     public MemberFactory(StoreOptions options, DocumentMapping mapping)
     {
@@ -25,6 +26,10 @@ internal class MemberFactory : IMemberResolver
         _idType = mapping.IdType;
         _valueTypeId = mapping.ValueTypeId;
         _mapping = mapping;
+        // #217: JSON_VALUE(... RETURNING <type>) is only available when the data column is the
+        // native `json` type (SQL Server 2025+), which is exactly what UseNativeJsonType selects.
+        // On nvarchar(max) storage the RETURNING clause is a syntax error, so fall back to CAST.
+        _useReturning = options.UseNativeJsonType;
 
         if (options.Serializer is Serializer s)
         {
@@ -56,7 +61,7 @@ internal class MemberFactory : IMemberResolver
 
         if (underlying.IsEnum)
         {
-            return new EnumMember(rawLocator, underlying, _enumStorage, _namingPolicy);
+            return new EnumMember(rawLocator, underlying, _enumStorage, _namingPolicy, jsonPath, _useReturning);
         }
 
         if (underlying == typeof(bool))
@@ -65,9 +70,7 @@ internal class MemberFactory : IMemberResolver
         }
 
         var sqlType = GetSqlType(underlying);
-        var typedLocator = sqlType != null
-            ? $"CAST({rawLocator} AS {sqlType})"
-            : rawLocator;
+        var typedLocator = BuildTypedLocator(jsonPath, rawLocator, sqlType);
 
         // #223: if a Default-casing Index(...) covers this member, emit the EXACT computed-column
         // expression the index defines instead of the bare/uncast locator. SQL Server then matches
@@ -96,6 +99,32 @@ internal class MemberFactory : IMemberResolver
         locator = DocumentIndex.ComputedColumnExpression(jsonPath, sqlType, IndexCasing.Default);
         return true;
     }
+
+    /// <summary>
+    ///     #217: builds the typed locator, preferring JSON_VALUE(... RETURNING type) on native json
+    ///     storage (SQL Server 2025+) over CAST(JSON_VALUE(...) AS type). RETURNING does not support
+    ///     uniqueidentifier, so Guid members keep CAST. A null sqlType (string/bool) needs no typing.
+    ///     Note: members covered by a Default-casing Index(...) are instead rewritten to the index's
+    ///     computed-column expression in CreateMember (which takes precedence), so they keep matching
+    ///     the persisted CAST/CONVERT column and stay seekable (#223).
+    /// </summary>
+    internal static string BuildTypedLocator(string jsonPath, string rawLocator, string? sqlType,
+        bool useReturning)
+    {
+        if (sqlType == null) return rawLocator;
+        return useReturning && SupportsReturning(sqlType)
+            ? $"JSON_VALUE(data, '{jsonPath}' RETURNING {sqlType})"
+            : $"CAST({rawLocator} AS {sqlType})";
+    }
+
+    private string BuildTypedLocator(string jsonPath, string rawLocator, string? sqlType)
+        => BuildTypedLocator(jsonPath, rawLocator, sqlType, _useReturning);
+
+    /// <summary>
+    ///     RETURNING supports every type Polecat emits except uniqueidentifier (not in the SQL Server
+    ///     JSON_VALUE RETURNING type list), so Guid members fall back to CAST.
+    /// </summary>
+    internal static bool SupportsReturning(string sqlType) => sqlType != "uniqueidentifier";
 
     private string BuildJsonPath(MemberExpression expression)
     {
