@@ -44,7 +44,7 @@ internal class EventDataMemberFactory : IMemberResolver
 
         if (underlying.IsEnum)
         {
-            return new EnumMember(rawLocator, underlying, _enumStorage);
+            return new EnumMember(rawLocator, underlying, _enumStorage, _namingPolicy);
         }
 
         if (underlying == typeof(bool))
