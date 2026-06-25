@@ -138,9 +138,11 @@ public class computed_column_index_usability_tests : OneOffConfigurationsContext
     }
 
     [Fact]
-    public async Task non_indexed_member_keeps_its_plain_locator()
+    public async Task non_indexed_member_is_not_rewritten_to_the_index_column()
     {
-        // Only indexed members are rewritten; everything else is untouched.
+        // Only indexed members are rewritten to the computed-column expression; an unrelated member
+        // keeps its normal typed locator. On native json storage (#217) that locator is the
+        // RETURNING form; the point of this test is that it is NOT a computed-column (cc_) reference.
         ConfigureStore(opts => opts.Schema.For<IndexedMetric>().Index(x => x.ServiceName));
         await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync();
 
@@ -148,7 +150,7 @@ public class computed_column_index_usability_tests : OneOffConfigurationsContext
         var query = session.Query<IndexedMetric>().Where(x => x.Count == 5);
 
         var sql = SqlFor(session, query);
-        sql.ShouldContain("CAST(JSON_VALUE(data, '$.count') AS int)");
+        sql.ShouldContain("JSON_VALUE(data, '$.count' RETURNING int)");
         sql.ShouldNotContain("cc_"); // no computed column reference, no rewrite of unrelated members
     }
 

@@ -12,16 +12,24 @@ internal class EnumMember : IQueryableMember
     private readonly JsonNamingPolicy? _namingPolicy;
 
     public EnumMember(string rawLocator, Type memberType, EnumStorage enumStorage,
-        JsonNamingPolicy? namingPolicy = null)
+        JsonNamingPolicy? namingPolicy = null, string? jsonPath = null, bool useReturning = false)
     {
         RawLocator = rawLocator;
         MemberType = memberType;
         _enumStorage = enumStorage;
         _namingPolicy = namingPolicy;
 
-        TypedLocator = enumStorage == EnumStorage.AsInteger
-            ? $"CAST({rawLocator} AS int)"
-            : rawLocator;
+        if (enumStorage != EnumStorage.AsInteger)
+        {
+            TypedLocator = rawLocator;
+        }
+        else
+        {
+            // #217: prefer JSON_VALUE(... RETURNING int) on native json storage over CAST(... AS int).
+            TypedLocator = useReturning && jsonPath != null
+                ? $"JSON_VALUE(data, '{jsonPath}' RETURNING int)"
+                : $"CAST({rawLocator} AS int)";
+        }
     }
 
     public Type MemberType { get; }
