@@ -41,9 +41,19 @@ public class DocumentIndex
     public string? Predicate { get; set; }
 
     /// <summary>
-    ///     SQL type hint for the indexed value (default: varchar(250) for string paths).
+    ///     SQL type hint applied to every path in the index. When null, the type is derived from
+    ///     each member's CLR type (so an int member indexes as int, a DateTimeOffset as
+    ///     datetimeoffset, a string as varchar(250)). A non-null value overrides every path.
+    ///     For per-path control in a composite index, use <see cref="SqlTypeByPath" />.
     /// </summary>
     public string? SqlType { get; set; }
+
+    /// <summary>
+    ///     #223: per-path SQL type overrides for composite indexes, keyed by JSON path
+    ///     (e.g. "$.bucketEnd"). Lets a composite over a string + a date type each column
+    ///     correctly. Takes precedence over <see cref="SqlType" /> and the CLR-derived type.
+    /// </summary>
+    public Dictionary<string, string> SqlTypeByPath { get; } = new();
 
     /// <summary>
     ///     Sort order for the index columns.
@@ -79,6 +89,40 @@ public class DocumentIndex
     }
 
     /// <summary>
+    ///     #223: resolves the SQL type for a single indexed path. Precedence:
+    ///     per-path override → index-wide <see cref="SqlType" /> → CLR-derived type → varchar(250).
+    /// </summary>
+    internal string ResolveSqlType(string jsonPath, Type? clrType)
+    {
+        if (SqlTypeByPath.TryGetValue(jsonPath, out var perPath)) return perPath;
+        if (SqlType != null) return SqlType;
+        if (clrType != null && SqlTypeMap.For(clrType) is { } derived) return derived;
+        return "varchar(250)";
+    }
+
+    /// <summary>
+    ///     #223: builds the computed-column / predicate expression for a path. This single method
+    ///     feeds both the index DDL and the LINQ translator (via MemberFactory), which is what lets
+    ///     SQL Server match a predicate to the persisted computed column and seek the index.
+    ///     Date/time types use a deterministic CONVERT(..., 126) so the column can be PERSISTED
+    ///     (a CAST of a string to a date/time type is non-deterministic and rejected by PERSISTED).
+    /// </summary>
+    internal static string ComputedColumnExpression(string jsonPath, string sqlType, IndexCasing casing)
+    {
+        var json = $"JSON_VALUE(data, '{jsonPath}')";
+        var expr = SqlTypeMap.IsDateTimeFamily(sqlType)
+            ? $"CONVERT({sqlType}, {json}, 126)"
+            : $"CAST({json} AS {sqlType})";
+
+        return casing switch
+        {
+            IndexCasing.Upper => $"UPPER({expr})",
+            IndexCasing.Lower => $"LOWER({expr})",
+            _ => expr
+        };
+    }
+
+    /// <summary>
     ///     Gets the index name (explicit or derived).
     /// </summary>
     internal string GetIndexName(string tableName)
@@ -97,7 +141,6 @@ public class DocumentIndex
         var qualifiedTable = $"[{schema}].[{table}]";
         var name = GetIndexName(table);
         var unique = IsUnique ? "UNIQUE " : "";
-        var sqlType = SqlType ?? "varchar(250)";
 
         var statements = new List<string>();
 
@@ -105,15 +148,8 @@ public class DocumentIndex
         foreach (var path in JsonPaths)
         {
             var colName = ColumnNameForPath(path, Casing);
-            var jsonValueExpr = $"JSON_VALUE(data, '{path}')";
-
-            // Apply case transformation for string-typed columns
-            var castedExpr = Casing switch
-            {
-                IndexCasing.Upper => $"UPPER(CAST({jsonValueExpr} AS {sqlType}))",
-                IndexCasing.Lower => $"LOWER(CAST({jsonValueExpr} AS {sqlType}))",
-                _ => $"CAST({jsonValueExpr} AS {sqlType})"
-            };
+            var sqlType = ResolveSqlType(path, mapping.ResolveClrMemberType(path));
+            var castedExpr = ComputedColumnExpression(path, sqlType, Casing);
 
             statements.Add($"""
                 IF COL_LENGTH('{schema}.{table}', '{colName}') IS NULL

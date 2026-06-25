@@ -102,6 +102,30 @@ internal class DocumentMapping
     public Type IdType { get; }
 
     /// <summary>
+    ///     #223: resolves an index JSON path (e.g. "$.serviceName", "$.address.city") back to the
+    ///     CLR member type so a computed-column index can be typed from the member rather than
+    ///     defaulting every column to varchar(250). Nullable types are unwrapped. Returns null when
+    ///     the path can't be walked to a simple property (caller falls back to varchar(250)).
+    /// </summary>
+    internal Type? ResolveClrMemberType(string jsonPath)
+    {
+        if (!jsonPath.StartsWith("$.", StringComparison.Ordinal)) return null;
+
+        var current = _documentType;
+        foreach (var segment in jsonPath[2..].Split('.'))
+        {
+            // Index paths are camelCased property names; match case-insensitively since
+            // camelCasing only changes the first character.
+            var prop = current.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                .FirstOrDefault(p => string.Equals(p.Name, segment, StringComparison.OrdinalIgnoreCase));
+            if (prop == null) return null;
+            current = prop.PropertyType;
+        }
+
+        return Nullable.GetUnderlyingType(current) ?? current;
+    }
+
+    /// <summary>
     ///     The unwrapped inner type for SQL column mapping.
     ///     For strongly typed IDs (e.g., OrderId wrapping Guid), returns the inner type.
     ///     For plain IDs, returns IdType.

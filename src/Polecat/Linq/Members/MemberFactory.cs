@@ -17,12 +17,14 @@ internal class MemberFactory : IMemberResolver
     private readonly EnumStorage _enumStorage;
     private readonly Type _idType;
     private readonly ValueTypeInfo? _valueTypeId;
+    private readonly DocumentMapping _mapping;
 
     public MemberFactory(StoreOptions options, DocumentMapping mapping)
     {
         _enumStorage = options.Serializer.EnumStorage;
         _idType = mapping.IdType;
         _valueTypeId = mapping.ValueTypeId;
+        _mapping = mapping;
 
         if (options.Serializer is Serializer s)
         {
@@ -67,7 +69,32 @@ internal class MemberFactory : IMemberResolver
             ? $"CAST({rawLocator} AS {sqlType})"
             : rawLocator;
 
+        // #223: if a Default-casing Index(...) covers this member, emit the EXACT computed-column
+        // expression the index defines instead of the bare/uncast locator. SQL Server then matches
+        // the predicate to the persisted computed column and can seek the index. Without this the
+        // translator's expression (e.g. bare JSON_VALUE for a string, CAST(... AS datetimeoffset)
+        // for a date) never lines up with the index column, so the index is dead weight.
+        if (TryGetIndexedLocator(jsonPath, underlying, out var indexedLocator))
+        {
+            typedLocator = indexedLocator;
+        }
+
         return new QueryableMember(rawLocator, typedLocator, memberType);
+    }
+
+    private bool TryGetIndexedLocator(string jsonPath, Type underlying, out string locator)
+    {
+        locator = string.Empty;
+
+        // Only Default-casing indexes are predicate-transparent. Upper/Lower computed columns
+        // fold case, so a plain equality/range predicate must not be rewritten onto them.
+        var index = _mapping.Indexes.FirstOrDefault(i =>
+            i.Casing == IndexCasing.Default && Array.IndexOf(i.JsonPaths, jsonPath) >= 0);
+        if (index == null) return false;
+
+        var sqlType = index.ResolveSqlType(jsonPath, underlying);
+        locator = DocumentIndex.ComputedColumnExpression(jsonPath, sqlType, IndexCasing.Default);
+        return true;
     }
 
     private string BuildJsonPath(MemberExpression expression)
@@ -105,15 +132,6 @@ internal class MemberFactory : IMemberResolver
 
     private static string? GetSqlType(Type type)
     {
-        if (type == typeof(int)) return "int";
-        if (type == typeof(long)) return "bigint";
-        if (type == typeof(short)) return "smallint";
-        if (type == typeof(double)) return "float";
-        if (type == typeof(decimal)) return "decimal(18,6)";
-        if (type == typeof(float)) return "real";
-        if (type == typeof(Guid)) return "uniqueidentifier";
-        if (type == typeof(DateTime)) return "datetime2";
-        if (type == typeof(DateTimeOffset)) return "datetimeoffset";
-        return null; // string, bool, etc. — no CAST needed
+        return SqlTypeMap.For(type);
     }
 }
