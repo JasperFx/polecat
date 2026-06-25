@@ -198,7 +198,8 @@ public class DocumentIndex
     }
 
     /// <summary>
-    ///     Resolves a member expression to a JSON path (e.g., x => x.UserName → "$.userName").
+    ///     Resolves a single, non-nested member to a JSON path (e.g., UserName → "$.userName").
+    ///     Used for attribute-based indexes, where the member is always a direct property.
     /// </summary>
     internal static string MemberToJsonPath(MemberInfo member)
     {
@@ -207,7 +208,35 @@ public class DocumentIndex
     }
 
     /// <summary>
-    ///     Resolves a lambda expression to JSON paths for indexing.
+    ///     Resolves a (possibly nested) member access expression to a JSON path by walking the
+    ///     member chain, e.g. x => x.Address.City → "$.address.city". This mirrors the LINQ
+    ///     translator's MemberFactory.BuildJsonPath so an index path and the query predicate path
+    ///     are identical (otherwise the computed-column index can never match). Each segment is
+    ///     camelCased, matching the default serializer casing the rest of the index DSL assumes.
+    /// </summary>
+    internal static string MemberExpressionToJsonPath(MemberExpression expression)
+    {
+        var segments = new List<string>();
+        var current = expression;
+
+        while (current != null)
+        {
+            var name = current.Member.Name;
+            segments.Insert(0, char.ToLowerInvariant(name[0]) + name[1..]);
+
+            if (current.Expression is ParameterExpression)
+                break;
+
+            current = current.Expression as MemberExpression;
+        }
+
+        return "$." + string.Join(".", segments);
+    }
+
+    /// <summary>
+    ///     Resolves a lambda expression to JSON paths for indexing. Supports a single (possibly
+    ///     nested) member — x => x.Prop or x => x.Address.City — and an anonymous type combining
+    ///     several — x => new { x.Prop1, x.Address.City }.
     /// </summary>
     internal static string[] ResolveJsonPaths<T>(Expression<Func<T, object?>> expression)
     {
@@ -219,24 +248,40 @@ public class DocumentIndex
             body = unary.Operand;
         }
 
-        // Single member: x => x.Property
+        // Single (possibly nested) member: x => x.Property / x => x.Address.City
         if (body is MemberExpression memberExpr)
         {
-            return [MemberToJsonPath(memberExpr.Member)];
+            return [MemberExpressionToJsonPath(memberExpr)];
         }
 
-        // Anonymous type: x => new { x.Prop1, x.Prop2 }
+        // Anonymous type: x => new { x.Prop1, x.Address.City }
         if (body is NewExpression newExpr)
         {
             return newExpr.Arguments
-                .OfType<MemberExpression>()
-                .Select(m => MemberToJsonPath(m.Member))
+                .Select(UnwrapToMemberExpression)
+                .Where(m => m != null)
+                .Select(m => MemberExpressionToJsonPath(m!))
                 .ToArray();
         }
 
         throw new ArgumentException(
             $"Expression '{expression}' is not a supported index expression. " +
-            "Use a single property (x => x.Prop) or anonymous type (x => new {{ x.Prop1, x.Prop2 }}).");
+            "Use a single property (x => x.Prop), a nested property (x => x.Address.City), " +
+            "or an anonymous type (x => new {{ x.Prop1, x.Prop2 }}).");
+    }
+
+    /// <summary>
+    ///     Strips a Convert wrapper (value-type members boxed to object in some anonymous-type
+    ///     arguments) and returns the underlying MemberExpression, or null if it isn't one.
+    /// </summary>
+    private static MemberExpression? UnwrapToMemberExpression(Expression expression)
+    {
+        if (expression is UnaryExpression { NodeType: ExpressionType.Convert } unary)
+        {
+            expression = unary.Operand;
+        }
+
+        return expression as MemberExpression;
     }
 }
 
