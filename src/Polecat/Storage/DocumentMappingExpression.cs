@@ -86,10 +86,58 @@ public class DocumentMappingExpression<T>
     }
 
     /// <summary>
+    ///     Add a composite computed index over several members, each given as its own lambda
+    ///     (e.g. <c>Index(x => x.A, x => x.B)</c>) — the multi-lambda alternative to the anonymous
+    ///     type form <c>Index(x => new { x.A, x.B })</c>.
+    /// </summary>
+    public DocumentMappingExpression<T> Index(params Expression<Func<T, object?>>[] expressions)
+    {
+        var paths = expressions.SelectMany(DocumentIndex.ResolveJsonPaths).ToArray();
+        Indexes.Add(new DocumentIndex(paths));
+        return this;
+    }
+
+    /// <summary>
+    ///     Add a composite unique computed index over several members, each given as its own lambda.
+    /// </summary>
+    public DocumentMappingExpression<T> UniqueIndex(params Expression<Func<T, object?>>[] expressions)
+    {
+        var paths = expressions.SelectMany(DocumentIndex.ResolveJsonPaths).ToArray();
+        Indexes.Add(new DocumentIndex(paths) { IsUnique = true });
+        return this;
+    }
+
+    /// <summary>
     ///     Add a custom index with explicit configuration.
     /// </summary>
     public DocumentMappingExpression<T> AddIndex(DocumentIndex index)
     {
+        Indexes.Add(index);
+        return this;
+    }
+
+    /// <summary>
+    ///     Index the <c>created_at</c> metadata column.
+    /// </summary>
+    public DocumentMappingExpression<T> IndexCreatedAt(Action<DocumentIndex>? configure = null)
+        => AddMetadataIndex("created_at", configure);
+
+    /// <summary>
+    ///     Index the <c>last_modified</c> metadata column.
+    /// </summary>
+    public DocumentMappingExpression<T> IndexLastModified(Action<DocumentIndex>? configure = null)
+        => AddMetadataIndex("last_modified", configure);
+
+    /// <summary>
+    ///     Index the <c>tenant_id</c> metadata column (multi-tenant stores).
+    /// </summary>
+    public DocumentMappingExpression<T> IndexTenantId(Action<DocumentIndex>? configure = null)
+        => AddMetadataIndex(JasperFx.StorageConstants.TenantIdColumn, configure);
+
+    private DocumentMappingExpression<T> AddMetadataIndex(string column, Action<DocumentIndex>? configure)
+    {
+        var index = new DocumentIndex([]) { RawColumn = column };
+        configure?.Invoke(index);
         Indexes.Add(index);
         return this;
     }
