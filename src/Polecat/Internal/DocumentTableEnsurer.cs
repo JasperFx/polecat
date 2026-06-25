@@ -43,6 +43,14 @@ internal class DocumentTableEnsurer
             return;
         }
 
+        // #219: honor the user's explicit opt-out. AutoCreate.None means "I manage the schema",
+        // so never create/alter tables implicitly on first use (mirrors Marten).
+        if (_options.AutoCreateSchemaObjects == AutoCreate.None)
+        {
+            _ensured.TryAdd(docType, true);
+            return;
+        }
+
         await _semaphore.WaitAsync(token);
         try
         {
@@ -185,6 +193,55 @@ internal class DocumentTableEnsurer
         foreach (var provider in providers)
         {
             await EnsureTableAsync(provider, token);
+        }
+    }
+
+    private volatile bool _eventStoreEnsured;
+    private readonly SemaphoreSlim _eventStoreSemaphore = new(1, 1);
+
+    /// <summary>
+    ///     #219: ensures the event store schema (streams / events / progression tables, plus any tag
+    ///     and natural-key tables) exists on first usage of the event store — the event-sourcing
+    ///     analogue of EnsureTableAsync for documents. Idempotent and applied once per process; a
+    ///     no-op under AutoCreate.None so the user's manual-schema opt-out is respected.
+    /// </summary>
+    public async Task EnsureEventStoreSchemaAsync(CancellationToken token)
+    {
+        if (_eventStoreEnsured) return;
+
+        if (_options.AutoCreateSchemaObjects == AutoCreate.None)
+        {
+            _eventStoreEnsured = true;
+            return;
+        }
+
+        await _eventStoreSemaphore.WaitAsync(token);
+        try
+        {
+            if (_eventStoreEnsured) return;
+
+            await using var conn = _connectionFactory.Create();
+            await conn.OpenAsync(token);
+
+            var migrator = new SqlServerMigrator();
+
+            // Mirror PolecatDatabase.BuildFeatureSchemas: the event store feature owns the natural-key
+            // tables for aggregate projections that declare one.
+            var naturalKeys = _options.Projections.All
+                .OfType<JasperFx.Events.Aggregation.IAggregateProjection>()
+                .Where(p => p.NaturalKeyDefinition != null)
+                .Select(p => p.NaturalKeyDefinition!)
+                .ToList();
+
+            var eventSchema = new Events.Schema.EventStoreFeatureSchema(_options.EventGraph, naturalKeys);
+            var migration = await SchemaMigration.DetermineAsync(conn, token, eventSchema.Objects);
+            await migrator.ApplyAllAsync(conn, migration, AutoCreate.CreateOrUpdate, ct: token);
+
+            _eventStoreEnsured = true;
+        }
+        finally
+        {
+            _eventStoreSemaphore.Release();
         }
     }
 }

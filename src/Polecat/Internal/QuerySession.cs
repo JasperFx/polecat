@@ -153,6 +153,12 @@ internal partial class QuerySession : IQuerySession
     public Task<bool> CheckExistsAsync<T>(int id, CancellationToken token = default) where T : class
         => CheckExistsInternalAsync<T>(id, token);
 
+    /// <summary>
+    ///     #219: ensure the event store schema exists on the fly before an event read/write.
+    /// </summary>
+    internal Task EnsureEventStoreSchemaAsync(CancellationToken token)
+        => _tableEnsurer.EnsureEventStoreSchemaAsync(token);
+
     public Task<bool> CheckExistsAsync<T>(long id, CancellationToken token = default) where T : class
         => CheckExistsInternalAsync<T>(id, token);
 
