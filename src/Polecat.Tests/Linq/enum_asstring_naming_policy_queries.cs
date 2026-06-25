@@ -142,4 +142,43 @@ public class enum_asstring_naming_policy_queries : OneOffConfigurationsContext
             .CountAsync(x => x.Granularity == Granularity.Hour);
         count.ShouldBe(1);
     }
+
+    // ---- #216: marcominerva's exact repro ------------------------------------------------------
+
+    public enum ActiveStatus
+    {
+        Active,
+        Inactive
+    }
+
+    public class User
+    {
+        public Guid Id { get; set; }
+        public string FirstName { get; set; } = string.Empty;
+        public string LastName { get; set; } = string.Empty;
+        public ActiveStatus Status { get; set; }
+    }
+
+    [Fact]
+    public async Task issue_216_query_by_asstring_enum_returns_matching_rows()
+    {
+        // EnumStorage.AsString with the default casing: Status is stored as "inactive". The
+        // predicate previously emitted JSON_VALUE(...) = '1' (the integer) and matched nothing.
+        ConfigureStore(opts => opts.ConfigureSerialization(EnumStorage.AsString));
+
+        await using (var session = theStore.LightweightSession())
+        {
+            session.Store(new User { Id = Guid.NewGuid(), FirstName = "Marco", LastName = "Minerva", Status = ActiveStatus.Inactive });
+            session.Store(new User { Id = Guid.NewGuid(), FirstName = "Jane", LastName = "Doe", Status = ActiveStatus.Active });
+            await session.SaveChangesAsync();
+        }
+
+        await using var query = theStore.QuerySession();
+        var inactive = await query.Query<User>()
+            .Where(x => x.Status == ActiveStatus.Inactive)
+            .ToListAsync();
+
+        inactive.Count.ShouldBe(1);
+        inactive[0].FirstName.ShouldBe("Marco");
+    }
 }
