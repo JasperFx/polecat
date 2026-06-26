@@ -189,6 +189,7 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
         // OpenTelemetry child
         var otel = new OptionsDescription { Subject = "Polecat.OpenTelemetryOptions" };
         otel.AddValue(nameof(Options.OpenTelemetry.TrackConnections), Options.OpenTelemetry.TrackConnections);
+        otel.AddValue(nameof(Options.OpenTelemetry.EventCountersEnabled), Options.OpenTelemetry.EventCountersEnabled);
         usage.Children["OpenTelemetry"] = otel;
 
         // Schema child — event-store table locations resolved through the lifted

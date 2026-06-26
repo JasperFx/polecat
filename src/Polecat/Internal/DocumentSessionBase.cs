@@ -528,6 +528,9 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             // events before the work tracker is reset, then notify best-effort.
             NotifyAppendObserver();
 
+            // #238: emit the opt-in polecat.event.append OpenTelemetry counter, also before reset.
+            RecordEventAppendMetrics();
+
             _workTracker.Reset();
 
             Logger.RecordSavedChanges(this);
@@ -575,6 +578,28 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         catch (Exception ex)
         {
             Logger.LogFailure("IEventStoreInstrumentation.AppendObserver threw", ex);
+        }
+    }
+
+    /// <summary>
+    ///     #238: increment the opt-in <c>polecat.event.append</c> counter once per event committed in
+    ///     this unit of work, tagged with the event type and tenant. Mirrors Marten's event-append
+    ///     counter. Must be called after commit but before the work tracker is reset. No-op unless
+    ///     <see cref="Polecat.Internal.OpenTelemetry.OpenTelemetryOptions.EventCountersEnabled" /> is on.
+    /// </summary>
+    private void RecordEventAppendMetrics()
+    {
+        if (!Options.OpenTelemetry.EventCountersEnabled) return;
+
+        var counter = Options.OpenTelemetry.EventAppendCounter;
+        foreach (var stream in _workTracker.Streams)
+        {
+            foreach (var @event in stream.Events)
+            {
+                counter.Add(1,
+                    new KeyValuePair<string, object?>("event_type", @event.EventTypeName),
+                    new KeyValuePair<string, object?>("tenant_id", @event.TenantId ?? TenantId));
+            }
         }
     }
 
