@@ -1,4 +1,5 @@
 using System.Data.Common;
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using JasperFx;
 using Microsoft.Data.SqlClient;
@@ -91,6 +92,13 @@ internal partial class QuerySession : IQuerySession
         _tableEnsurer = tableEnsurer;
         _eventGraph = eventGraph;
         Logger = options.Logger.StartSession(this);
+
+        // #239: seed correlation/causation from the ambient Activity so distributed-tracing context
+        // flows onto events (and metadata columns) with zero app code, mirroring Marten's
+        // DocumentStore session wiring. A caller can still override either after construction; the
+        // ??= leaves any pre-seeded value untouched.
+        CorrelationId ??= Activity.Current?.RootId;
+        CausationId ??= Activity.Current?.ParentId;
     }
 
     internal StoreOptions Options { get; }
