@@ -181,6 +181,73 @@ public class event_metadata_tests : OneOffConfigurationsContext
         events[0].Headers.ShouldBeNull();
     }
 
+    // ===== Session-level headers (#240) =====
+
+    [Fact]
+    public async Task session_headers_merge_onto_every_event()
+    {
+        await ConfigureAndApply(opts =>
+        {
+            opts.Events.EnableHeaders = true;
+        });
+
+        var streamId = Guid.NewGuid();
+
+        await using var session = theStore.LightweightSession();
+        session.SetHeader("request-id", "req-42");
+        session.SetHeader("user-agent", "tests");
+        session.Events.StartStream(streamId,
+            new QuestStarted("Session Headers"),
+            new MembersJoined(1, "Town", ["A"]));
+        await session.SaveChangesAsync();
+
+        await using var query = theStore.QuerySession();
+        var events = await query.Events.FetchStreamAsync(streamId);
+
+        events.Count.ShouldBe(2);
+        foreach (var @event in events)
+        {
+            @event.Headers.ShouldNotBeNull();
+            @event.GetHeader("request-id")!.ToString().ShouldBe("req-42");
+            @event.GetHeader("user-agent")!.ToString().ShouldBe("tests");
+        }
+    }
+
+    [Fact]
+    public async Task event_level_header_wins_over_session_header()
+    {
+        await ConfigureAndApply(opts =>
+        {
+            opts.Events.EnableHeaders = true;
+        });
+
+        var streamId = Guid.NewGuid();
+
+        await using var session = theStore.LightweightSession();
+        session.SetHeader("scope", "session");
+
+        var action = session.Events.StartStream(streamId, new QuestStarted("Override"));
+        action.Events[0].SetHeader("scope", "event"); // event-level value must win
+        await session.SaveChangesAsync();
+
+        await using var query = theStore.QuerySession();
+        var events = await query.Events.FetchStreamAsync(streamId);
+
+        events[0].GetHeader("scope")!.ToString().ShouldBe("event");
+    }
+
+    [Fact]
+    public async Task session_headers_are_null_until_set_and_round_trip_via_get()
+    {
+        await using var session = theStore.LightweightSession();
+        session.Headers.ShouldBeNull();
+        session.GetHeader("missing").ShouldBeNull();
+
+        session.SetHeader("k", "v");
+        session.Headers.ShouldNotBeNull();
+        session.GetHeader("k")!.ToString().ShouldBe("v");
+    }
+
     // ===== Sequence / version capture tests =====
 
     [Fact]

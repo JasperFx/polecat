@@ -37,6 +37,25 @@ public interface IQuerySession : IAsyncDisposable
     string? LastModifiedBy { get; set; }
 
     /// <summary>
+    ///     #240: session-level custom headers. Set once per unit of work via
+    ///     <see cref="SetHeader" /> and merged onto every event appended in the session (when
+    ///     <c>Events.EnableHeaders</c> is on), so a whole unit of work can be tagged in one place.
+    ///     Mirrors Marten's session <c>Headers</c>. <see langword="null" /> until the first
+    ///     <see cref="SetHeader" />.
+    /// </summary>
+    Dictionary<string, object>? Headers { get; }
+
+    /// <summary>
+    ///     Set a session-level header value. Mirrors Marten's <c>SetHeader</c>.
+    /// </summary>
+    void SetHeader(string key, object value);
+
+    /// <summary>
+    ///     Read a session-level header value, or <see langword="null" /> if not set.
+    /// </summary>
+    object? GetHeader(string key);
+
+    /// <summary>
     ///     The number of database requests executed by this session.
     /// </summary>
     int RequestCount { get; }
