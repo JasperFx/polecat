@@ -72,7 +72,8 @@ internal class DocumentProvider
         }
     }
 
-    public UpsertOperation BuildUpsert(object document, ISerializer serializer, string tenantId)
+    public UpsertOperation BuildUpsert(object document, ISerializer serializer, string tenantId,
+        DocumentMetadataValues metadata = default)
     {
         AssignIdIfNeeded(document);
         var id = Mapping.GetId(document);
@@ -94,18 +95,20 @@ internal class DocumentProvider
             expectedGuidVersion = versioned.Version;
         }
 
-        return new UpsertOperation(document, id, json, Mapping, tenantId, expectedRevision, expectedGuidVersion);
+        return new UpsertOperation(document, id, json, Mapping, tenantId, expectedRevision, expectedGuidVersion, metadata);
     }
 
-    public InsertOperation BuildInsert(object document, ISerializer serializer, string tenantId)
+    public InsertOperation BuildInsert(object document, ISerializer serializer, string tenantId,
+        DocumentMetadataValues metadata = default)
     {
         AssignIdIfNeeded(document);
         var id = Mapping.GetId(document);
         var json = serializer.ToJson(document);
-        return new InsertOperation(document, id, json, Mapping, tenantId);
+        return new InsertOperation(document, id, json, Mapping, tenantId, metadata);
     }
 
-    public UpdateOperation BuildUpdate(object document, ISerializer serializer, string tenantId)
+    public UpdateOperation BuildUpdate(object document, ISerializer serializer, string tenantId,
+        DocumentMetadataValues metadata = default)
     {
         var id = Mapping.GetId(document);
         var json = serializer.ToJson(document);
@@ -126,7 +129,7 @@ internal class DocumentProvider
             expectedGuidVersion = versioned.Version;
         }
 
-        return new UpdateOperation(document, id, json, Mapping, tenantId, expectedRevision, expectedGuidVersion);
+        return new UpdateOperation(document, id, json, Mapping, tenantId, expectedRevision, expectedGuidVersion, metadata);
     }
 
     public IStorageOperation BuildDeleteById(object id, string tenantId)

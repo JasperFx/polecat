@@ -44,6 +44,14 @@ internal class DocumentTable : Table
 
         AddColumn("dotnet_type", "varchar(500)").AllowNulls();
 
+        // #241: opt-in document metadata columns (correlation_id / causation_id / last_modified_by /
+        // headers), enabled via the .Metadata(...) DSL or metadata attributes (#243).
+        foreach (var column in mapping.EnabledMetadataColumns)
+        {
+            var columnType = column.Name == "headers" ? mapping.JsonColumnType : "varchar(250)";
+            AddColumn(column.Name, columnType).AllowNulls();
+        }
+
         // Sub-class hierarchy discriminator
         if (mapping.IsHierarchy())
         {
