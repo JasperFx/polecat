@@ -106,13 +106,28 @@ public class DocumentIndex
     ///     SQL Server match a predicate to the persisted computed column and seek the index.
     ///     Date/time types use a deterministic CONVERT(..., 126) so the column can be PERSISTED
     ///     (a CAST of a string to a date/time type is non-deterministic and rejected by PERSISTED).
+    ///     #236: on native <c>json</c> storage every other type prefers
+    ///     <c>JSON_VALUE(... RETURNING type)</c> over <c>CAST(JSON_VALUE(...) AS type)</c>, mirroring
+    ///     the #217 query-side change. Because the persisted computed column and the LINQ predicate
+    ///     both come from here, they stay textually identical and the index remains seekable.
     /// </summary>
-    internal static string ComputedColumnExpression(string jsonPath, string sqlType, IndexCasing casing)
+    internal static string ComputedColumnExpression(string jsonPath, string sqlType, IndexCasing casing,
+        bool useReturning)
     {
         var json = $"JSON_VALUE(data, '{jsonPath}')";
-        var expr = SqlTypeMap.IsDateTimeFamily(sqlType)
-            ? $"CONVERT({sqlType}, {json}, 126)"
-            : $"CAST({json} AS {sqlType})";
+        string expr;
+        if (SqlTypeMap.IsDateTimeFamily(sqlType))
+        {
+            expr = $"CONVERT({sqlType}, {json}, 126)";
+        }
+        else if (useReturning && Linq.Members.MemberFactory.SupportsReturning(sqlType))
+        {
+            expr = $"JSON_VALUE(data, '{jsonPath}' RETURNING {sqlType})";
+        }
+        else
+        {
+            expr = $"CAST({json} AS {sqlType})";
+        }
 
         return casing switch
         {
@@ -121,6 +136,12 @@ public class DocumentIndex
             _ => expr
         };
     }
+
+    /// <summary>
+    ///     Whether this document's <c>data</c> column is the native SQL Server 2025 <c>json</c> type,
+    ///     which is the precondition for the <c>JSON_VALUE(... RETURNING type)</c> form (#236).
+    /// </summary>
+    internal static bool UsesNativeJson(DocumentMapping mapping) => mapping.JsonColumnType == "json";
 
     /// <summary>
     ///     Gets the index name (explicit or derived).
@@ -149,7 +170,7 @@ public class DocumentIndex
         {
             var colName = ColumnNameForPath(path, Casing);
             var sqlType = ResolveSqlType(path, mapping.ResolveClrMemberType(path));
-            var castedExpr = ComputedColumnExpression(path, sqlType, Casing);
+            var castedExpr = ComputedColumnExpression(path, sqlType, Casing, UsesNativeJson(mapping));
 
             statements.Add($"""
                 IF COL_LENGTH('{schema}.{table}', '{colName}') IS NULL
