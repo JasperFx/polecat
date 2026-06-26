@@ -96,7 +96,7 @@ internal class MemberFactory : IMemberResolver
         if (index == null) return false;
 
         var sqlType = index.ResolveSqlType(jsonPath, underlying);
-        locator = DocumentIndex.ComputedColumnExpression(jsonPath, sqlType, IndexCasing.Default);
+        locator = DocumentIndex.ComputedColumnExpression(jsonPath, sqlType, IndexCasing.Default, _useReturning);
         return true;
     }
 

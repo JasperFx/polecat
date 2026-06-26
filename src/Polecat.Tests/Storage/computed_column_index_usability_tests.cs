@@ -42,15 +42,35 @@ public class computed_column_index_usability_tests : OneOffConfigurationsContext
     [Fact]
     public void datetimeoffset_uses_deterministic_convert_so_it_can_be_persisted()
     {
-        DocumentIndex.ComputedColumnExpression("$.bucketEnd", "datetimeoffset", IndexCasing.Default)
+        // Date/time stays on CONVERT(..., 126) regardless of native json: a CAST of a string to a
+        // date/time type is non-deterministic and cannot be PERSISTED, and #236's RETURNING swap
+        // only applies to the non-date branch.
+        DocumentIndex.ComputedColumnExpression("$.bucketEnd", "datetimeoffset", IndexCasing.Default, useReturning: true)
+            .ShouldBe("CONVERT(datetimeoffset, JSON_VALUE(data, '$.bucketEnd'), 126)");
+        DocumentIndex.ComputedColumnExpression("$.bucketEnd", "datetimeoffset", IndexCasing.Default, useReturning: false)
             .ShouldBe("CONVERT(datetimeoffset, JSON_VALUE(data, '$.bucketEnd'), 126)");
     }
 
     [Fact]
-    public void string_uses_cast_to_the_bounded_type()
+    public void string_uses_returning_on_native_json_and_cast_otherwise()
     {
-        DocumentIndex.ComputedColumnExpression("$.serviceName", "varchar(250)", IndexCasing.Default)
+        // #236: on native json storage the persisted computed column uses JSON_VALUE(... RETURNING),
+        // matching the #217 query-side form, so the index stays seekable.
+        DocumentIndex.ComputedColumnExpression("$.serviceName", "varchar(250)", IndexCasing.Default, useReturning: true)
+            .ShouldBe("JSON_VALUE(data, '$.serviceName' RETURNING varchar(250))");
+
+        // On nvarchar(max) storage RETURNING is a syntax error, so fall back to CAST.
+        DocumentIndex.ComputedColumnExpression("$.serviceName", "varchar(250)", IndexCasing.Default, useReturning: false)
             .ShouldBe("CAST(JSON_VALUE(data, '$.serviceName') AS varchar(250))");
+    }
+
+    [Fact]
+    public void uniqueidentifier_keeps_cast_even_on_native_json()
+    {
+        // RETURNING has no uniqueidentifier type, so Guid-typed computed columns (e.g. FK columns)
+        // always fall back to CAST.
+        DocumentIndex.ComputedColumnExpression("$.userId", "uniqueidentifier", IndexCasing.Default, useReturning: true)
+            .ShouldBe("CAST(JSON_VALUE(data, '$.userId') AS uniqueidentifier)");
     }
 
     [Fact]
@@ -107,6 +127,43 @@ public class computed_column_index_usability_tests : OneOffConfigurationsContext
         reader.GetString(1).ShouldBe("datetimeoffset");
     }
 
+    [Fact]
+    public async Task int_index_column_uses_returning_definition_on_native_json()
+    {
+        // #236: the persisted computed column for a non-date member should use
+        // JSON_VALUE(... RETURNING type) on native json storage rather than CAST.
+        ConfigureStore(opts => opts.Schema.For<IndexedMetric>().Index(x => x.Count));
+
+        await using (var session = theStore.LightweightSession())
+        {
+            session.Store(new IndexedMetric
+            {
+                Id = Guid.NewGuid(), ServiceName = "svc", BucketEnd = DateTimeOffset.UtcNow, Count = 7
+            });
+            await session.SaveChangesAsync();
+        }
+
+        await using var conn = await OpenConnectionAsync();
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"""
+            SELECT cc.is_persisted, cc.definition
+            FROM sys.computed_columns cc
+            WHERE cc.object_id = OBJECT_ID('[{_schema()}].[{Table}]') AND cc.name = 'cc_count';
+            """;
+        await using var reader = await cmd.ExecuteReaderAsync();
+        (await reader.ReadAsync()).ShouldBeTrue();
+        reader.GetBoolean(0).ShouldBeTrue(); // PERSISTED
+        var definition = reader.GetString(1);
+        if (ConnectionSource.SupportsNativeJson)
+        {
+            definition.ShouldContain("RETURNING");
+        }
+        else
+        {
+            definition.ShouldNotContain("RETURNING"); // CAST fallback on nvarchar(max) storage
+        }
+    }
+
     // ---- gap 1: the translator targets the computed column --------------------------------------
 
     [Fact]
@@ -119,8 +176,11 @@ public class computed_column_index_usability_tests : OneOffConfigurationsContext
         var query = session.Query<IndexedMetric>().Where(x => x.ServiceName == "svc-A");
 
         // Bare JSON_VALUE (the old behavior) could never match the varchar(250) computed column.
-        SqlFor(session, query)
-            .ShouldContain("CAST(JSON_VALUE(data, '$.serviceName') AS varchar(250))");
+        // The predicate must use the EXACT same expression as the persisted column — RETURNING on
+        // native json (#236), CAST on nvarchar(max) — so the index is seekable on either.
+        var expected = DocumentIndex.ComputedColumnExpression(
+            "$.serviceName", "varchar(250)", IndexCasing.Default, ConnectionSource.SupportsNativeJson);
+        SqlFor(session, query).ShouldContain(expected);
     }
 
     [Fact]

@@ -58,10 +58,14 @@ public class DocumentForeignKey
 
         var statements = new List<string>();
 
-        // Add persisted computed column for the FK property
+        // Add persisted computed column for the FK property. #236: routes through the shared
+        // ComputedColumnExpression so the FK column uses JSON_VALUE(... RETURNING type) on native
+        // json storage too (Guid ids still fall back to CAST — RETURNING has no uniqueidentifier).
+        var computedExpr = DocumentIndex.ComputedColumnExpression(
+            JsonPath, sqlType, IndexCasing.Default, DocumentIndex.UsesNativeJson(parentMapping));
         statements.Add($"""
             IF COL_LENGTH('{schema}.{table}', '{colName}') IS NULL
-                ALTER TABLE {qualifiedTable} ADD [{colName}] AS CAST(JSON_VALUE(data, '{JsonPath}') AS {sqlType}) PERSISTED;
+                ALTER TABLE {qualifiedTable} ADD [{colName}] AS {computedExpr} PERSISTED;
             """);
 
         // Build ON DELETE clause

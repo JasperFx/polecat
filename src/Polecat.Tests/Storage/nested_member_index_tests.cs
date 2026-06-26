@@ -84,7 +84,10 @@ public class nested_member_index_tests : OneOffConfigurationsContext
 
         // The index computed column is over '$.address.city'; the predicate must target the same
         // path (and be rewritten to the computed-column expression so the index is seekable).
-        sql.ShouldContain("JSON_VALUE(data, '$.address.city')");
+        // Form-agnostic: the indexed locator is JSON_VALUE(... '$.address.city' RETURNING type) on
+        // native json (#236) or CAST(JSON_VALUE(... '$.address.city') AS type) on nvarchar(max), so
+        // assert the path occurrence without the trailing ')'.
+        sql.ShouldContain("JSON_VALUE(data, '$.address.city'");
         sql.ShouldNotContain("'$.city'"); // the old, wrong leaf-only path
     }
 
