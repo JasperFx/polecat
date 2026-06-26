@@ -100,7 +100,7 @@ public class AdvancedOperations
                 var currentId = mapping.GetId(doc);
                 if ((Guid)currentId == Guid.Empty)
                 {
-                    mapping.SetId(doc, Guid.NewGuid());
+                    mapping.SetId(doc, Internal.SequentialGuid.NewGuid());
                 }
             }
             // Assign HiLo ID if needed
@@ -211,7 +211,7 @@ public class AdvancedOperations
                 var currentId = mapping.GetId(doc);
                 if ((Guid)currentId == Guid.Empty)
                 {
-                    mapping.SetId(doc, Guid.NewGuid());
+                    mapping.SetId(doc, Internal.SequentialGuid.NewGuid());
                 }
             }
             else if (mapping.IsNumericId && provider.Sequence != null)

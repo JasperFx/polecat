@@ -528,6 +528,9 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             // events before the work tracker is reset, then notify best-effort.
             NotifyAppendObserver();
 
+            // #238: emit the opt-in polecat.event.append OpenTelemetry counter, also before reset.
+            RecordEventAppendMetrics();
+
             _workTracker.Reset();
 
             Logger.RecordSavedChanges(this);
@@ -575,6 +578,28 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         catch (Exception ex)
         {
             Logger.LogFailure("IEventStoreInstrumentation.AppendObserver threw", ex);
+        }
+    }
+
+    /// <summary>
+    ///     #238: increment the opt-in <c>polecat.event.append</c> counter once per event committed in
+    ///     this unit of work, tagged with the event type and tenant. Mirrors Marten's event-append
+    ///     counter. Must be called after commit but before the work tracker is reset. No-op unless
+    ///     <see cref="Polecat.Internal.OpenTelemetry.OpenTelemetryOptions.EventCountersEnabled" /> is on.
+    /// </summary>
+    private void RecordEventAppendMetrics()
+    {
+        if (!Options.OpenTelemetry.EventCountersEnabled) return;
+
+        var counter = Options.OpenTelemetry.EventAppendCounter;
+        foreach (var stream in _workTracker.Streams)
+        {
+            foreach (var @event in stream.Events)
+            {
+                counter.Add(1,
+                    new KeyValuePair<string, object?>("event_type", @event.EventTypeName),
+                    new KeyValuePair<string, object?>("tenant_id", @event.TenantId ?? TenantId));
+            }
         }
     }
 
@@ -776,6 +801,8 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             @event.CorrelationId = CorrelationId;
         if (CausationId != null && @event.CausationId == null)
             @event.CausationId = CausationId;
+        if (LastModifiedBy != null && @event.UserName == null)
+            @event.UserName = LastModifiedBy;
 
         // #240: merge session-level headers into the event. Event-level keys win, so TryAdd only
         // fills keys the event didn't already set.
@@ -825,6 +852,12 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         {
             columns += ", headers";
             values += ", @headers";
+        }
+
+        if (eventOptions.EnableUserName)
+        {
+            columns += ", user_name";
+            values += ", @user_name";
         }
 
         await using var cmd = new SqlCommand();
@@ -921,6 +954,12 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
                 : null;
             cmd.Parameters.AddWithValue("@headers",
                 (object?)headersJson ?? DBNull.Value);
+        }
+
+        if (eventOptions.EnableUserName)
+        {
+            cmd.Parameters.AddWithValue("@user_name",
+                (object?)@event.UserName ?? DBNull.Value);
         }
 
         var seqId = (long)(await ExecuteScalarAsync(cmd, token))!;

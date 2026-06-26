@@ -181,6 +181,90 @@ public class event_metadata_tests : OneOffConfigurationsContext
         events[0].Headers.ShouldBeNull();
     }
 
+    // ===== UserName (LastModifiedBy) tests (#237) =====
+
+    [Fact]
+    public async Task session_last_modified_by_propagates_to_event_user_name()
+    {
+        await ConfigureAndApply(opts =>
+        {
+            opts.Events.EnableUserName = true;
+        });
+
+        var streamId = Guid.NewGuid();
+
+        await using var session = theStore.LightweightSession();
+        session.LastModifiedBy = "alice@example.com";
+        session.Events.StartStream(streamId,
+            new QuestStarted("User Quest"),
+            new MembersJoined(1, "Town", ["A"]));
+        await session.SaveChangesAsync();
+
+        await using var query = theStore.QuerySession();
+        var events = await query.Events.FetchStreamAsync(streamId);
+
+        events.Count.ShouldBe(2);
+        events[0].UserName.ShouldBe("alice@example.com");
+        events[1].UserName.ShouldBe("alice@example.com");
+    }
+
+    [Fact]
+    public async Task event_level_user_name_takes_precedence_over_session()
+    {
+        await ConfigureAndApply(opts =>
+        {
+            opts.Events.EnableUserName = true;
+        });
+
+        var streamId = Guid.NewGuid();
+
+        await using var session = theStore.LightweightSession();
+        session.LastModifiedBy = "session-user";
+
+        var action = session.Events.StartStream(streamId, new QuestStarted("Override"));
+        action.Events[0].UserName = "event-user";
+        await session.SaveChangesAsync();
+
+        await using var query = theStore.QuerySession();
+        var events = await query.Events.FetchStreamAsync(streamId);
+
+        events[0].UserName.ShouldBe("event-user");
+    }
+
+    [Fact]
+    public async Task null_user_name_when_not_set()
+    {
+        await ConfigureAndApply(opts =>
+        {
+            opts.Events.EnableUserName = true;
+        });
+
+        var streamId = Guid.NewGuid();
+
+        await using var session = theStore.LightweightSession();
+        session.Events.StartStream(streamId, new QuestStarted("No User"));
+        await session.SaveChangesAsync();
+
+        await using var query = theStore.QuerySession();
+        var events = await query.Events.FetchStreamAsync(streamId);
+
+        events[0].UserName.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task user_name_column_not_created_when_disabled()
+    {
+        await ConfigureAndApply(_ => { });
+
+        await using var conn = await OpenConnectionAsync();
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"SELECT COL_LENGTH('[{_schema()}].[pc_events]', 'user_name')";
+        var result = await cmd.ExecuteScalarAsync();
+        (result == null || result == DBNull.Value).ShouldBeTrue();
+    }
+
+    private string _schema() => GetType().Name.ToLowerInvariant();
+
     // ===== Session-level headers (#240) =====
 
     [Fact]
@@ -557,6 +641,7 @@ public class event_metadata_tests : OneOffConfigurationsContext
             opts.Events.EnableCorrelationId = true;
             opts.Events.EnableCausationId = true;
             opts.Events.EnableHeaders = true;
+            opts.Events.EnableUserName = true;
         });
 
         var streamId = Guid.NewGuid();
@@ -564,6 +649,7 @@ public class event_metadata_tests : OneOffConfigurationsContext
         await using var session = theStore.LightweightSession();
         session.CorrelationId = "full-meta-corr";
         session.CausationId = "full-meta-cause";
+        session.LastModifiedBy = "full-meta-user";
         var action = session.Events.StartStream(streamId, new QuestStarted("Full Metadata"));
         action.Events[0].SetHeader("env", "test");
         action.Events[0].SetHeader("version", "1.0");
@@ -575,6 +661,7 @@ public class event_metadata_tests : OneOffConfigurationsContext
         events.Count.ShouldBe(1);
         events[0].CorrelationId.ShouldBe("full-meta-corr");
         events[0].CausationId.ShouldBe("full-meta-cause");
+        events[0].UserName.ShouldBe("full-meta-user");
         events[0].Headers.ShouldNotBeNull();
         events[0].GetHeader("env")!.ToString().ShouldBe("test");
         events[0].GetHeader("version")!.ToString().ShouldBe("1.0");

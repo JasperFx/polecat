@@ -705,8 +705,9 @@ public class document_index_tests : IntegrationContext
 
         var statements = index.ToDdlStatements(mapping);
 
-        // Should use LOWER() wrapping
-        statements[0].ShouldContain("LOWER(CAST(JSON_VALUE(data, '$.name')");
+        // Should use LOWER() wrapping. #236: native json storage (TestDocumentMapping's default
+        // StoreOptions) emits JSON_VALUE(... RETURNING type) rather than CAST.
+        statements[0].ShouldContain("LOWER(JSON_VALUE(data, '$.name' RETURNING ");
         // Column name should include _lower suffix
         statements[0].ShouldContain("cc_name_lower");
     }
@@ -719,8 +720,8 @@ public class document_index_tests : IntegrationContext
 
         var statements = index.ToDdlStatements(mapping);
 
-        // Should use UPPER() wrapping
-        statements[0].ShouldContain("UPPER(CAST(JSON_VALUE(data, '$.email')");
+        // Should use UPPER() wrapping. #236: native json storage emits RETURNING.
+        statements[0].ShouldContain("UPPER(JSON_VALUE(data, '$.email' RETURNING ");
         // Column name should include _upper suffix
         statements[0].ShouldContain("cc_email_upper");
     }
@@ -736,8 +737,8 @@ public class document_index_tests : IntegrationContext
         // Should NOT contain UPPER or LOWER
         statements[0].ShouldNotContain("UPPER");
         statements[0].ShouldNotContain("LOWER");
-        // Should contain plain CAST
-        statements[0].ShouldContain("CAST(JSON_VALUE(data, '$.name')");
+        // #236: plain (un-cased) computed column. Native json storage emits RETURNING.
+        statements[0].ShouldContain("JSON_VALUE(data, '$.name' RETURNING ");
     }
 
     [Fact]
