@@ -123,6 +123,13 @@ internal class DocumentProviderRegistry
             {
                 mapping.Partitioning = partitioning;
             }
+
+            // #243: apply the fluent .Metadata(...) DSL config over the attribute-derived config.
+            var metadataField = exprType.GetField("MetadataConfig", BindingFlags.NonPublic | BindingFlags.Instance);
+            if (metadataField?.GetValue(expr) is Storage.Metadata.DocumentMetadataConfig metadataConfig)
+            {
+                mapping.Metadata.MergeFrom(metadataConfig);
+            }
         }
     }
 

@@ -5,6 +5,7 @@ using JasperFx.Core.Reflection;
 using Polecat.Attributes;
 using Polecat.Metadata;
 using Polecat.Schema.Identity.Sequences;
+using Polecat.Storage.Metadata;
 
 namespace Polecat.Storage;
 
@@ -73,6 +74,9 @@ internal class DocumentMapping
 
         // Discover and register attribute-based indexes
         DiscoverIndexAttributes(documentType);
+
+        // #243: discover attribute-based document metadata mappings ([CorrelationIdMetadata], etc.)
+        DiscoverMetadataAttributes(documentType);
 
         // Detect soft delete: [SoftDeleted] attribute, ISoftDeleted interface, or policy
         if (documentType.GetCustomAttribute<SoftDeletedAttribute>() != null
@@ -178,6 +182,12 @@ internal class DocumentMapping
     ///     Custom indexes configured for this document type.
     /// </summary>
     public List<DocumentIndex> Indexes { get; } = new();
+
+    /// <summary>
+    ///     #243: document metadata configuration (opt-in columns + member mappings), populated from
+    ///     metadata attributes and the <c>Schema.For&lt;T&gt;().Metadata(...)</c> DSL.
+    /// </summary>
+    public DocumentMetadataConfig Metadata { get; } = new();
 
     /// <summary>
     ///     Foreign key constraints configured for this document type.
@@ -352,6 +362,25 @@ internal class DocumentMapping
     {
         var underlying = Nullable.GetUnderlyingType(candidate) ?? candidate;
         return SupportedIdTypes.Contains(underlying) || TryResolveValueTypeId(underlying) != null;
+    }
+
+    /// <summary>
+    ///     #243: scans the document type for metadata attributes ([CorrelationIdMetadata], etc.) and
+    ///     enables + maps the corresponding metadata columns.
+    /// </summary>
+    private void DiscoverMetadataAttributes(Type documentType)
+    {
+        var members = documentType.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+            .Cast<MemberInfo>()
+            .Concat(documentType.GetFields(BindingFlags.Public | BindingFlags.Instance));
+
+        foreach (var member in members)
+        {
+            foreach (var attr in member.GetCustomAttributes<MetadataAttribute>())
+            {
+                attr.Apply(Metadata, member);
+            }
+        }
     }
 
     /// <summary>
