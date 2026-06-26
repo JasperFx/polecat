@@ -382,6 +382,14 @@ public class EventStoreOptions : IEventStoreInstrumentation
     public bool EnableHeaders { get; set; }
 
     /// <summary>
+    ///     #237: enable tracking of the user / last-modified-by metadata on events, persisted to the
+    ///     opt-in <c>user_name</c> column (maps <see cref="JasperFx.Events.IEvent.UserName" />).
+    ///     Mirrors Marten's opt-in <c>user_name</c> event-metadata column. Populated from the
+    ///     session's <c>LastModifiedBy</c> when the event doesn't already carry one.
+    /// </summary>
+    public bool EnableUserName { get; set; }
+
+    /// <summary>
     ///     Run inline projections' RaiseSideEffects (and other projection side effects) when an inline
     ///     projection is applied during SaveChangesAsync. Off by default; mirrors Marten's
     ///     <c>StoreOptions.Events.EnableSideEffectsOnInlineProjections</c>. CritterWatch relies on this so
