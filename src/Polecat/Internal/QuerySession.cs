@@ -1,4 +1,5 @@
 using System.Data.Common;
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using JasperFx;
 using Microsoft.Data.SqlClient;
@@ -91,6 +92,13 @@ internal partial class QuerySession : IQuerySession
         _tableEnsurer = tableEnsurer;
         _eventGraph = eventGraph;
         Logger = options.Logger.StartSession(this);
+
+        // #239: seed correlation/causation from the ambient Activity so distributed-tracing context
+        // flows onto events (and metadata columns) with zero app code, mirroring Marten's
+        // DocumentStore session wiring. A caller can still override either after construction; the
+        // ??= leaves any pre-seeded value untouched.
+        CorrelationId ??= Activity.Current?.RootId;
+        CausationId ??= Activity.Current?.ParentId;
     }
 
     internal StoreOptions Options { get; }
@@ -100,6 +108,26 @@ internal partial class QuerySession : IQuerySession
     public string? CorrelationId { get; set; }
     public string? CausationId { get; set; }
     public string? LastModifiedBy { get; set; }
+
+    // #240: session-level header bag, lazily created on first SetHeader.
+    public Dictionary<string, object>? Headers { get; private set; }
+
+    public void SetHeader(string key, object value)
+    {
+        Headers ??= new Dictionary<string, object>();
+        Headers[key] = value;
+    }
+
+    public object? GetHeader(string key)
+    {
+        if (Headers != null && Headers.TryGetValue(key, out var value))
+        {
+            return value;
+        }
+
+        return null;
+    }
+
     public int RequestCount { get; internal set; }
     public IPolecatSessionLogger Logger { get; set; }
 
