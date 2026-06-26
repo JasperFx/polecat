@@ -168,7 +168,7 @@ internal class DocumentProvider
             var currentId = Mapping.GetId(document);
             if ((Guid)currentId == Guid.Empty)
             {
-                Mapping.SetId(document, Guid.NewGuid());
+                Mapping.SetId(document, SequentialGuid.NewGuid());
             }
 
             return;
