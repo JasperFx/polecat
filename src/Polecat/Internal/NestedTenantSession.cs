@@ -42,6 +42,18 @@ internal class NestedTenantSession : ITenantOperations
     public Dictionary<string, object>? Headers => _parent.Headers;
     public void SetHeader(string key, object value) => _parent.SetHeader(key, value);
     public object? GetHeader(string key) => _parent.GetHeader(key);
+
+    public Task<DocumentMetadata?> MetadataForAsync<T>(T document, CancellationToken token = default) where T : notnull
+        => _parent.MetadataForAsync(document, token);
+    public Task<DocumentMetadata?> MetadataForAsync<T>(Guid id, CancellationToken token = default) where T : class
+        => _parent.MetadataForAsync<T>(id, token);
+    public Task<DocumentMetadata?> MetadataForAsync<T>(string id, CancellationToken token = default) where T : class
+        => _parent.MetadataForAsync<T>(id, token);
+    public Task<DocumentMetadata?> MetadataForAsync<T>(int id, CancellationToken token = default) where T : class
+        => _parent.MetadataForAsync<T>(id, token);
+    public Task<DocumentMetadata?> MetadataForAsync<T>(long id, CancellationToken token = default) where T : class
+        => _parent.MetadataForAsync<T>(id, token);
+
     public int RequestCount => _parent.RequestCount;
     public IPolecatSessionLogger Logger { get => _parent.Logger; set => _parent.Logger = value; }
     public IAdvancedSql AdvancedSql => _parent.AdvancedSql;

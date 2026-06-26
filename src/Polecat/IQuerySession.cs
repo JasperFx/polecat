@@ -56,6 +56,31 @@ public interface IQuerySession : IAsyncDisposable
     object? GetHeader(string key);
 
     /// <summary>
+    ///     #242: read a document's stored <see cref="Polecat.Metadata.DocumentMetadata" /> (version,
+    ///     timestamps, tenant, soft-delete state, dotnet/doc type, and the opt-in
+    ///     correlation/causation/last-modified-by/headers) without loading the document body. Returns
+    ///     <see langword="null" /> if no row exists. Mirrors Marten's <c>MetadataForAsync</c>.
+    /// </summary>
+    Task<Polecat.Metadata.DocumentMetadata?> MetadataForAsync<T>(T document, CancellationToken token = default)
+        where T : notnull;
+
+    /// <summary>Read a document's metadata by id. See <see cref="MetadataForAsync{T}(T, CancellationToken)" />.</summary>
+    Task<Polecat.Metadata.DocumentMetadata?> MetadataForAsync<T>(Guid id, CancellationToken token = default)
+        where T : class;
+
+    /// <summary>Read a document's metadata by id. See <see cref="MetadataForAsync{T}(T, CancellationToken)" />.</summary>
+    Task<Polecat.Metadata.DocumentMetadata?> MetadataForAsync<T>(string id, CancellationToken token = default)
+        where T : class;
+
+    /// <summary>Read a document's metadata by id. See <see cref="MetadataForAsync{T}(T, CancellationToken)" />.</summary>
+    Task<Polecat.Metadata.DocumentMetadata?> MetadataForAsync<T>(int id, CancellationToken token = default)
+        where T : class;
+
+    /// <summary>Read a document's metadata by id. See <see cref="MetadataForAsync{T}(T, CancellationToken)" />.</summary>
+    Task<Polecat.Metadata.DocumentMetadata?> MetadataForAsync<T>(long id, CancellationToken token = default)
+        where T : class;
+
+    /// <summary>
     ///     The number of database requests executed by this session.
     /// </summary>
     int RequestCount { get; }
