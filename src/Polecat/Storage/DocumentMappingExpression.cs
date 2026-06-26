@@ -16,6 +16,18 @@ public class DocumentMappingExpression<T>
     internal readonly List<DocumentIndex> Indexes = new();
     internal readonly List<DocumentForeignKey> ForeignKeys = new();
     internal DocumentPartitioning? Partitioning;
+    internal readonly Metadata.DocumentMetadataConfig MetadataConfig = new();
+
+    /// <summary>
+    ///     #243: configure document metadata columns — enable opt-in columns
+    ///     (correlation/causation/last-modified-by/headers) and/or map any stored metadata value
+    ///     onto a document member. Mirrors Marten's <c>Schema.For&lt;T&gt;().Metadata(m =&gt; ...)</c>.
+    /// </summary>
+    public DocumentMappingExpression<T> Metadata(Action<Metadata.MetadataConfig<T>> configure)
+    {
+        configure(new Metadata.MetadataConfig<T>(MetadataConfig));
+        return this;
+    }
 
     /// <summary>
     ///     Register a subclass of T for document hierarchy (single-table inheritance).
