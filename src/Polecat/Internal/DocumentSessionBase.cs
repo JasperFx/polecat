@@ -776,6 +776,8 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             @event.CorrelationId = CorrelationId;
         if (CausationId != null && @event.CausationId == null)
             @event.CausationId = CausationId;
+        if (LastModifiedBy != null && @event.UserName == null)
+            @event.UserName = LastModifiedBy;
 
         var eventOptions = _eventGraph.EventOptions;
 
@@ -814,6 +816,12 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         {
             columns += ", headers";
             values += ", @headers";
+        }
+
+        if (eventOptions.EnableUserName)
+        {
+            columns += ", user_name";
+            values += ", @user_name";
         }
 
         await using var cmd = new SqlCommand();
@@ -910,6 +918,12 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
                 : null;
             cmd.Parameters.AddWithValue("@headers",
                 (object?)headersJson ?? DBNull.Value);
+        }
+
+        if (eventOptions.EnableUserName)
+        {
+            cmd.Parameters.AddWithValue("@user_name",
+                (object?)@event.UserName ?? DBNull.Value);
         }
 
         var seqId = (long)(await ExecuteScalarAsync(cmd, token))!;

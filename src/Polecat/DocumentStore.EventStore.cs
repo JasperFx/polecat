@@ -169,6 +169,7 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
         usage.AddValue(nameof(Options.Events.EnableCorrelationId), Options.Events.EnableCorrelationId);
         usage.AddValue(nameof(Options.Events.EnableCausationId), Options.Events.EnableCausationId);
         usage.AddValue(nameof(Options.Events.EnableHeaders), Options.Events.EnableHeaders);
+        usage.AddValue(nameof(Options.Events.EnableUserName), Options.Events.EnableUserName);
         if (Options.Events.DatabaseSchemaName != null)
         {
             usage.AddValue(nameof(Options.Events.DatabaseSchemaName), Options.Events.DatabaseSchemaName);

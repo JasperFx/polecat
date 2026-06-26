@@ -88,6 +88,12 @@ internal class EventsTable : Table
             AddColumn("headers", events.JsonColumnType).AllowNulls();
         }
 
+        // #237: opt-in user / last-modified-by column, mirroring Marten's user_name.
+        if (events.EventOptions.EnableUserName)
+        {
+            AddColumn("user_name", "varchar(250)").AllowNulls();
+        }
+
         // Archive flag
         var archiveColumn = AddColumn("is_archived", "bit").NotNull().DefaultValue(0);
 
