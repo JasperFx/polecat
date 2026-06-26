@@ -78,6 +78,7 @@ internal static class PcEventsRowReader
         if (options.EnableCorrelationId) sb.Append(", correlation_id");
         if (options.EnableCausationId) sb.Append(", causation_id");
         if (options.EnableHeaders) sb.Append(", headers");
+        if (options.EnableUserName) sb.Append(", user_name");
         return sb.ToString();
     }
 
@@ -183,6 +184,12 @@ internal static class PcEventsRowReader
             var headersJson = reader.GetString(slots.HeadersIdx);
             @event.Headers = ctx.Serializer.FromJson<Dictionary<string, object>>(headersJson);
         }
+        if (slots.UserNameIdx >= 0)
+        {
+            @event.UserName = reader.IsDBNull(slots.UserNameIdx)
+                ? null
+                : reader.GetString(slots.UserNameIdx);
+        }
 
         return @event;
     }
@@ -258,7 +265,8 @@ internal static class PcEventsRowReader
 ///     in the batch. <c>-1</c> means the column is not projected; the
 ///     reader skips it without checking the underlying flag.
 /// </summary>
-internal readonly record struct MetadataSlots(int CorrelationIdx, int CausationIdx, int HeadersIdx)
+internal readonly record struct MetadataSlots(int CorrelationIdx, int CausationIdx, int HeadersIdx,
+    int UserNameIdx)
 {
     /// <summary>
     ///     Sentinel indicating the column is not in the projected SELECT.
@@ -270,8 +278,9 @@ internal readonly record struct MetadataSlots(int CorrelationIdx, int CausationI
         var ordinal = 10;
         var correlation = options.EnableCorrelationId ? ordinal++ : Disabled;
         var causation = options.EnableCausationId ? ordinal++ : Disabled;
-        var headers = options.EnableHeaders ? ordinal : Disabled;
-        return new MetadataSlots(correlation, causation, headers);
+        var headers = options.EnableHeaders ? ordinal++ : Disabled;
+        var userName = options.EnableUserName ? ordinal : Disabled;
+        return new MetadataSlots(correlation, causation, headers, userName);
     }
 }
 
