@@ -17,9 +17,10 @@ internal class UpdateOperation : IStorageOperation
     private readonly long _expectedRevision;
     private readonly Guid? _expectedGuidVersion;
     private readonly Guid _newGuidVersion;
+    private readonly DocumentMetadataValues _metadata;
 
     public UpdateOperation(object document, object id, string json, DocumentMapping mapping, string tenantId,
-        long expectedRevision = 0, Guid? expectedGuidVersion = null)
+        long expectedRevision = 0, Guid? expectedGuidVersion = null, DocumentMetadataValues metadata = default)
     {
         _document = document;
         _id = id;
@@ -29,6 +30,7 @@ internal class UpdateOperation : IStorageOperation
         _expectedRevision = expectedRevision;
         _expectedGuidVersion = expectedGuidVersion;
         _newGuidVersion = mapping.UseOptimisticConcurrency ? Guid.NewGuid() : Guid.Empty;
+        _metadata = metadata;
     }
 
     public Type DocumentType => _mapping.DocumentType;
@@ -55,7 +57,7 @@ internal class UpdateOperation : IStorageOperation
     private void ConfigureStandardCommand(ICommandBuilder builder)
     {
         var docTypeSet = _mapping.IsHierarchy() ? ", doc_type = @doc_type" : "";
-        var pSet = _mapping.PartitionUpdateSet;
+        var pSet = _mapping.PartitionUpdateSet + _mapping.MetadataUpdateSet; // #241: + metadata columns
         builder.Append($"""
             UPDATE {_mapping.QualifiedTableName}
             SET data = @data, version = version + 1,
@@ -70,7 +72,7 @@ internal class UpdateOperation : IStorageOperation
     private void ConfigureRevisionCommand(ICommandBuilder builder)
     {
         var docTypeSet = _mapping.IsHierarchy() ? ", doc_type = @doc_type" : "";
-        var pSet = _mapping.PartitionUpdateSet;
+        var pSet = _mapping.PartitionUpdateSet + _mapping.MetadataUpdateSet; // #241: + metadata columns
         builder.Append($"""
             UPDATE {_mapping.QualifiedTableName}
             SET data = @data, version = version + 1,
@@ -87,7 +89,7 @@ internal class UpdateOperation : IStorageOperation
     private void ConfigureGuidVersionCommand(ICommandBuilder builder)
     {
         var docTypeSet = _mapping.IsHierarchy() ? ", doc_type = @doc_type" : "";
-        var pSet = _mapping.PartitionUpdateSet;
+        var pSet = _mapping.PartitionUpdateSet + _mapping.MetadataUpdateSet; // #241: + metadata columns
         builder.Append($"""
             UPDATE {_mapping.QualifiedTableName}
             SET data = @data, version = version + 1, guid_version = @new_guid_version,
@@ -148,6 +150,9 @@ internal class UpdateOperation : IStorageOperation
             ["id"] = _id, ["data"] = _json,
             ["dotnet_type"] = _mapping.DotNetTypeName, ["tenant_id"] = _tenantId
         });
+
+        // #241: bind the opt-in metadata column values (no-op when none are enabled).
+        _metadata.AddParameters(builder, _mapping);
 
         if (_mapping.IsHierarchy())
         {

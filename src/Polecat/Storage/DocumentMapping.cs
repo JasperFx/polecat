@@ -190,6 +190,21 @@ internal class DocumentMapping
     public DocumentMetadataConfig Metadata { get; } = new();
 
     /// <summary>
+    ///     #241: the opt-in metadata columns enabled for this document type
+    ///     (correlation_id / causation_id / last_modified_by / headers).
+    /// </summary>
+    public IEnumerable<MetadataColumn> EnabledMetadataColumns => Metadata.OptInColumns().Where(c => c.Enabled);
+
+    /// <summary>#241: ", correlation_id, ..." fragment for INSERT column lists.</summary>
+    public string MetadataInsertColumns => string.Concat(EnabledMetadataColumns.Select(c => $", {c.Name}"));
+
+    /// <summary>#241: ", @correlation_id, ..." fragment for INSERT value lists.</summary>
+    public string MetadataInsertValues => string.Concat(EnabledMetadataColumns.Select(c => $", @{c.Name}"));
+
+    /// <summary>#241: ", correlation_id = @correlation_id, ..." fragment for UPDATE SET clauses.</summary>
+    public string MetadataUpdateSet => string.Concat(EnabledMetadataColumns.Select(c => $", {c.Name} = @{c.Name}"));
+
+    /// <summary>
     ///     Foreign key constraints configured for this document type.
     /// </summary>
     public List<DocumentForeignKey> ForeignKeys { get; } = new();

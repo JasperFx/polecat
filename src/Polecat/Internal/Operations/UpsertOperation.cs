@@ -17,9 +17,10 @@ internal class UpsertOperation : IStorageOperation
     private readonly long _expectedRevision;
     private readonly Guid? _expectedGuidVersion;
     private readonly Guid _newGuidVersion;
+    private readonly DocumentMetadataValues _metadata;
 
     public UpsertOperation(object document, object id, string json, DocumentMapping mapping, string tenantId,
-        long expectedRevision = 0, Guid? expectedGuidVersion = null)
+        long expectedRevision = 0, Guid? expectedGuidVersion = null, DocumentMetadataValues metadata = default)
     {
         _document = document;
         _id = id;
@@ -29,6 +30,7 @@ internal class UpsertOperation : IStorageOperation
         _expectedRevision = expectedRevision;
         _expectedGuidVersion = expectedGuidVersion;
         _newGuidVersion = mapping.UseOptimisticConcurrency ? Guid.NewGuid() : Guid.Empty;
+        _metadata = metadata;
     }
 
     public Type DocumentType => _mapping.DocumentType;
@@ -54,9 +56,11 @@ internal class UpsertOperation : IStorageOperation
 
     private void ConfigureStandardCommand(ICommandBuilder builder)
     {
-        var pCols = _mapping.PartitionInsertColumns;
-        var pVals = _mapping.PartitionInsertValues;
-        var pSet = _mapping.PartitionUpdateSet;
+        // #241: metadata columns ride along after the partition columns in the same INSERT/UPDATE
+        // fragments, so every concurrency/hierarchy variant picks them up with no SQL changes.
+        var pCols = _mapping.PartitionInsertColumns + _mapping.MetadataInsertColumns;
+        var pVals = _mapping.PartitionInsertValues + _mapping.MetadataInsertValues;
+        var pSet = _mapping.PartitionUpdateSet + _mapping.MetadataUpdateSet;
 
         if (_mapping.IsHierarchy())
         {
@@ -94,9 +98,11 @@ internal class UpsertOperation : IStorageOperation
 
     private void ConfigureRevisionCommand(ICommandBuilder builder)
     {
-        var pCols = _mapping.PartitionInsertColumns;
-        var pVals = _mapping.PartitionInsertValues;
-        var pSet = _mapping.PartitionUpdateSet;
+        // #241: metadata columns ride along after the partition columns in the same INSERT/UPDATE
+        // fragments, so every concurrency/hierarchy variant picks them up with no SQL changes.
+        var pCols = _mapping.PartitionInsertColumns + _mapping.MetadataInsertColumns;
+        var pVals = _mapping.PartitionInsertValues + _mapping.MetadataInsertValues;
+        var pSet = _mapping.PartitionUpdateSet + _mapping.MetadataUpdateSet;
 
         if (_mapping.IsHierarchy())
         {
@@ -135,9 +141,11 @@ internal class UpsertOperation : IStorageOperation
 
     private void ConfigureGuidVersionCommand(ICommandBuilder builder)
     {
-        var pCols = _mapping.PartitionInsertColumns;
-        var pVals = _mapping.PartitionInsertValues;
-        var pSet = _mapping.PartitionUpdateSet;
+        // #241: metadata columns ride along after the partition columns in the same INSERT/UPDATE
+        // fragments, so every concurrency/hierarchy variant picks them up with no SQL changes.
+        var pCols = _mapping.PartitionInsertColumns + _mapping.MetadataInsertColumns;
+        var pVals = _mapping.PartitionInsertValues + _mapping.MetadataInsertValues;
+        var pSet = _mapping.PartitionUpdateSet + _mapping.MetadataUpdateSet;
 
         if (_mapping.IsHierarchy())
         {
@@ -221,6 +229,9 @@ internal class UpsertOperation : IStorageOperation
             ["id"] = _id, ["data"] = _json,
             ["dotnet_type"] = _mapping.DotNetTypeName, ["tenant_id"] = _tenantId
         });
+
+        // #241: bind the opt-in metadata column values (no-op when none are enabled).
+        _metadata.AddParameters(builder, _mapping);
 
         if (_mapping.IsHierarchy())
         {

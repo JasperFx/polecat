@@ -92,9 +92,33 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     {
         SyncMetadata(document);
         var provider = _providers.GetProvider<T>();
-        var op = provider.BuildUpsert(document, Serializer, TenantId);
+        var op = provider.BuildUpsert(document, Serializer, TenantId, BuildMetadataValues(provider.Mapping));
         _workTracker.Add(op);
         OnDocumentStored(typeof(T), provider.Mapping.GetId(document), document);
+    }
+
+    // #241: capture the session-level metadata to persist into the opt-in document metadata columns.
+    // Returns default (empty) when the document type enables none of them, so the common path is free.
+    private Operations.DocumentMetadataValues BuildMetadataValues(Storage.DocumentMapping mapping)
+    {
+        if (!mapping.EnabledMetadataColumns.Any())
+        {
+            return default;
+        }
+
+        string? headersJson = null;
+        if (mapping.Metadata.Headers.Enabled && Headers is { Count: > 0 })
+        {
+            headersJson = Serializer.ToJson(Headers);
+        }
+
+        return new Operations.DocumentMetadataValues
+        {
+            CorrelationId = CorrelationId,
+            CausationId = CausationId,
+            LastModifiedBy = LastModifiedBy,
+            HeadersJson = headersJson
+        };
     }
 
     public void Store<T>(params T[] documents) where T : notnull
@@ -117,7 +141,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             var documentType = document.GetType();
             SyncMetadata(document);
             var provider = _providers.GetProvider(documentType);
-            var op = provider.BuildUpsert(document, Serializer, TenantId);
+            var op = provider.BuildUpsert(document, Serializer, TenantId, BuildMetadataValues(provider.Mapping));
             _workTracker.Add(op);
             OnDocumentStored(documentType, provider.Mapping.GetId(document), document);
         }
@@ -127,7 +151,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     {
         SyncMetadata(document);
         var provider = _providers.GetProvider<T>();
-        var op = provider.BuildInsert(document, Serializer, TenantId);
+        var op = provider.BuildInsert(document, Serializer, TenantId, BuildMetadataValues(provider.Mapping));
         _workTracker.Add(op);
         OnDocumentStored(typeof(T), provider.Mapping.GetId(document), document);
     }
@@ -136,7 +160,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     {
         SyncMetadata(document);
         var provider = _providers.GetProvider<T>();
-        var op = provider.BuildUpdate(document, Serializer, TenantId);
+        var op = provider.BuildUpdate(document, Serializer, TenantId, BuildMetadataValues(provider.Mapping));
         _workTracker.Add(op);
         OnDocumentStored(typeof(T), provider.Mapping.GetId(document), document);
     }

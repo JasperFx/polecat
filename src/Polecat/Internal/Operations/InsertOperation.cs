@@ -17,8 +17,10 @@ internal class InsertOperation : IStorageOperation
     private readonly DocumentMapping _mapping;
     private readonly string _tenantId;
     private readonly Guid _newGuidVersion;
+    private readonly DocumentMetadataValues _metadata;
 
-    public InsertOperation(object document, object id, string json, DocumentMapping mapping, string tenantId)
+    public InsertOperation(object document, object id, string json, DocumentMapping mapping, string tenantId,
+        DocumentMetadataValues metadata = default)
     {
         _document = document;
         _id = id;
@@ -26,6 +28,7 @@ internal class InsertOperation : IStorageOperation
         _mapping = mapping;
         _tenantId = tenantId;
         _newGuidVersion = mapping.UseOptimisticConcurrency ? Guid.NewGuid() : Guid.Empty;
+        _metadata = metadata;
     }
 
     public Type DocumentType => _mapping.DocumentType;
@@ -37,8 +40,9 @@ internal class InsertOperation : IStorageOperation
     {
         var docTypeCol = _mapping.IsHierarchy() ? ", doc_type" : "";
         var docTypeVal = _mapping.IsHierarchy() ? ", @doc_type" : "";
-        var pCols = _mapping.PartitionInsertColumns;
-        var pVals = _mapping.PartitionInsertValues;
+        // #241: append the opt-in metadata columns after the partition columns.
+        var pCols = _mapping.PartitionInsertColumns + _mapping.MetadataInsertColumns;
+        var pVals = _mapping.PartitionInsertValues + _mapping.MetadataInsertValues;
 
         if (_mapping.UseOptimisticConcurrency)
         {
@@ -56,6 +60,7 @@ internal class InsertOperation : IStorageOperation
             if (_mapping.IsHierarchy()) parameters["doc_type"] = _mapping.AliasFor(_document.GetType());
             if (_mapping.HasPartitionColumn) parameters["partition_value"] = _mapping.Partitioning!.GetValue(_document);
             builder.AddParameters(parameters);
+            _metadata.AddParameters(builder, _mapping);
         }
         else
         {
@@ -73,6 +78,7 @@ internal class InsertOperation : IStorageOperation
             if (_mapping.IsHierarchy()) parameters["doc_type"] = _mapping.AliasFor(_document.GetType());
             if (_mapping.HasPartitionColumn) parameters["partition_value"] = _mapping.Partitioning!.GetValue(_document);
             builder.AddParameters(parameters);
+            _metadata.AddParameters(builder, _mapping);
         }
     }
 
