@@ -804,6 +804,17 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         if (LastModifiedBy != null && @event.UserName == null)
             @event.UserName = LastModifiedBy;
 
+        // #240: merge session-level headers into the event. Event-level keys win, so TryAdd only
+        // fills keys the event didn't already set.
+        if (Headers is { Count: > 0 })
+        {
+            @event.Headers ??= new Dictionary<string, object>();
+            foreach (var header in Headers)
+            {
+                @event.Headers.TryAdd(header.Key, header.Value);
+            }
+        }
+
         var eventOptions = _eventGraph.EventOptions;
 
         // Build column and value lists dynamically based on enabled metadata

@@ -39,6 +39,9 @@ internal class NestedTenantSession : ITenantOperations
     public string? CorrelationId { get => _parent.CorrelationId; set => _parent.CorrelationId = value; }
     public string? CausationId { get => _parent.CausationId; set => _parent.CausationId = value; }
     public string? LastModifiedBy { get => _parent.LastModifiedBy; set => _parent.LastModifiedBy = value; }
+    public Dictionary<string, object>? Headers => _parent.Headers;
+    public void SetHeader(string key, object value) => _parent.SetHeader(key, value);
+    public object? GetHeader(string key) => _parent.GetHeader(key);
     public int RequestCount => _parent.RequestCount;
     public IPolecatSessionLogger Logger { get => _parent.Logger; set => _parent.Logger = value; }
     public IAdvancedSql AdvancedSql => _parent.AdvancedSql;
