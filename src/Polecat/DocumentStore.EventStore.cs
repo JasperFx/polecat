@@ -279,6 +279,20 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
             usage.MaxEventSequence = null;
         }
 
+        // jasperfx#475 — advertise which event/stream metadata Polecat captures so
+        // store-aware consumers (CritterWatch) gate query facets by what is actually
+        // persisted. The event flags are opt-in columns mapping straight off the
+        // event options (UserName landed in polecat#237); stream facets are universal
+        // in Polecat and keep the EventMetadataCapabilities defaults of true.
+        usage.EventMetadata = new EventMetadataCapabilities
+        {
+            StoreType = "Polecat",
+            CorrelationId = Options.Events.EnableCorrelationId,
+            CausationId = Options.Events.EnableCausationId,
+            Headers = Options.Events.EnableHeaders,
+            UserName = Options.Events.EnableUserName
+        };
+
         Options.Projections.Describe(usage, this);
         return usage;
     }
