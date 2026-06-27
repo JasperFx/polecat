@@ -14,7 +14,10 @@ namespace Polecat.Events;
 ///     Read-only event store implementation. Fetches events and stream state from the database.
 ///     All SQL execution routes through session's Polly-wrapped centralized methods.
 /// </summary>
-internal class QueryEventStore : IQueryEventStore
+// #256: also implements JasperFx.Events.IReadOnlyEventStore (FetchStream/FetchStreamState/QueryEvents)
+// so DocumentStore.OpenReadOnlyEventStore() can return this as IReadOnlyEventStore. All of its members
+// are already present on the read store.
+internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
 {
     private readonly QuerySession _session;
     private readonly StoreOptions _options;
@@ -42,6 +45,70 @@ internal class QueryEventStore : IQueryEventStore
     {
         var provider = new EventLinqQueryProvider(_session, _events);
         return new PolecatLinqQueryable<IEvent>(provider);
+    }
+
+    /// <summary>
+    ///     #256: query events across all streams with exact-match metadata filters and pagination
+    ///     (the JasperFx <see cref="EventQuery" /> surface). The correlation/causation/user-name
+    ///     filters are honored only when the option is set AND the event store actually captures that
+    ///     metadata column (the <c>Enable*</c> flag), since a disabled column isn't populated. v1 is
+    ///     exact-match, AND-combined; headers and timestamp ranges are deferred.
+    /// </summary>
+    public async Task<PagedEvents> QueryEventsAsync(EventQuery query, CancellationToken token = default)
+    {
+        IQueryable<IEvent> queryable = QueryAllRawEvents();
+
+        if (query.EventTypeName != null)
+        {
+            queryable = queryable.Where(e => e.EventTypeName == query.EventTypeName);
+        }
+
+        if (query.StreamId != null)
+        {
+            if (_events.StreamIdentity == StreamIdentity.AsGuid && Guid.TryParse(query.StreamId, out var streamGuid))
+            {
+                queryable = queryable.Where(e => e.StreamId == streamGuid);
+            }
+            else
+            {
+                queryable = queryable.Where(e => e.StreamKey == query.StreamId);
+            }
+        }
+
+        var options = _events.EventOptions;
+        if (query.CorrelationId != null && options.EnableCorrelationId)
+        {
+            queryable = queryable.Where(e => e.CorrelationId == query.CorrelationId);
+        }
+
+        if (query.CausationId != null && options.EnableCausationId)
+        {
+            queryable = queryable.Where(e => e.CausationId == query.CausationId);
+        }
+
+        if (query.UserName != null && options.EnableUserName)
+        {
+            queryable = queryable.Where(e => e.UserName == query.UserName);
+        }
+
+        var pageNumber = query.PageNumber <= 0 ? 1 : query.PageNumber;
+        var pageSize = query.PageSize <= 0 ? 25 : query.PageSize;
+        var offset = (pageNumber - 1) * pageSize;
+
+        var total = await queryable.CountAsync(token);
+        var events = await queryable
+            .OrderBy(e => e.Sequence)
+            .Skip(offset)
+            .Take(pageSize)
+            .ToListAsync(token);
+
+        return new PagedEvents
+        {
+            Events = events,
+            TotalCount = total,
+            PageNumber = pageNumber,
+            PageSize = pageSize
+        };
     }
 
     public async Task<IReadOnlyList<IEvent>> FetchStreamAsync(Guid streamId, long version = 0,

@@ -53,10 +53,29 @@ public partial class DocumentStore : IDocumentStoreDiagnostics
         // single-database store, so a tenant id filters the conjoined tenant_id column.
         var filterByTenant = options.TenantId != null && mapping.TenancyStyle == TenancyStyle.Conjoined;
 
+        // #256: exact-match metadata filters, honored only when the option is set AND the document
+        // type actually persists that opt-in column (#241). A filter on a disabled column would
+        // reference a column that doesn't exist, so it is silently skipped — mirroring the event side.
+        var filterCorrelation = options.CorrelationId != null && mapping.Metadata.CorrelationId.Enabled;
+        var filterCausation = options.CausationId != null && mapping.Metadata.CausationId.Enabled;
+        var filterLastModifiedBy = options.LastModifiedBy != null && mapping.Metadata.LastModifiedBy.Enabled;
+
         var conditions = new List<string>();
         if (options.IdEquals != null) conditions.Add("cast(id as nvarchar(max)) = @id");
         if (filterByTenant) conditions.Add("tenant_id = @tenant");
+        if (filterCorrelation) conditions.Add("correlation_id = @correlation");
+        if (filterCausation) conditions.Add("causation_id = @causation");
+        if (filterLastModifiedBy) conditions.Add("last_modified_by = @last_modified_by");
         var where = conditions.Count > 0 ? " where " + string.Join(" and ", conditions) : "";
+
+        void BindParameters(SqlCommand command)
+        {
+            if (options.IdEquals != null) command.Parameters.AddWithValue("@id", options.IdEquals);
+            if (filterByTenant) command.Parameters.AddWithValue("@tenant", options.TenantId!);
+            if (filterCorrelation) command.Parameters.AddWithValue("@correlation", options.CorrelationId!);
+            if (filterCausation) command.Parameters.AddWithValue("@causation", options.CausationId!);
+            if (filterLastModifiedBy) command.Parameters.AddWithValue("@last_modified_by", options.LastModifiedBy!);
+        }
 
         await using var conn = new SqlConnection(Database.ConnectionString);
         await conn.OpenAsync(token).ConfigureAwait(false);
@@ -65,15 +84,7 @@ public partial class DocumentStore : IDocumentStoreDiagnostics
         await using (var countCmd = conn.CreateCommand())
         {
             countCmd.CommandText = $"select count_big(*) from {table}{where}";
-            if (options.IdEquals != null)
-            {
-                countCmd.Parameters.AddWithValue("@id", options.IdEquals);
-            }
-            if (filterByTenant)
-            {
-                countCmd.Parameters.AddWithValue("@tenant", options.TenantId!);
-            }
-
+            BindParameters(countCmd);
             total = Convert.ToInt64(await countCmd.ExecuteScalarAsync(token).ConfigureAwait(false));
         }
 
@@ -85,14 +96,7 @@ public partial class DocumentStore : IDocumentStoreDiagnostics
             cmd.CommandText =
                 $"select cast(data as nvarchar(max)) from {table}{where} " +
                 $"order by id offset {offset} rows fetch next {pageSize} rows only";
-            if (options.IdEquals != null)
-            {
-                cmd.Parameters.AddWithValue("@id", options.IdEquals);
-            }
-            if (filterByTenant)
-            {
-                cmd.Parameters.AddWithValue("@tenant", options.TenantId!);
-            }
+            BindParameters(cmd);
 
             await using var reader = await cmd.ExecuteReaderAsync(token).ConfigureAwait(false);
             while (await reader.ReadAsync(token).ConfigureAwait(false))
