@@ -128,6 +128,32 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
         var connStr = database is PolecatDatabase pdb ? pdb.ConnectionString : Options.ConnectionString;
         var batch = new PolecatProjectionBatch(this, Events, connStr);
         await batch.RecordProgress(range);
+
+        // #259: when rebuilding a snapshot whose aggregate has a [NaturalKey], re-emit the natural-key
+        // upserts for this page's events. NaturalKeyProjection.ApplyAsync drives off newly-appended
+        // StreamActions on the inline path and never fires during rebuild — without this hook the
+        // pc_natural_key_X table stays empty after teardown. Routing each tenant's upserts through
+        // batch.SessionForTenant lands them on a session whose work-tracker flushes inside this batch's
+        // transaction, alongside the rebuilt snapshots.
+        if (mode == ShardExecutionMode.Rebuild && range.Events.Any())
+        {
+            var naturalKeySource = Options.Projections.All
+                .FirstOrDefault(s => string.Equals(s.Name, range.ShardName.Name, StringComparison.OrdinalIgnoreCase))
+                as JasperFx.Events.Aggregation.IAggregateProjection;
+
+            if (naturalKeySource?.NaturalKeyDefinition != null)
+            {
+                var naturalKeyProjection = new Events.Projections.NaturalKeyProjection(
+                    naturalKeySource.NaturalKeyDefinition!, Events);
+
+                foreach (var byTenant in range.Events.GroupBy(e => e.TenantId ?? JasperFx.StorageConstants.DefaultTenantId))
+                {
+                    var ops = batch.SessionForTenant(byTenant.Key);
+                    naturalKeyProjection.QueueUpsertsForEvents(ops, byTenant);
+                }
+            }
+        }
+
         return batch;
     }
 
@@ -530,9 +556,22 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
         var publishedTableNames = Array.Empty<string>();
         if (Options.Projections.TryFindProjection(subscriptionName, out var source))
         {
-            publishedTableNames = source.PublishedTypes()
+            var tables = source.PublishedTypes()
                 .Select(t => GetProvider(t).QualifiedTableName)
-                .ToArray();
+                .ToList();
+
+            // #259: a [NaturalKey] aggregate maintains its pc_natural_key_X lookup table via the
+            // auto-registered NaturalKeyProjection on the inline-append path. Teardown of the parent
+            // projection must also wipe that table so the rebuild repopulates it from scratch
+            // (the rebuild re-emits the upserts via StartProjectionBatchAsync). DELETE FROM works the
+            // same as for the doc tables, so it rides the same loop below.
+            if (source is JasperFx.Events.Aggregation.IAggregateProjection { NaturalKeyDefinition: not null } natural)
+            {
+                var aggregateName = natural.NaturalKeyDefinition.AggregateType.Name.ToLowerInvariant();
+                tables.Add($"[{Events.DatabaseSchemaName}].[pc_natural_key_{aggregateName}]");
+            }
+
+            publishedTableNames = tables.ToArray();
         }
 
         await Options.ResiliencePipeline.ExecuteAsync(static async (state, ct) =>
