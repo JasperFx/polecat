@@ -16,13 +16,14 @@ internal sealed class DocumentPartitioning
     private readonly Func<object, object?>? _getter;
 
     private DocumentPartitioning(string columnName, string sqlDataType, bool partitionOnId,
-        IReadOnlyList<object> boundaries, Func<object, object?>? getter)
+        IReadOnlyList<object> boundaries, Func<object, object?>? getter, bool externallyManaged)
     {
         ColumnName = columnName;
         SqlDataType = sqlDataType;
         PartitionOnId = partitionOnId;
         Boundaries = boundaries;
         _getter = getter;
+        ExternallyManaged = externallyManaged;
     }
 
     /// <summary>The partition column name. <c>id</c> when <see cref="PartitionOnId" /> is true.</summary>
@@ -42,6 +43,16 @@ internal sealed class DocumentPartitioning
 
     /// <summary>True when a real duplicated column must be created and written on upsert.</summary>
     public bool RequiresDuplicatedColumn => !PartitionOnId;
+
+    /// <summary>
+    ///     #255: when true, Polecat creates the partition function/scheme + table once (with the
+    ///     initial <see cref="Boundaries" />) and thereafter does NOT reconcile the partitioning — the
+    ///     partition boundaries are managed externally (app/DBA SPLIT/MERGE/SWITCH for monthly
+    ///     time-series retention). The table migration runs with <c>AutoCreate.CreateOnly</c> so a
+    ///     later schema apply never clobbers externally-managed partitions. When false (the default),
+    ///     Polecat owns the boundaries and rolls them forward in place via SPLIT RANGE.
+    /// </summary>
+    public bool ExternallyManaged { get; }
 
     /// <summary>Extract the partition value from a document instance for the write path.</summary>
     public object GetValue(object document)
@@ -65,7 +76,8 @@ internal sealed class DocumentPartitioning
     public static DocumentPartitioning For<T, TValue>(
         Expression<Func<T, TValue>> member,
         IReadOnlyList<TValue> boundaries,
-        string idMemberName)
+        string idMemberName,
+        bool externallyManaged = false)
     {
         var memberInfo = ResolveMember(member);
         var sqlType = ToSqlServerType(typeof(TValue));
@@ -73,14 +85,16 @@ internal sealed class DocumentPartitioning
 
         if (string.Equals(memberInfo.Name, idMemberName, StringComparison.Ordinal))
         {
-            return new DocumentPartitioning("id", sqlType, partitionOnId: true, boxed, getter: null);
+            return new DocumentPartitioning("id", sqlType, partitionOnId: true, boxed, getter: null,
+                externallyManaged);
         }
 
         var column = ToSnakeCase(memberInfo.Name);
         var compiled = member.Compile();
         Func<object, object?> getter = doc => compiled((T)doc);
 
-        return new DocumentPartitioning(column, sqlType, partitionOnId: false, boxed, getter);
+        return new DocumentPartitioning(column, sqlType, partitionOnId: false, boxed, getter,
+            externallyManaged);
     }
 
     private static MemberInfo ResolveMember<T, TValue>(Expression<Func<T, TValue>> member)

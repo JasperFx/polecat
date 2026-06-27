@@ -1,4 +1,5 @@
 using JasperFx;
+using Polecat.Linq;
 using Polecat.Tests.Harness;
 using Shouldly;
 
@@ -15,6 +16,14 @@ public class MetricsSample
 // Distinct type for the roll-forward test so its partition function (named from the table) does not
 // collide with the other tests' — SQL Server partition functions/schemes are database-scoped.
 public class RolledMetricsSample
+{
+    public Guid Id { get; set; }
+    public DateTimeOffset BucketEnd { get; set; }
+    public double Value { get; set; }
+}
+
+// Distinct type so its database-scoped partition function/scheme don't collide with the others'.
+public class ExternalMetricsSample
 {
     public Guid Id { get; set; }
     public DateTimeOffset BucketEnd { get; set; }
@@ -182,5 +191,74 @@ public class document_range_partitioning_tests : IntegrationContext
         });
 
         ex.Message.ShouldContain("conjoined");
+    }
+
+    // ---- #255: Marten-parity PartitionOn(...).ByRange(...) DSL ----------------------------------
+
+    [Fact]
+    public async Task partition_on_by_range_is_equivalent_to_partition_by_range()
+    {
+        await ResetAsync("pc_doc_metricssample");
+        await StoreOptions(opts =>
+        {
+            opts.DatabaseSchemaName = Schema;
+            // The Marten-parity fluent form over the same machinery as PartitionByRange.
+            opts.Schema.For<MetricsSample>().PartitionOn(x => x.BucketEnd).ByRange(Jan, Feb, Mar);
+        });
+
+        theSession.Store(new MetricsSample
+        {
+            Id = Guid.NewGuid(), BucketEnd = Jan.AddDays(5), Metric = "cpu", Value = 1
+        });
+        await theSession.SaveChangesAsync();
+
+        (await PartitionCountAsync("pc_doc_metricssample")).ShouldBe(4); // 3 boundaries -> 4 partitions
+    }
+
+    // ---- #255: externally-managed range partitioning (time-series retention) --------------------
+
+    [Fact]
+    public async Task externally_managed_range_is_provisioned_once_and_never_reconciled()
+    {
+        const string table = "pc_doc_externalmetricssample";
+        await ResetAsync(table);
+
+        // Initial boundaries [Jan, Feb] -> 3 partitions. Externally-managed means Polecat creates the
+        // partitioned table once and never reconciles it afterward.
+        await StoreOptions(opts =>
+        {
+            opts.DatabaseSchemaName = Schema;
+            opts.Schema.For<ExternalMetricsSample>()
+                .PartitionOn(x => x.BucketEnd).ByExternallyManagedRange(Jan, Feb);
+        });
+
+        theSession.Store(new ExternalMetricsSample { Id = Guid.NewGuid(), BucketEnd = Jan.AddDays(3), Value = 1 });
+        await theSession.SaveChangesAsync();
+
+        (await PartitionCountAsync(table)).ShouldBe(3);
+
+        // Simulate the app/DBA rolling March forward at runtime (the partition Polecat must not touch).
+        await SplitRangeAsync(table, "2026-03-01T00:00:00.0000000+00:00");
+        (await PartitionCountAsync(table)).ShouldBe(4);
+
+        // A bulk schema apply must NOT reconcile the externally-managed table back to its declared
+        // [Jan, Feb] boundaries — the app-managed March partition must survive.
+        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync();
+        (await PartitionCountAsync(table)).ShouldBe(4);
+
+        // And the data is intact + still queryable.
+        await using var query = theStore.QuerySession();
+        (await query.Query<ExternalMetricsSample>().CountAsync()).ShouldBe(1);
+    }
+
+    private async Task SplitRangeAsync(string table, string boundaryLiteral)
+    {
+        await using var conn = await OpenConnectionAsync();
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"""
+            ALTER PARTITION SCHEME [ps_{table}_bucket_end] NEXT USED [PRIMARY];
+            ALTER PARTITION FUNCTION [pf_{table}_bucket_end]() SPLIT RANGE (CONVERT(datetimeoffset, '{boundaryLiteral}'));
+            """;
+        await cmd.ExecuteNonQueryAsync();
     }
 }

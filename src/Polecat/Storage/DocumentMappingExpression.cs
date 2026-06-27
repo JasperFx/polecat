@@ -142,6 +142,65 @@ public class DocumentMappingExpression<T>
         Partitioning = DocumentPartitioning.For(member, boundaries, idMemberName);
         return this;
     }
+
+    /// <summary>
+    ///     #255: begin a fluent declaration of RANGE partitioning on a member, mirroring Marten's
+    ///     <c>PartitionOn(x =&gt; x.Member)</c>. Follow with <see cref="PartitioningExpression{T,TValue}.ByRange" />
+    ///     (Polecat manages + rolls the boundaries) or
+    ///     <see cref="PartitioningExpression{T,TValue}.ByExternallyManagedRange" /> (Polecat provisions the
+    ///     partitioned table once, then leaves the partitions to be managed externally — the
+    ///     time-series-retention pattern).
+    /// </summary>
+    public PartitioningExpression<T, TValue> PartitionOn<TValue>(Expression<Func<T, TValue>> member)
+    {
+        return new PartitioningExpression<T, TValue>(this, member);
+    }
+
+    /// <summary>Internal hook used by <see cref="PartitioningExpression{T,TValue}" /> to set the descriptor.</summary>
+    internal void SetPartitioning<TValue>(Expression<Func<T, TValue>> member, TValue[] boundaries,
+        bool externallyManaged)
+    {
+        var idMemberName = DocumentMapping.FindIdProperty(typeof(T))?.Name ?? "Id";
+        Partitioning = DocumentPartitioning.For(member, boundaries, idMemberName, externallyManaged);
+    }
+}
+
+/// <summary>
+///     #255: fluent continuation of <see cref="DocumentMappingExpression{T}.PartitionOn{TValue}" />,
+///     mirroring Marten's <c>PartitioningExpression</c>. Choose the range-partitioning strategy.
+/// </summary>
+public class PartitioningExpression<T, TValue>
+{
+    private readonly DocumentMappingExpression<T> _parent;
+    private readonly Expression<Func<T, TValue>> _member;
+
+    internal PartitioningExpression(DocumentMappingExpression<T> parent, Expression<Func<T, TValue>> member)
+    {
+        _parent = parent;
+        _member = member;
+    }
+
+    /// <summary>
+    ///     Polecat-managed RANGE partitioning: the boundaries are owned by Polecat and rolled forward
+    ///     in place via <c>SPLIT RANGE</c> when you add new ones. N boundaries → N+1 partitions.
+    /// </summary>
+    public DocumentMappingExpression<T> ByRange(params TValue[] boundaries)
+    {
+        _parent.SetPartitioning(_member, boundaries, externallyManaged: false);
+        return _parent;
+    }
+
+    /// <summary>
+    ///     #255: externally-managed RANGE partitioning. Polecat creates the partition function/scheme
+    ///     and table once (with the supplied <paramref name="initialBoundaries" />) and then never
+    ///     reconciles the partitioning, so the app/DBA can SPLIT new partitions and SWITCH/DROP old
+    ///     ones at runtime for time-series retention without a later schema apply clobbering them.
+    /// </summary>
+    public DocumentMappingExpression<T> ByExternallyManagedRange(params TValue[] initialBoundaries)
+    {
+        _parent.SetPartitioning(_member, initialBoundaries, externallyManaged: true);
+        return _parent;
+    }
 }
 
 /// <summary>
