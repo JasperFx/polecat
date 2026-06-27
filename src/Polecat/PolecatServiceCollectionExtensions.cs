@@ -98,6 +98,15 @@ public static class PolecatServiceCollectionExtensions
         // bridge for IEventStore.
         services.AddSingleton<JasperFx.Events.IDocumentStoreUsageSource>(sp =>
             sp.GetRequiredService<IDocumentStore>());
+
+        // wolverine#3219 — and the event-store side of the same bridge. Wolverine's
+        // ServiceCapabilities.readEventStores discovers stores via
+        // GetServices<JasperFx.Events.IEventStore>(); without this the Polecat store
+        // (which implements IEventStore) is invisible to CritterWatch's event-store
+        // surfaces, so its event metadata / projections never reach the dashboard.
+        // Marten registers IEventStore in its core DI; this brings Polecat to parity.
+        services.AddSingleton<JasperFx.Events.IEventStore>(sp =>
+            (JasperFx.Events.IEventStore)sp.GetRequiredService<IDocumentStore>());
         services.AddSingleton<JasperFx.Documents.IDocumentStoreDiagnostics>(sp =>
             (JasperFx.Documents.IDocumentStoreDiagnostics)sp.GetRequiredService<IDocumentStore>());
 
