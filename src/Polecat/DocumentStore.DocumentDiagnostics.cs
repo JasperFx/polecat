@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JasperFx.Core.Reflection;
 using JasperFx.Documents;
+using JasperFx.MultiTenancy;
 using Microsoft.Data.SqlClient;
 
 namespace Polecat;
@@ -43,11 +44,19 @@ public partial class DocumentStore : IDocumentStoreDiagnostics
         }
 
         var table = mapping.QualifiedTableName;
-        var where = options.IdEquals != null ? " where cast(id as nvarchar(max)) = @id" : "";
 
         var pageNumber = Math.Max(1, options.PageNumber);
         var pageSize = Math.Max(1, options.PageSize);
         var offset = (pageNumber - 1) * pageSize;
+
+        // Tenant scoping (#475 / EVENT_STORE_EXPLORER_PLAN §3.1): Polecat is a
+        // single-database store, so a tenant id filters the conjoined tenant_id column.
+        var filterByTenant = options.TenantId != null && mapping.TenancyStyle == TenancyStyle.Conjoined;
+
+        var conditions = new List<string>();
+        if (options.IdEquals != null) conditions.Add("cast(id as nvarchar(max)) = @id");
+        if (filterByTenant) conditions.Add("tenant_id = @tenant");
+        var where = conditions.Count > 0 ? " where " + string.Join(" and ", conditions) : "";
 
         await using var conn = new SqlConnection(Database.ConnectionString);
         await conn.OpenAsync(token).ConfigureAwait(false);
@@ -59,6 +68,10 @@ public partial class DocumentStore : IDocumentStoreDiagnostics
             if (options.IdEquals != null)
             {
                 countCmd.Parameters.AddWithValue("@id", options.IdEquals);
+            }
+            if (filterByTenant)
+            {
+                countCmd.Parameters.AddWithValue("@tenant", options.TenantId!);
             }
 
             total = Convert.ToInt64(await countCmd.ExecuteScalarAsync(token).ConfigureAwait(false));
@@ -75,6 +88,10 @@ public partial class DocumentStore : IDocumentStoreDiagnostics
             if (options.IdEquals != null)
             {
                 cmd.Parameters.AddWithValue("@id", options.IdEquals);
+            }
+            if (filterByTenant)
+            {
+                cmd.Parameters.AddWithValue("@tenant", options.TenantId!);
             }
 
             await using var reader = await cmd.ExecuteReaderAsync(token).ConfigureAwait(false);
