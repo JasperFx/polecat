@@ -22,6 +22,7 @@ internal class EventMemberFactory : IMemberResolver
         { "IsArchived", ("is_archived", typeof(bool)) },
         { "CorrelationId", ("correlation_id", typeof(string)) },
         { "CausationId", ("causation_id", typeof(string)) },
+        { "UserName", ("user_name", typeof(string)) },
         { "TenantId", ("tenant_id", typeof(string)) }
     };
 
