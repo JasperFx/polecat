@@ -31,6 +31,17 @@ internal class DocumentFeatureSchema : FeatureSchemaBase
 
         foreach (var provider in _options.Providers.AllProviders)
         {
+            // #255: externally-managed partitioned tables are intentionally excluded from the bulk
+            // reconciliation path. The whole-database migration applies a single (global) AutoCreate,
+            // so leaving them in would reconcile their partition boundaries back to the declared
+            // initial set and clobber the partitions the app/DBA manages at runtime (SPLIT/SWITCH/DROP
+            // for retention). They are provisioned once, on first use, by DocumentTableEnsurer with
+            // AutoCreate.CreateOnly and never reconciled by either path.
+            if (provider.Mapping.Partitioning is { ExternallyManaged: true })
+            {
+                continue;
+            }
+
             yield return new DocumentTable(provider.Mapping);
         }
     }

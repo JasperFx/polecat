@@ -81,10 +81,16 @@ internal class DocumentTableEnsurer
             // preserved — never a drop/recreate), then restores the default. No-op once bigint.
             await WidenVersionColumnIfNeededAsync(conn, provider.Mapping.QualifiedTableName, token);
 
-            // Use Weasel SchemaMigration to create or update the document table
+            // Use Weasel SchemaMigration to create or update the document table.
+            // #255: an externally-managed partitioned table is provisioned ONCE (CreateOnly) and
+            // never reconciled afterward, so a later schema apply can't clobber the partitions the
+            // app/DBA manages at runtime (SPLIT new months, SWITCH/DROP old ones for retention).
             var table = new DocumentTable(provider.Mapping);
+            var autoCreate = provider.Mapping.Partitioning is { ExternallyManaged: true }
+                ? AutoCreate.CreateOnly
+                : AutoCreate.CreateOrUpdate;
             var migration = await SchemaMigration.DetermineAsync(conn, token, table);
-            await migrator.ApplyAllAsync(conn, migration, AutoCreate.CreateOrUpdate, ct: token);
+            await migrator.ApplyAllAsync(conn, migration, autoCreate, ct: token);
 
             // Create custom indexes (computed columns + index)
             // Computed columns are not modeled in Weasel, so they remain as supplementary DDL.
