@@ -22,8 +22,8 @@
              IEventDatabase.QueryDeadLetterEventsAsync (dead-letter row drill-in), DeadLetterEvent.TenantId,
              and the tenant-aware daemon surface. Polecat implements the dead-letter row query + per-tenant
              FetchDeadLetterCountsAsync below. -->
-        <PackageVersion Include="JasperFx" Version="2.16.0" />
-        <PackageVersion Include="JasperFx.Events" Version="2.16.0" />
+        <PackageVersion Include="JasperFx" Version="2.17.0" />
+        <PackageVersion Include="JasperFx.Events" Version="2.17.0" />
         <!-- Pin the sibling JasperFx packages for parity with Marten 9's matrix
              even though Polecat doesn't currently reference them directly —
              keeps the lockstep matrix coherent when transitive resolution
@@ -31,7 +31,7 @@
              RuntimeCompiler 5.x line is the active continuation of the 4.x
              lineage; do not pin against the parallel stale 2.0.x series. -->
         <PackageVersion Include="JasperFx.RuntimeCompiler" Version="5.0.0" />
-        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.16.0" />
+        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.17.0" />
         <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
@@ -57,7 +57,7 @@
         <PackageVersion Include="StronglyTypedId" Version="1.0.0-beta08" />
 
         <!-- Source generators (matched to JasperFx.Events above) -->
-        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.16.0" />
+        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.17.0" />
 
         <!-- Build automation -->
         <PackageVersion Include="Nuke.Common" Version="9.0.4" />
