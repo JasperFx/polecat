@@ -327,11 +327,45 @@ internal class PatchExpression<T> : IPatchExpression<T>
         }
         else if (PatchOperation.IsScalarType(typeof(TValue)))
         {
-            _actions.Add(PatchOperation.SetScalar(path, value));
+            _actions.Add(BuildScalarSet(path, value));
         }
         else
         {
             _actions.Add(PatchOperation.SetComplex(path, _serializer.ToJson(value)));
+        }
+    }
+
+    /// <summary>
+    ///     Builds a scalar JSON_MODIFY assignment whose value matches exactly how the
+    ///     property is persisted in the document body. The value is serialized through the
+    ///     configured serializer first, so enum storage (AsString vs AsInteger) and
+    ///     System.Text.Json's date/time formatting are honored rather than binding the raw
+    ///     CLR value — which would emit the wrong representation (e.g. the integer behind a
+    ///     string enum) or a SQL type JSON_MODIFY rejects (e.g. datetimeoffset).
+    /// </summary>
+    private Action<ICommandBuilder> BuildScalarSet<TValue>(string path, TValue value)
+    {
+        var json = _serializer.ToJson(value!);
+        using var doc = JsonDocument.Parse(json);
+        switch (doc.RootElement.ValueKind)
+        {
+            case JsonValueKind.String:
+                // JSON_MODIFY escapes and stores an nvarchar argument as a JSON string —
+                // the right rendering for enum-as-string, DateTime/DateTimeOffset,
+                // DateOnly/TimeOnly, Guid, and string values.
+                return PatchOperation.SetScalar(path, doc.RootElement.GetString());
+
+            case JsonValueKind.True:
+            case JsonValueKind.False:
+                // A bit argument is rendered as JSON true/false by JSON_MODIFY.
+                return PatchOperation.SetScalar(path, doc.RootElement.GetBoolean());
+
+            case JsonValueKind.Null:
+                return PatchOperation.DeleteProperty(path);
+
+            default:
+                // Numeric: pass the original CLR value so JSON_MODIFY stores a JSON number.
+                return PatchOperation.SetScalar(path, value);
         }
     }
 }
