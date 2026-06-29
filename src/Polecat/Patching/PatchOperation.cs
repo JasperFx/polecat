@@ -388,6 +388,7 @@ internal class PatchOperation : Polecat.Internal.IStorageOperation
         return underlying.IsPrimitive || underlying == typeof(string) || underlying == typeof(decimal) ||
                underlying == typeof(Guid) || underlying == typeof(DateTime) ||
                underlying == typeof(DateTimeOffset) ||
+               underlying == typeof(DateOnly) || underlying == typeof(TimeOnly) ||
                underlying.IsEnum;
     }
 }
