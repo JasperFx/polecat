@@ -48,6 +48,13 @@ public class Target
     public float Float { get; set; }
     public decimal Decimal { get; set; }
 
+    // Date/time properties for date patching tests (#263)
+    public DateTime DateTime { get; set; }
+    public DateTimeOffset DateTimeOffset { get; set; }
+    public DateOnly DateOnly { get; set; }
+    public TimeOnly TimeOnly { get; set; }
+    public DateTimeOffset? NullableDateTimeOffset { get; set; }
+
     // Recursive nested property for deep patching
     public Target? Inner { get; set; }
     public Target? Inner2 { get; set; }
