@@ -39,6 +39,9 @@ public class Target
     public string? AnotherString { get; set; }
     public string? StringField { get; set; }
 
+    // Enum property for enum-storage patching tests (#262)
+    public ActiveStatus Status { get; set; }
+
     // Numeric properties for increment tests
     public long Long { get; set; }
     public double Double { get; set; }
@@ -96,6 +99,12 @@ public class Target
 
         return target;
     }
+}
+
+public enum ActiveStatus
+{
+    Active,
+    Inactive
 }
 
 public record TargetNested(Target[] Targets);
