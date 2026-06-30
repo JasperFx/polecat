@@ -288,6 +288,15 @@ public class MasterTableTenancy : ITenancy
     {
         if (_masterTableEnsured) return;
 
+        // #267: honor AutoCreate.None — when the user manages the schema, the pc_tenants control
+        // table is theirs to provision; never emit DDL at runtime on a least-privilege connection.
+        // A later read against a missing table surfaces as a clean "invalid object" error.
+        if (_options.AutoCreateSchemaObjects == AutoCreate.None)
+        {
+            _masterTableEnsured = true;
+            return;
+        }
+
         await _ensureLock.WaitAsync(token).ConfigureAwait(false);
         try
         {

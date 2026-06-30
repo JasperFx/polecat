@@ -19,15 +19,17 @@ internal class HiloSequence : HiloSequenceBase
     private readonly ConnectionFactory _connectionFactory;
     private readonly string _schemaName;
     private readonly ResiliencePipeline _resilience;
+    private readonly AutoCreate _autoCreate;
     private bool _tableEnsured;
 
     public HiloSequence(ConnectionFactory connectionFactory, string schemaName, string entityName,
-        HiloSettings settings, ResiliencePipeline resilience)
+        HiloSettings settings, ResiliencePipeline resilience, AutoCreate autoCreate)
         : base(entityName, settings)
     {
         _connectionFactory = connectionFactory;
         _schemaName = schemaName;
         _resilience = resilience;
+        _autoCreate = autoCreate;
     }
 
     public override async Task SetFloor(long floor)
@@ -105,6 +107,16 @@ internal class HiloSequence : HiloSequenceBase
     {
         if (_tableEnsured) return;
 
+        // #267: honor AutoCreate.None — the user manages the pc_hilo table themselves, so never
+        // emit DDL at runtime (mirrors DocumentTableEnsurer). A subsequent UPDATE/INSERT against a
+        // missing table surfaces as a clean "invalid object" error, the same opt-out contract as
+        // document and event-store tables.
+        if (_autoCreate == AutoCreate.None)
+        {
+            _tableEnsured = true;
+            return;
+        }
+
         var table = new HiloTable(_schemaName);
         var migrator = new SqlServerMigrator();
         var migration = await SchemaMigration.DetermineAsync(conn, ct, table);
@@ -115,6 +127,13 @@ internal class HiloSequence : HiloSequenceBase
     private void EnsureHiloTableSync(SqlConnection conn)
     {
         if (_tableEnsured) return;
+
+        // #267: honor AutoCreate.None (see EnsureHiloTableAsync).
+        if (_autoCreate == AutoCreate.None)
+        {
+            _tableEnsured = true;
+            return;
+        }
 
         var table = new HiloTable(_schemaName);
         var migrator = new SqlServerMigrator();

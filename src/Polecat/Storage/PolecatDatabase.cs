@@ -1,3 +1,4 @@
+using JasperFx;
 using JasperFx.Core.Reflection;
 using JasperFx.Descriptors;
 using JasperFx.Events;
@@ -387,6 +388,19 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
 
     public new async Task EnsureStorageExistsAsync(Type storageType, CancellationToken token)
     {
+        // #267: honor AutoCreate.None. When the user opts out of runtime schema management
+        // (e.g. the schema is owned by EF migrations on a least-privilege Azure SQL connection
+        // with no ALTER), no DDL may run on a storage-ensure. ApplyAllConfiguredChangesToDatabaseAsync
+        // would otherwise force-apply the WHOLE schema — and Weasel's DatabaseBase promotes
+        // None -> CreateOrUpdate, so any drift between the live schema and Polecat's model emits
+        // ALTER/sp_rename and fails. This is the daemon's first storage access (see
+        // DocumentStore.BuildProjectionDaemonAsync); on-the-fly session/query creation is already
+        // gated in DocumentTableEnsurer (#219).
+        if (AutoCreate == AutoCreate.None)
+        {
+            return;
+        }
+
         await ApplyAllConfiguredChangesToDatabaseAsync(ct: token);
     }
 

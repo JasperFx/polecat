@@ -1,4 +1,6 @@
+using System.Data.Common;
 using Polecat.Metadata;
+using Weasel.Core;
 using Weasel.SqlServer;
 using Weasel.SqlServer.Tables;
 
@@ -100,5 +102,58 @@ internal class DocumentTable : Table
                 range.AddBoundary(boundary);
             }
         }
+    }
+
+    /// <summary>
+    ///     #267: Polecat's <see cref="DocumentTable" /> models only the columns it manages. The
+    ///     persisted computed columns and secondary indexes Polecat itself creates are applied as
+    ///     idempotent raw DDL by <see cref="Internal.DocumentTableEnsurer" /> (not modeled here), and a
+    ///     user may add their own (e.g. a persisted computed column + unique index via an EF migration).
+    ///     Weasel's default <see cref="TableDelta" /> would treat every such object as an "extra" and
+    ///     emit <c>DROP COLUMN</c> / <c>DROP INDEX</c> — destructive — while also leaving the table with
+    ///     a permanently non-empty diff that makes every storage-ensure re-run DDL.
+    ///     <para>
+    ///     This override strips those unmodeled objects from the fetched (actual) table before the diff
+    ///     is computed, so Polecat is purely additive: it creates what is missing from its own model and
+    ///     never drops or churns columns/indexes it does not own. Columns and indexes Polecat <em>does</em>
+    ///     model still reconcile normally (missing/different are detected as before).
+    ///     </para>
+    /// </summary>
+    public override async Task<ISchemaObjectDelta> CreateDeltaAsync(DbDataReader reader,
+        CancellationToken ct = default)
+    {
+        var delta = (TableDelta)await base.CreateDeltaAsync(reader, ct).ConfigureAwait(false);
+
+        // Null Actual => the table does not exist yet; nothing to strip (this is a Create).
+        var actual = delta.Actual;
+        if (actual == null)
+        {
+            return delta;
+        }
+
+        var modeledColumns = Columns.Select(x => x.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var extra in actual.Columns.Where(c => !modeledColumns.Contains(c.Name)).ToList())
+        {
+            actual.RemoveColumn(extra.Name);
+        }
+
+        // DocumentTable does not model secondary indexes in Weasel (they are raw-DDL managed), so any
+        // non-primary-key index on the live table is treated as user/Polecat-owned and left in place.
+        var modeledIndexes = Indexes.Select(x => x.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var extra in actual.Indexes.Where(i => !modeledIndexes.Contains(i.Name)).ToList())
+        {
+            actual.Indexes.Remove(extra);
+        }
+
+        // Foreign keys are likewise raw-DDL managed (DocumentTableEnsurer.EnsureForeignKeysAsync) and
+        // not modeled here, so an unmodeled FK — Polecat's own or a user's — must not be dropped either.
+        var modeledForeignKeys = ForeignKeys.Select(x => x.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var extra in actual.ForeignKeys.Where(f => !modeledForeignKeys.Contains(f.Name)).ToList())
+        {
+            actual.ForeignKeys.Remove(extra);
+        }
+
+        // Recompute the diff against the now-stripped actual table.
+        return new TableDelta(this, actual);
     }
 }
