@@ -76,8 +76,16 @@ public class Serializer : ISerializer
         configure(_options);
     }
 
-    [RequiresUnreferencedCode("STJ JsonSerializer.Serialize uses reflection over document's runtime type.")]
-    [RequiresDynamicCode("STJ JsonSerializer.Serialize requires runtime code generation for non-source-generated types.")]
+    // #273: the shared members inherited from Weasel.Core.ISerializer are intentionally unannotated
+    // (Marten parity), so their reflection-based STJ bodies suppress the RUC/RDC warnings here rather
+    // than propagating a caller-facing contract the base doesn't declare. AOT consumers supply a
+    // source-generator-backed ISerializer. The two string-based overloads below are Polecat-only
+    // (not on the shared base), so they keep the propagating [RequiresUnreferencedCode]/[RequiresDynamicCode].
+    private const string SharedSerializerSuppression =
+        "Reflection-based STJ serialize/deserialize is Polecat's documented default; the shared Weasel.Core.ISerializer base is intentionally unannotated for Marten parity, so RUC/RDC is not propagated. AOT consumers supply a source-generator-backed ISerializer.";
+
+    [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode", Justification = SharedSerializerSuppression)]
+    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode", Justification = SharedSerializerSuppression)]
     public string ToJson(object document)
     {
         return JsonSerializer.Serialize(document, document.GetType(), _options);
@@ -97,45 +105,45 @@ public class Serializer : ISerializer
         return JsonSerializer.Deserialize(json, type, _options)!;
     }
 
-    [RequiresUnreferencedCode("STJ JsonSerializer.Deserialize<T> uses reflection over T.")]
-    [RequiresDynamicCode("STJ JsonSerializer.Deserialize requires runtime code generation for non-source-generated types.")]
+    [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode", Justification = SharedSerializerSuppression)]
+    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode", Justification = SharedSerializerSuppression)]
     public T FromJson<T>(Stream stream)
     {
         return JsonSerializer.Deserialize<T>(stream, _options)!;
     }
 
-    [RequiresUnreferencedCode("STJ JsonSerializer.Deserialize uses reflection over the supplied type.")]
-    [RequiresDynamicCode("STJ JsonSerializer.Deserialize requires runtime code generation for non-source-generated types.")]
+    [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode", Justification = SharedSerializerSuppression)]
+    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode", Justification = SharedSerializerSuppression)]
     public object FromJson(Type type, Stream stream)
     {
         return JsonSerializer.Deserialize(stream, type, _options)!;
     }
 
-    [RequiresUnreferencedCode("STJ JsonSerializer.Deserialize<T> uses reflection over T.")]
-    [RequiresDynamicCode("STJ JsonSerializer.Deserialize requires runtime code generation for non-source-generated types.")]
+    [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode", Justification = SharedSerializerSuppression)]
+    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode", Justification = SharedSerializerSuppression)]
     public T FromJson<T>(DbDataReader reader, int index)
     {
         var json = reader.GetString(index);
         return FromJson<T>(json);
     }
 
-    [RequiresUnreferencedCode("STJ JsonSerializer.Deserialize uses reflection over the supplied type.")]
-    [RequiresDynamicCode("STJ JsonSerializer.Deserialize requires runtime code generation for non-source-generated types.")]
+    [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode", Justification = SharedSerializerSuppression)]
+    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode", Justification = SharedSerializerSuppression)]
     public object FromJson(Type type, DbDataReader reader, int index)
     {
         var json = reader.GetString(index);
         return FromJson(type, json);
     }
 
-    [RequiresUnreferencedCode("STJ JsonSerializer.DeserializeAsync<T> uses reflection over T.")]
-    [RequiresDynamicCode("STJ JsonSerializer.DeserializeAsync requires runtime code generation for non-source-generated types.")]
+    [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode", Justification = SharedSerializerSuppression)]
+    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode", Justification = SharedSerializerSuppression)]
     public async ValueTask<T> FromJsonAsync<T>(Stream stream, CancellationToken cancellationToken = default)
     {
         return (await JsonSerializer.DeserializeAsync<T>(stream, _options, cancellationToken))!;
     }
 
-    [RequiresUnreferencedCode("STJ JsonSerializer.DeserializeAsync uses reflection over the supplied type.")]
-    [RequiresDynamicCode("STJ JsonSerializer.DeserializeAsync requires runtime code generation for non-source-generated types.")]
+    [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode", Justification = SharedSerializerSuppression)]
+    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode", Justification = SharedSerializerSuppression)]
     public async ValueTask<object> FromJsonAsync(Type type, Stream stream,
         CancellationToken cancellationToken = default)
     {

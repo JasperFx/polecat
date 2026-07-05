@@ -30,3 +30,7 @@ global using TrackLevel = JasperFx.OpenTelemetry.TrackLevel;
 global using ISequence = Weasel.Core.Sequences.ISequence;
 global using IReadOnlyHiloSettings = Weasel.Core.Sequences.IReadOnlyHiloSettings;
 global using HiloSettings = Weasel.Core.Sequences.HiloSettings;
+//   #273: Polecat.Serialization.ISerializer now extends the shared Weasel.Core.ISerializer base.
+//     Alias the unqualified name to Polecat's richer subtype so files importing both namespaces
+//     keep resolving ISerializer to Polecat's (which carries the string-based overloads too).
+global using ISerializer = Polecat.Serialization.ISerializer;
