@@ -12,3 +12,6 @@ global using IVersioned = JasperFx.Metadata.IVersioned;
 global using ITracked = JasperFx.Metadata.ITracked;
 global using RemoveAction = JasperFx.Events.RemoveAction;
 global using TrackLevel = JasperFx.OpenTelemetry.TrackLevel;
+
+// #273: Polecat.Serialization.ISerializer now extends Weasel.Core.ISerializer; alias to the subtype.
+global using ISerializer = Polecat.Serialization.ISerializer;
