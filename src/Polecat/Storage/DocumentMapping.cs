@@ -1,7 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
-using System.Linq.Expressions;
 using System.Reflection;
-using FastExpressionCompiler;
 using JasperFx;
 using JasperFx.Core.Reflection;
 using Polecat.Attributes;
@@ -19,7 +17,7 @@ namespace Polecat.Storage;
 [UnconditionalSuppressMessage("Trimming", "IL2070:DynamicallyAccessedMembers",
     Justification = "Class-level: reflects PublicProperties on the document Type (FindIdProperty, DiscoverIndexAttributes). The document type is preserved at the registration boundary (Schema.For<T>()), where T flows in from caller code that trimming sees.")]
 [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
-    Justification = "Class-level: the id accessor delegates (BuildPropertyAccessors / BuildWrapper / BuildUnwrapper) compile expression trees with FastExpressionCompiler once per document type at registration — the same FEC accessor strategy Marten's closed-shape storage uses. AOT consumers supply a source-generator-backed serializer per the AOT publishing guide; the reflective serialize path is already the gating RUC/RDC surface.")]
+    Justification = "Class-level: the id accessors close JasperFx's LambdaBuilder / ValueTypeInfo generic converters over the runtime document + id types via MakeGenericMethod once per document type at registration — the same FEC accessor helpers and runtime generic-closing Marten's closed-shape storage / ProviderGraph use. AOT consumers supply a source-generator-backed serializer per the AOT publishing guide; the reflective serialize path is already the gating RUC/RDC surface.")]
 internal class DocumentMapping
 {
     private static readonly HashSet<Type> SupportedIdTypes =
@@ -66,11 +64,10 @@ internal class DocumentMapping
         IsNumericId = InnerIdType == typeof(int) || InnerIdType == typeof(long);
 
         // Compile the id accessor delegates once, now that _idProperty and ValueTypeId are settled.
-        (_idGetter, _idSetter) = BuildPropertyAccessors(_idProperty);
+        (_idGetter, _idSetter) = BuildRawIdAccessors(_idProperty);
         if (ValueTypeId != null)
         {
-            _idUnwrapper = BuildUnwrapper(ValueTypeId);
-            _idWrapper = BuildWrapper(ValueTypeId);
+            (_idUnwrapper, _idWrapper) = BuildStrongTypedIdConverters(ValueTypeId);
         }
 
         // Read HiloSequenceAttribute if present on numeric ID types
@@ -365,55 +362,60 @@ internal class DocumentMapping
         }
     }
 
+    // JasperFx's LambdaBuilder / ValueTypeInfo generate the FEC accessor delegates (the same helpers
+    // Marten's closed-shape storage uses), but they are typed-generic — LambdaBuilder.GetProperty
+    // requires TTarget to be the property's declaring type. DocumentMapping is non-generic, so each
+    // builder closes a small generic bridge over the runtime types via MakeGenericMethod (the same
+    // runtime generic-closing Marten's ProviderGraph performs) and adapts the typed delegate to object.
+
     /// <summary>
-    ///     Compiles boxed get/set delegates for a document's id property, replacing per-call reflection.
+    ///     Builds boxed get/set delegates for a document's id property via JasperFx's LambdaBuilder,
+    ///     replacing per-call reflection.
     /// </summary>
-    private static (Func<object, object?> getter, Action<object, object> setter) BuildPropertyAccessors(
+    [RequiresUnreferencedCode("Closes LambdaBuilder over the document + id types via MakeGenericMethod.")]
+    private static (Func<object, object?> getter, Action<object, object> setter) BuildRawIdAccessors(
         PropertyInfo property)
     {
-        var targetType = property.DeclaringType!;
+        var closed = typeof(DocumentMapping)
+            .GetMethod(nameof(RawIdAccessors), BindingFlags.NonPublic | BindingFlags.Static)!
+            .MakeGenericMethod(property.DeclaringType!, property.PropertyType);
+        return ((Func<object, object?>, Action<object, object>))closed.Invoke(null, [property])!;
+    }
 
-        var getDocument = Expression.Parameter(typeof(object), "document");
-        var getBody = Expression.Convert(
-            Expression.Property(Expression.Convert(getDocument, targetType), property),
-            typeof(object));
-        var getter = Expression.Lambda<Func<object, object?>>(getBody, getDocument).CompileFast();
-
-        var setDocument = Expression.Parameter(typeof(object), "document");
-        var setValue = Expression.Parameter(typeof(object), "value");
-        var setBody = Expression.Assign(
-            Expression.Property(Expression.Convert(setDocument, targetType), property),
-            Expression.Convert(setValue, property.PropertyType));
-        var setter = Expression.Lambda<Action<object, object>>(setBody, setDocument, setValue).CompileFast();
-
-        return (getter, setter);
+    [RequiresUnreferencedCode("Delegates to LambdaBuilder.GetProperty / SetProperty.")]
+    private static (Func<object, object?>, Action<object, object>) RawIdAccessors<TDoc, TId>(PropertyInfo property)
+        where TDoc : notnull
+    {
+        var getter = LambdaBuilder.GetProperty<TDoc, TId>(property);
+        var setter = LambdaBuilder.SetProperty<TDoc, TId>(property)!;
+        return (
+            document => getter((TDoc)document),
+            (document, value) => setter((TDoc)document, (TId)value));
     }
 
     /// <summary>
-    ///     Compiles a delegate that reads the inner value out of a strong-typed-id wrapper instance.
+    ///     Builds boxed unwrap (wrapper → inner) and wrap (inner → wrapper) delegates for a
+    ///     strongly-typed id via JasperFx's <see cref="ValueTypeInfo"/> converters.
     /// </summary>
-    private static Func<object, object> BuildUnwrapper(ValueTypeInfo valueType)
+    [RequiresUnreferencedCode("Closes ValueTypeInfo converters over the wrapper + inner types via MakeGenericMethod.")]
+    private static (Func<object, object> unwrapper, Func<object, object> wrapper) BuildStrongTypedIdConverters(
+        ValueTypeInfo valueType)
     {
-        var wrapper = Expression.Parameter(typeof(object), "wrapper");
-        var body = Expression.Convert(
-            Expression.Property(Expression.Convert(wrapper, valueType.OuterType), valueType.ValueProperty),
-            typeof(object));
-        return Expression.Lambda<Func<object, object>>(body, wrapper).CompileFast();
+        var closed = typeof(DocumentMapping)
+            .GetMethod(nameof(StrongTypedIdConverters), BindingFlags.NonPublic | BindingFlags.Static)!
+            .MakeGenericMethod(valueType.OuterType, valueType.SimpleType);
+        return ((Func<object, object>, Func<object, object>))closed.Invoke(null, [valueType])!;
     }
 
-    /// <summary>
-    ///     Compiles a delegate that wraps an inner value into its strong-typed-id wrapper, via the
-    ///     wrapper's constructor or its static builder method (whichever <see cref="ValueTypeInfo"/> found).
-    /// </summary>
-    private static Func<object, object> BuildWrapper(ValueTypeInfo valueType)
+    [RequiresUnreferencedCode("Delegates to ValueTypeInfo.UnWrapper / CreateWrapper.")]
+    private static (Func<object, object>, Func<object, object>) StrongTypedIdConverters<TOuter, TInner>(
+        ValueTypeInfo valueType)
     {
-        var inner = Expression.Parameter(typeof(object), "inner");
-        var innerValue = Expression.Convert(inner, valueType.SimpleType);
-        Expression construct = valueType.Ctor != null
-            ? Expression.New(valueType.Ctor, innerValue)
-            : Expression.Call(valueType.Builder!, innerValue);
-        return Expression.Lambda<Func<object, object>>(Expression.Convert(construct, typeof(object)), inner)
-            .CompileFast();
+        var unwrapper = valueType.UnWrapper<TOuter, TInner>();   // Func<TOuter, TInner>
+        var wrapper = valueType.CreateWrapper<TOuter, TInner>(); // Func<TInner, TOuter>
+        return (
+            outer => unwrapper((TOuter)outer)!,
+            inner => wrapper((TInner)inner)!);
     }
 
     public static PropertyInfo? FindIdProperty(Type type)
