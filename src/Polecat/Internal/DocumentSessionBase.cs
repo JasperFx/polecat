@@ -555,6 +555,10 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             // #238: emit the opt-in polecat.event.append OpenTelemetry counter, also before reset.
             RecordEventAppendMetrics();
 
+            // Snapshot the unit of work as an IChangeSet before the tracker is reset, so AfterCommit
+            // listeners can see what was inserted/updated/deleted in this save.
+            var commit = _workTracker.Clone();
+
             _workTracker.Reset();
 
             Logger.RecordSavedChanges(this);
@@ -562,12 +566,12 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             // Call AfterCommitAsync on all listeners (global then session)
             foreach (var listener in Options.Listeners)
             {
-                await listener.AfterCommitAsync(this, token);
+                await listener.AfterCommitAsync(this, commit, token);
             }
 
             foreach (var listener in _sessionListeners)
             {
-                await listener.AfterCommitAsync(this, token);
+                await listener.AfterCommitAsync(this, commit, token);
             }
 
             if (_inlineMessageBatch is not null)

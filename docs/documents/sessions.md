@@ -106,20 +106,25 @@ session.EjectAllPendingChanges();
 
 ## Session Listeners
 
-Implement `IDocumentSessionListener` to hook into session lifecycle events:
+Implement `IDocumentSessionListener` to hook into session lifecycle events. `AfterCommitAsync`
+receives an [`IChangeSet`](#the-ichangeset) describing everything that was written in the just-committed
+unit of work:
 
 ```cs
 public class AuditListener : IDocumentSessionListener
 {
     public Task BeforeSaveChangesAsync(IDocumentSession session, CancellationToken ct)
     {
-        // Called before the transaction begins
+        // Called before the transaction begins. Inspect the pending work via session.PendingChanges.
         return Task.CompletedTask;
     }
 
-    public Task AfterCommitAsync(IDocumentSession session, CancellationToken ct)
+    public Task AfterCommitAsync(IDocumentSession session, IChangeSet commit, CancellationToken ct)
     {
-        // Called after the transaction commits
+        // Called after the transaction commits. `commit` reports what changed.
+        foreach (var inserted in commit.Inserted) { /* ... */ }
+        foreach (var updated in commit.Updated) { /* ... */ }
+        foreach (var deleted in commit.Deleted) { /* deleted.DocumentType / deleted.Id */ }
         return Task.CompletedTask;
     }
 }
@@ -137,6 +142,32 @@ await using var session = store.LightweightSession(new SessionOptions
     Listeners = { new AuditListener() }
 });
 ```
+
+### The IChangeSet
+
+`IChangeSet` is a snapshot of a single committed unit of work, handed to both `IDocumentSessionListener`
+(session saves) and `IChangeListener` (async daemon batches — see
+[Listening for Async Daemon Events](/events/projections/async-daemon#listening-for-daemon-commits)):
+
+```cs
+public interface IChangeSet
+{
+    IEnumerable<object> Updated { get; }       // Update/Upsert operations
+    IEnumerable<object> Inserted { get; }      // Insert operations
+    IEnumerable<IDeletion> Deleted { get; }    // Deletions (DocumentType + Id)
+
+    IEnumerable<IEvent> GetEvents();           // events appended this unit of work
+    IEnumerable<StreamAction> GetStreams();    // stream actions this unit of work
+
+    IChangeSet Clone();
+}
+```
+
+::: warning
+The live change set is reset immediately after each commit. If you retain it beyond the
+`AfterCommitAsync` call (e.g. to hand off to background work), call `commit.Clone()` first to take an
+immutable copy.
+:::
 
 ## Request Counting
 

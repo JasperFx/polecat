@@ -1,12 +1,15 @@
 using JasperFx.Events;
 using Polecat.Internal;
+using Polecat.Services;
 
 namespace Polecat;
 
 /// <summary>
-///     Public read-only view of pending operations in a document session.
+///     Public read-only view of pending operations in a document session. Also exposes the pending
+///     work as an <see cref="IChangeSet" /> (Inserted/Updated/Deleted/events), mirroring Marten's
+///     <c>ISessionWorkTracker : IUnitOfWork, IChangeSet</c>.
 /// </summary>
-public interface IWorkTracker
+public interface IWorkTracker : IChangeSet
 {
     /// <summary>
     ///     All pending storage operations.

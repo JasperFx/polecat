@@ -9,7 +9,7 @@ using Weasel.SqlServer;
 
 namespace Polecat.Internal.Operations;
 
-internal class InsertOperation : IStorageOperation
+internal class InsertOperation : IDocumentStorageOperation
 {
     private readonly object _document;
     private readonly object _id;

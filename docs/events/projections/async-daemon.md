@@ -97,6 +97,62 @@ Track daemon progress:
 
 The high water mark detector uses SQL Server's `LEAD()` window function to detect sequence gaps in the event log. This prevents the daemon from processing events out of order when concurrent writers create gaps.
 
+## Listening for Daemon Commits
+
+Sometimes you need to run a side effect **after** an aggregate has been durably updated by the async
+daemon — the canonical case is invalidating a cache key. Doing this before the commit would open a
+window where a concurrent read could repopulate the cache with stale state. Subscriptions, composite
+projections, and projection side effects all run *before* the batch is committed, so they can't close
+that window.
+
+Register an `IChangeListener` on `Projections.AsyncListeners` to hook the commit boundary of each
+daemon projection batch:
+
+```cs
+public class CacheFlushingListener : IChangeListener
+{
+    // Runs AFTER the batch is committed → "at most once". Ideal for cache invalidation.
+    public async Task AfterCommitAsync(IDocumentSession session, IChangeSet commit, CancellationToken token)
+    {
+        foreach (var party in commit.Updated.OfType<QuestParty>())
+        {
+            await _cache.RemoveAsync($"quest-party:{party.Id}", token);
+        }
+    }
+
+    // Runs BEFORE the batch is committed → "at least once".
+    public Task BeforeCommitAsync(IDocumentSession session, IChangeSet commit, CancellationToken token)
+        => Task.CompletedTask;
+}
+```
+
+```cs
+var store = DocumentStore.For(opts =>
+{
+    opts.ConnectionString = connectionString;
+    opts.Projections.Snapshot<QuestParty>(SnapshotLifecycle.Async);
+
+    // Fires only within the async daemon, once per committed projection batch
+    opts.Projections.AsyncListeners.Add(new CacheFlushingListener());
+});
+```
+
+The `commit` parameter is an [`IChangeSet`](/documents/sessions#the-ichangeset) describing the projected
+documents written in that batch (`Inserted` / `Updated` / `Deleted`).
+
+Delivery semantics mirror Marten:
+
+- **`AfterCommitAsync`** runs once, *after* the transaction commits — **at most once**. A faulting
+  after-commit listener is swallowed so the batch is not reprocessed (which would re-fire the side
+  effect); the data is already durable.
+- **`BeforeCommitAsync`** runs *before* the commit — **at least once**. A throw here aborts the batch
+  before anything is committed.
+
+::: tip
+Async listeners are **suppressed during projection rebuilds**. A full replay re-applies every event,
+so firing post-commit side effects for each historical batch is almost never what you want.
+:::
+
 ## Error Handling
 
 The daemon uses Polly resilience pipelines for error handling. See [Resiliency Policies](/configuration/retries) for configuration.
