@@ -1,5 +1,6 @@
 using JasperFx.Events;
 using System.Collections.Immutable;
+using Polecat.Services;
 
 namespace Polecat.Internal;
 
@@ -46,6 +47,15 @@ internal class WorkTracker : IWorkTracker
                 || _streams.Any(x =>
                     x.Events.Count > 0 || x.AlwaysEnforceConsistency);
     }
+
+    // IChangeSet — a live view over the current unit of work. Callers retaining it past the commit
+    // boundary must Clone() first, because the tracker is Reset() after each commit.
+    public IEnumerable<object> Updated => ChangeSet.UpdatedFrom(Operations);
+    public IEnumerable<object> Inserted => ChangeSet.InsertedFrom(Operations);
+    public IEnumerable<IDeletion> Deleted => ChangeSet.DeletedFrom(Operations);
+    public IEnumerable<IEvent> GetEvents() => Streams.SelectMany(x => x.Events);
+    public IEnumerable<StreamAction> GetStreams() => Streams;
+    public IChangeSet Clone() => new ChangeSet(Operations, Streams);
 
     public void Add(IStorageOperation operation)
     {

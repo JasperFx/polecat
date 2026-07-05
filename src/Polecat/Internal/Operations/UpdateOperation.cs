@@ -7,7 +7,7 @@ using Weasel.SqlServer;
 
 namespace Polecat.Internal.Operations;
 
-internal class UpdateOperation : IStorageOperation
+internal class UpdateOperation : IDocumentStorageOperation
 {
     private readonly object _document;
     private readonly object _id;

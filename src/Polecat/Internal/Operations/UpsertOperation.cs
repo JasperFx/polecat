@@ -7,7 +7,7 @@ using Weasel.SqlServer;
 
 namespace Polecat.Internal.Operations;
 
-internal class UpsertOperation : IStorageOperation
+internal class UpsertOperation : IDocumentStorageOperation
 {
     private readonly object _document;
     private readonly object _id;

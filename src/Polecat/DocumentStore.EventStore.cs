@@ -126,7 +126,7 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
             AsyncOptions projectionOptions, CancellationToken token)
     {
         var connStr = database is PolecatDatabase pdb ? pdb.ConnectionString : Options.ConnectionString;
-        var batch = new PolecatProjectionBatch(this, Events, connStr);
+        var batch = new PolecatProjectionBatch(this, Events, connStr, mode);
         await batch.RecordProgress(range);
 
         // #259: when rebuilding a snapshot whose aggregate has a [NaturalKey], re-emit the natural-key
@@ -528,7 +528,7 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
         ShardExecutionMode mode, CancellationToken token)
     {
         var connStr = ResolveConnectionString(database, Options);
-        var batch = new PolecatProjectionBatch(this, Events, connStr);
+        var batch = new PolecatProjectionBatch(this, Events, connStr, mode);
         await batch.RecordProgress(range);
 
         // Create a session the subscription can use for reads/writes,
@@ -543,7 +543,7 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
         // Invoke post-commit listener if provided
         if (listener is not NullChangeListener)
         {
-            await listener.AfterCommitAsync(token);
+            await listener.AfterCommitAsync(session, batch.Commit!, token);
         }
     }
 

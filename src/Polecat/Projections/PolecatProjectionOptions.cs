@@ -32,6 +32,15 @@ public class PolecatProjectionOptions
     internal void SetStoreOptions(StoreOptions options) => _storeOptions = options;
 
     /// <summary>
+    ///     Register <see cref="IChangeListener" />s that fire ONLY within the async daemon, at the commit
+    ///     boundary of each projection batch. Use these for post-commit side effects — such as flushing a
+    ///     cache after an aggregate snapshot has been durably updated — that must not run before the
+    ///     database commit. Mirrors Marten's <c>Projections.AsyncListeners</c>. Listeners are suppressed
+    ///     during projection rebuilds.
+    /// </summary>
+    public List<IChangeListener> AsyncListeners { get; } = new();
+
+    /// <summary>
     ///     Opt into a performance optimization that directs Polecat to use a session-level
     ///     identity map for aggregates fetched via FetchForWriting() or FetchLatest().
     ///     See <see cref="EventGraph.UseIdentityMapForAggregates"/> for details.

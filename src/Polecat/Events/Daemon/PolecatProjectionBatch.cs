@@ -9,6 +9,7 @@ using Polly;
 using Polecat.Events.Aggregation;
 using Polecat.Internal;
 using Polecat.Internal.Operations;
+using Polecat.Services;
 using Weasel.SqlServer;
 
 namespace Polecat.Events.Daemon;
@@ -24,9 +25,14 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
     private readonly DocumentStore _store;
     private readonly EventGraph _events;
     private readonly string _connectionString;
+    private readonly ShardExecutionMode _mode;
     private readonly ResiliencePipeline _resilience;
     private readonly ConcurrentBag<IDocumentSession> _sessions = new();
     private readonly ConcurrentQueue<IStorageOperation> _progressOps = new();
+
+    // The change set committed by this batch, populated during ExecuteAsync. Exposed so the
+    // subscription runner can hand it to the IChangeListener returned by ProcessEventsAsync.
+    public IChangeSet? Commit { get; private set; }
 
     // Lazily created on first PublishMessageAsync call; reused for every
     // subsequent publish in this batch. Stays null when no projection
@@ -35,11 +41,13 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
     private IMessageBatch? _messageBatch;
     private readonly SemaphoreSlim _messageBatchGate = new(1, 1);
 
-    public PolecatProjectionBatch(DocumentStore store, EventGraph events, string connectionString)
+    public PolecatProjectionBatch(DocumentStore store, EventGraph events, string connectionString,
+        ShardExecutionMode mode = ShardExecutionMode.Continuous)
     {
         _store = store;
         _events = events;
         _connectionString = connectionString;
+        _mode = mode;
         _resilience = store.Options.ResiliencePipeline;
     }
 
@@ -107,9 +115,41 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
             allOps.Add(progressOp);
         }
 
+        // Snapshot the committed change set (document ops + any stream actions) so both the async
+        // IChangeListeners below and the subscription runner (via Commit) can see what changed.
+        var streams = _sessions
+            .OfType<DocumentSessionBase>()
+            .SelectMany(s => s.WorkTracker.Streams)
+            .ToList();
+        Commit = new ChangeSet(allOps, streams);
+
         if (allOps.Count == 0 && !_sessions.Any(s => s is DocumentSessionBase sb && sb.TransactionParticipants.Any()))
         {
             return;
+        }
+
+        // Async daemon commit listeners (Projections.AsyncListeners). Suppressed during rebuilds so a
+        // full replay does not re-fire post-commit side effects (mirrors Marten's ShouldApplyListeners).
+        var asyncListeners = _store.Options.Projections.AsyncListeners;
+        var applyListeners = _mode != ShardExecutionMode.Rebuild && asyncListeners.Count > 0;
+        IDocumentSession? listenerSession = null;
+        if (applyListeners)
+        {
+            // Any tenant session works for the listener's reads/writes; create a throwaway (tracked for
+            // disposal) if this batch only produced progress rows.
+            listenerSession = _sessions.FirstOrDefault();
+            if (listenerSession == null)
+            {
+                listenerSession = _store.LightweightSession();
+                _sessions.Add(listenerSession);
+            }
+
+            // BeforeCommit runs before the DB commit → "at least once". A throw here aborts the batch
+            // before anything is committed, so the exception is allowed to propagate.
+            foreach (var listener in asyncListeners)
+            {
+                await listener.BeforeCommitAsync(listenerSession, Commit, token).ConfigureAwait(false);
+            }
         }
 
         // Collect transaction participants outside the lambda
@@ -207,6 +247,25 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
         if (messageBatch is not null)
         {
             await messageBatch.AfterCommitAsync(token).ConfigureAwait(false);
+        }
+
+        // AfterCommit runs once, after the transaction is durably committed → "at most once". A faulting
+        // listener must not fail the batch (which would reprocess the page and re-fire side effects), so
+        // exceptions are suppressed best-effort — matching Marten's protective daemon behavior.
+        if (applyListeners)
+        {
+            foreach (var listener in asyncListeners)
+            {
+                try
+                {
+                    await listener.AfterCommitAsync(listenerSession!, Commit, token).ConfigureAwait(false);
+                }
+                catch
+                {
+                    // best-effort: the commit already succeeded; a listener fault is swallowed so the
+                    // shard is not marked failed and the batch is not reprocessed.
+                }
+            }
         }
     }
 
