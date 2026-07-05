@@ -25,7 +25,6 @@
     <ItemGroup>
         <ProjectReference Include="..\Polecat.TestUtils\Polecat.TestUtils.csproj" />
         <ProjectReference Include="..\Polecat\Polecat.csproj" />
-        <ProjectReference Include="..\Polecat.CodeGeneration\Polecat.CodeGeneration.csproj" />
         <PackageReference Include="JasperFx.Events.SourceGenerator" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
     </ItemGroup>
 

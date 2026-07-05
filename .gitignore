@@ -413,3 +413,8 @@ results/
 
 # Claude Code session data / worktrees
 .claude/
+
+# Local-only NuGet config for cross-repo dev (absolute local feed path; must not reach CI)
+nuget.config
+NuGet.config
+publish-local-nugets.sh

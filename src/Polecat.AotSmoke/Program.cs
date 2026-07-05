@@ -19,9 +19,11 @@
 //   - DocumentStore.LightweightSession() called from outside DI (we go through
 //     ISessionFactory so the AddPolecat extension is what's gated).
 //   - SaveChangesAsync / session command execution (would require a real DB and
-//     is on the codegen path — Polecat.CodeGeneration provides the static
-//     manifest for AOT consumers).
-//   - Async daemon / projection runtime (also codegen-backed).
+//     runs through reflection-based DocumentMapping + the STJ serializer, which
+//     carry the RUC/RDC annotations we don't exercise here).
+//   - Async daemon / projection runtime (projection dispatch is source-generated
+//     by JasperFx.Events.SourceGenerator, exercised via the concrete projection
+//     registration below).
 
 using JasperFx.Events.Projections;
 using Microsoft.Extensions.DependencyInjection;
