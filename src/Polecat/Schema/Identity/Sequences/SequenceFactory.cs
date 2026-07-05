@@ -1,9 +1,12 @@
 using System.Collections.Concurrent;
 using Polecat.Internal;
+using Weasel.Core.Sequences;
 
 namespace Polecat.Schema.Identity.Sequences;
 
-internal class SequenceFactory
+// #273: implements the Weasel.Core ISequenceSource seam (SequenceFor(Type) -> ISequence, already
+// present) so the shared Weasel.Core.Identity strategies can resolve Hi-Lo sequences through it.
+internal class SequenceFactory : ISequenceSource
 {
     private readonly ConcurrentDictionary<string, ISequence> _sequences = new();
     private readonly ConnectionFactory _connectionFactory;
