@@ -94,27 +94,11 @@ public class AdvancedOperations
         var rows = new List<(object Id, string Json, string DotNetType)>(documents.Count);
         foreach (var doc in documents)
         {
-            // Auto-assign Guid for strongly typed Guid wrappers when default
-            if (mapping.IsStrongTypedId && mapping.InnerIdType == typeof(Guid))
+            // #273: route id generation through the shared Weasel.Core.Identity strategy, same as
+            // single-doc Store, so bulk insert and single-doc stay consistent (Guid → UUIDv7, etc.).
+            if (provider.SequenceSource is not null)
             {
-                var currentId = mapping.GetId(doc);
-                if ((Guid)currentId == Guid.Empty)
-                {
-                    mapping.SetId(doc, Internal.SequentialGuid.NewGuid());
-                }
-            }
-            // Assign HiLo ID if needed
-            else if (mapping.IsNumericId && provider.Sequence != null)
-            {
-                var currentId = mapping.GetId(doc);
-                if (mapping.InnerIdType == typeof(int) && (int)currentId <= 0)
-                {
-                    mapping.SetId(doc, provider.Sequence.NextInt());
-                }
-                else if (mapping.InnerIdType == typeof(long) && (long)currentId <= 0)
-                {
-                    mapping.SetId(doc, provider.Sequence.NextLong());
-                }
+                mapping.AssignIdIfMissing(doc, provider.SequenceSource);
             }
 
             // Sync metadata
@@ -206,25 +190,10 @@ public class AdvancedOperations
         var rows = new List<(object Id, string Json, string DotNetType, long ExpectedVersion)>(documents.Count);
         foreach (var (doc, expectedVersion) in documents)
         {
-            if (mapping.IsStrongTypedId && mapping.InnerIdType == typeof(Guid))
+            // #273: route id generation through the shared Weasel.Core.Identity strategy (see above).
+            if (provider.SequenceSource is not null)
             {
-                var currentId = mapping.GetId(doc);
-                if ((Guid)currentId == Guid.Empty)
-                {
-                    mapping.SetId(doc, Internal.SequentialGuid.NewGuid());
-                }
-            }
-            else if (mapping.IsNumericId && provider.Sequence != null)
-            {
-                var currentId = mapping.GetId(doc);
-                if (mapping.InnerIdType == typeof(int) && (int)currentId <= 0)
-                {
-                    mapping.SetId(doc, provider.Sequence.NextInt());
-                }
-                else if (mapping.InnerIdType == typeof(long) && (long)currentId <= 0)
-                {
-                    mapping.SetId(doc, provider.Sequence.NextLong());
-                }
+                mapping.AssignIdIfMissing(doc, provider.SequenceSource);
             }
 
             if (doc is ITenanted tenanted)

@@ -64,10 +64,17 @@ internal class DocumentProviderRegistry
 
             var provider = new DocumentProvider(mapping);
 
-            if (mapping.IsNumericId && _sequenceFactory != null)
+            if (_sequenceFactory != null)
             {
-                var settings = mapping.HiloSettings ?? _options.HiloSequenceDefaults;
-                provider.Sequence = _sequenceFactory.Hilo(type, settings);
+                // #273: the sequence source drives the shared identity generation strategy for every
+                // id shape (Guid strategies ignore it; Hi-Lo strategies resolve their sequence from it).
+                provider.SequenceSource = _sequenceFactory;
+
+                if (mapping.IsNumericId)
+                {
+                    var settings = mapping.HiloSettings ?? _options.HiloSequenceDefaults;
+                    provider.Sequence = _sequenceFactory.Hilo(type, settings);
+                }
             }
 
             return provider;

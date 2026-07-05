@@ -3,9 +3,12 @@ using System.Reflection;
 using JasperFx;
 using JasperFx.Core.Reflection;
 using Polecat.Attributes;
+using Polecat.Internal;
 using Polecat.Metadata;
 using Polecat.Schema.Identity.Sequences;
 using Polecat.Storage.Metadata;
+using Weasel.Core.Identity;
+using Weasel.Core.Sequences;
 
 namespace Polecat.Storage;
 
@@ -34,6 +37,10 @@ internal class DocumentMapping
     private readonly Action<object, object> _idSetter;
     private readonly Func<object, object>? _idUnwrapper;
     private readonly Func<object, object>? _idWrapper;
+
+    // #273: the shared Weasel.Core.Identity generation strategy for this document type, wrapped in a
+    // non-generic adapter. Null for externally-assigned ids (string) that Polecat never auto-generates.
+    private readonly IIdentityAssigner? _identityAssigner;
 
     public DocumentMapping(Type documentType, StoreOptions options)
     {
@@ -69,6 +76,9 @@ internal class DocumentMapping
         {
             (_idUnwrapper, _idWrapper) = BuildStrongTypedIdConverters(ValueTypeId);
         }
+
+        // Resolve the shared Weasel.Core.Identity generation strategy for this id shape.
+        _identityAssigner = BuildIdentityAssigner();
 
         // Read HiloSequenceAttribute if present on numeric ID types
         if (IsNumericId)
@@ -360,6 +370,61 @@ internal class DocumentMapping
         {
             _idSetter(document, id);
         }
+    }
+
+    /// <summary>
+    ///     #273: generate and assign an id if the document doesn't have one, via the shared
+    ///     Weasel.Core.Identity strategy for this id shape. No-op for externally-assigned (string) ids.
+    /// </summary>
+    public void AssignIdIfMissing(object document, ISequenceSource sequences)
+        => _identityAssigner?.AssignIfMissing(document, sequences);
+
+    /// <summary>
+    ///     Picks and constructs the Weasel.Core.Identity strategy matching this document's id shape:
+    ///     strong-typed wrapper → ValueTypeIdentification; Guid → SequentialGuidIdentification (UUIDv7);
+    ///     int / long → Hi-Lo; string (externally assigned) → none.
+    /// </summary>
+    [RequiresUnreferencedCode("Closes the generic Weasel.Core.Identity strategy over the document + id types.")]
+    private IIdentityAssigner? BuildIdentityAssigner()
+    {
+        if (ValueTypeId != null)
+        {
+            var strategyType = typeof(ValueTypeIdentification<,,>)
+                .MakeGenericType(_documentType, ValueTypeId.OuterType, ValueTypeId.SimpleType);
+            var strategy = Activator.CreateInstance(strategyType, _idProperty, ValueTypeId, _documentType)!;
+            return CreateAssigner(_documentType, ValueTypeId.OuterType, strategy);
+        }
+
+        if (IdType == typeof(Guid))
+        {
+            var strategy = Activator.CreateInstance(
+                typeof(SequentialGuidIdentification<>).MakeGenericType(_documentType), _idProperty)!;
+            return CreateAssigner(_documentType, typeof(Guid), strategy);
+        }
+
+        if (IdType == typeof(int))
+        {
+            var strategy = Activator.CreateInstance(
+                typeof(HiloIntIdentification<>).MakeGenericType(_documentType), _idProperty, _documentType)!;
+            return CreateAssigner(_documentType, typeof(int), strategy);
+        }
+
+        if (IdType == typeof(long))
+        {
+            var strategy = Activator.CreateInstance(
+                typeof(HiloLongIdentification<>).MakeGenericType(_documentType), _idProperty, _documentType)!;
+            return CreateAssigner(_documentType, typeof(long), strategy);
+        }
+
+        // string ids are externally assigned in Polecat — no auto-generation.
+        return null;
+    }
+
+    [RequiresUnreferencedCode("Closes IdentityAssigner<TDoc,TId> over the document + id types.")]
+    private static IIdentityAssigner CreateAssigner(Type documentType, Type idType, object identification)
+    {
+        var assignerType = typeof(IdentityAssigner<,>).MakeGenericType(documentType, idType);
+        return (IIdentityAssigner)Activator.CreateInstance(assignerType, identification)!;
     }
 
     // JasperFx's LambdaBuilder / ValueTypeInfo generate the FEC accessor delegates (the same helpers

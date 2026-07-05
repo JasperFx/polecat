@@ -5,6 +5,7 @@ using Polecat.Metadata;
 using Polecat.Schema.Identity.Sequences;
 using Polecat.Serialization;
 using Polecat.Storage;
+using Weasel.Core.Sequences;
 
 namespace Polecat.Internal;
 
@@ -25,6 +26,11 @@ internal class DocumentProvider
 
     public DocumentMapping Mapping { get; }
     internal ISequence? Sequence { get; set; }
+
+    // #273: the store's sequence source, used by the shared Weasel.Core.Identity generation strategy
+    // (via DocumentMapping.AssignIdIfMissing). Set by the registry; present whenever a SequenceFactory
+    // is configured (always, in practice).
+    internal ISequenceSource? SequenceSource { get; set; }
 
     public string QualifiedTableName => Mapping.QualifiedTableName;
 
@@ -161,38 +167,12 @@ internal class DocumentProvider
 
     private void AssignIdIfNeeded(object document)
     {
-        // #218: auto-assign a new Guid when the id is default. This applies to BOTH a plain
-        // `Guid Id` property and strongly typed Guid wrappers — GetId/SetId already resolve the
-        // inner Guid for either, so gating on InnerIdType (not IsStrongTypedId) is what was missing:
-        // previously a plain Guid id fell through to the numeric branch and was never assigned,
-        // so documents persisted with Guid.Empty.
-        if (Mapping.InnerIdType == typeof(Guid))
+        // #273: id generation now runs through the shared Weasel.Core.Identity strategy resolved on the
+        // mapping (Guid → UUIDv7, int/long → Hi-Lo, strong-typed wrappers handled, string left external),
+        // replacing Polecat's bespoke per-type branching so single-doc and bulk-insert stay consistent.
+        if (SequenceSource is not null)
         {
-            var currentId = Mapping.GetId(document);
-            if ((Guid)currentId == Guid.Empty)
-            {
-                Mapping.SetId(document, SequentialGuid.NewGuid());
-            }
-
-            return;
-        }
-
-        if (Sequence == null || !Mapping.IsNumericId) return;
-
-        var numericId = Mapping.GetId(document);
-        if (Mapping.InnerIdType == typeof(int))
-        {
-            if ((int)numericId <= 0)
-            {
-                Mapping.SetId(document, Sequence.NextInt());
-            }
-        }
-        else if (Mapping.InnerIdType == typeof(long))
-        {
-            if ((long)numericId <= 0)
-            {
-                Mapping.SetId(document, Sequence.NextLong());
-            }
+            Mapping.AssignIdIfMissing(document, SequenceSource);
         }
     }
 }
