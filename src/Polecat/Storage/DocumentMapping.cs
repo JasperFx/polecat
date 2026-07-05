@@ -1,5 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Linq.Expressions;
 using System.Reflection;
+using FastExpressionCompiler;
 using JasperFx;
 using JasperFx.Core.Reflection;
 using Polecat.Attributes;
@@ -16,6 +18,8 @@ namespace Polecat.Storage;
     Justification = "Class-level: AddSubClassHierarchy uses Assembly.GetTypes() to discover subclasses; document hierarchies are part of the registered surface and AOT consumers must preserve subclass types via their JsonSerializerContext / per-type registration.")]
 [UnconditionalSuppressMessage("Trimming", "IL2070:DynamicallyAccessedMembers",
     Justification = "Class-level: reflects PublicProperties on the document Type (FindIdProperty, DiscoverIndexAttributes). The document type is preserved at the registration boundary (Schema.For<T>()), where T flows in from caller code that trimming sees.")]
+[UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+    Justification = "Class-level: the id accessor delegates (BuildPropertyAccessors / BuildWrapper / BuildUnwrapper) compile expression trees with FastExpressionCompiler once per document type at registration — the same FEC accessor strategy Marten's closed-shape storage uses. AOT consumers supply a source-generator-backed serializer per the AOT publishing guide; the reflective serialize path is already the gating RUC/RDC surface.")]
 internal class DocumentMapping
 {
     private static readonly HashSet<Type> SupportedIdTypes =
@@ -23,6 +27,15 @@ internal class DocumentMapping
 
     private readonly PropertyInfo _idProperty;
     private readonly Type _documentType;
+
+    // #273 Phase 2: FEC-compiled id accessors built once per document type at construction, replacing
+    // per-call PropertyInfo.GetValue/SetValue on the Store/Load/assign hot paths. _idGetter/_idSetter
+    // read/write the raw (possibly wrapper) id member; the wrap/unwrap delegates are non-null only for
+    // strongly-typed-id documents.
+    private readonly Func<object, object?> _idGetter;
+    private readonly Action<object, object> _idSetter;
+    private readonly Func<object, object>? _idUnwrapper;
+    private readonly Func<object, object>? _idWrapper;
 
     public DocumentMapping(Type documentType, StoreOptions options)
     {
@@ -51,6 +64,14 @@ internal class DocumentMapping
         }
 
         IsNumericId = InnerIdType == typeof(int) || InnerIdType == typeof(long);
+
+        // Compile the id accessor delegates once, now that _idProperty and ValueTypeId are settled.
+        (_idGetter, _idSetter) = BuildPropertyAccessors(_idProperty);
+        if (ValueTypeId != null)
+        {
+            _idUnwrapper = BuildUnwrapper(ValueTypeId);
+            _idWrapper = BuildWrapper(ValueTypeId);
+        }
 
         // Read HiloSequenceAttribute if present on numeric ID types
         if (IsNumericId)
@@ -302,16 +323,11 @@ internal class DocumentMapping
     /// </summary>
     public object GetId(object document)
     {
-        var raw = _idProperty.GetValue(document)
+        var raw = _idGetter(document)
             ?? throw new InvalidOperationException(
                 $"Document of type '{_documentType.Name}' has a null Id.");
 
-        if (ValueTypeId != null)
-        {
-            return ValueTypeId.ValueProperty.GetValue(raw)!;
-        }
-
-        return raw;
+        return _idUnwrapper != null ? _idUnwrapper(raw) : raw;
     }
 
     /// <summary>
@@ -320,7 +336,7 @@ internal class DocumentMapping
     /// </summary>
     public object GetRawId(object document)
     {
-        return _idProperty.GetValue(document)
+        return _idGetter(document)
             ?? throw new InvalidOperationException(
                 $"Document of type '{_documentType.Name}' has a null Id.");
     }
@@ -330,34 +346,74 @@ internal class DocumentMapping
     /// </summary>
     public void SetId(object document, object id)
     {
-        if (ValueTypeId != null)
+        if (_idWrapper != null)
         {
-            // If id is already the wrapper type (e.g., PaymentId), use it directly
-            var idActualType = id.GetType();
+            // If id is already the wrapper type (e.g., PaymentId), set it directly
             var wrapperType = Nullable.GetUnderlyingType(IdType) ?? IdType;
-            if (idActualType == wrapperType)
+            if (id.GetType() == wrapperType)
             {
-                _idProperty.SetValue(document, id);
+                _idSetter(document, id);
                 return;
             }
 
-            // Wrap: Guid → OrderId
-            object wrapped;
-            if (ValueTypeId.Ctor != null)
-            {
-                wrapped = ValueTypeId.Ctor.Invoke([id]);
-            }
-            else
-            {
-                wrapped = ValueTypeId.Builder!.Invoke(null, [id])!;
-            }
-
-            _idProperty.SetValue(document, wrapped);
+            // Wrap the inner value (e.g., Guid → OrderId) then set
+            _idSetter(document, _idWrapper(id));
         }
         else
         {
-            _idProperty.SetValue(document, id);
+            _idSetter(document, id);
         }
+    }
+
+    /// <summary>
+    ///     Compiles boxed get/set delegates for a document's id property, replacing per-call reflection.
+    /// </summary>
+    private static (Func<object, object?> getter, Action<object, object> setter) BuildPropertyAccessors(
+        PropertyInfo property)
+    {
+        var targetType = property.DeclaringType!;
+
+        var getDocument = Expression.Parameter(typeof(object), "document");
+        var getBody = Expression.Convert(
+            Expression.Property(Expression.Convert(getDocument, targetType), property),
+            typeof(object));
+        var getter = Expression.Lambda<Func<object, object?>>(getBody, getDocument).CompileFast();
+
+        var setDocument = Expression.Parameter(typeof(object), "document");
+        var setValue = Expression.Parameter(typeof(object), "value");
+        var setBody = Expression.Assign(
+            Expression.Property(Expression.Convert(setDocument, targetType), property),
+            Expression.Convert(setValue, property.PropertyType));
+        var setter = Expression.Lambda<Action<object, object>>(setBody, setDocument, setValue).CompileFast();
+
+        return (getter, setter);
+    }
+
+    /// <summary>
+    ///     Compiles a delegate that reads the inner value out of a strong-typed-id wrapper instance.
+    /// </summary>
+    private static Func<object, object> BuildUnwrapper(ValueTypeInfo valueType)
+    {
+        var wrapper = Expression.Parameter(typeof(object), "wrapper");
+        var body = Expression.Convert(
+            Expression.Property(Expression.Convert(wrapper, valueType.OuterType), valueType.ValueProperty),
+            typeof(object));
+        return Expression.Lambda<Func<object, object>>(body, wrapper).CompileFast();
+    }
+
+    /// <summary>
+    ///     Compiles a delegate that wraps an inner value into its strong-typed-id wrapper, via the
+    ///     wrapper's constructor or its static builder method (whichever <see cref="ValueTypeInfo"/> found).
+    /// </summary>
+    private static Func<object, object> BuildWrapper(ValueTypeInfo valueType)
+    {
+        var inner = Expression.Parameter(typeof(object), "inner");
+        var innerValue = Expression.Convert(inner, valueType.SimpleType);
+        Expression construct = valueType.Ctor != null
+            ? Expression.New(valueType.Ctor, innerValue)
+            : Expression.Call(valueType.Builder!, innerValue);
+        return Expression.Lambda<Func<object, object>>(Expression.Convert(construct, typeof(object)), inner)
+            .CompileFast();
     }
 
     public static PropertyInfo? FindIdProperty(Type type)
