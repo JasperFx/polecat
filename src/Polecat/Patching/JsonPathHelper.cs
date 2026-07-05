@@ -2,6 +2,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using System.Reflection;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace Polecat.Patching;
 
@@ -14,13 +15,6 @@ namespace Polecat.Patching;
 internal static class JsonPathHelper
 {
     public static string ToPath(Expression expression, JsonNamingPolicy? namingPolicy)
-    {
-        var members = ExtractMembers(expression);
-        var segments = members.Select(m => FormatName(m, namingPolicy));
-        return string.Join(".", segments);
-    }
-
-    private static List<string> ExtractMembers(Expression expression)
     {
         // Unwrap lambda
         if (expression is LambdaExpression lambda)
@@ -35,28 +29,31 @@ internal static class JsonPathHelper
         }
 
         var segments = new List<string>();
-        CollectSegments(expression, segments);
-        return segments;
+        CollectSegments(expression, segments, namingPolicy);
+        return string.Join(".", segments);
     }
 
-    private static void CollectSegments(Expression expression, List<string> segments)
+    private static void CollectSegments(Expression expression, List<string> segments,
+        JsonNamingPolicy? namingPolicy)
     {
         switch (expression)
         {
             case MemberExpression member:
                 if (member.Expression is not ParameterExpression)
                 {
-                    CollectSegments(member.Expression!, segments);
+                    CollectSegments(member.Expression!, segments, namingPolicy);
                 }
 
-                segments.Add(member.Member.Name);
+                segments.Add(FormatMember(member.Member, namingPolicy));
                 break;
 
             case MethodCallExpression methodCall when IsDictionaryIndexer(methodCall):
                 // Dictionary indexer: x.Dict["key"] or x.Dict[variable]
-                CollectSegments(methodCall.Object!, segments);
+                CollectSegments(methodCall.Object!, segments, namingPolicy);
                 var key = EvaluateExpression(methodCall.Arguments[0]);
-                segments.Add(key?.ToString() ?? throw new InvalidOperationException("Dictionary key cannot be null."));
+                segments.Add(FormatName(
+                    key?.ToString() ?? throw new InvalidOperationException("Dictionary key cannot be null."),
+                    namingPolicy));
                 break;
 
             case ParameterExpression:
@@ -108,6 +105,22 @@ internal static class JsonPathHelper
         var lambda = Expression.Lambda(expression);
         var compiled = lambda.Compile();
         return compiled.DynamicInvoke();
+    }
+
+    /// <summary>
+    ///     #270: resolves the JSON key for a member exactly as System.Text.Json serializes it — an
+    ///     explicit [JsonPropertyName] wins verbatim over the naming policy, otherwise the configured
+    ///     naming policy is applied — so a patch targets the same key the document was written with.
+    /// </summary>
+    private static string FormatMember(MemberInfo member, JsonNamingPolicy? namingPolicy)
+    {
+        var attribute = member.GetCustomAttribute<JsonPropertyNameAttribute>();
+        if (attribute != null)
+        {
+            return attribute.Name;
+        }
+
+        return FormatName(member.Name, namingPolicy);
     }
 
     private static string FormatName(string clrName, JsonNamingPolicy? namingPolicy)

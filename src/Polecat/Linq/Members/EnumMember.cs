@@ -1,4 +1,6 @@
+using System.Reflection;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Weasel.Core;
 
 namespace Polecat.Linq.Members;
@@ -72,7 +74,22 @@ internal class EnumMember : IQueryableMember
             name = Enum.GetName(MemberType, value) ?? value.ToString();
         }
 
-        return _namingPolicy != null && name != null
+        if (name == null)
+        {
+            return null;
+        }
+
+        // #270: an explicit [JsonStringEnumMemberName] on the enum member wins verbatim over the
+        // naming policy — STJ's JsonStringEnumConverter serializes the attribute name as-is and does
+        // NOT apply the policy on top of it, so the predicate literal must not either.
+        var field = MemberType.GetField(name);
+        var attribute = field?.GetCustomAttribute<JsonStringEnumMemberNameAttribute>();
+        if (attribute != null)
+        {
+            return attribute.Name;
+        }
+
+        return _namingPolicy != null
             ? _namingPolicy.ConvertName(name)
             : name;
     }
