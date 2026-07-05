@@ -1,6 +1,7 @@
 using System.Linq.Expressions;
 using System.Reflection;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using JasperFx.Core.Reflection;
 using Polecat.Serialization;
 using Polecat.Storage;
@@ -133,7 +134,7 @@ internal class MemberFactory : IMemberResolver
 
         while (current != null)
         {
-            segments.Insert(0, GetJsonPropertyName(current.Member.Name));
+            segments.Insert(0, GetJsonPropertyName(current.Member));
 
             if (current.Expression is ParameterExpression)
                 break;
@@ -144,9 +145,20 @@ internal class MemberFactory : IMemberResolver
         return "$." + string.Join(".", segments);
     }
 
-    private string GetJsonPropertyName(string clrPropertyName)
+    /// <summary>
+    ///     #270: resolves the JSON key for a member exactly as System.Text.Json serializes it — an
+    ///     explicit [JsonPropertyName] wins verbatim over the naming policy (STJ does NOT apply the
+    ///     policy on top of an explicit name), otherwise the configured naming policy is applied.
+    /// </summary>
+    private string GetJsonPropertyName(MemberInfo member)
     {
-        return _namingPolicy?.ConvertName(clrPropertyName) ?? clrPropertyName;
+        var attribute = member.GetCustomAttribute<JsonPropertyNameAttribute>();
+        if (attribute != null)
+        {
+            return attribute.Name;
+        }
+
+        return _namingPolicy?.ConvertName(member.Name) ?? member.Name;
     }
 
     private static Type GetMemberType(MemberInfo member)
