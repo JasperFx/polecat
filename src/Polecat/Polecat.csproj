@@ -37,6 +37,9 @@
         <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
         <PackageReference Include="Polly.Core" />
         <PackageReference Include="Weasel.SqlServer" />
+        <!-- #273: dialect-neutral closed-shape storage contracts extracted from Marten
+             (marten#4821/#4830 → weasel#329/#331) — the shared runtime Polecat retargets onto. -->
+        <PackageReference Include="Weasel.Storage" />
     </ItemGroup>
 
     <!-- #196 (mirrors JasperFx/marten#4557): Bundle the JasperFx.Events.SourceGenerator

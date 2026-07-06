@@ -34,3 +34,7 @@ global using HiloSettings = Weasel.Core.Sequences.HiloSettings;
 //     Alias the unqualified name to Polecat's richer subtype so files importing both namespaces
 //     keep resolving ISerializer to Polecat's (which carries the string-based overloads too).
 global using ISerializer = Polecat.Serialization.ISerializer;
+//   #273 / Weasel 9.7.0 (weasel#327/#328): a shared dialect-neutral ICommandBuilder was added to
+//     Weasel.Core, and Weasel.SqlServer.ICommandBuilder now derives from it. Polecat's operations
+//     bind SqlParameters, so the unqualified name keeps resolving to the SqlServer subtype.
+global using ICommandBuilder = Weasel.SqlServer.ICommandBuilder;

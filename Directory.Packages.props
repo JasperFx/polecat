@@ -50,8 +50,13 @@
         <PackageVersion Include="Shouldly" Version="4.3.0" />
         <PackageVersion Include="xunit" Version="2.9.3" />
         <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.4" />
-        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.5.0" />
-        <PackageVersion Include="Weasel.SqlServer" Version="9.5.0" />
+        <!-- Weasel 9.8.0/9.9.0 introduce Weasel.Storage: the dialect-neutral closed-shape
+             storage contracts extracted from Marten (marten#4821/#4830, weasel#329/#331) —
+             IStorageSession / IStorageDatabase / IStorageSerializer / IDocumentStorage /
+             IStorageDialect. This is the shared runtime Polecat retargets onto for #273. -->
+        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.9.0" />
+        <PackageVersion Include="Weasel.SqlServer" Version="9.9.0" />
+        <PackageVersion Include="Weasel.Storage" Version="9.9.0" />
 
         <!-- Strongly typed IDs -->
         <PackageVersion Include="StronglyTypedId" Version="1.0.0-beta08" />

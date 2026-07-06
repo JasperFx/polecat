@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Data.Common;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
@@ -10,7 +11,13 @@ namespace Polecat.Serialization;
 /// <summary>
 ///     Default serializer implementation using System.Text.Json.
 /// </summary>
-public class Serializer : ISerializer
+/// <remarks>
+///     Also implements <see cref="Weasel.Storage.IStorageSerializer" /> — the dialect-neutral
+///     serializer seam of the shared closed-shape storage runtime (weasel#329/#331, #273) — so the
+///     default serializer plugs straight into the shared <c>IStorageSession</c> once Polecat's
+///     sessions retarget onto it.
+/// </remarks>
+public class Serializer : ISerializer, Weasel.Storage.IStorageSerializer
 {
     private JsonSerializerOptions _options;
     private EnumStorage _enumStorage = EnumStorage.AsInteger;
@@ -86,9 +93,63 @@ public class Serializer : ISerializer
 
     [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode", Justification = SharedSerializerSuppression)]
     [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode", Justification = SharedSerializerSuppression)]
-    public string ToJson(object document)
+    public string ToJson(object? document)
     {
-        return JsonSerializer.Serialize(document, document.GetType(), _options);
+        // object? satisfies both Weasel.Core.ISerializer.ToJson(object) and the wider
+        // Weasel.Storage.IStorageSerializer.ToJson(object?) with a single implementation.
+        return JsonSerializer.Serialize(document, document?.GetType() ?? typeof(object), _options);
+    }
+
+    // ---- Weasel.Storage.IStorageSerializer additions (beyond the Weasel.Core.ISerializer base) ----
+
+    /// <summary>
+    ///     STJ has no type-metadata pollution to strip, so "clean" JSON is identical to
+    ///     <see cref="ToJson" />. (The distinction exists on the shared seam for Newtonsoft's
+    ///     TypeNameHandling.)
+    /// </summary>
+    [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode", Justification = SharedSerializerSuppression)]
+    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode", Justification = SharedSerializerSuppression)]
+    public string ToCleanJson(object? document)
+    {
+        return ToJson(document);
+    }
+
+    [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode", Justification = SharedSerializerSuppression)]
+    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode", Justification = SharedSerializerSuppression)]
+    public void WriteTo(IBufferWriter<byte> writer, object? value)
+    {
+        using var jsonWriter = new Utf8JsonWriter(writer);
+        JsonSerializer.Serialize(jsonWriter, value, value?.GetType() ?? typeof(object), _options);
+    }
+
+    /// <summary>
+    ///     Writes the value's JSON to a database parameter. Polecat binds JSON as string parameter
+    ///     values throughout (SQL Server 2025's native JSON column type accepts nvarchar input), so
+    ///     this stays dialect-neutral with no SqlClient-specific typing.
+    /// </summary>
+    [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode", Justification = SharedSerializerSuppression)]
+    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode", Justification = SharedSerializerSuppression)]
+    public void WriteToParameter(DbParameter parameter, object? value)
+    {
+        parameter.Value = value is null ? DBNull.Value : ToJson(value);
+    }
+
+    [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode", Justification = SharedSerializerSuppression)]
+    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode", Justification = SharedSerializerSuppression)]
+    public async ValueTask<T> FromJsonAsync<T>(DbDataReader reader, int index,
+        CancellationToken cancellationToken = default)
+    {
+        var json = await reader.GetFieldValueAsync<string>(index, cancellationToken).ConfigureAwait(false);
+        return FromJson<T>(json);
+    }
+
+    [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode", Justification = SharedSerializerSuppression)]
+    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode", Justification = SharedSerializerSuppression)]
+    public async ValueTask<object> FromJsonAsync(Type type, DbDataReader reader, int index,
+        CancellationToken cancellationToken = default)
+    {
+        var json = await reader.GetFieldValueAsync<string>(index, cancellationToken).ConfigureAwait(false);
+        return FromJson(type, json);
     }
 
     [RequiresUnreferencedCode("STJ JsonSerializer.Deserialize<T> uses reflection over T.")]
