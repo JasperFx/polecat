@@ -25,7 +25,7 @@ namespace Polecat.Storage;
 ///     Implements IEventDatabase for async daemon infrastructure.
 /// </summary>
 public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IProjectionDatabase,
-    ICrossTenantRebuildSource
+    ICrossTenantRebuildSource, Weasel.Storage.IStorageDatabase
 {
     private readonly StoreOptions _options;
     private readonly EventGraph _events;
@@ -440,4 +440,47 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
             _options.ResiliencePipeline);
         return new PolecatProjectionDaemon(store, this, loggerFactory, detector);
     }
+
+    // ---- Weasel.Storage.IStorageDatabase (#273) ----
+    // The dialect-neutral database seam of the shared closed-shape storage runtime
+    // (weasel#329/#331). Sessions expose this through IStorageSession.Database once they
+    // retarget onto the shared contract.
+
+    /// <summary>
+    ///     The closed-shape provider graph. Not available until Polecat's document storage
+    ///     retargets onto the shared <c>Weasel.Storage</c> bases (#273 phases D/E) — Polecat's
+    ///     current per-type providers do not yet implement <c>IDocumentStorage&lt;T&gt;</c>.
+    /// </summary>
+    Weasel.Storage.IProviderGraph Weasel.Storage.IStorageDatabase.Providers =>
+        throw new NotSupportedException(
+            "The closed-shape IProviderGraph is not available until Polecat's document storage retargets onto the shared Weasel.Storage bases (JasperFx/polecat#273).");
+
+    /// <summary>
+    ///     Creates an unopened connection to this database (shared-runtime counterpart of
+    ///     <see cref="DatabaseBase{T}.CreateConnection" />). Callers own the connection and are
+    ///     responsible for resilience around its use.
+    /// </summary>
+    public System.Data.Common.DbConnection CreateStorageConnection() => CreateConnection();
+
+    public Task RunSqlAsync(string sql, CancellationToken ct = default)
+    {
+        // Like the rest of PolecatDatabase's direct access, this owns its own connection and
+        // wraps the work in Options.ResiliencePipeline directly.
+        return _resilience.ExecuteAsync(static async (state, token) =>
+        {
+            var (connectionString, sqlText) = state;
+            await using var conn = new SqlConnection(connectionString);
+            await conn.OpenAsync(token);
+
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = sqlText;
+            await cmd.ExecuteNonQueryAsync(token);
+        }, (_connectionString, sql), ct).AsTask();
+    }
+
+    /// <summary>
+    ///     Resolves the Hi-Lo sequence for a document type through the store's single
+    ///     <see cref="SequenceFactory" /> (which caches Hi-Lo state per sequence).
+    /// </summary>
+    public ISequence SequenceFor(Type documentType) => RequireStore().Sequences.SequenceFor(documentType);
 }
