@@ -43,6 +43,9 @@ internal class AliasingCommandBuilder : ICommandBuilder
     public IGroupedParameterBuilder CreateGroupedParameterBuilder(char? seperator = null) => _inner.CreateGroupedParameterBuilder(seperator);
     public SqlParameter[] AppendWithParameters(string text) => _inner.AppendWithParameters(JoinStatement.AliasLocator(text, _alias));
     public SqlParameter[] AppendWithParameters(string text, char placeholder) => _inner.AppendWithParameters(JoinStatement.AliasLocator(text, _alias), placeholder);
+    // Weasel 9.7.0 (weasel#324): dialect-neutral DbParameter[] variants on the shared Weasel.Core.ICommandBuilder.
+    public System.Data.Common.DbParameter[] AppendWithDbParameters(string text) => _inner.AppendWithDbParameters(JoinStatement.AliasLocator(text, _alias));
+    public System.Data.Common.DbParameter[] AppendWithDbParameters(string text, char placeholder) => _inner.AppendWithDbParameters(JoinStatement.AliasLocator(text, _alias), placeholder);
     public void StartNewCommand() => _inner.StartNewCommand();
 
     // Mirror the RUC annotation that Weasel.SqlServer's ICommandBuilder.AddParameters(object)
