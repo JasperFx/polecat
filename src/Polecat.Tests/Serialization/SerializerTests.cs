@@ -79,6 +79,60 @@ public class SerializerTests
         json.ShouldNotContain("\"name\":");
     }
 
+    // ---- Weasel.Storage.IStorageSerializer seam (#273) ----
+
+    [Fact]
+    public void is_the_shared_storage_serializer_seam()
+    {
+        _serializer.ShouldBeAssignableTo<Weasel.Storage.IStorageSerializer>();
+    }
+
+    [Fact]
+    public void to_json_of_null_yields_json_null()
+    {
+        _serializer.ToJson(null).ShouldBe("null");
+    }
+
+    [Fact]
+    public void to_clean_json_matches_to_json_for_stj()
+    {
+        var doc = new TestDocument { Id = Guid.NewGuid(), Name = "Clean", Count = 3 };
+
+        _serializer.ToCleanJson(doc).ShouldBe(_serializer.ToJson(doc));
+    }
+
+    [Fact]
+    public void write_to_buffer_writer_produces_the_same_json()
+    {
+        var doc = new TestDocument { Id = Guid.NewGuid(), Name = "Buffered", Count = 9 };
+
+        var buffer = new System.Buffers.ArrayBufferWriter<byte>();
+        _serializer.WriteTo(buffer, doc);
+
+        System.Text.Encoding.UTF8.GetString(buffer.WrittenSpan).ShouldBe(_serializer.ToJson(doc));
+    }
+
+    [Fact]
+    public void write_to_parameter_assigns_json_string_value()
+    {
+        var doc = new TestDocument { Id = Guid.NewGuid(), Name = "Param", Count = 4 };
+        var parameter = new Microsoft.Data.SqlClient.SqlParameter();
+
+        _serializer.WriteToParameter(parameter, doc);
+
+        parameter.Value.ShouldBe(_serializer.ToJson(doc));
+    }
+
+    [Fact]
+    public void write_to_parameter_assigns_dbnull_for_null()
+    {
+        var parameter = new Microsoft.Data.SqlClient.SqlParameter();
+
+        _serializer.WriteToParameter(parameter, null);
+
+        parameter.Value.ShouldBe(DBNull.Value);
+    }
+
     public class TestDocument
     {
         public Guid Id { get; set; }
