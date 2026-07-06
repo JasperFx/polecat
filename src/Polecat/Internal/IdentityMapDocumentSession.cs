@@ -114,4 +114,18 @@ internal class IdentityMapDocumentSession : DocumentSessionBase
 
         return map;
     }
+
+    // #273: shared-runtime identity-map hooks (Weasel.Storage.IStorageSession). The closed-shape
+    // selectors call these when materializing/queueing documents; route them into the bespoke
+    // identity map so both paths agree until phase E makes the shared runtime authoritative.
+
+    public override void MarkAsAddedForStorage(object id, object document)
+    {
+        GetOrCreateTypeMap(document.GetType())[id] = document;
+    }
+
+    public override void MarkAsDocumentLoaded(object id, object document)
+    {
+        GetOrCreateTypeMap(document.GetType())[id] = document;
+    }
 }

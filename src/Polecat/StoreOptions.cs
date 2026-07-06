@@ -201,6 +201,11 @@ public class StoreOptions
     /// </summary>
     internal DocumentProviderRegistry Providers { get; set; } = null!;
 
+    // #273: back-reference to the store's PolecatDatabase (set by DocumentStore construction,
+    // same pattern as Providers above) so sessions can expose it through the shared
+    // Weasel.Storage.IStorageSession.Database seam.
+    internal Storage.PolecatDatabase? StorageDatabase { get; set; }
+
     /// <summary>
     ///     The Polly resilience pipeline used for all SQL execution.
     ///     Defaults to retry on transient SQL Server errors.

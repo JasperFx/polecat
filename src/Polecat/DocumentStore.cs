@@ -27,6 +27,8 @@ public partial class DocumentStore : IDocumentStore
         _tableEnsurer = new DocumentTableEnsurer(_connectionFactory, options);
         _tableEnsurer.SetProviderRegistry(_providers);
         Database = new PolecatDatabase(options);
+        // #273: sessions surface the database through Weasel.Storage.IStorageSession.Database.
+        options.StorageDatabase = Database;
 
         // Wire up sequence factory for HiLo ID generation
         Sequences = new SequenceFactory(options, _connectionFactory);
