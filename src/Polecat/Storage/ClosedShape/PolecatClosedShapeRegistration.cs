@@ -156,4 +156,16 @@ internal sealed class PolecatProviderGraph : IProviderGraph
             .MakeGenericMethod(documentType)
             .Invoke(this, null)!;
     }
+
+    /// <summary>
+    ///     Non-generic access to a root document type's QueryOnly storage as the shared
+    ///     select-clause contract — the LINQ provider's materialization seam (#273 E2d).
+    /// </summary>
+    internal Weasel.Storage.ISelectClause QueryOnlySelectClauseFor(Type documentType)
+    {
+        var provider = ProviderFor(documentType);
+        return (Weasel.Storage.ISelectClause)provider.GetType()
+            .GetProperty(nameof(DocumentProvider<object>.QueryOnly))!
+            .GetValue(provider)!;
+    }
 }
