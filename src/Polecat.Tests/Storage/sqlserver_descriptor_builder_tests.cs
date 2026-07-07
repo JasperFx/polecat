@@ -220,16 +220,23 @@ public class sqlserver_descriptor_builder_tests : OneOffConfigurationsContext
         await executeAsync(second, session);
         doc.Version.ShouldBe(2);
 
-        // Explicit stale revision (not greater than current) -> ConcurrencyException
+        // POLECAT numeric semantics (#273 E2c): the explicit revision is an EQUALITY
+        // expectation against the current version (bespoke-pipeline parity), and version
+        // always auto-increments — unlike Marten's explicit-greater rule.
         var stale = new NumericClosedShapeUpsertOperation<RevisionedDoc, Guid>(
             doc, doc.Id, session.TenantId, descriptor, OperationRole.Upsert, revisions) { Revision = 1 };
         await Should.ThrowAsync<JasperFx.ConcurrencyException>(() => executeAsync(stale, session));
 
-        // Explicit higher revision wins
+        // A jump past the current version is also a mismatch
         var jump = new NumericClosedShapeUpsertOperation<RevisionedDoc, Guid>(
             doc, doc.Id, session.TenantId, descriptor, OperationRole.Upsert, revisions) { Revision = 10 };
-        await executeAsync(jump, session);
-        doc.Version.ShouldBe(10);
+        await Should.ThrowAsync<JasperFx.ConcurrencyException>(() => executeAsync(jump, session));
+
+        // Matching the current version succeeds and increments
+        var match = new NumericClosedShapeUpsertOperation<RevisionedDoc, Guid>(
+            doc, doc.Id, session.TenantId, descriptor, OperationRole.Upsert, revisions) { Revision = 2 };
+        await executeAsync(match, session);
+        doc.Version.ShouldBe(3);
     }
 
     [Fact]

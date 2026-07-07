@@ -325,8 +325,10 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
         {
             if (column == "rev0")
             {
+                // Bespoke parity: INSERT always starts at revision 1 regardless of the
+                // doc-carried value (the expectation only applies to existing rows).
                 insertColumns.Add("version");
-                insertValues.Add("CASE WHEN s.rev0 = 0 THEN 1 ELSE s.rev1 END");
+                insertValues.Add("1");
             }
             else if (column != "rev1")
             {
@@ -365,7 +367,10 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
         var updateAssignments = new List<string> { "data = s.data" };
         if (numeric)
         {
-            updateAssignments.Add("version = CASE WHEN ? = 0 THEN t.version + 1 ELSE ? END");
+            // POLECAT numeric semantics (deliberate divergence from Marten's explicit-greater
+            // rule): the doc-carried revision is an EQUALITY expectation and version always
+            // auto-increments. Explicit path sets ? + 1 to match the bespoke pipeline.
+            updateAssignments.Add("version = CASE WHEN ? = 0 THEN t.version + 1 ELSE ? + 1 END");
         }
         else
         {
@@ -387,10 +392,10 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
         }
         else if (numeric)
         {
-            // Auto-increment (? = 0) always wins; explicit revisions only when greater than
-            // current. Guarded and unguarded numeric upserts share the shape — the shared
-            // numeric ops always bind the four trailing slots.
-            guard = " AND (? = 0 OR t.version < ?)";
+            // Equality expectation (Polecat parity): auto (? = 0) always wins; an explicit
+            // revision must MATCH the current version. The shared numeric ops always bind the
+            // four trailing slots, so the shape is constant whether guarded or not.
+            guard = " AND (? = 0 OR t.version = ?)";
         }
 
         return $"MERGE {table} WITH (HOLDLOCK) AS t " +
@@ -464,7 +469,7 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
 
         var updateAssignments = new List<string> { "data = s.data" };
         updateAssignments.Add(numeric
-            ? "version = CASE WHEN s.rev0 = 0 THEN t.version + 1 ELSE s.rev1 END"
+            ? "version = CASE WHEN s.rev0 = 0 THEN t.version + 1 ELSE s.rev1 + 1 END"
             : "version = t.version + 1");
         updateAssignments.AddRange(binders
             .Where(b => !b.IsServerSide && b.ColumnName != "tenant_id" && !ReferenceEquals(b, revisionBinder))
@@ -475,7 +480,7 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
         var guard = mode switch
         {
             ConcurrencyMode.Optimistic => " AND t.guid_version = ?",
-            ConcurrencyMode.Numeric => " AND (? = 0 OR t.version < ?)",
+            ConcurrencyMode.Numeric => " AND (? = 0 OR t.version = ?)",
             _ => string.Empty
         };
 
