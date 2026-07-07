@@ -187,6 +187,103 @@ public class sqlserver_descriptor_builder_tests : OneOffConfigurationsContext
         await Should.ThrowAsync<JasperFx.ConcurrencyException>(() => executeAsync(badUpdate, session));
     }
 
+    // ---- Slice 2: numeric revisions, soft delete, hierarchy ----
+
+    [Fact]
+    public async Task numeric_descriptor_auto_increments_and_guards_revisions()
+    {
+        await using var bootstrap = theStore.LightweightSession();
+        bootstrap.Store(new RevisionedDoc { Name = "seed" }); // force table creation
+        await bootstrap.SaveChangesAsync();
+
+        var descriptor = descriptorFor<RevisionedDoc>();
+        descriptor.ConcurrencyMode.ShouldBe(ConcurrencyMode.Numeric);
+        descriptor.RevisionBinder.ShouldNotBeNull();
+
+        await using var raw = theStore.LightweightSession();
+        var session = (IStorageSession)raw;
+
+        var doc = new RevisionedDoc { Id = Guid.NewGuid(), Name = "r1" };
+        var revisions = new Dictionary<Guid, long>();
+
+        // Auto-increment: Revision = 0 -> initial revision 1, written back to the document
+        var first = new NumericClosedShapeUpsertOperation<RevisionedDoc, Guid>(
+            doc, doc.Id, session.TenantId, descriptor, OperationRole.Upsert, revisions) { Revision = 0 };
+        await executeAsync(first, session);
+        doc.Version.ShouldBe(1);
+        revisions[doc.Id].ShouldBe(1);
+
+        // Auto-increment again -> 2
+        doc.Name = "r2";
+        var second = new NumericClosedShapeUpsertOperation<RevisionedDoc, Guid>(
+            doc, doc.Id, session.TenantId, descriptor, OperationRole.Upsert, revisions) { Revision = 0 };
+        await executeAsync(second, session);
+        doc.Version.ShouldBe(2);
+
+        // Explicit stale revision (not greater than current) -> ConcurrencyException
+        var stale = new NumericClosedShapeUpsertOperation<RevisionedDoc, Guid>(
+            doc, doc.Id, session.TenantId, descriptor, OperationRole.Upsert, revisions) { Revision = 1 };
+        await Should.ThrowAsync<JasperFx.ConcurrencyException>(() => executeAsync(stale, session));
+
+        // Explicit higher revision wins
+        var jump = new NumericClosedShapeUpsertOperation<RevisionedDoc, Guid>(
+            doc, doc.Id, session.TenantId, descriptor, OperationRole.Upsert, revisions) { Revision = 10 };
+        await executeAsync(jump, session);
+        doc.Version.ShouldBe(10);
+    }
+
+    [Fact]
+    public async Task soft_delete_descriptor_resave_undeletes()
+    {
+        await using var bootstrap = theStore.LightweightSession();
+        var doc = new SoftDeletedDoc { Id = Guid.NewGuid(), Name = "keep", Number = 5 };
+        bootstrap.Store(doc);
+        await bootstrap.SaveChangesAsync();
+
+        // Soft-delete through Polecat's bespoke pipeline
+        await using (var deleter = theStore.LightweightSession())
+        {
+            deleter.Delete<SoftDeletedDoc>(doc.Id);
+            await deleter.SaveChangesAsync();
+        }
+
+        var descriptor = descriptorFor<SoftDeletedDoc>();
+        descriptor.WriteBinders.Select(b => b.ColumnName).ShouldContain("is_deleted");
+        descriptor.WriteBinders.Select(b => b.ColumnName).ShouldContain("deleted_at");
+
+        await using var raw = theStore.LightweightSession();
+        var session = (IStorageSession)raw;
+
+        // Re-save via the shared upsert: writes is_deleted = 0 / deleted_at = NULL -> undelete
+        var resave = new UnversionedClosedShapeUpsertOperation<SoftDeletedDoc, Guid>(
+            doc, doc.Id, session.TenantId, descriptor, OperationRole.Upsert);
+        await executeAsync(resave, session);
+
+        await using var check = theStore.QuerySession();
+        var loaded = await check.LoadAsync<SoftDeletedDoc>(doc.Id);
+        loaded.ShouldNotBeNull(); // visible again — undeleted
+    }
+
+    [Fact]
+    public void hierarchical_descriptor_carries_doc_type_dispatch()
+    {
+        ConfigureStore(opts => opts.Schema.For<Target>().AddSubClass<SubTarget>());
+
+        var descriptor = descriptorFor<Target>();
+
+        descriptor.ResolveDocumentType.ShouldNotBeNull();
+        descriptor.DocTypeReadIndex.ShouldBe(0); // doc_type reads first
+        descriptor.WriteBinders[0].ColumnName.ShouldBe("doc_type");
+        descriptor.UpsertSql.ShouldContain("doc_type");
+        var mapping = theStore.Options.Providers.GetProvider(typeof(Target)).Mapping;
+        descriptor.ResolveDocumentType!(mapping.AliasFor(typeof(SubTarget))).ShouldBe(typeof(SubTarget));
+    }
+
+    public class SubTarget : Target
+    {
+        public string Extra { get; set; } = string.Empty;
+    }
+
     [Fact]
     public async Task insert_only_descriptor_sql_signals_id_collision_with_zero_rows()
     {
