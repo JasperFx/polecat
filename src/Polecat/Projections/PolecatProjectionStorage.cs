@@ -97,43 +97,63 @@ internal class PolecatProjectionStorage<TDoc, TId> : IProjectionStorage<TDoc, TI
         return id;
     }
 
-    public void Store(TDoc snapshot)
+    // #273 E2e: projection writes flow through the closed-shape storage layer's session-free
+    // *Projected operations (no session version-tracker reads — safe for parallel daemon
+    // slice handlers). The adapter carries a tenant-scoped session when this storage serves
+    // a different tenant than the driving session, so flush-time metadata binders write the
+    // projection's tenant.
+
+    // QueryOnly flavor deliberately: its ops are identical, and its selector reads no id
+    // column and captures no session version/identity-map state — matching the bespoke
+    // projection reads (and avoiding the writeable selectors' typed id read, which cannot
+    // materialize Polecat's varchar-stored strongly-typed id columns).
+    private Polecat.Storage.ClosedShape.IPolecatObjectStorage<TDoc> Storage
+        => (Polecat.Storage.ClosedShape.IPolecatObjectStorage<TDoc>)
+            _session.Providers.ClosedShapeGraph.StorageFor<TDoc>().QueryOnly;
+
+    private Weasel.Storage.IStorageSession SessionFor(string tenantId)
     {
-        var op = _provider.BuildUpsert(snapshot, _session.Serializer, TenantId);
-        _session.WorkTracker.Add(op);
+        Weasel.Storage.IStorageSession session = _session;
+        return tenantId == _session.TenantId ? session : new TenantScopedStorageSession(session, tenantId);
     }
+
+    private void StoreProjected(TDoc snapshot, string tenantId)
+    {
+        // Bespoke parity: assign an id when missing (aggregations normally set it from the slice).
+        if (_provider.SequenceSource is not null)
+        {
+            _provider.Mapping.AssignIdIfMissing(snapshot, _provider.SequenceSource);
+        }
+
+        var op = ((Weasel.Storage.IDocumentStorage<TDoc>)Storage).UpsertProjected(snapshot, tenantId);
+        DocumentSessionBase.CaptureExpectedRevision(op, snapshot);
+        _session.WorkTracker.Add(new ClosedShapeOperationAdapter(
+            op, SessionFor(tenantId), snapshot, _provider.Mapping.GetId(snapshot)));
+    }
+
+    public void Store(TDoc snapshot) => StoreProjected(snapshot, TenantId);
 
     public void Store(TDoc document, TId id, string tenantId)
     {
         SetIdentity(document, id);
-        var op = _provider.BuildUpsert(document, _session.Serializer, tenantId);
-        _session.WorkTracker.Add(op);
+        StoreProjected(document, tenantId);
     }
 
-    public void Delete(TId identity)
-    {
-        var op = _provider.BuildDeleteById(identity!, TenantId);
-        _session.WorkTracker.Add(op);
-    }
+    public void Delete(TId identity) => Delete(identity, TenantId);
 
     public void Delete(TId identity, string tenantId)
     {
-        var op = _provider.BuildDeleteById(identity!, tenantId);
-        _session.WorkTracker.Add(op);
+        _session.WorkTracker.Add(new ClosedShapeOperationAdapter(
+            Storage.DeletionForObjectId(identity!, tenantId), SessionFor(tenantId), identity!, identity));
     }
 
-    public void HardDelete(TDoc snapshot)
-    {
-        var id = _provider.Mapping.GetId(snapshot);
-        var op = _provider.BuildHardDeleteById(id, TenantId);
-        _session.WorkTracker.Add(op);
-    }
+    public void HardDelete(TDoc snapshot) => HardDelete(snapshot, TenantId);
 
     public void HardDelete(TDoc snapshot, string tenantId)
     {
         var id = _provider.Mapping.GetId(snapshot);
-        var op = _provider.BuildHardDeleteById(id, tenantId);
-        _session.WorkTracker.Add(op);
+        _session.WorkTracker.Add(new ClosedShapeOperationAdapter(
+            Storage.HardDeletionForObjectId(id, tenantId), SessionFor(tenantId), snapshot, id));
     }
 
     public void UnDelete(TDoc snapshot)
@@ -156,23 +176,16 @@ internal class PolecatProjectionStorage<TDoc, TId> : IProjectionStorage<TDoc, TI
         }
     }
 
+    // #273 E2e: projection loads route through the closed-shape storage layer with this
+    // storage's (possibly session-differing) tenant id; the object-id bridge normalizes
+    // raw inner values vs strongly-typed wrappers.
+
     public async Task<TDoc> LoadAsync(TId id, CancellationToken cancellation)
     {
         await EnsureTableExistsAsync(cancellation);
-
-        await using var cmd = new SqlCommand();
-        cmd.CommandText = _provider.LoadSql;
-        cmd.Parameters.AddWithValue("@id", UnwrapId(id));
-        cmd.Parameters.AddWithValue("@tenant_id", TenantId);
-
-        await using var reader = await _session.ExecuteReaderAsync(cmd, cancellation);
-        if (await reader.ReadAsync(cancellation))
-        {
-            var json = reader.GetString(1);
-            return _session.Serializer.FromJson<TDoc>(json)!;
-        }
-
-        return default!;
+        var doc = await Storage.LoadByObjectIdAsync(id, (Weasel.Storage.IStorageSession)_session, TenantId,
+            cancellation);
+        return doc ?? default!;
     }
 
     public async Task<IReadOnlyDictionary<TId, TDoc>> LoadManyAsync(TId[] identities,
@@ -183,28 +196,17 @@ internal class PolecatProjectionStorage<TDoc, TId> : IProjectionStorage<TDoc, TI
 
         await EnsureTableExistsAsync(cancellationToken);
 
-        await using var cmd = new SqlCommand();
-
-        var paramNames = new string[identities.Length];
+        var ids = new object[identities.Length];
         for (var i = 0; i < identities.Length; i++)
         {
-            paramNames[i] = $"@id{i}";
-            cmd.Parameters.AddWithValue(paramNames[i], UnwrapId(identities[i]));
+            ids[i] = identities[i];
         }
 
-        var softDeleteFilter = _provider.Mapping.DeleteStyle == DeleteStyle.SoftDelete
-            ? " AND is_deleted = 0"
-            : "";
-        cmd.CommandText = $"{_provider.SelectSql} WHERE id IN ({string.Join(", ", paramNames)}) AND tenant_id = @tenant_id{softDeleteFilter};";
-        cmd.Parameters.AddWithValue("@tenant_id", TenantId);
-
-        await using var reader = await _session.ExecuteReaderAsync(cmd, cancellationToken);
-        while (await reader.ReadAsync(cancellationToken))
+        var docs = await Storage.LoadManyByObjectIdsAsync(ids, (Weasel.Storage.IStorageSession)_session, TenantId,
+            cancellationToken);
+        foreach (var doc in docs)
         {
-            var json = reader.GetString(1);
-            var doc = _session.Serializer.FromJson<TDoc>(json)!;
-            var id = Identity(doc);
-            dict[id] = doc;
+            dict[Identity(doc)] = doc;
         }
 
         return dict;

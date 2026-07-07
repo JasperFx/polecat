@@ -99,22 +99,58 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     // #273 E2b/E2c/E2e: every document write goes through the shared closed-shape operations
     // (wrapped for the bespoke unit-of-work currency until the op-currency flip); subclass
     // types resolve a SubClassPolecatStorage delegating to the hierarchy root's storage.
-    private Operations.ClosedShapeOperationAdapter BuildClosedShapeWrite<T>(T document, DocumentProvider provider,
-        WriteKind kind) where T : notnull
+    // A tenant override (IDocumentSession.ForTenant) wraps the session in a
+    // TenantScopedStorageSession so flush-time metadata binders write the override tenant.
+    internal Operations.ClosedShapeOperationAdapter BuildClosedShapeWrite<T>(T document, DocumentProvider provider,
+        WriteKind kind, string? tenantOverride = null) where T : notnull
     {
-        var session = (Weasel.Storage.IStorageSession)this;
+        Weasel.Storage.IStorageSession session = (Weasel.Storage.IStorageSession)this;
         var storage = (Weasel.Storage.IDocumentStorage<T>)session.StorageFor<T>();
+        if (tenantOverride is not null && tenantOverride != TenantId)
+        {
+            session = new TenantScopedStorageSession(session, tenantOverride);
+        }
+
         storage.Store(session, document); // id assignment + identity-map/version bookkeeping
 
         var op = kind switch
         {
-            WriteKind.Insert => storage.Insert(document, session, TenantId),
-            WriteKind.Update => storage.Update(document, session, TenantId),
-            _ => storage.Upsert(document, session, TenantId)
+            WriteKind.Insert => storage.Insert(document, session, session.TenantId),
+            WriteKind.Update => storage.Update(document, session, session.TenantId),
+            _ => storage.Upsert(document, session, session.TenantId)
         };
 
-        // Numeric revisions: the doc-carried version is the equality expectation (0 = new/auto),
-        // matching the bespoke pipeline's expectedRevision capture.
+        CaptureExpectedRevision(op, document);
+
+        return new Operations.ClosedShapeOperationAdapter(op, session, document, provider.Mapping.GetId(document));
+    }
+
+    /// <summary>
+    ///     Runtime-type (object) variant of <see cref="BuildClosedShapeWrite{T}" /> for
+    ///     StoreObjects (#273 E2e) — dispatches through the non-generic object-write bridge.
+    /// </summary>
+    internal Operations.ClosedShapeOperationAdapter BuildClosedShapeObjectWrite(object document,
+        DocumentProvider provider, string? tenantOverride = null)
+    {
+        Weasel.Storage.IStorageSession session = (Weasel.Storage.IStorageSession)this;
+        var storage = (Polecat.Storage.ClosedShape.IPolecatObjectWriteStorage)session.StorageFor(document.GetType());
+        if (tenantOverride is not null && tenantOverride != TenantId)
+        {
+            session = new TenantScopedStorageSession(session, tenantOverride);
+        }
+
+        storage.StoreObject(session, document);
+        var op = storage.UpsertObject(document, session, session.TenantId);
+        CaptureExpectedRevision(op, document);
+
+        return new Operations.ClosedShapeOperationAdapter(op, session, document, provider.Mapping.GetId(document));
+    }
+
+    // Numeric revisions: the doc-carried version is the equality expectation (0 = new/auto),
+    // matching the bespoke pipeline's expectedRevision capture. Shared with the projection
+    // storage (#273 E2e).
+    internal static void CaptureExpectedRevision(Weasel.Storage.IStorageOperation op, object document)
+    {
         if (op is Weasel.Storage.IRevisionedOperation revisioned)
         {
             revisioned.Revision = document switch
@@ -124,41 +160,15 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
                 _ => 0
             };
         }
-
-        return new Operations.ClosedShapeOperationAdapter(op, session, document, provider.Mapping.GetId(document));
     }
 
-    private enum WriteKind
+    internal enum WriteKind
     {
         Upsert,
         Insert,
         Update
     }
 
-
-    // #241: capture the session-level metadata to persist into the opt-in document metadata columns.
-    // Returns default (empty) when the document type enables none of them, so the common path is free.
-    private Operations.DocumentMetadataValues BuildMetadataValues(Storage.DocumentMapping mapping)
-    {
-        if (!mapping.EnabledMetadataColumns.Any())
-        {
-            return default;
-        }
-
-        string? headersJson = null;
-        if (mapping.Metadata.Headers.Enabled && Headers is { Count: > 0 })
-        {
-            headersJson = Serializer.ToJson(Headers);
-        }
-
-        return new Operations.DocumentMetadataValues
-        {
-            CorrelationId = CorrelationId,
-            CausationId = CausationId,
-            LastModifiedBy = LastModifiedBy,
-            HeadersJson = headersJson
-        };
-    }
 
     public void Store<T>(params T[] documents) where T : notnull
     {
@@ -170,9 +180,8 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
 
     public void StoreObjects(IEnumerable<object> documents)
     {
-        // Dispatch by runtime type via the non-generic GetProvider(Type) +
-        // BuildUpsert(object, ...) — no MakeGenericMethod / Activator on the
-        // hot path. Mirrors Store<T> per-document otherwise.
+        // Per-document runtime-type dispatch through the closed-shape object-write bridge
+        // (#273 E2e). Mirrors Store<T> otherwise.
         foreach (var document in documents)
         {
             if (document is null) continue;
@@ -180,8 +189,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             var documentType = document.GetType();
             SyncMetadata(document);
             var provider = _providers.GetProvider(documentType);
-            var op = provider.BuildUpsert(document, Serializer, TenantId, BuildMetadataValues(provider.Mapping));
-            _workTracker.Add(op);
+            _workTracker.Add(BuildClosedShapeObjectWrite(document, provider));
             OnDocumentStored(documentType, provider.Mapping.GetId(document), document);
         }
     }
@@ -248,39 +256,30 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             storage.DeletionForObjectId(id, TenantId), session, id, id));
     }
 
+    // #273 E2e: hard deletions route through the closed-shape storage layer.
     public void HardDelete<T>(T document) where T : notnull
     {
-        var provider = _providers.GetProvider<T>();
-        var op = provider.BuildHardDeleteByDocument(document, TenantId);
-        _workTracker.Add(op);
+        var session = (Weasel.Storage.IStorageSession)this;
+        var storage = (Weasel.Storage.IDocumentStorage<T>)session.StorageFor<T>();
+        _workTracker.Add(new Operations.ClosedShapeOperationAdapter(
+            storage.HardDeleteForDocument(document, TenantId), session, document,
+            _providers.GetProvider<T>().Mapping.GetId(document)));
     }
 
-    public void HardDelete<T>(Guid id) where T : class
-    {
-        var provider = _providers.GetProvider<T>();
-        var op = provider.BuildHardDeleteById(id, TenantId);
-        _workTracker.Add(op);
-    }
+    public void HardDelete<T>(Guid id) where T : class => HardDeleteByObjectId<T>(id);
 
-    public void HardDelete<T>(string id) where T : class
-    {
-        var provider = _providers.GetProvider<T>();
-        var op = provider.BuildHardDeleteById(id, TenantId);
-        _workTracker.Add(op);
-    }
+    public void HardDelete<T>(string id) where T : class => HardDeleteByObjectId<T>(id);
 
-    public void HardDelete<T>(int id) where T : class
-    {
-        var provider = _providers.GetProvider<T>();
-        var op = provider.BuildHardDeleteById(id, TenantId);
-        _workTracker.Add(op);
-    }
+    public void HardDelete<T>(int id) where T : class => HardDeleteByObjectId<T>(id);
 
-    public void HardDelete<T>(long id) where T : class
+    public void HardDelete<T>(long id) where T : class => HardDeleteByObjectId<T>(id);
+
+    private void HardDeleteByObjectId<T>(object id) where T : class
     {
-        var provider = _providers.GetProvider<T>();
-        var op = provider.BuildHardDeleteById(id, TenantId);
-        _workTracker.Add(op);
+        var session = (Weasel.Storage.IStorageSession)this;
+        var storage = (Polecat.Storage.ClosedShape.IPolecatObjectStorage<T>)session.StorageFor<T>();
+        _workTracker.Add(new Operations.ClosedShapeOperationAdapter(
+            storage.HardDeletionForObjectId(id, TenantId), session, id, id));
     }
 
     public void DeleteWhere<T>(Expression<Func<T, bool>> predicate) where T : class

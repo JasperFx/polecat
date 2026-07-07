@@ -24,14 +24,44 @@ namespace Polecat.Storage.ClosedShape;
 ///     Subclass (hierarchy child) storage is also E2.
 /// </remarks>
 /// <summary>
+///     Non-generic object bridge for callers that only have a runtime <see cref="Type" />
+///     (#273 E2e): <c>StoreObjects</c> and the projection storage dispatch writes without a
+///     TDoc/TId generic context.
+/// </summary>
+internal interface IPolecatObjectWriteStorage
+{
+    /// <summary>Id assignment + session bookkeeping (identity-map add for that flavor).</summary>
+    void StoreObject(IStorageSession session, object document);
+
+    Weasel.Storage.IStorageOperation UpsertObject(object document, IStorageSession session, string tenantId);
+
+    /// <summary>Session-free upsert for the projection paths (no version-tracker reads).</summary>
+    Weasel.Storage.IStorageOperation UpsertObjectProjected(object document, string tenantId);
+
+    IDeletion HardDeletionForObjectId(object id, string tenantId);
+    IDeletion HardDeletionForDocument(object document, string tenantId);
+}
+
+/// <summary>
 ///     Non-generic-id load bridge for the session pipeline (#273 E2a): QuerySession's load
 ///     internals carry ids as <c>object</c>, so this closes the gap without the session
 ///     needing the TId generic argument.
 /// </summary>
-internal interface IPolecatObjectStorage<TDoc> where TDoc : notnull
+internal interface IPolecatObjectStorage<TDoc> : IPolecatObjectWriteStorage where TDoc : notnull
 {
     Task<TDoc?> LoadByObjectIdAsync(object id, IStorageSession session, CancellationToken token);
     Task<IReadOnlyList<TDoc>> LoadManyByObjectIdsAsync(IReadOnlyList<object> ids, IStorageSession session, CancellationToken token);
+
+    /// <summary>
+    ///     Explicit-tenant load for the projection storage (#273 E2e), which may serve a
+    ///     different tenant than the driving session. Bypasses identity-map flavor logic,
+    ///     matching the bespoke projection reads.
+    /// </summary>
+    Task<TDoc?> LoadByObjectIdAsync(object id, IStorageSession session, string tenantId, CancellationToken token);
+
+    Task<IReadOnlyList<TDoc>> LoadManyByObjectIdsAsync(IReadOnlyList<object> ids, IStorageSession session,
+        string tenantId, CancellationToken token);
+
     IDeletion DeletionForObjectId(object id, string tenantId);
 }
 
@@ -195,9 +225,12 @@ internal abstract class PolecatDocumentStorage<TDoc, TId> : IDocumentStorage<TDo
 
     public abstract Task<IReadOnlyList<TDoc>> LoadManyAsync(TId[] ids, IStorageSession session, CancellationToken token);
 
-    protected async Task<TDoc?> QueryOneAsync(TId id, IStorageSession session, CancellationToken token)
+    protected Task<TDoc?> QueryOneAsync(TId id, IStorageSession session, CancellationToken token)
+        => QueryOneAsync(id, session, session.TenantId, token);
+
+    private async Task<TDoc?> QueryOneAsync(TId id, IStorageSession session, string tenantId, CancellationToken token)
     {
-        var command = BuildLoadCommand(id, session.TenantId);
+        var command = BuildLoadCommand(id, tenantId);
         var selector = (ISelector<TDoc>)BuildSelector(session);
         await using var reader = await session.ExecuteReaderAsync(command, token).ConfigureAwait(false);
         if (!await reader.ReadAsync(token).ConfigureAwait(false))
@@ -208,10 +241,13 @@ internal abstract class PolecatDocumentStorage<TDoc, TId> : IDocumentStorage<TDo
         return await selector.ResolveAsync(reader, token).ConfigureAwait(false);
     }
 
-    protected async Task<IReadOnlyList<TDoc>> QueryManyAsync(TId[] ids, IStorageSession session,
+    protected Task<IReadOnlyList<TDoc>> QueryManyAsync(TId[] ids, IStorageSession session, CancellationToken token)
+        => QueryManyAsync(ids, session, session.TenantId, token);
+
+    private async Task<IReadOnlyList<TDoc>> QueryManyAsync(TId[] ids, IStorageSession session, string tenantId,
         CancellationToken token)
     {
-        var command = BuildLoadManyCommand(ids, session.TenantId);
+        var command = BuildLoadManyCommand(ids, tenantId);
         var selector = (ISelector<TDoc>)BuildSelector(session);
         var list = new List<TDoc>();
         await using var reader = await session.ExecuteReaderAsync(command, token).ConfigureAwait(false);
@@ -352,6 +388,38 @@ internal abstract class PolecatDocumentStorage<TDoc, TId> : IDocumentStorage<TDo
     private TId NormalizeId(object id) => id is TId typed ? typed : (TId)_mapping.WrapId(id);
 
     public IDeletion DeletionForObjectId(object id, string tenantId) => DeleteForId(NormalizeId(id), tenantId);
+
+    // ---- IPolecatObjectWriteStorage bridge (#273 E2e) ----
+
+    public Task<TDoc?> LoadByObjectIdAsync(object id, IStorageSession session, string tenantId,
+        CancellationToken token)
+        => QueryOneAsync(NormalizeId(id), session, tenantId, token);
+
+    public Task<IReadOnlyList<TDoc>> LoadManyByObjectIdsAsync(IReadOnlyList<object> ids, IStorageSession session,
+        string tenantId, CancellationToken token)
+    {
+        var typed = new TId[ids.Count];
+        for (var i = 0; i < ids.Count; i++)
+        {
+            typed[i] = NormalizeId(ids[i]);
+        }
+
+        return QueryManyAsync(typed, session, tenantId, token);
+    }
+
+    public void StoreObject(IStorageSession session, object document) => Store(session, (TDoc)document);
+
+    public Weasel.Storage.IStorageOperation UpsertObject(object document, IStorageSession session, string tenantId)
+        => Upsert((TDoc)document, session, tenantId);
+
+    public Weasel.Storage.IStorageOperation UpsertObjectProjected(object document, string tenantId)
+        => UpsertProjected((TDoc)document, tenantId);
+
+    public IDeletion HardDeletionForObjectId(object id, string tenantId)
+        => HardDeleteForId(NormalizeId(id), tenantId);
+
+    public IDeletion HardDeletionForDocument(object document, string tenantId)
+        => HardDeleteForDocument((TDoc)document, tenantId);
 }
 
 /// <summary>Fixed-SQL operation fragment (delete fragments on the shared contract).</summary>

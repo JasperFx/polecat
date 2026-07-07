@@ -112,14 +112,16 @@ internal class NestedTenantSession : ITenantOperations
     public Task<string?> LoadJsonAsync<T>(long id, CancellationToken token = default) where T : class
         => _parent.LoadJsonAsync<T>(id, token);
 
-    // ── IDocumentOperations (mutation operations use _tenantId) ──
+    // ── IDocumentOperations (mutations flow through the closed-shape layer with the
+    //    override tenant; #273 E2e. Deletions carry _tenantId explicitly; writes bind
+    //    single-tenant metadata via a TenantScopedStorageSession at flush time.) ──
 
     public void Store<T>(T document) where T : notnull
     {
         SyncMetadata(document);
         var provider = _parent.Providers.GetProvider<T>();
-        var op = provider.BuildUpsert(document, Serializer, _tenantId);
-        _parent.WorkTracker.Add(op);
+        _parent.WorkTracker.Add(_parent.BuildClosedShapeWrite(document, provider,
+            DocumentSessionBase.WriteKind.Upsert, _tenantId));
     }
 
     public void Store<T>(params T[] documents) where T : notnull
@@ -129,17 +131,13 @@ internal class NestedTenantSession : ITenantOperations
 
     public void StoreObjects(IEnumerable<object> documents)
     {
-        // Per-document runtime-type dispatch through the non-generic
-        // GetProvider(Type) + BuildUpsert(object, ...) — no reflection on
-        // the hot path. Tenant scoping uses _tenantId, mirroring Store<T>.
         foreach (var document in documents)
         {
             if (document is null) continue;
 
             SyncMetadata(document);
             var provider = _parent.Providers.GetProvider(document.GetType());
-            var op = provider.BuildUpsert(document, Serializer, _tenantId);
-            _parent.WorkTracker.Add(op);
+            _parent.WorkTracker.Add(_parent.BuildClosedShapeObjectWrite(document, provider, _tenantId));
         }
     }
 
@@ -147,23 +145,25 @@ internal class NestedTenantSession : ITenantOperations
     {
         SyncMetadata(document);
         var provider = _parent.Providers.GetProvider<T>();
-        var op = provider.BuildInsert(document, Serializer, _tenantId);
-        _parent.WorkTracker.Add(op);
+        _parent.WorkTracker.Add(_parent.BuildClosedShapeWrite(document, provider,
+            DocumentSessionBase.WriteKind.Insert, _tenantId));
     }
 
     public void Update<T>(T document) where T : notnull
     {
         SyncMetadata(document);
         var provider = _parent.Providers.GetProvider<T>();
-        var op = provider.BuildUpdate(document, Serializer, _tenantId);
-        _parent.WorkTracker.Add(op);
+        _parent.WorkTracker.Add(_parent.BuildClosedShapeWrite(document, provider,
+            DocumentSessionBase.WriteKind.Update, _tenantId));
     }
 
     public void Delete<T>(T document) where T : notnull
     {
+        var session = (Weasel.Storage.IStorageSession)_parent;
+        var storage = (Weasel.Storage.IDocumentStorage<T>)session.StorageFor<T>();
         var provider = _parent.Providers.GetProvider<T>();
-        var op = provider.BuildDeleteByDocument(document, _tenantId);
-        _parent.WorkTracker.Add(op);
+        _parent.WorkTracker.Add(new Operations.ClosedShapeOperationAdapter(
+            storage.DeleteForDocument(document, _tenantId), session, document, provider.Mapping.GetId(document)));
 
         if (document is ISoftDeleted softDeleted && provider.Mapping.DeleteStyle == DeleteStyle.SoftDelete)
         {
@@ -172,58 +172,45 @@ internal class NestedTenantSession : ITenantOperations
         }
     }
 
-    public void Delete<T>(Guid id) where T : class
-    {
-        var provider = _parent.Providers.GetProvider<T>();
-        _parent.WorkTracker.Add(provider.BuildDeleteById(id, _tenantId));
-    }
+    public void Delete<T>(Guid id) where T : class => DeleteByObjectId<T>(id);
 
-    public void Delete<T>(string id) where T : class
-    {
-        var provider = _parent.Providers.GetProvider<T>();
-        _parent.WorkTracker.Add(provider.BuildDeleteById(id, _tenantId));
-    }
+    public void Delete<T>(string id) where T : class => DeleteByObjectId<T>(id);
 
-    public void Delete<T>(int id) where T : class
-    {
-        var provider = _parent.Providers.GetProvider<T>();
-        _parent.WorkTracker.Add(provider.BuildDeleteById(id, _tenantId));
-    }
+    public void Delete<T>(int id) where T : class => DeleteByObjectId<T>(id);
 
-    public void Delete<T>(long id) where T : class
+    public void Delete<T>(long id) where T : class => DeleteByObjectId<T>(id);
+
+    private void DeleteByObjectId<T>(object id) where T : class
     {
-        var provider = _parent.Providers.GetProvider<T>();
-        _parent.WorkTracker.Add(provider.BuildDeleteById(id, _tenantId));
+        var session = (Weasel.Storage.IStorageSession)_parent;
+        var storage = (Polecat.Storage.ClosedShape.IPolecatObjectStorage<T>)session.StorageFor<T>();
+        _parent.WorkTracker.Add(new Operations.ClosedShapeOperationAdapter(
+            storage.DeletionForObjectId(id, _tenantId), session, id, id));
     }
 
     public void HardDelete<T>(T document) where T : notnull
     {
-        var provider = _parent.Providers.GetProvider<T>();
-        _parent.WorkTracker.Add(provider.BuildHardDeleteByDocument(document, _tenantId));
+        var session = (Weasel.Storage.IStorageSession)_parent;
+        var storage = (Weasel.Storage.IDocumentStorage<T>)session.StorageFor<T>();
+        _parent.WorkTracker.Add(new Operations.ClosedShapeOperationAdapter(
+            storage.HardDeleteForDocument(document, _tenantId), session, document,
+            _parent.Providers.GetProvider<T>().Mapping.GetId(document)));
     }
 
-    public void HardDelete<T>(Guid id) where T : class
-    {
-        var provider = _parent.Providers.GetProvider<T>();
-        _parent.WorkTracker.Add(provider.BuildHardDeleteById(id, _tenantId));
-    }
+    public void HardDelete<T>(Guid id) where T : class => HardDeleteByObjectId<T>(id);
 
-    public void HardDelete<T>(string id) where T : class
-    {
-        var provider = _parent.Providers.GetProvider<T>();
-        _parent.WorkTracker.Add(provider.BuildHardDeleteById(id, _tenantId));
-    }
+    public void HardDelete<T>(string id) where T : class => HardDeleteByObjectId<T>(id);
 
-    public void HardDelete<T>(int id) where T : class
-    {
-        var provider = _parent.Providers.GetProvider<T>();
-        _parent.WorkTracker.Add(provider.BuildHardDeleteById(id, _tenantId));
-    }
+    public void HardDelete<T>(int id) where T : class => HardDeleteByObjectId<T>(id);
 
-    public void HardDelete<T>(long id) where T : class
+    public void HardDelete<T>(long id) where T : class => HardDeleteByObjectId<T>(id);
+
+    private void HardDeleteByObjectId<T>(object id) where T : class
     {
-        var provider = _parent.Providers.GetProvider<T>();
-        _parent.WorkTracker.Add(provider.BuildHardDeleteById(id, _tenantId));
+        var session = (Weasel.Storage.IStorageSession)_parent;
+        var storage = (Polecat.Storage.ClosedShape.IPolecatObjectStorage<T>)session.StorageFor<T>();
+        _parent.WorkTracker.Add(new Operations.ClosedShapeOperationAdapter(
+            storage.HardDeletionForObjectId(id, _tenantId), session, id, id));
     }
 
     public void DeleteWhere<T>(Expression<Func<T, bool>> predicate) where T : class

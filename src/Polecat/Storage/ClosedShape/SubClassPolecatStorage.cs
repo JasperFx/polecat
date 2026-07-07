@@ -193,6 +193,32 @@ internal sealed class SubClassPolecatStorage<T, TRoot, TId> : IDocumentStorage<T
             .OfType<T>().ToList();
 
     public IDeletion DeletionForObjectId(object id, string tenantId) => ParentBridge.DeletionForObjectId(id, tenantId);
+
+    public async Task<T?> LoadByObjectIdAsync(object id, IStorageSession session, string tenantId,
+        CancellationToken token)
+    {
+        var doc = await ParentBridge.LoadByObjectIdAsync(id, session, tenantId, token).ConfigureAwait(false);
+        return doc is T subclass ? subclass : default;
+    }
+
+    public async Task<IReadOnlyList<T>> LoadManyByObjectIdsAsync(IReadOnlyList<object> ids, IStorageSession session,
+        string tenantId, CancellationToken token)
+        => (await ParentBridge.LoadManyByObjectIdsAsync(ids, session, tenantId, token).ConfigureAwait(false))
+            .OfType<T>().ToList();
+
+    public void StoreObject(IStorageSession session, object document) => ParentBridge.StoreObject(session, document);
+
+    public Weasel.Storage.IStorageOperation UpsertObject(object document, IStorageSession session, string tenantId)
+        => ParentBridge.UpsertObject(document, session, tenantId);
+
+    public Weasel.Storage.IStorageOperation UpsertObjectProjected(object document, string tenantId)
+        => ParentBridge.UpsertObjectProjected(document, tenantId);
+
+    public IDeletion HardDeletionForObjectId(object id, string tenantId)
+        => ParentBridge.HardDeletionForObjectId(id, tenantId);
+
+    public IDeletion HardDeletionForDocument(object document, string tenantId)
+        => ParentBridge.HardDeletionForDocument(document, tenantId);
 }
 
 /// <summary>
