@@ -54,9 +54,9 @@
              storage contracts extracted from Marten (marten#4821/#4830, weasel#329/#331) —
              IStorageSession / IStorageDatabase / IStorageSerializer / IDocumentStorage /
              IStorageDialect. This is the shared runtime Polecat retargets onto for #273. -->
-        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.12.0" />
-        <PackageVersion Include="Weasel.SqlServer" Version="9.12.0" />
-        <PackageVersion Include="Weasel.Storage" Version="9.12.0" />
+        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.13.0" />
+        <PackageVersion Include="Weasel.SqlServer" Version="9.13.0" />
+        <PackageVersion Include="Weasel.Storage" Version="9.13.0" />
 
         <!-- Strongly typed IDs -->
         <PackageVersion Include="StronglyTypedId" Version="1.0.0-beta08" />
