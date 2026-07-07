@@ -9,14 +9,14 @@ namespace Polecat.Internal;
 /// </summary>
 internal class WorkTracker : IWorkTracker
 {
-    private readonly List<IStorageOperation> _operations = [];
-    private ImmutableList<IStorageOperation>? _operationsSnapshot;
+    private readonly List<Weasel.Storage.IStorageOperation> _operations = [];
+    private ImmutableList<Weasel.Storage.IStorageOperation>? _operationsSnapshot;
 
     private readonly List<StreamAction> _streams = [];
     private ImmutableList<StreamAction>? _streamsSnapshot;
     private readonly Lock _stateLock = new();
 
-    public IReadOnlyList<IStorageOperation> Operations
+    public IReadOnlyList<Weasel.Storage.IStorageOperation> Operations
     {
         get
         {
@@ -57,7 +57,7 @@ internal class WorkTracker : IWorkTracker
     public IEnumerable<StreamAction> GetStreams() => Streams;
     public IChangeSet Clone() => new ChangeSet(Operations, Streams);
 
-    public void Add(IStorageOperation operation)
+    public void Add(Weasel.Storage.IStorageOperation operation)
     {
         lock (_stateLock)
         {
@@ -107,8 +107,8 @@ internal class WorkTracker : IWorkTracker
         {
             var removed = _operations.RemoveAll(op =>
                 op.DocumentType == documentType
-                && op.DocumentId != null
-                && op.DocumentId.Equals(id));
+                && OperationIdentity(op) is { } opId
+                && opId.Equals(id));
 
             if (removed > 0)
                 _operationsSnapshot = null;
@@ -125,4 +125,17 @@ internal class WorkTracker : IWorkTracker
                 _operationsSnapshot = null;
         }
     }
+
+    /// <summary>
+    ///     Per-operation document identity for eject matching over the shared currency
+    ///     (#273 E2e): bespoke Polecat operations (including the closed-shape adapter)
+    ///     carry DocumentId; shared deletions carry Id.
+    /// </summary>
+    private static object? OperationIdentity(Weasel.Storage.IStorageOperation op)
+        => op switch
+        {
+            IStorageOperation bespoke => bespoke.DocumentId,
+            Weasel.Storage.IDeletion deletion => deletion.Id,
+            _ => null
+        };
 }

@@ -28,7 +28,7 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
     private readonly ShardExecutionMode _mode;
     private readonly ResiliencePipeline _resilience;
     private readonly ConcurrentBag<IDocumentSession> _sessions = new();
-    private readonly ConcurrentQueue<IStorageOperation> _progressOps = new();
+    private readonly ConcurrentQueue<Weasel.Storage.IStorageOperation> _progressOps = new();
 
     // The change set committed by this batch, populated during ExecuteAsync. Exposed so the
     // subscription runner can hand it to the IChangeListener returned by ProcessEventsAsync.
@@ -85,7 +85,7 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
     public async Task ExecuteAsync(CancellationToken token)
     {
         // Collect all operations outside the lambda to keep state simple
-        var allOps = new List<IStorageOperation>();
+        var allOps = new List<Weasel.Storage.IStorageOperation>();
         var tableEnsurer = new DocumentTableEnsurer(
             new ConnectionFactory(_connectionString), _store.Options);
 
@@ -188,7 +188,9 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
                         foreach (var operation in ops)
                         {
                             if (commandIndex > 0) builder.StartNewCommand();
-                            operation.ConfigureCommand(builder);
+                            // Every daemon-batch op carries its own session context (bespoke
+                            // ops are fully bound; adapters captured their tenant session).
+                            StorageOperationExecution.Configure(operation, builder, session: null);
                             commandIndex++;
                         }
 

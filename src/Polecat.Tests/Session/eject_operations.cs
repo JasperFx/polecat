@@ -46,7 +46,7 @@ public class eject_operations : IntegrationContext
 
         theSession.Eject(doc2);
         theSession.PendingChanges.Operations.Count.ShouldBe(1);
-        theSession.PendingChanges.Operations[0].DocumentId!.ShouldBe(doc1.Id);
+        ((Polecat.Internal.IStorageOperation)theSession.PendingChanges.Operations[0]).DocumentId!.ShouldBe(doc1.Id);
     }
 
     [Fact]

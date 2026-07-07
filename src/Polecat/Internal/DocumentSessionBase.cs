@@ -539,7 +539,8 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
                 for (var i = 0; i < operations.Count; i++)
                 {
                     if (i > 0) builder.StartNewCommand();
-                    operations[i].ConfigureCommand(builder);
+                    Operations.StorageOperationExecution.Configure(
+                        operations[i], builder, (Weasel.Storage.IStorageSession)this);
                 }
 
                 builder.Compile();
@@ -582,7 +583,8 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
                     var insertOp = operations.FirstOrDefault(op => op.Role() == OperationRole.Insert);
                     if (insertOp != null)
                     {
-                        throw new DocumentAlreadyExistsException(insertOp.DocumentType, insertOp.DocumentId!);
+                        var documentId = insertOp is IStorageOperation bespoke ? bespoke.DocumentId : null;
+                        throw new DocumentAlreadyExistsException(insertOp.DocumentType, documentId!);
                     }
 
                     throw;
