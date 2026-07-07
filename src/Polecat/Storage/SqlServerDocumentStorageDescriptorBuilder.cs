@@ -72,24 +72,37 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
         // tenant_id: pc tables always carry it. Conjoined uses the shared operations'
         // leading tenant parameter slot (NOT a binder); single-tenant writes the session's
         // (default) tenant id through a regular binder slot.
+        // Parity with the bespoke load path: ITenanted documents get tenant_id applied on load.
+        var tenantMember = mapping.Metadata.TenantId.Member
+                           ?? (typeof(Polecat.Metadata.ITenanted).IsAssignableFrom(typeof(TDoc))
+                               ? typeof(TDoc).GetProperty(nameof(Polecat.Metadata.ITenanted.TenantId))
+                               : null);
         if (!isConjoined)
         {
             // Shared DocumentTenantIdBinder is read-only (Marten binds tenant inline);
             // Polecat's write-capable binder sources the session's tenant id.
-            writeBinders.Add(new PolecatTenantIdBinder<TDoc>(
-                mapping.Metadata.TenantId.Name, mapping.Metadata.TenantId.Member));
+            var tenantBinder = new PolecatTenantIdBinder<TDoc>(mapping.Metadata.TenantId.Name, tenantMember);
+            writeBinders.Add(tenantBinder);
+            if (tenantMember is not null)
+            {
+                readBinders.Add(tenantBinder);
+            }
         }
-        else if (mapping.Metadata.TenantId.Member is not null)
+        else if (tenantMember is not null)
         {
-            readBinders.Add(new DocumentTenantIdBinder<TDoc>(
-                mapping.Metadata.TenantId.Name, mapping.Metadata.TenantId.Member));
+            readBinders.Add(new DocumentTenantIdBinder<TDoc>(mapping.Metadata.TenantId.Name, tenantMember));
         }
 
         // guid_version: the optimistic-concurrency vehicle (uniqueidentifier), separate from
         // the always-present numeric version column that MERGE maintains as literal SQL.
         if (mapping.UseOptimisticConcurrency)
         {
-            versionBinder = new DocumentVersionBinder<TDoc>("guid_version", dialect, versionMember: null);
+            // Parity with the bespoke load path: IVersioned documents get guid_version
+            // applied to their Version member on every load.
+            var versionMember = typeof(IVersioned).IsAssignableFrom(typeof(TDoc))
+                ? typeof(TDoc).GetProperty(nameof(IVersioned.Version))
+                : null;
+            versionBinder = new DocumentVersionBinder<TDoc>("guid_version", dialect, versionMember);
             writeBinders.Add(versionBinder);
             versionReadIndex = readBinders.Count;
             readBinders.Add(versionBinder);
@@ -120,10 +133,15 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
         }
 
         // created_at: read-only projection; the INSERT branch bakes SYSDATETIMEOFFSET().
-        if (mapping.Metadata.CreatedAt.Member is not null)
+        // Parity: ICreated documents get created_at applied on load.
+        var createdMember = mapping.Metadata.CreatedAt.Member
+                            ?? (typeof(Polecat.Metadata.ICreated).IsAssignableFrom(typeof(TDoc))
+                                ? typeof(TDoc).GetProperty(nameof(Polecat.Metadata.ICreated.CreatedAt))
+                                : null);
+        if (createdMember is not null)
         {
             readBinders.Add(new DocumentCreatedAtBinder<TDoc>(
-                mapping.Metadata.CreatedAt.Name, mapping.Metadata.CreatedAt.Member, ServerTimestamp));
+                mapping.Metadata.CreatedAt.Name, createdMember, ServerTimestamp));
         }
 
         // Opt-in session-sourced metadata (#241): write slot when enabled, read slot only
@@ -172,9 +190,11 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
 
         var writeArray = writeBinders.ToArray();
         var readArray = readBinders.ToArray();
-        // QueryOnly's SELECT omits guid_version when it has no mapped member (always the case
-        // in slice 1) so its read set drops that binder — mirrors Marten's #4602 rule.
-        var queryOnlyReadArray = versionReadIndex >= 0
+        // QueryOnly's SELECT omits the version/revision binder only when it has no mapped
+        // member — mirrors Marten's #4602 rule.
+        var versionHasMember = (versionBinder is not null && typeof(IVersioned).IsAssignableFrom(typeof(TDoc)))
+                               || revisionBinder is not null;
+        var queryOnlyReadArray = versionReadIndex >= 0 && !versionHasMember
             ? readArray.Where((_, i) => i != versionReadIndex).ToArray()
             : readArray;
         var clientSide = writeArray.Where(b => !b.IsServerSide).ToArray();

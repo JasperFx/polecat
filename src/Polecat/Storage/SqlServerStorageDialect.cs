@@ -20,8 +20,17 @@ internal sealed class SqlServerStorageDialect<TId> : IStorageDialect
 {
     public static readonly IStorageDialect Instance = new SqlServerStorageDialect<TId>();
 
-    private static readonly SqlDbType IdParameterType =
-        SqlServerProvider.Instance.ToParameterType(typeof(TId));
+    // NOTE: not derived from typeof(TId) — for strongly-typed ids TId is the wrapper type
+    // while raw sql values are the unwrapped inner (Guid/string/int/long). Type from the
+    // runtime value instead (#273 E2a).
+    private static SqlDbType TypeForRawId(object rawId) => rawId switch
+    {
+        Guid => SqlDbType.UniqueIdentifier,
+        string => SqlDbType.NVarChar,
+        int => SqlDbType.Int,
+        long => SqlDbType.BigInt,
+        _ => SqlServerProvider.Instance.ToParameterType(rawId.GetType())
+    };
 
     private SqlServerStorageDialect()
     {
@@ -30,7 +39,7 @@ internal sealed class SqlServerStorageDialect<TId> : IStorageDialect
     public System.Data.Common.DbCommand BuildLoadCommand(string loaderSql, object rawId, string? tenant)
     {
         var command = new SqlCommand(loaderSql);
-        command.Parameters.Add(new SqlParameter("id", rawId) { SqlDbType = IdParameterType });
+        command.Parameters.Add(new SqlParameter("id", rawId) { SqlDbType = TypeForRawId(rawId) });
         if (tenant is not null)
         {
             command.Parameters.Add(new SqlParameter("tenant_id", tenant) { SqlDbType = SqlDbType.NVarChar });
@@ -62,7 +71,7 @@ internal sealed class SqlServerStorageDialect<TId> : IStorageDialect
         return command;
     }
 
-    public Weasel.Core.SqlGeneration.ISqlFragment ByIdFilter(object rawId) => new SqlServerByIdFilter(rawId, IdParameterType);
+    public Weasel.Core.SqlGeneration.ISqlFragment ByIdFilter(object rawId) => new SqlServerByIdFilter(rawId, TypeForRawId(rawId));
 
     /// <summary>SQL Server error 208: "Invalid object name '%s'."</summary>
     public bool IsUndefinedTable(Exception exception)

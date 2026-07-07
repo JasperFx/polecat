@@ -23,7 +23,18 @@ namespace Polecat.Storage.ClosedShape;
 ///     <c>SelectFields</c>, fragments) are minimal-but-correct; the full LINQ retarget is E2+.
 ///     Subclass (hierarchy child) storage is also E2.
 /// </remarks>
-internal abstract class PolecatDocumentStorage<TDoc, TId> : IDocumentStorage<TDoc, TId>
+/// <summary>
+///     Non-generic-id load bridge for the session pipeline (#273 E2a): QuerySession's load
+///     internals carry ids as <c>object</c>, so this closes the gap without the session
+///     needing the TId generic argument.
+/// </summary>
+internal interface IPolecatObjectStorage<TDoc> where TDoc : notnull
+{
+    Task<TDoc?> LoadByObjectIdAsync(object id, IStorageSession session, CancellationToken token);
+    Task<IReadOnlyList<TDoc>> LoadManyByObjectIdsAsync(IReadOnlyList<object> ids, IStorageSession session, CancellationToken token);
+}
+
+internal abstract class PolecatDocumentStorage<TDoc, TId> : IDocumentStorage<TDoc, TId>, IPolecatObjectStorage<TDoc>
     where TDoc : notnull
     where TId : notnull
 {
@@ -40,9 +51,16 @@ internal abstract class PolecatDocumentStorage<TDoc, TId> : IDocumentStorage<TDo
         _mapping = mapping;
         _descriptor = descriptor;
 
-        // Read layout must match the shared selectors: id=0, data=1, metadata from 2
-        // (QueryOnly narrows via QueryOnlyReadBinders — see SelectFields()).
-        var readColumns = new List<string> { "id", "data" };
+        // Read layout must match the shared selectors: writeable flavors read id=0, data=1,
+        // metadata from 2; the QueryOnly selectors EXCLUDE id (data=0, metadata from 1) and
+        // narrow the binder set via QueryOnlyReadBinders.
+        var readColumns = new List<string>();
+        if (IncludeIdInSelect)
+        {
+            readColumns.Add("id");
+        }
+
+        readColumns.Add("data");
         readColumns.AddRange(ReadBinders().Select(b => b.ColumnName));
         _selectFields = readColumns.ToArray();
 
@@ -65,6 +83,9 @@ internal abstract class PolecatDocumentStorage<TDoc, TId> : IDocumentStorage<TDo
 
     /// <summary>Read binders backing this flavor's SELECT (QueryOnly overrides).</summary>
     protected virtual IDocumentMetadataBinder<TDoc>[] ReadBinders() => _descriptor.ReadBinders;
+
+    /// <summary>The QueryOnly selectors read data at column 0 with no id column.</summary>
+    protected virtual bool IncludeIdInSelect => true;
 
     private string SoftDeleteFilterSql()
         => _mapping.DeleteStyle == DeleteStyle.SoftDelete ? " AND is_deleted = 0" : string.Empty;
@@ -298,6 +319,29 @@ internal abstract class PolecatDocumentStorage<TDoc, TId> : IDocumentStorage<TDo
     }
 
     public bool Contains(string sqlText) => false;
+
+    // ---- IPolecatObjectStorage bridge (#273 E2a) ----
+
+    public Task<TDoc?> LoadByObjectIdAsync(object id, IStorageSession session, CancellationToken token)
+        => LoadAsync(NormalizeId(id), session, token);
+
+    public Task<IReadOnlyList<TDoc>> LoadManyByObjectIdsAsync(IReadOnlyList<object> ids, IStorageSession session,
+        CancellationToken token)
+    {
+        var typed = new TId[ids.Count];
+        for (var i = 0; i < ids.Count; i++)
+        {
+            typed[i] = NormalizeId(ids[i]);
+        }
+
+        return LoadManyAsync(typed, session, token);
+    }
+
+    /// <summary>
+    ///     Session load internals carry raw inner values (Guid/string/int/long) even for
+    ///     strongly-typed-id documents; wrap when TId is the wrapper type.
+    /// </summary>
+    private TId NormalizeId(object id) => id is TId typed ? typed : (TId)_mapping.WrapId(id);
 }
 
 /// <summary>Fixed-SQL operation fragment (delete fragments on the shared contract).</summary>

@@ -387,6 +387,12 @@ internal class DocumentMapping
     /// </summary>
     internal void SetRawId(object document, object id) => _idSetter(document, id);
 
+    /// <summary>
+    ///     Wraps a raw inner id value (Guid/string/int/long) into the strongly-typed wrapper when
+    ///     this mapping uses one; pass-through otherwise (#273 E2a load bridge).
+    /// </summary>
+    internal object WrapId(object rawId) => _idWrapper is not null ? _idWrapper(rawId) : rawId;
+
     public void AssignIdIfMissing(object document, ISequenceSource sequences)
         => _identityAssigner?.AssignIfMissing(document, sequences);
 
