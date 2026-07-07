@@ -376,6 +376,8 @@ internal sealed class QueryOnlyPolecatStorage<TDoc, TId> : PolecatDocumentStorag
 
     protected override IDocumentMetadataBinder<TDoc>[] ReadBinders() => _descriptor.QueryOnlyReadBinders;
 
+    protected override bool IncludeIdInSelect => false;
+
     public override Task<TDoc?> LoadAsync(TId id, IStorageSession session, CancellationToken token)
         => QueryOneAsync(id, session, token);
 

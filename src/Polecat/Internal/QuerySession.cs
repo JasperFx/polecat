@@ -246,6 +246,22 @@ internal partial class QuerySession : IQuerySession
         var provider = _providers.GetProvider<T>();
         await _tableEnsurer.EnsureTableAsync(provider, token);
 
+        // #273 E2a: root documents load through the closed-shape storage layer (shared
+        // selectors + dialect commands over the descriptor). Subclass loads (provider routed
+        // to the parent mapping) stay on the legacy path until SubClassDocumentStorage (E2e).
+        if (provider.Mapping.DocumentType == typeof(T))
+        {
+            var storage = (Polecat.Storage.ClosedShape.IPolecatObjectStorage<T>)
+                ((Weasel.Storage.IStorageSession)this).StorageFor<T>();
+            return await storage.LoadByObjectIdAsync(id, this, token);
+        }
+
+        return await LegacyLoadInternalAsync<T>(provider, id, token);
+    }
+
+    private async Task<T?> LegacyLoadInternalAsync<T>(DocumentProvider provider, object id, CancellationToken token)
+        where T : class
+    {
         await using var cmd = new SqlCommand();
         cmd.CommandText = provider.LoadSql;
         cmd.Parameters.AddWithValue("@id", id);
@@ -307,6 +323,20 @@ internal partial class QuerySession : IQuerySession
         var provider = _providers.GetProvider<T>();
         await _tableEnsurer.EnsureTableAsync(provider, token);
 
+        // #273 E2a: root documents load through the closed-shape storage layer.
+        if (provider.Mapping.DocumentType == typeof(T))
+        {
+            var storage = (Polecat.Storage.ClosedShape.IPolecatObjectStorage<T>)
+                ((Weasel.Storage.IStorageSession)this).StorageFor<T>();
+            return await storage.LoadManyByObjectIdsAsync(ids, this, token);
+        }
+
+        return await LegacyLoadManyInternalAsync<T>(provider, ids, token);
+    }
+
+    private async Task<IReadOnlyList<T>> LegacyLoadManyInternalAsync<T>(DocumentProvider provider, List<object> ids,
+        CancellationToken token) where T : class
+    {
         await using var cmd = new SqlCommand();
 
         var paramNames = new string[ids.Count];

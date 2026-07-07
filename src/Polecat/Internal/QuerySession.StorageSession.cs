@@ -82,7 +82,7 @@ internal partial class QuerySession : IStorageSession
     ///     Db-neutral execution seam of the shared runtime. Delegates to Polecat's existing
     ///     resilience-pipeline-wrapped reader execution; Polecat sessions only speak SqlClient.
     /// </summary>
-    public Task<DbDataReader> ExecuteReaderAsync(DbCommand command, CancellationToken token = default)
+    public async Task<DbDataReader> ExecuteReaderAsync(DbCommand command, CancellationToken token = default)
     {
         if (command is not SqlCommand sqlCommand)
         {
@@ -91,7 +91,20 @@ internal partial class QuerySession : IStorageSession
                 nameof(command));
         }
 
-        return ExecuteReaderAsync(sqlCommand, token);
+        // The bespoke pipeline logs at its call sites; the closed-shape paths execute through
+        // this seam, so it owns the session-logger notifications (#273 E2a).
+        Logger.OnBeforeExecute(sqlCommand.CommandText);
+        try
+        {
+            var reader = await ExecuteReaderAsync(sqlCommand, token).ConfigureAwait(false);
+            Logger.LogSuccess(sqlCommand.CommandText);
+            return reader;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogFailure(sqlCommand.CommandText, ex);
+            throw;
+        }
     }
 
     public string NextTempTableName()
