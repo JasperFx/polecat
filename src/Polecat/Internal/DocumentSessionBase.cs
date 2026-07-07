@@ -92,30 +92,16 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     {
         SyncMetadata(document);
         var provider = _providers.GetProvider<T>();
-        if (TryBuildClosedShapeWrite(document, provider, WriteKind.Upsert, out var adapter))
-        {
-            _workTracker.Add(adapter);
-            OnDocumentStored(typeof(T), provider.Mapping.GetId(document), document);
-            return;
-        }
-
-        var op = provider.BuildUpsert(document, Serializer, TenantId, BuildMetadataValues(provider.Mapping));
-        _workTracker.Add(op);
+        _workTracker.Add(BuildClosedShapeWrite(document, provider, WriteKind.Upsert));
         OnDocumentStored(typeof(T), provider.Mapping.GetId(document), document);
     }
 
-    // #273 E2b: root non-numeric documents write through the shared closed-shape operations
-    // (wrapped for the bespoke unit-of-work currency until E2e). Numeric-revision documents
-    // stay bespoke pending E2c's version-guard parity, as do subclasses (E2e).
-    private bool TryBuildClosedShapeWrite<T>(T document, DocumentProvider provider, WriteKind kind,
-        out Operations.ClosedShapeOperationAdapter adapter) where T : notnull
+    // #273 E2b/E2c/E2e: every document write goes through the shared closed-shape operations
+    // (wrapped for the bespoke unit-of-work currency until the op-currency flip); subclass
+    // types resolve a SubClassPolecatStorage delegating to the hierarchy root's storage.
+    private Operations.ClosedShapeOperationAdapter BuildClosedShapeWrite<T>(T document, DocumentProvider provider,
+        WriteKind kind) where T : notnull
     {
-        adapter = null!;
-        if (provider.Mapping.DocumentType != typeof(T))
-        {
-            return false;
-        }
-
         var session = (Weasel.Storage.IStorageSession)this;
         var storage = (Weasel.Storage.IDocumentStorage<T>)session.StorageFor<T>();
         storage.Store(session, document); // id assignment + identity-map/version bookkeeping
@@ -139,8 +125,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             };
         }
 
-        adapter = new Operations.ClosedShapeOperationAdapter(op, session, document, provider.Mapping.GetId(document));
-        return true;
+        return new Operations.ClosedShapeOperationAdapter(op, session, document, provider.Mapping.GetId(document));
     }
 
     private enum WriteKind
@@ -205,15 +190,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     {
         SyncMetadata(document);
         var provider = _providers.GetProvider<T>();
-        if (TryBuildClosedShapeWrite(document, provider, WriteKind.Insert, out var adapter))
-        {
-            _workTracker.Add(adapter);
-            OnDocumentStored(typeof(T), provider.Mapping.GetId(document), document);
-            return;
-        }
-
-        var op = provider.BuildInsert(document, Serializer, TenantId, BuildMetadataValues(provider.Mapping));
-        _workTracker.Add(op);
+        _workTracker.Add(BuildClosedShapeWrite(document, provider, WriteKind.Insert));
         OnDocumentStored(typeof(T), provider.Mapping.GetId(document), document);
     }
 
@@ -221,34 +198,18 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     {
         SyncMetadata(document);
         var provider = _providers.GetProvider<T>();
-        if (TryBuildClosedShapeWrite(document, provider, WriteKind.Update, out var adapter))
-        {
-            _workTracker.Add(adapter);
-            OnDocumentStored(typeof(T), provider.Mapping.GetId(document), document);
-            return;
-        }
-
-        var op = provider.BuildUpdate(document, Serializer, TenantId, BuildMetadataValues(provider.Mapping));
-        _workTracker.Add(op);
+        _workTracker.Add(BuildClosedShapeWrite(document, provider, WriteKind.Update));
         OnDocumentStored(typeof(T), provider.Mapping.GetId(document), document);
     }
 
     public void Delete<T>(T document) where T : notnull
     {
         var provider = _providers.GetProvider<T>();
-        if (provider.Mapping.DocumentType == typeof(T))
-        {
-            var session = (Weasel.Storage.IStorageSession)this;
-            var storage = (Weasel.Storage.IDocumentStorage<T>)session.StorageFor<T>();
-            var deletion = storage.DeleteForDocument(document, TenantId);
-            _workTracker.Add(new Operations.ClosedShapeOperationAdapter(
-                deletion, session, document, provider.Mapping.GetId(document)));
-        }
-        else
-        {
-            var op = provider.BuildDeleteByDocument(document, TenantId);
-            _workTracker.Add(op);
-        }
+        var session = (Weasel.Storage.IStorageSession)this;
+        var storage = (Weasel.Storage.IDocumentStorage<T>)session.StorageFor<T>();
+        var deletion = storage.DeleteForDocument(document, TenantId);
+        _workTracker.Add(new Operations.ClosedShapeOperationAdapter(
+            deletion, session, document, provider.Mapping.GetId(document)));
 
         // Sync ISoftDeleted properties in memory
         if (document is ISoftDeleted softDeleted && provider.Mapping.DeleteStyle == DeleteStyle.SoftDelete)
@@ -278,22 +239,13 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         DeleteByObjectId<T>(id);
     }
 
-    // #273 E2c: root-document deletions route through the closed-shape storage layer.
+    // #273 E2c/E2e: all by-id deletions route through the closed-shape storage layer.
     private void DeleteByObjectId<T>(object id) where T : class
     {
-        var provider = _providers.GetProvider<T>();
-        if (provider.Mapping.DocumentType == typeof(T))
-        {
-            var session = (Weasel.Storage.IStorageSession)this;
-            var storage = (Polecat.Storage.ClosedShape.IPolecatObjectStorage<T>)session.StorageFor<T>();
-            _workTracker.Add(new Operations.ClosedShapeOperationAdapter(
-                storage.DeletionForObjectId(id, TenantId), session, id, id));
-        }
-        else
-        {
-            var op = provider.BuildDeleteById(id, TenantId);
-            _workTracker.Add(op);
-        }
+        var session = (Weasel.Storage.IStorageSession)this;
+        var storage = (Polecat.Storage.ClosedShape.IPolecatObjectStorage<T>)session.StorageFor<T>();
+        _workTracker.Add(new Operations.ClosedShapeOperationAdapter(
+            storage.DeletionForObjectId(id, TenantId), session, id, id));
     }
 
     public void HardDelete<T>(T document) where T : notnull

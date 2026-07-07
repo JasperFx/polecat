@@ -256,41 +256,19 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider
 
         ApplyModifiedFilters(parser);
 
-        // Materialization shape. Root documents ride the closed-shape QueryOnly storage
-        // (#273 E2d): SELECT columns come from the shared select clause (data first, then
-        // the QueryOnlyReadBinders' columns in binder order) and rows resolve through the
-        // shared QueryOnly selector. Subclass queries stay on the bespoke column shape +
-        // DeserializingSelector until the SubClassDocumentStorage analog (E2e).
+        // Materialization shape (#273 E2d/E2e). Whole-document queries ride the closed-shape
+        // QueryOnly storage: SELECT columns come from the shared select clause (data first,
+        // then the QueryOnlyReadBinders' columns in binder order) and rows resolve through
+        // the shared QueryOnly selector — for subclasses that is a SubClassPolecatStorage
+        // downcasting over the root's hierarchical selector.
         bool syncRevision = provider.Mapping.UseNumericRevisions;
         bool syncGuidVersion = provider.Mapping.UseOptimisticConcurrency;
         bool isHierarchy = provider.Mapping.IsHierarchy();
         Weasel.Storage.ISelectClause? sharedSelectClause = null;
         if (parser.Statement.SelectColumns == "data")
         {
-            if (documentType == provider.Mapping.DocumentType)
-            {
-                sharedSelectClause = _providers.ClosedShapeGraph.QueryOnlySelectClauseFor(documentType);
-                parser.Statement.SelectColumns = string.Join(", ", sharedSelectClause.SelectFields());
-            }
-            else
-            {
-                var cols = "data";
-                if (syncGuidVersion)
-                {
-                    cols = "data, version, guid_version";
-                }
-                else if (syncRevision)
-                {
-                    cols = "data, version";
-                }
-
-                if (isHierarchy)
-                {
-                    cols += ", doc_type";
-                }
-
-                parser.Statement.SelectColumns = cols;
-            }
+            sharedSelectClause = _providers.ClosedShapeGraph.QueryOnlySelectClauseFor(documentType);
+            parser.Statement.SelectColumns = string.Join(", ", sharedSelectClause.SelectFields());
         }
 
         // Add doc_type filter for subclass queries
