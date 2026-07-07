@@ -92,10 +92,52 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     {
         SyncMetadata(document);
         var provider = _providers.GetProvider<T>();
+        if (TryBuildClosedShapeWrite(document, provider, WriteKind.Upsert, out var adapter))
+        {
+            _workTracker.Add(adapter);
+            OnDocumentStored(typeof(T), provider.Mapping.GetId(document), document);
+            return;
+        }
+
         var op = provider.BuildUpsert(document, Serializer, TenantId, BuildMetadataValues(provider.Mapping));
         _workTracker.Add(op);
         OnDocumentStored(typeof(T), provider.Mapping.GetId(document), document);
     }
+
+    // #273 E2b: root non-numeric documents write through the shared closed-shape operations
+    // (wrapped for the bespoke unit-of-work currency until E2e). Numeric-revision documents
+    // stay bespoke pending E2c's version-guard parity, as do subclasses (E2e).
+    private bool TryBuildClosedShapeWrite<T>(T document, DocumentProvider provider, WriteKind kind,
+        out Operations.ClosedShapeOperationAdapter adapter) where T : notnull
+    {
+        adapter = null!;
+        if (provider.Mapping.DocumentType != typeof(T) || provider.Mapping.UseNumericRevisions)
+        {
+            return false;
+        }
+
+        var session = (Weasel.Storage.IStorageSession)this;
+        var storage = (Weasel.Storage.IDocumentStorage<T>)session.StorageFor<T>();
+        storage.Store(session, document); // id assignment + identity-map/version bookkeeping
+
+        var op = kind switch
+        {
+            WriteKind.Insert => storage.Insert(document, session, TenantId),
+            WriteKind.Update => storage.Update(document, session, TenantId),
+            _ => storage.Upsert(document, session, TenantId)
+        };
+
+        adapter = new Operations.ClosedShapeOperationAdapter(op, session, document, provider.Mapping.GetId(document));
+        return true;
+    }
+
+    private enum WriteKind
+    {
+        Upsert,
+        Insert,
+        Update
+    }
+
 
     // #241: capture the session-level metadata to persist into the opt-in document metadata columns.
     // Returns default (empty) when the document type enables none of them, so the common path is free.
@@ -151,6 +193,13 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     {
         SyncMetadata(document);
         var provider = _providers.GetProvider<T>();
+        if (TryBuildClosedShapeWrite(document, provider, WriteKind.Insert, out var adapter))
+        {
+            _workTracker.Add(adapter);
+            OnDocumentStored(typeof(T), provider.Mapping.GetId(document), document);
+            return;
+        }
+
         var op = provider.BuildInsert(document, Serializer, TenantId, BuildMetadataValues(provider.Mapping));
         _workTracker.Add(op);
         OnDocumentStored(typeof(T), provider.Mapping.GetId(document), document);
@@ -160,6 +209,13 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     {
         SyncMetadata(document);
         var provider = _providers.GetProvider<T>();
+        if (TryBuildClosedShapeWrite(document, provider, WriteKind.Update, out var adapter))
+        {
+            _workTracker.Add(adapter);
+            OnDocumentStored(typeof(T), provider.Mapping.GetId(document), document);
+            return;
+        }
+
         var op = provider.BuildUpdate(document, Serializer, TenantId, BuildMetadataValues(provider.Mapping));
         _workTracker.Add(op);
         OnDocumentStored(typeof(T), provider.Mapping.GetId(document), document);
@@ -515,6 +571,20 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
                         {
                             await reader.NextResultAsync(token);
                         }
+                    }
+
+                    // #273 E2b: drain the reader past every remaining result set. SQL Server
+                    // surfaces a per-command batch error (unique index 2601, FK 547, ...) only
+                    // when the reader ADVANCES into that command's result set — and the shared
+                    // unversioned upsert is deliberately fire-and-forget, so without draining
+                    // the error would sit unconsumed and be swallowed by DisposeAsync.
+                    while (await reader.NextResultAsync(token))
+                    {
+                    }
+
+                    if (exceptions.Count == 1)
+                    {
+                        System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(exceptions[0]).Throw();
                     }
 
                     if (exceptions.Count > 0)
@@ -1034,12 +1104,20 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         var id = provider.Mapping.GetId(document);
         _workTracker.EjectDocument(typeof(T), id);
         OnDocumentEjected(typeof(T), id);
+        // #273 E2b: the closed-shape load path caches in the shared ItemMap / version tracker.
+        if (provider.Mapping.DocumentType == typeof(T))
+        {
+            var session = (Weasel.Storage.IStorageSession)this;
+            session.StorageFor<T>().EjectById(session, id);
+        }
     }
 
     public void EjectAllOfType(Type type)
     {
         _workTracker.EjectAllOfType(type);
         OnAllOfTypeEjected(type);
+        // #273 E2b: drop the closed-shape shared-ItemMap cache for the type as well.
+        ((Weasel.Storage.IStorageSession)this).ItemMap.Remove(type);
     }
 
     public void EjectAllPendingChanges()
