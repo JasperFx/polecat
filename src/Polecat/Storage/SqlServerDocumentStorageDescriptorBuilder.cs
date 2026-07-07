@@ -46,17 +46,10 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
         where TDoc : notnull
         where TId : notnull
     {
-        if (mapping.IsHierarchy())
+        if (mapping.HasPartitionColumn)
         {
             throw new NotSupportedException(
-                "Closed-shape descriptors for hierarchical documents land in a later #273 increment.");
-        }
-
-        if (mapping.UseNumericRevisions || mapping.DeleteStyle == DeleteStyle.SoftDelete ||
-            mapping.HasPartitionColumn)
-        {
-            throw new NotSupportedException(
-                "Closed-shape descriptors for numeric revisions / soft deletes / partitioned documents land in a later #273 increment.");
+                "Closed-shape descriptors for partitioned documents land in a later #273 increment.");
         }
 
         var dialect = SqlServerStorageDialect<TId>.Instance;
@@ -64,8 +57,23 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
         var readBinders = new List<IDocumentMetadataBinder<TDoc>>();
 
         DocumentVersionBinder<TDoc>? versionBinder = null;
+        DocumentRevisionBinder<TDoc>? revisionBinder = null;
         var versionReadIndex = -1;
+        var docTypeReadIndex = -1;
+        Func<string, Type>? resolveDocumentType = null;
         var isConjoined = mapping.TenancyStyle == TenancyStyle.Conjoined;
+
+        // Hierarchy: doc_type discriminator, written on every save and read FIRST so the
+        // hierarchical selectors can dispatch deserialization (read layout: id, data,
+        // doc_type, version, ...).
+        if (mapping.IsHierarchy())
+        {
+            resolveDocumentType = mapping.TypeFor;
+            var docTypeBinder = new DocumentDocTypeBinder<TDoc>("doc_type", dialect, mapping.AliasFor);
+            writeBinders.Add(docTypeBinder);
+            docTypeReadIndex = readBinders.Count;
+            readBinders.Add(docTypeBinder);
+        }
 
         // tenant_id: pc tables always carry it. Conjoined uses the shared operations'
         // leading tenant parameter slot (NOT a binder); single-tenant writes the session's
@@ -91,6 +99,18 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
             writeBinders.Add(versionBinder);
             versionReadIndex = readBinders.Count;
             readBinders.Add(versionBinder);
+        }
+        else if (mapping.UseNumericRevisions)
+        {
+            // Numeric revisions ride the always-present version column itself; the MERGE
+            // CASE expressions handle auto-increment (Revision = 0) vs explicit revisions.
+            var revisionMember = mapping.Metadata.Version.Member
+                                 ?? typeof(TDoc).GetProperty("Version");
+            var columnType = mapping.UseLongRevisions ? StorageColumnType.Long : StorageColumnType.Int;
+            revisionBinder = new DocumentRevisionBinder<TDoc>("version", dialect, revisionMember, columnType);
+            writeBinders.Add(revisionBinder);
+            versionReadIndex = readBinders.Count;
+            readBinders.Add(revisionBinder);
         }
 
         // dotnet_type: always written, never selected (matches Polecat's current SELECTs).
@@ -128,6 +148,24 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
                 mapping.Metadata.Headers.Name, dialect, mapping.Metadata.Headers.Member));
         }
 
+        // Soft delete: every save writes the defaults (0, NULL) so re-saving a soft-deleted
+        // document undeletes it — Marten's closed-shape semantics; the actual soft-delete
+        // UPDATE stays with the delete operations.
+        if (mapping.DeleteStyle == DeleteStyle.SoftDelete)
+        {
+            var isDeleted = new DocumentSoftDeletedBinder<TDoc>(
+                mapping.Metadata.IsSoftDeleted.Name, dialect, mapping.Metadata.IsSoftDeleted.Member);
+            writeBinders.Add(isDeleted);
+            if (mapping.Metadata.IsSoftDeleted.Member is not null)
+            {
+                readBinders.Add(isDeleted);
+            }
+
+            // Polecat has no member-mapping config for deleted_at (only is_deleted);
+            // write-only with the column's fixed name.
+            writeBinders.Add(new DocumentSoftDeletedAtBinder<TDoc>("deleted_at", dialect, member: null));
+        }
+
         var writeArray = writeBinders.ToArray();
         var readArray = readBinders.ToArray();
         // QueryOnly's SELECT omits guid_version when it has no mapped member (always the case
@@ -139,12 +177,14 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
 
         var concurrencyMode = mapping.UseOptimisticConcurrency
             ? ConcurrencyMode.Optimistic
-            : ConcurrencyMode.Off;
+            : mapping.UseNumericRevisions
+                ? ConcurrencyMode.Numeric
+                : ConcurrencyMode.Off;
 
-        var upsertSql = BuildMergeSql(mapping, writeArray, isConjoined, concurrencyMode, guarded: concurrencyMode != ConcurrencyMode.Off, insertOnly: false);
-        var insertSql = BuildMergeSql(mapping, writeArray, isConjoined, concurrencyMode, guarded: false, insertOnly: true);
-        var updateSql = BuildUpdateSql(mapping, writeArray, isConjoined, concurrencyMode);
-        var overwriteSql = BuildMergeSql(mapping, writeArray, isConjoined, concurrencyMode, guarded: false, insertOnly: false);
+        var upsertSql = BuildMergeSql(mapping, writeArray, revisionBinder, isConjoined, concurrencyMode, guarded: concurrencyMode != ConcurrencyMode.Off, insertOnly: false);
+        var insertSql = BuildMergeSql(mapping, writeArray, revisionBinder, isConjoined, concurrencyMode, guarded: false, insertOnly: true);
+        var updateSql = BuildUpdateSql(mapping, writeArray, revisionBinder, isConjoined, concurrencyMode);
+        var overwriteSql = BuildMergeSql(mapping, writeArray, revisionBinder, isConjoined, concurrencyMode, guarded: false, insertOnly: false);
 
         return new DocumentStorageDescriptor<TDoc, TId>(
             identification,
@@ -161,10 +201,10 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
             isConjoined: isConjoined,
             concurrencyMode: concurrencyMode,
             versionBinder: versionBinder,
-            revisionBinder: null,
+            revisionBinder: revisionBinder,
             versionReadIndex: versionReadIndex,
-            resolveDocumentType: null,
-            docTypeReadIndex: -1,
+            resolveDocumentType: resolveDocumentType,
+            docTypeReadIndex: docTypeReadIndex,
             tableName: mapping.QualifiedTableName);
     }
 
@@ -191,14 +231,19 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
     /// <summary>
     ///     The MERGE statement serving upsert (guarded or not) and insert-only. Client-side
     ///     binder values travel in the USING row so both branches reference <c>s.{col}</c>;
-    ///     server-side values are baked as literals per branch. The always-present numeric
-    ///     <c>version</c> column is 1 on insert and <c>t.version + 1</c> on update. Zero rows
-    ///     from OUTPUT signals a concurrency violation (guarded upsert) or an id collision
-    ///     (insert-only) to the shared operations.
+    ///     server-side values are baked as literals per branch. Off/Optimistic modes maintain
+    ///     the always-present numeric <c>version</c> column as literal SQL (1 on insert,
+    ///     <c>t.version + 1</c> on update); Numeric mode instead routes the revision binder's
+    ///     TWO parameter slots through source columns <c>rev0</c>/<c>rev1</c> (the shared
+    ///     operations bind the raw revision to both) and adds the four trailing slots the
+    ///     numeric upsert binds (guard pair + SET-CASE pair — all four get the same value, so
+    ///     MERGE's textual reordering versus Postgres is safe). Zero rows from OUTPUT signals
+    ///     a concurrency violation (guarded upsert) or an id collision (insert-only).
     /// </summary>
     private static string BuildMergeSql<TDoc>(
         DocumentMapping mapping,
         IReadOnlyList<IDocumentMetadataBinder<TDoc>> binders,
+        IDocumentMetadataBinder<TDoc>? revisionBinder,
         bool isConjoined,
         ConcurrencyMode mode,
         bool guarded,
@@ -206,8 +251,10 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
         where TDoc : notnull
     {
         var table = mapping.QualifiedTableName;
+        var numeric = mode == ConcurrencyMode.Numeric;
 
-        // USING row: [tenant] id, data, then client-side binder columns — parameter slot order.
+        // USING row: [tenant] id, data, then client-side binder columns in binder-array order —
+        // this IS the parameter slot order. The numeric revision binder occupies two slots.
         var usingColumns = new List<string>();
         if (isConjoined)
         {
@@ -216,7 +263,18 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
 
         usingColumns.Add("id");
         usingColumns.Add("data");
-        usingColumns.AddRange(binders.Where(b => !b.IsServerSide).Select(b => b.ColumnName));
+        foreach (var binder in binders.Where(b => !b.IsServerSide))
+        {
+            if (numeric && ReferenceEquals(binder, revisionBinder))
+            {
+                usingColumns.Add("rev0");
+                usingColumns.Add("rev1");
+            }
+            else
+            {
+                usingColumns.Add(binder.ColumnName);
+            }
+        }
 
         var usingValues = string.Join(", ", usingColumns.Select(_ => "?"));
         var sourceColumns = string.Join(", ", usingColumns);
@@ -225,9 +283,32 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
             ? "t.id = s.id AND t.tenant_id = s.tenant_id"
             : "t.id = s.id";
 
-        // INSERT branch: USING columns + version/created_at/last modified server-side extras.
-        var insertColumns = new List<string>(usingColumns) { "version", "created_at" };
-        var insertValues = new List<string>(usingColumns.Select(c => $"s.{c}")) { "1", ServerTimestamp };
+        // INSERT branch. Off/Optimistic: version literal 1 + created_at. Numeric: the version
+        // value is the revision CASE over the source columns (auto -> initial revision 1).
+        var insertColumns = new List<string>();
+        var insertValues = new List<string>();
+        foreach (var column in usingColumns)
+        {
+            if (column == "rev0")
+            {
+                insertColumns.Add("version");
+                insertValues.Add("CASE WHEN s.rev0 = 0 THEN 1 ELSE s.rev1 END");
+            }
+            else if (column != "rev1")
+            {
+                insertColumns.Add(column);
+                insertValues.Add($"s.{column}");
+            }
+        }
+
+        if (!numeric)
+        {
+            insertColumns.Add("version");
+            insertValues.Add("1");
+        }
+
+        insertColumns.Add("created_at");
+        insertValues.Add(ServerTimestamp);
         foreach (var binder in binders.Where(b => b.IsServerSide))
         {
             insertColumns.Add(binder.ColumnName);
@@ -245,20 +326,38 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
                    $"OUTPUT {OutputColumn(mode)};";
         }
 
-        // UPDATE branch: data + client-side binder columns from s, server-side as literals,
-        // numeric version incremented. created_at is never touched on update.
-        var updateAssignments = new List<string> { "data = s.data", "version = t.version + 1" };
-        updateAssignments.AddRange(binders.Where(b => !b.IsServerSide && b.ColumnName != "tenant_id")
+        // UPDATE branch. Numeric: version SET-CASE + guard use the four trailing ? slots the
+        // shared numeric upsert binds after the client loop (all four carry the raw revision).
+        var updateAssignments = new List<string> { "data = s.data" };
+        if (numeric)
+        {
+            updateAssignments.Add("version = CASE WHEN ? = 0 THEN t.version + 1 ELSE ? END");
+        }
+        else
+        {
+            updateAssignments.Add("version = t.version + 1");
+        }
+
+        updateAssignments.AddRange(binders
+            .Where(b => !b.IsServerSide && b.ColumnName != "tenant_id" && !ReferenceEquals(b, revisionBinder))
             .Select(b => $"{b.ColumnName} = s.{b.ColumnName}"));
         updateAssignments.AddRange(binders.Where(b => b.IsServerSide)
             .Select(b => $"{b.ColumnName} = {b.ValueSql}"));
 
-        // Optimistic guard: expected guid_version is the trailing parameter slot; a NULL
-        // expectation (document never loaded in this session) skips the check, matching the
-        // shared operation's DBNull binding.
-        var guard = guarded && mode == ConcurrencyMode.Optimistic
-            ? " AND t.guid_version = ?"
-            : string.Empty;
+        var guard = string.Empty;
+        if (guarded && mode == ConcurrencyMode.Optimistic)
+        {
+            // Trailing expected-version slot; strict equality — updating an existing row
+            // without having loaded it is a concurrency violation by design.
+            guard = " AND t.guid_version = ?";
+        }
+        else if (numeric)
+        {
+            // Auto-increment (? = 0) always wins; explicit revisions only when greater than
+            // current. Guarded and unguarded numeric upserts share the shape — the shared
+            // numeric ops always bind the four trailing slots.
+            guard = " AND (? = 0 OR t.version < ?)";
+        }
 
         return $"MERGE {table} WITH (HOLDLOCK) AS t " +
                $"USING (VALUES ({usingValues})) AS s ({sourceColumns}) ON {onClause} " +
@@ -268,22 +367,23 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
     }
 
     /// <summary>
-    ///     Update-only SQL. Parameter order per the shared update operations: [tenant] id,
-    ///     data, client binders, then the optimistic guard pair. Zero rows = missing document
-    ///     or concurrency violation.
+    ///     Update-only SQL, same MERGE shape without the NOT MATCHED branch so slot order
+    ///     stays identical to upsert. Numeric mode: the revision binder's two client-loop
+    ///     slots ride the <c>rev0</c>/<c>rev1</c> source columns and the shared update
+    ///     operation binds the trailing guard pair. Zero rows = missing document or
+    ///     concurrency violation.
     /// </summary>
     private static string BuildUpdateSql<TDoc>(
         DocumentMapping mapping,
         IReadOnlyList<IDocumentMetadataBinder<TDoc>> binders,
+        IDocumentMetadataBinder<TDoc>? revisionBinder,
         bool isConjoined,
         ConcurrencyMode mode)
         where TDoc : notnull
     {
         var table = mapping.QualifiedTableName;
+        var numeric = mode == ConcurrencyMode.Numeric;
 
-        // Reuse the MERGE shape without the NOT MATCHED branch so the slot order stays
-        // identical to upsert — the shared ClosedShapeUpdateOperations bind exactly like
-        // the upserts.
         var usingColumns = new List<string>();
         if (isConjoined)
         {
@@ -292,7 +392,18 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
 
         usingColumns.Add("id");
         usingColumns.Add("data");
-        usingColumns.AddRange(binders.Where(b => !b.IsServerSide).Select(b => b.ColumnName));
+        foreach (var binder in binders.Where(b => !b.IsServerSide))
+        {
+            if (numeric && ReferenceEquals(binder, revisionBinder))
+            {
+                usingColumns.Add("rev0");
+                usingColumns.Add("rev1");
+            }
+            else
+            {
+                usingColumns.Add(binder.ColumnName);
+            }
+        }
 
         var usingValues = string.Join(", ", usingColumns.Select(_ => "?"));
         var sourceColumns = string.Join(", ", usingColumns);
@@ -300,15 +411,22 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
             ? "t.id = s.id AND t.tenant_id = s.tenant_id"
             : "t.id = s.id";
 
-        var updateAssignments = new List<string> { "data = s.data", "version = t.version + 1" };
-        updateAssignments.AddRange(binders.Where(b => !b.IsServerSide && b.ColumnName != "tenant_id")
+        var updateAssignments = new List<string> { "data = s.data" };
+        updateAssignments.Add(numeric
+            ? "version = CASE WHEN s.rev0 = 0 THEN t.version + 1 ELSE s.rev1 END"
+            : "version = t.version + 1");
+        updateAssignments.AddRange(binders
+            .Where(b => !b.IsServerSide && b.ColumnName != "tenant_id" && !ReferenceEquals(b, revisionBinder))
             .Select(b => $"{b.ColumnName} = s.{b.ColumnName}"));
         updateAssignments.AddRange(binders.Where(b => b.IsServerSide)
             .Select(b => $"{b.ColumnName} = {b.ValueSql}"));
 
-        var guard = mode == ConcurrencyMode.Optimistic
-            ? " AND t.guid_version = ?"
-            : string.Empty;
+        var guard = mode switch
+        {
+            ConcurrencyMode.Optimistic => " AND t.guid_version = ?",
+            ConcurrencyMode.Numeric => " AND (? = 0 OR t.version < ?)",
+            _ => string.Empty
+        };
 
         return $"MERGE {table} WITH (HOLDLOCK) AS t " +
                $"USING (VALUES ({usingValues})) AS s ({sourceColumns}) ON {onClause} " +
@@ -317,5 +435,10 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
     }
 
     private static string OutputColumn(ConcurrencyMode mode)
-        => mode == ConcurrencyMode.Optimistic ? "inserted.guid_version" : "inserted.id";
+        => mode switch
+        {
+            ConcurrencyMode.Optimistic => "inserted.guid_version",
+            ConcurrencyMode.Numeric => "inserted.version",
+            _ => "inserted.id"
+        };
 }
