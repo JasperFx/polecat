@@ -62,6 +62,35 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
     // Type stays the provider ("SqlServer"). See polecat#207.
     EventStoreIdentity IEventStore.Identity => new(Options.StoreName.ToLowerInvariant(), "SqlServer");
 
+    // jasperfx#420 / marten#4710 companion: the resolved per-database rebuild concurrency cap read
+    // by the CLI rebuild path (ProjectionHost.TryRebuildShardsAsync). Explicit configuration on
+    // StoreOptions.DaemonSettings wins; otherwise derive max(1, MaxPoolSize / 8) from the SqlClient
+    // connection pool so a wide store cannot exhaust the pool during a rebuild while leaving
+    // headroom for application traffic. Falls back to null (the historical unbounded fan-out)
+    // when no pool signal is reachable.
+    int? IEventStore.MaxConcurrentRebuildsPerDatabase
+    {
+        get
+        {
+            if (Options.DaemonSettings.MaxConcurrentRebuildsPerDatabase.HasValue)
+            {
+                var configured = Options.DaemonSettings.MaxConcurrentRebuildsPerDatabase.Value;
+                return configured > 0 ? configured : null;
+            }
+
+            try
+            {
+                using var connection = Database.CreateStorageConnection();
+                var poolSize = new SqlConnectionStringBuilder(connection.ConnectionString).MaxPoolSize;
+                return Math.Max(1, poolSize / 8);
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+    }
+
     Uri IEventStore.Subject => Database.DatabaseUri;
 
     // Store-agnostic accessor for every IEventDatabase backing this store (jasperfx#387).
@@ -212,6 +241,10 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
         daemon.AddValue(nameof(Options.DaemonSettings.AgentPauseTime), Options.DaemonSettings.AgentPauseTime);
         daemon.AddValue(nameof(Options.DaemonSettings.DaemonLockId), Options.DaemonSettings.DaemonLockId);
         usage.Children["DaemonSettings"] = daemon;
+
+        // jasperfx#434: surface the effective rebuild cap so monitoring tools (CritterWatch#309's
+        // rebuild dispatcher) can size their orchestration off the wire.
+        usage.MaxConcurrentRebuildsPerDatabase = ((IEventStore)this).MaxConcurrentRebuildsPerDatabase;
 
         // OpenTelemetry child
         var otel = new OptionsDescription { Subject = "Polecat.OpenTelemetryOptions" };
