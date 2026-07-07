@@ -166,13 +166,19 @@ public class storage_session_seam_tests : OneOffConfigurationsContext
     }
 
     [Fact]
-    public async Task storage_for_is_guarded_until_closed_shape_storage_lands()
+    public async Task storage_for_resolves_the_session_flavor()
     {
-        await using var session = theStore.QuerySession();
-        var seam = (IStorageSession)session;
+        // #273 phase E1: flavor tracks the session kind
+        var provider = theStore.Options.Providers.ClosedShapeGraph.StorageFor<Target>();
 
-        Should.Throw<NotSupportedException>(() => seam.StorageFor(typeof(Target)))
-            .Message.ShouldContain("polecat#273");
-        Should.Throw<NotSupportedException>(() => seam.StorageFor<Target>());
+        await using var query = theStore.QuerySession();
+        ((IStorageSession)query).StorageFor<Target>().ShouldBeSameAs(provider.QueryOnly);
+        ((IStorageSession)query).StorageFor(typeof(Target)).ShouldBeSameAs(provider.QueryOnly);
+
+        await using var lightweight = theStore.LightweightSession();
+        ((IStorageSession)lightweight).StorageFor<Target>().ShouldBeSameAs(provider.Lightweight);
+
+        await using var identity = theStore.IdentitySession();
+        ((IStorageSession)identity).StorageFor<Target>().ShouldBeSameAs(provider.IdentityMap);
     }
 }

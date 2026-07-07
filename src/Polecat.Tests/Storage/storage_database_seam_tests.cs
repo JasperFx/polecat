@@ -66,9 +66,13 @@ public class storage_database_seam_tests : OneOffConfigurationsContext
     }
 
     [Fact]
-    public void provider_graph_is_not_supported_until_closed_shape_storage_lands()
+    public void provider_graph_resolves_closed_shape_providers()
     {
-        var ex = Should.Throw<NotSupportedException>(() => theSeam.Providers);
-        ex.Message.ShouldContain("polecat#273");
+        // #273 phase E1: the graph lazily builds the four closed-shape storage flavors
+        var provider = theSeam.Providers.StorageFor<Polecat.Tests.Harness.Target>();
+        provider.QueryOnly.ShouldNotBeNull();
+        provider.Lightweight.ShouldNotBeNull();
+        provider.IdentityMap.ShouldNotBeNull();
+        provider.DirtyTracking.ShouldBeSameAs(provider.IdentityMap); // no dirty tracking by design
     }
 }
