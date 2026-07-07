@@ -111,7 +111,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         out Operations.ClosedShapeOperationAdapter adapter) where T : notnull
     {
         adapter = null!;
-        if (provider.Mapping.DocumentType != typeof(T) || provider.Mapping.UseNumericRevisions)
+        if (provider.Mapping.DocumentType != typeof(T))
         {
             return false;
         }
@@ -126,6 +126,18 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             WriteKind.Update => storage.Update(document, session, TenantId),
             _ => storage.Upsert(document, session, TenantId)
         };
+
+        // Numeric revisions: the doc-carried version is the equality expectation (0 = new/auto),
+        // matching the bespoke pipeline's expectedRevision capture.
+        if (op is Weasel.Storage.IRevisionedOperation revisioned)
+        {
+            revisioned.Revision = document switch
+            {
+                ILongVersioned longVersioned => longVersioned.Version,
+                IRevisioned rev => rev.Version,
+                _ => 0
+            };
+        }
 
         adapter = new Operations.ClosedShapeOperationAdapter(op, session, document, provider.Mapping.GetId(document));
         return true;
@@ -224,8 +236,19 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     public void Delete<T>(T document) where T : notnull
     {
         var provider = _providers.GetProvider<T>();
-        var op = provider.BuildDeleteByDocument(document, TenantId);
-        _workTracker.Add(op);
+        if (provider.Mapping.DocumentType == typeof(T))
+        {
+            var session = (Weasel.Storage.IStorageSession)this;
+            var storage = (Weasel.Storage.IDocumentStorage<T>)session.StorageFor<T>();
+            var deletion = storage.DeleteForDocument(document, TenantId);
+            _workTracker.Add(new Operations.ClosedShapeOperationAdapter(
+                deletion, session, document, provider.Mapping.GetId(document)));
+        }
+        else
+        {
+            var op = provider.BuildDeleteByDocument(document, TenantId);
+            _workTracker.Add(op);
+        }
 
         // Sync ISoftDeleted properties in memory
         if (document is ISoftDeleted softDeleted && provider.Mapping.DeleteStyle == DeleteStyle.SoftDelete)
@@ -237,30 +260,40 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
 
     public void Delete<T>(Guid id) where T : class
     {
-        var provider = _providers.GetProvider<T>();
-        var op = provider.BuildDeleteById(id, TenantId);
-        _workTracker.Add(op);
+        DeleteByObjectId<T>(id);
     }
 
     public void Delete<T>(string id) where T : class
     {
-        var provider = _providers.GetProvider<T>();
-        var op = provider.BuildDeleteById(id, TenantId);
-        _workTracker.Add(op);
+        DeleteByObjectId<T>(id);
     }
 
     public void Delete<T>(int id) where T : class
     {
-        var provider = _providers.GetProvider<T>();
-        var op = provider.BuildDeleteById(id, TenantId);
-        _workTracker.Add(op);
+        DeleteByObjectId<T>(id);
     }
 
     public void Delete<T>(long id) where T : class
     {
+        DeleteByObjectId<T>(id);
+    }
+
+    // #273 E2c: root-document deletions route through the closed-shape storage layer.
+    private void DeleteByObjectId<T>(object id) where T : class
+    {
         var provider = _providers.GetProvider<T>();
-        var op = provider.BuildDeleteById(id, TenantId);
-        _workTracker.Add(op);
+        if (provider.Mapping.DocumentType == typeof(T))
+        {
+            var session = (Weasel.Storage.IStorageSession)this;
+            var storage = (Polecat.Storage.ClosedShape.IPolecatObjectStorage<T>)session.StorageFor<T>();
+            _workTracker.Add(new Operations.ClosedShapeOperationAdapter(
+                storage.DeletionForObjectId(id, TenantId), session, id, id));
+        }
+        else
+        {
+            var op = provider.BuildDeleteById(id, TenantId);
+            _workTracker.Add(op);
+        }
     }
 
     public void HardDelete<T>(T document) where T : notnull

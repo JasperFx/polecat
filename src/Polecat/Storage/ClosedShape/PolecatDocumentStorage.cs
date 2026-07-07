@@ -32,6 +32,7 @@ internal interface IPolecatObjectStorage<TDoc> where TDoc : notnull
 {
     Task<TDoc?> LoadByObjectIdAsync(object id, IStorageSession session, CancellationToken token);
     Task<IReadOnlyList<TDoc>> LoadManyByObjectIdsAsync(IReadOnlyList<object> ids, IStorageSession session, CancellationToken token);
+    IDeletion DeletionForObjectId(object id, string tenantId);
 }
 
 internal abstract class PolecatDocumentStorage<TDoc, TId> : IDocumentStorage<TDoc, TId>, IPolecatObjectStorage<TDoc>
@@ -342,6 +343,8 @@ internal abstract class PolecatDocumentStorage<TDoc, TId> : IDocumentStorage<TDo
     ///     strongly-typed-id documents; wrap when TId is the wrapper type.
     /// </summary>
     private TId NormalizeId(object id) => id is TId typed ? typed : (TId)_mapping.WrapId(id);
+
+    public IDeletion DeletionForObjectId(object id, string tenantId) => DeleteForId(NormalizeId(id), tenantId);
 }
 
 /// <summary>Fixed-SQL operation fragment (delete fragments on the shared contract).</summary>
