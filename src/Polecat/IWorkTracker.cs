@@ -12,9 +12,10 @@ namespace Polecat;
 public interface IWorkTracker : IChangeSet
 {
     /// <summary>
-    ///     All pending storage operations.
+    ///     All pending storage operations, in the shared closed-shape currency
+    ///     (#273 E2e: <see cref="Weasel.Storage.IStorageOperation" />).
     /// </summary>
-    IReadOnlyList<IStorageOperation> Operations { get; }
+    IReadOnlyList<Weasel.Storage.IStorageOperation> Operations { get; }
 
     /// <summary>
     ///     All pending stream actions (event appends/starts).

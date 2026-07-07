@@ -14,10 +14,10 @@ namespace Polecat.Services;
 /// </summary>
 internal sealed class ChangeSet : IChangeSet
 {
-    private readonly IReadOnlyList<IStorageOperation> _operations;
+    private readonly IReadOnlyList<Weasel.Storage.IStorageOperation> _operations;
     private readonly IReadOnlyList<StreamAction> _streams;
 
-    public ChangeSet(IReadOnlyList<IStorageOperation> operations, IReadOnlyList<StreamAction> streams)
+    public ChangeSet(IReadOnlyList<Weasel.Storage.IStorageOperation> operations, IReadOnlyList<StreamAction> streams)
     {
         _operations = operations;
         _streams = streams;
@@ -33,20 +33,41 @@ internal sealed class ChangeSet : IChangeSet
     // Already an immutable snapshot, so cloning is a no-op copy of the same backing lists.
     public IChangeSet Clone() => new ChangeSet(_operations, _streams);
 
-    internal static IEnumerable<object> UpdatedFrom(IEnumerable<IStorageOperation> operations)
-        => operations.OfType<IDocumentStorageOperation>()
+    internal static IEnumerable<object> UpdatedFrom(IEnumerable<Weasel.Storage.IStorageOperation> operations)
+        => operations
             .Where(x => x.Role() is OperationRole.Update or OperationRole.Upsert)
-            .Select(x => x.Document);
+            .Select(DocumentOf)
+            .Where(d => d is not null)!;
 
-    internal static IEnumerable<object> InsertedFrom(IEnumerable<IStorageOperation> operations)
-        => operations.OfType<IDocumentStorageOperation>()
+    internal static IEnumerable<object> InsertedFrom(IEnumerable<Weasel.Storage.IStorageOperation> operations)
+        => operations
             .Where(x => x.Role() == OperationRole.Insert)
-            .Select(x => x.Document);
+            .Select(DocumentOf)
+            .Where(d => d is not null)!;
 
-    internal static IEnumerable<IDeletion> DeletedFrom(IEnumerable<IStorageOperation> operations)
+    internal static IEnumerable<IDeletion> DeletedFrom(IEnumerable<Weasel.Storage.IStorageOperation> operations)
         => operations
             .Where(x => x.Role() == OperationRole.Deletion)
-            .Select(x => (IDeletion)new Deletion(x.DocumentType, x.DocumentId));
+            .Select(x => (IDeletion)new Deletion(x.DocumentType, IdentityOf(x)));
+
+    // #273 E2e: the unit of work speaks the shared currency. Bespoke Polecat operations
+    // (including the closed-shape adapter) and raw shared operations both surface their
+    // document / identity here.
+    private static object? DocumentOf(Weasel.Storage.IStorageOperation op)
+        => op switch
+        {
+            IDocumentStorageOperation bespoke => bespoke.Document,
+            Weasel.Storage.IDocumentStorageOperation shared => shared.Document,
+            _ => null
+        };
+
+    private static object? IdentityOf(Weasel.Storage.IStorageOperation op)
+        => op switch
+        {
+            IStorageOperation bespoke => bespoke.DocumentId,
+            Weasel.Storage.IDeletion deletion => deletion.Id,
+            _ => null
+        };
 }
 
 /// <summary>

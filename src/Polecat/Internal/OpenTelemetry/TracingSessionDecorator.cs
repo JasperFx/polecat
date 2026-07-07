@@ -27,7 +27,8 @@ internal static class TracingSessionDecorator
     /// <summary>
     ///     Adds verbose operation events to an activity if verbose tracking is enabled.
     /// </summary>
-    public static void AddOperationEvents(Activity? activity, IEnumerable<IStorageOperation> operations,
+    public static void AddOperationEvents(Activity? activity,
+        IEnumerable<Weasel.Storage.IStorageOperation> operations,
         OpenTelemetryOptions options)
     {
         if (activity == null) return;
