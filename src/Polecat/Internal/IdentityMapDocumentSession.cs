@@ -119,6 +119,11 @@ internal class IdentityMapDocumentSession : DocumentSessionBase
     // selectors call these when materializing/queueing documents; route them into the bespoke
     // identity map so both paths agree until phase E makes the shared runtime authoritative.
 
+    // #273 phase E1: identity-map sessions resolve the IdentityMap closed-shape flavor.
+    internal override Weasel.Storage.IDocumentStorage<T> SelectClosedShapeStorage<T>(
+        Weasel.Storage.DocumentProvider<T> provider)
+        => provider.IdentityMap;
+
     public override void MarkAsAddedForStorage(object id, object document)
     {
         GetOrCreateTypeMap(document.GetType())[id] = document;

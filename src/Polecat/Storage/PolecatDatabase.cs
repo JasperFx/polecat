@@ -447,13 +447,10 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
     // retarget onto the shared contract.
 
     /// <summary>
-    ///     The closed-shape provider graph. Not available until Polecat's document storage
-    ///     retargets onto the shared <c>Weasel.Storage</c> bases (#273 phases D/E) — Polecat's
-    ///     current per-type providers do not yet implement <c>IDocumentStorage&lt;T&gt;</c>.
+    ///     The closed-shape provider graph (#273 phase E1) — lazily builds the shared-runtime
+    ///     storage flavors per document type over the registry's mappings.
     /// </summary>
-    Weasel.Storage.IProviderGraph Weasel.Storage.IStorageDatabase.Providers =>
-        throw new NotSupportedException(
-            "The closed-shape IProviderGraph is not available until Polecat's document storage retargets onto the shared Weasel.Storage bases (JasperFx/polecat#273).");
+    Weasel.Storage.IProviderGraph Weasel.Storage.IStorageDatabase.Providers => _options.Providers.ClosedShapeGraph;
 
     /// <summary>
     ///     Creates an unopened connection to this database (shared-runtime counterpart of

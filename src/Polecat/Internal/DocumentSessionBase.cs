@@ -1074,6 +1074,11 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         // No-op in lightweight session
     }
 
+    // #273 phase E1: document sessions resolve the Lightweight closed-shape storage flavor.
+    internal override Weasel.Storage.IDocumentStorage<T> SelectClosedShapeStorage<T>(
+        Weasel.Storage.DocumentProvider<T> provider)
+        => provider.Lightweight;
+
     private void SyncMetadata(object document)
     {
         if (document is ITracked tracked)

@@ -43,15 +43,24 @@ internal partial class QuerySession : IStorageSession
 
     ConcurrencyChecks IStorageSession.Concurrency => ConcurrencyChecks.Enabled;
 
-    IDocumentStorage IStorageSession.StorageFor(Type documentType) => throw ClosedShapeStorageNotAvailable();
+    // #273 phase E1: closed-shape storage resolution. The flavor tracks the session kind —
+    // QuerySession -> QueryOnly, DocumentSessionBase (lightweight) -> Lightweight,
+    // IdentityMapDocumentSession -> IdentityMap.
 
-    IDocumentStorage<T> IStorageSession.StorageFor<T>() => throw ClosedShapeStorageNotAvailable();
+    IDocumentStorage IStorageSession.StorageFor(Type documentType)
+        => (IDocumentStorage)typeof(QuerySession)
+            .GetMethod(nameof(ClosedShapeStorageFor), System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .MakeGenericMethod(documentType)
+            .Invoke(this, null)!;
 
-    private static NotSupportedException ClosedShapeStorageNotAvailable()
-    {
-        return new NotSupportedException(
-            "Closed-shape IDocumentStorage is not available until Polecat's document storage retargets onto the shared Weasel.Storage bases (JasperFx/polecat#273).");
-    }
+    IDocumentStorage<T> IStorageSession.StorageFor<T>() => ClosedShapeStorageFor<T>();
+
+    private IDocumentStorage<T> ClosedShapeStorageFor<T>() where T : notnull
+        => SelectClosedShapeStorage(Providers.ClosedShapeGraph.StorageFor<T>());
+
+    internal virtual IDocumentStorage<T> SelectClosedShapeStorage<T>(Weasel.Storage.DocumentProvider<T> provider)
+        where T : notnull
+        => provider.QueryOnly;
 
     /// <summary>
     ///     Identity-map hook for documents newly queued for storage. No-op outside identity-map

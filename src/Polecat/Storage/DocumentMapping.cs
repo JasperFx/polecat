@@ -45,6 +45,7 @@ internal class DocumentMapping
     public DocumentMapping(Type documentType, StoreOptions options)
     {
         _documentType = documentType;
+        StoreOptions = options;
 
         _idProperty = FindIdProperty(documentType)
             ?? throw new InvalidOperationException(
@@ -168,6 +169,10 @@ internal class DocumentMapping
     ///     Non-null when the Id property is a strongly typed value wrapper.
     /// </summary>
     public ValueTypeInfo? ValueTypeId { get; }
+
+    // #273 phase E1: surfaced for the closed-shape registration layer.
+    internal StoreOptions StoreOptions { get; }
+    internal PropertyInfo IdMember => _idProperty;
 
     /// <summary>
     ///     True when the Id property uses a strongly typed wrapper.
@@ -376,6 +381,12 @@ internal class DocumentMapping
     ///     #273: generate and assign an id if the document doesn't have one, via the shared
     ///     Weasel.Core.Identity strategy for this id shape. No-op for externally-assigned (string) ids.
     /// </summary>
+    /// <summary>
+    ///     The compiled (FEC) raw id setter — used by the closed-shape storage layer's
+    ///     IIdentitySetter implementation (#273 phase E1).
+    /// </summary>
+    internal void SetRawId(object document, object id) => _idSetter(document, id);
+
     public void AssignIdIfMissing(object document, ISequenceSource sequences)
         => _identityAssigner?.AssignIfMissing(document, sequences);
 

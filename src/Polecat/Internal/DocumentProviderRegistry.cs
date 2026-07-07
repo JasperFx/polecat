@@ -18,6 +18,14 @@ internal class DocumentProviderRegistry
     private readonly ConcurrentDictionary<Type, DocumentProvider> _providers = new();
     private readonly StoreOptions _options;
     private SequenceFactory? _sequenceFactory;
+    private Storage.ClosedShape.PolecatProviderGraph? _closedShapeGraph;
+
+    /// <summary>
+    ///     #273 phase E1: the shared-runtime IProviderGraph over this registry — lazily builds
+    ///     closed-shape DocumentProvider&lt;T&gt; per document type.
+    /// </summary>
+    internal Storage.ClosedShape.PolecatProviderGraph ClosedShapeGraph
+        => _closedShapeGraph ??= new Storage.ClosedShape.PolecatProviderGraph(this);
 
     public DocumentProviderRegistry(StoreOptions options)
     {
