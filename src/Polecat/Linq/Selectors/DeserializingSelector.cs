@@ -11,12 +11,15 @@ namespace Polecat.Linq.Selectors;
 ///     Reads the JSON 'data' column and deserializes it to T.
 ///     Optionally syncs version/revision properties from additional columns.
 ///     Supports polymorphic deserialization for document hierarchies via doc_type column.
+///     Implements the shared <see cref="Weasel.Storage.ISelector{T}" /> contract so the LINQ
+///     query handlers accept it interchangeably with the closed-shape selectors (#273 E2d);
+///     it remains the materializer for subclass queries and the event-store LINQ provider.
 /// </summary>
 [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
     Justification = "Class-level: invokes ISerializer.FromJson, which is annotated RUC because the default STJ-reflection serializer requires unreferenced code. AOT consumers supply a source-generator-backed ISerializer impl per the AOT publishing guide.")]
 [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
     Justification = "Class-level: ISerializer.FromJson is annotated RDC for the same reason as IL2026 above. AOT consumers supply a source-generator-backed ISerializer impl.")]
-internal class DeserializingSelector<T> where T : class
+internal class DeserializingSelector<T> : Weasel.Storage.ISelector<T> where T : class
 {
     private readonly ISerializer _serializer;
     private readonly bool _syncRevision;
@@ -83,4 +86,7 @@ internal class DeserializingSelector<T> where T : class
 
         return doc;
     }
+
+    public Task<T> ResolveAsync(DbDataReader reader, CancellationToken token)
+        => Task.FromResult(Resolve(reader));
 }

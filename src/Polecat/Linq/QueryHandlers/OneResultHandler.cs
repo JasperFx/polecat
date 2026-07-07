@@ -1,18 +1,19 @@
 using System.Data.Common;
-using Polecat.Linq.Selectors;
 
 namespace Polecat.Linq.QueryHandlers;
 
 /// <summary>
-///     Reads a single result from a query (First, Single, etc.).
+///     Reads a single result from a query (First, Single, etc.). Materialization goes through
+///     the shared selector contract — either the closed-shape QueryOnly selector (root
+///     documents, #273 E2d) or Polecat's DeserializingSelector (subclass + event queries).
 /// </summary>
 internal class OneResultHandler<T> : IQueryHandler<T?> where T : class
 {
-    private readonly DeserializingSelector<T> _selector;
+    private readonly Weasel.Storage.ISelector<T> _selector;
     private readonly bool _canBeNull;
     private readonly bool _canBeMultiples;
 
-    public OneResultHandler(DeserializingSelector<T> selector, bool canBeNull, bool canBeMultiples)
+    public OneResultHandler(Weasel.Storage.ISelector<T> selector, bool canBeNull, bool canBeMultiples)
     {
         _selector = selector;
         _canBeNull = canBeNull;

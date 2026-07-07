@@ -256,28 +256,41 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider
 
         ApplyModifiedFilters(parser);
 
-        // Adjust select columns for version syncing on IRevisioned/IVersioned types
+        // Materialization shape. Root documents ride the closed-shape QueryOnly storage
+        // (#273 E2d): SELECT columns come from the shared select clause (data first, then
+        // the QueryOnlyReadBinders' columns in binder order) and rows resolve through the
+        // shared QueryOnly selector. Subclass queries stay on the bespoke column shape +
+        // DeserializingSelector until the SubClassDocumentStorage analog (E2e).
         bool syncRevision = provider.Mapping.UseNumericRevisions;
         bool syncGuidVersion = provider.Mapping.UseOptimisticConcurrency;
         bool isHierarchy = provider.Mapping.IsHierarchy();
+        Weasel.Storage.ISelectClause? sharedSelectClause = null;
         if (parser.Statement.SelectColumns == "data")
         {
-            var cols = "data";
-            if (syncGuidVersion)
+            if (documentType == provider.Mapping.DocumentType)
             {
-                cols = "data, version, guid_version";
+                sharedSelectClause = _providers.ClosedShapeGraph.QueryOnlySelectClauseFor(documentType);
+                parser.Statement.SelectColumns = string.Join(", ", sharedSelectClause.SelectFields());
             }
-            else if (syncRevision)
+            else
             {
-                cols = "data, version";
-            }
+                var cols = "data";
+                if (syncGuidVersion)
+                {
+                    cols = "data, version, guid_version";
+                }
+                else if (syncRevision)
+                {
+                    cols = "data, version";
+                }
 
-            if (isHierarchy)
-            {
-                cols += ", doc_type";
-            }
+                if (isHierarchy)
+                {
+                    cols += ", doc_type";
+                }
 
-            parser.Statement.SelectColumns = cols;
+                parser.Statement.SelectColumns = cols;
+            }
         }
 
         // Add doc_type filter for subclass queries
@@ -296,7 +309,7 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider
         await using var reader = await _session.ExecuteReaderAsync(batch, token);
 
         return await HandleResultAsync<TResult>(reader, parser, documentType, token, syncRevision, syncGuidVersion,
-            isHierarchy ? provider.Mapping : null);
+            isHierarchy ? provider.Mapping : null, sharedSelectClause);
     }
 
     [RequiresDynamicCode("GroupBy execution closes GroupByListHandler<>/ScalarListHandler<> over the projected type via Type.MakeGenericType.")]
@@ -924,7 +937,8 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider
     [RequiresUnreferencedCode("Routes to handler invocations that reflect over handler/result types.")]
     private async Task<TResult> HandleResultAsync<TResult>(
         DbDataReader reader, LinqQueryParser parser, Type documentType, CancellationToken token,
-        bool syncRevision = false, bool syncGuidVersion = false, DocumentMapping? hierarchyMapping = null)
+        bool syncRevision = false, bool syncGuidVersion = false, DocumentMapping? hierarchyMapping = null,
+        Weasel.Storage.ISelectClause? sharedSelectClause = null)
     {
         if (parser.ValueMode == null)
         {
@@ -942,7 +956,8 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider
             }
 
             // Plain list result
-            return await InvokeListHandlerAsync<TResult>(documentType, reader, token, syncRevision, syncGuidVersion, hierarchyMapping);
+            return await InvokeListHandlerAsync<TResult>(documentType, reader, token, syncRevision, syncGuidVersion,
+                hierarchyMapping, sharedSelectClause);
         }
 
         switch (parser.ValueMode)
@@ -953,7 +968,8 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider
                 return await InvokeOneResultHandlerAsync<TResult>(
                     documentType, reader, token, canBeNull: false,
                     canBeMultiples: parser.ValueMode == SingleValueMode.First || parser.ValueMode == SingleValueMode.Last,
-                    syncRevision: syncRevision, syncGuidVersion: syncGuidVersion, hierarchyMapping: hierarchyMapping);
+                    syncRevision: syncRevision, syncGuidVersion: syncGuidVersion, hierarchyMapping: hierarchyMapping,
+                    sharedSelectClause: sharedSelectClause);
 
             case SingleValueMode.FirstOrDefault:
             case SingleValueMode.SingleOrDefault:
@@ -961,7 +977,8 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider
                 return await InvokeOneResultHandlerAsync<TResult>(
                     documentType, reader, token, canBeNull: true,
                     canBeMultiples: parser.ValueMode != SingleValueMode.SingleOrDefault,
-                    syncRevision: syncRevision, syncGuidVersion: syncGuidVersion, hierarchyMapping: hierarchyMapping);
+                    syncRevision: syncRevision, syncGuidVersion: syncGuidVersion, hierarchyMapping: hierarchyMapping,
+                    sharedSelectClause: sharedSelectClause);
 
             case SingleValueMode.Count:
             case SingleValueMode.LongCount:
@@ -986,11 +1003,22 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider
     [RequiresUnreferencedCode("Reflects over handler/selector types (Activator.CreateInstance, MethodInfo.Invoke on HandleAsync, GetProperty on Task<>.Result).")]
     private async Task<TResult> InvokeListHandlerAsync<TResult>(
         Type itemType, DbDataReader reader, CancellationToken token,
-        bool syncRevision = false, bool syncGuidVersion = false, DocumentMapping? hierarchyMapping = null)
+        bool syncRevision = false, bool syncGuidVersion = false, DocumentMapping? hierarchyMapping = null,
+        Weasel.Storage.ISelectClause? sharedSelectClause = null)
     {
-        var selectorType = typeof(DeserializingSelector<>).MakeGenericType(itemType);
-        var selector = Activator.CreateInstance(selectorType, _session.Serializer, syncRevision, syncGuidVersion,
-            hierarchyMapping)!;
+        // #273 E2d: root documents materialize through the shared QueryOnly selector,
+        // whose layout matches the SELECT columns the shared select clause produced.
+        object selector;
+        if (sharedSelectClause != null)
+        {
+            selector = sharedSelectClause.BuildSelector((Weasel.Storage.IStorageSession)_session);
+        }
+        else
+        {
+            var selectorType = typeof(DeserializingSelector<>).MakeGenericType(itemType);
+            selector = Activator.CreateInstance(selectorType, _session.Serializer, syncRevision, syncGuidVersion,
+                hierarchyMapping)!;
+        }
 
         var handlerType = typeof(ListQueryHandler<>).MakeGenericType(itemType);
         var handler = Activator.CreateInstance(handlerType, selector)!;
@@ -1045,11 +1073,21 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider
     private async Task<TResult> InvokeOneResultHandlerAsync<TResult>(
         Type documentType, DbDataReader reader, CancellationToken token,
         bool canBeNull, bool canBeMultiples,
-        bool syncRevision = false, bool syncGuidVersion = false, DocumentMapping? hierarchyMapping = null)
+        bool syncRevision = false, bool syncGuidVersion = false, DocumentMapping? hierarchyMapping = null,
+        Weasel.Storage.ISelectClause? sharedSelectClause = null)
     {
-        var selectorType = typeof(DeserializingSelector<>).MakeGenericType(documentType);
-        var selector = Activator.CreateInstance(selectorType, _session.Serializer, syncRevision, syncGuidVersion,
-            hierarchyMapping)!;
+        // #273 E2d: root documents materialize through the shared QueryOnly selector.
+        object selector;
+        if (sharedSelectClause != null)
+        {
+            selector = sharedSelectClause.BuildSelector((Weasel.Storage.IStorageSession)_session);
+        }
+        else
+        {
+            var selectorType = typeof(DeserializingSelector<>).MakeGenericType(documentType);
+            selector = Activator.CreateInstance(selectorType, _session.Serializer, syncRevision, syncGuidVersion,
+                hierarchyMapping)!;
+        }
 
         var handlerType = typeof(OneResultHandler<>).MakeGenericType(documentType);
         var handler = Activator.CreateInstance(handlerType, selector, canBeNull, canBeMultiples)!;
