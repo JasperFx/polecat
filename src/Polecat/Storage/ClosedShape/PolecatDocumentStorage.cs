@@ -112,21 +112,28 @@ internal abstract class PolecatDocumentStorage<TDoc, TId> : IDocumentStorage<TDo
     public object RawIdentityValue(TId id) => _descriptor.Identification.ToRawSqlValue(id);
 
     public void SetIdentityFromString(TDoc document, string identityString)
-        => SetIdentity(document, (TId)ConvertIdentity(identityString, typeof(TId)));
+        => SetIdentity(document, ConvertIdentity(identityString));
 
     public void SetIdentityFromGuid(TDoc document, Guid identityGuid)
         => SetIdentity(document, typeof(TId) == typeof(Guid)
             ? (TId)(object)identityGuid
-            : (TId)ConvertIdentity(identityGuid.ToString(), typeof(TId)));
+            : ConvertIdentity(identityGuid.ToString()));
 
-    private static object ConvertIdentity(string raw, Type idType)
+    /// <summary>
+    ///     Converts an identity string to TId. Strongly-typed wrapper ids (#273 E2e) convert
+    ///     the string to the INNER value shape first, then wrap via the mapping's compiled
+    ///     wrapper (WrapId is a pass-through for plain ids, where InnerIdType == TId).
+    /// </summary>
+    private TId ConvertIdentity(string raw)
+        => (TId)_mapping.WrapId(ConvertRawIdentity(raw, _mapping.InnerIdType));
+
+    private static object ConvertRawIdentity(string raw, Type idType)
     {
         if (idType == typeof(string)) return raw;
         if (idType == typeof(Guid)) return Guid.Parse(raw);
         if (idType == typeof(int)) return int.Parse(raw);
         if (idType == typeof(long)) return long.Parse(raw);
-        throw new NotSupportedException(
-            $"Cannot convert identity string to {idType.FullName}; strongly-typed id string conversion lands with the E2 subclass/LINQ work.");
+        throw new NotSupportedException($"Cannot convert identity string to {idType.FullName}.");
     }
 
     // ---- storage facts ----

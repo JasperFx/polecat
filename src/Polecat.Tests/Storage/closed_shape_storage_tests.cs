@@ -218,4 +218,32 @@ public class closed_shape_storage_tests : OneOffConfigurationsContext
     {
         public string Extra { get; set; } = string.Empty;
     }
+
+    [Fact]
+    public async Task set_identity_from_string_handles_plain_and_strongly_typed_ids()
+    {
+        await using var raw = theStore.LightweightSession();
+        var session = (IStorageSession)raw;
+
+        // Plain Guid id
+        var guidStorage = (IDocumentStorage<Target, Guid>)session.StorageFor<Target>();
+        var target = new Target();
+        var guid = Guid.NewGuid();
+        guidStorage.SetIdentityFromString(target, guid.ToString());
+        target.Id.ShouldBe(guid);
+
+        // Strongly-typed wrapper id (#273 E2e): the string converts to the inner value
+        // shape, then wraps via the mapping's compiled wrapper.
+        var typedStorage = (IDocumentStorage<StrongTypedId.Invoice, StrongTypedId.InvoiceId>)
+            session.StorageFor<StrongTypedId.Invoice>();
+        var invoice = new StrongTypedId.Invoice();
+        var inner = Guid.NewGuid();
+        typedStorage.SetIdentityFromString(invoice, inner.ToString());
+        invoice.Id.Value.ShouldBe(inner);
+
+        var viaGuid = new StrongTypedId.Invoice();
+        var inner2 = Guid.NewGuid();
+        typedStorage.SetIdentityFromGuid(viaGuid, inner2);
+        viaGuid.Id.Value.ShouldBe(inner2);
+    }
 }
