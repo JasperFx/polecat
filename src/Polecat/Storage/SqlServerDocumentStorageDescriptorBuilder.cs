@@ -46,12 +46,6 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
         where TDoc : notnull
         where TId : notnull
     {
-        if (mapping.HasPartitionColumn)
-        {
-            throw new NotSupportedException(
-                "Closed-shape descriptors for partitioned documents land in a later #273 increment.");
-        }
-
         var dialect = SqlServerStorageDialect<TId>.Instance;
         var writeBinders = new List<IDocumentMetadataBinder<TDoc>>();
         var readBinders = new List<IDocumentMetadataBinder<TDoc>>();
@@ -166,6 +160,16 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
             writeBinders.Add(new DocumentSoftDeletedAtBinder<TDoc>("deleted_at", dialect, member: null));
         }
 
+        // Range-partitioned documents (#211): the duplicated partition column is written on
+        // every save and participates in the MERGE ON clause so updates target the correct
+        // partition row (Marten #4223 analog).
+        PolecatPartitionColumnBinder<TDoc>? partitionBinder = null;
+        if (mapping.HasPartitionColumn)
+        {
+            partitionBinder = new PolecatPartitionColumnBinder<TDoc>(mapping.Partitioning!);
+            writeBinders.Add(partitionBinder);
+        }
+
         var writeArray = writeBinders.ToArray();
         var readArray = readBinders.ToArray();
         // QueryOnly's SELECT omits guid_version when it has no mapped member (always the case
@@ -181,10 +185,11 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
                 ? ConcurrencyMode.Numeric
                 : ConcurrencyMode.Off;
 
-        var upsertSql = BuildMergeSql(mapping, writeArray, revisionBinder, isConjoined, concurrencyMode, guarded: concurrencyMode != ConcurrencyMode.Off, insertOnly: false);
-        var insertSql = BuildMergeSql(mapping, writeArray, revisionBinder, isConjoined, concurrencyMode, guarded: false, insertOnly: true);
-        var updateSql = BuildUpdateSql(mapping, writeArray, revisionBinder, isConjoined, concurrencyMode);
-        var overwriteSql = BuildMergeSql(mapping, writeArray, revisionBinder, isConjoined, concurrencyMode, guarded: false, insertOnly: false);
+        var partitionColumn = partitionBinder?.ColumnName;
+        var upsertSql = BuildMergeSql(mapping, writeArray, revisionBinder, partitionColumn, isConjoined, concurrencyMode, guarded: concurrencyMode != ConcurrencyMode.Off, insertOnly: false);
+        var insertSql = BuildMergeSql(mapping, writeArray, revisionBinder, partitionColumn, isConjoined, concurrencyMode, guarded: false, insertOnly: true);
+        var updateSql = BuildUpdateSql(mapping, writeArray, revisionBinder, partitionColumn, isConjoined, concurrencyMode);
+        var overwriteSql = BuildMergeSql(mapping, writeArray, revisionBinder, partitionColumn, isConjoined, concurrencyMode, guarded: false, insertOnly: false);
 
         return new DocumentStorageDescriptor<TDoc, TId>(
             identification,
@@ -205,7 +210,10 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
             versionReadIndex: versionReadIndex,
             resolveDocumentType: resolveDocumentType,
             docTypeReadIndex: docTypeReadIndex,
-            tableName: mapping.QualifiedTableName);
+            tableName: mapping.QualifiedTableName,
+            partitionPkBinders: partitionBinder is null
+                ? null
+                : new IDocumentMetadataBinder<TDoc>[] { partitionBinder });
     }
 
     private static void AddSessionMetadataBinder<TDoc>(
@@ -244,6 +252,7 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
         DocumentMapping mapping,
         IReadOnlyList<IDocumentMetadataBinder<TDoc>> binders,
         IDocumentMetadataBinder<TDoc>? revisionBinder,
+        string? partitionColumn,
         bool isConjoined,
         ConcurrencyMode mode,
         bool guarded,
@@ -282,6 +291,11 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
         var onClause = isConjoined
             ? "t.id = s.id AND t.tenant_id = s.tenant_id"
             : "t.id = s.id";
+        if (partitionColumn is not null)
+        {
+            // Partition column is in the PK; the predicate keeps MERGE on the right partition row.
+            onClause += $" AND t.{partitionColumn} = s.{partitionColumn}";
+        }
 
         // INSERT branch. Off/Optimistic: version literal 1 + created_at. Numeric: the version
         // value is the revision CASE over the source columns (auto -> initial revision 1).
@@ -367,16 +381,19 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
     }
 
     /// <summary>
-    ///     Update-only SQL, same MERGE shape without the NOT MATCHED branch so slot order
-    ///     stays identical to upsert. Numeric mode: the revision binder's two client-loop
-    ///     slots ride the <c>rev0</c>/<c>rev1</c> source columns and the shared update
-    ///     operation binds the trailing guard pair. Zero rows = missing document or
-    ///     concurrency violation.
+    ///     Update-only SQL. The shared update operations bind a DIFFERENT slot order than the
+    ///     upserts (<c>ClosedShapeUpdateOperation.BindPreConcurrencyParameters</c>): data →
+    ///     client-side binders → id → tenant (when conjoined) → partition PK binders →
+    ///     trailing concurrency guard. The MERGE USING tuple is laid out in exactly that
+    ///     order; the partition PK travels as a second source column (<c>{col}_pk</c>) since
+    ///     the ordinary binder slot already carries it for the SET list. Zero rows = missing
+    ///     document or concurrency violation.
     /// </summary>
     private static string BuildUpdateSql<TDoc>(
         DocumentMapping mapping,
         IReadOnlyList<IDocumentMetadataBinder<TDoc>> binders,
         IDocumentMetadataBinder<TDoc>? revisionBinder,
+        string? partitionColumn,
         bool isConjoined,
         ConcurrencyMode mode)
         where TDoc : notnull
@@ -384,14 +401,9 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
         var table = mapping.QualifiedTableName;
         var numeric = mode == ConcurrencyMode.Numeric;
 
-        var usingColumns = new List<string>();
-        if (isConjoined)
-        {
-            usingColumns.Add("tenant_id");
-        }
-
-        usingColumns.Add("id");
-        usingColumns.Add("data");
+        // USING tuple in the update ops' binding order: data, client binders, id, [tenant],
+        // [partition pk].
+        var usingColumns = new List<string> { "data" };
         foreach (var binder in binders.Where(b => !b.IsServerSide))
         {
             if (numeric && ReferenceEquals(binder, revisionBinder))
@@ -405,11 +417,30 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
             }
         }
 
+        usingColumns.Add("id");
+        if (isConjoined)
+        {
+            usingColumns.Add("tenant_id_pk");
+        }
+
+        if (partitionColumn is not null)
+        {
+            usingColumns.Add($"{partitionColumn}_pk");
+        }
+
         var usingValues = string.Join(", ", usingColumns.Select(_ => "?"));
         var sourceColumns = string.Join(", ", usingColumns);
-        var onClause = isConjoined
-            ? "t.id = s.id AND t.tenant_id = s.tenant_id"
-            : "t.id = s.id";
+
+        var onClause = "t.id = s.id";
+        if (isConjoined)
+        {
+            onClause += " AND t.tenant_id = s.tenant_id_pk";
+        }
+
+        if (partitionColumn is not null)
+        {
+            onClause += $" AND t.{partitionColumn} = s.{partitionColumn}_pk";
+        }
 
         var updateAssignments = new List<string> { "data = s.data" };
         updateAssignments.Add(numeric

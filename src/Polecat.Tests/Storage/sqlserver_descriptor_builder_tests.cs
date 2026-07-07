@@ -284,6 +284,113 @@ public class sqlserver_descriptor_builder_tests : OneOffConfigurationsContext
         public string Extra { get; set; } = string.Empty;
     }
 
+    // Partition functions/schemes are database-global objects named from the table; a
+    // dedicated doc type keeps this test's objects distinct from document_range_partitioning_tests.
+    public class DescriptorMetricsSample
+    {
+        public Guid Id { get; set; }
+        public DateTimeOffset BucketEnd { get; set; }
+        public string Metric { get; set; } = string.Empty;
+        public double Value { get; set; }
+    }
+
+    // ---- Slice 3: update-op slot order + partitioned documents ----
+
+    [Fact]
+    public async Task shared_update_operation_binds_the_update_slot_order()
+    {
+        // The update ops bind data -> binders -> id -> [tenant] -> [partition] -> guard,
+        // NOT the upsert order — this test locks the UpdateSql slot layout.
+        await using var bootstrap = theStore.LightweightSession();
+        var doc = new Target { Id = Guid.NewGuid(), Number = 1, Color = "red" };
+        bootstrap.Store(doc);
+        await bootstrap.SaveChangesAsync();
+
+        var descriptor = descriptorFor<Target>();
+        await using var raw = theStore.LightweightSession();
+        var session = (IStorageSession)raw;
+
+        doc.Number = 99;
+        var update = new UnversionedClosedShapeUpdateOperation<Target, Guid>(
+            doc, doc.Id, session.TenantId, descriptor);
+        await executeAsync(update, session);
+
+        var loaded = await loadViaSharedSelectorAsync(descriptor, doc.Id, session);
+        loaded.ShouldNotBeNull();
+        loaded.Number.ShouldBe(99);
+
+        // Updating a nonexistent document -> zero rows -> missing-document error
+        var ghost = new Target { Id = Guid.NewGuid(), Number = 1 };
+        var missing = new UnversionedClosedShapeUpdateOperation<Target, Guid>(
+            ghost, ghost.Id, session.TenantId, descriptor);
+        await Should.ThrowAsync<Exception>(() => executeAsync(missing, session));
+    }
+
+    [Fact]
+    public async Task shared_numeric_update_operation_guards_and_increments()
+    {
+        await using var bootstrap = theStore.LightweightSession();
+        var doc = new RevisionedDoc { Id = Guid.NewGuid(), Name = "u1" };
+        bootstrap.Store(doc);
+        await bootstrap.SaveChangesAsync(); // bespoke pipeline writes revision 1
+
+        var descriptor = descriptorFor<RevisionedDoc>();
+        await using var raw = theStore.LightweightSession();
+        var session = (IStorageSession)raw;
+
+        doc.Name = "u2";
+        var revisions = new Dictionary<Guid, long>();
+        var update = new NumericClosedShapeUpdateOperation<RevisionedDoc, Guid>(
+            doc, doc.Id, session.TenantId, descriptor, revisions) { Revision = 0 };
+        await executeAsync(update, session);
+        doc.Version.ShouldBe(2); // auto-incremented past the bespoke pipeline's 1
+
+        var stale = new NumericClosedShapeUpdateOperation<RevisionedDoc, Guid>(
+            doc, doc.Id, session.TenantId, descriptor, revisions) { Revision = 1 };
+        await Should.ThrowAsync<JasperFx.ConcurrencyException>(() => executeAsync(stale, session));
+    }
+
+    [Fact]
+    public async Task partitioned_descriptor_round_trips_and_updates_in_partition()
+    {
+        var jan = new DateTimeOffset(2026, 1, 31, 0, 0, 0, TimeSpan.Zero);
+        var feb = new DateTimeOffset(2026, 2, 28, 0, 0, 0, TimeSpan.Zero);
+        ConfigureStore(opts =>
+            opts.Schema.For<DescriptorMetricsSample>().PartitionByRange(x => x.BucketEnd, jan, feb));
+
+        await using var bootstrap = theStore.LightweightSession();
+        bootstrap.Store(new DescriptorMetricsSample { BucketEnd = jan, Metric = "seed" });
+        await bootstrap.SaveChangesAsync(); // force partitioned table creation
+
+        var descriptor = descriptorFor<DescriptorMetricsSample>();
+        descriptor.PartitionPkBinders.Length.ShouldBe(1);
+        descriptor.PartitionPkBinders[0].ColumnName.ShouldBe("bucket_end");
+        descriptor.UpsertSql.ShouldContain("t.bucket_end = s.bucket_end");
+        descriptor.UpdateSql.ShouldContain("t.bucket_end = s.bucket_end_pk");
+
+        await using var raw = theStore.LightweightSession();
+        var session = (IStorageSession)raw;
+
+        var doc = new DescriptorMetricsSample
+        {
+            Id = Guid.NewGuid(), BucketEnd = jan, Metric = "cpu", Value = 0.5
+        };
+        var upsert = new UnversionedClosedShapeUpsertOperation<DescriptorMetricsSample, Guid>(
+            doc, doc.Id, session.TenantId, descriptor, OperationRole.Upsert);
+        await executeAsync(upsert, session);
+
+        // Shared update targets the same partition row
+        doc.Value = 0.9;
+        var update = new UnversionedClosedShapeUpdateOperation<DescriptorMetricsSample, Guid>(
+            doc, doc.Id, session.TenantId, descriptor);
+        await executeAsync(update, session);
+
+        await using var check = theStore.QuerySession();
+        var loaded = await check.LoadAsync<DescriptorMetricsSample>(doc.Id);
+        loaded.ShouldNotBeNull();
+        loaded.Value.ShouldBe(0.9);
+    }
+
     [Fact]
     public async Task insert_only_descriptor_sql_signals_id_collision_with_zero_rows()
     {
