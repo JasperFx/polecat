@@ -246,61 +246,12 @@ internal partial class QuerySession : IQuerySession
         var provider = _providers.GetProvider<T>();
         await _tableEnsurer.EnsureTableAsync(provider, token);
 
-        // #273 E2a: root documents load through the closed-shape storage layer (shared
-        // selectors + dialect commands over the descriptor). Subclass loads (provider routed
-        // to the parent mapping) stay on the legacy path until SubClassDocumentStorage (E2e).
-        if (provider.Mapping.DocumentType == typeof(T))
-        {
-            var storage = (Polecat.Storage.ClosedShape.IPolecatObjectStorage<T>)
-                ((Weasel.Storage.IStorageSession)this).StorageFor<T>();
-            return await storage.LoadByObjectIdAsync(id, this, token);
-        }
-
-        return await LegacyLoadInternalAsync<T>(provider, id, token);
-    }
-
-    private async Task<T?> LegacyLoadInternalAsync<T>(DocumentProvider provider, object id, CancellationToken token)
-        where T : class
-    {
-        await using var cmd = new SqlCommand();
-        cmd.CommandText = provider.LoadSql;
-        cmd.Parameters.AddWithValue("@id", id);
-        cmd.Parameters.AddWithValue("@tenant_id", TenantId);
-
-        Logger.OnBeforeExecute(cmd.CommandText);
-        try
-        {
-            await using var reader = await ExecuteReaderAsync(cmd, token);
-            Logger.LogSuccess(cmd.CommandText);
-
-            if (await reader.ReadAsync(token))
-            {
-                var json = reader.GetString(1); // data column
-                T doc;
-                if (provider.DocTypeColumnIndex >= 0)
-                {
-                    var docType = reader.GetString(provider.DocTypeColumnIndex);
-                    var resolvedType = provider.Mapping.TypeFor(docType);
-                    doc = (T)Serializer.FromJson(resolvedType, json);
-                }
-                else
-                {
-                    doc = Serializer.FromJson<T>(json);
-                }
-
-                SyncVersionProperties(doc, reader, provider);
-                SyncCreatedAt(doc, reader);
-                SyncTenantId(doc, reader);
-                return doc;
-            }
-
-            return null;
-        }
-        catch (Exception ex)
-        {
-            Logger.LogFailure(cmd.CommandText, ex);
-            throw;
-        }
+        // #273 E2a/E2e: all document loads route through the closed-shape storage layer
+        // (shared selectors + dialect commands over the descriptor); subclass types resolve
+        // a SubClassPolecatStorage wrapping the hierarchy root's storage.
+        var storage = (Polecat.Storage.ClosedShape.IPolecatObjectStorage<T>)
+            ((Weasel.Storage.IStorageSession)this).StorageFor<T>();
+        return await storage.LoadByObjectIdAsync(id, this, token);
     }
 
     public async Task<IReadOnlyList<T>> LoadManyAsync<T>(IEnumerable<Guid> ids, CancellationToken token = default)
@@ -323,70 +274,10 @@ internal partial class QuerySession : IQuerySession
         var provider = _providers.GetProvider<T>();
         await _tableEnsurer.EnsureTableAsync(provider, token);
 
-        // #273 E2a: root documents load through the closed-shape storage layer.
-        if (provider.Mapping.DocumentType == typeof(T))
-        {
-            var storage = (Polecat.Storage.ClosedShape.IPolecatObjectStorage<T>)
-                ((Weasel.Storage.IStorageSession)this).StorageFor<T>();
-            return await storage.LoadManyByObjectIdsAsync(ids, this, token);
-        }
-
-        return await LegacyLoadManyInternalAsync<T>(provider, ids, token);
-    }
-
-    private async Task<IReadOnlyList<T>> LegacyLoadManyInternalAsync<T>(DocumentProvider provider, List<object> ids,
-        CancellationToken token) where T : class
-    {
-        await using var cmd = new SqlCommand();
-
-        var paramNames = new string[ids.Count];
-        for (var i = 0; i < ids.Count; i++)
-        {
-            paramNames[i] = $"@id{i}";
-            cmd.Parameters.AddWithValue(paramNames[i], ids[i]);
-        }
-
-        var softDeleteFilter = provider.Mapping.DeleteStyle == DeleteStyle.SoftDelete
-            ? " AND is_deleted = 0"
-            : "";
-        cmd.CommandText = $"{provider.SelectSql} WHERE id IN ({string.Join(", ", paramNames)}) AND tenant_id = @tenant_id{softDeleteFilter};";
-        cmd.Parameters.AddWithValue("@tenant_id", TenantId);
-
-        Logger.OnBeforeExecute(cmd.CommandText);
-        try
-        {
-            var results = new List<T>();
-            await using var reader = await ExecuteReaderAsync(cmd, token);
-            Logger.LogSuccess(cmd.CommandText);
-
-            while (await reader.ReadAsync(token))
-            {
-                var json = reader.GetString(1); // data column
-                T doc;
-                if (provider.DocTypeColumnIndex >= 0)
-                {
-                    var docType = reader.GetString(provider.DocTypeColumnIndex);
-                    var resolvedType = provider.Mapping.TypeFor(docType);
-                    doc = (T)Serializer.FromJson(resolvedType, json);
-                }
-                else
-                {
-                    doc = Serializer.FromJson<T>(json);
-                }
-
-                SyncVersionProperties(doc, reader, provider);
-                SyncCreatedAt(doc, reader);
-                SyncTenantId(doc, reader);
-                results.Add(doc);
-            }
-
-            return results;
-        }
-        catch (Exception ex)
-        {
-            Logger.LogFailure(cmd.CommandText, ex);
-            throw;
-        }
+        // #273 E2a/E2e: all document loads route through the closed-shape storage layer.
+        var storage = (Polecat.Storage.ClosedShape.IPolecatObjectStorage<T>)
+            ((Weasel.Storage.IStorageSession)this).StorageFor<T>();
+        return await storage.LoadManyByObjectIdsAsync(ids, this, token);
     }
 
     public IPolecatQueryable<T> Query<T>() where T : class
@@ -479,30 +370,6 @@ internal partial class QuerySession : IQuerySession
         if (provider.Mapping.UseOptimisticConcurrency && doc is IVersioned versioned)
         {
             versioned.Version = reader.GetGuid(7); // guid_version column
-        }
-    }
-
-    /// <summary>
-    ///     Syncs tenant_id from the DB column to ITenanted documents.
-    ///     tenant_id is at column index 6 in SelectSql.
-    /// </summary>
-    internal static void SyncTenantId<T>(T doc, DbDataReader reader) where T : class
-    {
-        if (doc is ITenanted tenanted)
-        {
-            tenanted.TenantId = reader.GetString(6); // tenant_id column
-        }
-    }
-
-    /// <summary>
-    ///     Syncs created_at from the DB column to ICreated documents.
-    ///     created_at is at column index 4 in SelectSql.
-    /// </summary>
-    internal static void SyncCreatedAt<T>(T doc, DbDataReader reader) where T : class
-    {
-        if (doc is ICreated created)
-        {
-            created.CreatedAt = reader.GetFieldValue<DateTimeOffset>(4); // created_at column
         }
     }
 

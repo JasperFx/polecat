@@ -96,6 +96,37 @@ internal static class PolecatClosedShapeRegistration
             ConcurrencyMode.Numeric => new NumericIdentityMapPolecatStorage<TDoc, TId>(mapping, descriptor),
             _ => new UnversionedIdentityMapPolecatStorage<TDoc, TId>(mapping, descriptor)
         };
+
+    /// <summary>
+    ///     Builds the closed-shape provider for a registered SUBCLASS (#273 E2e): each flavor
+    ///     is a <see cref="SubClassPolecatStorage{T,TRoot,TId}" /> wrapping the hierarchy
+    ///     root's corresponding flavor from <paramref name="rootProvider" />.
+    /// </summary>
+    internal static object BuildSubClassProviderFor(DocumentMapping rootMapping, Type subclassType,
+        object rootProvider)
+    {
+        var idType = rootMapping.ValueTypeId?.OuterType ?? rootMapping.IdType;
+        return typeof(PolecatClosedShapeRegistration)
+            .GetMethod(nameof(BuildTypedSubClassProvider), BindingFlags.NonPublic | BindingFlags.Static)!
+            .MakeGenericMethod(subclassType, rootMapping.DocumentType, idType)
+            .Invoke(null, new[] { rootProvider, rootMapping })!;
+    }
+
+    private static DocumentProvider<T> BuildTypedSubClassProvider<T, TRoot, TId>(
+        DocumentProvider<TRoot> rootProvider, DocumentMapping rootMapping)
+        where T : notnull, TRoot
+        where TRoot : notnull
+        where TId : notnull
+    {
+        SubClassPolecatStorage<T, TRoot, TId> Wrap(IDocumentStorage<TRoot> storage)
+            => new((IDocumentStorage<TRoot, TId>)storage, rootMapping);
+
+        return new DocumentProvider<T>(
+            Wrap(rootProvider.QueryOnly),
+            Wrap(rootProvider.Lightweight),
+            Wrap(rootProvider.IdentityMap),
+            Wrap(rootProvider.DirtyTracking));
+    }
 }
 
 /// <summary>
@@ -122,8 +153,14 @@ internal sealed class PolecatProviderGraph : IProviderGraph
                 return (DocumentProvider<T>)cached;
             }
 
+            // The registry routes subclass types to the hierarchy root's provider, so a
+            // mapping whose DocumentType differs from T marks T as a registered subclass:
+            // wrap the root's flavors in SubClassPolecatStorage (#273 E2e).
             var mapping = _registry.GetProvider(typeof(T)).Mapping;
-            var provider = (DocumentProvider<T>)PolecatClosedShapeRegistration.BuildProviderFor(mapping);
+            var provider = mapping.DocumentType == typeof(T)
+                ? (DocumentProvider<T>)PolecatClosedShapeRegistration.BuildProviderFor(mapping)
+                : (DocumentProvider<T>)PolecatClosedShapeRegistration.BuildSubClassProviderFor(
+                    mapping, typeof(T), ProviderFor(mapping.DocumentType));
             _providers[typeof(T)] = provider;
             return provider;
         }
