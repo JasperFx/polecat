@@ -93,8 +93,10 @@ public class bulk_insert_operations : IntegrationContext
 
         await theStore.Advanced.BulkInsertAsync(new[] { user });
 
-        // Inserting again should throw
-        await Should.ThrowAsync<SqlException>(async () =>
+        // Inserting again should throw. #273 doc-side convergence: bulk insert now shares the
+        // closed-shape insert operation, so a duplicate surfaces as DocumentAlreadyExistsException
+        // (Marten parity + single-doc Store parity) rather than a raw SqlException.
+        await Should.ThrowAsync<DocumentAlreadyExistsException>(async () =>
         {
             await theStore.Advanced.BulkInsertAsync(new[] { user }, BulkInsertMode.InsertsOnly);
         });
