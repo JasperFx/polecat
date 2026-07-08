@@ -10,6 +10,7 @@ using Polecat.Projections.Flattened;
 using Polecat.Schema.Identity.Sequences;
 using Polecat.Storage;
 using Weasel.Core;
+using Weasel.SqlServer;
 
 namespace Polecat;
 
@@ -77,62 +78,127 @@ public class AdvancedOperations
     /// <summary>
     ///     Bulk insert documents with full control over mode, batch size, and tenant.
     /// </summary>
+    /// <remarks>
+    ///     #273 doc-side convergence: bulk insert composes the SAME closed-shape write operations
+    ///     as single-document <c>Store</c> and projection storage, so it writes EVERY modeled
+    ///     column (<c>doc_type</c> for hierarchies, <c>guid_version</c> under optimistic
+    ///     concurrency, the range-partition column, soft-delete defaults) rather than the bespoke
+    ///     hardcoded <c>id/data/version/timestamps/dotnet_type[/tenant_id]</c> subset. The
+    ///     operations bind through an <see cref="Weasel.Storage.IStorageSession" /> for the
+    ///     serializer + session-sourced metadata; bulk insert has no ambient session, so a
+    ///     throwaway query session for the target tenant supplies those (its metadata is disabled
+    ///     by default, matching the bespoke path's "no correlation/causation for bulk" behavior).
+    ///     The session only CONFIGURES commands — execution runs on this method's own
+    ///     resilience-wrapped connection.
+    /// </remarks>
     public async Task BulkInsertAsync<T>(IReadOnlyCollection<T> documents, BulkInsertMode mode,
         int batchSize, string tenantId, CancellationToken token = default) where T : notnull
     {
         if (documents.Count == 0) return;
 
+        if (mode == BulkInsertMode.OverwriteIfVersionMatches)
+        {
+            // OverwriteIfVersionMatches requires a per-document expected version that this
+            // versionless surface cannot receive — callers use BulkInsertWithVersionAsync.
+            throw new InvalidOperationException(
+                "BulkInsertMode.OverwriteIfVersionMatches requires a per-document expected version " +
+                "and is not available through BulkInsertAsync. " +
+                "Call BulkInsertWithVersionAsync(IReadOnlyCollection<(T document, long expectedVersion)>, ...) instead.");
+        }
+
         var provider = _store.GetProvider(typeof(T));
         var mapping = provider.Mapping;
-        var serializer = _store.Options.Serializer;
 
         // Ensure the table exists
         var ensurer = _store.ResolveTableEnsurer(tenantId);
         await ensurer.EnsureTableAsync(provider, token);
 
-        // Pre-process: assign IDs, sync metadata, serialize
-        var rows = new List<(object Id, string Json, string DotNetType)>(documents.Count);
+        var storage = _store.Options.Providers.ClosedShapeGraph.StorageFor<T>().QueryOnly;
+
+        // Pre-process: assign ids + sync ITenanted before the operations serialize each document
+        // (route id generation through the shared identity strategy, same as single-doc Store).
         foreach (var doc in documents)
         {
-            // #273: route id generation through the shared Weasel.Core.Identity strategy, same as
-            // single-doc Store, so bulk insert and single-doc stay consistent (Guid → UUIDv7, etc.).
             if (provider.SequenceSource is not null)
             {
                 mapping.AssignIdIfMissing(doc, provider.SequenceSource);
-            }
-
-            // Sync metadata
-            if (doc is ITracked tracked)
-            {
-                // No session-level correlation for bulk insert � leave as-is
             }
 
             if (doc is ITenanted tenanted)
             {
                 tenanted.TenantId = tenantId;
             }
-
-            var id = mapping.GetId(doc);
-            var json = serializer.ToJson(doc);
-            rows.Add((id, json, mapping.DotNetTypeName));
         }
 
-        // Execute in batches with Polly wrapping
+        await using var bindingSession = _store.QuerySession(new SessionOptions { TenantId = tenantId });
+        var storageSession = (Weasel.Storage.IStorageSession)bindingSession;
+
         var connFactory = _store.Options.Tenancy!.GetConnectionFactory(tenantId);
         await _resilience.ExecuteAsync(static async (state, ct) =>
         {
-            var (factory, allRows, size, docMapping, tenant, insertMode) = state;
+            var (factory, docs, size, docStorage, session, tenant, insertMode) = state;
             await using var conn = factory.Create();
             await conn.OpenAsync(ct);
 
-            for (var offset = 0; offset < allRows.Count; offset += size)
+            for (var offset = 0; offset < docs.Count; offset += size)
             {
-                var batch = allRows.Skip(offset).Take(size).ToList();
-                await using var cmd = conn.CreateCommand();
-                BuildBatchCommand(cmd, batch, docMapping, tenant, insertMode);
-                await cmd.ExecuteNonQueryAsync(ct);
+                var chunk = docs.Skip(offset).Take(size).ToList();
+                await using var batch = new SqlBatch(conn);
+                var builder = new BatchBuilder(batch);
+
+                var operations = new List<Weasel.Storage.IStorageOperation>(chunk.Count);
+                for (var i = 0; i < chunk.Count; i++)
+                {
+                    if (i > 0) builder.StartNewCommand();
+                    // OverwriteExisting → unguarded upsert; InsertsOnly & IgnoreDuplicates →
+                    // insert-only MERGE (its OUTPUT-drives the already-exists postprocess below).
+                    var op = insertMode == BulkInsertMode.OverwriteExisting
+                        ? docStorage.OverwriteProjected(chunk[i], tenant)
+                        : docStorage.InsertProjected(chunk[i], tenant);
+                    operations.Add(op);
+                    op.ConfigureCommand(builder, session);
+                }
+
+                builder.Compile();
+
+                var exceptions = new List<Exception>();
+                await using (var reader = await batch.ExecuteReaderAsync(ct))
+                {
+                    for (var i = 0; i < operations.Count; i++)
+                    {
+                        await operations[i].PostprocessAsync(reader, exceptions, ct);
+                        if (i < operations.Count - 1)
+                        {
+                            await reader.NextResultAsync(ct);
+                        }
+                    }
+
+                    // Drain remaining result sets so any per-command batch error surfaces —
+                    // SQL Server raises a unique/FK error only when the reader advances into
+                    // that command's result set (the closed-shape draining gotcha).
+                    while (await reader.NextResultAsync(ct))
+                    {
+                    }
+                }
+
+                // The insert-only operation raises DocumentAlreadyExistsException when the row
+                // already exists: InsertsOnly surfaces it (Marten parity), IgnoreDuplicates swallows.
+                if (insertMode == BulkInsertMode.IgnoreDuplicates)
+                {
+                    exceptions.RemoveAll(e => e is DocumentAlreadyExistsException);
+                }
+
+                if (exceptions.Count == 1)
+                {
+                    System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(exceptions[0]).Throw();
+                }
+
+                if (exceptions.Count > 0)
+                {
+                    throw new AggregateException(exceptions);
+                }
             }
-        }, (connFactory, rows, batchSize, mapping, tenantId, mode), token);
+        }, (connFactory, documents, batchSize, storage, storageSession, tenantId, mode), token);
     }
 
     /// <summary>
@@ -305,127 +371,6 @@ public class AdvancedOperations
             cmd.Parameters.AddWithValue(pType, dotnetType);
             if (conjoined) cmd.Parameters.AddWithValue(pTenant!, tenantId);
             cmd.Parameters.AddWithValue(pExpected, expectedVersion);
-        }
-
-        cmd.CommandText = sb.ToString();
-    }
-
-    private static void BuildBatchCommand(
-        SqlCommand cmd,
-        List<(object Id, string Json, string DotNetType)> batch,
-        Storage.DocumentMapping mapping,
-        string tenantId,
-        BulkInsertMode mode)
-    {
-        var sb = new StringBuilder();
-        var paramIndex = 0;
-
-        // #234: tenant_id column exists only on conjoined tables.
-        var conjoined = mapping.TenancyStyle == TenancyStyle.Conjoined;
-        var insertTenantCol = conjoined ? ", tenant_id" : "";
-
-        switch (mode)
-        {
-            case BulkInsertMode.InsertsOnly:
-                foreach (var (id, json, dotnetType) in batch)
-                {
-                    var pId = $"@p{paramIndex++}";
-                    var pData = $"@p{paramIndex++}";
-                    var pType = $"@p{paramIndex++}";
-                    var pTenant = conjoined ? $"@p{paramIndex++}" : null;
-                    var insertTenantVal = conjoined ? $", {pTenant}" : "";
-
-                    sb.AppendLine(
-                        $"INSERT INTO {mapping.QualifiedTableName} (id, data, version, last_modified, created_at, dotnet_type{insertTenantCol})");
-                    sb.AppendLine(
-                        $"VALUES ({pId}, {pData}, 1, SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET(), {pType}{insertTenantVal});");
-
-                    cmd.Parameters.AddWithValue(pId, id);
-                    cmd.Parameters.AddWithValue(pData, json);
-                    cmd.Parameters.AddWithValue(pType, dotnetType);
-                    if (conjoined) cmd.Parameters.AddWithValue(pTenant!, tenantId);
-                }
-
-                break;
-
-            case BulkInsertMode.IgnoreDuplicates:
-                foreach (var (id, json, dotnetType) in batch)
-                {
-                    var pId = $"@p{paramIndex++}";
-                    var pData = $"@p{paramIndex++}";
-                    var pType = $"@p{paramIndex++}";
-                    var pTenant = conjoined ? $"@p{paramIndex++}" : null;
-                    var usingTenant = conjoined ? $", {pTenant} AS tenant_id" : "";
-                    var onTenant = conjoined ? " AND target.tenant_id = source.tenant_id" : "";
-                    var insertTenantVal = conjoined ? $", {pTenant}" : "";
-
-                    sb.AppendLine(
-                        $"MERGE INTO {mapping.QualifiedTableName} WITH (HOLDLOCK) AS target");
-                    sb.AppendLine(
-                        $"USING (SELECT {pId} AS id{usingTenant}) AS source");
-                    sb.AppendLine(
-                        $"    ON target.id = source.id{onTenant}");
-                    sb.AppendLine("WHEN NOT MATCHED THEN");
-                    sb.AppendLine(
-                        $"    INSERT (id, data, version, last_modified, created_at, dotnet_type{insertTenantCol})");
-                    sb.AppendLine(
-                        $"    VALUES ({pId}, {pData}, 1, SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET(), {pType}{insertTenantVal});");
-
-                    cmd.Parameters.AddWithValue(pId, id);
-                    cmd.Parameters.AddWithValue(pData, json);
-                    cmd.Parameters.AddWithValue(pType, dotnetType);
-                    if (conjoined) cmd.Parameters.AddWithValue(pTenant!, tenantId);
-                }
-
-                break;
-
-            case BulkInsertMode.OverwriteExisting:
-                foreach (var (id, json, dotnetType) in batch)
-                {
-                    var pId = $"@p{paramIndex++}";
-                    var pData = $"@p{paramIndex++}";
-                    var pType = $"@p{paramIndex++}";
-                    var pTenant = conjoined ? $"@p{paramIndex++}" : null;
-                    var usingTenant = conjoined ? $", {pTenant} AS tenant_id" : "";
-                    var onTenant = conjoined ? " AND target.tenant_id = source.tenant_id" : "";
-                    var insertTenantVal = conjoined ? $", {pTenant}" : "";
-
-                    sb.AppendLine(
-                        $"MERGE INTO {mapping.QualifiedTableName} WITH (HOLDLOCK) AS target");
-                    sb.AppendLine(
-                        $"USING (SELECT {pId} AS id{usingTenant}) AS source");
-                    sb.AppendLine(
-                        $"    ON target.id = source.id{onTenant}");
-                    sb.AppendLine("WHEN MATCHED THEN");
-                    sb.AppendLine(
-                        $"    UPDATE SET data = {pData}, version = target.version + 1,");
-                    sb.AppendLine(
-                        $"        last_modified = SYSDATETIMEOFFSET(), dotnet_type = {pType}");
-                    sb.AppendLine("WHEN NOT MATCHED THEN");
-                    sb.AppendLine(
-                        $"    INSERT (id, data, version, last_modified, created_at, dotnet_type{insertTenantCol})");
-                    sb.AppendLine(
-                        $"    VALUES ({pId}, {pData}, 1, SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET(), {pType}{insertTenantVal});");
-
-                    cmd.Parameters.AddWithValue(pId, id);
-                    cmd.Parameters.AddWithValue(pData, json);
-                    cmd.Parameters.AddWithValue(pType, dotnetType);
-                    if (conjoined) cmd.Parameters.AddWithValue(pTenant!, tenantId);
-                }
-
-                break;
-
-            case BulkInsertMode.OverwriteIfVersionMatches:
-                // OverwriteIfVersionMatches is not reachable through the
-                // versionless BulkInsertAsync surface — it requires a
-                // per-document expected version that this method has no
-                // way to receive. Callers should switch to
-                // BulkInsertWithVersionAsync, which threads (T, long)
-                // pairs through a sibling code path.
-                throw new InvalidOperationException(
-                    "BulkInsertMode.OverwriteIfVersionMatches requires a per-document expected version " +
-                    "and is not available through BulkInsertAsync. " +
-                    "Call BulkInsertWithVersionAsync(IReadOnlyCollection<(T document, long expectedVersion)>, ...) instead.");
         }
 
         cmd.CommandText = sb.ToString();
