@@ -17,7 +17,7 @@ namespace Polecat.Storage.ClosedShape;
 /// </summary>
 internal sealed class SubClassPolecatStorage<T, TRoot, TId>
     : IDocumentStorage<T, TId>, IPolecatObjectStorage<T>, IPolecatBatchLoadStorage<T>,
-        IPolecatBulkVersionCheckStorage<T>
+        IPolecatBulkVersionCheckStorage<T>, IPolecatDeletionStorage
     where T : notnull, TRoot
     where TRoot : notnull
     where TId : notnull
@@ -69,6 +69,8 @@ internal sealed class SubClassPolecatStorage<T, TRoot, TId>
     public DbObjectName TableName => _parent.TableName;
     public IOperationFragment DeleteFragment => _parent.DeleteFragment;
     public IOperationFragment HardDeleteFragment => _parent.HardDeleteFragment;
+    public IOperationFragment UndeleteFragment => ((IPolecatDeletionStorage)_parent).UndeleteFragment;
+    public bool IsConjoined => ((IPolecatDeletionStorage)_parent).IsConjoined;
     public IReadOnlyList<IDuplicatedField> DuplicatedFields => _parent.DuplicatedFields;
 
     // ---- select clause ----

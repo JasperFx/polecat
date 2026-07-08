@@ -156,23 +156,17 @@ internal class PolecatProjectionStorage<TDoc, TId> : IProjectionStorage<TDoc, TI
             Storage.HardDeletionForObjectId(id, tenantId), SessionFor(tenantId), snapshot, id));
     }
 
-    public void UnDelete(TDoc snapshot)
-    {
-        if (_provider.Mapping.DeleteStyle == DeleteStyle.SoftDelete)
-        {
-            var id = _provider.Mapping.GetId(snapshot);
-            var op = new UnDeleteByIdOperation(id, _provider.Mapping, TenantId);
-            _session.WorkTracker.Add(op);
-        }
-    }
+    public void UnDelete(TDoc snapshot) => UnDelete(snapshot, TenantId);
 
     public void UnDelete(TDoc snapshot, string tenantId)
     {
         if (_provider.Mapping.DeleteStyle == DeleteStyle.SoftDelete)
         {
+            // #273 doc-side convergence: undelete SQL + tenancy from the shared closed-shape storage.
+            var deletion = (Storage.ClosedShape.IPolecatDeletionStorage)Storage;
             var id = _provider.Mapping.GetId(snapshot);
-            var op = new UnDeleteByIdOperation(id, _provider.Mapping, tenantId);
-            _session.WorkTracker.Add(op);
+            _session.WorkTracker.Add(new UnDeleteByIdOperation(
+                deletion.UndeleteFragment, deletion.IsConjoined, id, tenantId, typeof(TDoc)));
         }
     }
 
