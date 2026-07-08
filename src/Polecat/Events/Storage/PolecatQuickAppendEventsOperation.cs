@@ -39,10 +39,10 @@ internal enum StreamWriteMode
 ///         <see cref="IEvent.Sequence" /> in <see cref="PostprocessAsync" />.
 ///     </para>
 ///     <para>
-///         Increment 1 covers the core append shape (single/conjoined tenancy, Guid/string streams,
-///         optional correlation/causation/headers/user_name columns) plus DCB tag writes. Per-tenant
-///         event partitioning (UseTenantPartitionedEvents) is not yet supported and throws; the
-///         bespoke inline path still covers it (polecat#309).
+///         Covers the core append shape (single/conjoined tenancy, Guid/string streams, optional
+///         correlation/causation/headers/user_name columns), DCB tag writes, and per-tenant event
+///         partitioning (UseTenantPartitionedEvents — seq_id via NEXT VALUE FOR the tenant sequence
+///         plus the tenant_ordinal column, resolved by the planner).
 ///     </para>
 /// </remarks>
 internal sealed class PolecatQuickAppendEventsOperation
@@ -67,15 +67,30 @@ internal sealed class PolecatQuickAppendEventsOperation
     /// <summary>Set by the planner: INSERT a new stream row, or UPDATE the existing one's version.</summary>
     public StreamWriteMode Mode { get; set; } = StreamWriteMode.Insert;
 
+    /// <summary>
+    ///     Per-tenant partitioning (<c>UseTenantPartitionedEvents</c>): the stream tenant's compact
+    ///     partition ordinal, resolved (and provisioned) by the planner. Null when partitioning is off,
+    ///     in which case <c>seq_id</c> is the global IDENTITY column.
+    /// </summary>
+    public int? PartitionOrdinal { get; set; }
+
+    /// <summary>
+    ///     The stream tenant's per-tenant sequence name (schema-qualified) that feeds <c>seq_id</c> via
+    ///     <c>NEXT VALUE FOR</c> under per-tenant partitioning. Set alongside <see cref="PartitionOrdinal" />.
+    /// </summary>
+    public string? PartitionSequenceName { get; set; }
+
     public Type DocumentType => typeof(IEvent);
 
     public OperationRole Role() => OperationRole.Events;
 
     public void ConfigureCommand(Weasel.Core.ICommandBuilder builder, IStorageSession session)
     {
-        if (_graph.UseTenantPartitionedEvents)
-            throw new NotSupportedException(
-                "Per-tenant event partitioning is not yet supported on the closed-shape event append path.");
+        var partitioned = _graph.UseTenantPartitionedEvents;
+        if (partitioned && (PartitionSequenceName is null || PartitionOrdinal is null))
+            throw new InvalidOperationException(
+                "Per-tenant partitioning is enabled but the planner did not resolve the tenant partition " +
+                "ordinal/sequence for this append operation.");
 
         builder.Append("declare ");
         builder.Append(SeqTableVar);
@@ -110,7 +125,17 @@ internal sealed class PolecatQuickAppendEventsOperation
             ordinal++;
             builder.Append("insert into ");
             builder.Append(_graph.EventsTableName);
-            builder.Append(" (id, stream_id, version, data, type, timestamp, tenant_id, dotnet_type");
+            builder.Append(" (");
+            // Per-tenant partitioning: seq_id is drawn from the tenant's own sequence (not IDENTITY) and
+            // the row carries the tenant's physical-partition ordinal.
+            if (partitioned)
+            {
+                builder.Append("seq_id, ");
+                builder.Append(_graph.TenantPartitionManager.Column);
+                builder.Append(", ");
+            }
+
+            builder.Append("id, stream_id, version, data, type, timestamp, tenant_id, dotnet_type");
             if (options.EnableCorrelationId) builder.Append(", correlation_id");
             if (options.EnableCausationId) builder.Append(", causation_id");
             if (options.EnableHeaders) builder.Append(", headers");
@@ -118,6 +143,15 @@ internal sealed class PolecatQuickAppendEventsOperation
             builder.Append(") output inserted.seq_id into ");
             builder.Append(SeqTableVar);
             builder.Append(" values (");
+
+            if (partitioned)
+            {
+                builder.Append("next value for ");
+                builder.Append(PartitionSequenceName!);
+                builder.Append(", ");
+                Bind(builder, PartitionOrdinal!.Value, StorageColumnType.Int);
+                builder.Append(", ");
+            }
 
             Bind(builder, @event.Id, StorageColumnType.Guid);
 

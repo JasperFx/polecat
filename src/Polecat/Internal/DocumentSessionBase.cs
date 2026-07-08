@@ -724,11 +724,16 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
                 continue;
             }
 
+            // Per-tenant partitioning: resolve (and lazily provision) the stream tenant's partition
+            // ordinal + sequence once per stream before building the append op.
+            var (partitionOrdinal, partitionSequenceName) = await ResolvePartitionForClosedShapeAsync(stream, token);
+
             if (stream.ActionType == StreamActionType.Start)
             {
                 AssignEventMetadataForClosedShape(stream, 0);
                 stream.Version = stream.Events.Count;
-                ops.Add(QuickAppendEventsClosedShape(storage, isGuid, stream, Polecat.Events.Storage.StreamWriteMode.Insert));
+                ops.Add(QuickAppendEventsClosedShape(storage, isGuid, stream,
+                    Polecat.Events.Storage.StreamWriteMode.Insert, partitionOrdinal, partitionSequenceName));
             }
             else
             {
@@ -749,15 +754,12 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
                 AssignEventMetadataForClosedShape(stream, currentVersion);
                 stream.Version = currentVersion + stream.Events.Count;
 
-                if (exists)
-                {
-                    stream.ExpectedVersionOnServer ??= currentVersion;
-                    ops.Add(QuickAppendEventsClosedShape(storage, isGuid, stream, Polecat.Events.Storage.StreamWriteMode.Update));
-                }
-                else
-                {
-                    ops.Add(QuickAppendEventsClosedShape(storage, isGuid, stream, Polecat.Events.Storage.StreamWriteMode.Insert));
-                }
+                var mode = exists
+                    ? Polecat.Events.Storage.StreamWriteMode.Update
+                    : Polecat.Events.Storage.StreamWriteMode.Insert;
+                if (exists) stream.ExpectedVersionOnServer ??= currentVersion;
+                ops.Add(QuickAppendEventsClosedShape(storage, isGuid, stream, mode,
+                    partitionOrdinal, partitionSequenceName));
             }
         }
 
@@ -766,13 +768,24 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         await ExecuteClosedShapeEventOperationsAsync(ops, token);
     }
 
+    private async Task<(int? ordinal, string? sequenceName)> ResolvePartitionForClosedShapeAsync(
+        StreamAction stream, CancellationToken token)
+    {
+        if (!_eventGraph.UseTenantPartitionedEvents) return (null, null);
+        var storage = await _eventGraph.TenantSequences.ResolveAsync(stream.TenantId, token);
+        return (storage.Ordinal, storage.SequenceName);
+    }
+
     private static Weasel.Storage.IStorageOperation QuickAppendEventsClosedShape(
-        object storage, bool isGuid, StreamAction stream, Polecat.Events.Storage.StreamWriteMode mode)
+        object storage, bool isGuid, StreamAction stream, Polecat.Events.Storage.StreamWriteMode mode,
+        int? partitionOrdinal, string? partitionSequenceName)
     {
         var op = (Polecat.Events.Storage.PolecatQuickAppendEventsOperation)(isGuid
             ? ((Weasel.Storage.EventStorage<Guid>)storage).QuickAppendEvents(stream)
             : ((Weasel.Storage.EventStorage<string>)storage).QuickAppendEvents(stream));
         op.Mode = mode;
+        op.PartitionOrdinal = partitionOrdinal;
+        op.PartitionSequenceName = partitionSequenceName;
         return op;
     }
 
