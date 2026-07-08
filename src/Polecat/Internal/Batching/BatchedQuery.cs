@@ -41,24 +41,10 @@ internal class BatchedQuery : IBatchedQuery
     public Task<T?> Load<T>(long id) where T : class => AddLoad<T>(id);
 
     public Task<IReadOnlyList<T>> LoadMany<T>(params Guid[] ids) where T : class
-    {
-        var provider = _providers.GetProvider<T>();
-        _involvedProviders.Add(provider);
-        var item = new LoadManyBatchQueryItem<T>(ids.Cast<object>().ToArray(), provider,
-            _session.Serializer, _session.TenantId);
-        _items.Add(item);
-        return item.Result;
-    }
+        => AddLoadMany<T>(ids.Cast<object>().ToArray());
 
     public Task<IReadOnlyList<T>> LoadMany<T>(params string[] ids) where T : class
-    {
-        var provider = _providers.GetProvider<T>();
-        _involvedProviders.Add(provider);
-        var item = new LoadManyBatchQueryItem<T>(ids.Cast<object>().ToArray(), provider,
-            _session.Serializer, _session.TenantId);
-        _items.Add(item);
-        return item.Result;
-    }
+        => AddLoadMany<T>(ids.Cast<object>().ToArray());
 
     public IBatchedQueryable<T> Query<T>() where T : class
     {
@@ -153,10 +139,24 @@ internal class BatchedQuery : IBatchedQuery
 
     private Task<T?> AddLoad<T>(object id) where T : class
     {
-        var provider = _providers.GetProvider<T>();
-        _involvedProviders.Add(provider);
-        var item = new LoadBatchQueryItem<T>(id, provider, _session.Serializer, _session.TenantId);
+        // Track the bespoke provider so the shared table gets ensured; compose the read via the
+        // closed-shape QueryOnly storage (#273 doc-side convergence).
+        _involvedProviders.Add(_providers.GetProvider<T>());
+        var storage = ClosedShapeLoadStorageFor<T>();
+        var item = new LoadBatchQueryItem<T>(id, storage, _session, _session.TenantId);
         _items.Add(item);
         return item.Result;
     }
+
+    private Task<IReadOnlyList<T>> AddLoadMany<T>(object[] ids) where T : class
+    {
+        _involvedProviders.Add(_providers.GetProvider<T>());
+        var storage = ClosedShapeLoadStorageFor<T>();
+        var item = new LoadManyBatchQueryItem<T>(ids, storage, _session, _session.TenantId);
+        _items.Add(item);
+        return item.Result;
+    }
+
+    private Storage.ClosedShape.IPolecatBatchLoadStorage<T> ClosedShapeLoadStorageFor<T>() where T : class
+        => (Storage.ClosedShape.IPolecatBatchLoadStorage<T>)_providers.ClosedShapeGraph.StorageFor<T>().QueryOnly;
 }

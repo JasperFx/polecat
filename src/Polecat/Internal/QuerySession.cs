@@ -352,31 +352,6 @@ internal partial class QuerySession : IQuerySession
         return polecatProvider.BuildSql(queryable.Expression, TenantId);
     }
 
-    /// <summary>
-    ///     Syncs version/revision properties from the DB columns to the document object.
-    ///     SelectSql column layout: id[0], data[1], version[2], last_modified[3], created_at[4], dotnet_type[5], tenant_id[6], guid_version[7]?
-    /// </summary>
-    internal static void SyncVersionProperties<T>(T doc, DbDataReader reader, DocumentProvider provider) where T : class
-    {
-        if (provider.Mapping.UseNumericRevisions)
-        {
-            var version = reader.GetInt64(2); // version column
-            if (doc is ILongVersioned longVersioned)
-            {
-                longVersioned.Version = version;
-            }
-            else if (doc is IRevisioned revisioned)
-            {
-                revisioned.Version = (int)version;
-            }
-        }
-
-        if (provider.Mapping.UseOptimisticConcurrency && doc is IVersioned versioned)
-        {
-            versioned.Version = reader.GetGuid(provider.GuidVersionColumnIndex); // guid_version column
-        }
-    }
-
     public virtual async ValueTask DisposeAsync()
     {
         await _lifetime.DisposeAsync();

@@ -34,66 +34,8 @@ internal class DocumentProvider
 
     public string QualifiedTableName => Mapping.QualifiedTableName;
 
-    // #234: tenant_id is present only on conjoined tables. When absent, every trailing column
-    // ordinal shifts down by one, so the read-side ordinals below are computed off tenancy.
-    private bool IsConjoined => Mapping.TenancyStyle == TenancyStyle.Conjoined;
-
-    public string SelectSql
-    {
-        get
-        {
-            var baseCols = "id, data, version, last_modified, created_at, dotnet_type";
-            if (IsConjoined)
-            {
-                baseCols += ", tenant_id";
-            }
-
-            if (Mapping.UseOptimisticConcurrency)
-            {
-                baseCols += ", guid_version";
-            }
-
-            if (Mapping.IsHierarchy())
-            {
-                baseCols += ", doc_type";
-            }
-
-            return $"SELECT {baseCols} FROM {Mapping.QualifiedTableName}";
-        }
-    }
-
-    /// <summary>
-    ///     Column index of guid_version in SelectSql (valid only under optimistic concurrency).
-    ///     Base columns id[0]..dotnet_type[5], then tenant_id[6] only when conjoined.
-    /// </summary>
-    public int GuidVersionColumnIndex => 6 + (IsConjoined ? 1 : 0);
-
-    /// <summary>
-    ///     Column index of doc_type in SelectSql, or -1 if not a hierarchy.
-    /// </summary>
-    public int DocTypeColumnIndex
-    {
-        get
-        {
-            if (!Mapping.IsHierarchy()) return -1;
-            return 6 + (IsConjoined ? 1 : 0) + (Mapping.UseOptimisticConcurrency ? 1 : 0);
-        }
-    }
-
-    public string LoadSql
-    {
-        get
-        {
-            var softDeleteFilter = Mapping.DeleteStyle == DeleteStyle.SoftDelete
-                ? " AND is_deleted = 0"
-                : "";
-            var tenantFilter = IsConjoined ? " AND tenant_id = @tenant_id" : "";
-            return $"{SelectSql} WHERE id = @id{tenantFilter}{softDeleteFilter};";
-        }
-    }
-
-    // #273 E2e: the per-document write/delete operation factories are retired — every write
-    // and delete now flows through the closed-shape storage layer (Storage/ClosedShape).
-    // What remains here is the read-side SQL the batching items still compose (SelectSql /
-    // LoadSql / DocTypeColumnIndex) and the sequence plumbing.
+    // #273: the per-document write/delete operation factories (E2e) and the read-side SQL the
+    // batching items used to compose (doc-side convergence) are both retired — every write,
+    // delete, and load now flows through the closed-shape storage layer (Storage/ClosedShape).
+    // What remains here is the table-mapping handle and the sequence plumbing.
 }

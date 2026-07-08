@@ -65,7 +65,27 @@ internal interface IPolecatObjectStorage<TDoc> : IPolecatObjectWriteStorage wher
     IDeletion DeletionForObjectId(object id, string tenantId);
 }
 
-internal abstract class PolecatDocumentStorage<TDoc, TId> : IDocumentStorage<TDoc, TId>, IPolecatObjectStorage<TDoc>
+/// <summary>
+///     Read-side seam for the batched-query load items (#273 doc-side convergence): composes the
+///     closed-shape whole-document SELECT with positional parameters into a shared
+///     <c>SqlBatch</c> command, and materializes rows through the closed-shape QueryOnly selector.
+///     This retires the bespoke <c>DocumentProvider.SelectSql</c>/<c>LoadSql</c> +
+///     <c>FromJson</c>/<c>SyncVersionProperties</c> load path from <c>Internal/Batching</c>.
+/// </summary>
+internal interface IPolecatBatchLoadStorage<TDoc> where TDoc : notnull
+{
+    /// <summary>Appends <c>SELECT … FROM … WHERE id = @p [AND tenant] [AND soft-delete]</c> (no trailing <c>;</c>).</summary>
+    void WriteLoadByIdSql(Weasel.SqlServer.ICommandBuilder builder, object id, string tenantId);
+
+    /// <summary>Appends <c>SELECT … FROM … WHERE id IN (…) [AND tenant] [AND soft-delete]</c> (no trailing <c>;</c>).</summary>
+    void WriteLoadManySql(Weasel.SqlServer.ICommandBuilder builder, IReadOnlyList<object> ids, string tenantId);
+
+    /// <summary>The closed-shape QueryOnly selector whose ordinals match the composed SELECT.</summary>
+    ISelector<TDoc> BuildLoadSelector(IStorageSession session);
+}
+
+internal abstract class PolecatDocumentStorage<TDoc, TId>
+    : IDocumentStorage<TDoc, TId>, IPolecatObjectStorage<TDoc>, IPolecatBatchLoadStorage<TDoc>
     where TDoc : notnull
     where TId : notnull
 {
@@ -73,6 +93,7 @@ internal abstract class PolecatDocumentStorage<TDoc, TId> : IDocumentStorage<TDo
     protected readonly DocumentStorageDescriptor<TDoc, TId> _descriptor;
     private readonly string _loaderSql;
     private readonly string _loadManySql;
+    private readonly string _selectPrefixSql;
     private readonly string[] _selectFields;
     private readonly IOperationFragment _deleteFragment;
     private readonly IOperationFragment _hardDeleteFragment;
@@ -96,6 +117,7 @@ internal abstract class PolecatDocumentStorage<TDoc, TId> : IDocumentStorage<TDo
         _selectFields = readColumns.ToArray();
 
         var select = $"SELECT {string.Join(", ", _selectFields)} FROM {_mapping.QualifiedTableName}";
+        _selectPrefixSql = select;
         // #234: only conjoined tables carry a tenant_id column, so single-tenant loads omit the
         // tenant predicate entirely (the harmless @tenant_id parameter the dialect still binds is
         // simply unreferenced by the SQL).
@@ -274,6 +296,56 @@ internal abstract class PolecatDocumentStorage<TDoc, TId> : IDocumentStorage<TDo
         CancellationToken token)
         => ClosedShapeProjectionLoader<TDoc, TId>.LoadManyAsync(
             BuildLoadManyCommand(ids, tenantId), _descriptor, _descriptor.Serializer, database, token);
+
+    // ---- batched-query read seam (#273 doc-side convergence) ----
+
+    public void WriteLoadByIdSql(Weasel.SqlServer.ICommandBuilder builder, object id, string tenantId)
+    {
+        builder.Append(_selectPrefixSql);
+        builder.Append(" WHERE id = ");
+        builder.AppendParameter(id);
+        AppendBatchLoadFilters(builder, tenantId);
+    }
+
+    public void WriteLoadManySql(Weasel.SqlServer.ICommandBuilder builder, IReadOnlyList<object> ids, string tenantId)
+    {
+        builder.Append(_selectPrefixSql);
+        if (ids.Count == 0)
+        {
+            builder.Append(" WHERE 1 = 0");
+            return;
+        }
+
+        builder.Append(" WHERE id IN (");
+        for (var i = 0; i < ids.Count; i++)
+        {
+            if (i > 0) builder.Append(", ");
+            builder.AppendParameter(ids[i]);
+        }
+
+        builder.Append(")");
+        AppendBatchLoadFilters(builder, tenantId);
+    }
+
+    /// <summary>
+    ///     Appends the conjoined tenant predicate (#234 — conjoined tables only) and the
+    ///     soft-delete predicate, with positional parameters, mirroring the closed-shape
+    ///     loader SQL. <see cref="SubClassPolecatStorage{T,TRoot,TId}" /> reuses these filters
+    ///     by delegating to the whole write methods above before appending its <c>doc_type</c>
+    ///     discriminator.
+    /// </summary>
+    private void AppendBatchLoadFilters(Weasel.SqlServer.ICommandBuilder builder, string tenantId)
+    {
+        if (_mapping.TenancyStyle == TenancyStyle.Conjoined)
+        {
+            builder.Append(" AND tenant_id = ");
+            builder.AppendParameter(tenantId);
+        }
+
+        builder.Append(SoftDeleteFilterSql());
+    }
+
+    public ISelector<TDoc> BuildLoadSelector(IStorageSession session) => (ISelector<TDoc>)BuildSelector(session);
 
     // ---- session bookkeeping ----
 
