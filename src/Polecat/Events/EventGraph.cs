@@ -209,8 +209,7 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
     ///     (#273 event-dialect convergence), built once from <see cref="Storage.SqlServerEventStoreDialect" />
     ///     and cached. Boxed as <see cref="object" /> because <c>TId</c> is fixed by
     ///     <see cref="StreamIdentity" /> (Guid vs string) — the append planner downcasts to the concrete
-    ///     <c>EventStorage&lt;Guid&gt;</c> / <c>EventStorage&lt;string&gt;</c>. Only used when
-    ///     <see cref="EventStoreOptions.UseClosedShapeEventStorage" /> is enabled.
+    ///     <c>EventStorage&lt;Guid&gt;</c> / <c>EventStorage&lt;string&gt;</c>.
     /// </summary>
     internal object ClosedShapeEventStorage =>
         _closedShapeEventStorage ??= BuildClosedShapeEventStorage();

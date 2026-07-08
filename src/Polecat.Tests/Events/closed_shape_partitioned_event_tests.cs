@@ -7,9 +7,8 @@ using Polecat.TestUtils;
 namespace Polecat.Tests.Events;
 
 /// <summary>
-///     #273 event-dialect increment 5 (closes #309): per-tenant event partitioning
-///     (UseTenantPartitionedEvents) on the closed-shape append path
-///     (Events.UseClosedShapeEventStorage). Mirrors <see cref="per_tenant_event_sequence_tests" />'s
+///     #273 event-dialect (closes #309): per-tenant event partitioning (UseTenantPartitionedEvents)
+///     on the closed-shape append path. Mirrors <see cref="per_tenant_event_sequence_tests" />'s
 ///     isolation guarantee but through the closed-shape operation, which draws seq_id from each
 ///     tenant's own sequence via NEXT VALUE FOR and stamps the tenant_ordinal column.
 /// </summary>
@@ -37,7 +36,6 @@ public class closed_shape_partitioned_event_tests : IAsyncLifetime
             opts.UseNativeJsonType = ConnectionSource.SupportsNativeJson;
             opts.Events.TenancyStyle = TenancyStyle.Conjoined;
             opts.EventGraph.UseTenantPartitionedEvents = true;
-            opts.Events.UseClosedShapeEventStorage = true;
         });
     }
 
