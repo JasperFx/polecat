@@ -86,6 +86,12 @@ internal class DocumentTableEnsurer
             // never reconciled afterward, so a later schema apply can't clobber the partitions the
             // app/DBA manages at runtime (SPLIT new months, SWITCH/DROP old ones for retention).
             var table = new DocumentTable(provider.Mapping);
+
+            // #296: strongly-typed-id tables created before the inner-type fix carry a varchar(250)
+            // id column, which trips InvalidCastException in the shared writeable selectors (they
+            // read GetFieldValue<TInner>). Convert it to the inner primitive type in place — drop
+            // PK, ALTER COLUMN, re-add PK — before Weasel diffs the table, so the diff stays clean.
+            await ConvertStrongTypedIdColumnIfNeededAsync(conn, provider.Mapping, table, token);
             var autoCreate = provider.Mapping.Partitioning is { ExternallyManaged: true }
                 ? AutoCreate.CreateOnly
                 : AutoCreate.CreateOrUpdate;
@@ -189,6 +195,64 @@ internal class DocumentTableEnsurer
                     SELECT 1 FROM sys.columns c
                     WHERE c.object_id = @oid AND c.name = 'version' AND TYPE_NAME(c.system_type_id) = 'int')
                     ALTER TABLE {qualifiedTableName} ALTER COLUMN [version] bigint NOT NULL;
+            END
+            """;
+        await cmd.ExecuteNonQueryAsync(token);
+    }
+
+    /// <summary>
+    ///     #296: converts a legacy <c>varchar(250)</c> id column on a strongly-typed-id table to the
+    ///     inner primitive type (<c>uniqueidentifier</c>/<c>int</c>/<c>bigint</c>) in place, so the
+    ///     shared writeable selectors (which read the inner value via <c>GetFieldValue&lt;TInner&gt;</c>)
+    ///     can materialize it. Drops the primary key, widens the column — existing guid/numeric string
+    ///     values convert implicitly — then restores the primary key from the modeled definition. A
+    ///     no-op once the column is already the native type (or the table is absent), and skipped for
+    ///     string-backed wrappers (they legitimately stay <c>varchar(250)</c>) and partitioned tables
+    ///     (whose clustered-PK/partition-scheme coupling makes an in-place rebuild unsafe — those keep
+    ///     the correct type from creation and any pre-existing table is a manual migration).
+    /// </summary>
+    private static async Task ConvertStrongTypedIdColumnIfNeededAsync(SqlConnection conn,
+        DocumentMapping mapping, DocumentTable table, CancellationToken token)
+    {
+        if (!mapping.IsStrongTypedId || mapping.Partitioning is not null)
+        {
+            return;
+        }
+
+        var targetType = mapping.InnerIdType == typeof(Guid) ? "uniqueidentifier"
+            : mapping.InnerIdType == typeof(int) ? "int"
+            : mapping.InnerIdType == typeof(long) ? "bigint"
+            : null;
+        if (targetType is null)
+        {
+            return; // string-backed wrapper — the varchar(250) column is correct.
+        }
+
+        var qualifiedTableName = mapping.QualifiedTableName;
+        var pkColumnList = string.Join(", ", table.PrimaryKeyColumns.Select(c => $"[{c}]"));
+
+        // The table/PK names are derived from the document type (not user input) and inlined; only
+        // the discovered PK-constraint name needs dynamic SQL (SQL Server forbids function calls
+        // inside EXEC(...), hence SET-then-EXEC). ALTER COLUMN of a PK member requires dropping the
+        // key first, so the whole convert runs as one guarded batch.
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"""
+            DECLARE @oid int = OBJECT_ID('{qualifiedTableName}');
+            IF @oid IS NOT NULL AND EXISTS (
+                SELECT 1 FROM sys.columns c
+                WHERE c.object_id = @oid AND c.name = 'id'
+                  AND TYPE_NAME(c.system_type_id) IN ('varchar', 'nvarchar', 'char', 'nchar'))
+            BEGIN
+                DECLARE @pk sysname, @sql nvarchar(max);
+                SELECT @pk = kc.name FROM sys.key_constraints kc
+                    WHERE kc.parent_object_id = @oid AND kc.type = 'PK';
+                IF @pk IS NOT NULL
+                BEGIN
+                    SET @sql = 'ALTER TABLE {qualifiedTableName} DROP CONSTRAINT ' + QUOTENAME(@pk);
+                    EXEC(@sql);
+                END
+                ALTER TABLE {qualifiedTableName} ALTER COLUMN [id] {targetType} NOT NULL;
+                ALTER TABLE {qualifiedTableName} ADD CONSTRAINT {table.PrimaryKeyName} PRIMARY KEY ({pkColumnList});
             END
             """;
         await cmd.ExecuteNonQueryAsync(token);
