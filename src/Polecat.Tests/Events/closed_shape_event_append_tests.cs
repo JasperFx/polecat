@@ -1,5 +1,7 @@
 using JasperFx.Events;
+using JasperFx.Events.Projections;
 using Polecat.Exceptions;
+using Polecat.Projections;
 using Polecat.Tests.Harness;
 
 namespace Polecat.Tests.Events;
@@ -225,6 +227,138 @@ public class closed_shape_event_append_tests : IntegrationContext
         stream.AlwaysEnforceConsistency = true;
 
         await session2.SaveChangesAsync();
+    }
+
+    // ---- broader parity coverage (increment 3) ----
+
+    [Fact]
+    public async Task multiple_sequential_appends_accumulate_versions_and_sequences()
+    {
+        await ConfigureClosedShape();
+        var streamId = Guid.NewGuid();
+
+        theSession.Events.StartStream(streamId, new QuestStarted("Start"));
+        await theSession.SaveChangesAsync();
+
+        await using var s2 = theStore.LightweightSession();
+        s2.Events.Append(streamId, new MembersJoined(1, "T", ["A"]));
+        await s2.SaveChangesAsync();
+
+        await using var s3 = theStore.LightweightSession();
+        s3.Events.Append(streamId, new MonsterSlain("Orc", 1), new MonsterSlain("Goblin", 2));
+        await s3.SaveChangesAsync();
+
+        await using var query = theStore.QuerySession();
+        var events = await query.Events.FetchStreamAsync(streamId);
+        events.Count.ShouldBe(4);
+        events.Select(e => e.Version).ShouldBe([1, 2, 3, 4]);
+        for (var i = 1; i < events.Count; i++)
+            events[i].Sequence.ShouldBeGreaterThan(events[i - 1].Sequence);
+    }
+
+    [Fact]
+    public async Task live_aggregation_rebuilds_state()
+    {
+        await ConfigureClosedShape();
+        var streamId = Guid.NewGuid();
+
+        theSession.Events.StartStream(streamId,
+            new QuestStarted("Ring Quest"),
+            new MembersJoined(1, "Shire", ["Frodo", "Sam"]),
+            new MonsterSlain("Balrog", 100));
+        await theSession.SaveChangesAsync();
+
+        await using var query = theStore.QuerySession();
+        var quest = await query.Events.AggregateStreamAsync<QuestAggregate>(streamId);
+
+        quest.ShouldNotBeNull();
+        quest!.Name.ShouldBe("Ring Quest");
+        quest.Members.ShouldBe(["Frodo", "Sam"]);
+        quest.MonstersSlain.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task inline_projection_snapshots_during_append()
+    {
+        await ConfigureClosedShape(opts =>
+            opts.Projections.Add<SingleStreamProjection<QuestAggregate, Guid>>(ProjectionLifecycle.Inline));
+
+        var streamId = Guid.NewGuid();
+        theSession.Events.StartStream(streamId,
+            new QuestStarted("Ring Quest"),
+            new MembersJoined(1, "Shire", ["Frodo", "Sam"]));
+        await theSession.SaveChangesAsync();
+
+        await using var query = theStore.QuerySession();
+        var snapshot = await query.LoadAsync<QuestAggregate>(streamId);
+        snapshot.ShouldNotBeNull();
+        snapshot!.Name.ShouldBe("Ring Quest");
+        snapshot.Members.ShouldBe(["Frodo", "Sam"]);
+    }
+
+    [Fact]
+    public async Task appending_to_archived_stream_throws()
+    {
+        await ConfigureClosedShape();
+        var streamId = Guid.NewGuid();
+
+        theSession.Events.StartStream(streamId, new QuestStarted("Start"));
+        await theSession.SaveChangesAsync();
+
+        await using var archiveSession = theStore.LightweightSession();
+        archiveSession.Events.ArchiveStream(streamId);
+        await archiveSession.SaveChangesAsync();
+
+        await using var appendSession = theStore.LightweightSession();
+        appendSession.Events.Append(streamId, new MembersJoined(2, "Cave", ["Bilbo"]));
+
+        var ex = await Should.ThrowAsync<InvalidStreamException>(async () =>
+            await appendSession.SaveChangesAsync());
+        ex.Message.ShouldContain("archived");
+    }
+
+    [Fact]
+    public async Task optimistic_concurrency_conflict_throws()
+    {
+        await ConfigureClosedShape();
+        var streamId = Guid.NewGuid();
+
+        theSession.Events.StartStream(streamId, new QuestStarted("Start"));
+        await theSession.SaveChangesAsync();
+
+        // First writer appends and commits, advancing the version.
+        await using var winner = theStore.LightweightSession();
+        await winner.Events.AppendOptimistic(streamId, new MembersJoined(1, "T", ["A"]));
+        await winner.SaveChangesAsync();
+
+        // Second writer read the stale version and must conflict.
+        await using var loser = theStore.LightweightSession();
+        loser.Events.Append(streamId, 2, new MonsterSlain("Orc", 1));
+        await Should.ThrowAsync<EventStreamUnexpectedMaxEventIdException>(async () =>
+            await loser.SaveChangesAsync());
+    }
+
+    [Fact]
+    public async Task fetch_for_writing_round_trip()
+    {
+        await ConfigureClosedShape();
+        var streamId = Guid.NewGuid();
+
+        theSession.Events.StartStream(streamId,
+            new QuestStarted("Ring Quest"),
+            new MembersJoined(1, "Shire", ["Frodo"]));
+        await theSession.SaveChangesAsync();
+
+        await using var writer = theStore.LightweightSession();
+        var stream = await writer.Events.FetchForWriting<QuestAggregate>(streamId);
+        stream.Aggregate!.Name.ShouldBe("Ring Quest");
+        stream.AppendOne(new MembersJoined(2, "Rivendell", ["Aragorn"]));
+        await writer.SaveChangesAsync();
+
+        await using var query = theStore.QuerySession();
+        var events = await query.Events.FetchStreamAsync(streamId);
+        events.Count.ShouldBe(3);
+        events[2].Version.ShouldBe(3);
     }
 
     [Fact]
