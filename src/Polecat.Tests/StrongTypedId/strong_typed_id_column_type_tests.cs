@@ -144,11 +144,13 @@ public class strong_typed_id_column_type_tests : IntegrationContext
             await conn.OpenAsync();
             await ExecuteAsync(conn, $"IF SCHEMA_ID('{schema}') IS NULL EXEC('CREATE SCHEMA {schema}')");
             await ExecuteAsync(conn, $"DROP TABLE IF EXISTS {schema}.pc_doc_invoice");
-            // Legacy shape: id is varchar(250) as pre-#296 tables were created.
+            // Legacy shape: id is varchar(250) as pre-#296 tables were created. The data column type
+            // follows the engine — native json on SQL Server 2025, nvarchar(max) on Azure SQL Edge.
+            var dataType = ConnectionSource.SupportsNativeJson ? "json" : "nvarchar(max)";
             await ExecuteAsync(conn, $"""
                 CREATE TABLE {schema}.pc_doc_invoice (
                     id varchar(250) NOT NULL,
-                    data json NOT NULL,
+                    data {dataType} NOT NULL,
                     version bigint NOT NULL,
                     last_modified datetimeoffset NOT NULL DEFAULT SYSDATETIMEOFFSET(),
                     created_at datetimeoffset NOT NULL DEFAULT SYSDATETIMEOFFSET(),
