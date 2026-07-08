@@ -56,6 +56,9 @@ public class storage_operation_seam_tests
         public void Append(string sql) { }
         public void Append(char character) { }
         public void AppendParameters(params object[] parameters) { }
+        // Weasel 9.16.0 (weasel#339): dialect-neutral grouped-parameter seam on Weasel.Core.ICommandBuilder.
+        public System.Data.Common.DbParameter AppendParameter(object value) => throw new NotSupportedException();
+        public Weasel.Core.IGroupedParameterBuilder CreateGroupedParameterBuilder(char? separator = null) => throw new NotSupportedException();
         public System.Data.Common.DbParameter[] AppendWithDbParameters(string text) => [];
         public System.Data.Common.DbParameter[] AppendWithDbParameters(string text, char placeholder) => [];
         public void StartNewCommand() { }
