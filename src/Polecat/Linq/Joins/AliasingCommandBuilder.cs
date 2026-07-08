@@ -41,6 +41,13 @@ internal class AliasingCommandBuilder : ICommandBuilder
     public SqlParameter AppendParameter(object? value, SqlDbType? dbType) => _inner.AppendParameter(value, dbType);
     public void AppendParameters(params object[] parameters) => _inner.AppendParameters(parameters);
     public IGroupedParameterBuilder CreateGroupedParameterBuilder(char? seperator = null) => _inner.CreateGroupedParameterBuilder(seperator);
+
+    // Weasel 9.16.0 (weasel#339): the SqlServer ICommandBuilder members now `new`-shadow the
+    // dialect-neutral Weasel.Core.ICommandBuilder declarations (which return DbParameter /
+    // Weasel.Core.IGroupedParameterBuilder). Satisfy the Core contract explicitly by delegating
+    // to the inner builder — the SqlClient-typed overloads above satisfy the SqlServer shadows.
+    System.Data.Common.DbParameter Weasel.Core.ICommandBuilder.AppendParameter(object value) => _inner.AppendParameter(value);
+    Weasel.Core.IGroupedParameterBuilder Weasel.Core.ICommandBuilder.CreateGroupedParameterBuilder(char? seperator) => _inner.CreateGroupedParameterBuilder(seperator);
     public SqlParameter[] AppendWithParameters(string text) => _inner.AppendWithParameters(JoinStatement.AliasLocator(text, _alias));
     public SqlParameter[] AppendWithParameters(string text, char placeholder) => _inner.AppendWithParameters(JoinStatement.AliasLocator(text, _alias), placeholder);
     // Weasel 9.7.0 (weasel#324): dialect-neutral DbParameter[] variants on the shared Weasel.Core.ICommandBuilder.
