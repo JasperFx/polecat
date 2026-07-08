@@ -221,7 +221,9 @@ public class document_index_tests : IntegrationContext
             opts.Schema.For<IndexedProduct>()
                 .Index(x => x.Sku, idx =>
                 {
-                    idx.Predicate = "tenant_id <> 'EXCLUDED'";
+                    // #234: filtered indexes can't reference computed columns; use a regular
+                    // always-present column (dotnet_type) — tenant_id no longer exists single-tenant.
+                    idx.Predicate = "dotnet_type <> 'EXCLUDED'";
                 });
         });
 
@@ -302,6 +304,9 @@ public class document_index_tests : IntegrationContext
         await StoreOptions(opts =>
         {
             opts.DatabaseSchemaName = "idx_tenant2";
+            // #234: a per-tenant index only makes sense under conjoined tenancy (single-tenant
+            // tables have no tenant_id column to include).
+            opts.Events.TenancyStyle = TenancyStyle.Conjoined;
             opts.Schema.For<IndexedProduct>()
                 .UniqueIndex(x => x.Email, idx => idx.TenancyScope = TenancyScope.PerTenant);
         });

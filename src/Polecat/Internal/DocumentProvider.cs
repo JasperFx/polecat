@@ -34,11 +34,20 @@ internal class DocumentProvider
 
     public string QualifiedTableName => Mapping.QualifiedTableName;
 
+    // #234: tenant_id is present only on conjoined tables. When absent, every trailing column
+    // ordinal shifts down by one, so the read-side ordinals below are computed off tenancy.
+    private bool IsConjoined => Mapping.TenancyStyle == TenancyStyle.Conjoined;
+
     public string SelectSql
     {
         get
         {
-            var baseCols = "id, data, version, last_modified, created_at, dotnet_type, tenant_id";
+            var baseCols = "id, data, version, last_modified, created_at, dotnet_type";
+            if (IsConjoined)
+            {
+                baseCols += ", tenant_id";
+            }
+
             if (Mapping.UseOptimisticConcurrency)
             {
                 baseCols += ", guid_version";
@@ -54,6 +63,12 @@ internal class DocumentProvider
     }
 
     /// <summary>
+    ///     Column index of guid_version in SelectSql (valid only under optimistic concurrency).
+    ///     Base columns id[0]..dotnet_type[5], then tenant_id[6] only when conjoined.
+    /// </summary>
+    public int GuidVersionColumnIndex => 6 + (IsConjoined ? 1 : 0);
+
+    /// <summary>
     ///     Column index of doc_type in SelectSql, or -1 if not a hierarchy.
     /// </summary>
     public int DocTypeColumnIndex
@@ -61,9 +76,7 @@ internal class DocumentProvider
         get
         {
             if (!Mapping.IsHierarchy()) return -1;
-            // Base columns: id[0], data[1], version[2], last_modified[3], created_at[4], dotnet_type[5], tenant_id[6]
-            // Optional: guid_version[7], doc_type[8] OR doc_type[7]
-            return Mapping.UseOptimisticConcurrency ? 8 : 7;
+            return 6 + (IsConjoined ? 1 : 0) + (Mapping.UseOptimisticConcurrency ? 1 : 0);
         }
     }
 
@@ -74,7 +87,8 @@ internal class DocumentProvider
             var softDeleteFilter = Mapping.DeleteStyle == DeleteStyle.SoftDelete
                 ? " AND is_deleted = 0"
                 : "";
-            return $"{SelectSql} WHERE id = @id AND tenant_id = @tenant_id{softDeleteFilter};";
+            var tenantFilter = IsConjoined ? " AND tenant_id = @tenant_id" : "";
+            return $"{SelectSql} WHERE id = @id{tenantFilter}{softDeleteFilter};";
         }
     }
 

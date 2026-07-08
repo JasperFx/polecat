@@ -43,6 +43,11 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider
         _tableEnsurer = tableEnsurer;
     }
 
+    // #234: document tenancy is global (DocumentMapping.TenancyStyle mirrors Events.TenancyStyle),
+    // and only conjoined tables carry a tenant_id column. Every implicit tenant filter — for list,
+    // scalar, aggregate, group-by, and join query shapes — is gated on this.
+    private bool IsConjoinedTenancy => _session.Options.Events.TenancyStyle == TenancyStyle.Conjoined;
+
     // IL2046 — IQueryProvider.CreateQuery(Expression) is not annotated [RUC]/[RDC]
     // in the BCL, but the only AOT-safe implementation is the generic
     // CreateQuery<TElement>(Expression) overload below. The non-generic
@@ -100,7 +105,10 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider
 
         if (parser.IsDistinct) parser.Statement.IsDistinct = true;
 
-        if (!parser.IsAnyTenant)
+        // #234: single-tenant tables have no tenant_id column, so no implicit tenant filter is
+        // applied — every document is under the default tenant. Explicit AnyTenant()/TenantIsOneOf()
+        // are likewise no-ops there. Only conjoined stores filter by tenant_id.
+        if (!parser.IsAnyTenant && provider.Mapping.TenancyStyle == TenancyStyle.Conjoined)
         {
             if (parser.TenantIds != null)
             {
@@ -137,7 +145,7 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider
 
         if (parser.IsDistinct) parser.Statement.IsDistinct = true;
 
-        if (!parser.IsAnyTenant)
+        if (!parser.IsAnyTenant && IsConjoinedTenancy)
         {
             if (parser.TenantIds != null)
             {
@@ -216,7 +224,7 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider
         }
 
         // Add tenant filter (unless AnyTenant was called)
-        if (!parser.IsAnyTenant)
+        if (!parser.IsAnyTenant && IsConjoinedTenancy)
         {
             if (parser.TenantIds != null)
             {
@@ -333,7 +341,7 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider
         }
 
         // Add tenant filter
-        if (!parser.IsAnyTenant)
+        if (!parser.IsAnyTenant && IsConjoinedTenancy)
         {
             if (parser.TenantIds != null)
             {
@@ -447,7 +455,7 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider
         };
 
         // Add tenant filters for both sides
-        if (!parser.IsAnyTenant)
+        if (!parser.IsAnyTenant && IsConjoinedTenancy)
         {
             if (parser.TenantIds != null)
             {

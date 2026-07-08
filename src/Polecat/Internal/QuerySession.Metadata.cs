@@ -41,7 +41,10 @@ internal partial class QuerySession
 
         // Build the column list off the mapping. Note: no soft-delete filter — metadata is surfaced
         // even for soft-deleted rows so the caller can see Deleted/DeletedAt.
-        var columns = new List<string> { "id", "version", "last_modified", "created_at", "tenant_id", "dotnet_type" };
+        // #234: tenant_id exists only on conjoined tables.
+        var isConjoined = mapping.TenancyStyle == TenancyStyle.Conjoined;
+        var columns = new List<string> { "id", "version", "last_modified", "created_at", "dotnet_type" };
+        if (isConjoined) columns.Add("tenant_id");
         if (mapping.UseOptimisticConcurrency) columns.Add("guid_version");
         if (mapping.IsHierarchy()) columns.Add("doc_type");
         if (mapping.DeleteStyle == DeleteStyle.SoftDelete)
@@ -58,9 +61,9 @@ internal partial class QuerySession
         await using var cmd = new SqlCommand();
         cmd.CommandText =
             $"SELECT {string.Join(", ", columns)} FROM {mapping.QualifiedTableName} " +
-            "WHERE id = @id AND tenant_id = @tenant_id";
+            (isConjoined ? "WHERE id = @id AND tenant_id = @tenant_id" : "WHERE id = @id");
         cmd.Parameters.AddWithValue("@id", id);
-        cmd.Parameters.AddWithValue("@tenant_id", TenantId);
+        if (isConjoined) cmd.Parameters.AddWithValue("@tenant_id", TenantId);
 
         Logger.OnBeforeExecute(cmd.CommandText);
         try
@@ -75,9 +78,9 @@ internal partial class QuerySession
                 reader.GetInt64(ordinals["version"]),
                 reader.GetFieldValue<DateTimeOffset>(ordinals["last_modified"]),
                 reader.GetFieldValue<DateTimeOffset>(ordinals["created_at"]),
-                reader.IsDBNull(ordinals["tenant_id"])
-                    ? StorageConstants.DefaultTenantId
-                    : reader.GetString(ordinals["tenant_id"]))
+                isConjoined && !reader.IsDBNull(ordinals["tenant_id"])
+                    ? reader.GetString(ordinals["tenant_id"])
+                    : StorageConstants.DefaultTenantId)
             {
                 DotNetType = ReadOptionalString(reader, ordinals, "dotnet_type"),
                 DocumentType = ReadOptionalString(reader, ordinals, "doc_type"),

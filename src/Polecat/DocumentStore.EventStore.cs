@@ -513,7 +513,7 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
         {
             await Options.ResiliencePipeline.ExecuteAsync(static async (state, ct) =>
             {
-                var (connString, progressionTable, identities, tableNames, tenant) = state;
+                var (connString, progressionTable, identities, tableNames, tenant, isConjoined) = state;
                 await using var conn = new SqlConnection(connString);
                 await conn.OpenAsync(ct);
 
@@ -537,14 +537,18 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
                     delDocs.Transaction = tx;
                     // The projection's doc table is created lazily on first write, so on a first-ever
                     // rebuild it may not exist yet — guard the tenant-scoped delete accordingly.
-                    delDocs.CommandText =
-                        $"IF OBJECT_ID('{tableName}', 'U') IS NOT NULL DELETE FROM {tableName} WHERE tenant_id = @tenant;";
-                    delDocs.Parameters.AddWithValue("@tenant", tenant);
+                    // #234: single-tenant projection tables have no tenant_id column, so the delete
+                    // is unscoped there (only the default tenant's rows exist).
+                    delDocs.CommandText = isConjoined
+                        ? $"IF OBJECT_ID('{tableName}', 'U') IS NOT NULL DELETE FROM {tableName} WHERE tenant_id = @tenant;"
+                        : $"IF OBJECT_ID('{tableName}', 'U') IS NOT NULL DELETE FROM {tableName};";
+                    if (isConjoined) delDocs.Parameters.AddWithValue("@tenant", tenant);
                     await delDocs.ExecuteNonQueryAsync(ct);
                 }
 
                 await tx.CommitAsync(ct);
-            }, (connStr, Events.ProgressionTableName, shardIdentities, publishedTableNames, tenantId), token);
+            }, (connStr, Events.ProgressionTableName, shardIdentities, publishedTableNames, tenantId,
+                Options.Events.TenancyStyle == TenancyStyle.Conjoined), token);
         }
         catch (Exception ex) when (token.IsCancellationRequested && ex is not OperationCanceledException)
         {

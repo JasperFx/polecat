@@ -29,8 +29,11 @@ internal class PatchExpression<T> : IPatchExpression<T>
         {
             builder.Append("id = ");
             builder.AppendParameter(id);
-            builder.Append(" AND tenant_id = ");
-            builder.AppendParameter(tenantId);
+            if (mapping.TenancyStyle == TenancyStyle.Conjoined) // #234
+            {
+                builder.Append(" AND tenant_id = ");
+                builder.AppendParameter(tenantId);
+            }
         });
         session.WorkTracker.Add(operation);
     }
@@ -49,9 +52,13 @@ internal class PatchExpression<T> : IPatchExpression<T>
 
         var operation = new PatchOperation(mapping, _actions, builder =>
         {
-            builder.Append("tenant_id = ");
-            builder.AppendParameter(session.TenantId);
-            builder.Append(" AND ");
+            if (mapping.TenancyStyle == TenancyStyle.Conjoined) // #234
+            {
+                builder.Append("tenant_id = ");
+                builder.AppendParameter(session.TenantId);
+                builder.Append(" AND ");
+            }
+
             fragment.Apply(builder);
         });
         session.WorkTracker.Add(operation);

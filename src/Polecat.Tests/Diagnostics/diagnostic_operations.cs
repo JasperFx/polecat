@@ -107,7 +107,8 @@ public class diagnostic_operations : IntegrationContext
 
         sql.ShouldContain("SELECT");
         sql.ShouldContain("pc_doc_user");
-        sql.ShouldContain("tenant_id");
+        // #234: single-tenant queries carry no implicit tenant_id filter.
+        sql.ShouldNotContain("tenant_id");
     }
 
     [Fact]

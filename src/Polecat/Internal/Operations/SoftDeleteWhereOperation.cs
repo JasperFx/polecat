@@ -29,9 +29,14 @@ internal class SoftDeleteWhereOperation : IStorageOperation
     public void ConfigureCommand(ICommandBuilder builder)
     {
         builder.Append(
-            $"UPDATE {_mapping.QualifiedTableName} SET is_deleted = 1, deleted_at = SYSDATETIMEOFFSET() WHERE tenant_id = ");
-        builder.AppendParameter(_tenantId);
-        builder.Append(" AND ");
+            $"UPDATE {_mapping.QualifiedTableName} SET is_deleted = 1, deleted_at = SYSDATETIMEOFFSET() WHERE ");
+        if (_mapping.TenancyStyle == TenancyStyle.Conjoined) // #234
+        {
+            builder.Append("tenant_id = ");
+            builder.AppendParameter(_tenantId);
+            builder.Append(" AND ");
+        }
+
         _whereFragment.Apply(builder);
         builder.Append(";");
     }

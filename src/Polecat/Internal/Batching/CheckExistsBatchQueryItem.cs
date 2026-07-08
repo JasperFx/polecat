@@ -28,8 +28,12 @@ internal class CheckExistsBatchQueryItem<T> : IBatchQueryItem where T : class
 
         builder.Append($"SELECT CAST(CASE WHEN EXISTS(SELECT 1 FROM {_provider.Mapping.QualifiedTableName} WHERE id = ");
         builder.AppendParameter(_id);
-        builder.Append(" AND tenant_id = ");
-        builder.AppendParameter(_tenantId);
+        if (_provider.Mapping.TenancyStyle == TenancyStyle.Conjoined) // #234
+        {
+            builder.Append(" AND tenant_id = ");
+            builder.AppendParameter(_tenantId);
+        }
+
         builder.Append(softDeleteFilter);
         builder.Append(") THEN 1 ELSE 0 END AS BIT);\n");
     }

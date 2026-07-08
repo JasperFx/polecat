@@ -44,7 +44,7 @@ public class advanced_sql_query : IntegrationContext
 
         await using var query = theStore.QuerySession();
         var name = (await query.AdvancedSql.QueryAsync<string>(
-            "SELECT JSON_VALUE(data, '$.name') FROM advsql_scalar.pc_doc_advsqldoc WHERE tenant_id = '*DEFAULT*'",
+            "SELECT JSON_VALUE(data, '$.name') FROM advsql_scalar.pc_doc_advsqldoc",
             CancellationToken.None)).First();
 
         name.ShouldBe("Max");
@@ -107,7 +107,7 @@ public class advanced_sql_query : IntegrationContext
 
         await using var query = theStore.QuerySession();
         var docs = await query.AdvancedSql.QueryAsync<AdvSqlDoc>(
-            "SELECT id, data FROM advsql_docs.pc_doc_advsqldoc WHERE tenant_id = '*DEFAULT*' ORDER BY JSON_VALUE(data, '$.name')",
+            "SELECT id, data FROM advsql_docs.pc_doc_advsqldoc ORDER BY JSON_VALUE(data, '$.name')",
             CancellationToken.None);
 
         docs.Count.ShouldBe(2);
@@ -129,7 +129,7 @@ public class advanced_sql_query : IntegrationContext
 
         // Default placeholder '?'
         var name = (await query.AdvancedSql.QueryAsync<string>(
-            "SELECT JSON_VALUE(data, ?) FROM advsql_params.pc_doc_advsqldoc WHERE tenant_id = '*DEFAULT*'",
+            "SELECT JSON_VALUE(data, ?) FROM advsql_params.pc_doc_advsqldoc",
             CancellationToken.None,
             "$.name")).First();
 
@@ -138,7 +138,7 @@ public class advanced_sql_query : IntegrationContext
         // Custom placeholder '^'
         var name2 = (await query.AdvancedSql.QueryAsync<string>(
             '^',
-            "SELECT JSON_VALUE(data, ^) FROM advsql_params.pc_doc_advsqldoc WHERE tenant_id = '*DEFAULT*'",
+            "SELECT JSON_VALUE(data, ^) FROM advsql_params.pc_doc_advsqldoc",
             CancellationToken.None,
             "$.name")).First();
 
@@ -162,7 +162,7 @@ public class advanced_sql_query : IntegrationContext
         await using var query = theStore.QuerySession();
         var names = new List<string>();
         await foreach (var name in query.AdvancedSql.StreamAsync<string>(
-            "SELECT JSON_VALUE(data, '$.name') FROM advsql_stream.pc_doc_advsqldoc WHERE tenant_id = '*DEFAULT*' ORDER BY JSON_VALUE(data, '$.name')",
+            "SELECT JSON_VALUE(data, '$.name') FROM advsql_stream.pc_doc_advsqldoc ORDER BY JSON_VALUE(data, '$.name')",
             CancellationToken.None))
         {
             names.Add(name);
@@ -208,7 +208,7 @@ public class advanced_sql_query : IntegrationContext
 
         await using var query = theStore.QuerySession();
         var results = await query.AdvancedSql.QueryAsync<AdvSqlDoc, long>(
-            "SELECT id, data, COUNT(*) OVER() FROM advsql_doc_scalar.pc_doc_advsqldoc WHERE tenant_id = '*DEFAULT*' ORDER BY JSON_VALUE(data, '$.name')",
+            "SELECT id, data, COUNT(*) OVER() FROM advsql_doc_scalar.pc_doc_advsqldoc ORDER BY JSON_VALUE(data, '$.name')",
             CancellationToken.None);
 
         results.Count.ShouldBe(2);
