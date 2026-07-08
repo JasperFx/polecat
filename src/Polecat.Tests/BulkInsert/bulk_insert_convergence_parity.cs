@@ -81,4 +81,41 @@ public class bulk_insert_convergence_parity : IntegrationContext
         // A persisted guid_version round-trips back onto the reloaded document.
         loaded.Version.ShouldBe(doc.Version);
     }
+
+    [Fact]
+    public async Task bulk_insert_with_version_hierarchy_writes_doc_type_discriminator()
+    {
+        await StoreOptions(opts =>
+        {
+            opts.DatabaseSchemaName = "bulk_ver_hierarchy";
+            opts.Schema.For<BulkPerson>()
+                .AddSubClass<BulkEmployee>()
+                .AddSubClass<BulkContractor>();
+        });
+
+        var employee = new BulkEmployee { Id = Guid.NewGuid(), Name = "VEmp", Department = "Eng" };
+
+        // Expected version 0 → the row is absent → WHEN NOT MATCHED → INSERT.
+        await theStore.Advanced.BulkInsertWithVersionAsync(new[] { (employee, 0L) });
+
+        await using var query = theStore.QuerySession();
+        var loaded = await query.LoadAsync<BulkPerson>(employee.Id);
+        loaded.ShouldBeOfType<BulkEmployee>();
+        ((BulkEmployee)loaded).Department.ShouldBe("Eng");
+    }
+
+    [Fact]
+    public async Task bulk_insert_with_version_optimistic_writes_guid_version()
+    {
+        await StoreOptions(opts => opts.DatabaseSchemaName = "bulk_ver_optimistic");
+
+        var doc = new VersionedDoc { Id = Guid.NewGuid(), Name = "VOpt" };
+        await theStore.Advanced.BulkInsertWithVersionAsync(new[] { (doc, 0L) });
+
+        await using var query = theStore.QuerySession();
+        var loaded = await query.LoadAsync<VersionedDoc>(doc.Id);
+        loaded.ShouldNotBeNull();
+        // guid_version is now written (bound via the version binder's session-free bulk value).
+        loaded.Version.ShouldNotBe(Guid.Empty);
+    }
 }

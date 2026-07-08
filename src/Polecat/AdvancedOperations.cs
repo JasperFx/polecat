@@ -245,18 +245,19 @@ public class AdvancedOperations
 
         var provider = _store.GetProvider(typeof(T));
         var mapping = provider.Mapping;
-        var serializer = _store.Options.Serializer;
 
         var ensurer = _store.ResolveTableEnsurer(tenantId);
         await ensurer.EnsureTableAsync(provider, token);
 
-        // Pre-process. The id-assignment and metadata sync mirrors the
-        // versionless path; the only extra piece is carrying the expected
-        // version forward into the batched MERGE.
-        var rows = new List<(object Id, string Json, string DotNetType, long ExpectedVersion)>(documents.Count);
-        foreach (var (doc, expectedVersion) in documents)
+        // #273 doc-side convergence: source the version-checked MERGE's full column set from the
+        // closed-shape descriptor's write binders (doc_type, guid_version, partition, soft-delete)
+        // instead of the bespoke hardcoded id/data/version/dotnet_type[/tenant_id] subset.
+        var storage = (Storage.ClosedShape.IPolecatBulkVersionCheckStorage<T>)
+            _store.Options.Providers.ClosedShapeGraph.StorageFor<T>().QueryOnly;
+
+        // Pre-process: assign ids + sync ITenanted before the operations serialize each document.
+        foreach (var (doc, _) in documents)
         {
-            // #273: route id generation through the shared Weasel.Core.Identity strategy (see above).
             if (provider.SequenceSource is not null)
             {
                 mapping.AssignIdIfMissing(doc, provider.SequenceSource);
@@ -266,39 +267,37 @@ public class AdvancedOperations
             {
                 tenanted.TenantId = tenantId;
             }
-
-            var id = mapping.GetId(doc);
-            var json = serializer.ToJson(doc);
-            rows.Add((id, json, mapping.DotNetTypeName, expectedVersion));
         }
 
         var connFactory = _store.Options.Tenancy!.GetConnectionFactory(tenantId);
 
         await _resilience.ExecuteAsync(static async (state, ct) =>
         {
-            var (factory, allRows, size, docMapping, tenant) = state;
+            var (factory, docs, size, docStorage, tenant) = state;
             await using var conn = factory.Create();
             await conn.OpenAsync(ct);
 
-            for (var offset = 0; offset < allRows.Count; offset += size)
+            for (var offset = 0; offset < docs.Count; offset += size)
             {
-                var batch = allRows.Skip(offset).Take(size).ToList();
-                await using var cmd = conn.CreateCommand();
-                BuildVersionCheckedBatchCommand(cmd, batch, docMapping, tenant);
+                var chunk = docs.Skip(offset).Take(size).ToList();
+                await using var batch = new SqlBatch(conn);
+                var builder = new BatchBuilder(batch);
 
-                // Read the OUTPUTed inserted.id stream to discover which rows
-                // the MERGE actually touched. Any incoming id missing from
-                // the output set is a version-mismatch (the WHEN MATCHED AND
-                // ... predicate failed and the row was neither updated nor
-                // inserted). One ConcurrencyException per batch, thrown for
-                // the first missing id we find — matches the per-row pattern
-                // in UpdateOperation / UpsertOperation rather than the
-                // aggregate pattern.
-                //
-                // Each MERGE-OUTPUT in the batched command produces its own
-                // result set; iterate all of them via NextResultAsync.
+                for (var i = 0; i < chunk.Count; i++)
+                {
+                    if (i > 0) builder.StartNewCommand();
+                    docStorage.ConfigureVersionCheckedUpsert(
+                        builder, chunk[i].Document, chunk[i].ExpectedVersion, tenant);
+                }
+
+                builder.Compile();
+
+                // Each MERGE's OUTPUT inserted.id is its own result set. A row absent from the
+                // combined stream was neither updated (version mismatch) nor inserted — a
+                // concurrency violation, surfaced for the first missing id (per-row pattern,
+                // matching UpdateOperation / UpsertOperation).
                 var touched = new HashSet<object>();
-                await using (var reader = await cmd.ExecuteReaderAsync(ct))
+                await using (var reader = await batch.ExecuteReaderAsync(ct))
                 {
                     do
                     {
@@ -309,71 +308,16 @@ public class AdvancedOperations
                     } while (await reader.NextResultAsync(ct));
                 }
 
-                foreach (var row in batch)
+                foreach (var (doc, _) in chunk)
                 {
-                    if (!touched.Contains(row.Id))
+                    var rawId = docStorage.BulkRawId(doc);
+                    if (!touched.Contains(rawId))
                     {
-                        throw new ConcurrencyException(typeof(T), row.Id);
+                        throw new ConcurrencyException(typeof(T), rawId);
                     }
                 }
             }
-        }, (connFactory, rows, batchSize, mapping, tenantId), token);
-    }
-
-    private static void BuildVersionCheckedBatchCommand(
-        SqlCommand cmd,
-        List<(object Id, string Json, string DotNetType, long ExpectedVersion)> batch,
-        Storage.DocumentMapping mapping,
-        string tenantId)
-    {
-        var sb = new StringBuilder();
-        var paramIndex = 0;
-
-        foreach (var (id, json, dotnetType, expectedVersion) in batch)
-        {
-            // #234: tenant_id column exists only on conjoined tables.
-            var conjoined = mapping.TenancyStyle == TenancyStyle.Conjoined;
-            var pId = $"@p{paramIndex++}";
-            var pData = $"@p{paramIndex++}";
-            var pType = $"@p{paramIndex++}";
-            var pTenant = conjoined ? $"@p{paramIndex++}" : null;
-            var pExpected = $"@p{paramIndex++}";
-
-            var usingTenant = conjoined ? $", {pTenant} AS tenant_id" : "";
-            var onTenant = conjoined ? " AND target.tenant_id = source.tenant_id" : "";
-            var insertTenantCol = conjoined ? ", tenant_id" : "";
-            var insertTenantVal = conjoined ? $", {pTenant}" : "";
-
-            // MERGE pattern from the polecat#48 audit body. The expected_version
-            // is part of the USING projection rather than a free-standing
-            // parameter so SQL Server's optimizer can see it as a column on the
-            // source rowset (matters when this is extended to set-based MERGEs).
-            sb.AppendLine(
-                $"MERGE INTO {mapping.QualifiedTableName} WITH (HOLDLOCK) AS target");
-            sb.AppendLine(
-                $"USING (SELECT {pId} AS id{usingTenant}, {pExpected} AS expected_version) AS source");
-            sb.AppendLine(
-                $"    ON target.id = source.id{onTenant}");
-            sb.AppendLine("WHEN MATCHED AND target.version = source.expected_version THEN");
-            sb.AppendLine(
-                $"    UPDATE SET data = {pData}, version = target.version + 1,");
-            sb.AppendLine(
-                $"        last_modified = SYSDATETIMEOFFSET(), dotnet_type = {pType}");
-            sb.AppendLine("WHEN NOT MATCHED THEN");
-            sb.AppendLine(
-                $"    INSERT (id, data, version, last_modified, created_at, dotnet_type{insertTenantCol})");
-            sb.AppendLine(
-                $"    VALUES ({pId}, {pData}, 1, SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET(), {pType}{insertTenantVal})");
-            sb.AppendLine("OUTPUT inserted.id;");
-
-            cmd.Parameters.AddWithValue(pId, id);
-            cmd.Parameters.AddWithValue(pData, json);
-            cmd.Parameters.AddWithValue(pType, dotnetType);
-            if (conjoined) cmd.Parameters.AddWithValue(pTenant!, tenantId);
-            cmd.Parameters.AddWithValue(pExpected, expectedVersion);
-        }
-
-        cmd.CommandText = sb.ToString();
+        }, (connFactory, documents, batchSize, storage, tenantId), token);
     }
 
     public Task ResetHiloSequenceFloor<T>(long floor)
