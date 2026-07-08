@@ -284,36 +284,39 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
 
     public void DeleteWhere<T>(Expression<Func<T, bool>> predicate) where T : class
     {
-        var provider = _providers.GetProvider<T>();
-        var memberFactory = new MemberFactory(Options, provider.Mapping);
-        var whereParser = new WhereClauseParser(memberFactory);
-        var fragment = whereParser.Parse(predicate.Body);
-
-        IStorageOperation op = provider.Mapping.DeleteStyle == DeleteStyle.SoftDelete
-            ? new SoftDeleteWhereOperation(provider.Mapping, TenantId, fragment)
-            : new DeleteWhereOperation(provider.Mapping, TenantId, fragment);
-        _workTracker.Add(op);
+        var fragment = ParseDeleteWhere(predicate);
+        // #273 doc-side convergence: the DELETE / soft-delete-UPDATE prefix and tenancy come from
+        // the shared closed-shape storage. DeleteFragment is already soft-or-hard per the type.
+        var storage = ClosedShapeDeletionStorageFor<T>();
+        _workTracker.Add(new DeleteWhereOperation(
+            storage.DeleteFragment, storage.IsConjoined, TenantId, fragment, typeof(T)));
     }
 
     public void HardDeleteWhere<T>(Expression<Func<T, bool>> predicate) where T : class
     {
-        var provider = _providers.GetProvider<T>();
-        var memberFactory = new MemberFactory(Options, provider.Mapping);
-        var whereParser = new WhereClauseParser(memberFactory);
-        var fragment = whereParser.Parse(predicate.Body);
-        var op = new DeleteWhereOperation(provider.Mapping, TenantId, fragment);
-        _workTracker.Add(op);
+        var fragment = ParseDeleteWhere(predicate);
+        var storage = ClosedShapeDeletionStorageFor<T>();
+        _workTracker.Add(new DeleteWhereOperation(
+            storage.HardDeleteFragment, storage.IsConjoined, TenantId, fragment, typeof(T)));
     }
 
     public void UndoDeleteWhere<T>(Expression<Func<T, bool>> predicate) where T : class
     {
+        var fragment = ParseDeleteWhere(predicate);
+        var storage = ClosedShapeDeletionStorageFor<T>();
+        _workTracker.Add(new UndoDeleteWhereOperation(
+            storage.UndeleteFragment, storage.IsConjoined, TenantId, fragment, typeof(T)));
+    }
+
+    private Linq.SqlGeneration.ISqlFragment ParseDeleteWhere<T>(Expression<Func<T, bool>> predicate) where T : class
+    {
         var provider = _providers.GetProvider<T>();
         var memberFactory = new MemberFactory(Options, provider.Mapping);
-        var whereParser = new WhereClauseParser(memberFactory);
-        var fragment = whereParser.Parse(predicate.Body);
-        var op = new UndoDeleteWhereOperation(provider.Mapping, TenantId, fragment);
-        _workTracker.Add(op);
+        return new WhereClauseParser(memberFactory).Parse(predicate.Body);
     }
+
+    private Storage.ClosedShape.IPolecatDeletionStorage ClosedShapeDeletionStorageFor<T>() where T : class
+        => (Storage.ClosedShape.IPolecatDeletionStorage)_providers.ClosedShapeGraph.StorageFor<T>().QueryOnly;
 
     private Dictionary<string, NestedTenantSession>? _byTenant;
 

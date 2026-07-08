@@ -105,9 +105,33 @@ internal interface IPolecatBulkVersionCheckStorage<TDoc> where TDoc : notnull
     object BulkRawId(TDoc document);
 }
 
+/// <summary>
+///     Set-based delete / undelete seam (#273 doc-side convergence). Exposes the closed-shape
+///     operation fragments (the <c>DELETE FROM …</c> / <c>UPDATE … SET is_deleted = …</c>
+///     prefixes) so the criteria-based delete/undelete operations compose off the shared storage
+///     instead of hand-writing SQL from <c>DocumentMapping</c>. <see cref="DeleteFragment" /> and
+///     <see cref="HardDeleteFragment" /> already live on <c>IDocumentStorage</c>; this adds the
+///     undelete prefix and the tenancy flag the operations need.
+/// </summary>
+internal interface IPolecatDeletionStorage
+{
+    /// <summary>Soft-or-hard delete prefix (an <c>UPDATE … is_deleted = 1</c> for soft-delete
+    /// types, a <c>DELETE FROM …</c> otherwise).</summary>
+    IOperationFragment DeleteFragment { get; }
+
+    /// <summary>Always a hard <c>DELETE FROM …</c>.</summary>
+    IOperationFragment HardDeleteFragment { get; }
+
+    /// <summary><c>UPDATE … SET is_deleted = 0, deleted_at = NULL</c>.</summary>
+    IOperationFragment UndeleteFragment { get; }
+
+    /// <summary>#234: conjoined tables carry a <c>tenant_id</c> column to scope the WHERE by.</summary>
+    bool IsConjoined { get; }
+}
+
 internal abstract class PolecatDocumentStorage<TDoc, TId>
     : IDocumentStorage<TDoc, TId>, IPolecatObjectStorage<TDoc>, IPolecatBatchLoadStorage<TDoc>,
-        IPolecatBulkVersionCheckStorage<TDoc>
+        IPolecatBulkVersionCheckStorage<TDoc>, IPolecatDeletionStorage
     where TDoc : notnull
     where TId : notnull
 {
@@ -121,6 +145,7 @@ internal abstract class PolecatDocumentStorage<TDoc, TId>
     private readonly string[] _selectFields;
     private readonly IOperationFragment _deleteFragment;
     private readonly IOperationFragment _hardDeleteFragment;
+    private readonly IOperationFragment _undeleteFragment;
 
     protected PolecatDocumentStorage(DocumentMapping mapping, DocumentStorageDescriptor<TDoc, TId> descriptor)
     {
@@ -158,6 +183,8 @@ internal abstract class PolecatDocumentStorage<TDoc, TId>
                 $"DELETE FROM {_mapping.QualifiedTableName}", OperationRole.Deletion);
         _hardDeleteFragment = new HardCodedOperationFragment(
             $"DELETE FROM {_mapping.QualifiedTableName}", OperationRole.Deletion);
+        _undeleteFragment = new HardCodedOperationFragment(
+            $"UPDATE {_mapping.QualifiedTableName} SET is_deleted = 0, deleted_at = NULL", OperationRole.Update);
     }
 
     /// <summary>Read binders backing this flavor's SELECT (QueryOnly overrides).</summary>
@@ -222,6 +249,8 @@ internal abstract class PolecatDocumentStorage<TDoc, TId>
     public DbObjectName TableName => DbObjectName.Parse(SqlServerProvider.Instance, _mapping.QualifiedTableName);
     public IOperationFragment DeleteFragment => _deleteFragment;
     public IOperationFragment HardDeleteFragment => _hardDeleteFragment;
+    public IOperationFragment UndeleteFragment => _undeleteFragment;
+    public bool IsConjoined => _mapping.TenancyStyle == TenancyStyle.Conjoined;
     public IReadOnlyList<IDuplicatedField> DuplicatedFields => Array.Empty<IDuplicatedField>();
 
     // ---- select clause (E1-minimal; full LINQ retarget is E2) ----

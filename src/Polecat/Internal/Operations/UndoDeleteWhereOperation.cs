@@ -1,32 +1,43 @@
 using System.Data.Common;
 using Polecat.Linq.SqlGeneration;
-using Polecat.Storage;
 using Weasel.Core;
 using Weasel.SqlServer;
+using Weasel.Storage;
 
 namespace Polecat.Internal.Operations;
 
+/// <summary>
+///     Criteria-based undelete: applies the closed-shape undelete fragment
+///     (<c>UPDATE … SET is_deleted = 0, deleted_at = NULL</c>), scoped to currently-deleted rows
+///     matching the tenant + LINQ predicate. #273 doc-side convergence — the SQL prefix + tenancy
+///     come from the shared closed-shape storage, not from <c>DocumentMapping</c>.
+/// </summary>
 internal class UndoDeleteWhereOperation : IStorageOperation
 {
-    private readonly DocumentMapping _mapping;
+    private readonly IOperationFragment _undeleteFragment;
+    private readonly bool _conjoined;
     private readonly string _tenantId;
     private readonly ISqlFragment _whereFragment;
+    private readonly Type _documentType;
 
-    public UndoDeleteWhereOperation(DocumentMapping mapping, string tenantId, ISqlFragment whereFragment)
+    public UndoDeleteWhereOperation(IOperationFragment undeleteFragment, bool conjoined, string tenantId,
+        ISqlFragment whereFragment, Type documentType)
     {
-        _mapping = mapping;
+        _undeleteFragment = undeleteFragment;
+        _conjoined = conjoined;
         _tenantId = tenantId;
         _whereFragment = whereFragment;
+        _documentType = documentType;
     }
 
-    public Type DocumentType => _mapping.DocumentType;
+    public Type DocumentType => _documentType;
     public OperationRole Role() => OperationRole.Update;
 
     public void ConfigureCommand(ICommandBuilder builder)
     {
-        builder.Append(
-            $"UPDATE {_mapping.QualifiedTableName} SET is_deleted = 0, deleted_at = NULL WHERE ");
-        if (_mapping.TenancyStyle == TenancyStyle.Conjoined) // #234
+        _undeleteFragment.Apply(builder);
+        builder.Append(" WHERE ");
+        if (_conjoined) // #234
         {
             builder.Append("tenant_id = ");
             builder.AppendParameter(_tenantId);
