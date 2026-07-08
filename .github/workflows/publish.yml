@@ -49,7 +49,6 @@ jobs:
           fi
           dotnet pack src/Polecat/Polecat.csproj -c Release --no-build -o ./artifacts $VERSION_ARG
           dotnet pack src/Polecat.AspNetCore/Polecat.AspNetCore.csproj -c Release --no-build -o ./artifacts $VERSION_ARG
-          dotnet pack src/Polecat.CodeGeneration/Polecat.CodeGeneration.csproj -c Release --no-build -o ./artifacts $VERSION_ARG
           dotnet pack src/Polecat.EntityFrameworkCore/Polecat.EntityFrameworkCore.csproj -c Release --no-build -o ./artifacts $VERSION_ARG
 
       - name: Push to NuGet
