@@ -715,7 +715,10 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             {
                 if (stream.AlwaysEnforceConsistency && stream.ExpectedVersionOnServer.HasValue)
                 {
-                    ops.Add(AssertStreamVersionClosedShape(storage, isGuid, stream));
+                    // Reuse the bespoke assert: unlike the shared AssertStreamVersionOperation (which
+                    // throws on any missing stream), Polecat treats a not-found stream with expected
+                    // version 0 as consistent (0 == 0), matching FetchForWriting on a new stream.
+                    await AssertStreamVersionAsync(stream, token);
                 }
 
                 continue;
@@ -762,12 +765,6 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
 
         await ExecuteClosedShapeEventOperationsAsync(ops, token);
     }
-
-    private static Weasel.Storage.IStorageOperation AssertStreamVersionClosedShape(
-        object storage, bool isGuid, StreamAction stream)
-        => isGuid
-            ? ((Weasel.Storage.EventStorage<Guid>)storage).AssertStreamVersion(stream)
-            : ((Weasel.Storage.EventStorage<string>)storage).AssertStreamVersion(stream);
 
     private static Weasel.Storage.IStorageOperation QuickAppendEventsClosedShape(
         object storage, bool isGuid, StreamAction stream, Polecat.Events.Storage.StreamWriteMode mode)
