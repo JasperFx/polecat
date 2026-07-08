@@ -218,13 +218,12 @@ public class document_index_tests : IntegrationContext
         await StoreOptions(opts =>
         {
             opts.DatabaseSchemaName = "idx_filtered3";
-            // #234: tenant_id exists only under conjoined tenancy; use it as the filtered-index
-            // predicate column here (the test's point is that a filtered index can be created).
-            opts.Events.TenancyStyle = TenancyStyle.Conjoined;
             opts.Schema.For<IndexedProduct>()
                 .Index(x => x.Sku, idx =>
                 {
-                    idx.Predicate = "tenant_id <> 'EXCLUDED'";
+                    // #234: filtered indexes can't reference computed columns; use a regular
+                    // always-present column (dotnet_type) — tenant_id no longer exists single-tenant.
+                    idx.Predicate = "dotnet_type <> 'EXCLUDED'";
                 });
         });
 
