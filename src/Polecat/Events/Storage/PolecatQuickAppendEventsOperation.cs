@@ -40,15 +40,16 @@ internal enum StreamWriteMode
 ///     </para>
 ///     <para>
 ///         Increment 1 covers the core append shape (single/conjoined tenancy, Guid/string streams,
-///         optional correlation/causation/headers/user_name columns). DCB tag writes and per-tenant
-///         event partitioning are not yet supported and throw; the bespoke inline path still covers
-///         them.
+///         optional correlation/causation/headers/user_name columns) plus DCB tag writes. Per-tenant
+///         event partitioning (UseTenantPartitionedEvents) is not yet supported and throws; the
+///         bespoke inline path still covers it (polecat#309).
 ///     </para>
 /// </remarks>
 internal sealed class PolecatQuickAppendEventsOperation
     : Weasel.Storage.IStorageOperation, IExceptionTransform
 {
     private const string SeqTableVar = "@pc_appended_seqs";
+    private const string SeqIdVar = "@pc_event_seq";
 
     private readonly EventGraph _graph;
     private readonly QuickEventStorageDescriptor _descriptor;
@@ -80,6 +81,18 @@ internal sealed class PolecatQuickAppendEventsOperation
         builder.Append(SeqTableVar);
         builder.Append(" table (ord int identity(1,1), seq_id bigint);");
 
+        // DCB tag writes need the just-inserted event's seq_id; captured per event via
+        // SCOPE_IDENTITY() (seq_id is IDENTITY on this path — per-tenant partitioning, which uses a
+        // sequence instead, is rejected above).
+        var writesTags = _graph.TagTypes.Count > 0
+            && Stream.Events.Any(e => e.Tags is { Count: > 0 });
+        if (writesTags)
+        {
+            builder.Append("declare ");
+            builder.Append(SeqIdVar);
+            builder.Append(" bigint;");
+        }
+
         // Stream row write reuses the dialect's descriptor closures so the SQL stays in one place.
         if (Mode == StreamWriteMode.Insert)
             _descriptor.ConfigureInsertStreamCommand(builder, Stream);
@@ -88,13 +101,13 @@ internal sealed class PolecatQuickAppendEventsOperation
         builder.Append(";");
 
         var options = _graph.EventOptions;
+        var conjoined = _graph.TenancyStyle == JasperFx.MultiTenancy.TenancyStyle.Conjoined;
+        var archivePartitioned = _graph.UseArchivedStreamPartitioning;
 
+        var ordinal = 0;
         foreach (var @event in Stream.Events)
         {
-            if (@event.Tags is { Count: > 0 } && _graph.TagTypes.Count > 0)
-                throw new NotSupportedException(
-                    "DCB tag writes are not yet supported on the closed-shape event append path.");
-
+            ordinal++;
             builder.Append("insert into ");
             builder.Append(_graph.EventsTableName);
             builder.Append(" (id, stream_id, version, data, type, timestamp, tenant_id, dotnet_type");
@@ -157,6 +170,11 @@ internal sealed class PolecatQuickAppendEventsOperation
             }
 
             builder.Append(");");
+
+            if (writesTags && @event.Tags is { Count: > 0 })
+            {
+                WriteTagInserts(builder, @event, ordinal, conjoined, archivePartitioned);
+            }
         }
 
         builder.Append("select seq_id from ");
@@ -164,10 +182,96 @@ internal sealed class PolecatQuickAppendEventsOperation
         builder.Append(" order by ord;");
     }
 
+    /// <summary>
+    ///     Emits the per-event DCB tag-table upserts, mirroring the bespoke path's tenancy/archive
+    ///     variants. Uses <c>SCOPE_IDENTITY()</c> for the event's just-assigned <c>seq_id</c>, and an
+    ///     <c>IF NOT EXISTS</c> guard so a re-appended tag value is idempotent.
+    /// </summary>
+    private void WriteTagInserts(Weasel.Core.ICommandBuilder builder, IEvent @event, int ordinal,
+        bool conjoined, bool archivePartitioned)
+    {
+        // Read the event's just-assigned seq_id back from the accumulator by its 1-based insert
+        // ordinal. Deterministic and batch-safe — SCOPE_IDENTITY() is not reliably per-statement
+        // when multiple stream operations share a SqlBatch scope.
+        builder.Append("set ");
+        builder.Append(SeqIdVar);
+        builder.Append(" = (select seq_id from ");
+        builder.Append(SeqTableVar);
+        builder.Append(" where ord = ");
+        builder.Append(ordinal.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        builder.Append(");");
+
+        var tenantId = @event.TenantId ?? Stream.TenantId;
+
+        foreach (var tag in @event.Tags!)
+        {
+            var registration = _graph.FindTagType(tag.TagType);
+            if (registration == null) continue;
+
+            var value = registration.ExtractValue(tag.Value);
+            var table = $"[{_graph.DatabaseSchemaName}].[pc_event_tag_{registration.TableSuffix}]";
+
+            builder.Append("if not exists (select 1 from ");
+            builder.Append(table);
+            builder.Append(" where value = ");
+            BindTagValue(builder, value);
+            if (conjoined)
+            {
+                builder.Append(" and tenant_id = ");
+                Bind(builder, tenantId, StorageColumnType.String);
+            }
+
+            builder.Append(" and seq_id = ");
+            builder.Append(SeqIdVar);
+            if (archivePartitioned) builder.Append(" and is_archived = 0");
+
+            builder.Append(") insert into ");
+            builder.Append(table);
+            builder.Append(conjoined
+                ? (archivePartitioned
+                    ? " (value, tenant_id, seq_id, is_archived) values ("
+                    : " (value, tenant_id, seq_id) values (")
+                : (archivePartitioned
+                    ? " (value, seq_id, is_archived) values ("
+                    : " (value, seq_id) values ("));
+
+            BindTagValue(builder, value);
+            if (conjoined)
+            {
+                builder.Append(", ");
+                Bind(builder, tenantId, StorageColumnType.String);
+            }
+
+            builder.Append(", ");
+            builder.Append(SeqIdVar);
+            if (archivePartitioned) builder.Append(", 0");
+            builder.Append(");");
+        }
+    }
+
     private void Bind(Weasel.Core.ICommandBuilder builder, object value, StorageColumnType type)
     {
         var parameter = builder.AppendParameter(value);
         _descriptor.Dialect.SetParameterType(parameter, type);
+    }
+
+    /// <summary>
+    ///     Binds a DCB tag value with the SQL Server type matching its registered simple type — the
+    ///     command builder pre-types fresh parameters as strings, so the type must be set explicitly
+    ///     (Guid/int/long tags would otherwise bind as text).
+    /// </summary>
+    private void BindTagValue(Weasel.Core.ICommandBuilder builder, object value)
+    {
+        var (bindValue, type) = value switch
+        {
+            Guid => (value, StorageColumnType.Guid),
+            int => (value, StorageColumnType.Int),
+            long => (value, StorageColumnType.Long),
+            short s => ((object)(int)s, StorageColumnType.Int),
+            _ => (value, StorageColumnType.String)
+        };
+
+        Bind(builder, bindValue, type);
     }
 
     public async Task PostprocessAsync(DbDataReader reader, IList<Exception> exceptions, CancellationToken token)

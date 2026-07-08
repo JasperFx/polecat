@@ -1,5 +1,7 @@
 using JasperFx.Events;
 using JasperFx.Events.Projections;
+using JasperFx.Events.Tags;
+using Polecat.Events.Dcb;
 using Polecat.Exceptions;
 using Polecat.Projections;
 using Polecat.Tests.Harness;
@@ -359,6 +361,91 @@ public class closed_shape_event_append_tests : IntegrationContext
         var events = await query.Events.FetchStreamAsync(streamId);
         events.Count.ShouldBe(3);
         events[2].Version.ShouldBe(3);
+    }
+
+    // ---- DCB tag writes (increment 4) ----
+
+    [Fact]
+    public async Task dcb_tags_are_written_and_queryable()
+    {
+        await ConfigureClosedShape(opts =>
+        {
+            opts.Events.RegisterTagType<StudentId>("student");
+            opts.Events.RegisterTagType<CourseId>("course");
+        });
+
+        var studentId = new StudentId(Guid.NewGuid());
+        var courseId = new CourseId(Guid.NewGuid());
+        var streamId = Guid.NewGuid();
+
+        var enrolled = theSession.Events.BuildEvent(new StudentEnrolled("Alice", "Math"));
+        enrolled.WithTag(studentId, courseId);
+        theSession.Events.Append(streamId, enrolled);
+        await theSession.SaveChangesAsync();
+
+        await using var session2 = theStore.LightweightSession();
+        var byStudent = await session2.Events.QueryByTagsAsync(new EventTagQuery().Or<StudentId>(studentId));
+        byStudent.Count.ShouldBe(1);
+        byStudent[0].Data.ShouldBeOfType<StudentEnrolled>().StudentName.ShouldBe("Alice");
+
+        var byCourse = await session2.Events.QueryByTagsAsync(new EventTagQuery().Or<CourseId>(courseId));
+        byCourse.Count.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task dcb_tags_across_multiple_events_and_streams()
+    {
+        await ConfigureClosedShape(opts =>
+        {
+            opts.Events.RegisterTagType<StudentId>("student");
+            opts.Events.RegisterTagType<CourseId>("course");
+        });
+
+        var student1 = new StudentId(Guid.NewGuid());
+        var student2 = new StudentId(Guid.NewGuid());
+        var course = new CourseId(Guid.NewGuid());
+
+        var e1 = theSession.Events.BuildEvent(new StudentEnrolled("Alice", "Math"));
+        e1.WithTag(student1, course);
+        theSession.Events.Append(Guid.NewGuid(), e1);
+
+        var e2 = theSession.Events.BuildEvent(new StudentEnrolled("Bob", "Math"));
+        e2.WithTag(student2, course);
+        theSession.Events.Append(Guid.NewGuid(), e2);
+
+        await theSession.SaveChangesAsync();
+
+        await using var session2 = theStore.LightweightSession();
+        var byCourse = await session2.Events.QueryByTagsAsync(new EventTagQuery().Or<CourseId>(course));
+        byCourse.Count.ShouldBe(2);
+
+        var byStudent1 = await session2.Events.QueryByTagsAsync(new EventTagQuery().Or<StudentId>(student1));
+        byStudent1.Count.ShouldBe(1);
+        byStudent1[0].Data.ShouldBeOfType<StudentEnrolled>().StudentName.ShouldBe("Alice");
+    }
+
+    [Fact]
+    public async Task dcb_tags_with_conjoined_tenancy_isolate_by_tenant()
+    {
+        await ConfigureClosedShape(opts =>
+        {
+            opts.Events.TenancyStyle = TenancyStyle.Conjoined;
+            opts.Events.RegisterTagType<StudentId>("student");
+        });
+
+        var studentId = new StudentId(Guid.NewGuid());
+
+        await using var red = theStore.LightweightSession(new SessionOptions { TenantId = "Red" });
+        var redEvent = red.Events.BuildEvent(new StudentEnrolled("Alice", "Math"));
+        redEvent.WithTag(studentId);
+        red.Events.Append(Guid.NewGuid(), redEvent);
+        await red.SaveChangesAsync();
+
+        await using var redQuery = theStore.LightweightSession(new SessionOptions { TenantId = "Red" });
+        (await redQuery.Events.QueryByTagsAsync(new EventTagQuery().Or<StudentId>(studentId))).Count.ShouldBe(1);
+
+        await using var blueQuery = theStore.LightweightSession(new SessionOptions { TenantId = "Blue" });
+        (await blueQuery.Events.QueryByTagsAsync(new EventTagQuery().Or<StudentId>(studentId))).Count.ShouldBe(0);
     }
 
     [Fact]
