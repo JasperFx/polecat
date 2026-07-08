@@ -177,6 +177,57 @@ public class closed_shape_event_append_tests : IntegrationContext
     }
 
     [Fact]
+    public async Task always_enforce_consistency_not_found_expected_zero_succeeds()
+    {
+        await ConfigureClosedShape();
+        var streamId = Guid.NewGuid();
+
+        // FetchForWriting on a non-existent stream yields ExpectedVersionOnServer == 0; with
+        // AlwaysEnforceConsistency and no events, 0 == 0 (missing) must NOT throw.
+        await using var session = theStore.LightweightSession();
+        var stream = await session.Events.FetchForWriting<QuestAggregate>(streamId);
+        stream.AlwaysEnforceConsistency = true;
+
+        await session.SaveChangesAsync();
+    }
+
+    [Fact]
+    public async Task always_enforce_consistency_throws_when_version_changed()
+    {
+        await ConfigureClosedShape();
+        var streamId = Guid.NewGuid();
+
+        theSession.Events.StartStream(streamId, new QuestStarted("Ring Quest"), new MembersJoined(1, "Shire", ["Frodo"]));
+        await theSession.SaveChangesAsync();
+
+        await using var session2 = theStore.LightweightSession();
+        var stream = await session2.Events.FetchForWriting<QuestAggregate>(streamId);
+        stream.AlwaysEnforceConsistency = true;
+
+        await using var session3 = theStore.LightweightSession();
+        session3.Events.Append(streamId, new MonsterSlain("Balrog", 100));
+        await session3.SaveChangesAsync();
+
+        await Should.ThrowAsync<EventStreamUnexpectedMaxEventIdException>(session2.SaveChangesAsync());
+    }
+
+    [Fact]
+    public async Task always_enforce_consistency_succeeds_when_version_unchanged()
+    {
+        await ConfigureClosedShape();
+        var streamId = Guid.NewGuid();
+
+        theSession.Events.StartStream(streamId, new QuestStarted("Ring Quest"), new MembersJoined(1, "Shire", ["Frodo"]));
+        await theSession.SaveChangesAsync();
+
+        await using var session2 = theStore.LightweightSession();
+        var stream = await session2.Events.FetchForWriting<QuestAggregate>(streamId);
+        stream.AlwaysEnforceConsistency = true;
+
+        await session2.SaveChangesAsync();
+    }
+
+    [Fact]
     public async Task metadata_columns_are_written()
     {
         await ConfigureClosedShape(opts =>
