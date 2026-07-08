@@ -265,11 +265,18 @@ public class AdvancedOperations
 
         foreach (var (id, json, dotnetType, expectedVersion) in batch)
         {
+            // #234: tenant_id column exists only on conjoined tables.
+            var conjoined = mapping.TenancyStyle == TenancyStyle.Conjoined;
             var pId = $"@p{paramIndex++}";
             var pData = $"@p{paramIndex++}";
             var pType = $"@p{paramIndex++}";
-            var pTenant = $"@p{paramIndex++}";
+            var pTenant = conjoined ? $"@p{paramIndex++}" : null;
             var pExpected = $"@p{paramIndex++}";
+
+            var usingTenant = conjoined ? $", {pTenant} AS tenant_id" : "";
+            var onTenant = conjoined ? " AND target.tenant_id = source.tenant_id" : "";
+            var insertTenantCol = conjoined ? ", tenant_id" : "";
+            var insertTenantVal = conjoined ? $", {pTenant}" : "";
 
             // MERGE pattern from the polecat#48 audit body. The expected_version
             // is part of the USING projection rather than a free-standing
@@ -278,9 +285,9 @@ public class AdvancedOperations
             sb.AppendLine(
                 $"MERGE INTO {mapping.QualifiedTableName} WITH (HOLDLOCK) AS target");
             sb.AppendLine(
-                $"USING (SELECT {pId} AS id, {pTenant} AS tenant_id, {pExpected} AS expected_version) AS source");
+                $"USING (SELECT {pId} AS id{usingTenant}, {pExpected} AS expected_version) AS source");
             sb.AppendLine(
-                "    ON target.id = source.id AND target.tenant_id = source.tenant_id");
+                $"    ON target.id = source.id{onTenant}");
             sb.AppendLine("WHEN MATCHED AND target.version = source.expected_version THEN");
             sb.AppendLine(
                 $"    UPDATE SET data = {pData}, version = target.version + 1,");
@@ -288,15 +295,15 @@ public class AdvancedOperations
                 $"        last_modified = SYSDATETIMEOFFSET(), dotnet_type = {pType}");
             sb.AppendLine("WHEN NOT MATCHED THEN");
             sb.AppendLine(
-                $"    INSERT (id, data, version, last_modified, created_at, dotnet_type, tenant_id)");
+                $"    INSERT (id, data, version, last_modified, created_at, dotnet_type{insertTenantCol})");
             sb.AppendLine(
-                $"    VALUES ({pId}, {pData}, 1, SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET(), {pType}, {pTenant})");
+                $"    VALUES ({pId}, {pData}, 1, SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET(), {pType}{insertTenantVal})");
             sb.AppendLine("OUTPUT inserted.id;");
 
             cmd.Parameters.AddWithValue(pId, id);
             cmd.Parameters.AddWithValue(pData, json);
             cmd.Parameters.AddWithValue(pType, dotnetType);
-            cmd.Parameters.AddWithValue(pTenant, tenantId);
+            if (conjoined) cmd.Parameters.AddWithValue(pTenant!, tenantId);
             cmd.Parameters.AddWithValue(pExpected, expectedVersion);
         }
 
@@ -313,6 +320,10 @@ public class AdvancedOperations
         var sb = new StringBuilder();
         var paramIndex = 0;
 
+        // #234: tenant_id column exists only on conjoined tables.
+        var conjoined = mapping.TenancyStyle == TenancyStyle.Conjoined;
+        var insertTenantCol = conjoined ? ", tenant_id" : "";
+
         switch (mode)
         {
             case BulkInsertMode.InsertsOnly:
@@ -321,17 +332,18 @@ public class AdvancedOperations
                     var pId = $"@p{paramIndex++}";
                     var pData = $"@p{paramIndex++}";
                     var pType = $"@p{paramIndex++}";
-                    var pTenant = $"@p{paramIndex++}";
+                    var pTenant = conjoined ? $"@p{paramIndex++}" : null;
+                    var insertTenantVal = conjoined ? $", {pTenant}" : "";
 
                     sb.AppendLine(
-                        $"INSERT INTO {mapping.QualifiedTableName} (id, data, version, last_modified, created_at, dotnet_type, tenant_id)");
+                        $"INSERT INTO {mapping.QualifiedTableName} (id, data, version, last_modified, created_at, dotnet_type{insertTenantCol})");
                     sb.AppendLine(
-                        $"VALUES ({pId}, {pData}, 1, SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET(), {pType}, {pTenant});");
+                        $"VALUES ({pId}, {pData}, 1, SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET(), {pType}{insertTenantVal});");
 
                     cmd.Parameters.AddWithValue(pId, id);
                     cmd.Parameters.AddWithValue(pData, json);
                     cmd.Parameters.AddWithValue(pType, dotnetType);
-                    cmd.Parameters.AddWithValue(pTenant, tenantId);
+                    if (conjoined) cmd.Parameters.AddWithValue(pTenant!, tenantId);
                 }
 
                 break;
@@ -342,24 +354,27 @@ public class AdvancedOperations
                     var pId = $"@p{paramIndex++}";
                     var pData = $"@p{paramIndex++}";
                     var pType = $"@p{paramIndex++}";
-                    var pTenant = $"@p{paramIndex++}";
+                    var pTenant = conjoined ? $"@p{paramIndex++}" : null;
+                    var usingTenant = conjoined ? $", {pTenant} AS tenant_id" : "";
+                    var onTenant = conjoined ? " AND target.tenant_id = source.tenant_id" : "";
+                    var insertTenantVal = conjoined ? $", {pTenant}" : "";
 
                     sb.AppendLine(
                         $"MERGE INTO {mapping.QualifiedTableName} WITH (HOLDLOCK) AS target");
                     sb.AppendLine(
-                        $"USING (SELECT {pId} AS id, {pTenant} AS tenant_id) AS source");
+                        $"USING (SELECT {pId} AS id{usingTenant}) AS source");
                     sb.AppendLine(
-                        "    ON target.id = source.id AND target.tenant_id = source.tenant_id");
+                        $"    ON target.id = source.id{onTenant}");
                     sb.AppendLine("WHEN NOT MATCHED THEN");
                     sb.AppendLine(
-                        $"    INSERT (id, data, version, last_modified, created_at, dotnet_type, tenant_id)");
+                        $"    INSERT (id, data, version, last_modified, created_at, dotnet_type{insertTenantCol})");
                     sb.AppendLine(
-                        $"    VALUES ({pId}, {pData}, 1, SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET(), {pType}, {pTenant});");
+                        $"    VALUES ({pId}, {pData}, 1, SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET(), {pType}{insertTenantVal});");
 
                     cmd.Parameters.AddWithValue(pId, id);
                     cmd.Parameters.AddWithValue(pData, json);
                     cmd.Parameters.AddWithValue(pType, dotnetType);
-                    cmd.Parameters.AddWithValue(pTenant, tenantId);
+                    if (conjoined) cmd.Parameters.AddWithValue(pTenant!, tenantId);
                 }
 
                 break;
@@ -370,14 +385,17 @@ public class AdvancedOperations
                     var pId = $"@p{paramIndex++}";
                     var pData = $"@p{paramIndex++}";
                     var pType = $"@p{paramIndex++}";
-                    var pTenant = $"@p{paramIndex++}";
+                    var pTenant = conjoined ? $"@p{paramIndex++}" : null;
+                    var usingTenant = conjoined ? $", {pTenant} AS tenant_id" : "";
+                    var onTenant = conjoined ? " AND target.tenant_id = source.tenant_id" : "";
+                    var insertTenantVal = conjoined ? $", {pTenant}" : "";
 
                     sb.AppendLine(
                         $"MERGE INTO {mapping.QualifiedTableName} WITH (HOLDLOCK) AS target");
                     sb.AppendLine(
-                        $"USING (SELECT {pId} AS id, {pTenant} AS tenant_id) AS source");
+                        $"USING (SELECT {pId} AS id{usingTenant}) AS source");
                     sb.AppendLine(
-                        "    ON target.id = source.id AND target.tenant_id = source.tenant_id");
+                        $"    ON target.id = source.id{onTenant}");
                     sb.AppendLine("WHEN MATCHED THEN");
                     sb.AppendLine(
                         $"    UPDATE SET data = {pData}, version = target.version + 1,");
@@ -385,14 +403,14 @@ public class AdvancedOperations
                         $"        last_modified = SYSDATETIMEOFFSET(), dotnet_type = {pType}");
                     sb.AppendLine("WHEN NOT MATCHED THEN");
                     sb.AppendLine(
-                        $"    INSERT (id, data, version, last_modified, created_at, dotnet_type, tenant_id)");
+                        $"    INSERT (id, data, version, last_modified, created_at, dotnet_type{insertTenantCol})");
                     sb.AppendLine(
-                        $"    VALUES ({pId}, {pData}, 1, SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET(), {pType}, {pTenant});");
+                        $"    VALUES ({pId}, {pData}, 1, SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET(), {pType}{insertTenantVal});");
 
                     cmd.Parameters.AddWithValue(pId, id);
                     cmd.Parameters.AddWithValue(pData, json);
                     cmd.Parameters.AddWithValue(pType, dotnetType);
-                    cmd.Parameters.AddWithValue(pTenant, tenantId);
+                    if (conjoined) cmd.Parameters.AddWithValue(pTenant!, tenantId);
                 }
 
                 break;

@@ -73,12 +73,13 @@ internal class DocumentTable : Table
             AddColumn("guid_version", "uniqueidentifier").NotNull().DefaultValueByExpression("NEWID()");
         }
 
-        if (mapping.TenancyStyle != TenancyStyle.Conjoined)
-        {
-            AddColumn(JasperFx.StorageConstants.TenantIdColumn, "varchar(250)")
-                .NotNull()
-                .DefaultValueByString(JasperFx.StorageConstants.DefaultTenantId);
-        }
+        // #234: single-tenant (non-conjoined) tables do NOT carry a tenant_id column, matching
+        // Marten — every document lives under the default tenant implicitly, so the whole runtime
+        // tenant_id if/then (schema column, write binder, load filter, LINQ filter, metadata query)
+        // stays off for single-tenant stores. Conjoined tenancy adds tenant_id to the primary key
+        // above. Existing single-tenant tables keep their (now-unmodeled) tenant_id column via the
+        // additive CreateDeltaAsync override (#267) — it is defaulted, so INSERTs that omit it still
+        // succeed — so this is purely additive with no destructive migration.
 
         // Declarative SQL Server RANGE partitioning (#211). The partition column must be part of the
         // table's unique (clustered) index, so a promoted member joins the primary key.

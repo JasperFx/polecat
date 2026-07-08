@@ -28,9 +28,15 @@ internal class DeleteWhereOperation : IStorageOperation
 
     public void ConfigureCommand(ICommandBuilder builder)
     {
-        builder.Append($"DELETE FROM {_mapping.QualifiedTableName} WHERE tenant_id = ");
-        builder.AppendParameter(_tenantId);
-        builder.Append(" AND ");
+        // #234: single-tenant tables have no tenant_id column to scope the delete by.
+        builder.Append($"DELETE FROM {_mapping.QualifiedTableName} WHERE ");
+        if (_mapping.TenancyStyle == TenancyStyle.Conjoined)
+        {
+            builder.Append("tenant_id = ");
+            builder.AppendParameter(_tenantId);
+            builder.Append(" AND ");
+        }
+
         _whereFragment.Apply(builder);
         builder.Append(";");
     }

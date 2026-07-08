@@ -96,11 +96,13 @@ internal abstract class PolecatDocumentStorage<TDoc, TId> : IDocumentStorage<TDo
         _selectFields = readColumns.ToArray();
 
         var select = $"SELECT {string.Join(", ", _selectFields)} FROM {_mapping.QualifiedTableName}";
-        // Polecat filters tenant_id on every load (the column is always present; default
-        // tenant id for single-tenant stores), matching the bespoke pipeline.
-        _loaderSql = $"{select} WHERE id = @id AND tenant_id = @tenant_id{SoftDeleteFilterSql()}";
+        // #234: only conjoined tables carry a tenant_id column, so single-tenant loads omit the
+        // tenant predicate entirely (the harmless @tenant_id parameter the dialect still binds is
+        // simply unreferenced by the SQL).
+        var tenantFilter = _mapping.TenancyStyle == TenancyStyle.Conjoined ? " AND tenant_id = @tenant_id" : string.Empty;
+        _loaderSql = $"{select} WHERE id = @id{tenantFilter}{SoftDeleteFilterSql()}";
         _loadManySql =
-            $"{select} WHERE id IN (SELECT value FROM OPENJSON(@ids)) AND tenant_id = @tenant_id{SoftDeleteFilterSql()}";
+            $"{select} WHERE id IN (SELECT value FROM OPENJSON(@ids)){tenantFilter}{SoftDeleteFilterSql()}";
 
         _deleteFragment = _mapping.DeleteStyle == DeleteStyle.SoftDelete
             ? new HardCodedOperationFragment(
@@ -194,7 +196,12 @@ internal abstract class PolecatDocumentStorage<TDoc, TId> : IDocumentStorage<TDo
     public ISqlFragment FilterDocuments(ISqlFragment query, IStorageSession session)
     {
         var filters = new List<ISqlFragment> { query };
-        filters.Add(new HardCodedFilter($"d.tenant_id = '{session.TenantId.Replace("'", "''")}'"));
+        // #234: single-tenant tables have no tenant_id column to filter on.
+        if (_mapping.TenancyStyle == TenancyStyle.Conjoined)
+        {
+            filters.Add(new HardCodedFilter($"d.tenant_id = '{session.TenantId.Replace("'", "''")}'"));
+        }
+
         if (_mapping.DeleteStyle == DeleteStyle.SoftDelete)
         {
             filters.Add(new HardCodedFilter("d.is_deleted = 0"));
@@ -350,11 +357,15 @@ internal abstract class PolecatDocumentStorage<TDoc, TId> : IDocumentStorage<TDo
 
     private IDeletion BuildDeletion(TDoc? document, TId id, string tenantId, bool hard)
     {
+        // #234: single-tenant tables have no tenant_id column, so the tenant predicate (and its
+        // bound parameter) are conjoined-only.
+        var conjoined = _mapping.TenancyStyle == TenancyStyle.Conjoined;
+        var tenantClause = conjoined ? " AND tenant_id = ?" : string.Empty;
         var sql = hard
-            ? $"DELETE FROM {_mapping.QualifiedTableName} WHERE id = ? AND tenant_id = ?"
-            : $"UPDATE {_mapping.QualifiedTableName} SET is_deleted = 1, deleted_at = SYSDATETIMEOFFSET() WHERE id = ? AND tenant_id = ? AND is_deleted = 0";
+            ? $"DELETE FROM {_mapping.QualifiedTableName} WHERE id = ?{tenantClause}"
+            : $"UPDATE {_mapping.QualifiedTableName} SET is_deleted = 1, deleted_at = SYSDATETIMEOFFSET() WHERE id = ?{tenantClause} AND is_deleted = 0";
         return new ClosedShapeDeletion<TDoc, TId>(sql, document, id, RawIdentityValue(id), tenantId,
-            _descriptor, typeof(TDoc));
+            _descriptor, typeof(TDoc), bindTenant: conjoined);
     }
 
     public async Task TruncateDocumentStorageAsync(IStorageDatabase database, CancellationToken ct = default)
@@ -482,15 +493,17 @@ internal sealed class ClosedShapeDeletion<TDoc, TId> : IDeletion, NoDataReturned
     private readonly string _sql;
     private readonly object _rawId;
     private readonly string _tenantId;
+    private readonly bool _bindTenant;
     private readonly DocumentStorageDescriptor<TDoc, TId> _descriptor;
     private readonly Type _documentType;
 
     public ClosedShapeDeletion(string sql, TDoc? document, TId id, object rawId, string tenantId,
-        DocumentStorageDescriptor<TDoc, TId> descriptor, Type documentType)
+        DocumentStorageDescriptor<TDoc, TId> descriptor, Type documentType, bool bindTenant = true)
     {
         _sql = sql;
         _rawId = rawId;
         _tenantId = tenantId;
+        _bindTenant = bindTenant;
         _descriptor = descriptor;
         _documentType = documentType;
         Document = document!;
@@ -508,8 +521,11 @@ internal sealed class ClosedShapeDeletion<TDoc, TId> : IDeletion, NoDataReturned
         var parameters = builder.AppendWithDbParameters(_sql, '?');
         parameters[0].Value = _rawId;
         _descriptor.Dialect.SetIdParameterType(parameters[0], _descriptor.Identification.RawSqlType);
-        parameters[1].Value = _tenantId;
-        _descriptor.Dialect.SetParameterType(parameters[1], StorageColumnType.String);
+        if (_bindTenant)
+        {
+            parameters[1].Value = _tenantId;
+            _descriptor.Dialect.SetParameterType(parameters[1], StorageColumnType.String);
+        }
     }
 
     public Task PostprocessAsync(DbDataReader reader, IList<Exception> exceptions, CancellationToken token)

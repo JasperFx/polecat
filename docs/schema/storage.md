@@ -4,19 +4,26 @@ Polecat stores documents as JSON in SQL Server 2025 using the native `json` data
 
 ## Document Table Structure
 
-Each document type gets its own table with the prefix `pc_doc_`:
+Each document type gets its own table with the prefix `pc_doc_`. A plain, single-tenant document
+type produces exactly these columns — no `tenant_id` (that is conjoined-tenancy only, see below):
 
 ```sql
 CREATE TABLE dbo.pc_doc_user (
     id uniqueidentifier NOT NULL,
     data json NOT NULL,
-    type nvarchar(250) NULL,
+    version bigint NOT NULL,
     last_modified datetimeoffset NOT NULL DEFAULT SYSDATETIMEOFFSET(),
-    created datetimeoffset NOT NULL DEFAULT SYSDATETIMEOFFSET(),
-    dotnet_type nvarchar(500) NULL,
-    CONSTRAINT pk_pc_doc_user PRIMARY KEY (id)
+    created_at datetimeoffset NOT NULL DEFAULT SYSDATETIMEOFFSET(),
+    dotnet_type varchar(500) NULL,
+    CONSTRAINT pkey_pc_doc_user_id PRIMARY KEY (id)
 );
 ```
+
+The `version` column is always present (a `bigint` that carries optimistic/numeric concurrency
+revisions when configured); `last_modified`, `created_at`, and `dotnet_type` are the standard
+metadata columns. The `tenant_id` column is **only** created for conjoined multi-tenancy — a
+single-tenant store keeps every document under the default tenant implicitly, with no `tenant_id`
+column and no per-query tenant filter.
 
 ## ID Column Types
 

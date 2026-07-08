@@ -83,8 +83,11 @@ internal class BatchedQueryable<T> : IBatchedQueryable<T> where T : class
             statement.Wheres.Add(fragment);
         }
 
-        // Tenant filter
-        statement.Wheres.Add(new ComparisonFilter("tenant_id", "=", _tenantId));
+        // Tenant filter — #234: only conjoined tables carry a tenant_id column.
+        if (_provider.Mapping.TenancyStyle == TenancyStyle.Conjoined)
+        {
+            statement.Wheres.Add(new ComparisonFilter("tenant_id", "=", _tenantId));
+        }
 
         // Soft delete filter
         if (_provider.Mapping.DeleteStyle == DeleteStyle.SoftDelete)

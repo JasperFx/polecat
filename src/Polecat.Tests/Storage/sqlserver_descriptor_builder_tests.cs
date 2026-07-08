@@ -101,9 +101,11 @@ public class sqlserver_descriptor_builder_tests : OneOffConfigurationsContext
         descriptor.ConcurrencyMode.ShouldBe(ConcurrencyMode.Off);
         descriptor.IsConjoined.ShouldBeFalse();
 
-        // Single-tenant: tenant travels as an ordinary client-side binder
+        // #234: single-tenant tables have no tenant_id column, so there is no tenant write binder
+        // and the MERGE never references tenant_id.
         descriptor.ClientSideWriteBinders.Select(b => b.ColumnName)
-            .ShouldContain("tenant_id");
+            .ShouldNotContain("tenant_id");
+        descriptor.UpsertSql.ShouldNotContain("tenant_id");
 
         // ? slots in the USING row = id + data + client-side binders
         var expectedSlots = 2 + descriptor.ClientSideWriteBinders.Length;

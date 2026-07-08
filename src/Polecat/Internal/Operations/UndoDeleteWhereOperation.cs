@@ -25,9 +25,15 @@ internal class UndoDeleteWhereOperation : IStorageOperation
     public void ConfigureCommand(ICommandBuilder builder)
     {
         builder.Append(
-            $"UPDATE {_mapping.QualifiedTableName} SET is_deleted = 0, deleted_at = NULL WHERE tenant_id = ");
-        builder.AppendParameter(_tenantId);
-        builder.Append(" AND is_deleted = 1 AND ");
+            $"UPDATE {_mapping.QualifiedTableName} SET is_deleted = 0, deleted_at = NULL WHERE ");
+        if (_mapping.TenancyStyle == TenancyStyle.Conjoined) // #234
+        {
+            builder.Append("tenant_id = ");
+            builder.AppendParameter(_tenantId);
+            builder.Append(" AND ");
+        }
+
+        builder.Append("is_deleted = 1 AND ");
         _whereFragment.Apply(builder);
         builder.Append(";");
     }

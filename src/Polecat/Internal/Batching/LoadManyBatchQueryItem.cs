@@ -47,8 +47,13 @@ internal class LoadManyBatchQueryItem<T> : IBatchQueryItem where T : class
             builder.AppendParameter(_ids[i]);
         }
 
-        builder.Append(") AND tenant_id = ");
-        builder.AppendParameter(_tenantId);
+        builder.Append(")");
+        if (_provider.Mapping.TenancyStyle == TenancyStyle.Conjoined) // #234
+        {
+            builder.Append(" AND tenant_id = ");
+            builder.AppendParameter(_tenantId);
+        }
+
         builder.Append(softDeleteFilter);
         builder.Append(";\n");
     }

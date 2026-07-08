@@ -369,7 +369,7 @@ internal partial class QuerySession : IQuerySession
 
         if (provider.Mapping.UseOptimisticConcurrency && doc is IVersioned versioned)
         {
-            versioned.Version = reader.GetGuid(7); // guid_version column
+            versioned.Version = reader.GetGuid(provider.GuidVersionColumnIndex); // guid_version column
         }
     }
 

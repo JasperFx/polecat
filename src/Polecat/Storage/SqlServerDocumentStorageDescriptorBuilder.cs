@@ -69,26 +69,15 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
             readBinders.Add(docTypeBinder);
         }
 
-        // tenant_id: pc tables always carry it. Conjoined uses the shared operations'
-        // leading tenant parameter slot (NOT a binder); single-tenant writes the session's
-        // (default) tenant id through a regular binder slot.
-        // Parity with the bespoke load path: ITenanted documents get tenant_id applied on load.
+        // tenant_id: #234 — only CONJOINED tables carry a tenant_id column. Conjoined writes the
+        // tenant through the shared operations' leading tenant parameter slot (NOT a binder) and, for
+        // ITenanted documents, reads it back through a read binder. Single-tenant tables have no
+        // tenant_id column, so there is no tenant binder at all (no write slot, no read column).
         var tenantMember = mapping.Metadata.TenantId.Member
                            ?? (typeof(Polecat.Metadata.ITenanted).IsAssignableFrom(typeof(TDoc))
                                ? typeof(TDoc).GetProperty(nameof(Polecat.Metadata.ITenanted.TenantId))
                                : null);
-        if (!isConjoined)
-        {
-            // Shared DocumentTenantIdBinder is read-only (Marten binds tenant inline);
-            // Polecat's write-capable binder sources the session's tenant id.
-            var tenantBinder = new PolecatTenantIdBinder<TDoc>(mapping.Metadata.TenantId.Name, tenantMember);
-            writeBinders.Add(tenantBinder);
-            if (tenantMember is not null)
-            {
-                readBinders.Add(tenantBinder);
-            }
-        }
-        else if (tenantMember is not null)
+        if (isConjoined && tenantMember is not null)
         {
             readBinders.Add(new DocumentTenantIdBinder<TDoc>(mapping.Metadata.TenantId.Name, tenantMember));
         }

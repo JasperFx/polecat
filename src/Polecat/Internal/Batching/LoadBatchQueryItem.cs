@@ -36,8 +36,12 @@ internal class LoadBatchQueryItem<T> : IBatchQueryItem where T : class
 
         builder.Append($"{_provider.SelectSql} WHERE id = ");
         builder.AppendParameter(_id);
-        builder.Append(" AND tenant_id = ");
-        builder.AppendParameter(_tenantId);
+        if (_provider.Mapping.TenancyStyle == TenancyStyle.Conjoined) // #234
+        {
+            builder.Append(" AND tenant_id = ");
+            builder.AppendParameter(_tenantId);
+        }
+
         builder.Append(softDeleteFilter);
         builder.Append(";\n");
     }
