@@ -218,6 +218,9 @@ public class document_index_tests : IntegrationContext
         await StoreOptions(opts =>
         {
             opts.DatabaseSchemaName = "idx_filtered3";
+            // #234: tenant_id exists only under conjoined tenancy; use it as the filtered-index
+            // predicate column here (the test's point is that a filtered index can be created).
+            opts.Events.TenancyStyle = TenancyStyle.Conjoined;
             opts.Schema.For<IndexedProduct>()
                 .Index(x => x.Sku, idx =>
                 {
@@ -302,6 +305,9 @@ public class document_index_tests : IntegrationContext
         await StoreOptions(opts =>
         {
             opts.DatabaseSchemaName = "idx_tenant2";
+            // #234: a per-tenant index only makes sense under conjoined tenancy (single-tenant
+            // tables have no tenant_id column to include).
+            opts.Events.TenancyStyle = TenancyStyle.Conjoined;
             opts.Schema.For<IndexedProduct>()
                 .UniqueIndex(x => x.Email, idx => idx.TenancyScope = TenancyScope.PerTenant);
         });

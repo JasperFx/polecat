@@ -201,9 +201,11 @@ internal partial class QuerySession : IQuerySession
             ? " AND is_deleted = 0"
             : "";
 
-        cmd.CommandText = $"SELECT CAST(CASE WHEN EXISTS(SELECT 1 FROM {provider.Mapping.QualifiedTableName} WHERE id = @id AND tenant_id = @tenant_id{softDeleteFilter}) THEN 1 ELSE 0 END AS BIT);";
+        // #234: tenant_id predicate is conjoined-only.
+        var tenantFilter = provider.Mapping.TenancyStyle == TenancyStyle.Conjoined ? " AND tenant_id = @tenant_id" : "";
+        cmd.CommandText = $"SELECT CAST(CASE WHEN EXISTS(SELECT 1 FROM {provider.Mapping.QualifiedTableName} WHERE id = @id{tenantFilter}{softDeleteFilter}) THEN 1 ELSE 0 END AS BIT);";
         cmd.Parameters.AddWithValue("@id", id);
-        cmd.Parameters.AddWithValue("@tenant_id", TenantId);
+        if (provider.Mapping.TenancyStyle == TenancyStyle.Conjoined) cmd.Parameters.AddWithValue("@tenant_id", TenantId);
 
         Logger.OnBeforeExecute(cmd.CommandText);
         try
@@ -319,9 +321,11 @@ internal partial class QuerySession : IQuerySession
             ? " AND is_deleted = 0"
             : "";
 
-        cmd.CommandText = $"SELECT data FROM {provider.Mapping.QualifiedTableName} WHERE id = @id AND tenant_id = @tenant_id{softDeleteFilter};";
+        // #234: tenant_id predicate is conjoined-only.
+        var tenantFilter = provider.Mapping.TenancyStyle == TenancyStyle.Conjoined ? " AND tenant_id = @tenant_id" : "";
+        cmd.CommandText = $"SELECT data FROM {provider.Mapping.QualifiedTableName} WHERE id = @id{tenantFilter}{softDeleteFilter};";
         cmd.Parameters.AddWithValue("@id", id);
-        cmd.Parameters.AddWithValue("@tenant_id", TenantId);
+        if (provider.Mapping.TenancyStyle == TenancyStyle.Conjoined) cmd.Parameters.AddWithValue("@tenant_id", TenantId);
 
         Logger.OnBeforeExecute(cmd.CommandText);
         try
