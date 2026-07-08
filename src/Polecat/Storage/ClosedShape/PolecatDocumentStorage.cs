@@ -84,11 +84,35 @@ internal interface IPolecatBatchLoadStorage<TDoc> where TDoc : notnull
     ISelector<TDoc> BuildLoadSelector(IStorageSession session);
 }
 
+/// <summary>
+///     Session-free bulk version-checked upsert seam (#273 doc-side convergence). Sources the
+///     full write-column set from the closed-shape descriptor's write binders — including
+///     <c>doc_type</c>, <c>guid_version</c>, the partition column and soft-delete defaults that
+///     the bespoke <c>BuildVersionCheckedBatchCommand</c> silently omitted — while keeping the
+///     bulk-specific strict version guard (<c>WHEN MATCHED AND version = expected</c>).
+/// </summary>
+internal interface IPolecatBulkVersionCheckStorage<TDoc> where TDoc : notnull
+{
+    /// <summary>
+    ///     Appends one <c>MERGE … OUTPUT inserted.id</c> for the document + its expected version
+    ///     (positional params), session-free. A row absent from the OUTPUT stream is a version
+    ///     mismatch (neither updated nor inserted).
+    /// </summary>
+    void ConfigureVersionCheckedUpsert(Weasel.SqlServer.ICommandBuilder builder, TDoc document,
+        long expectedVersion, string tenantId);
+
+    /// <summary>The raw id value as it appears in the <c>OUTPUT inserted.id</c> stream.</summary>
+    object BulkRawId(TDoc document);
+}
+
 internal abstract class PolecatDocumentStorage<TDoc, TId>
-    : IDocumentStorage<TDoc, TId>, IPolecatObjectStorage<TDoc>, IPolecatBatchLoadStorage<TDoc>
+    : IDocumentStorage<TDoc, TId>, IPolecatObjectStorage<TDoc>, IPolecatBatchLoadStorage<TDoc>,
+        IPolecatBulkVersionCheckStorage<TDoc>
     where TDoc : notnull
     where TId : notnull
 {
+    private string? _bulkVersionCheckedSql;
+
     protected readonly DocumentMapping _mapping;
     protected readonly DocumentStorageDescriptor<TDoc, TId> _descriptor;
     private readonly string _loaderSql;
@@ -346,6 +370,113 @@ internal abstract class PolecatDocumentStorage<TDoc, TId>
     }
 
     public ISelector<TDoc> BuildLoadSelector(IStorageSession session) => (ISelector<TDoc>)BuildSelector(session);
+
+    // ---- bulk version-checked upsert seam (#273 doc-side convergence) ----
+
+    /// <summary>Client-side write binders that drive the versioned bulk column set. The numeric
+    /// revision binder (column <c>version</c>) is excluded — this path owns that column via the
+    /// version guard/increment.</summary>
+    private IEnumerable<IDocumentMetadataBinder<TDoc>> BulkClientBinders
+        => _descriptor.ClientSideWriteBinders.Where(b => b.ColumnName != "version");
+
+    private string BulkVersionCheckedSql()
+    {
+        if (_bulkVersionCheckedSql is not null) return _bulkVersionCheckedSql;
+
+        var table = _mapping.QualifiedTableName;
+        var conjoined = _descriptor.IsConjoined;
+        var clientCols = BulkClientBinders.Select(b => b.ColumnName).ToArray();
+        var serverBinders = _descriptor.WriteBinders.Where(b => b.IsServerSide && b.ColumnName != "version").ToArray();
+
+        // USING tuple = parameter order: [tenant_id,] id, data, expected_version, {client cols}.
+        var usingCols = new List<string>();
+        if (conjoined) usingCols.Add("tenant_id");
+        usingCols.Add("id");
+        usingCols.Add("data");
+        usingCols.Add("expected_version");
+        usingCols.AddRange(clientCols);
+
+        var usingValues = string.Join(", ", usingCols.Select(_ => "?"));
+        var sourceCols = string.Join(", ", usingCols);
+        var on = conjoined ? "t.id = s.id AND t.tenant_id = s.tenant_id" : "t.id = s.id";
+
+        // UPDATE (matched AND version == expected): data, version+1, client cols, server literals.
+        var setList = new List<string> { "data = s.data", "version = t.version + 1" };
+        setList.AddRange(clientCols.Select(c => $"{c} = s.{c}"));
+        setList.AddRange(serverBinders.Select(b => $"{b.ColumnName} = {b.ValueSql}"));
+
+        // INSERT (not matched): id, data, version=1, created_at, {client cols}, {server literals}[, tenant].
+        var insertCols = new List<string> { "id", "data", "version", "created_at" };
+        var insertVals = new List<string> { "s.id", "s.data", "1", "SYSDATETIMEOFFSET()" };
+        foreach (var c in clientCols)
+        {
+            insertCols.Add(c);
+            insertVals.Add($"s.{c}");
+        }
+
+        foreach (var b in serverBinders)
+        {
+            insertCols.Add(b.ColumnName);
+            insertVals.Add(b.ValueSql);
+        }
+
+        if (conjoined)
+        {
+            insertCols.Add("tenant_id");
+            insertVals.Add("s.tenant_id");
+        }
+
+        _bulkVersionCheckedSql =
+            $"MERGE {table} WITH (HOLDLOCK) AS t " +
+            $"USING (VALUES ({usingValues})) AS s ({sourceCols}) ON {on} " +
+            $"WHEN MATCHED AND t.version = s.expected_version THEN UPDATE SET {string.Join(", ", setList)} " +
+            $"WHEN NOT MATCHED THEN INSERT ({string.Join(", ", insertCols)}) VALUES ({string.Join(", ", insertVals)}) " +
+            $"OUTPUT inserted.id;";
+        return _bulkVersionCheckedSql;
+    }
+
+    public void ConfigureVersionCheckedUpsert(Weasel.SqlServer.ICommandBuilder builder, TDoc document,
+        long expectedVersion, string tenantId)
+    {
+        var parameters = builder.AppendWithParameters(BulkVersionCheckedSql(), '?');
+        var slot = 0;
+
+        if (_descriptor.IsConjoined)
+        {
+            parameters[slot].Value = tenantId;
+            _descriptor.Dialect.SetParameterType(parameters[slot], StorageColumnType.String);
+            slot++;
+        }
+
+        parameters[slot].Value = _descriptor.Identification.ToRawSqlValue(Identity(document));
+        _descriptor.Dialect.SetIdParameterType(parameters[slot], _descriptor.Identification.RawSqlType);
+        slot++;
+
+        _descriptor.Serializer.WriteToParameter(parameters[slot], document);
+        slot++;
+
+        parameters[slot].Value = expectedVersion;
+        _descriptor.Dialect.SetParameterType(parameters[slot], StorageColumnType.Long);
+        slot++;
+
+        foreach (var binder in BulkClientBinders)
+        {
+            var bulk = binder.GetBulkValue(document);
+            if (bulk.Value is null)
+            {
+                parameters[slot].Value = DBNull.Value;
+            }
+            else
+            {
+                parameters[slot].Value = bulk.Value;
+                _descriptor.Dialect.SetParameterType(parameters[slot], bulk.Type);
+            }
+
+            slot++;
+        }
+    }
+
+    public object BulkRawId(TDoc document) => _descriptor.Identification.ToRawSqlValue(Identity(document));
 
     // ---- session bookkeeping ----
 

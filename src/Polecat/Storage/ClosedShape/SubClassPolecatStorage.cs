@@ -16,7 +16,8 @@ namespace Polecat.Storage.ClosedShape;
 ///     parent provider's corresponding flavor.
 /// </summary>
 internal sealed class SubClassPolecatStorage<T, TRoot, TId>
-    : IDocumentStorage<T, TId>, IPolecatObjectStorage<T>, IPolecatBatchLoadStorage<T>
+    : IDocumentStorage<T, TId>, IPolecatObjectStorage<T>, IPolecatBatchLoadStorage<T>,
+        IPolecatBulkVersionCheckStorage<T>
     where T : notnull, TRoot
     where TRoot : notnull
     where TId : notnull
@@ -206,6 +207,17 @@ internal sealed class SubClassPolecatStorage<T, TRoot, TId>
     }
 
     public ISelector<T> BuildLoadSelector(IStorageSession session) => (ISelector<T>)BuildSelector(session);
+
+    // The root storage owns the descriptor + write binders (incl. the doc_type binder, whose
+    // GetBulkValue resolves the alias from the document's runtime type), so bulk version-checked
+    // upserts for a subclass delegate straight through with the subclass instance.
+    public void ConfigureVersionCheckedUpsert(Weasel.SqlServer.ICommandBuilder builder, T document,
+        long expectedVersion, string tenantId)
+        => ((IPolecatBulkVersionCheckStorage<TRoot>)_parent)
+            .ConfigureVersionCheckedUpsert(builder, document, expectedVersion, tenantId);
+
+    public object BulkRawId(T document)
+        => ((IPolecatBulkVersionCheckStorage<TRoot>)_parent).BulkRawId(document);
 
     // ---- IPolecatObjectStorage bridge ----
 
