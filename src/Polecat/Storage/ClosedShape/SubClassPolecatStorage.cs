@@ -15,7 +15,8 @@ namespace Polecat.Storage.ClosedShape;
 ///     Marten's semantics). One wrapper instance exists per closed-shape flavor, wrapping the
 ///     parent provider's corresponding flavor.
 /// </summary>
-internal sealed class SubClassPolecatStorage<T, TRoot, TId> : IDocumentStorage<T, TId>, IPolecatObjectStorage<T>
+internal sealed class SubClassPolecatStorage<T, TRoot, TId>
+    : IDocumentStorage<T, TId>, IPolecatObjectStorage<T>, IPolecatBatchLoadStorage<T>
     where T : notnull, TRoot
     where TRoot : notnull
     where TId : notnull
@@ -178,6 +179,33 @@ internal sealed class SubClassPolecatStorage<T, TRoot, TId> : IDocumentStorage<T
     public Task TruncateDocumentStorageAsync(IStorageDatabase database, CancellationToken ct = default)
         => database.RunSqlAsync(
             $"DELETE FROM {_mapping.QualifiedTableName} WHERE doc_type = '{_alias.Replace("'", "''")}'", ct);
+
+    // ---- batched-query read seam (#273 doc-side convergence) ----
+    // Delegate the SELECT + id/tenant/soft-delete filters to the root storage, then constrain
+    // to this subclass with a doc_type discriminator so the casting selector cannot see a row
+    // of a sibling subclass.
+
+    private IPolecatBatchLoadStorage<TRoot> BatchParent => (IPolecatBatchLoadStorage<TRoot>)_parent;
+
+    public void WriteLoadByIdSql(Weasel.SqlServer.ICommandBuilder builder, object id, string tenantId)
+    {
+        BatchParent.WriteLoadByIdSql(builder, id, tenantId);
+        AppendDocTypeFilter(builder);
+    }
+
+    public void WriteLoadManySql(Weasel.SqlServer.ICommandBuilder builder, IReadOnlyList<object> ids, string tenantId)
+    {
+        BatchParent.WriteLoadManySql(builder, ids, tenantId);
+        AppendDocTypeFilter(builder);
+    }
+
+    private void AppendDocTypeFilter(Weasel.SqlServer.ICommandBuilder builder)
+    {
+        builder.Append(" AND doc_type = ");
+        builder.AppendParameter(_alias);
+    }
+
+    public ISelector<T> BuildLoadSelector(IStorageSession session) => (ISelector<T>)BuildSelector(session);
 
     // ---- IPolecatObjectStorage bridge ----
 
