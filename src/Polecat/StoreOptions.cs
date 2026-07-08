@@ -403,6 +403,18 @@ public class EventStoreOptions : IEventStoreInstrumentation
     public bool EnableSideEffectsOnInlineProjections { get; set; }
 
     /// <summary>
+    ///     Opt into the closed-shape event append path (#273 event-dialect convergence): route event
+    ///     appends through the shared <c>Weasel.Storage.EventStorage&lt;TId&gt;</c> hierarchy driven by
+    ///     <c>SqlServerEventStoreDialect</c>, instead of the bespoke inline <c>SqlCommand</c> path in
+    ///     <c>DocumentSessionBase</c>. <b>Off by default</b> while the closed-shape path is being brought
+    ///     to full parity; increment 1 covers single/conjoined tenancy, Guid/string streams, and the
+    ///     optional correlation/causation/headers/user_name columns. DCB tag writes and per-tenant event
+    ///     partitioning are not yet supported on this path and fall back is not automatic — leave this off
+    ///     when using those features.
+    /// </summary>
+    public bool UseClosedShapeEventStorage { get; set; }
+
+    /// <summary>
     ///     Opt into extended columns on the event progression table for CritterWatch alerting.
     ///     Adds nullable heartbeat, agent_status, pause_reason, running_on_node,
     ///     warning_behind_threshold, and critical_behind_threshold columns. This is the
