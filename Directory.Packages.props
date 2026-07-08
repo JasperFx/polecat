@@ -22,8 +22,8 @@
              IEventDatabase.QueryDeadLetterEventsAsync (dead-letter row drill-in), DeadLetterEvent.TenantId,
              and the tenant-aware daemon surface. Polecat implements the dead-letter row query + per-tenant
              FetchDeadLetterCountsAsync below. -->
-        <PackageVersion Include="JasperFx" Version="2.24.0" />
-        <PackageVersion Include="JasperFx.Events" Version="2.24.0" />
+        <PackageVersion Include="JasperFx" Version="2.24.1" />
+        <PackageVersion Include="JasperFx.Events" Version="2.24.1" />
         <!-- Pin the sibling JasperFx packages for parity with Marten 9's matrix
              even though Polecat doesn't currently reference them directly —
              keeps the lockstep matrix coherent when transitive resolution
@@ -54,9 +54,9 @@
              storage contracts extracted from Marten (marten#4821/#4830, weasel#329/#331) —
              IStorageSession / IStorageDatabase / IStorageSerializer / IDocumentStorage /
              IStorageDialect. This is the shared runtime Polecat retargets onto for #273. -->
-        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.16.0" />
-        <PackageVersion Include="Weasel.SqlServer" Version="9.16.0" />
-        <PackageVersion Include="Weasel.Storage" Version="9.16.0" />
+        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.16.2" />
+        <PackageVersion Include="Weasel.SqlServer" Version="9.16.2" />
+        <PackageVersion Include="Weasel.Storage" Version="9.16.2" />
 
         <!-- Strongly typed IDs -->
         <PackageVersion Include="StronglyTypedId" Version="1.0.0-beta08" />
