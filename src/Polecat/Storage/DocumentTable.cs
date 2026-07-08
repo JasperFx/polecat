@@ -20,9 +20,14 @@ internal class DocumentTable : Table
             AddColumn(JasperFx.StorageConstants.TenantIdColumn, "varchar(250)").AsPrimaryKey().NotNull();
         }
 
-        var idColumnType = mapping.IdType == typeof(Guid) ? "uniqueidentifier"
-            : mapping.IdType == typeof(int) ? "int"
-            : mapping.IdType == typeof(long) ? "bigint"
+        // #296: strongly-typed ids persist their INNER primitive value (ValueTypeIdentification
+        // unwraps to TInner on write and reads GetFieldValue<TInner> on read), so the id column
+        // must be the inner type — uniqueidentifier/int/bigint — NOT varchar(250) derived from the
+        // wrapper type. A varchar id column trips InvalidCastException in the shared writeable
+        // selectors on any Lightweight/IdentityMap database read of a wrapper-id document.
+        var idColumnType = mapping.InnerIdType == typeof(Guid) ? "uniqueidentifier"
+            : mapping.InnerIdType == typeof(int) ? "int"
+            : mapping.InnerIdType == typeof(long) ? "bigint"
             : "varchar(250)";
 
         AddColumn("id", idColumnType).AsPrimaryKey().NotNull();
