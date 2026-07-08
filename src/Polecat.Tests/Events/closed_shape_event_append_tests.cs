@@ -9,9 +9,9 @@ using Polecat.Tests.Harness;
 namespace Polecat.Tests.Events;
 
 /// <summary>
-///     #273 event-dialect increment 1: exercises the closed-shape event append path
-///     (Events.UseClosedShapeEventStorage) end-to-end against live SQL Server, asserting parity with
-///     the bespoke inline path for start/append/expected-version/collision/metadata/tenancy.
+///     #273 event-dialect: exercises the closed-shape event append path (the shared
+///     Weasel.Storage.EventStorage&lt;TId&gt; hierarchy via SqlServerEventStoreDialect) end-to-end
+///     against live SQL Server for start/append/expected-version/collision/metadata/tenancy/tags.
 /// </summary>
 [Collection("integration")]
 public class closed_shape_event_append_tests : IntegrationContext
@@ -26,7 +26,6 @@ public class closed_shape_event_append_tests : IntegrationContext
         await StoreOptions(opts =>
         {
             opts.DatabaseSchemaName = schemaName;
-            opts.Events.UseClosedShapeEventStorage = true;
             extra?.Invoke(opts);
         });
     }

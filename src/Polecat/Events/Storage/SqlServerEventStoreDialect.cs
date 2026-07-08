@@ -25,11 +25,6 @@ namespace Polecat.Events.Storage;
 ///         <c>QuickInsertStreamOperation</c> / <c>QuickUpdateStreamVersionOperation</c> /
 ///         <c>AssertStreamVersionOperation</c> via the descriptor's command-configurer closures.
 ///     </para>
-///     <para>
-///         Wired behind the opt-in <see cref="EventStoreOptions.UseClosedShapeEventStorage" /> flag
-///         (#273 event-dialect increment 1); the bespoke inline append path in
-///         <c>DocumentSessionBase</c> remains the default.
-///     </para>
 /// </remarks>
 internal sealed class SqlServerEventStoreDialect : IEventStoreSqlDialect
 {
