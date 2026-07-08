@@ -202,6 +202,28 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
         set => base.AppendMode = value;
     }
 
+    private object? _closedShapeEventStorage;
+
+    /// <summary>
+    ///     The shared closed-shape <c>Weasel.Storage.EventStorage&lt;TId&gt;</c> for this event graph
+    ///     (#273 event-dialect convergence), built once from <see cref="Storage.SqlServerEventStoreDialect" />
+    ///     and cached. Boxed as <see cref="object" /> because <c>TId</c> is fixed by
+    ///     <see cref="StreamIdentity" /> (Guid vs string) — the append planner downcasts to the concrete
+    ///     <c>EventStorage&lt;Guid&gt;</c> / <c>EventStorage&lt;string&gt;</c>. Only used when
+    ///     <see cref="EventStoreOptions.UseClosedShapeEventStorage" /> is enabled.
+    /// </summary>
+    internal object ClosedShapeEventStorage =>
+        _closedShapeEventStorage ??= BuildClosedShapeEventStorage();
+
+    private object BuildClosedShapeEventStorage()
+    {
+        var dialect = new Storage.SqlServerEventStoreDialect();
+        var serializer = Serialization.StorageSerializerAdapter.For(Serializer);
+        return StreamIdentity == StreamIdentity.AsGuid
+            ? Weasel.Storage.EventStorageBuilder.Build<Guid>(dialect, AppendMode, this, serializer)
+            : Weasel.Storage.EventStorageBuilder.Build<string>(dialect, AppendMode, this, serializer);
+    }
+
     /// <summary>
     ///     Wrap raw event data into an IEvent instance with type metadata.
     /// </summary>

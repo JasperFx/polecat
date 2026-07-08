@@ -474,25 +474,34 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
                 }
             }
 
-            // Process event streams
-            foreach (var stream in _workTracker.Streams)
+            // Process event streams. #273: the closed-shape path routes appends through the shared
+            // Weasel.Storage.EventStorage<TId> hierarchy (SqlServerEventStoreDialect); the bespoke inline
+            // SqlCommand path remains the default.
+            if (Options.Events.UseClosedShapeEventStorage)
             {
-                // Handle AlwaysEnforceConsistency with no events — just assert version
-                if (!stream.Events.Any() && stream.AlwaysEnforceConsistency && stream.ExpectedVersionOnServer.HasValue)
+                await ProcessStreamsClosedShapeAsync(token);
+            }
+            else
+            {
+                foreach (var stream in _workTracker.Streams)
                 {
-                    await AssertStreamVersionAsync(stream, token);
-                    continue;
-                }
+                    // Handle AlwaysEnforceConsistency with no events — just assert version
+                    if (!stream.Events.Any() && stream.AlwaysEnforceConsistency && stream.ExpectedVersionOnServer.HasValue)
+                    {
+                        await AssertStreamVersionAsync(stream, token);
+                        continue;
+                    }
 
-                if (!stream.Events.Any()) continue;
+                    if (!stream.Events.Any()) continue;
 
-                if (stream.ActionType == StreamActionType.Start)
-                {
-                    await ProcessStartStreamAsync(stream, token);
-                }
-                else
-                {
-                    await ProcessAppendStreamAsync(stream, token);
+                    if (stream.ActionType == StreamActionType.Start)
+                    {
+                        await ProcessStartStreamAsync(stream, token);
+                    }
+                    else
+                    {
+                        await ProcessAppendStreamAsync(stream, token);
+                    }
                 }
             }
 
@@ -684,6 +693,195 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
                     new KeyValuePair<string, object?>("event_type", @event.EventTypeName),
                     new KeyValuePair<string, object?>("tenant_id", @event.TenantId ?? TenantId));
             }
+        }
+    }
+
+    // ---- #273 closed-shape event append path (opt-in via Events.UseClosedShapeEventStorage) --------
+    // Routes appends through the shared Weasel.Storage.EventStorage<TId> hierarchy
+    // (SqlServerEventStoreDialect + PolecatQuickAppendEventsOperation) instead of the bespoke
+    // ProcessStart/ProcessAppend/AssertStreamVersion/InsertEvent methods below. Versions are assigned
+    // client-side after a locking read so inline projections see them; sequences read back in Postprocess.
+
+    private async Task ProcessStreamsClosedShapeAsync(CancellationToken token)
+    {
+        var storage = _eventGraph.ClosedShapeEventStorage;
+        var isGuid = _eventGraph.StreamIdentity == JasperFx.Events.StreamIdentity.AsGuid;
+
+        var ops = new List<Weasel.Storage.IStorageOperation>();
+
+        foreach (var stream in _workTracker.Streams)
+        {
+            if (!stream.Events.Any())
+            {
+                if (stream.AlwaysEnforceConsistency && stream.ExpectedVersionOnServer.HasValue)
+                {
+                    ops.Add(AssertStreamVersionClosedShape(storage, isGuid, stream));
+                }
+
+                continue;
+            }
+
+            if (stream.ActionType == StreamActionType.Start)
+            {
+                AssignEventMetadataForClosedShape(stream, 0);
+                stream.Version = stream.Events.Count;
+                ops.Add(QuickAppendEventsClosedShape(storage, isGuid, stream, Polecat.Events.Storage.StreamWriteMode.Insert));
+            }
+            else
+            {
+                var (currentVersion, exists, archived) = await ReadStreamStateForClosedShapeAsync(stream, token);
+
+                var streamId = isGuid ? (object)stream.Id : stream.Key!;
+                if (archived)
+                {
+                    throw new Exceptions.InvalidStreamException(streamId, "Cannot append to an archived stream.");
+                }
+
+                if (stream.ExpectedVersionOnServer.HasValue && currentVersion != stream.ExpectedVersionOnServer.Value)
+                {
+                    throw new EventStreamUnexpectedMaxEventIdException(streamId, stream.AggregateType,
+                        stream.ExpectedVersionOnServer.Value, currentVersion);
+                }
+
+                AssignEventMetadataForClosedShape(stream, currentVersion);
+                stream.Version = currentVersion + stream.Events.Count;
+
+                if (exists)
+                {
+                    stream.ExpectedVersionOnServer ??= currentVersion;
+                    ops.Add(QuickAppendEventsClosedShape(storage, isGuid, stream, Polecat.Events.Storage.StreamWriteMode.Update));
+                }
+                else
+                {
+                    ops.Add(QuickAppendEventsClosedShape(storage, isGuid, stream, Polecat.Events.Storage.StreamWriteMode.Insert));
+                }
+            }
+        }
+
+        if (ops.Count == 0) return;
+
+        await ExecuteClosedShapeEventOperationsAsync(ops, token);
+    }
+
+    private static Weasel.Storage.IStorageOperation AssertStreamVersionClosedShape(
+        object storage, bool isGuid, StreamAction stream)
+        => isGuid
+            ? ((Weasel.Storage.EventStorage<Guid>)storage).AssertStreamVersion(stream)
+            : ((Weasel.Storage.EventStorage<string>)storage).AssertStreamVersion(stream);
+
+    private static Weasel.Storage.IStorageOperation QuickAppendEventsClosedShape(
+        object storage, bool isGuid, StreamAction stream, Polecat.Events.Storage.StreamWriteMode mode)
+    {
+        var op = (Polecat.Events.Storage.PolecatQuickAppendEventsOperation)(isGuid
+            ? ((Weasel.Storage.EventStorage<Guid>)storage).QuickAppendEvents(stream)
+            : ((Weasel.Storage.EventStorage<string>)storage).QuickAppendEvents(stream));
+        op.Mode = mode;
+        return op;
+    }
+
+    private void AssignEventMetadataForClosedShape(StreamAction stream, long baseVersion)
+    {
+        var events = stream.Events;
+        for (var i = 0; i < events.Count; i++)
+        {
+            var e = events[i];
+            e.Version = baseVersion + i + 1;
+            if (e.Id == Guid.Empty) e.Id = Guid.NewGuid();
+            e.Timestamp = DateTimeOffset.UtcNow;
+            e.TenantId = stream.TenantId;
+            e.StreamId = stream.Id;
+            e.StreamKey = stream.Key;
+
+            if (CorrelationId != null && e.CorrelationId == null) e.CorrelationId = CorrelationId;
+            if (CausationId != null && e.CausationId == null) e.CausationId = CausationId;
+            if (LastModifiedBy != null && e.UserName == null) e.UserName = LastModifiedBy;
+
+            if (Headers is { Count: > 0 })
+            {
+                e.Headers ??= new Dictionary<string, object>();
+                foreach (var header in Headers)
+                {
+                    e.Headers.TryAdd(header.Key, header.Value);
+                }
+            }
+        }
+    }
+
+    private async Task<(long currentVersion, bool exists, bool archived)> ReadStreamStateForClosedShapeAsync(
+        StreamAction stream, CancellationToken token)
+    {
+        var streamId = _eventGraph.StreamIdentity == JasperFx.Events.StreamIdentity.AsGuid
+            ? (object)stream.Id
+            : stream.Key!;
+
+        await using var cmd = new SqlCommand();
+        cmd.CommandText =
+            $"SELECT version, is_archived FROM {_eventGraph.StreamsTableName} WITH (UPDLOCK, HOLDLOCK) WHERE id = @id AND tenant_id = @tenant_id;";
+        cmd.Parameters.AddWithValue("@id", streamId);
+        cmd.Parameters.AddWithValue("@tenant_id", TenantId);
+
+        await using var reader = await ExecuteReaderAsync(cmd, token);
+        if (await reader.ReadAsync(token))
+        {
+            return (reader.GetInt64(0), true, reader.GetBoolean(1));
+        }
+
+        return (0, false, false);
+    }
+
+    private async Task ExecuteClosedShapeEventOperationsAsync(
+        List<Weasel.Storage.IStorageOperation> operations, CancellationToken token)
+    {
+        await using var batch = new SqlBatch();
+        var builder = new BatchBuilder(batch);
+
+        for (var i = 0; i < operations.Count; i++)
+        {
+            if (i > 0) builder.StartNewCommand();
+            Operations.StorageOperationExecution.Configure(operations[i], builder, (Weasel.Storage.IStorageSession)this);
+        }
+
+        builder.Compile();
+
+        var exceptions = new List<Exception>();
+        try
+        {
+            await using var reader = await ExecuteReaderAsync(batch, token);
+            for (var i = 0; i < operations.Count; i++)
+            {
+                await operations[i].PostprocessAsync(reader, exceptions, token);
+                if (i < operations.Count - 1)
+                {
+                    await reader.NextResultAsync(token);
+                }
+            }
+
+            while (await reader.NextResultAsync(token))
+            {
+            }
+        }
+        catch (SqlException ex)
+        {
+            foreach (var op in operations)
+            {
+                if (op is JasperFx.Core.Exceptions.IExceptionTransform transform
+                    && transform.TryTransform(ex, out var transformed) && transformed != null)
+                {
+                    System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(transformed).Throw();
+                }
+            }
+
+            throw;
+        }
+
+        if (exceptions.Count == 1)
+        {
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(exceptions[0]).Throw();
+        }
+
+        if (exceptions.Count > 0)
+        {
+            throw new AggregateException(exceptions);
         }
     }
 
