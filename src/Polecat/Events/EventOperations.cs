@@ -480,22 +480,22 @@ internal class EventOperations : QueryEventStore, IEventOperations
 
     public void ArchiveStream(Guid streamId)
     {
-        _workTracker.Add(new ArchiveStreamOperation(_events, streamId, _tenantId));
+        _workTracker.Add(new SetStreamArchivedOperation(_events, streamId, _tenantId, archived: true));
     }
 
     public void ArchiveStream(string streamKey)
     {
-        _workTracker.Add(new ArchiveStreamOperation(_events, streamKey, _tenantId));
+        _workTracker.Add(new SetStreamArchivedOperation(_events, streamKey, _tenantId, archived: true));
     }
 
     public void UnArchiveStream(Guid streamId)
     {
-        _workTracker.Add(new UnArchiveStreamOperation(_events, streamId, _tenantId));
+        _workTracker.Add(new SetStreamArchivedOperation(_events, streamId, _tenantId, archived: false));
     }
 
     public void UnArchiveStream(string streamKey)
     {
-        _workTracker.Add(new UnArchiveStreamOperation(_events, streamKey, _tenantId));
+        _workTracker.Add(new SetStreamArchivedOperation(_events, streamKey, _tenantId, archived: false));
     }
 
     public void TombstoneStream(Guid streamId)
