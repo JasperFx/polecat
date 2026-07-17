@@ -96,6 +96,52 @@ public class projection_progression_tests : IntegrationContext
         progress.ShouldBe(0);
     }
 
+    // #324 (jasperfx#435): the targeted single-cell read.
+    [Fact]
+    public async Task read_single_progression_row()
+    {
+        var shardName = new ShardName("ReadOne");
+        await RecordProgressAsync(shardName, ceiling: 42, upsert: true);
+
+        var row = await theStore.Database.ReadProjectionProgressAsync(shardName.Identity, null, default);
+
+        row.ShouldNotBeNull();
+        row!.ProjectionName.ShouldBe(shardName.Identity);
+        row.TenantId.ShouldBeNull();
+        row.Sequence.ShouldBe(42);
+        // The default store has no extended progression tracking, so these columns don't exist / aren't read.
+        row.AgentStatus.ShouldBeNull();
+        row.LastHeartbeat.ShouldBeNull();
+    }
+
+    // A missing (projection, tenant) pair is the meaningful "not observed yet" answer: null, never 0.
+    [Fact]
+    public async Task read_returns_null_for_unknown_projection()
+    {
+        var row = await theStore.Database.ReadProjectionProgressAsync("NoSuchProjection:All", null, default);
+        row.ShouldBeNull();
+    }
+
+    // A non-null tenantId composes the trailing ":{tenant}" segment onto the identity, matching the
+    // ShardName grammar the daemon writes (range.ShardName.Identity).
+    [Fact]
+    public async Task read_composes_the_tenant_suffix()
+    {
+        var tenantShard = ShardName.Compose("TenantRead", "All", "Red");
+        tenantShard.Identity.ShouldBe("TenantRead:All:Red");
+        await RecordProgressAsync(tenantShard, ceiling: 7, upsert: true);
+
+        var row = await theStore.Database.ReadProjectionProgressAsync("TenantRead:All", "Red", default);
+        row.ShouldNotBeNull();
+        row!.ProjectionName.ShouldBe("TenantRead:All");
+        row.TenantId.ShouldBe("Red");
+        row.Sequence.ShouldBe(7);
+
+        // The store-global lookup (null tenant) must NOT match the tenant-suffixed row.
+        var global = await theStore.Database.ReadProjectionProgressAsync("TenantRead:All", null, default);
+        global.ShouldBeNull();
+    }
+
     private async Task RecordProgressAsync(ShardName shardName, long ceiling, bool upsert)
     {
         var events = theStore.Database.Events;
