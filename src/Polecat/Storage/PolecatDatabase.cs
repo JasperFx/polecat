@@ -218,6 +218,56 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
         }, (_connectionString, _events), token);
     }
 
+    // #324 (jasperfx#435 / jasperfx#518): targeted per-cell progression read. The JasperFx.Events
+    // default throws NotSupportedException — null is the meaningful "no row yet" answer, so a store
+    // that has not implemented this must not report a live cell as absent. This override reads the
+    // single (projection, tenant) row from pc_event_progression.
+    //
+    // The progression row is keyed by ShardName.Identity (the daemon writes range.ShardName.Identity;
+    // see PolecatProjectionBatch.RecordProgress). Tenant is always the trailing ":{tenant}" segment of
+    // the identity grammar (ShardName ctor), and a null/default tenant carries no suffix — matching the
+    // abstraction's "null tenantId => store-global on a non-tenanted store, or the default-tenant row
+    // on a tenanted store". So the lookup key is projectionName as-is when tenantId is null, or
+    // "{projectionName}:{tenantId}" otherwise. heartbeat + agent_status are only present under
+    // EnableExtendedProgressionTracking; without it, AgentStatus/LastHeartbeat come back null.
+    public async ValueTask<ProjectionProgressRow?> ReadProjectionProgressAsync(
+        string projectionName, string? tenantId, CancellationToken token)
+    {
+        var name = string.IsNullOrEmpty(tenantId) ? projectionName : $"{projectionName}:{tenantId}";
+
+        return await _resilience.ExecuteAsync(static async (state, ct) =>
+        {
+            var (connectionString, events, projName, tenant, lookupName) = state;
+
+            await using var conn = new SqlConnection(connectionString);
+            await conn.OpenAsync(ct);
+
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = events.EnableExtendedProgressionTracking
+                ? $"SELECT last_seq_id, heartbeat, agent_status FROM {events.ProgressionTableName} WHERE name = @name;"
+                : $"SELECT last_seq_id FROM {events.ProgressionTableName} WHERE name = @name;";
+            cmd.Parameters.AddWithValue("@name", lookupName);
+
+            await using var reader = await cmd.ExecuteReaderAsync(ct);
+            if (!await reader.ReadAsync(ct))
+            {
+                // No row for this (projection, tenant) pair yet — the meaningful "not observed" answer.
+                return (ProjectionProgressRow?)null;
+            }
+
+            var seq = reader.GetInt64(0);
+            DateTimeOffset? heartbeat = null;
+            string? agentStatus = null;
+            if (events.EnableExtendedProgressionTracking)
+            {
+                if (!reader.IsDBNull(1)) heartbeat = reader.GetDateTimeOffset(1);
+                if (!reader.IsDBNull(2)) agentStatus = reader.GetString(2);
+            }
+
+            return new ProjectionProgressRow(projName, tenant, seq, agentStatus, heartbeat);
+        }, (_connectionString, _events, projectionName, tenantId, name), token);
+    }
+
     public async Task<long> FetchHighestEventSequenceNumber(CancellationToken token)
     {
         return await _resilience.ExecuteAsync(static async (state, ct) =>
