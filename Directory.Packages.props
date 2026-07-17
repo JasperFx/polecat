@@ -61,9 +61,9 @@
              overriding ReleaseConnectionPoolAsync (SqlConnection.ClearPool) and
              IsTransientConnectionFailure over the SQL Server/Azure SQL resource-limit error
              set. Polecat picks this up through the migrator base class — no code change. -->
-        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.16.4" />
-        <PackageVersion Include="Weasel.SqlServer" Version="9.16.4" />
-        <PackageVersion Include="Weasel.Storage" Version="9.16.4" />
+        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.17.0" />
+        <PackageVersion Include="Weasel.SqlServer" Version="9.17.0" />
+        <PackageVersion Include="Weasel.Storage" Version="9.17.0" />
 
         <!-- Strongly typed IDs -->
         <PackageVersion Include="StronglyTypedId" Version="1.0.0-beta08" />
