@@ -1,11 +1,15 @@
 using JasperFx.Events.Projections;
-using Microsoft.Data.SqlClient;
-using Polecat.Events.Daemon.Progress;
-using Polecat.Exceptions;
+using Polecat.Internal.Operations;
 using Polecat.Tests.Harness;
 
 namespace Polecat.Tests.Daemon;
 
+/// <summary>
+///     Progression writes and the read APIs over them (<c>ProjectionProgressFor</c> /
+///     <c>AllProjectionProgress</c>). Rows are written through <see cref="RecordProgressionOperation" />
+///     — the operation <c>PolecatProjectionBatch</c> actually uses — so these exercise the production
+///     write path rather than a parallel one (polecat#323).
+/// </summary>
 [Collection("integration")]
 public class projection_progression_tests : IntegrationContext
 {
@@ -27,10 +31,8 @@ public class projection_progression_tests : IntegrationContext
     public async Task insert_progression()
     {
         var shardName = new ShardName("TestProjection");
-        var range = CreateRange(shardName, 0, 12);
 
-        var op = new InsertProjectionProgress(theStore.Database.Events, range);
-        await ExecuteOperationAsync(op);
+        await RecordProgressAsync(shardName, ceiling: 12, upsert: true);
 
         var progress = await theStore.Database.ProjectionProgressFor(shardName);
         progress.ShouldBe(12);
@@ -41,36 +43,30 @@ public class projection_progression_tests : IntegrationContext
     {
         var shardName = new ShardName("UpdateTest");
 
-        // Insert at 12
-        var insertRange = CreateRange(shardName, 0, 12);
-        var insertOp = new InsertProjectionProgress(theStore.Database.Events, insertRange);
-        await ExecuteOperationAsync(insertOp);
+        // Floor == 0, so the row may not exist yet — upsert.
+        await RecordProgressAsync(shardName, ceiling: 12, upsert: true);
 
-        // Update from 12 to 50
-        var updateRange = CreateRange(shardName, 12, 50);
-        var updateOp = new UpdateProjectionProgress(theStore.Database.Events, updateRange);
-        await ExecuteOperationAsync(updateOp);
+        // Floor > 0, so the row is already there — plain update.
+        await RecordProgressAsync(shardName, ceiling: 50, upsert: false);
 
         var progress = await theStore.Database.ProjectionProgressFor(shardName);
         progress.ShouldBe(50);
     }
 
     [Fact]
-    public async Task update_wrong_floor_throws()
+    public async Task upsert_is_idempotent_for_an_existing_row()
     {
-        var shardName = new ShardName("ConcurrencyTest");
+        var shardName = new ShardName("UpsertTwice");
 
-        // Insert at 12
-        var insertRange = CreateRange(shardName, 0, 12);
-        var insertOp = new InsertProjectionProgress(theStore.Database.Events, insertRange);
-        await ExecuteOperationAsync(insertOp);
+        await RecordProgressAsync(shardName, ceiling: 12, upsert: true);
+        await RecordProgressAsync(shardName, ceiling: 30, upsert: true);
 
-        // Update with wrong floor (5 instead of 12)
-        var updateRange = CreateRange(shardName, 5, 50);
-        var updateOp = new UpdateProjectionProgress(theStore.Database.Events, updateRange);
+        // The MERGE matches the existing row rather than inserting a duplicate.
+        var progress = await theStore.Database.ProjectionProgressFor(shardName);
+        progress.ShouldBe(30);
 
-        await Should.ThrowAsync<ProgressionProgressOutOfOrderException>(
-            ExecuteOperationAsync(updateOp));
+        var all = await theStore.Database.AllProjectionProgress();
+        all.Count(x => x.ShardName == shardName.Identity).ShouldBe(1);
     }
 
     [Fact]
@@ -80,12 +76,9 @@ public class projection_progression_tests : IntegrationContext
         var shard2 = new ShardName("Projection2");
         var shard3 = new ShardName("Projection3");
 
-        await ExecuteOperationAsync(
-            new InsertProjectionProgress(theStore.Database.Events, CreateRange(shard1, 0, 10)));
-        await ExecuteOperationAsync(
-            new InsertProjectionProgress(theStore.Database.Events, CreateRange(shard2, 0, 20)));
-        await ExecuteOperationAsync(
-            new InsertProjectionProgress(theStore.Database.Events, CreateRange(shard3, 0, 30)));
+        await RecordProgressAsync(shard1, 10, upsert: true);
+        await RecordProgressAsync(shard2, 20, upsert: true);
+        await RecordProgressAsync(shard3, 30, upsert: true);
 
         var all = await theStore.Database.AllProjectionProgress();
 
@@ -103,9 +96,17 @@ public class projection_progression_tests : IntegrationContext
         progress.ShouldBe(0);
     }
 
-    private static EventRange CreateRange(ShardName shardName, long floor, long ceiling)
+    private async Task RecordProgressAsync(ShardName shardName, long ceiling, bool upsert)
     {
-        return new EventRange(shardName, floor, ceiling, null!);
+        var events = theStore.Database.Events;
+        var op = new RecordProgressionOperation(
+            events.ProgressionTableName,
+            shardName.Identity,
+            ceiling,
+            events.EnableExtendedProgressionTracking,
+            upsert);
+
+        await ExecuteOperationAsync(op);
     }
 
     private async Task ExecuteOperationAsync(Internal.IStorageOperation op)

@@ -2,7 +2,7 @@ using JasperFx;
 using JasperFx.Events;
 using Microsoft.Data.SqlClient;
 using Polecat.Events;
-using Polecat.Events.Daemon.Progress;
+using Polecat.Internal.Operations;
 using Polecat.Tests.Harness;
 using Polecat.TestUtils;
 using Weasel.SqlServer;
@@ -105,27 +105,20 @@ public class event_store_instrumentation_tests : IAsyncLifetime
         }
     }
 
+    /// <summary>
+    ///     The shard-state read path lifts the extended columns into <c>ShardState</c>. Seeded with raw
+    ///     SQL rather than an operation because **nothing in Polecat writes agent state** — see
+    ///     polecat#323. This covers the read half only; it deliberately does not imply a daemon write.
+    /// </summary>
     [Fact]
-    public async Task daemon_write_is_read_back_into_shard_state()
+    public async Task extended_columns_are_read_back_into_shard_state()
     {
         using var store = CreateStore(OnSchema, extended: true);
         await store.Database.ApplyAllConfiguredChangesToDatabaseAsync();
 
-        var heartbeat = DateTimeOffset.UtcNow;
+        await SeedExtendedRowAsync(
+            store, shardName: "Instrumented:All", sequence: 42, agentStatus: "Running", runningOnNode: 7);
 
-        // Simulate the projection daemon writing its runtime agent state for a shard.
-        var op = new MarkExtendedProjectionProgress(
-            store.Database.Events,
-            shardName: "Instrumented:All",
-            sequenceCeiling: 42,
-            heartbeat: heartbeat,
-            agentStatus: "Running",
-            pauseReason: null,
-            runningOnNode: 7);
-
-        await ExecuteAsync(op);
-
-        // The shard-state selector reads the extended columns back into ShardState.
         var all = await store.Database.AllProjectionProgress();
         var state = all.ShouldHaveSingleItem();
 
@@ -134,6 +127,53 @@ public class event_store_instrumentation_tests : IAsyncLifetime
         state.AgentStatus.ShouldBe("Running");
         state.RunningOnNode.ShouldBe(7);
         state.LastHeartbeat.ShouldNotBeNull();
+    }
+
+    /// <summary>
+    ///     Characterizes the polecat#323 gap: the real progression write (the one
+    ///     <c>PolecatProjectionBatch</c> issues) populates last_seq_id and heartbeat, but leaves
+    ///     agent_status / running_on_node NULL because no code path supplies them. Marten has the same
+    ///     gap. If agent state is ever wired up, this test should fail and be updated — that's the point
+    ///     of pinning it.
+    /// </summary>
+    [Fact]
+    public async Task production_write_sets_heartbeat_but_leaves_agent_state_null()
+    {
+        using var store = CreateStore(OnSchema, extended: true);
+        await store.Database.ApplyAllConfiguredChangesToDatabaseAsync();
+
+        var events = store.Database.Events;
+        await ExecuteAsync(new RecordProgressionOperation(
+            events.ProgressionTableName,
+            "Instrumented:All",
+            ceiling: 42,
+            extendedTracking: true,
+            upsert: true));
+
+        var state = (await store.Database.AllProjectionProgress()).ShouldHaveSingleItem();
+
+        state.Sequence.ShouldBe(42);
+        state.LastHeartbeat.ShouldNotBeNull("the production extended write does set heartbeat");
+        state.AgentStatus.ShouldBeNull("nothing in Polecat writes agent_status — polecat#323");
+        state.RunningOnNode.ShouldBeNull("nothing in Polecat writes running_on_node — polecat#323");
+    }
+
+    private static async Task SeedExtendedRowAsync(
+        DocumentStore store, string shardName, long sequence, string agentStatus, int runningOnNode)
+    {
+        await using var conn = new SqlConnection(ConnectionSource.ConnectionString);
+        await conn.OpenAsync();
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"""
+            INSERT INTO {store.Database.Events.ProgressionTableName}
+                (name, last_seq_id, last_updated, heartbeat, agent_status, running_on_node)
+            VALUES (@name, @seq, SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET(), @status, @node);
+            """;
+        cmd.Parameters.AddWithValue("@name", shardName);
+        cmd.Parameters.AddWithValue("@seq", sequence);
+        cmd.Parameters.AddWithValue("@status", agentStatus);
+        cmd.Parameters.AddWithValue("@node", runningOnNode);
+        await cmd.ExecuteNonQueryAsync();
     }
 
     private static async Task ExecuteAsync(Internal.IStorageOperation op)

@@ -1,6 +1,6 @@
 using JasperFx.Events;
 using JasperFx.Events.Projections;
-using Polecat.Events.Daemon.Progress;
+using Polecat.Internal.Operations;
 using Polecat.Tests.Harness;
 
 namespace Polecat.Tests.Daemon;
@@ -139,9 +139,14 @@ public class delete_projection_progress_by_shard_name_tests : IntegrationContext
 
     private async Task InsertProgressAsync(ShardName shardName, long ceiling)
     {
-        var op = new InsertProjectionProgress(
-            theStore.Database.Events,
-            new EventRange(shardName, 0, ceiling, null!));
+        // Seed through the production write path (polecat#323).
+        var events = theStore.Database.Events;
+        var op = new RecordProgressionOperation(
+            events.ProgressionTableName,
+            shardName.Identity,
+            ceiling,
+            events.EnableExtendedProgressionTracking,
+            upsert: true);
         await using var conn = await OpenConnectionAsync();
         await using var batch = new Microsoft.Data.SqlClient.SqlBatch(conn);
         var builder = new Weasel.SqlServer.BatchBuilder(batch);
