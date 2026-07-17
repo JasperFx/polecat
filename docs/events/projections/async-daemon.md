@@ -153,6 +153,94 @@ Async listeners are **suppressed during projection rebuilds**. A full replay re-
 so firing post-commit side effects for each historical batch is almost never what you want.
 :::
 
+## Blue/Green Deployments with Projection Versioning
+
+Every projection carries a `Version` (default `1`). The version is baked into the shard's
+progression identity, so different versions of the same projection track their progress
+independently:
+
+```cs
+public class TripProjection : SingleStreamProjection<Trip, Guid>
+{
+    public TripProjection()
+    {
+        // Bump the version when you change the projection's logic or shape
+        Version = 3;
+    }
+}
+```
+
+| Projection | `Version` | Progression identity (`pc_event_progression.name`) |
+|------------|-----------|-----------------------------------------------------|
+| `Trip`     | `1`       | `Trips:All`                                         |
+| `Trip`     | `2`       | `Trips:V2:All`                                       |
+| `Trip`     | `3`       | `Trips:V3:All`                                       |
+
+Because each version has its own progression row, you can stand up a new version alongside
+the old one and let it rebuild from zero while the old version keeps serving reads — a
+blue/green deployment.
+
+### Gating Side Effects Behind the Prior Version
+
+The catch with a blue/green rebuild is [side effects](side-effects.md). If your projection
+publishes messages or emits other side effects from `RaiseSideEffects()`, a new version
+replaying the full event history from zero would **re-fire every side effect** for events the
+previous version already processed — duplicate emails, duplicate messages, and so on.
+
+Opt into the **side-effect gate** to prevent that:
+
+```cs
+public class TripProjection : SingleStreamProjection<Trip, Guid>
+{
+    public TripProjection()
+    {
+        Version = 3;
+
+        // Suppress side effects for events the prior version already processed
+        Options.GateSideEffectsBehindPriorVersion = true;
+    }
+}
+```
+
+When the daemon starts a gated shard whose own progression is **behind** the highest prior
+version's persisted mark `N`, it:
+
+1. Replays the new version from its current position up to `N` in **Rebuild mode**, with side
+   effects **suppressed** (the projected documents are still built — only the side effects are
+   gated).
+2. Hands off to **Continuous** execution from `N`, where side effects fire normally.
+
+The net effect: side effects fire exactly once, only for events past `N` — the events the
+previous version never saw.
+
+### Semantics and Edge Cases
+
+- **Trigger is "own progress `< prior mark`".** The gate keys off the new version's own
+  persisted progression, so an interrupted warm-up **resumes suppressed** rather than
+  re-emitting. Restarting the daemon after a crash mid-warm-up picks up from the recorded
+  position with side effects still gated.
+- **Failed warm-up pauses the shard.** If the suppressed replay throws (e.g. a poison event
+  under a pausing error policy), the shard is left **paused** with the exception attached, no
+  continuous execution starts, and no side effects fire. Restarting the daemon resumes the
+  warm-up from its persisted progress.
+- **`Version == 1` and the flag-off case are inert.** The gate is skipped entirely unless
+  `Version > 1` **and** `GateSideEffectsBehindPriorVersion` is set — a v1 projection behaves
+  exactly as it always has.
+- **`SubscribeFromPresent` is incompatible.** A shard that subscribes from "present" ignores
+  persisted progression, so the gate cannot reason about a prior mark. The gate is skipped and
+  a warning is logged; use versioning-with-gate _or_ subscribe-from-present, not both.
+- **Overlap window.** The prior mark `N` is snapshotted when the new version starts. If the
+  **old** version is still running and advances past `N` while the new version warms up, the
+  events in `(N, old_final]` can be processed by both versions — an accepted duplicate window.
+  Stop the old version (or accept the small overlap) when you need exactly-once across the
+  cutover.
+
+::: tip
+The gate suppresses **side effects**, not the projection write itself — the new version's
+documents are fully rebuilt over the entire history. Only `RaiseSideEffects()` output
+(published messages, emitted events, etc.) is held back during the warm-up.
+:::
+
 ## Error Handling
 
 The daemon uses Polly resilience pipelines for error handling. See [Resiliency Policies](/configuration/retries) for configuration.

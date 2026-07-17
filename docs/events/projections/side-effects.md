@@ -2,7 +2,10 @@
 
 ::: tip
 By default, side effects only fire during _continuous_ asynchronous projection execution.
-They do not run during projection rebuilds. Inline projections can opt in via
+They do not run during projection rebuilds, and they do not run during the _warm-up phase_
+of a new projection version that opts into the
+[blue/green side-effect gate](async-daemon.md#blue-green-deployments-with-projection-versioning).
+Inline projections can opt in via
 [`EnableSideEffectsOnInlineProjections`](#side-effects-in-inline-projections).
 :::
 
@@ -114,6 +117,21 @@ messages to a database table inside the same transaction) and "best-effort" patt
 A first-class [Wolverine](https://wolverinefx.net) integration is on the roadmap that will
 plug Wolverine's outbox in via `IntegrateWithWolverine()`, mirroring the existing
 Marten/Wolverine bridge.
+
+### When Messages Do and Do Not Fire
+
+Published messages (and every other `RaiseSideEffects()` side effect) fire only when the
+daemon is processing _new_ events in **continuous** execution. They are suppressed:
+
+- during a projection **rebuild** (`RebuildProjectionAsync`), and
+- during the **blue/green warm-up phase** of a new projection version that opts into
+  `GateSideEffectsBehindPriorVersion` — while the new version replays the history the prior
+  version already processed, side effects stay suppressed, and only start firing once the
+  new version catches up to the prior version's progression mark and switches to continuous
+  execution.
+
+See [Blue/Green Deployments with Projection Versioning](async-daemon.md#blue-green-deployments-with-projection-versioning)
+for the versioning mechanics.
 
 ## Side Effects in Inline Projections
 
