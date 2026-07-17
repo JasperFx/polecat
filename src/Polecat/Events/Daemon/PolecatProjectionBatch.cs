@@ -74,9 +74,9 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
         var name = range.ShardName.Identity;
         var ceiling = range.SequenceCeiling;
 
-        IStorageOperation op = range.SequenceFloor == 0
-            ? new ProgressMergeOperation(progressionTable, name, ceiling, extendedTracking)
-            : new ProgressUpdateOperation(progressionTable, name, ceiling, extendedTracking);
+        // Floor == 0 means the row may not exist yet, so upsert; otherwise it's already there.
+        IStorageOperation op = new RecordProgressionOperation(
+            progressionTable, name, ceiling, extendedTracking, upsert: range.SequenceFloor == 0);
 
         _progressOps.Enqueue(op);
         return ValueTask.CompletedTask;
