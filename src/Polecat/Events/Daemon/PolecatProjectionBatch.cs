@@ -69,14 +69,13 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
 
     public ValueTask RecordProgress(EventRange range)
     {
-        var progressionTable = _events.ProgressionTableName;
-        var extendedTracking = _events.EnableExtendedProgressionTracking;
         var name = range.ShardName.Identity;
         var ceiling = range.SequenceCeiling;
 
+        // #318: the progression write now rides the shared Weasel.Storage.EventStorage<TId> seam
+        // (EventGraph.UpdateProgressOperation) instead of instantiating RecordProgressionOperation here.
         // Floor == 0 means the row may not exist yet, so upsert; otherwise it's already there.
-        IStorageOperation op = new RecordProgressionOperation(
-            progressionTable, name, ceiling, extendedTracking, upsert: range.SequenceFloor == 0);
+        var op = _events.UpdateProgressOperation(name, ceiling, upsert: range.SequenceFloor == 0);
 
         _progressOps.Enqueue(op);
         return ValueTask.CompletedTask;

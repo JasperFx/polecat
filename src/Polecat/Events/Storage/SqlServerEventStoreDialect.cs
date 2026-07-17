@@ -2,6 +2,7 @@ using System;
 using System.Data;
 using JasperFx.Events;
 using Polecat.Exceptions;
+using Polecat.Internal.Operations;
 using Polecat.Storage;
 using Weasel.Core;
 using Weasel.Storage;
@@ -71,6 +72,29 @@ internal sealed class SqlServerEventStoreDialect : IEventStoreSqlDialect
             CreateQuickAppendEventsOperation = (descriptor, stream) =>
                 new PolecatQuickAppendEventsOperation(graph, descriptor, stream)
         };
+    }
+
+    /// <summary>
+    ///     #318: the SQL Server dialect of the shared auxiliary-operation seam
+    ///     (<see cref="EventAuxiliaryOperations" />, Weasel.Storage 9.17.0). Vends the archive/un-archive,
+    ///     tombstone, and progression-upsert operations that ride alongside the append/stream lifecycle.
+    ///     The operation classes hold the SQL Server SQL (SYSDATETIMEOFFSET(), MERGE); the shared
+    ///     <see cref="EventStorage{TId}" /> exposes them through ArchiveStream / TombstoneStream /
+    ///     UpdateProgress so the call sites no longer instantiate the operations directly.
+    /// </summary>
+    public EventAuxiliaryOperations? BuildAuxiliaryOperations(EventRegistry registry)
+    {
+        var graph = (EventGraph)registry;
+
+        return new EventAuxiliaryOperations(
+            ArchiveStream: (streamId, tenantId, archived) =>
+                new SetStreamArchivedOperation(graph, streamId, tenantId, archived),
+            TombstoneStream: (streamId, tenantId) =>
+                new TombstoneStreamOperation(graph, streamId, tenantId),
+            UpdateProgress: (shardIdentity, sequence, upsert) =>
+                new RecordProgressionOperation(
+                    graph.ProgressionTableName, shardIdentity, sequence,
+                    graph.EnableExtendedProgressionTracking, upsert));
     }
 
     /// <summary>

@@ -223,6 +223,31 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
             : Weasel.Storage.EventStorageBuilder.Build<string>(dialect, AppendMode, this, serializer);
     }
 
+    // #318: route the event-store auxiliary operations (archive / tombstone / progression) through the
+    // shared Weasel.Storage.EventStorage<TId> seam instead of instantiating the operation classes at the
+    // call sites. TId is fixed by StreamIdentity, so downcast the boxed storage accordingly; the
+    // operations themselves are supplied by SqlServerEventStoreDialect.BuildAuxiliaryOperations.
+    private Weasel.Storage.EventStorage<Guid> GuidEventStorage
+        => (Weasel.Storage.EventStorage<Guid>)ClosedShapeEventStorage;
+
+    private Weasel.Storage.EventStorage<string> StringEventStorage
+        => (Weasel.Storage.EventStorage<string>)ClosedShapeEventStorage;
+
+    internal Weasel.Storage.IStorageOperation ArchiveStreamOperation(object streamId, string tenantId, bool archived)
+        => StreamIdentity == StreamIdentity.AsGuid
+            ? GuidEventStorage.ArchiveStream(streamId, tenantId, archived)
+            : StringEventStorage.ArchiveStream(streamId, tenantId, archived);
+
+    internal Weasel.Storage.IStorageOperation TombstoneStreamOperation(object streamId, string tenantId)
+        => StreamIdentity == StreamIdentity.AsGuid
+            ? GuidEventStorage.TombstoneStream(streamId, tenantId)
+            : StringEventStorage.TombstoneStream(streamId, tenantId);
+
+    internal Weasel.Storage.IStorageOperation UpdateProgressOperation(string shardIdentity, long sequence, bool upsert)
+        => StreamIdentity == StreamIdentity.AsGuid
+            ? GuidEventStorage.UpdateProgress(shardIdentity, sequence, upsert)
+            : StringEventStorage.UpdateProgress(shardIdentity, sequence, upsert);
+
     /// <summary>
     ///     Wrap raw event data into an IEvent instance with type metadata.
     /// </summary>

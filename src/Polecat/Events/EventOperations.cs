@@ -478,34 +478,36 @@ internal class EventOperations : QueryEventStore, IEventOperations
         return e.InnerException is SqlException { Number: 1222 or 1205 };
     }
 
+    // #318: archive / un-archive / tombstone now flow through the shared Weasel.Storage.EventStorage<TId>
+    // seam (EventGraph.*Operation) rather than instantiating the operation classes here.
     public void ArchiveStream(Guid streamId)
     {
-        _workTracker.Add(new SetStreamArchivedOperation(_events, streamId, _tenantId, archived: true));
+        _workTracker.Add(_events.ArchiveStreamOperation(streamId, _tenantId, archived: true));
     }
 
     public void ArchiveStream(string streamKey)
     {
-        _workTracker.Add(new SetStreamArchivedOperation(_events, streamKey, _tenantId, archived: true));
+        _workTracker.Add(_events.ArchiveStreamOperation(streamKey, _tenantId, archived: true));
     }
 
     public void UnArchiveStream(Guid streamId)
     {
-        _workTracker.Add(new SetStreamArchivedOperation(_events, streamId, _tenantId, archived: false));
+        _workTracker.Add(_events.ArchiveStreamOperation(streamId, _tenantId, archived: false));
     }
 
     public void UnArchiveStream(string streamKey)
     {
-        _workTracker.Add(new SetStreamArchivedOperation(_events, streamKey, _tenantId, archived: false));
+        _workTracker.Add(_events.ArchiveStreamOperation(streamKey, _tenantId, archived: false));
     }
 
     public void TombstoneStream(Guid streamId)
     {
-        _workTracker.Add(new TombstoneStreamOperation(_events, streamId, _tenantId));
+        _workTracker.Add(_events.TombstoneStreamOperation(streamId, _tenantId));
     }
 
     public void TombstoneStream(string streamKey)
     {
-        _workTracker.Add(new TombstoneStreamOperation(_events, streamKey, _tenantId));
+        _workTracker.Add(_events.TombstoneStreamOperation(streamKey, _tenantId));
     }
 
     public void OverwriteEvent(IEvent @event)
