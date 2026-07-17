@@ -91,7 +91,13 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
         }
     }
 
-    Uri IEventStore.Subject => Database.DatabaseUri;
+    // polecat#320: Subject identifies the *store*, not the database backing it. Returning the database
+    // URI collapsed a primary store and an ancillary store on the same database (the default layout —
+    // schemas apart, one DB) onto an identical Subject, so monitoring tools keying per-store state by
+    // Subject (CritterWatch's EventProgressionPoller) merged their shard states and clobbered each
+    // other's high-water marks. Mirrors Marten's `marten://main` / `marten://{storename}`. The database
+    // identity keeps its own surfaces (Database.DatabaseUri, IEventDatabase.Identifier).
+    Uri IEventStore.Subject => new("polecat://" + Options.StoreName.ToLowerInvariant());
 
     // Store-agnostic accessor for every IEventDatabase backing this store (jasperfx#387).
     // Monitoring/tooling (e.g. CritterWatch) resolves IEventStore from DI and enumerates the

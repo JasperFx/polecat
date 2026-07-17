@@ -125,6 +125,44 @@ public class DocumentStoreTests
         store.Options.StoreName.ShouldBe(nameof(IInvoiceStore));
         ((IEventStore)store).Identity.Name.ShouldBe("iinvoicestore");
     }
+
+    // polecat#320: IEventStore.Subject identifies the store, not the database backing it.
+    [Fact]
+    public void event_store_subject_defaults_to_polecat_main()
+    {
+        using var store = DocumentStore.For(ConnectionSource.ConnectionString);
+        ((IEventStore)store).Subject.ShouldBe(new Uri("polecat://main"));
+    }
+
+    [Fact]
+    public void event_store_subject_varies_by_store_name()
+    {
+        using var store = DocumentStore.For(opts =>
+        {
+            opts.ConnectionString = ConnectionSource.ConnectionString;
+            opts.StoreName = "Invoicing";
+        });
+
+        ((IEventStore)store).Subject.ShouldBe(new Uri("polecat://invoicing"));
+    }
+
+    // The actual regression: a primary store and an ancillary store sharing ONE database (schemas
+    // apart) must still report distinct Subjects, or monitoring tools bucket their shard states and
+    // high-water marks together.
+    [Fact]
+    public void stores_sharing_a_database_have_distinct_subjects()
+    {
+        using var primary = DocumentStore.For(ConnectionSource.ConnectionString);
+
+        var services = new ServiceCollection();
+        services.AddPolecatStore<IInvoiceStore>(opts => opts.ConnectionString = ConnectionSource.ConnectionString);
+        using var provider = services.BuildServiceProvider();
+        var ancillary = provider.GetRequiredService<IInvoiceStore>();
+
+        ((IEventStore)primary).Subject.ShouldBe(new Uri("polecat://main"));
+        ((IEventStore)ancillary).Subject.ShouldBe(new Uri("polecat://iinvoicestore"));
+        ((IEventStore)primary).Subject.ShouldNotBe(((IEventStore)ancillary).Subject);
+    }
 }
 
 public interface IInvoiceStore : IDocumentStore;
