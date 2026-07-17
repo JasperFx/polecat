@@ -53,10 +53,17 @@
         <!-- Weasel 9.8.0/9.9.0 introduce Weasel.Storage: the dialect-neutral closed-shape
              storage contracts extracted from Marten (marten#4821/#4830, weasel#329/#331) —
              IStorageSession / IStorageDatabase / IStorageSerializer / IDocumentStorage /
-             IStorageDialect. This is the shared runtime Polecat retargets onto for #273. -->
-        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.16.2" />
-        <PackageVersion Include="Weasel.SqlServer" Version="9.16.2" />
-        <PackageVersion Include="Weasel.Storage" Version="9.16.2" />
+             IStorageDialect. This is the shared runtime Polecat retargets onto for #273.
+             Weasel 9.16.3: AdvisoryLock.TryAttainLockAsync treats a disposed data source as
+             terminal (Postgres-only; no Polecat surface).
+             Weasel 9.16.4: weasel#356 — db-apply bounds its connection usage across many
+             databases and retries transient connection failures, with SqlServerMigrator now
+             overriding ReleaseConnectionPoolAsync (SqlConnection.ClearPool) and
+             IsTransientConnectionFailure over the SQL Server/Azure SQL resource-limit error
+             set. Polecat picks this up through the migrator base class — no code change. -->
+        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.16.4" />
+        <PackageVersion Include="Weasel.SqlServer" Version="9.16.4" />
+        <PackageVersion Include="Weasel.Storage" Version="9.16.4" />
 
         <!-- Strongly typed IDs -->
         <PackageVersion Include="StronglyTypedId" Version="1.0.0-beta08" />
