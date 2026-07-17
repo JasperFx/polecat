@@ -142,6 +142,52 @@ public class projection_progression_tests : IntegrationContext
         global.ShouldBeNull();
     }
 
+    // #333 / jasperfx#529 — the exact ShardName overload looks up the full identity verbatim, no collapsing.
+    [Fact]
+    public async Task read_by_shard_name_reads_the_exact_row()
+    {
+        var shardName = ShardName.Compose("ExactRead");
+        await RecordProgressAsync(shardName, ceiling: 55, upsert: true);
+
+        var row = await theStore.Database.ReadProjectionProgressAsync(shardName, default);
+
+        row.ShouldNotBeNull();
+        row!.ProjectionName.ShouldBe("ExactRead");
+        row.TenantId.ShouldBeNull();
+        row.Sequence.ShouldBe(55);
+        row.AgentStatus.ShouldBeNull();
+        row.LastHeartbeat.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task read_by_shard_name_returns_null_for_an_unknown_identity()
+    {
+        await RecordProgressAsync(ShardName.Compose("KnownOne"), ceiling: 3, upsert: true);
+
+        var row = await theStore.Database.ReadProjectionProgressAsync(
+            ShardName.Compose("KnownOne", "All", null, 9), default);
+
+        row.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task read_by_shard_name_targets_the_exact_version_and_tenant()
+    {
+        await RecordProgressAsync(ShardName.Compose("Versioned", "All", null, 2), ceiling: 25, upsert: true);
+        await RecordProgressAsync(ShardName.Compose("Versioned", "All", null, 3), ceiling: 40, upsert: true);
+        await RecordProgressAsync(ShardName.Compose("Versioned", "All", "Red"), ceiling: 7, upsert: true);
+
+        // Exact V2 — not the newest V3.
+        var v2 = await theStore.Database.ReadProjectionProgressAsync(
+            ShardName.Compose("Versioned", "All", null, 2), default);
+        v2!.Sequence.ShouldBe(25);
+
+        var tenant = await theStore.Database.ReadProjectionProgressAsync(
+            ShardName.Compose("Versioned", "All", "Red"), default);
+        tenant!.Sequence.ShouldBe(7);
+        tenant.TenantId.ShouldBe("Red");
+    }
+
     private async Task RecordProgressAsync(ShardName shardName, long ceiling, bool upsert)
     {
         var events = theStore.Database.Events;
