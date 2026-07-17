@@ -268,6 +268,48 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
         }, (_connectionString, _events, projectionName, tenantId, name), token);
     }
 
+    // #333 / jasperfx#529 — exact per-cell progression read. Unlike the (projectionName, tenantId) overload
+    // above this does no collapsing: it looks up the single pc_event_progression row whose name equals the
+    // full ShardName.Identity verbatim (the daemon writes range.ShardName.Identity), so a blue/green deploy's
+    // versions, a sliced projection's shard keys, and per-tenant partitions each address their own row. A
+    // ShardKey of "All" is the projection's global cell. heartbeat + agent_status are only present under
+    // EnableExtendedProgressionTracking; without it AgentStatus/LastHeartbeat come back null.
+    public async ValueTask<ProjectionProgressRow?> ReadProjectionProgressAsync(
+        ShardName name, CancellationToken token)
+    {
+        return await _resilience.ExecuteAsync(static async (state, ct) =>
+        {
+            var (connectionString, events, shard) = state;
+
+            await using var conn = new SqlConnection(connectionString);
+            await conn.OpenAsync(ct);
+
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = events.EnableExtendedProgressionTracking
+                ? $"SELECT last_seq_id, heartbeat, agent_status FROM {events.ProgressionTableName} WHERE name = @name;"
+                : $"SELECT last_seq_id FROM {events.ProgressionTableName} WHERE name = @name;";
+            cmd.Parameters.AddWithValue("@name", shard.Identity);
+
+            await using var reader = await cmd.ExecuteReaderAsync(ct);
+            if (!await reader.ReadAsync(ct))
+            {
+                // No row for this identity yet — the meaningful "not observed" answer.
+                return (ProjectionProgressRow?)null;
+            }
+
+            var seq = reader.GetInt64(0);
+            DateTimeOffset? heartbeat = null;
+            string? agentStatus = null;
+            if (events.EnableExtendedProgressionTracking)
+            {
+                if (!reader.IsDBNull(1)) heartbeat = reader.GetDateTimeOffset(1);
+                if (!reader.IsDBNull(2)) agentStatus = reader.GetString(2);
+            }
+
+            return new ProjectionProgressRow(shard.Name, shard.TenantId, seq, agentStatus, heartbeat);
+        }, (_connectionString, _events, name), token);
+    }
+
     public async Task<long> FetchHighestEventSequenceNumber(CancellationToken token)
     {
         return await _resilience.ExecuteAsync(static async (state, ct) =>
