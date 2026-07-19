@@ -137,10 +137,11 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
     /// <summary>
     ///     The single Weasel.SqlServer managed per-tenant partition strategy (polecat#171) — maps each
     ///     tenant to a compact integer ordinal, owns the <c>pc_tenant_partitions</c> registry, and
-    ///     physically partitions <c>pc_events</c> by that ordinal (RANGE RIGHT). One instance is shared
-    ///     between the events-table DDL (<see cref="EventsTable" />) and the runtime partition split
-    ///     (<see cref="TenantEventSequenceRegistry" />) so Weasel can match the table to this strategy
-    ///     by reference. Only built when <see cref="UseTenantPartitionedEvents" /> is enabled.
+    ///     physically partitions every managed table by that ordinal (RANGE RIGHT): <c>pc_events</c>
+    ///     and <c>pc_streams</c> under <see cref="UseTenantPartitionedEvents" />, plus the
+    ///     tenant-partitioned document tables (#335). One instance is shared between the table DDL and
+    ///     the runtime partition split so Weasel can match each table to this strategy by reference —
+    ///     one registry per database.
     /// </summary>
     internal ManagedTenantPartitions TenantPartitionManager =>
         _tenantPartitions ??= new ManagedTenantPartitions(
@@ -149,7 +150,17 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
             column: "tenant_ordinal");
 
     private PolecatDatabase? _tenantPartitionDatabase;
+    private TenantPartitionOrdinalRegistry? _tenantOrdinals;
     private TenantEventSequenceRegistry? _tenantSequences;
+
+    /// <summary>
+    ///     True when anything in the store partitions by tenant — the event store tables
+    ///     (<see cref="UseTenantPartitionedEvents" />) or the document tables
+    ///     (<see cref="StorePolicies.PartitionMultiTenantedDocumentsUsingPolecatManagement" />, #335).
+    ///     Gates the shared <c>pc_tenant_partitions</c> registry feature schema.
+    /// </summary>
+    internal bool AnyTenantPartitioning =>
+        UseTenantPartitionedEvents || _options.Policies.DocumentTenantPartitioningEnabled;
 
     /// <summary>
     ///     Wire the owning database so per-tenant provisioning can SPLIT physical partitions at runtime.
@@ -159,15 +170,24 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
         => _tenantPartitionDatabase = database;
 
     /// <summary>
+    ///     The store's single tenant → partition-ordinal registry (#335), shared by the append
+    ///     planner, the stream-row SQL, the document write pipeline, and the runtime tenant
+    ///     onboarding APIs. Conjoined tenancy is a precondition for any tenant partitioning, so all
+    ///     tenants share the one configured connection/database.
+    /// </summary>
+    internal TenantPartitionOrdinalRegistry TenantOrdinals =>
+        _tenantOrdinals ??= new TenantPartitionOrdinalRegistry(
+            TenantPartitionManager,
+            _tenantPartitionDatabase ?? throw new InvalidOperationException(
+                "The owning database has not been attached for per-tenant partitioning."));
+
+    /// <summary>
     ///     Resolves (and lazily provisions) each tenant's ordinal, physical partition, and per-tenant
-    ///     event sequence when <see cref="UseTenantPartitionedEvents" /> is enabled. Conjoined tenancy
-    ///     is a precondition, so all tenants share the one configured connection/database.
+    ///     event sequence when <see cref="UseTenantPartitionedEvents" /> is enabled.
     /// </summary>
     internal TenantEventSequenceRegistry TenantSequences =>
         _tenantSequences ??= new TenantEventSequenceRegistry(
-            TenantPartitionManager,
-            _tenantPartitionDatabase ?? throw new InvalidOperationException(
-                "The owning database has not been attached for per-tenant partitioning."),
+            TenantOrdinals,
             _options.ConnectionString, DatabaseSchemaName, _options.ResiliencePipeline);
 
     /// <summary>
@@ -178,6 +198,15 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
     /// </summary>
     internal void AssertTenantPartitioningValidity()
     {
+        if (_options.Policies.DocumentTenantPartitioningEnabled && TenancyStyle != TenancyStyle.Conjoined)
+        {
+            throw new InvalidOperationException(
+                "Tenant-partitioned documents (StoreOptions.Policies.AllDocumentsAreMultiTenantedWithPartitioning / " +
+                "PartitionMultiTenantedDocumentsUsingPolecatManagement) require Events.TenancyStyle = " +
+                "TenancyStyle.Conjoined — there is nothing to partition by when every document lives in " +
+                "the default tenant.");
+        }
+
         if (!UseTenantPartitionedEvents) return;
 
         if (TenancyStyle != TenancyStyle.Conjoined)

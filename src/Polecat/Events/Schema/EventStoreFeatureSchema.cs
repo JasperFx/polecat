@@ -39,7 +39,9 @@ internal class EventStoreFeatureSchema : FeatureSchemaBase
         // ordinal) is owned by the Weasel.SqlServer ManagedTenantPartitions strategy; the physical
         // partition function/scheme are emitted as part of the partitioned pc_events DDL above, and the
         // per-tenant pc_events_sequence_{ordinal} objects are created on demand at first append.
-        if (_events.UseTenantPartitionedEvents)
+        // #335: tenant-partitioned documents share the same one-registry-per-database, so the registry
+        // also materializes when only the document-side policy is on.
+        if (_events.AnyTenantPartitioning)
         {
             foreach (var schemaObject in
                      ((Weasel.Core.Migrations.IFeatureSchema)_events.TenantPartitionManager).Objects)

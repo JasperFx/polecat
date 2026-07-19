@@ -3,6 +3,7 @@ using Polecat.Metadata;
 using Weasel.Core;
 using Weasel.SqlServer;
 using Weasel.SqlServer.Tables;
+using Weasel.SqlServer.Tables.Partitioning;
 
 namespace Polecat.Storage;
 
@@ -86,15 +87,37 @@ internal class DocumentTable : Table
         // additive CreateDeltaAsync override (#267) — it is defaulted, so INSERTs that omit it still
         // succeed — so this is purely additive with no destructive migration.
 
+        // Managed per-tenant partitioning (#335): the conjoined table is physically partitioned by
+        // the store's shared tenant-ordinal strategy (one pc_tenant_partitions registry per
+        // database). SQL Server requires the partition column in the clustered index, so
+        // tenant_ordinal joins the primary key after (tenant_id, id) — reads still prefix-seek on
+        // (tenant_id, id); every write resolves the ordinal server-side from the registry.
+        if (mapping.TenantPartitioned)
+        {
+            if (mapping.Partitioning is not null)
+            {
+                throw new NotSupportedException(
+                    $"Document '{mapping.DocumentType.Name}' cannot combine PartitionByRange with the " +
+                    "store's managed tenant partitioning — a SQL Server table supports only one " +
+                    "partition scheme. Opt the type out via " +
+                    "Policies.ForDocument<T>(p => p.DisableTenantPartitioning = true) to keep the " +
+                    "custom RANGE partitioning.");
+            }
+
+            AddColumn(DocumentMapping.TenantOrdinalColumn, "int").NotNull().AsPrimaryKey();
+            this.PartitionByManagedTenants(mapping.StoreOptions.EventGraph.TenantPartitionManager);
+        }
         // Declarative SQL Server RANGE partitioning (#211). The partition column must be part of the
         // table's unique (clustered) index, so a promoted member joins the primary key.
-        if (mapping.Partitioning is { } partitioning)
+        else if (mapping.Partitioning is { } partitioning)
         {
             if (mapping.TenancyStyle == TenancyStyle.Conjoined)
             {
                 throw new NotSupportedException(
-                    "RANGE partitioning of document tables is currently supported for single-tenant tables " +
-                    $"only, but '{mapping.DocumentType.Name}' uses conjoined tenancy.");
+                    "RANGE partitioning of document tables on a caller-chosen member is supported for " +
+                    $"single-tenant tables only, but '{mapping.DocumentType.Name}' uses conjoined " +
+                    "tenancy. Conjoined tables can instead be partitioned per tenant via " +
+                    "StoreOptions.Policies.PartitionMultiTenantedDocumentsUsingPolecatManagement() (#335).");
             }
 
             if (partitioning.RequiresDuplicatedColumn)

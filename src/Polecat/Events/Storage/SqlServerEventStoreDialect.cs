@@ -114,8 +114,14 @@ internal sealed class SqlServerEventStoreDialect : IEventStoreSqlDialect
     private static Action<Weasel.Core.ICommandBuilder, StreamAction> BuildInsertStreamCommandConfigurer(
         EventGraph graph, bool isGuid, IStorageDialect dialect)
     {
+        // #335: under per-tenant partitioning pc_streams carries the tenant_ordinal partition
+        // column, stamped from the planner-resolved tenant cache (the append planner always
+        // resolves the tenant's ordinal before any stream operation executes).
+        var partitioned = graph.UseTenantPartitionedEvents;
         var prefix = $"insert into {graph.StreamsTableName} " +
-                     "(id, type, version, timestamp, created, tenant_id) values (";
+                     (partitioned
+                         ? "(id, type, version, timestamp, created, tenant_id, tenant_ordinal) values ("
+                         : "(id, type, version, timestamp, created, tenant_id) values (");
 
         return (builder, stream) =>
         {
@@ -136,8 +142,34 @@ internal sealed class SqlServerEventStoreDialect : IEventStoreSqlDialect
             var tenantParam = builder.AppendParameter(stream.TenantId);
             dialect.SetParameterType(tenantParam, StorageColumnType.String);
 
+            if (partitioned)
+            {
+                builder.Append(", ");
+                var ordinalParam = builder.AppendParameter(ResolveCachedOrdinal(graph, stream));
+                dialect.SetParameterType(ordinalParam, StorageColumnType.Int);
+            }
+
             builder.Append(")");
         };
+    }
+
+    /// <summary>
+    ///     The stream tenant's partition ordinal from the store's shared tenant cache (#335). The
+    ///     append planner resolves (and provisions) every stream's tenant before its operations
+    ///     execute, so this synchronous read cannot miss on the append path — a miss means a new
+    ///     code path is building stream-row SQL without resolving the tenant first.
+    /// </summary>
+    private static int ResolveCachedOrdinal(EventGraph graph, StreamAction stream)
+    {
+        if (!graph.TenantOrdinals.TryGetOrdinal(stream.TenantId, out var ordinal))
+        {
+            throw new InvalidOperationException(
+                $"Per-tenant partitioning is enabled but tenant '{stream.TenantId}' has no resolved " +
+                "partition ordinal in this process. Stream-row SQL must run after the append planner " +
+                "(or AdvancedOperations.AddPolecatManagedTenantsAsync) has resolved the tenant.");
+        }
+
+        return ordinal;
     }
 
     /// <summary>
@@ -172,6 +204,15 @@ internal sealed class SqlServerEventStoreDialect : IEventStoreSqlDialect
                 builder.Append(" and tenant_id = ");
                 var tenantParam = builder.AppendParameter(stream.TenantId);
                 dialect.SetParameterType(tenantParam, StorageColumnType.String);
+            }
+
+            // #335: partition-eliminate the version bump under per-tenant partitioning —
+            // tenant_ordinal is in the clustered key of the partitioned pc_streams.
+            if (graph.UseTenantPartitionedEvents)
+            {
+                builder.Append(" and tenant_ordinal = ");
+                var ordinalParam = builder.AppendParameter(ResolveCachedOrdinal(graph, stream));
+                dialect.SetParameterType(ordinalParam, StorageColumnType.Int);
             }
         };
     }

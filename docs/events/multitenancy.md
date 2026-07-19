@@ -100,9 +100,11 @@ When enabled, Polecat:
   `pc_events_sequence_{ordinal}` object (created on demand) via `NEXT VALUE FOR`, rather than a single
   global `IDENTITY`. `seq_id` is therefore unique only *within* a tenant, so the `pc_events` primary
   key becomes composite `(tenant_ordinal, seq_id)`.
-* **Physically partitions `pc_events` by tenant** — the table is `RANGE RIGHT` partitioned on the
-  tenant `ordinal`, and a new partition is split in as each tenant registers. A tenant's events live
-  in their own physical partition, so per-tenant scans and rebuilds touch only that partition.
+* **Physically partitions `pc_events` and `pc_streams` by tenant** — both tables are `RANGE RIGHT`
+  partitioned on the tenant `ordinal`, and a new partition is split in as each tenant registers. A
+  tenant's events and stream rows live in their own physical partitions, so per-tenant scans and
+  rebuilds touch only those partitions (Marten parity: `mt_streams` rides `mt_events`' tenant
+  partitioning).
 
 ```cs
 // Each tenant's seq_id starts at 1 and advances independently
@@ -145,7 +147,12 @@ path byte-for-byte. The flag **requires** `TenancyStyle.Conjoined` (there is not
 otherwise) and is currently incompatible with `UseArchivedStreamPartitioning` — a SQL Server table
 supports only one partition scheme; both raise an error at store construction.
 
-Physical partitioning applies to `pc_events` (the table that drives the bounded per-tenant scan);
-`pc_streams` is accessed by point lookup and is left unpartitioned. The partition function/scheme are
-database-global objects, so a single database should host one tenant-partitioned event store.
+Physical partitioning applies to `pc_events` and (since #335) `pc_streams`. The partition
+function/scheme are database-global objects, so a single database should host one tenant-partitioned
+event store.
+
+Document tables can join the same managed per-tenant partitioning — including runtime tenant
+onboarding/removal via `store.Advanced.AddPolecatManagedTenantsAsync` /
+`RemovePolecatManagedTenantsAsync` — see
+[Document multi-tenancy partitioning](/documents/partitioning#managed-per-tenant-partitioning-335).
 :::

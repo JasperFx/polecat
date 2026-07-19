@@ -108,6 +108,19 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
             }
         }
 
+        // #335: tenant-partitioned documents — the daemon batch executes session operations
+        // directly (no DocumentSessionBase.SaveChangesAsync), so provision the partition ordinal
+        // for every tenant this batch writes under before the transaction opens. The projection
+        // write SQL resolves tenant_ordinal server-side from the registry these provisions
+        // populate; known tenants are cached no-ops.
+        if (_store.Options.Policies.DocumentTenantPartitioningEnabled)
+        {
+            foreach (var adapter in allOps.OfType<Polecat.Internal.Operations.ClosedShapeOperationAdapter>())
+            {
+                await _store.Events.TenantOrdinals.ResolveAsync(adapter.SessionTenantId, token);
+            }
+        }
+
         // Add progress operations
         while (_progressOps.TryDequeue(out var progressOp))
         {
