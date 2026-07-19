@@ -92,6 +92,14 @@ internal class DocumentTableEnsurer
             // read GetFieldValue<TInner>). Convert it to the inner primitive type in place — drop
             // PK, ALTER COLUMN, re-add PK — before Weasel diffs the table, so the diff stays clean.
             await ConvertStrongTypedIdColumnIfNeededAsync(conn, provider.Mapping, table, token);
+
+            // #335: a tenant-partitioned document table created after tenants already exist must
+            // bake the full boundary set into its CREATE — hydrate the shared partition manager's
+            // tenant map from pc_tenant_partitions first (cached; a no-op after the first call).
+            if (provider.Mapping.TenantPartitioned)
+            {
+                await _options.EventGraph.TenantPartitionManager.InitializeAsync(conn, token);
+            }
             var autoCreate = provider.Mapping.Partitioning is { ExternallyManaged: true }
                 ? AutoCreate.CreateOnly
                 : AutoCreate.CreateOrUpdate;
@@ -302,6 +310,14 @@ internal class DocumentTableEnsurer
                 .Where(p => p.NaturalKeyDefinition != null)
                 .Select(p => p.NaturalKeyDefinition!)
                 .ToList();
+
+            // #335: under per-tenant partitioning, hydrate the shared partition manager's tenant map
+            // first so pc_events/pc_streams CREATEd against an existing registry bake the full
+            // boundary set (cached; a no-op after the first call).
+            if (_options.EventGraph.AnyTenantPartitioning)
+            {
+                await _options.EventGraph.TenantPartitionManager.InitializeAsync(conn, token);
+            }
 
             var eventSchema = new Events.Schema.EventStoreFeatureSchema(_options.EventGraph, naturalKeys);
             var migration = await SchemaMigration.DetermineAsync(conn, token, eventSchema.Objects);

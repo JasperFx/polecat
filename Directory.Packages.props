@@ -60,10 +60,16 @@
              databases and retries transient connection failures, with SqlServerMigrator now
              overriding ReleaseConnectionPoolAsync (SqlConnection.ClearPool) and
              IsTransientConnectionFailure over the SQL Server/Azure SQL resource-limit error
-             set. Polecat picks this up through the migrator base class — no code change. -->
-        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.17.0" />
-        <PackageVersion Include="Weasel.SqlServer" Version="9.17.0" />
-        <PackageVersion Include="Weasel.Storage" Version="9.17.0" />
+             set. Polecat picks this up through the migrator base class — no code change.
+             Weasel 9.18.0: weasel#362/#374 — ManagedTenantPartitions parity with the
+             PostgreSQL ManagedListPartitions: TenantDropBehavior (RetainData/DeleteData),
+             AllowOrdinalSharing + explicit-ordinal add overloads (tenant bucketing),
+             MigrateAllTablesAsync new-table back-fill, and TenantPartitionAddResult /
+             TablePartitionStatus batch status reporting. Consumed by Polecat #335
+             (per-tenant partitioning parity for documents + streams). -->
+        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.18.0" />
+        <PackageVersion Include="Weasel.SqlServer" Version="9.18.0" />
+        <PackageVersion Include="Weasel.Storage" Version="9.18.0" />
 
         <!-- Strongly typed IDs -->
         <PackageVersion Include="StronglyTypedId" Version="1.0.0-beta08" />

@@ -9,8 +9,10 @@ using Polecat.Metadata;
 using Polecat.Projections.Flattened;
 using Polecat.Schema.Identity.Sequences;
 using Polecat.Storage;
+using Microsoft.Extensions.Logging.Abstractions;
 using Weasel.Core;
 using Weasel.SqlServer;
+using Weasel.SqlServer.Tables.Partitioning;
 
 namespace Polecat;
 
@@ -112,6 +114,13 @@ public class AdvancedOperations
         // Ensure the table exists
         var ensurer = _store.ResolveTableEnsurer(tenantId);
         await ensurer.EnsureTableAsync(provider, token);
+
+        // #335: tenant-partitioned documents — provision the tenant's partition ordinal before the
+        // bulk MERGEs resolve it server-side from the registry (cached no-op for known tenants).
+        if (mapping.TenantPartitioned)
+        {
+            await _store.Events.TenantOrdinals.ResolveAsync(tenantId, token);
+        }
 
         var storage = _store.Options.Providers.ClosedShapeGraph.StorageFor<T>().QueryOnly;
 
@@ -248,6 +257,13 @@ public class AdvancedOperations
 
         var ensurer = _store.ResolveTableEnsurer(tenantId);
         await ensurer.EnsureTableAsync(provider, token);
+
+        // #335: tenant-partitioned documents — provision the tenant's partition ordinal before the
+        // version-checked MERGEs resolve it server-side from the registry.
+        if (mapping.TenantPartitioned)
+        {
+            await _store.Events.TenantOrdinals.ResolveAsync(tenantId, token);
+        }
 
         // #273 doc-side convergence: source the version-checked MERGE's full column set from the
         // closed-shape descriptor's write binders (doc_type, guid_version, partition, soft-delete)
@@ -655,5 +671,176 @@ public class AdvancedOperations
         var scenario = new ProjectionScenario(_store);
         configuration(scenario);
         return scenario.Execute(ct);
+    }
+
+    // ---- runtime tenant onboarding under managed per-tenant partitioning (#335) ----
+
+    /// <summary>
+    ///     Explicitly onboard tenants under the store's managed per-tenant partitioning — the SQL
+    ///     Server counterpart of Marten's <c>AddMartenManagedTenantsAsync</c>. Each tenant is
+    ///     registered in the <c>pc_tenant_partitions</c> registry, allocated a compact partition
+    ///     ordinal, and every managed table (<c>pc_events</c> / <c>pc_streams</c> under
+    ///     <c>Events.UseTenantPartitionedEvents</c>, plus all tenant-partitioned document tables) is
+    ///     SPLIT for the new ordinals. Idempotent — already-registered tenants keep their ordinal and
+    ///     emit no DDL. Under <c>Events.UseTenantPartitionedEvents</c> the per-tenant
+    ///     <c>pc_events_sequence_{ordinal}</c> objects are provisioned as well.
+    ///     <para>
+    ///     Only document tables of document types already registered with the store (schema config or
+    ///     prior use) participate in the split; a table created later bakes the full boundary set at
+    ///     creation. Tenants are also onboarded lazily on first write — this API exists for explicit
+    ///     provisioning with per-table status reporting (partial failures surface per table, Marten
+    ///     batch-add parity).
+    ///     </para>
+    /// </summary>
+    /// <returns>Per-table migration statuses for every table wired to the managed strategy.</returns>
+    public async Task<TablePartitionStatus[]> AddPolecatManagedTenantsAsync(
+        CancellationToken token, params string[] tenantIds)
+    {
+        var events = AssertManagedTenantPartitioning();
+        var manager = events.TenantPartitionManager;
+
+        var result = await manager.AddPartitionsToAllTables(
+                NullLogger.Instance, _store.Database, tenantIds, token)
+            .ConfigureAwait(false);
+
+        await EnsureTenantSequencesAsync(events, result.Ordinals, token).ConfigureAwait(false);
+
+        return result.Tables;
+    }
+
+    /// <summary>
+    ///     Onboard tenants with explicitly assigned partition ordinals — the tenant bucketing seam
+    ///     (Weasel 9.18.0 / weasel#362). With
+    ///     <c>ManagedTenantPartitions.AllowOrdinalSharing</c> enabled, multiple tenant ids may map to
+    ///     one ordinal so small tenants share a physical partition (the mitigation for SQL Server's
+    ///     15,000-partition ceiling). Re-registering a tenant with its current ordinal is a no-op;
+    ///     re-registering with a different ordinal throws, because existing rows keep the old ordinal.
+    /// </summary>
+    /// <returns>Per-table migration statuses for every table wired to the managed strategy.</returns>
+    public async Task<TablePartitionStatus[]> AddPolecatManagedTenantsAsync(
+        IReadOnlyDictionary<string, int> tenantIdToOrdinal, CancellationToken token = default)
+    {
+        var events = AssertManagedTenantPartitioning();
+        var manager = events.TenantPartitionManager;
+
+        var result = await manager.AddPartitionsToAllTables(
+                NullLogger.Instance, _store.Database, tenantIdToOrdinal, token)
+            .ConfigureAwait(false);
+
+        await EnsureTenantSequencesAsync(events, result.Ordinals, token).ConfigureAwait(false);
+
+        return result.Tables;
+    }
+
+    /// <summary>
+    ///     Remove tenants from the store's managed per-tenant partitioning, retaining their rows
+    ///     (<see cref="TenantDropBehavior.RetainData" /> — the tenants' data merges into the
+    ///     neighboring partition). The counterpart of Marten's <c>RemoveMartenManagedTenantsAsync</c>;
+    ///     use the <see cref="TenantDropBehavior" /> overload for data-removing semantics.
+    /// </summary>
+    public Task RemovePolecatManagedTenantsAsync(string[] tenantIds, CancellationToken token = default)
+        => RemovePolecatManagedTenantsAsync(tenantIds, TenantDropBehavior.RetainData, token);
+
+    /// <summary>
+    ///     Remove tenants from the store's managed per-tenant partitioning. SQL Server's
+    ///     <c>MERGE RANGE</c> only removes the partition boundary — pass
+    ///     <see cref="TenantDropBehavior.DeleteData" /> to physically delete the tenants' rows from
+    ///     every managed table before the merge (PostgreSQL managed-drop parity, Weasel 9.18.0 /
+    ///     weasel#362). An ordinal still shared with other tenants is never merged or purged. Fully
+    ///     released ordinals also drop their per-tenant <c>pc_events_sequence_{ordinal}</c> under
+    ///     <c>Events.UseTenantPartitionedEvents</c>, and the removed tenants are evicted from the
+    ///     in-process caches so a later write re-provisions instead of stamping a stale ordinal.
+    /// </summary>
+    public async Task RemovePolecatManagedTenantsAsync(
+        string[] tenantIds, TenantDropBehavior behavior, CancellationToken token = default)
+    {
+        var events = AssertManagedTenantPartitioning();
+        var manager = events.TenantPartitionManager;
+
+        // Hydrate + capture the ordinals of the tenants being dropped BEFORE the drop clears the
+        // registry rows, so fully-released ordinals can be identified afterwards.
+        await manager.InitializeAsync(_store.Database, token).ConfigureAwait(false);
+        var captured = tenantIds
+            .Where(t => !string.IsNullOrEmpty(t) && manager.Ordinals.ContainsKey(t))
+            .ToDictionary(t => t, t => manager.Ordinals[t], StringComparer.Ordinal);
+
+        await manager.DropPartitionFromAllTables(
+                NullLogger.Instance, _store.Database, tenantIds, behavior, token)
+            .ConfigureAwait(false);
+
+        // An ordinal is released only when no remaining tenant references it (ordinal sharing).
+        var released = captured.Values
+            .Distinct()
+            .Where(o => !manager.Ordinals.Values.Contains(o))
+            .ToArray();
+
+        if (events.UseTenantPartitionedEvents && released.Length > 0)
+        {
+            await DropTenantSequencesAsync(events, released, token).ConfigureAwait(false);
+        }
+
+        foreach (var tenantId in captured.Keys)
+        {
+            events.TenantOrdinals.Evict(tenantId);
+            events.TenantSequences.Evict(tenantId);
+        }
+    }
+
+    private Events.EventGraph AssertManagedTenantPartitioning()
+    {
+        var events = _store.Events;
+        if (!events.AnyTenantPartitioning)
+        {
+            throw new InvalidOperationException(
+                "Managed per-tenant partitioning is not enabled for this store. Enable " +
+                "Events.UseTenantPartitionedEvents and/or " +
+                "StoreOptions.Policies.PartitionMultiTenantedDocumentsUsingPolecatManagement() first.");
+        }
+
+        return events;
+    }
+
+    private static Task EnsureTenantSequencesAsync(
+        Events.EventGraph events, IReadOnlyDictionary<string, int> ordinals, CancellationToken token)
+    {
+        return events.UseTenantPartitionedEvents && ordinals.Count > 0
+            ? events.TenantSequences.EnsureSequencesForOrdinalsAsync(ordinals.Values, token)
+            : Task.CompletedTask;
+    }
+
+    /// <summary>
+    ///     Drop the per-tenant event sequences of fully-released ordinals (the #335 analogue of
+    ///     Marten's orphan-sequence cleanup on tenant removal).
+    /// </summary>
+    private async Task DropTenantSequencesAsync(Events.EventGraph events, int[] ordinals, CancellationToken token)
+    {
+        var schema = events.DatabaseSchemaName;
+        var connStr = _store.Options.ConnectionString;
+
+        await _resilience.ExecuteAsync(static async (state, ct) =>
+        {
+            var (connectionString, schemaName, released) = state;
+            await using var conn = new SqlConnection(connectionString);
+            await conn.OpenAsync(ct).ConfigureAwait(false);
+
+            foreach (var ordinal in released)
+            {
+                await using var cmd = conn.CreateCommand();
+                cmd.CommandText = $"""
+                    IF EXISTS (
+                        SELECT 1 FROM sys.sequences sq
+                        JOIN sys.schemas sc ON sq.schema_id = sc.schema_id
+                        WHERE sq.name = @seq AND sc.name = @schema)
+                    BEGIN
+                        DECLARE @sql nvarchar(max) =
+                            N'DROP SEQUENCE ' + QUOTENAME(@schema) + N'.' + QUOTENAME(@seq);
+                        EXEC sp_executesql @sql;
+                    END
+                    """;
+                cmd.Parameters.AddWithValue("@seq", $"pc_events_sequence_{ordinal}");
+                cmd.Parameters.AddWithValue("@schema", schemaName);
+                await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+            }
+        }, (connStr, schema, ordinals), token).ConfigureAwait(false);
     }
 }

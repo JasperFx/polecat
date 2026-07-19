@@ -163,6 +163,14 @@ internal class DocumentProviderRegistry
             var exprType = expr.GetType();
             if (!exprType.IsGenericType) continue;
 
+            // #335: under the tenant-partitioned-documents policy, EVERY registered document type is
+            // partitioned — materialize its provider so the table joins the managed set (created by
+            // schema migration, SPLIT by AddPolecatManagedTenantsAsync) at activation time.
+            if (_options.Policies.DocumentTenantPartitioningEnabled)
+            {
+                GetProvider(exprType.GetGenericArguments()[0]);
+            }
+
             var partitioningField = exprType.GetField("Partitioning", BindingFlags.NonPublic | BindingFlags.Instance);
             if (partitioningField?.GetValue(expr) is not DocumentPartitioning) continue;
 
@@ -171,8 +179,11 @@ internal class DocumentProviderRegistry
             if (_options.Events.TenancyStyle == TenancyStyle.Conjoined)
             {
                 throw new NotSupportedException(
-                    "RANGE partitioning of document tables is currently supported for single-tenant tables " +
-                    $"only, but '{docType.Name}' uses conjoined tenancy.");
+                    "RANGE partitioning of document tables on a caller-chosen member is supported for " +
+                    $"single-tenant tables only, but '{docType.Name}' uses conjoined tenancy — a SQL " +
+                    "Server table supports only one partition scheme. Conjoined tables can instead be " +
+                    "partitioned per tenant via " +
+                    "StoreOptions.Policies.PartitionMultiTenantedDocumentsUsingPolecatManagement() (#335).");
             }
 
             // Materialize the provider so DocumentFeatureSchema yields its (partitioned) table.

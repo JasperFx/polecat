@@ -297,6 +297,18 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
         var usingValues = string.Join(", ", usingColumns.Select(_ => "?"));
         var sourceColumns = string.Join(", ", usingColumns);
 
+        // Managed tenant partitioning (#335): the tenant's partition ordinal is resolved
+        // server-side by joining the pc_tenant_partitions registry into the MERGE source — the
+        // VALUES tuple (and so the positional parameter slots) is unchanged. An unregistered
+        // tenant yields NULL and fails the tenant_ordinal NOT NULL constraint loudly; the session
+        // flush pipeline auto-provisions tenants before executing operations.
+        var usingClause = mapping.TenantPartitioned
+            ? $"(SELECT {string.Join(", ", usingColumns.Select(c => $"v.{c}"))}, tp.ordinal AS tenant_ordinal " +
+              $"FROM (VALUES ({usingValues})) AS v ({sourceColumns}) " +
+              $"LEFT JOIN {mapping.StoreOptions.EventGraph.TenantPartitionsTableName} tp " +
+              "ON tp.tenant_id = v.tenant_id) AS s"
+            : $"(VALUES ({usingValues})) AS s ({sourceColumns})";
+
         var onClause = isConjoined
             ? "t.id = s.id AND t.tenant_id = s.tenant_id"
             : "t.id = s.id";
@@ -304,6 +316,12 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
         {
             // Partition column is in the PK; the predicate keeps MERGE on the right partition row.
             onClause += $" AND t.{partitionColumn} = s.{partitionColumn}";
+        }
+
+        if (mapping.TenantPartitioned)
+        {
+            // tenant_ordinal is in the PK; the predicate keeps MERGE partition-eliminated.
+            onClause += " AND t.tenant_ordinal = s.tenant_ordinal";
         }
 
         // INSERT branch. Off/Optimistic: version literal 1 + created_at. Numeric: the version
@@ -334,6 +352,12 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
 
         insertColumns.Add("created_at");
         insertValues.Add(ServerTimestamp);
+        if (mapping.TenantPartitioned)
+        {
+            insertColumns.Add("tenant_ordinal");
+            insertValues.Add("s.tenant_ordinal");
+        }
+
         foreach (var binder in binders.Where(b => b.IsServerSide))
         {
             insertColumns.Add(binder.ColumnName);
@@ -346,7 +370,7 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
         if (insertOnly)
         {
             return $"MERGE {table} WITH (HOLDLOCK) AS t " +
-                   $"USING (VALUES ({usingValues})) AS s ({sourceColumns}) ON {onClause} " +
+                   $"USING {usingClause} ON {onClause} " +
                    $"{insertClause} " +
                    $"OUTPUT {OutputColumn(mode)};";
         }
@@ -388,7 +412,7 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
         }
 
         return $"MERGE {table} WITH (HOLDLOCK) AS t " +
-               $"USING (VALUES ({usingValues})) AS s ({sourceColumns}) ON {onClause} " +
+               $"USING {usingClause} ON {onClause} " +
                $"WHEN MATCHED{guard} THEN UPDATE SET {string.Join(", ", updateAssignments)} " +
                $"{insertClause} " +
                $"OUTPUT {OutputColumn(mode)};";
@@ -445,6 +469,15 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
         var usingValues = string.Join(", ", usingColumns.Select(_ => "?"));
         var sourceColumns = string.Join(", ", usingColumns);
 
+        // Managed tenant partitioning (#335): same server-side ordinal join as BuildMergeSql,
+        // keyed on the update ops' tenant_id_pk source column.
+        var usingClause = mapping.TenantPartitioned
+            ? $"(SELECT {string.Join(", ", usingColumns.Select(c => $"v.{c}"))}, tp.ordinal AS tenant_ordinal " +
+              $"FROM (VALUES ({usingValues})) AS v ({sourceColumns}) " +
+              $"LEFT JOIN {mapping.StoreOptions.EventGraph.TenantPartitionsTableName} tp " +
+              "ON tp.tenant_id = v.tenant_id_pk) AS s"
+            : $"(VALUES ({usingValues})) AS s ({sourceColumns})";
+
         var onClause = "t.id = s.id";
         if (isConjoined)
         {
@@ -454,6 +487,11 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
         if (partitionColumn is not null)
         {
             onClause += $" AND t.{partitionColumn} = s.{partitionColumn}_pk";
+        }
+
+        if (mapping.TenantPartitioned)
+        {
+            onClause += " AND t.tenant_ordinal = s.tenant_ordinal";
         }
 
         var updateAssignments = new List<string> { "data = s.data" };
@@ -474,7 +512,7 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
         };
 
         return $"MERGE {table} WITH (HOLDLOCK) AS t " +
-               $"USING (VALUES ({usingValues})) AS s ({sourceColumns}) ON {onClause} " +
+               $"USING {usingClause} ON {onClause} " +
                $"WHEN MATCHED{guard} THEN UPDATE SET {string.Join(", ", updateAssignments)} " +
                $"OUTPUT {OutputColumn(mode)};";
     }

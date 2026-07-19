@@ -437,6 +437,20 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             await _tableEnsurer.EnsureEventStoreSchemaAsync(token);
         }
 
+        // #335: tenant-partitioned documents — resolve (and lazily provision, mirroring the event
+        // append path) the partition ordinal for every tenant this flush writes under, BEFORE the
+        // data transaction opens (provisioning runs DDL on its own connection). The document write
+        // SQL then resolves tenant_ordinal server-side from the pc_tenant_partitions registry these
+        // provisions populate; an already-known tenant is a cached no-op.
+        if (Options.Policies.DocumentTenantPartitioningEnabled && _workTracker.Operations.Count > 0)
+        {
+            await _eventGraph.TenantOrdinals.ResolveAsync(TenantId, token);
+            foreach (var adapter in _workTracker.Operations.OfType<Operations.ClosedShapeOperationAdapter>())
+            {
+                await _eventGraph.TenantOrdinals.ResolveAsync(adapter.SessionTenantId, token);
+            }
+        }
+
         await _transactional.BeginTransactionAsync(token);
         using var tx = _transactional.Transaction!;
         try

@@ -31,6 +31,13 @@ internal sealed class ClosedShapeOperationAdapter : IStorageOperation, IDocument
     public object? DocumentId { get; }
     public Type DocumentType => _inner.DocumentType;
 
+    /// <summary>
+    ///     The tenant this operation will write under (the session's tenant, or the ForTenant
+    ///     override wrapped in a <c>TenantScopedStorageSession</c>). Used by the flush pipeline to
+    ///     provision tenant partition ordinals before operations execute (#335).
+    /// </summary>
+    internal string SessionTenantId => _session.TenantId;
+
     public OperationRole Role() => _inner.Role();
 
     public void ConfigureCommand(Weasel.SqlServer.ICommandBuilder builder)

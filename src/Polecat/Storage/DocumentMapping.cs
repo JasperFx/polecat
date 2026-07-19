@@ -251,6 +251,19 @@ internal class DocumentMapping
     /// <summary>True when a promoted partition column must be written on every upsert.</summary>
     public bool HasPartitionColumn => Partitioning is { RequiresDuplicatedColumn: true };
 
+    /// <summary>
+    ///     True when this document's table is physically partitioned per tenant through the store's
+    ///     shared managed tenant partitioning (#335): conjoined tenancy + the store-wide policy
+    ///     (<see cref="StorePolicies.PartitionMultiTenantedDocumentsUsingPolecatManagement" />) with
+    ///     no per-type opt-out. The table gains a <c>tenant_ordinal</c> int primary-key column whose
+    ///     value is resolved server-side from <c>pc_tenant_partitions</c> on every write.
+    /// </summary>
+    public bool TenantPartitioned =>
+        TenancyStyle == TenancyStyle.Conjoined && StoreOptions.Policies.IsTenantPartitioned(DocumentType);
+
+    /// <summary>The partition column every managed-tenant-partitioned table carries (#335).</summary>
+    public const string TenantOrdinalColumn = "tenant_ordinal";
+
     /// <summary>SQL fragment appended to an INSERT column list for the partition column (or empty).</summary>
     public string PartitionInsertColumns => HasPartitionColumn ? $", {Partitioning!.ColumnName}" : string.Empty;
 

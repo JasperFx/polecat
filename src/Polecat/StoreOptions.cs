@@ -32,6 +32,7 @@ public class StoreOptions
 
     public StoreOptions()
     {
+        Policies = new StorePolicies(this);
         EventGraph = new EventGraph(this);
         Events.EventGraph = EventGraph;
         Projections = new PolecatProjectionOptions(EventGraph);
@@ -144,9 +145,9 @@ public class StoreOptions
     public SchemaConfiguration Schema { get; } = new();
 
     /// <summary>
-    ///     Document storage policies (e.g., soft deletes).
+    ///     Document storage policies (e.g., soft deletes, tenant-partitioned documents).
     /// </summary>
-    public StorePolicies Policies { get; } = new();
+    public StorePolicies Policies { get; }
 
     /// <summary>
     ///     Global session listeners applied to all sessions.

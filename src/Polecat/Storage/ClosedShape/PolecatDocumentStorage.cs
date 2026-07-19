@@ -427,7 +427,21 @@ internal abstract class PolecatDocumentStorage<TDoc, TId>
 
         var usingValues = string.Join(", ", usingCols.Select(_ => "?"));
         var sourceCols = string.Join(", ", usingCols);
+
+        // Managed tenant partitioning (#335): resolve tenant_ordinal server-side by joining the
+        // pc_tenant_partitions registry into the MERGE source — parameter slots unchanged.
+        var usingClause = _mapping.TenantPartitioned
+            ? $"(SELECT {string.Join(", ", usingCols.Select(c => $"v.{c}"))}, tp.ordinal AS tenant_ordinal " +
+              $"FROM (VALUES ({usingValues})) AS v ({sourceCols}) " +
+              $"LEFT JOIN {_mapping.StoreOptions.EventGraph.TenantPartitionsTableName} tp " +
+              "ON tp.tenant_id = v.tenant_id) AS s"
+            : $"(VALUES ({usingValues})) AS s ({sourceCols})";
+
         var on = conjoined ? "t.id = s.id AND t.tenant_id = s.tenant_id" : "t.id = s.id";
+        if (_mapping.TenantPartitioned)
+        {
+            on += " AND t.tenant_ordinal = s.tenant_ordinal";
+        }
 
         // UPDATE (matched AND version == expected): data, version+1, client cols, server literals.
         var setList = new List<string> { "data = s.data", "version = t.version + 1" };
@@ -455,9 +469,15 @@ internal abstract class PolecatDocumentStorage<TDoc, TId>
             insertVals.Add("s.tenant_id");
         }
 
+        if (_mapping.TenantPartitioned)
+        {
+            insertCols.Add("tenant_ordinal");
+            insertVals.Add("s.tenant_ordinal");
+        }
+
         _bulkVersionCheckedSql =
             $"MERGE {table} WITH (HOLDLOCK) AS t " +
-            $"USING (VALUES ({usingValues})) AS s ({sourceCols}) ON {on} " +
+            $"USING {usingClause} ON {on} " +
             $"WHEN MATCHED AND t.version = s.expected_version THEN UPDATE SET {string.Join(", ", setList)} " +
             $"WHEN NOT MATCHED THEN INSERT ({string.Join(", ", insertCols)}) VALUES ({string.Join(", ", insertVals)}) " +
             $"OUTPUT inserted.id;";

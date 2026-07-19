@@ -14,8 +14,9 @@ namespace Polecat.Tests.Harness;
 public class TenantPartitioningCollection;
 
 /// <summary>
-///     Drops the database-global partition function/scheme that the managed tenant partitioning leaves
-///     behind for a tenant-partitioned <c>pc_events</c> — they outlive a schema/table drop and must be
+///     Drops the database-global partition functions/schemes that the managed tenant partitioning
+///     leaves behind for tenant-partitioned tables (<c>pc_events</c>, <c>pc_streams</c> since #335,
+///     and any tenant-partitioned <c>pc_doc_*</c>) — they outlive a schema/table drop and must be
 ///     removed explicitly so each test starts clean.
 /// </summary>
 public static class PartitionTestCleanup
@@ -26,21 +27,27 @@ public static class PartitionTestCleanup
         await conn.OpenAsync();
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = """
-            -- The scheme is shared across every test schema's pc_events, so drop ALL tables sitting on
-            -- it (in any schema) before the scheme/function can be removed.
+            -- The schemes are shared across every test schema's tables, so drop ALL tables sitting
+            -- on any pc_* tenant-ordinal scheme (in any schema) before the schemes/functions can be
+            -- removed.
             DECLARE @sql nvarchar(max) = N'';
             SELECT @sql = @sql + 'DROP TABLE [' + s.name + '].[' + t.name + '];'
             FROM sys.tables t
             JOIN sys.schemas s ON t.schema_id = s.schema_id
             JOIN sys.indexes i ON i.object_id = t.object_id AND i.index_id IN (0, 1)
             JOIN sys.data_spaces ds ON i.data_space_id = ds.data_space_id
-            WHERE ds.name = 'ps_pc_events_tenant_ordinal';
+            WHERE ds.name LIKE 'ps[_]pc[_]%[_]tenant[_]ordinal';
             IF @sql <> N'' EXEC sp_executesql @sql;
 
-            IF EXISTS (SELECT 1 FROM sys.partition_schemes WHERE name = 'ps_pc_events_tenant_ordinal')
-                DROP PARTITION SCHEME ps_pc_events_tenant_ordinal;
-            IF EXISTS (SELECT 1 FROM sys.partition_functions WHERE name = 'pf_pc_events_tenant_ordinal')
-                DROP PARTITION FUNCTION pf_pc_events_tenant_ordinal;
+            SET @sql = N'';
+            SELECT @sql = @sql + 'DROP PARTITION SCHEME [' + name + '];'
+            FROM sys.partition_schemes WHERE name LIKE 'ps[_]pc[_]%[_]tenant[_]ordinal';
+            IF @sql <> N'' EXEC sp_executesql @sql;
+
+            SET @sql = N'';
+            SELECT @sql = @sql + 'DROP PARTITION FUNCTION [' + name + '];'
+            FROM sys.partition_functions WHERE name LIKE 'pf[_]pc[_]%[_]tenant[_]ordinal';
+            IF @sql <> N'' EXEC sp_executesql @sql;
             """;
         await cmd.ExecuteNonQueryAsync();
     }

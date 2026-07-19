@@ -25,19 +25,17 @@ namespace Polecat.Events.Schema;
 /// </summary>
 internal sealed class TenantEventSequenceRegistry
 {
-    private readonly ManagedTenantPartitions _partitions;
-    private readonly PolecatDatabase _database;
+    private readonly TenantPartitionOrdinalRegistry _ordinals;
     private readonly string _connectionString;
     private readonly string _schemaName;
     private readonly ResiliencePipeline _resilience;
 
     private readonly ConcurrentDictionary<string, TenantStorage> _cache = new(StringComparer.Ordinal);
 
-    public TenantEventSequenceRegistry(ManagedTenantPartitions partitions, PolecatDatabase database,
+    public TenantEventSequenceRegistry(TenantPartitionOrdinalRegistry ordinals,
         string connectionString, string schemaName, ResiliencePipeline resilience)
     {
-        _partitions = partitions;
-        _database = database;
+        _ordinals = ordinals;
         _connectionString = connectionString;
         _schemaName = schemaName;
         _resilience = resilience;
@@ -51,15 +49,34 @@ internal sealed class TenantEventSequenceRegistry
     {
         if (_cache.TryGetValue(tenantId, out var cached)) return cached;
 
-        // Allocate the tenant ordinal + SPLIT the physical pc_events partition (idempotent).
-        var ordinal = await _partitions.AddPartitionToAllTables(_database, tenantId, token)
-            .ConfigureAwait(false);
+        // Allocate the tenant ordinal + SPLIT every managed-partitioned table (idempotent),
+        // through the store's shared ordinal registry (#335) so document writes and the
+        // stream-row SQL see the same tenant -> ordinal cache.
+        var ordinal = await _ordinals.ResolveAsync(tenantId, token).ConfigureAwait(false);
 
         // Ensure the tenant's per-tenant event sequence exists.
         await EnsureSequenceAsync(ordinal, token).ConfigureAwait(false);
 
         var storage = new TenantStorage(ordinal, $"[{_schemaName}].[pc_events_sequence_{ordinal}]");
         return _cache.GetOrAdd(tenantId, storage);
+    }
+
+    /// <summary>
+    ///     Evict a removed tenant so a later append re-provisions instead of reusing a stale
+    ///     ordinal/sequence pairing (#335 runtime tenant removal).
+    /// </summary>
+    public void Evict(string tenantId) => _cache.TryRemove(tenantId, out _);
+
+    /// <summary>
+    ///     Imperative sequence provisioning for <see cref="AdvancedOperations.AddPolecatManagedTenantsAsync(CancellationToken,string[])" />
+    ///     — creates <c>pc_events_sequence_{ordinal}</c> for each ordinal (idempotent).
+    /// </summary>
+    public async Task EnsureSequencesForOrdinalsAsync(IEnumerable<int> ordinals, CancellationToken token)
+    {
+        foreach (var ordinal in ordinals.Distinct())
+        {
+            await EnsureSequenceAsync(ordinal, token).ConfigureAwait(false);
+        }
     }
 
     private async Task EnsureSequenceAsync(int ordinal, CancellationToken token)

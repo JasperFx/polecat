@@ -1,5 +1,6 @@
 using Weasel.SqlServer;
 using Weasel.SqlServer.Tables;
+using Weasel.SqlServer.Tables.Partitioning;
 
 namespace Polecat.Events.Schema;
 
@@ -23,6 +24,17 @@ internal class StreamsTable : Table
             : "varchar(250)";
 
         AddColumn("id", idType).AsPrimaryKey().NotNull();
+
+        // #335: partition pc_streams alongside pc_events under per-tenant partitioning (Marten
+        // parity — mt_streams rides mt_events' tenant partitioning). SQL Server requires the
+        // partition column in the clustered index, so tenant_ordinal joins the primary key AFTER
+        // (tenant_id, id) — existing readers keep their (tenant_id, id) prefix seek. The ordinal is
+        // stamped by the append path's stream-row SQL from the planner-resolved tenant cache.
+        if (events.UseTenantPartitionedEvents)
+        {
+            AddColumn(events.TenantPartitionManager.Column, "int").NotNull().AsPrimaryKey();
+            this.PartitionByManagedTenants(events.TenantPartitionManager);
+        }
 
         AddColumn("type", "varchar(250)").AllowNulls();
         AddColumn("version", "bigint").NotNull().DefaultValue(0);
