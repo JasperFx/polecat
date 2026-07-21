@@ -4,6 +4,7 @@ using System.Reflection;
 using System.Text.Json;
 using JasperFx.Descriptors;
 using JasperFx.Events;
+using JasperFx.Events.Aggregation;
 using JasperFx.Events.Projections;
 using Polecat.Events;
 
@@ -164,6 +165,70 @@ public partial class DocumentStore
             : JsonSerializer.SerializeToElement(typedFinal, stateType);
 
         return new ProjectionTimelineRaw(rawSteps, finalJson);
+    }
+
+    /// <summary>
+    ///     #346: MultiStreamProjection stepthrough parity. Replays a fixed event list through a
+    ///     registered aggregation projection's <em>real</em> execution path — slice → group →
+    ///     <c>EnrichEventsAsync</c> → evolve — fanning the events out across every aggregate identity
+    ///     the projection touches and returning one timeline per identity. Single-stream projections
+    ///     produce exactly one. Stateless; nothing is persisted.
+    ///
+    ///     The fold itself lives in JasperFx.Events on <c>JasperFxAggregationProjectionBase</c> (which
+    ///     every Polecat single/multi-stream projection derives from) and is reached through
+    ///     <see cref="ISteppableAggregation{TQuerySession}" />, so this is a thin adapter: resolve the
+    ///     projection by name, convert the wire events, open a read-only query session, and delegate.
+    /// </summary>
+    [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
+        Justification = "Calls ToDomainEvent (annotated [RequiresUnreferencedCode]) and STJ over the store serializer output. The explicit interface impl can't propagate the requirement because IEventStore.RunMultiStreamProjectionAsync doesn't declare it (tracked with the sibling replay methods above).")]
+    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+        Justification = "ToDomainEvent + JsonSerializer.Deserialize<JsonElement> use STJ runtime code generation. Diagnostic IEventStore surface — same rationale as RunProjectionAsync / RunProjectionByNameAsync above.")]
+    async Task<MultiAggregateProjectionResult> IEventStore.RunMultiStreamProjectionAsync(
+        string projectionName, IReadOnlyList<EventRecord> events, CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(projectionName);
+        ArgumentNullException.ThrowIfNull(events);
+
+        if (!Options.Projections.TryFindProjection(projectionName, out var source))
+        {
+            throw new ArgumentException(
+                $"Unknown projection '{projectionName}'. Register the projection on StoreOptions.Projections before replaying.",
+                nameof(projectionName));
+        }
+
+        // Only aggregation (single- or multi-stream) projections carry the instrumented fold. The
+        // projection source returned by TryFindProjection is the JasperFxAggregationProjectionBase
+        // instance itself, so for an aggregation projection it casts straight to ISteppableAggregation.
+        if (source is not ISteppableAggregation<IQuerySession> steppable)
+        {
+            throw new NotSupportedException(
+                $"Projection '{projectionName}' is not an aggregation (single- or multi-stream) projection and cannot be stepped through.");
+        }
+
+        // Convert wire events to domain events, keeping a reference-keyed map back to each originating
+        // EventRecord for the fold's toRecord delegate (the fold hands back the same IEvent instances).
+        // Unregistered event types are skipped, matching the single-aggregate replay path above.
+        var recordByEvent = new Dictionary<IEvent, EventRecord>(ReferenceEqualityComparer.Instance);
+        var domainEvents = new List<IEvent>(events.Count);
+        foreach (var record in events)
+        {
+            var domainEvent = ToDomainEvent(record);
+            if (domainEvent is null) continue;
+            recordByEvent[domainEvent] = record;
+            domainEvents.Add(domainEvent);
+        }
+
+        await using var session = QuerySession();
+
+        // serialize: use the store's own serializer so captured snapshots match what the store would
+        // persist (per the ISteppableAggregation contract), then parse to a JsonElement.
+        return await steppable.BuildTimelinesAsync(
+            domainEvents,
+            session,
+            state => state is null ? null : JsonSerializer.Deserialize<JsonElement>(Options.Serializer.ToJson(state)),
+            e => recordByEvent[e],
+            observer: null,
+            ct).ConfigureAwait(false);
     }
 
     /// <summary>
