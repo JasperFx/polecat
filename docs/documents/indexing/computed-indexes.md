@@ -61,6 +61,41 @@ opts.Schema.For<User>().UniqueIndex(x => x.Email);
 
 Attempting to store two documents with the same email will throw a SQL Server unique constraint violation.
 
+## Covering Indexes (INCLUDE Columns)
+
+A query that filters on one property but also *selects* others can still pay for a lookup back into the
+table to fetch the extra columns. You can avoid that by carrying those extra members in the index as
+non-key **`INCLUDE`** columns, so SQL Server satisfies the whole query from the index alone. Pass the
+`include:` argument — a single member or an anonymous type, just like the key expression:
+
+```cs
+opts.Schema.For<User>().Index(x => x.UserName, include: x => new { x.FirstName, x.LastName });
+```
+
+Each include member gets its own persisted computed column, and the index gains an `INCLUDE` clause:
+
+```sql
+ALTER TABLE [myschema].[pc_doc_user]
+    ADD [cc_firstname] AS CAST(JSON_VALUE(data, '$.firstName') AS varchar(250)) PERSISTED;
+ALTER TABLE [myschema].[pc_doc_user]
+    ADD [cc_lastname] AS CAST(JSON_VALUE(data, '$.lastName') AS varchar(250)) PERSISTED;
+
+CREATE NONCLUSTERED INDEX [ix_pc_doc_user_username]
+    ON [myschema].[pc_doc_user] ([cc_username]) INCLUDE ([cc_firstname], [cc_lastname]);
+```
+
+This maps to the `IncludeColumns` property on `DocumentIndex` (named after Marten/Weasel's
+`IndexDefinition.IncludeColumns`), which you can also set directly in the `configure` action if you
+prefer to work in raw JSON paths:
+
+```cs
+opts.Schema.For<User>().Index(x => x.UserName, idx => idx.IncludeColumns = ["$.firstName", "$.lastName"]);
+```
+
+`UniqueIndex(...)` accepts the same `include:` argument. Include columns are always stored with default
+casing (they are payload, not keys), and covering indexes work on both native `json` and `nvarchar(max)`
+storage.
+
 ## Customizing an Index
 
 The `Index()` and `UniqueIndex()` methods accept an optional `Action<DocumentIndex>` to customize the index:
