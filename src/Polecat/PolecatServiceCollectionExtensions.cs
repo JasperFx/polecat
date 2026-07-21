@@ -119,8 +119,10 @@ public static class PolecatServiceCollectionExtensions
         services.AddScoped(sp => sp.GetRequiredService<ISessionFactory>().QuerySession());
 
         // #219: register the activator unconditionally so InitialData seeders run on host startup
-        // even without ApplyAllDatabaseChangesOnStartup. StartAsync is a no-op when there is no
-        // InitialData and ShouldApplyChangesOnStartup is false, so this is safe for every app.
+        // even without ApplyAllDatabaseChangesOnStartup. #345: it is also Polecat's always-on emit
+        // point for the JasperFx application-assembly-reuse warning. StartAsync only logs that warning
+        // (when present) and is otherwise a no-op when there is no InitialData and
+        // ShouldApplyChangesOnStartup is false, so this is safe for every app.
         PolecatConfigurationExpression.EnsureActivatorIsRegistered(services);
 
         return new PolecatConfigurationExpression(services);
