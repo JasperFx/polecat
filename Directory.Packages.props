@@ -26,9 +26,14 @@
              local restart seam (IProjectionDaemon.HighWaterLastPolledAt / IsHighWaterStale /
              RestartHighWaterAgentAsync; DaemonSettings.HighWaterStalenessThreshold; ShardAction.Faulted/
              Restarted). Foundation for the Phase 2 high-water health check (polecat#341). Also carries
-             the jasperfx#540 faulted-start teardown that first shipped in 2.32.0. -->
-        <PackageVersion Include="JasperFx" Version="2.32.0" />
-        <PackageVersion Include="JasperFx.Events" Version="2.32.0" />
+             the jasperfx#540 faulted-start teardown that first shipped in 2.32.0.
+             JasperFx 2.33.0: (a) jasperfx#543 — JasperFxOptions.ApplicationAssemblyReuseWarning, the
+             GH-3521 application-assembly-reuse detection Polecat surfaces once at startup (#345); and
+             (b) the JasperFx.Events instrumented-fold surface (ISteppableAggregation,
+             JasperFxAggregationProjectionBase.Stepping, EnrichEventsAsync) that Polecat's
+             MultiStreamProjection stepthrough parity builds on (#346). -->
+        <PackageVersion Include="JasperFx" Version="2.33.0" />
+        <PackageVersion Include="JasperFx.Events" Version="2.33.0" />
         <!-- Pin the sibling JasperFx packages for parity with Marten 9's matrix
              even though Polecat doesn't currently reference them directly —
              keeps the lockstep matrix coherent when transitive resolution
@@ -36,7 +41,7 @@
              RuntimeCompiler 5.x line is the active continuation of the 4.x
              lineage; do not pin against the parallel stale 2.0.x series. -->
         <PackageVersion Include="JasperFx.RuntimeCompiler" Version="5.0.0" />
-        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.32.0" />
+        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.33.0" />
         <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
@@ -81,7 +86,7 @@
         <PackageVersion Include="StronglyTypedId" Version="1.0.0-beta08" />
 
         <!-- Source generators (matched to JasperFx.Events above) -->
-        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.32.0" />
+        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.33.0" />
 
         <!-- Build automation -->
         <PackageVersion Include="Nuke.Common" Version="9.0.4" />
