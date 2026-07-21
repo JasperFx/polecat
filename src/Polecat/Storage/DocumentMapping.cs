@@ -217,6 +217,12 @@ internal class DocumentMapping
     public List<DocumentIndex> Indexes { get; } = new();
 
     /// <summary>
+    ///     Native SQL Server 2025 JSON indexes (<c>CREATE JSON INDEX</c>) configured for this document
+    ///     type. The SQL Server analog of Marten's whole-body <c>GinIndexJsonData</c>.
+    /// </summary>
+    public List<JsonIndex> JsonIndexes { get; } = new();
+
+    /// <summary>
     ///     #243: document metadata configuration (opt-in columns + member mappings), populated from
     ///     metadata attributes and the <c>Schema.For&lt;T&gt;().Metadata(...)</c> DSL.
     /// </summary>

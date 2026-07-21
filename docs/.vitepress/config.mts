@@ -80,6 +80,12 @@ const config: UserConfig<DefaultTheme.Config> = {
             { text: 'Storing Documents', link: '/documents/storing' },
             { text: 'Deleting Documents', link: '/documents/deletes' },
             {
+              text: 'Indexing Documents', link: '/documents/indexing/', collapsed: true, items: [
+                { text: 'Computed Indexes', link: '/documents/indexing/computed-indexes' },
+                { text: 'JSON Indexes', link: '/documents/indexing/json-indexes' },
+              ]
+            },
+            {
               text: 'Querying Documents', link: '/documents/querying/', collapsed: true, items: [
                 { text: 'Loading Documents by Id', link: '/documents/querying/byid' },
                 { text: 'Querying Documents with LINQ', link: '/documents/querying/linq/' },
