@@ -14,6 +14,7 @@ public class DocumentMappingExpression<T>
     internal readonly Type DocumentType = typeof(T);
     internal readonly List<(Type SubClass, string? Alias)> SubClasses = new();
     internal readonly List<DocumentIndex> Indexes = new();
+    internal readonly List<JsonIndex> JsonIndexes = new();
     internal readonly List<DocumentForeignKey> ForeignKeys = new();
     internal DocumentPartitioning? Partitioning;
     internal readonly Metadata.DocumentMetadataConfig MetadataConfig = new();
@@ -65,29 +66,67 @@ public class DocumentMappingExpression<T>
     }
 
     /// <summary>
-    ///     Add a computed index on one or more document properties.
-    ///     Properties are extracted via JSON_VALUE from the data column.
+    ///     Add a computed index on one or more document properties, mirroring Marten's
+    ///     <c>Schema.For&lt;T&gt;().Index(...)</c>. Properties are extracted via JSON_VALUE from the
+    ///     data column into persisted computed columns. Pass <paramref name="include" /> (a member or
+    ///     anonymous type) to carry those members as non-key <c>INCLUDE</c> columns for a covering
+    ///     index that avoids key lookups — the type-safe equivalent of setting
+    ///     <see cref="DocumentIndex.IncludeColumns" /> inside <paramref name="configure" />.
     /// </summary>
     public DocumentMappingExpression<T> Index(Expression<Func<T, object?>> expression,
-        Action<DocumentIndex>? configure = null)
+        Action<DocumentIndex>? configure = null, Expression<Func<T, object?>>? include = null)
     {
         var paths = DocumentIndex.ResolveJsonPaths(expression);
         var index = new DocumentIndex(paths);
+        if (include != null) index.IncludeColumns = DocumentIndex.ResolveJsonPaths(include);
         configure?.Invoke(index);
         Indexes.Add(index);
         return this;
     }
 
     /// <summary>
-    ///     Add a unique index on one or more document properties.
+    ///     Add a unique index on one or more document properties, mirroring Marten's
+    ///     <c>Schema.For&lt;T&gt;().UniqueIndex(...)</c>. Pass <paramref name="include" /> to carry
+    ///     extra members as non-key <c>INCLUDE</c> columns (covering index).
     /// </summary>
     public DocumentMappingExpression<T> UniqueIndex(Expression<Func<T, object?>> expression,
-        Action<DocumentIndex>? configure = null)
+        Action<DocumentIndex>? configure = null, Expression<Func<T, object?>>? include = null)
     {
         var paths = DocumentIndex.ResolveJsonPaths(expression);
         var index = new DocumentIndex(paths) { IsUnique = true };
+        if (include != null) index.IncludeColumns = DocumentIndex.ResolveJsonPaths(include);
         configure?.Invoke(index);
         Indexes.Add(index);
+        return this;
+    }
+
+    /// <summary>
+    ///     Add a native SQL Server 2025 JSON index (<c>CREATE JSON INDEX</c>) over one or more JSON
+    ///     paths in the document. A single JSON index covers all the given paths and accelerates
+    ///     <c>JSON_VALUE</c> (=, including the <c>RETURNING</c> form) / <c>JSON_PATH_EXISTS</c> /
+    ///     <c>JSON_CONTAINS</c> predicates without per-path computed columns. Requires
+    ///     <c>UseNativeJsonType = true</c>. See <see cref="JsonIndex" /> for the constraints.
+    /// </summary>
+    public DocumentMappingExpression<T> JsonIndex(Expression<Func<T, object?>> expression,
+        Action<JsonIndex>? configure = null)
+    {
+        var paths = Storage.JsonIndex.ResolveJsonPaths(expression);
+        var index = new JsonIndex(paths);
+        configure?.Invoke(index);
+        JsonIndexes.Add(index);
+        return this;
+    }
+
+    /// <summary>
+    ///     Add a native JSON index over the entire JSON document (no <c>FOR</c> path filter) — the
+    ///     SQL Server counterpart to Marten's <c>GinIndexJsonData</c>. Requires
+    ///     <c>UseNativeJsonType = true</c>.
+    /// </summary>
+    public DocumentMappingExpression<T> JsonIndex(Action<JsonIndex>? configure = null)
+    {
+        var index = new JsonIndex([]);
+        configure?.Invoke(index);
+        JsonIndexes.Add(index);
         return this;
     }
 

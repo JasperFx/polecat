@@ -56,6 +56,17 @@ public class DocumentIndex
     public Dictionary<string, string> SqlTypeByPath { get; } = new();
 
     /// <summary>
+    ///     JSON paths whose values are carried in the index as non-key <c>INCLUDE</c> columns (a
+    ///     covering index). Mirrors Marten/Weasel's <see cref="!:IndexDefinition.IncludeColumns" />.
+    ///     Each entry is a JSON path (e.g. "$.bucketEnd"); it gets its own persisted computed column.
+    ///     Including the columns a query also selects lets SQL Server satisfy the query from the index
+    ///     alone, avoiding a key lookup back into the table. Include columns are always Default casing
+    ///     (they are payload, not keys). Set directly, or via the type-safe <c>include:</c> parameter
+    ///     on <c>Schema.For&lt;T&gt;().Index(...)</c>.
+    /// </summary>
+    public string[] IncludeColumns { get; set; } = [];
+
+    /// <summary>
     ///     Sort order for the index columns.
     /// </summary>
     public SortOrder SortOrder { get; set; } = SortOrder.Ascending;
@@ -165,12 +176,25 @@ public class DocumentIndex
 
         var statements = new List<string>();
 
-        // Add persisted computed columns for each JSON path
+        // Add persisted computed columns for each key JSON path
         foreach (var path in JsonPaths)
         {
             var colName = ColumnNameForPath(path, Casing);
             var sqlType = ResolveSqlType(path, mapping.ResolveClrMemberType(path));
             var castedExpr = ComputedColumnExpression(path, sqlType, Casing, UsesNativeJson(mapping));
+
+            statements.Add($"""
+                IF COL_LENGTH('{schema}.{table}', '{colName}') IS NULL
+                    ALTER TABLE {qualifiedTable} ADD [{colName}] AS {castedExpr} PERSISTED;
+                """);
+        }
+
+        // Add persisted computed columns for each INCLUDE (covering) path — always Default casing.
+        foreach (var path in IncludeColumns)
+        {
+            var colName = ColumnNameForPath(path, IndexCasing.Default);
+            var sqlType = ResolveSqlType(path, mapping.ResolveClrMemberType(path));
+            var castedExpr = ComputedColumnExpression(path, sqlType, IndexCasing.Default, UsesNativeJson(mapping));
 
             statements.Add($"""
                 IF COL_LENGTH('{schema}.{table}', '{colName}') IS NULL
@@ -193,12 +217,16 @@ public class DocumentIndex
         }
 
         var columnList = string.Join(", ", indexColumns);
+        var include = IncludeColumns.Length > 0
+            ? " INCLUDE (" + string.Join(", ",
+                IncludeColumns.Select(p => $"[{ColumnNameForPath(p, IndexCasing.Default)}]")) + ")"
+            : "";
         var where = !string.IsNullOrEmpty(Predicate) ? $" WHERE {Predicate}" : "";
 
         statements.Add($"""
             IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = '{name}'
                            AND object_id = OBJECT_ID('{qualifiedTable}'))
-                CREATE {unique}NONCLUSTERED INDEX [{name}] ON {qualifiedTable} ({columnList}){where};
+                CREATE {unique}NONCLUSTERED INDEX [{name}] ON {qualifiedTable} ({columnList}){include}{where};
             """);
 
         return statements.ToArray();
