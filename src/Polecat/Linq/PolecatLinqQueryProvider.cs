@@ -184,6 +184,59 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider
         return sb.ToString();
     }
 
+    /// <summary>
+    ///     Reads the first matching document's raw <c>data</c> JSON <em>and</em> its <c>version</c>
+    ///     in a single round trip (<c>SELECT TOP(1) data, version …</c>). Used by the ASP.NET Core
+    ///     <c>StreamOne</c> ETag path so the version is available without a second metadata query.
+    ///     Returns <c>null</c> when the query matches no document.
+    /// </summary>
+    internal async Task<(string Json, long Version)?> ExecuteJsonFirstWithVersionAsync(
+        Expression expression, CancellationToken token)
+    {
+        var documentType = FindDocumentType(expression);
+        var provider = _providers.GetProvider(documentType);
+        await _tableEnsurer.EnsureTableAsync(provider, token);
+
+        var memberFactory = new MemberFactory(_session.Options, provider.Mapping);
+        var parser = new LinqQueryParser(memberFactory, provider.Mapping.QualifiedTableName);
+        parser.Parse(expression);
+
+        // Read the persisted JSON and the version column together — one round trip, no reserialize.
+        parser.Statement.SelectColumns = "data, version";
+        parser.Statement.Limit = 1;
+
+        if (!parser.IsAnyTenant && IsConjoinedTenancy)
+        {
+            if (parser.TenantIds != null)
+            {
+                parser.Statement.Wheres.Add(new TenantInFilter(parser.TenantIds));
+            }
+            else
+            {
+                parser.Statement.Wheres.Add(new ComparisonFilter("tenant_id", "=", _session.TenantId));
+            }
+        }
+
+        if (provider.Mapping.DeleteStyle == DeleteStyle.SoftDelete && !parser.IsMaybeDeleted)
+        {
+            parser.Statement.Wheres.Add(new LiteralSqlFragment(parser.IsDeletedOnly ? "is_deleted = 1" : "is_deleted = 0"));
+        }
+
+        ApplyModifiedFilters(parser);
+
+        await using var batch = new SqlBatch();
+        var builder = new BatchBuilder(batch);
+        parser.Statement.Apply(builder);
+        builder.Compile();
+
+        await using var reader = await _session.ExecuteReaderAsync(batch, token);
+        if (!await reader.ReadAsync(token)) return null;
+
+        var json = reader.GetString(0);
+        var version = reader.GetInt64(1);
+        return (json, version);
+    }
+
     [RequiresDynamicCode("LINQ-to-SQL execution closes ListQueryHandler<>/DeserializingSelector<>/etc. over the document type via Type.MakeGenericType.")]
     [RequiresUnreferencedCode("LINQ-to-SQL execution reflects over the document type (Activator.CreateInstance on handler types, MethodInfo.Invoke on HandleAsync). AOT consumers must preserve handler + document members through DAM or source generation.")]
     public async Task<TResult> ExecuteAsync<TResult>(Expression expression, CancellationToken token)
