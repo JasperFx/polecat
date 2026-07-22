@@ -34,6 +34,13 @@ internal class LinqQueryParser : ExpressionVisitor
     public IQueryableMember? AggregationMember { get; private set; }
 
     /// <summary>
+    ///     The resolved members behind each ORDER BY / THEN BY clause, in order. Parallel to
+    ///     <see cref="SqlGeneration.Statement.OrderBys"/> but carrying the member CLR type and
+    ///     identity information needed for keyset (cursor) pagination.
+    /// </summary>
+    public List<(IQueryableMember Member, bool Descending)> OrderByMembers { get; } = [];
+
+    /// <summary>
     ///     The Select() lambda, if present. Used for projections.
     /// </summary>
     public LambdaExpression? SelectExpression { get; private set; }
@@ -367,6 +374,7 @@ internal class LinqQueryParser : ExpressionVisitor
         if (replace)
         {
             Statement.OrderBys.Clear();
+            OrderByMembers.Clear();
         }
 
         var lambda = GetLambda(node.Arguments[1]);
@@ -385,6 +393,7 @@ internal class LinqQueryParser : ExpressionVisitor
 
         var member = _memberFactory.ResolveMember(memberExpr);
         Statement.OrderBys.Add((member.TypedLocator, descending));
+        OrderByMembers.Add((member, descending));
     }
 
     private void HandleTake(MethodCallExpression node)

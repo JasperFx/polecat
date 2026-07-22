@@ -21,6 +21,7 @@ that dispatch any `IResult` return value), Polecat.AspNetCore ships three typed 
 | `StreamOne<T>` | `IQueryable<T>` — document query | Single `T` | yes |
 | `StreamMany<T>` | `IQueryable<T>` — document query | JSON array `T[]` | no (empty array = 200) |
 | `StreamPaged<T>` | `IQueryable<T>` + page number/size | Paged JSON envelope | no (empty page = 200) |
+| `StreamPagedByCursor<T>` | `IQueryable<T>` + cursor/page size | Keyset page envelope | no (empty page = 200) |
 | `StreamAggregate<T>` | `IQuerySession` + stream id — event-sourced | Single `T` | yes |
 
 Each type implements both `IResult` (so ASP.NET dispatches it via `ExecuteAsync`) and
@@ -89,6 +90,28 @@ Core via `StreamPagedJsonArray`:
 await session.Query<Issue>().OrderBy(x => x.Number)
     .StreamPagedJsonArray(pageNumber, pageSize, destinationStream);
 ```
+
+### StreamPagedByCursor — keyset (cursor) pagination
+
+```csharp
+app.MapGet("/issues/paged-cursor/{pageSize:int}",
+    (int pageSize, string? cursor, IQuerySession session) =>
+        new StreamPagedByCursor<Issue>(
+            session.Query<Issue>().OrderBy(x => x.Number).ThenBy(x => x.Id), cursor, pageSize));
+```
+
+Streams one keyset (seek) page — constant cost at any depth — as a JSON envelope, and echoes
+the continuation cursor in a `Polecat-Continuation` response header:
+
+```json
+{"items":[...],"nextCursor":"v1:..."}
+```
+
+`nextCursor` is `null` at the end of the set. The wrapped query must order so its terminal key
+is the document identity (e.g. `OrderBy(x => x.Number).ThenBy(x => x.Id)`); a query lacking an
+`OrderBy` or with a non-identity terminal key is rejected. See
+[Keyset (Cursor) Pagination](./querying/linq/paging.md#keyset-cursor-pagination) for the
+mechanics and rules.
 
 ### StreamAggregate — event-sourced aggregate (latest)
 

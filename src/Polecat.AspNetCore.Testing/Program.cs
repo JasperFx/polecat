@@ -53,6 +53,12 @@ app.MapGet("/api/issues-noetag/{id:guid}", (Guid id, IQuerySession session) =>
 app.MapGet("/api/aggregates-noetag/{id:guid}", (Guid id, IQuerySession session) =>
     new StreamAggregate<StreamingQuestParty>(session, id) { EmitETag = false });
 
+// StreamPagedByCursor endpoint — one keyset page + continuation cursor
+app.MapGet("/api/issues/paged-cursor/{pageSize:int}",
+    (int pageSize, string? cursor, IQuerySession session) =>
+        new StreamPagedByCursor<StreamingIssue>(
+            session.Query<StreamingIssue>().OrderBy(x => x.Number).ThenBy(x => x.Id), cursor, pageSize));
+
 app.Run();
 
 namespace Polecat.AspNetCore.Testing
@@ -64,7 +70,7 @@ namespace Polecat.AspNetCore.Testing
         public string Title { get; set; } = "";
         public bool IsOpen { get; set; } = true;
 
-        // Stable ordering key for paged streaming endpoints.
+        // Ordering key for paged / cursor streaming endpoints.
         public int Number { get; set; }
     }
 
