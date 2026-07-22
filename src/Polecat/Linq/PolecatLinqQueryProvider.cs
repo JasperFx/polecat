@@ -4,6 +4,7 @@ using System.Linq.Expressions;
 using System.Text;
 using Microsoft.Data.SqlClient;
 using Polecat.Internal;
+using Polecat.Linq.CursorPaging;
 using Polecat.Linq.Joins;
 using Polecat.Linq.Members;
 using Polecat.Linq.Parsing;
@@ -332,6 +333,112 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider
         }
 
         await destination.WriteAsync("]}"u8.ToArray(), token);
+    }
+
+    /// <summary>
+    ///     Executes one keyset (cursor / seek) page: streams the page's raw document JSON and builds
+    ///     the continuation cursor from the last row's sort-key values — all in a single round trip
+    ///     that also selects the ordering-key columns so the cursor is built without hydrating.
+    ///     Mirrors Marten's <c>StreamPagedByCursor</c> mechanics (JasperFx/marten#5016), adapted to
+    ///     SQL Server (composite seek predicate + <c>TOP(pageSize + 1)</c> to detect a next page).
+    /// </summary>
+    internal async Task<CursorPageResult> ExecuteCursorPageJsonAsync(
+        Expression expression, string? cursor, int pageSize, CancellationToken token)
+    {
+        if (pageSize < 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(pageSize), pageSize,
+                "pageSize must be greater than or equal to 1.");
+        }
+
+        var documentType = FindDocumentType(expression);
+        var provider = _providers.GetProvider(documentType);
+        await _tableEnsurer.EnsureTableAsync(provider, token);
+
+        var memberFactory = new MemberFactory(_session.Options, provider.Mapping);
+        var parser = new LinqQueryParser(memberFactory, provider.Mapping.QualifiedTableName);
+        parser.Parse(expression);
+
+        var orderBy = parser.OrderByMembers;
+        CursorPagination.ValidateOrdering(orderBy);
+
+        // Select the raw data column plus each ordering-key column (aliased) so the cursor is built
+        // from the last row without hydrating the document.
+        var select = new StringBuilder("data");
+        for (var i = 0; i < orderBy.Count; i++)
+        {
+            select.Append(", ").Append(orderBy[i].Member.TypedLocator).Append(" AS __pc_k").Append(i);
+        }
+
+        parser.Statement.SelectColumns = select.ToString();
+
+        // Fetch one extra row to detect whether a next page exists.
+        parser.Statement.Limit = pageSize + 1;
+
+        if (cursor != null)
+        {
+            var values = CursorPagination.Decode(cursor, orderBy);
+            parser.Statement.Wheres.Add(CursorPagination.BuildSeekPredicate(orderBy, values));
+        }
+
+        if (!parser.IsAnyTenant && IsConjoinedTenancy)
+        {
+            if (parser.TenantIds != null)
+            {
+                parser.Statement.Wheres.Add(new TenantInFilter(parser.TenantIds));
+            }
+            else
+            {
+                parser.Statement.Wheres.Add(new ComparisonFilter("tenant_id", "=", _session.TenantId));
+            }
+        }
+
+        if (provider.Mapping.DeleteStyle == DeleteStyle.SoftDelete && !parser.IsMaybeDeleted)
+        {
+            parser.Statement.Wheres.Add(new LiteralSqlFragment(parser.IsDeletedOnly ? "is_deleted = 1" : "is_deleted = 0"));
+        }
+
+        ApplyModifiedFilters(parser);
+
+        await using var batch = new SqlBatch();
+        var builder = new BatchBuilder(batch);
+        parser.Statement.Apply(builder);
+        builder.Compile();
+
+        await using var reader = await _session.ExecuteReaderAsync(batch, token);
+
+        var items = new List<string>(pageSize + 1);
+        var lastKeyValues = new List<object?[]>(pageSize + 1);
+        while (await reader.ReadAsync(token))
+        {
+            items.Add(reader.GetString(0));
+
+            var keys = new object?[orderBy.Count];
+            for (var i = 0; i < orderBy.Count; i++)
+            {
+                keys[i] = reader.IsDBNull(i + 1) ? null : reader.GetValue(i + 1);
+            }
+
+            lastKeyValues.Add(keys);
+        }
+
+        // If the probe row came back, there is a next page. Trim to pageSize and build the cursor
+        // from the last kept row's sort-key values.
+        var hasMore = items.Count > pageSize;
+        var count = hasMore ? pageSize : items.Count;
+
+        var sb = new StringBuilder("[");
+        for (var i = 0; i < count; i++)
+        {
+            if (i > 0) sb.Append(',');
+            sb.Append(items[i]);
+        }
+
+        sb.Append(']');
+
+        var nextCursor = hasMore ? CursorPagination.Encode(lastKeyValues[count - 1]) : null;
+
+        return new CursorPageResult(sb.ToString(), count, nextCursor);
     }
 
     [RequiresDynamicCode("LINQ-to-SQL execution closes ListQueryHandler<>/DeserializingSelector<>/etc. over the document type via Type.MakeGenericType.")]
