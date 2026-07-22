@@ -27,8 +27,17 @@ namespace Polecat;
     Justification = "Class-level: RehydrateAtVersionByNameAsync uses MethodInfo.MakeGenericMethod with the resolved aggregate type — runtime code generation. AOT consumers should prefer the strong-typed RehydrateAtVersionAsync<T> overload (covered by the AOT publishing guide).")]
 public partial class DocumentStore
 {
+    Task<IReadOnlyList<StreamSummary>> IEventStore.GetRecentStreamsAsync(int count, CancellationToken ct)
+        => ((IEventStore)this).GetRecentStreamsAsync(count, null, ct);
+
+    // #782 / jasperfx#503 — tenant-scoped recent-streams listing. On a conjoined multi-tenant
+    // Polecat store the pc_streams rows carry a tenant_id column, so a non-null tenantId bounds
+    // the listing with a tenant_id predicate. Null preserves the store-global listing across
+    // every tenant (today's behaviour). Database-per-tenant scoping (StaticMultiple /
+    // DynamicMultiple) is a separate, broader gap — the tenant-less explorer reads themselves do
+    // not yet resolve per-database — so it is not attempted here.
     async Task<IReadOnlyList<StreamSummary>> IEventStore.GetRecentStreamsAsync(
-        int count, CancellationToken ct)
+        int count, string? tenantId, CancellationToken ct)
     {
         if (count <= 0) return Array.Empty<StreamSummary>();
 
@@ -41,12 +50,14 @@ public partial class DocumentStore
         // #57: share the column projection + row read with FetchStreamStateAsync
         // and GetStreamMetadataAsync via PcStreamsRowReader so all three sites
         // stay aligned when pc_streams' shape evolves.
+        var tenantFilter = tenantId == null ? "" : "WHERE tenant_id = @tenant_id\n            ";
         cmd.CommandText = $"""
             SELECT TOP (@count) {PcStreamsRowReader.SelectColumns}
             FROM {Events.StreamsTableName}
-            ORDER BY timestamp DESC;
+            {tenantFilter}ORDER BY timestamp DESC;
             """;
         cmd.Parameters.AddWithValue("@count", count);
+        if (tenantId != null) cmd.Parameters.AddWithValue("@tenant_id", tenantId);
 
         await using var reader = await session.ExecuteReaderAsync(cmd, ct);
         while (await reader.ReadAsync(ct))
@@ -57,8 +68,16 @@ public partial class DocumentStore
         return results;
     }
 
+    IAsyncEnumerable<EventRecord> IEventStore.ReadStreamAsync(string streamId, CancellationToken ct)
+        => ((IEventStore)this).ReadStreamAsync(streamId, null, ct);
+
+    // #782 / jasperfx#503 — tenant-scoped stream read. On a conjoined multi-tenant Polecat
+    // store the same stream id can exist under two tenants; the tenant-less overload reads
+    // across every tenant and returns their ambiguous union. A non-null tenantId filters the
+    // read to that tenant's rows via a tenant_id predicate. Null preserves the store-global
+    // read. (See the GetRecentStreamsAsync note on the database-per-tenant boundary.)
     async IAsyncEnumerable<EventRecord> IEventStore.ReadStreamAsync(
-        string streamId, [EnumeratorCancellation] CancellationToken ct)
+        string streamId, string? tenantId, [EnumeratorCancellation] CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrEmpty(streamId);
 
@@ -80,13 +99,15 @@ public partial class DocumentStore
         // (dotnet_type, is_archived, correlation_id, causation_id) per the
         // polecat#57 Q2 design note — wire cost is negligible against the
         // readability of one canonical projection.
+        var tenantFilter = tenantId == null ? "" : "AND tenant_id = @tenant_id\n            ";
         cmd.CommandText = $"""
             SELECT {PcEventsRowReader.ComposeSelectColumns(Events.EventOptions)}
             FROM {Events.EventsTableName}
             WHERE stream_id = @stream_id
-            ORDER BY version;
+            {tenantFilter}ORDER BY version;
             """;
         cmd.Parameters.AddWithValue("@stream_id", resolvedStreamId);
+        if (tenantId != null) cmd.Parameters.AddWithValue("@tenant_id", tenantId);
 
         var ctx = new EventHydrationContext(
             Events,
