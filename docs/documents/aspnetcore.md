@@ -66,6 +66,44 @@ string-keyed streams.
 - **`StreamAggregate<T>`** is for event-sourced aggregates — Polecat rebuilds (or reads the
   snapshot of) the latest aggregate state from events before writing the response.
 
+### ETag / Conditional Requests
+
+`StreamOne<T>` and `StreamAggregate<T>` support HTTP conditional requests
+(`ETag` / `If-None-Match` → `304 Not Modified`) so polling clients skip re-downloading
+unchanged documents/aggregates. It is **on by default**.
+
+- On a normal hit, an `ETag` response header carrying the version is emitted.
+- An incoming `If-None-Match` that matches the current version yields `304 Not Modified`
+  with an empty body and the `ETag` header — for `StreamAggregate<T>` this skips the
+  aggregation entirely (the stream version is read cheaply first).
+- The version source differs by type:
+  - **`StreamOne<T>`** uses the document's `version` column (read inline with the document
+    JSON in a single round trip — no follow-up metadata query).
+  - **`StreamAggregate<T>`** uses the event stream's version (via `FetchStreamStateAsync`,
+    read before folding).
+- `StreamMany<T>` is intentionally out of scope (a cheap collection-wide ETag is hard to
+  derive).
+
+Opt out per endpoint with `EmitETag = false`, which restores the exact pre-ETag behavior
+(no header, no conditional handling):
+
+```csharp
+app.MapGet("/issues/{id:guid}",
+    (Guid id, IQuerySession session) =>
+        new StreamOne<Issue>(session.Query<Issue>().Where(x => x.Id == id))
+        {
+            EmitETag = false
+        });
+```
+
+::: tip
+ETag values are opaque per RFC 7232. Polecat document tables always carry a `version`
+column, so a document ETag is always available when `EmitETag` is on; the only way to
+suppress it is `EmitETag = false`. `ETagHelpers` handles the `*` wildcard, comma-separated
+`If-None-Match` lists, and `W/` weak validators (weak comparison, the correct function for
+`If-None-Match`).
+:::
+
 ### Customizing status code and content type
 
 All three types expose `init`-only properties:
@@ -81,9 +119,8 @@ app.MapPost("/issues",
 ```
 
 ::: tip
-Unlike Marten.AspNetCore, Polecat does not currently offer a deserialize-free raw-JSON
-streaming path. The streaming helpers materialize documents via the regular query path and
-serialize through `System.Text.Json`. This still eliminates the endpoint boilerplate
-(null-check, status code, content type, OpenAPI metadata). A future enhancement will add
-a true streaming path.
+`StreamOne<T>` streams the raw persisted document JSON straight through (no
+deserialize/reserialize). `StreamMany<T>` and `StreamAggregate<T>` materialize via the
+regular query/projection path and serialize through `System.Text.Json`. All of them
+eliminate the endpoint boilerplate (null-check, status code, content type, OpenAPI metadata).
 :::

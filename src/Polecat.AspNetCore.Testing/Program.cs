@@ -37,6 +37,16 @@ app.MapGet("/api/issues", async (IQuerySession session) =>
 app.MapGet("/api/aggregates/{id:guid}", async (Guid id, IQuerySession session) =>
     new StreamAggregate<StreamingQuestParty>(session, id));
 
+// EmitETag = false variants — restore the pre-ETag behavior (no ETag header, no 304)
+app.MapGet("/api/issues-noetag/{id:guid}", (Guid id, IQuerySession session) =>
+    new StreamOne<StreamingIssue>(session.Query<StreamingIssue>().Where(x => x.Id == id))
+    {
+        EmitETag = false
+    });
+
+app.MapGet("/api/aggregates-noetag/{id:guid}", (Guid id, IQuerySession session) =>
+    new StreamAggregate<StreamingQuestParty>(session, id) { EmitETag = false });
+
 app.Run();
 
 namespace Polecat.AspNetCore.Testing

@@ -64,6 +64,14 @@ public sealed class StreamAggregate<T> : IResult, IEndpointMetadataProvider wher
     /// </summary>
     public string ContentType { get; init; } = "application/json";
 
+    /// <summary>
+    /// When <c>true</c> (the default), an <c>ETag</c> response header carrying the stream version
+    /// is emitted on a hit, and an incoming <c>If-None-Match</c> that matches the current version
+    /// yields <c>304 Not Modified</c> with an empty body — skipping the aggregation entirely. Set to
+    /// <c>false</c> to restore the pre-ETag behavior exactly (no header, no conditional handling).
+    /// </summary>
+    public bool EmitETag { get; init; } = true;
+
     /// <inheritdoc />
     [UnconditionalSuppressMessage("Trimming", "IL2046",
         Justification = "IResult.ExecuteAsync is not RUC-annotated; the contract lives on this override.")]
@@ -75,6 +83,30 @@ public sealed class StreamAggregate<T> : IResult, IEndpointMetadataProvider wher
     {
         ArgumentNullException.ThrowIfNull(httpContext);
 
+        // Read the stream's version cheaply BEFORE folding so a 304 skips the aggregation entirely.
+        var state = _useGuid
+            ? await _session.Events.FetchStreamStateAsync(_guidId, httpContext.RequestAborted)
+            : await _session.Events.FetchStreamStateAsync(_stringId!, httpContext.RequestAborted);
+
+        if (state is null)
+        {
+            httpContext.Response.StatusCode = StatusCodes.Status404NotFound;
+            return;
+        }
+
+        if (EmitETag)
+        {
+            var etag = ETagHelpers.Format(state.Version);
+
+            if (ETagHelpers.IfNoneMatchMatches(httpContext, etag))
+            {
+                httpContext.Response.StatusCode = StatusCodes.Status304NotModified;
+                httpContext.Response.Headers.ETag = etag;
+                httpContext.Response.ContentLength = 0;
+                return;
+            }
+        }
+
         var aggregate = _useGuid
             ? await _session.Events.FetchLatest<T>(_guidId)
             : await _session.Events.FetchLatest<T>(_stringId!);
@@ -85,11 +117,16 @@ public sealed class StreamAggregate<T> : IResult, IEndpointMetadataProvider wher
             return;
         }
 
+        if (EmitETag)
+        {
+            httpContext.Response.Headers.ETag = ETagHelpers.Format(state.Version);
+        }
+
         httpContext.Response.StatusCode = OnFoundStatus;
         httpContext.Response.ContentType = ContentType;
         var json = JsonSerializer.SerializeToUtf8Bytes(aggregate);
         httpContext.Response.ContentLength = json.Length;
-        await httpContext.Response.Body.WriteAsync(json);
+        await httpContext.Response.Body.WriteAsync(json, httpContext.RequestAborted);
     }
 
     /// <summary>
@@ -102,6 +139,8 @@ public sealed class StreamAggregate<T> : IResult, IEndpointMetadataProvider wher
 
         builder.Metadata.Add(new ProducesResponseTypeMetadata(
             StatusCodes.Status200OK, typeof(T), ["application/json"]));
+        builder.Metadata.Add(new ProducesResponseTypeMetadata(
+            StatusCodes.Status304NotModified, typeof(void), []));
         builder.Metadata.Add(new ProducesResponseTypeMetadata(
             StatusCodes.Status404NotFound, typeof(void), []));
     }

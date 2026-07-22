@@ -1,6 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
-using System.Text.Json;
+using System.Text;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Metadata;
@@ -45,18 +45,28 @@ public sealed class StreamOne<T> : IResult, IEndpointMetadataProvider
     /// </summary>
     public string ContentType { get; init; } = "application/json";
 
+    /// <summary>
+    /// When <c>true</c> (the default), an <c>ETag</c> response header carrying the document's
+    /// version is emitted on a hit, and an incoming <c>If-None-Match</c> that matches the current
+    /// version yields <c>304 Not Modified</c> with an empty body. Set to <c>false</c> to restore
+    /// the pre-ETag behavior exactly (no header, no conditional handling).
+    /// </summary>
+    public bool EmitETag { get; init; } = true;
+
     /// <inheritdoc />
     [UnconditionalSuppressMessage("Trimming", "IL2046",
         Justification = "IResult.ExecuteAsync is not RUC-annotated; the contract lives on this override.")]
     [UnconditionalSuppressMessage("AOT", "IL3051",
         Justification = "IResult.ExecuteAsync is not RDC-annotated; the contract lives on this override.")]
-    [RequiresDynamicCode("StreamOne<T>.ExecuteAsync calls JsonSerializer.SerializeToUtf8Bytes(T) which uses STJ runtime codegen. AOT consumers must supply a JsonSerializerContext for T or switch to a source-generator-backed serializer.")]
-    [RequiresUnreferencedCode("StreamOne<T>.ExecuteAsync reflects over T's properties via STJ. AOT consumers must preserve T's serialized members through DynamicallyAccessedMembers or source generation.")]
+    [RequiresDynamicCode("StreamOne<T>.ExecuteAsync routes through the Polecat LINQ provider, which closes generic handler types over T via MakeGenericType.")]
+    [RequiresUnreferencedCode("StreamOne<T>.ExecuteAsync routes through the Polecat LINQ provider, which reflects over T. AOT consumers must preserve T's members through DynamicallyAccessedMembers or source generation.")]
     public async Task ExecuteAsync(HttpContext httpContext)
     {
         ArgumentNullException.ThrowIfNull(httpContext);
 
-        var result = await _queryable.FirstOrDefaultAsync();
+        // Read the document JSON and its version together in one round trip so a 304 needs no
+        // extra query and a 200 streams the raw persisted JSON with no reserialize.
+        var result = await _queryable.ToJsonFirstWithVersionAsync(httpContext.RequestAborted);
 
         if (result is null)
         {
@@ -64,11 +74,26 @@ public sealed class StreamOne<T> : IResult, IEndpointMetadataProvider
             return;
         }
 
+        if (EmitETag)
+        {
+            var etag = ETagHelpers.Format(result.Version);
+
+            if (ETagHelpers.IfNoneMatchMatches(httpContext, etag))
+            {
+                httpContext.Response.StatusCode = StatusCodes.Status304NotModified;
+                httpContext.Response.Headers.ETag = etag;
+                httpContext.Response.ContentLength = 0;
+                return;
+            }
+
+            httpContext.Response.Headers.ETag = etag;
+        }
+
         httpContext.Response.StatusCode = OnFoundStatus;
         httpContext.Response.ContentType = ContentType;
-        var json = JsonSerializer.SerializeToUtf8Bytes(result);
+        var json = Encoding.UTF8.GetBytes(result.Json);
         httpContext.Response.ContentLength = json.Length;
-        await httpContext.Response.Body.WriteAsync(json);
+        await httpContext.Response.Body.WriteAsync(json, httpContext.RequestAborted);
     }
 
     /// <summary>
@@ -81,6 +106,8 @@ public sealed class StreamOne<T> : IResult, IEndpointMetadataProvider
 
         builder.Metadata.Add(new ProducesResponseTypeMetadata(
             StatusCodes.Status200OK, typeof(T), ["application/json"]));
+        builder.Metadata.Add(new ProducesResponseTypeMetadata(
+            StatusCodes.Status304NotModified, typeof(void), []));
         builder.Metadata.Add(new ProducesResponseTypeMetadata(
             StatusCodes.Status404NotFound, typeof(void), []));
     }
