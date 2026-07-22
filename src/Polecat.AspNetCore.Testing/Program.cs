@@ -33,6 +33,12 @@ app.MapGet("/api/issues/{id:guid}", async (Guid id, IQuerySession session) =>
 app.MapGet("/api/issues", async (IQuerySession session) =>
     new StreamMany<StreamingIssue>(session.Query<StreamingIssue>()));
 
+// StreamPaged endpoint — returns one page of documents plus paging metadata in one round trip
+app.MapGet("/api/issues/paged/{pageNumber:int}/{pageSize:int}",
+    (int pageNumber, int pageSize, IQuerySession session) =>
+        new StreamPaged<StreamingIssue>(
+            session.Query<StreamingIssue>().OrderBy(x => x.Number), pageNumber, pageSize));
+
 // StreamAggregate endpoint — returns latest aggregate state or 404
 app.MapGet("/api/aggregates/{id:guid}", async (Guid id, IQuerySession session) =>
     new StreamAggregate<StreamingQuestParty>(session, id));
@@ -57,6 +63,9 @@ namespace Polecat.AspNetCore.Testing
         public Guid Id { get; set; }
         public string Title { get; set; } = "";
         public bool IsOpen { get; set; } = true;
+
+        // Stable ordering key for paged streaming endpoints.
+        public int Number { get; set; }
     }
 
     // Aggregate type for StreamAggregate tests
