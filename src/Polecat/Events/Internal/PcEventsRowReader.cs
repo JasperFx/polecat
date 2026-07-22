@@ -83,6 +83,25 @@ internal static class PcEventsRowReader
     }
 
     /// <summary>
+    ///     <see cref="ComposeSelectColumns"/> with every column qualified by the supplied table
+    ///     <paramref name="alias"/>. Needed by any read that JOINs pc_events against another table
+    ///     (e.g. the DCB tag query joining pc_event_tag_*, which shares the <c>seq_id</c> /
+    ///     <c>tenant_id</c> column names), where a bare column list would be ambiguous. The column
+    ///     ORDER is identical to <see cref="ComposeSelectColumns"/> so <see cref="ReadEventRecord"/>
+    ///     and the IEvent readers keep reading by the same ordinals.
+    /// </summary>
+    internal static string ComposeSelectColumnsWithAlias(EventStoreOptions options, string alias)
+    {
+        var sb = new StringBuilder(
+            $"{alias}.seq_id, {alias}.id, {alias}.stream_id, {alias}.version, {alias}.data, {alias}.type, {alias}.timestamp, {alias}.tenant_id, {alias}.dotnet_type, {alias}.is_archived");
+        if (options.EnableCorrelationId) sb.Append($", {alias}.correlation_id");
+        if (options.EnableCausationId) sb.Append($", {alias}.causation_id");
+        if (options.EnableHeaders) sb.Append($", {alias}.headers");
+        if (options.EnableUserName) sb.Append($", {alias}.user_name");
+        return sb.ToString();
+    }
+
+    /// <summary>
     ///     Read the row the reader is positioned on into a fully-hydrated
     ///     <see cref="IEvent"/>, assuming the active store uses
     ///     <see cref="StreamIdentity.AsGuid"/>. Caller selects between this
