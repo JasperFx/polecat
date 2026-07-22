@@ -174,6 +174,43 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
         }, (_connectionString, _events.ProgressionTableName, shardIdentity), token);
     }
 
+    // marten#5001 / CritterWatch#750: persist the async daemon's extended telemetry (heartbeat,
+    // agent_status, pause_reason, running_on_node) that the shared ExtendedProgressionWriter drives
+    // through IEventDatabase.WriteExtendedProgressionAsync (the default is a no-op). Mirrors Marten's
+    // mt_mark_event_progression_extended: TELEMETRY-ONLY — decorate an EXISTING progression row's
+    // extended columns and nothing else. It must never INSERT and never touch last_seq_id/last_updated,
+    // because the progression row (name/last_seq_id/last_updated) is owned by the projection batch
+    // commit: a pre-emptive insert here would race the batch's own insert into a duplicate-key failure,
+    // and updating last_seq_id on a throttled heartbeat would roll committed progress backwards (the
+    // "clobber" defect). If no row exists yet, the zero-row UPDATE simply skips until the first commit
+    // creates it. running_on_node stays NULL until a distribution layer stamps AssignedNodeNumber onto
+    // the published ShardState (Wolverine-managed distribution), which the writer carries into RunningOnNode.
+    public async Task WriteExtendedProgressionAsync(ShardState state, CancellationToken token = default)
+    {
+        await _resilience.ExecuteAsync(static async (s, ct) =>
+        {
+            var (connectionString, progressionTable, shardState) = s;
+            await using var conn = new SqlConnection(connectionString);
+            await conn.OpenAsync(ct);
+
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = $"""
+                UPDATE {progressionTable}
+                SET heartbeat = @heartbeat,
+                    agent_status = @status,
+                    pause_reason = @reason,
+                    running_on_node = @node
+                WHERE name = @name;
+                """;
+            cmd.Parameters.AddWithValue("@name", shardState.ShardName);
+            cmd.Parameters.AddWithValue("@heartbeat", (object?)shardState.LastHeartbeat ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@status", (object?)shardState.AgentStatus ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@reason", (object?)shardState.PauseReason ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@node", (object?)shardState.RunningOnNode ?? DBNull.Value);
+            await cmd.ExecuteNonQueryAsync(ct);
+        }, (_connectionString, _events.ProgressionTableName, state), token);
+    }
+
     public async Task<IReadOnlyList<ShardState>> AllProjectionProgress(CancellationToken token = default)
     {
         return await _resilience.ExecuteAsync(static async (state, ct) =>
