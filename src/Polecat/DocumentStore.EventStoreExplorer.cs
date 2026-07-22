@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
+using System.Text;
 using System.Text.Json;
 using JasperFx.Descriptors;
 using JasperFx.Events;
@@ -150,6 +151,97 @@ public partial class DocumentStore
         throw new NotSupportedException(
             "DCB tag-set queries are not yet supported on Polecat. " +
             "Tracked at https://github.com/JasperFx/polecat/issues — see the CritterWatch master plan for the DCB roadmap.");
+    }
+
+    /// <summary>
+    ///     #353 / jasperfx#555 — tenant-scoped DCB tag query, companion to the jasperfx#503 stream reads.
+    ///     On a conjoined multi-tenant store the same tag value can be attached to events living under two
+    ///     tenants, so an untenanted query reads an ambiguous cross-tenant union. This overload isolates a
+    ///     single tenant with an <c>e.tenant_id</c> predicate on pc_events, AND-combining a <c>seq_id</c>
+    ///     sub-select per requested tag (matching the Marten companion's shape).
+    ///     <para>
+    ///     Scope here is the conjoined single-database <c>tenant_id</c>-predicate path only. A null
+    ///     <paramref name="tenantId"/> delegates to the tenant-less overload — still a NotSupportedException,
+    ///     because store-global DCB tag queries are a separate, pre-existing Polecat gap. Database-per-tenant
+    ///     explorer scoping is likewise a pre-existing Polecat gap (the stream-read explorer methods don't
+    ///     open a per-database session either); when that lands, this method grows the same
+    ///     FindOrCreateDatabase branch its Marten counterpart already uses.
+    ///     </para>
+    /// </summary>
+    async IAsyncEnumerable<EventRecord> IEventStore.QueryByTagsAsync(
+        IReadOnlyDictionary<string, string> tags,
+        string? tenantId,
+        [EnumeratorCancellation] CancellationToken ct)
+    {
+        if (tenantId == null)
+        {
+            // Store-global tag query is not yet supported on Polecat — defer to the tenant-less overload,
+            // which throws NotSupportedException as soon as this iterator is enumerated.
+            await foreach (var e in ((IEventStore)this).QueryByTagsAsync(tags, ct).ConfigureAwait(false))
+            {
+                yield return e;
+            }
+
+            yield break;
+        }
+
+        ArgumentNullException.ThrowIfNull(tags);
+        if (tags.Count == 0) yield break;
+
+        var schema = Events.DatabaseSchemaName;
+        var options = Events.EventOptions;
+        var registered = Events.TagTypes;
+
+        // #148: run through a QuerySession so the command is covered by Options.ResiliencePipeline (Polly),
+        // like the rest of the explorer read path. The e.tenant_id predicate below — not the session's own
+        // tenant — does the scoping, matching how the other explorer reads run raw SQL over every tenant.
+        await using var session = (Internal.QuerySession)QuerySession();
+        await using var cmd = new SqlCommand();
+
+        var sb = new StringBuilder();
+        sb.Append(
+            $"SELECT {PcEventsRowReader.ComposeSelectColumnsWithAlias(options, "e")} FROM {Events.EventsTableName} e WHERE ");
+
+        var idx = 0;
+        foreach (var (tagName, tagValue) in tags)
+        {
+            var registration = registered.FirstOrDefault(r =>
+                string.Equals(r.TagType.Name, tagName, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(r.TableSuffix, tagName, StringComparison.OrdinalIgnoreCase));
+            if (registration == null)
+            {
+                throw new ArgumentException(
+                    $"Tag type '{tagName}' is not registered on this event store. Registered tag types: {string.Join(", ", registered.Select(t => t.TagType.Name))}",
+                    nameof(tags));
+            }
+
+            if (idx > 0) sb.Append(" AND ");
+
+            // A seq_id sub-select per tag, AND-combined: the event must carry every requested tag. The tag
+            // value arrives as a string from the explorer, so it's compared case-insensitively via nvarchar —
+            // matching whatever native type (uniqueidentifier, etc.) the tag's value column stores.
+            sb.Append(
+                $"e.seq_id IN (SELECT seq_id FROM [{schema}].[pc_event_tag_{registration.TableSuffix}] WHERE LOWER(CONVERT(nvarchar(4000), value)) = LOWER(@tag_value_{idx}))");
+            cmd.Parameters.AddWithValue($"@tag_value_{idx}", tagValue);
+            idx++;
+        }
+
+        sb.Append(" AND e.tenant_id = @tenant_id ORDER BY e.seq_id");
+        cmd.Parameters.AddWithValue("@tenant_id", tenantId);
+        cmd.CommandText = sb.ToString();
+
+        var ctx = new EventHydrationContext(
+            Events,
+            Options.Serializer,
+            streamId: string.Empty,
+            defaultTenantId: tenantId);
+        var slots = MetadataSlots.Compute(options);
+
+        await using var reader = await session.ExecuteReaderAsync(cmd, ct);
+        while (await reader.ReadAsync(ct))
+        {
+            yield return PcEventsRowReader.ReadEventRecord(reader, ctx, slots);
+        }
     }
 
     Task<DcbProjectedState?> IEventStore.GetProjectedStateForTagsAsync(
