@@ -237,6 +237,103 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider
         return (json, version);
     }
 
+    /// <summary>
+    ///     Streams a single page of raw document JSON plus paging metadata as one JSON envelope
+    ///     (<c>{"pageNumber":..,"pageSize":..,"totalItemCount":..,"pageCount":..,"hasNextPage":..,
+    ///     "hasPreviousPage":..,"items":[..]}</c>) directly to <paramref name="destination"/> in a
+    ///     single database round trip. The total row count rides along on every row via
+    ///     <c>COUNT(*) OVER()</c> so no second COUNT query is needed. Raw <c>data</c> column JSON is
+    ///     written straight through — no deserialize/reserialize. Mirrors Marten's
+    ///     <c>StreamPagedMany</c> (JasperFx/marten#5014). Envelope key names/shape are byte-for-byte
+    ///     identical to Marten so clients are interchangeable.
+    /// </summary>
+    internal async Task StreamPagedJsonArrayAsync(
+        Expression expression, int pageNumber, int pageSize, Stream destination, CancellationToken token)
+    {
+        if (pageNumber < 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(pageNumber), pageNumber,
+                "pageNumber must be greater than or equal to 1.");
+        }
+
+        if (pageSize < 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(pageSize), pageSize,
+                "pageSize must be greater than or equal to 1.");
+        }
+
+        var documentType = FindDocumentType(expression);
+        var provider = _providers.GetProvider(documentType);
+        await _tableEnsurer.EnsureTableAsync(provider, token);
+
+        var memberFactory = new MemberFactory(_session.Options, provider.Mapping);
+        var parser = new LinqQueryParser(memberFactory, provider.Mapping.QualifiedTableName);
+        parser.Parse(expression);
+
+        // Ride the total-rows window column alongside the raw data column so the total comes back
+        // on the same round trip as the page. COUNT(*) OVER() returns int on SQL Server.
+        parser.Statement.SelectColumns = "data, COUNT(*) OVER() AS total_rows";
+        parser.Statement.Offset = (pageNumber - 1) * pageSize;
+        parser.Statement.Limit = pageSize;
+
+        if (parser.IsDistinct) parser.Statement.IsDistinct = true;
+
+        if (!parser.IsAnyTenant && IsConjoinedTenancy)
+        {
+            if (parser.TenantIds != null)
+            {
+                parser.Statement.Wheres.Add(new TenantInFilter(parser.TenantIds));
+            }
+            else
+            {
+                parser.Statement.Wheres.Add(new ComparisonFilter("tenant_id", "=", _session.TenantId));
+            }
+        }
+
+        if (provider.Mapping.DeleteStyle == DeleteStyle.SoftDelete && !parser.IsMaybeDeleted)
+        {
+            parser.Statement.Wheres.Add(new LiteralSqlFragment(parser.IsDeletedOnly ? "is_deleted = 1" : "is_deleted = 0"));
+        }
+
+        ApplyModifiedFilters(parser);
+
+        await using var batch = new SqlBatch();
+        var builder = new BatchBuilder(batch);
+        parser.Statement.Apply(builder);
+        builder.Compile();
+
+        await using var reader = await _session.ExecuteReaderAsync(batch, token);
+
+        // Read the first row up front: the window-function total lives on every row, so a zero-row
+        // page (empty match, or paging past the end) simply has no total → totalItemCount = 0.
+        var hasFirst = await reader.ReadAsync(token);
+        var total = hasFirst ? reader.GetInt32(1) : 0;
+
+        var pageCount = total > 0 ? (int)Math.Ceiling(total / (double)pageSize) : 0;
+        var hasNextPage = pageNumber < pageCount;
+        var hasPreviousPage = pageNumber > 1;
+
+        var prefix =
+            $"{{\"pageNumber\":{pageNumber},\"pageSize\":{pageSize},\"totalItemCount\":{total}," +
+            $"\"pageCount\":{pageCount}," +
+            $"\"hasNextPage\":{(hasNextPage ? "true" : "false")}," +
+            $"\"hasPreviousPage\":{(hasPreviousPage ? "true" : "false")}," +
+            "\"items\":[";
+        await destination.WriteAsync(Encoding.UTF8.GetBytes(prefix), token);
+
+        if (hasFirst)
+        {
+            await destination.WriteAsync(Encoding.UTF8.GetBytes(reader.GetString(0)), token);
+            while (await reader.ReadAsync(token))
+            {
+                await destination.WriteAsync(","u8.ToArray(), token);
+                await destination.WriteAsync(Encoding.UTF8.GetBytes(reader.GetString(0)), token);
+            }
+        }
+
+        await destination.WriteAsync("]}"u8.ToArray(), token);
+    }
+
     [RequiresDynamicCode("LINQ-to-SQL execution closes ListQueryHandler<>/DeserializingSelector<>/etc. over the document type via Type.MakeGenericType.")]
     [RequiresUnreferencedCode("LINQ-to-SQL execution reflects over the document type (Activator.CreateInstance on handler types, MethodInfo.Invoke on HandleAsync). AOT consumers must preserve handler + document members through DAM or source generation.")]
     public async Task<TResult> ExecuteAsync<TResult>(Expression expression, CancellationToken token)

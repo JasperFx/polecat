@@ -20,6 +20,7 @@ that dispatch any `IResult` return value), Polecat.AspNetCore ships three typed 
 | --- | --- | --- | --- |
 | `StreamOne<T>` | `IQueryable<T>` — document query | Single `T` | yes |
 | `StreamMany<T>` | `IQueryable<T>` — document query | JSON array `T[]` | no (empty array = 200) |
+| `StreamPaged<T>` | `IQueryable<T>` + page number/size | Paged JSON envelope | no (empty page = 200) |
 | `StreamAggregate<T>` | `IQuerySession` + stream id — event-sourced | Single `T` | yes |
 
 Each type implements both `IResult` (so ASP.NET dispatches it via `ExecuteAsync`) and
@@ -46,6 +47,48 @@ app.MapGet("/issues/open",
 
 Returns `200 application/json` with a JSON array body. An empty result set yields `[]`,
 not a 404.
+
+### StreamPaged — one page of documents plus paging metadata
+
+```csharp
+app.MapGet("/issues/paged/{pageNumber:int}/{pageSize:int}",
+    (int pageNumber, int pageSize, IQuerySession session) =>
+        new StreamPaged<Issue>(
+            session.Query<Issue>().OrderBy(x => x.Number), pageNumber, pageSize));
+```
+
+Streams a single page of documents **plus** paging metadata as one JSON envelope in a
+**single database round trip** — the total row count rides along on every row via
+`COUNT(*) OVER()`, so there is no separate `COUNT` query. Raw persisted document JSON is
+streamed straight into `items` with no deserialize/reserialize:
+
+```json
+{"pageNumber":3,"pageSize":25,"totalItemCount":1207,"pageCount":49,
+ "hasNextPage":true,"hasPreviousPage":true,"items":[...]}
+```
+
+The envelope key names and shape are byte-for-byte identical to Marten's `StreamPaged`, so
+clients are interchangeable across the two stores. Include an `OrderBy` on the query for a
+stable page order (SQL Server requires an `ORDER BY` for `OFFSET/FETCH` paging).
+
+`pageNumber` is 1-based; both `pageNumber` and `pageSize` must be `>= 1` (otherwise an
+`ArgumentOutOfRangeException` is thrown). An empty match — or paging past the end of the set
+— yields `totalItemCount: 0`, `pageCount: 0`, `items: []`.
+
+::: warning
+Paging **past the end of a non-empty set** (e.g. 10 items, page 5 of size 3 → `OFFSET 12`)
+returns zero rows, so the window-function total is lost and the envelope reports
+`totalItemCount: 0` even though items exist. This matches `PagedList`/Marten behavior; page
+within range to get an accurate total.
+:::
+
+The same one-round-trip envelope is available off any Polecat `IQueryable<T>` without ASP.NET
+Core via `StreamPagedJsonArray`:
+
+```csharp
+await session.Query<Issue>().OrderBy(x => x.Number)
+    .StreamPagedJsonArray(pageNumber, pageSize, destinationStream);
+```
 
 ### StreamAggregate — event-sourced aggregate (latest)
 
@@ -119,8 +162,8 @@ app.MapPost("/issues",
 ```
 
 ::: tip
-`StreamOne<T>` streams the raw persisted document JSON straight through (no
-deserialize/reserialize). `StreamMany<T>` and `StreamAggregate<T>` materialize via the
-regular query/projection path and serialize through `System.Text.Json`. All of them
-eliminate the endpoint boilerplate (null-check, status code, content type, OpenAPI metadata).
+`StreamOne<T>` and `StreamPaged<T>` stream the raw persisted document JSON straight through
+(no deserialize/reserialize). `StreamMany<T>` and `StreamAggregate<T>` materialize via the
+regular query/projection path and serialize through `System.Text.Json`. All of them eliminate
+the endpoint boilerplate (null-check, status code, content type, OpenAPI metadata).
 :::
