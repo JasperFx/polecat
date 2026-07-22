@@ -99,6 +99,15 @@ public class StoreOptions
     ///     (<c>AddPolecatStore&lt;T&gt;</c>) registration paths. Mirrors Marten's
     ///     <c>StoreOptions.ReadJasperFxOptions</c>.
     /// </summary>
+    /// <summary>
+    ///     #345: buffered copy of <see cref="JasperFxOptions.ApplicationAssemblyReuseWarning" /> (jasperfx#543 /
+    ///     GH-3521). Non-null only when this host adopted an earlier host's process-pinned application
+    ///     assembly that differs from its own registration assembly — the quiet, order-dependent failure
+    ///     mode in a multi-host test process. <see cref="Internal.PolecatActivator" /> logs it once at
+    ///     startup. JasperFx only detects the condition; consumers surface it.
+    /// </summary>
+    internal string? ApplicationAssemblyReuseWarning { get; set; }
+
     internal void ReadJasperFxOptions(JasperFxOptions? options)
     {
         if (options == null) return;
@@ -111,6 +120,11 @@ public class StoreOptions
         {
             Events.EnableExtendedProgressionTracking = true;
         }
+
+        // #345: buffer JasperFx's GH-3521 application-assembly-reuse warning so PolecatActivator can
+        // log it once at startup. ??= so the first non-null value (primary or ancillary path) wins and
+        // a later null never clobbers it.
+        ApplicationAssemblyReuseWarning ??= options.ApplicationAssemblyReuseWarning;
     }
 
     /// <summary>
