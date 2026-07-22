@@ -26,7 +26,17 @@
              local restart seam (IProjectionDaemon.HighWaterLastPolledAt / IsHighWaterStale /
              RestartHighWaterAgentAsync; DaemonSettings.HighWaterStalenessThreshold; ShardAction.Faulted/
              Restarted). Foundation for the Phase 2 high-water health check (polecat#341). Also carries
-             the jasperfx#540 faulted-start teardown that first shipped in 2.32.0. -->
+             the jasperfx#540 faulted-start teardown that first shipped in 2.32.0.
+             JasperFx 2.33.0: (a) jasperfx#543 — JasperFxOptions.ApplicationAssemblyReuseWarning, the
+             GH-3521 application-assembly-reuse detection Polecat surfaces once at startup (#345); and
+             (b) the JasperFx.Events instrumented-fold surface (ISteppableAggregation,
+             JasperFxAggregationProjectionBase.Stepping, EnrichEventsAsync) that Polecat's
+             MultiStreamProjection stepthrough parity builds on (#346).
+             JasperFx 2.33.1: jasperfx#551 (marten#5001) — ShardStateTracker stamps AssignedNodeNumber
+             onto every published ShardState, so the ExtendedProgressionWriter can carry the running node
+             into WriteExtendedProgressionAsync's running_on_node column under managed distribution.
+             JasperFx 2.34.0: jasperfx#555 (tenant-scoped QueryByTagsAsync + EventQuery.TenantId explorer
+             reads, #353) and jasperfx#557 (extended-progression writer shutdown drain). -->
         <PackageVersion Include="JasperFx" Version="2.34.0" />
         <PackageVersion Include="JasperFx.Events" Version="2.34.0" />
         <!-- Pin the sibling JasperFx packages for parity with Marten 9's matrix
