@@ -55,6 +55,14 @@ internal class MemberFactory : IMemberResolver
         return CreateMember(jsonPath, memberType);
     }
 
+    /// <summary>
+    ///     Formats the JSON key a projection member would serialize to — an explicit
+    ///     <c>[JsonPropertyName]</c> wins verbatim over the configured naming policy, exactly as
+    ///     System.Text.Json serializes it. Used when translating a simple <c>Select()</c> projection
+    ///     to a server-side JSON object so the emitted keys match what a client would deserialize.
+    /// </summary>
+    public string FormatProjectedKey(MemberInfo member) => GetJsonPropertyName(member);
+
     private IQueryableMember CreateMember(string jsonPath, Type memberType)
     {
         var rawLocator = $"JSON_VALUE(data, '{jsonPath}')";

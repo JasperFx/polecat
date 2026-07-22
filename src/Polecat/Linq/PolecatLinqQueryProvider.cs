@@ -141,8 +141,12 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider
         var parser = new LinqQueryParser(memberFactory, provider.Mapping.QualifiedTableName);
         parser.Parse(expression);
 
-        // Force select only the data column
-        parser.Statement.SelectColumns = "data";
+        // Choose the streamed columns. A whole-document query streams the raw `data` column. A
+        // Select(...) projection must translate to a server-side JSON object (#358) — otherwise
+        // streaming would silently ignore the projection and return the raw documents. A projection
+        // that isn't a simple, translatable member shape can't be streamed and throws a clear error
+        // rather than producing wrong JSON.
+        parser.Statement.SelectColumns = ResolveStreamingSelectColumns(parser, memberFactory);
 
         if (parser.IsDistinct) parser.Statement.IsDistinct = true;
 
@@ -439,6 +443,59 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider
         var nextCursor = hasMore ? CursorPagination.Encode(lastKeyValues[count - 1]) : null;
 
         return new CursorPageResult(sb.ToString(), count, nextCursor);
+    }
+
+    /// <summary>
+    ///     Resolves the SELECT columns for a raw-JSON streaming query (#358). No projection → the
+    ///     raw <c>data</c> column. A simple <c>Select(x =&gt; new { … })</c> projection of document
+    ///     members → a server-side <c>JSON_OBJECT(...)</c> (native-JSON / SQL Server 2025 only). Any
+    ///     other projection (scalar select, method calls, arithmetic, non-native store, …) cannot be
+    ///     streamed faithfully and throws <see cref="BadLinqExpressionException"/> rather than
+    ///     silently returning the raw documents.
+    /// </summary>
+    private string ResolveStreamingSelectColumns(LinqQueryParser parser, MemberFactory memberFactory)
+    {
+        if (parser.SelectExpression is null)
+        {
+            return "data";
+        }
+
+        var columns = _session.Options.UseNativeJsonType
+            ? SelectProjectionAnalyzer.TryAnalyze(parser.SelectExpression, memberFactory)
+            : null;
+
+        if (columns is null)
+        {
+            throw new BadLinqExpressionException(
+                "This query cannot be streamed as raw JSON because its Select(...) projection is not a " +
+                "simple object of document members. Either project into an anonymous type / DTO composed " +
+                "only of document member accesses (e.g. Select(x => new { x.Name, x.Address.City })) on a " +
+                "native-JSON store (SQL Server 2025), or materialize the results with ToListAsync() " +
+                "instead of a JSON-streaming call.");
+        }
+
+        return BuildJsonObjectSelect(columns);
+    }
+
+    /// <summary>
+    ///     Emits a native SQL Server <c>JSON_OBJECT('key': locator, …) AS data</c> for a simple
+    ///     projection. Keys honor the serializer naming policy / <c>[JsonPropertyName]</c>; values
+    ///     come from each member's typed JSON locator, so numbers stay numbers and strings stay
+    ///     quoted. NULL members are kept as JSON <c>null</c> (JSON_OBJECT's default NULL ON NULL),
+    ///     matching how System.Text.Json serializes the same shape.
+    /// </summary>
+    private static string BuildJsonObjectSelect(IReadOnlyList<SimpleProjectionColumn> columns)
+    {
+        var sb = new StringBuilder("JSON_OBJECT(");
+        for (var i = 0; i < columns.Count; i++)
+        {
+            if (i > 0) sb.Append(", ");
+            sb.Append('\'').Append(columns[i].JsonKey.Replace("'", "''")).Append("': ");
+            sb.Append(columns[i].Locator);
+        }
+
+        sb.Append(") AS data");
+        return sb.ToString();
     }
 
     [RequiresDynamicCode("LINQ-to-SQL execution closes ListQueryHandler<>/DeserializingSelector<>/etc. over the document type via Type.MakeGenericType.")]
