@@ -17,6 +17,7 @@ using Polly;
 using Weasel.Core.Migrations;
 using Weasel.SqlServer;
 
+using Polecat.Internal;
 namespace Polecat.Storage;
 
 /// <summary>
@@ -145,7 +146,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
                 SELECT last_seq_id FROM {progressionTable}
                 WHERE name = @name;
                 """;
-            cmd.Parameters.AddWithValue("@name", identity);
+            cmd.Parameters.AddVarChar("@name", identity);
 
             var result = await cmd.ExecuteScalarAsync(ct);
             return result is long seq ? seq : 0;
@@ -169,7 +170,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
 
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = $"DELETE FROM {progressionTable} WHERE name = @identity;";
-            cmd.Parameters.AddWithValue("@identity", identity);
+            cmd.Parameters.AddVarChar("@identity", identity);
             await cmd.ExecuteNonQueryAsync(ct);
         }, (_connectionString, _events.ProgressionTableName, shardIdentity), token);
     }
@@ -202,7 +203,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
                     running_on_node = @node
                 WHERE name = @name;
                 """;
-            cmd.Parameters.AddWithValue("@name", shardState.ShardName);
+            cmd.Parameters.AddVarChar("@name", shardState.ShardName);
             cmd.Parameters.AddWithValue("@heartbeat", (object?)shardState.LastHeartbeat ?? DBNull.Value);
             cmd.Parameters.AddWithValue("@status", (object?)shardState.AgentStatus ?? DBNull.Value);
             cmd.Parameters.AddWithValue("@reason", (object?)shardState.PauseReason ?? DBNull.Value);
@@ -283,7 +284,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
             cmd.CommandText = events.EnableExtendedProgressionTracking
                 ? $"SELECT last_seq_id, heartbeat, agent_status FROM {events.ProgressionTableName} WHERE name = @name;"
                 : $"SELECT last_seq_id FROM {events.ProgressionTableName} WHERE name = @name;";
-            cmd.Parameters.AddWithValue("@name", lookupName);
+            cmd.Parameters.AddVarChar("@name", lookupName);
 
             await using var reader = await cmd.ExecuteReaderAsync(ct);
             if (!await reader.ReadAsync(ct))
@@ -325,7 +326,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
             cmd.CommandText = events.EnableExtendedProgressionTracking
                 ? $"SELECT last_seq_id, heartbeat, agent_status FROM {events.ProgressionTableName} WHERE name = @name;"
                 : $"SELECT last_seq_id FROM {events.ProgressionTableName} WHERE name = @name;";
-            cmd.Parameters.AddWithValue("@name", shard.Identity);
+            cmd.Parameters.AddVarChar("@name", shard.Identity);
 
             await using var reader = await cmd.ExecuteReaderAsync(ct);
             if (!await reader.ReadAsync(ct))

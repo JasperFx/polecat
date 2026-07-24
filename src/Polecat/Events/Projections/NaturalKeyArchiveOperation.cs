@@ -36,12 +36,13 @@ internal class NaturalKeyArchiveOperation : Polecat.Internal.IStorageOperation
         var streamColumn = _isGuidStream ? "stream_id" : "stream_key";
 
         builder.Append($"UPDATE {_tableName} SET is_archived = 1 WHERE {streamColumn} = ");
-        builder.AppendParameter(_streamId);
+        // #363: string stream keys must bind varchar to seek the varchar(250) stream_key column.
+        builder.AppendParameter(_streamId, _streamId is string ? System.Data.SqlDbType.VarChar : null);
 
         if (_isConjoined)
         {
             builder.Append(" AND tenant_id = ");
-            builder.AppendParameter(_tenantId!);
+            builder.AppendParameter(_tenantId!, System.Data.SqlDbType.VarChar);
         }
 
         builder.Append(";");

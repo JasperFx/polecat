@@ -447,8 +447,8 @@ internal class EventOperations : QueryEventStore, IEventOperations
             SELECT version FROM {_events.StreamsTableName}{lockHint}
             WHERE id = @id AND tenant_id = @tenant_id;
             """;
-        cmd.Parameters.AddWithValue("@id", streamId);
-        cmd.Parameters.AddWithValue("@tenant_id", _tenantId);
+        cmd.Parameters.AddIdParameter("@id", streamId);
+        cmd.Parameters.AddVarChar("@tenant_id", _tenantId);
 
         long version = 0;
         try
@@ -554,8 +554,8 @@ internal class EventOperations : QueryEventStore, IEventOperations
                 SELECT version FROM {_events.StreamsTableName}{lockHint}
                 WHERE id = @id AND tenant_id = @tenant_id;
                 """;
-            cmd.Parameters.AddWithValue("@id", streamId);
-            cmd.Parameters.AddWithValue("@tenant_id", _tenantId);
+            cmd.Parameters.AddIdParameter("@id", streamId);
+            cmd.Parameters.AddVarChar("@tenant_id", _tenantId);
 
             var result = await _sessionBase.ExecuteScalarAsync(cmd, cancellation);
             if (result != null && result != DBNull.Value)
@@ -697,10 +697,10 @@ internal class EventOperations : QueryEventStore, IEventOperations
             FROM [{schema}].[{tableName}] nk
             WHERE nk.natural_key_value = @naturalKey AND nk.is_archived = 0{tenantFilter};
             """;
-        cmd.Parameters.AddWithValue("@naturalKey", unwrapped);
+        cmd.Parameters.AddWithValue("@naturalKey", unwrapped); // natural_key_value is nvarchar(200)
         if (_events.TenancyStyle == TenancyStyle.Conjoined)
         {
-            cmd.Parameters.AddWithValue("@tenantId", _tenantId);
+            cmd.Parameters.AddVarChar("@tenantId", _tenantId);
         }
 
         var result = await _sessionBase.ExecuteScalarAsync(cmd, cancellation);
@@ -819,14 +819,14 @@ internal class EventOperations : QueryEventStore, IEventOperations
             var value = registration.ExtractValue(condition.TagValue);
 
             sb.Append($"(t{tagIndex}.value = @p{paramIndex}");
-            cmd.Parameters.AddWithValue($"@p{paramIndex}", value);
+            cmd.Parameters.AddIdParameter($"@p{paramIndex}", value);
             paramIndex++;
 
             if (condition.EventType != null)
             {
                 sb.Append($" AND e.type = @p{paramIndex}");
                 var eventTypeName = _events.EventMappingFor(condition.EventType).EventTypeName;
-                cmd.Parameters.AddWithValue($"@p{paramIndex}", eventTypeName);
+                cmd.Parameters.AddVarChar($"@p{paramIndex}", eventTypeName);
                 paramIndex++;
             }
 
@@ -839,7 +839,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
         if (_events.TenancyStyle == TenancyStyle.Conjoined)
         {
             sb.Append($" AND t0.tenant_id = @p{paramIndex}");
-            cmd.Parameters.AddWithValue($"@p{paramIndex}", _tenantId);
+            cmd.Parameters.AddVarChar($"@p{paramIndex}", _tenantId);
             paramIndex++;
         }
 
@@ -900,14 +900,14 @@ internal class EventOperations : QueryEventStore, IEventOperations
             var value = registration.ExtractValue(condition.TagValue);
 
             sb.Append($"(t{tagIndex}.value = @p{paramIndex}");
-            cmd.Parameters.AddWithValue($"@p{paramIndex}", value);
+            cmd.Parameters.AddIdParameter($"@p{paramIndex}", value);
             paramIndex++;
 
             if (condition.EventType != null)
             {
                 sb.Append($" AND e.type = @p{paramIndex}");
                 var eventTypeName = _events.EventMappingFor(condition.EventType).EventTypeName;
-                cmd.Parameters.AddWithValue($"@p{paramIndex}", eventTypeName);
+                cmd.Parameters.AddVarChar($"@p{paramIndex}", eventTypeName);
                 paramIndex++;
             }
 
@@ -920,7 +920,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
         if (_events.TenancyStyle == TenancyStyle.Conjoined)
         {
             sb.Append($" AND e.tenant_id = @p{paramIndex}");
-            cmd.Parameters.AddWithValue($"@p{paramIndex}", _tenantId);
+            cmd.Parameters.AddVarChar($"@p{paramIndex}", _tenantId);
             paramIndex++;
         }
 
@@ -1089,13 +1089,13 @@ internal class EventOperations : QueryEventStore, IEventOperations
             var value = registration.ExtractValue(condition.TagValue);
 
             builder.Append($"(t{tagIndex}.value = ");
-            builder.AppendParameter(value);
+            builder.AppendParameter(value, value is string ? System.Data.SqlDbType.VarChar : null);
 
             if (condition.EventType != null)
             {
                 builder.Append(" AND e.type = ");
                 var eventTypeName = eventGraph.EventMappingFor(condition.EventType).EventTypeName;
-                builder.AppendParameter(eventTypeName);
+                builder.AppendParameter(eventTypeName, System.Data.SqlDbType.VarChar);
             }
 
             builder.Append(")");
@@ -1107,7 +1107,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
         if (eventGraph.TenancyStyle == TenancyStyle.Conjoined && tenantId != null)
         {
             builder.Append(" AND e.tenant_id = ");
-            builder.AppendParameter(tenantId);
+            builder.AppendParameter(tenantId, System.Data.SqlDbType.VarChar);
         }
 
         builder.Append(" ORDER BY e.seq_id");

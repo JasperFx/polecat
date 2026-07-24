@@ -69,13 +69,13 @@ internal class EventsExistBatchItem : IBatchQueryItem
             var value = registration.ExtractValue(condition.TagValue);
 
             builder.Append($"(t{tagIndex}.value = ");
-            builder.AppendParameter(value);
+            builder.AppendParameter(value, value is string ? System.Data.SqlDbType.VarChar : null);
 
             if (condition.EventType != null)
             {
                 builder.Append(" AND e.type = ");
                 var eventTypeName = _eventGraph.EventMappingFor(condition.EventType).EventTypeName;
-                builder.AppendParameter(eventTypeName);
+                builder.AppendParameter(eventTypeName, System.Data.SqlDbType.VarChar);
             }
 
             builder.Append(")");
@@ -87,7 +87,7 @@ internal class EventsExistBatchItem : IBatchQueryItem
         if (_eventGraph.TenancyStyle == TenancyStyle.Conjoined)
         {
             builder.Append(" AND t0.tenant_id = ");
-            builder.AppendParameter(_tenantId);
+            builder.AppendParameter(_tenantId, System.Data.SqlDbType.VarChar);
         }
 
         builder.Append(") THEN 1 ELSE 0 END");

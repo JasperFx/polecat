@@ -4,6 +4,7 @@ using JasperFx.Events.Daemon;
 using JasperFx.Events.Projections;
 using Microsoft.Data.SqlClient;
 
+using Polecat.Internal;
 namespace Polecat.Events.Daemon;
 
 /// <summary>
@@ -87,7 +88,7 @@ internal class PolecatEventLoader : IEventLoader
         cmd.Parameters.AddWithValue("@batchSize", request.BatchSize);
         cmd.Parameters.AddWithValue("@floor", request.Floor);
         cmd.Parameters.AddWithValue("@ceiling", request.HighWater);
-        if (_tenantFilter != null) cmd.Parameters.AddWithValue("@tenant", _tenantFilter);
+        if (_tenantFilter != null) cmd.Parameters.AddVarChar("@tenant", _tenantFilter);
 
         var skippedEvents = 0;
 

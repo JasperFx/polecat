@@ -43,7 +43,7 @@ internal class DeleteWhereOperation : IStorageOperation
         if (_conjoined)
         {
             builder.Append("tenant_id = ");
-            builder.AppendParameter(_tenantId);
+            builder.AppendParameter(_tenantId, System.Data.SqlDbType.VarChar);
             builder.Append(" AND ");
         }
 

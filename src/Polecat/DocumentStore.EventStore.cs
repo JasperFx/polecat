@@ -17,6 +17,7 @@ using Polecat.Projections;
 using Polecat.Storage;
 using Polecat.Subscriptions;
 
+using Polecat.Internal;
 namespace Polecat;
 
 public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession>,
@@ -413,7 +414,7 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
             {
                 await using var cmd = conn.CreateCommand();
                 cmd.CommandText = $"DELETE FROM {progressionTable} WHERE name LIKE @name;";
-                cmd.Parameters.AddWithValue("@name", name + "%");
+                cmd.Parameters.AddVarChar("@name", name + "%");
                 await cmd.ExecuteNonQueryAsync(ct);
             }
             else
@@ -426,7 +427,7 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
                     WHEN NOT MATCHED THEN INSERT (name, last_seq_id, last_updated)
                         VALUES (@name, @seq, SYSDATETIMEOFFSET());
                     """;
-                cmd.Parameters.AddWithValue("@name", name);
+                cmd.Parameters.AddVarChar("@name", name);
                 cmd.Parameters.AddWithValue("@seq", seqFloor.Value);
                 await cmd.ExecuteNonQueryAsync(ct);
             }
@@ -451,7 +452,7 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
                 WHEN NOT MATCHED THEN INSERT (name, last_seq_id, last_updated)
                     VALUES (@name, @seq, SYSDATETIMEOFFSET());
                 """;
-            cmd.Parameters.AddWithValue("@name", name);
+            cmd.Parameters.AddVarChar("@name", name);
             cmd.Parameters.AddWithValue("@seq", seqFloor);
             await cmd.ExecuteNonQueryAsync(ct);
         }, (connStr, Events.ProgressionTableName, shardName, sequenceFloor), token);
@@ -479,7 +480,7 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
 
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = $"DELETE FROM {progressionTable} WHERE name LIKE @name;";
-            cmd.Parameters.AddWithValue("@name", name + "%");
+            cmd.Parameters.AddVarChar("@name", name + "%");
             await cmd.ExecuteNonQueryAsync(ct);
         }, (connStr, Events.ProgressionTableName, subscriptionName), token);
     }
@@ -533,7 +534,7 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
                     await using var delProg = conn.CreateCommand();
                     delProg.Transaction = tx;
                     delProg.CommandText = $"DELETE FROM {progressionTable} WHERE name = @id;";
-                    delProg.Parameters.AddWithValue("@id", identity);
+                    delProg.Parameters.AddVarChar("@id", identity);
                     await delProg.ExecuteNonQueryAsync(ct);
                 }
 
@@ -548,7 +549,7 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
                     delDocs.CommandText = isConjoined
                         ? $"IF OBJECT_ID('{tableName}', 'U') IS NOT NULL DELETE FROM {tableName} WHERE tenant_id = @tenant;"
                         : $"IF OBJECT_ID('{tableName}', 'U') IS NOT NULL DELETE FROM {tableName};";
-                    if (isConjoined) delDocs.Parameters.AddWithValue("@tenant", tenant);
+                    if (isConjoined) delDocs.Parameters.AddVarChar("@tenant", tenant);
                     await delDocs.ExecuteNonQueryAsync(ct);
                 }
 
@@ -625,7 +626,7 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
 
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = $"DELETE FROM {progressionTable} WHERE name LIKE @name;";
-            cmd.Parameters.AddWithValue("@name", name + "%");
+            cmd.Parameters.AddVarChar("@name", name + "%");
             await cmd.ExecuteNonQueryAsync(ct);
 
             foreach (var tableName in tableNames)

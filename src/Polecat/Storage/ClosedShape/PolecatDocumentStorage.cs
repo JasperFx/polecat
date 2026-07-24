@@ -172,8 +172,14 @@ internal abstract class PolecatDocumentStorage<TDoc, TId>
         // simply unreferenced by the SQL).
         var tenantFilter = _mapping.TenancyStyle == TenancyStyle.Conjoined ? " AND tenant_id = @tenant_id" : string.Empty;
         _loaderSql = $"{select} WHERE id = @id{tenantFilter}{SoftDeleteFilterSql()}";
+        // #363: OPENJSON's value column is nvarchar(4000); against a varchar(250) id column that
+        // forces CONVERT_IMPLICIT on the column side and a full scan, so string ids cast the
+        // extracted values back to varchar before the IN comparison.
+        var idsSelect = _mapping.InnerIdType == typeof(string)
+            ? "SELECT CAST(value AS varchar(250)) FROM OPENJSON(@ids)"
+            : "SELECT value FROM OPENJSON(@ids)";
         _loadManySql =
-            $"{select} WHERE id IN (SELECT value FROM OPENJSON(@ids)){tenantFilter}{SoftDeleteFilterSql()}";
+            $"{select} WHERE id IN ({idsSelect}){tenantFilter}{SoftDeleteFilterSql()}";
 
         _deleteFragment = _mapping.DeleteStyle == DeleteStyle.SoftDelete
             ? new HardCodedOperationFragment(
@@ -356,7 +362,7 @@ internal abstract class PolecatDocumentStorage<TDoc, TId>
     {
         builder.Append(_selectPrefixSql);
         builder.Append(" WHERE id = ");
-        builder.AppendParameter(id);
+        builder.AppendParameter(id, id is string ? System.Data.SqlDbType.VarChar : null);
         AppendBatchLoadFilters(builder, tenantId);
     }
 
@@ -373,7 +379,7 @@ internal abstract class PolecatDocumentStorage<TDoc, TId>
         for (var i = 0; i < ids.Count; i++)
         {
             if (i > 0) builder.Append(", ");
-            builder.AppendParameter(ids[i]);
+            builder.AppendParameter(ids[i], ids[i] is string ? System.Data.SqlDbType.VarChar : null);
         }
 
         builder.Append(")");
@@ -392,7 +398,7 @@ internal abstract class PolecatDocumentStorage<TDoc, TId>
         if (_mapping.TenancyStyle == TenancyStyle.Conjoined)
         {
             builder.Append(" AND tenant_id = ");
-            builder.AppendParameter(tenantId);
+            builder.AppendParameter(tenantId, System.Data.SqlDbType.VarChar);
         }
 
         builder.Append(SoftDeleteFilterSql());

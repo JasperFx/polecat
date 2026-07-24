@@ -45,9 +45,9 @@ internal class NaturalKeyUpsertOperation : Polecat.Internal.IStorageOperation
                 """);
             builder.AppendParameter(_naturalKeyValue);
             builder.Append(", ");
-            builder.AppendParameter(_tenantId!);
+            builder.AppendParameter(_tenantId!, System.Data.SqlDbType.VarChar);
             builder.Append(", ");
-            builder.AppendParameter(_streamId);
+            builder.AppendParameter(_streamId, _streamId is string ? System.Data.SqlDbType.VarChar : null);
             builder.Append($"""
                 , 0)) AS source (natural_key_value, tenant_id, {streamColumn}, is_archived)
                 ON target.natural_key_value = source.natural_key_value AND target.tenant_id = source.tenant_id
@@ -63,7 +63,7 @@ internal class NaturalKeyUpsertOperation : Polecat.Internal.IStorageOperation
                 """);
             builder.AppendParameter(_naturalKeyValue);
             builder.Append(", ");
-            builder.AppendParameter(_streamId);
+            builder.AppendParameter(_streamId, _streamId is string ? System.Data.SqlDbType.VarChar : null);
             builder.Append($"""
                 , 0)) AS source (natural_key_value, {streamColumn}, is_archived)
                 ON target.natural_key_value = source.natural_key_value

@@ -37,12 +37,12 @@ internal class UnDeleteByIdOperation : IStorageOperation
     {
         _undeleteFragment.Apply(builder);
         builder.Append(" WHERE id = ");
-        builder.AppendParameter(_id);
+        builder.AppendParameter(_id, _id is string ? System.Data.SqlDbType.VarChar : null);
         // #234: single-tenant tables have no tenant_id column.
         if (_conjoined)
         {
             builder.Append(" AND tenant_id = ");
-            builder.AppendParameter(_tenantId);
+            builder.AppendParameter(_tenantId, System.Data.SqlDbType.VarChar);
         }
 
         builder.Append(";");

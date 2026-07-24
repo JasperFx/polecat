@@ -204,8 +204,8 @@ internal partial class QuerySession : IQuerySession
         // #234: tenant_id predicate is conjoined-only.
         var tenantFilter = provider.Mapping.TenancyStyle == TenancyStyle.Conjoined ? " AND tenant_id = @tenant_id" : "";
         cmd.CommandText = $"SELECT CAST(CASE WHEN EXISTS(SELECT 1 FROM {provider.Mapping.QualifiedTableName} WHERE id = @id{tenantFilter}{softDeleteFilter}) THEN 1 ELSE 0 END AS BIT);";
-        cmd.Parameters.AddWithValue("@id", id);
-        if (provider.Mapping.TenancyStyle == TenancyStyle.Conjoined) cmd.Parameters.AddWithValue("@tenant_id", TenantId);
+        cmd.Parameters.AddIdParameter("@id", id);
+        if (provider.Mapping.TenancyStyle == TenancyStyle.Conjoined) cmd.Parameters.AddVarChar("@tenant_id", TenantId);
 
         Logger.OnBeforeExecute(cmd.CommandText);
         try
@@ -324,8 +324,8 @@ internal partial class QuerySession : IQuerySession
         // #234: tenant_id predicate is conjoined-only.
         var tenantFilter = provider.Mapping.TenancyStyle == TenancyStyle.Conjoined ? " AND tenant_id = @tenant_id" : "";
         cmd.CommandText = $"SELECT data FROM {provider.Mapping.QualifiedTableName} WHERE id = @id{tenantFilter}{softDeleteFilter};";
-        cmd.Parameters.AddWithValue("@id", id);
-        if (provider.Mapping.TenancyStyle == TenancyStyle.Conjoined) cmd.Parameters.AddWithValue("@tenant_id", TenantId);
+        cmd.Parameters.AddIdParameter("@id", id);
+        if (provider.Mapping.TenancyStyle == TenancyStyle.Conjoined) cmd.Parameters.AddVarChar("@tenant_id", TenantId);
 
         Logger.OnBeforeExecute(cmd.CommandText);
         try

@@ -49,8 +49,8 @@ internal static class NaturalKeyFetchPlanner
             AND s.tenant_id = @tenantId;
             """;
 
-        cmd.Parameters.AddWithValue("@naturalKey", unwrapped);
-        cmd.Parameters.AddWithValue("@tenantId", tenantId);
+        cmd.Parameters.AddWithValue("@naturalKey", unwrapped); // natural_key_value is nvarchar(200)
+        cmd.Parameters.AddVarChar("@tenantId", tenantId);
 
         long version = 0;
         object? streamId = null;

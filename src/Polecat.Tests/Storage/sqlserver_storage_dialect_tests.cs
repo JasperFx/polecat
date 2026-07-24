@@ -1,5 +1,6 @@
 using System.Data;
 using Microsoft.Data.SqlClient;
+using Polecat.Internal;
 using Polecat.Storage;
 using Polecat.Tests.Harness;
 using Weasel.SqlServer;
@@ -29,6 +30,33 @@ public class sqlserver_storage_dialect_tests : OneOffConfigurationsContext
         sql.Parameters["tenant_id"].Value.ShouldBe("t1");
     }
 
+    // #363 regression: string ids and tenant ids must bind as varchar to match the varchar(250)
+    // columns; nvarchar parameters turn the id/tenant index seeks into full scans.
+    [Fact]
+    public void build_load_command_binds_string_id_and_tenant_as_varchar()
+    {
+        var stringDialect = SqlServerStorageDialect<string>.Instance;
+        var command = stringDialect.BuildLoadCommand(
+            "SELECT data FROM t WHERE id = @id AND tenant_id = @tenant_id", "customer-1", "t1");
+
+        var sql = command.ShouldBeOfType<SqlCommand>();
+        sql.Parameters["id"].SqlDbType.ShouldBe(SqlDbType.VarChar);
+        sql.Parameters["tenant_id"].SqlDbType.ShouldBe(SqlDbType.VarChar);
+    }
+
+    // #363 regression: the LINQ by-id filter for string identities must also bind varchar.
+    [Fact]
+    public void by_id_filter_binds_string_ids_as_varchar()
+    {
+        var fragment = SqlServerStorageDialect<string>.Instance.ByIdFilter("customer-1");
+
+        var builder = new CommandBuilder();
+        fragment.Apply(builder);
+        var command = builder.Compile();
+
+        command.Parameters[0].SqlDbType.ShouldBe(SqlDbType.VarChar);
+    }
+
     [Fact]
     public void build_load_command_omits_tenant_when_null()
     {
@@ -36,8 +64,10 @@ public class sqlserver_storage_dialect_tests : OneOffConfigurationsContext
         command.Parameters.Count.ShouldBe(1);
     }
 
+    // #363: String maps to VarChar, not NVarChar — every string-typed storage column in Polecat is
+    // varchar, and an nvarchar parameter forces CONVERT_IMPLICIT onto the column, killing index seeks.
     [Theory]
-    [InlineData(StorageColumnType.String, SqlDbType.NVarChar)]
+    [InlineData(StorageColumnType.String, SqlDbType.VarChar)]
     [InlineData(StorageColumnType.Guid, SqlDbType.UniqueIdentifier)]
     [InlineData(StorageColumnType.Long, SqlDbType.BigInt)]
     [InlineData(StorageColumnType.Int, SqlDbType.Int)]
@@ -143,5 +173,25 @@ public class sqlserver_storage_dialect_tests : OneOffConfigurationsContext
     {
         Should.Throw<ArgumentOutOfRangeException>(() =>
             theDialect.CreateIdArrayParameter(new[] { 1.5, 2.5 }, typeof(double)));
+    }
+
+    // #363 regression: the AddWithValue replacements bind strings as varchar (fixed 8000 size for
+    // plan-cache stability) and pass non-string ids through untouched.
+    [Fact]
+    public void add_varchar_and_add_id_parameter_bind_expected_types()
+    {
+        using var command = new SqlCommand();
+
+        var text = command.Parameters.AddVarChar("@a", "value");
+        text.SqlDbType.ShouldBe(SqlDbType.VarChar);
+        text.Size.ShouldBe(8000);
+
+        var nullText = command.Parameters.AddVarChar("@b", null);
+        nullText.Value.ShouldBe(DBNull.Value);
+        nullText.SqlDbType.ShouldBe(SqlDbType.VarChar);
+
+        command.Parameters.AddIdParameter("@c", "stream-key").SqlDbType.ShouldBe(SqlDbType.VarChar);
+        command.Parameters.AddIdParameter("@d", Guid.NewGuid()).SqlDbType.ShouldBe(SqlDbType.UniqueIdentifier);
+        command.Parameters.AddIdParameter("@e", 42L).SqlDbType.ShouldBe(SqlDbType.BigInt);
     }
 }

@@ -6,6 +6,7 @@ using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Logging;
 using Polly;
 
+using Polecat.Internal;
 namespace Polecat.Events.Daemon;
 
 /// <summary>
@@ -296,7 +297,7 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
 
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = $"""
-                WITH inputs AS (SELECT value AS tenant_id FROM OPENJSON(@tenants))
+                WITH inputs AS (SELECT CAST(value AS varchar(250)) AS tenant_id FROM OPENJSON(@tenants))
                 SELECT
                     i.tenant_id,
                     CAST(ISNULL(sq.current_value, 0) AS bigint) AS last_value,
@@ -313,7 +314,7 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
                 """;
             cmd.Parameters.AddWithValue("@tenants", tenantsJson);
             cmd.Parameters.AddWithValue("@schema", schema);
-            cmd.Parameters.AddWithValue("@prefix", prefix);
+            cmd.Parameters.AddVarChar("@prefix", prefix);
 
             var results = new List<HighWaterStatistics>();
             await using var reader = await cmd.ExecuteReaderAsync(ct);

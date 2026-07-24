@@ -205,7 +205,7 @@ internal sealed class SubClassPolecatStorage<T, TRoot, TId>
     private void AppendDocTypeFilter(Weasel.SqlServer.ICommandBuilder builder)
     {
         builder.Append(" AND doc_type = ");
-        builder.AppendParameter(_alias);
+        builder.AppendParameter(_alias, System.Data.SqlDbType.VarChar);
     }
 
     public ISelector<T> BuildLoadSelector(IStorageSession session) => (ISelector<T>)BuildSelector(session);

@@ -816,8 +816,8 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         await using var cmd = new SqlCommand();
         cmd.CommandText =
             $"SELECT version, is_archived FROM {_eventGraph.StreamsTableName} WITH (UPDLOCK, HOLDLOCK) WHERE id = @id AND tenant_id = @tenant_id;";
-        cmd.Parameters.AddWithValue("@id", streamId);
-        cmd.Parameters.AddWithValue("@tenant_id", TenantId);
+        cmd.Parameters.AddIdParameter("@id", streamId);
+        cmd.Parameters.AddVarChar("@tenant_id", TenantId);
 
         await using var reader = await ExecuteReaderAsync(cmd, token);
         if (await reader.ReadAsync(token))
@@ -893,8 +893,8 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         await using var cmd = new SqlCommand();
         cmd.CommandText =
             $"SELECT version FROM {_eventGraph.StreamsTableName} WHERE id = @id AND tenant_id = @tenant_id;";
-        cmd.Parameters.AddWithValue("@id", streamId);
-        cmd.Parameters.AddWithValue("@tenant_id", TenantId);
+        cmd.Parameters.AddIdParameter("@id", streamId);
+        cmd.Parameters.AddVarChar("@tenant_id", TenantId);
 
         await using var reader = await ExecuteReaderAsync(cmd, token);
         if (!await reader.ReadAsync(token))
