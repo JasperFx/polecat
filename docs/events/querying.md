@@ -164,6 +164,22 @@ The queryable `IEvent` properties available for filtering and projection are:
 These queries search the entire event table and should be used judiciously. For routine application queries, prefer projected views or tag-based queries.
 :::
 
+### AggregateToManyAsync
+
+`AggregateToManyAsync<T>()` is a LINQ terminal that runs the events matched by an event query through the **multi-stream projection** registered for `T` and returns the aggregate it produces for each resulting identity. It drives the projection's real slicer/grouper, `EnrichEventsAsync`, and per-slice build against the live query session — the same building blocks the projection step-through and the async daemon use — so custom groupers that read present-day reference data from the session work for free. Nothing is persisted.
+
+Given a multi-stream projection:
+
+<!-- snippet: sample_aggregate_to_many_projection -->
+<!-- endSnippet -->
+
+query any slice of the event store and fan it out to one aggregate per identity:
+
+<!-- snippet: sample_aggregate_to_many -->
+<!-- endSnippet -->
+
+Each returned aggregate has its identity stamped from the projection's slice id. Aggregates whose event slice resolves to a delete (`ShouldDelete`) are omitted, an empty query returns an empty list, and calling it for an aggregate type with no registered projection throws `ArgumentException`.
+
 ## QueryForNonStaleData
 
 Wait for async projections to catch up before querying:

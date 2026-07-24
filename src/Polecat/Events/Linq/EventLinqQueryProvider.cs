@@ -31,6 +31,12 @@ internal class EventLinqQueryProvider : IPolecatAsyncQueryProvider
     private readonly Type? _eventDataType;
 
     /// <summary>
+    ///     The owning session, surfaced for event-query terminals that need live-session context
+    ///     (AggregateToAsync / AggregateToManyAsync).
+    /// </summary>
+    internal QuerySession Session => _session;
+
+    /// <summary>
     ///     Create provider for QueryAllRawEvents().
     /// </summary>
     public EventLinqQueryProvider(QuerySession session, EventGraph events)
@@ -91,7 +97,9 @@ internal class EventLinqQueryProvider : IPolecatAsyncQueryProvider
     [RequiresUnreferencedCode("Event-store LINQ execution reflects over the event type (Activator.CreateInstance on handler types, MethodInfo.Invoke on HandleAsync). AOT consumers must preserve event + handler members through DAM or source generation.")]
     public async Task<TResult> ExecuteAsync<TResult>(Expression expression, CancellationToken token)
     {
-        var parser = new LinqQueryParser(_memberFactory, _eventsTable);
+        // HasTag() is only meaningful over IEvent queries, where the FROM table is pc_events.
+        var parser = new LinqQueryParser(_memberFactory, _eventsTable,
+            _isAllEvents ? [new HasTagParser(_events)] : null);
         parser.Parse(expression);
 
         ApplySingleValueMode(parser);

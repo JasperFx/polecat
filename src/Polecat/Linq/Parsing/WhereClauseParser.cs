@@ -25,10 +25,13 @@ internal class WhereClauseParser
     };
 
     private readonly IMemberResolver _memberFactory;
+    private readonly IReadOnlyList<IMethodCallParser>? _additionalParsers;
 
-    public WhereClauseParser(IMemberResolver memberFactory)
+    public WhereClauseParser(IMemberResolver memberFactory,
+        IReadOnlyList<IMethodCallParser>? additionalParsers = null)
     {
         _memberFactory = memberFactory;
+        _additionalParsers = additionalParsers;
     }
 
     public ISqlFragment Parse(Expression expression)
@@ -50,6 +53,15 @@ internal class WhereClauseParser
 
     private ISqlFragment ParseMethodCall(MethodCallExpression expression)
     {
+        if (_additionalParsers != null)
+        {
+            foreach (var additional in _additionalParsers)
+            {
+                if (additional.Matches(expression))
+                    return additional.Parse(_memberFactory, expression);
+            }
+        }
+
         var parser = MethodCallParserRegistry.FindParser(expression)
             ?? throw new NotSupportedException(
                 $"Unsupported method call in WHERE clause: {expression.Method.DeclaringType?.Name}.{expression.Method.Name}");
