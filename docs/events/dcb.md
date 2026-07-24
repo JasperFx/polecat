@@ -59,6 +59,25 @@ Use `EventTagQuery` to build a query, then execute it with `QueryByTagsAsync`:
 
 Events are always returned ordered by sequence number (global append order).
 
+### Tag Predicates in LINQ (`HasTag`)
+
+Tag predicates can also compose directly into a LINQ `Where()` over an event query, alongside ordinary event predicates (timestamp, event type, stream). Use the `IEvent.HasTag<TTag>(value)` marker method:
+
+<!-- snippet: sample_polecat_dcb_has_tag_linq -->
+<!-- endSnippet -->
+
+`HasTag` compiles to the same tag-table subquery that `QueryByTagsAsync` emits (a correlated `seq_id IN (SELECT seq_id FROM pc_event_tag_{suffix} WHERE value = @p)` predicate), and under conjoined tenancy it is automatically tenant-scoped. AND-ing several `HasTag` calls with normal predicates is supported:
+
+```cs
+var events = await session.Events.QueryAllRawEvents()
+    .Where(e => e.HasTag<StudentId>(alice)
+             && e.HasTag<CourseId>(math)
+             && e.Timestamp > cutoff)
+    .ToListAsync();
+```
+
+For OR-across-tags or the richer tag/event-type interplay, keep using the `EventTagQuery` builder with `QueryByTagsAsync` — that remains the rich escape hatch. `HasTag` is a marker method recognized by the LINQ provider; calling it outside a Polecat event query throws `NotSupportedException`, and using an unregistered tag type throws `InvalidOperationException`.
+
 ## Aggregating by Tags
 
 Build an aggregate from tagged events, similar to `AggregateStreamAsync` but across streams. First define an aggregate that applies the tagged events:

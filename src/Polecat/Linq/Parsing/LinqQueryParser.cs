@@ -116,10 +116,11 @@ internal class LinqQueryParser : ExpressionVisitor
     /// </summary>
     public TimeSpan? NonStaleDataTimeout { get; private set; }
 
-    public LinqQueryParser(IMemberResolver memberFactory, string fromTable)
+    public LinqQueryParser(IMemberResolver memberFactory, string fromTable,
+        IReadOnlyList<Methods.IMethodCallParser>? additionalMethodParsers = null)
     {
         _memberFactory = memberFactory;
-        _whereParser = new WhereClauseParser(memberFactory);
+        _whereParser = new WhereClauseParser(memberFactory, additionalMethodParsers);
         Statement = new Statement { FromTable = fromTable };
     }
 

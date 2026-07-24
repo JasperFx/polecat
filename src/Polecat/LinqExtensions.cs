@@ -1,6 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using System.Reflection;
+using JasperFx.Events;
 
 namespace Polecat;
 
@@ -40,6 +41,21 @@ public static class LinqExtensions
     ///     Translated to OPENJSON count check.
     /// </summary>
     public static bool IsEmpty<T>(this IEnumerable<T> enumerable) => !enumerable.Any();
+
+    /// <summary>
+    ///     LINQ filter over an event query (e.g. <c>session.Events.QueryAllRawEvents()</c>) that matches only
+    ///     events carrying the given DCB tag value. Composes into the same <c>Where()</c> as ordinary event
+    ///     predicates (timestamp, event type, stream), so one query can express "these events, matching these
+    ///     tags". <typeparamref name="TTag"/> must be a registered tag type (see <c>RegisterTagType&lt;TTag&gt;()</c>).
+    ///     AND-ing several <c>HasTag</c> calls with normal predicates is supported; for OR-across-tags or the
+    ///     richer event-type interplay, use the <c>EventTagQuery</c> builder with <c>QueryByTagsAsync</c> instead.
+    ///     This is a marker method recognized by the LINQ provider and cannot be invoked directly.
+    /// </summary>
+    public static bool HasTag<TTag>(this IEvent e, TTag value) where TTag : notnull
+    {
+        throw new NotSupportedException(
+            "IEvent.HasTag<TTag>() is a marker method for LINQ event queries and cannot be invoked directly. Use it inside session.Events.QueryAllRawEvents().Where(...).");
+    }
 
     private static readonly MethodInfo AnyTenantMethodInfo =
         typeof(LinqExtensions).GetMethod(nameof(AnyTenant))!;
