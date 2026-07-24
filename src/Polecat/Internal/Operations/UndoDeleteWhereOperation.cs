@@ -40,7 +40,7 @@ internal class UndoDeleteWhereOperation : IStorageOperation
         if (_conjoined) // #234
         {
             builder.Append("tenant_id = ");
-            builder.AppendParameter(_tenantId);
+            builder.AppendParameter(_tenantId, System.Data.SqlDbType.VarChar);
             builder.Append(" AND ");
         }
 

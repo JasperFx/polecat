@@ -48,7 +48,7 @@ internal class HiloSequence : HiloSequenceBase
             cmd.CommandText =
                 $"UPDATE [{_schemaName}].[pc_hilo] SET hi_value = @floor WHERE entity_name = @name;";
             cmd.Parameters.AddWithValue("@floor", state);
-            cmd.Parameters.AddWithValue("@name", EntityName);
+            cmd.Parameters.AddVarChar("@name", EntityName);
             await cmd.ExecuteNonQueryAsync(ct);
         }, numberOfPages);
 
@@ -150,7 +150,7 @@ internal class HiloSequence : HiloSequenceBase
         {
             readCmd.CommandText =
                 $"SELECT hi_value FROM [{_schemaName}].[pc_hilo] WHERE entity_name = @entity;";
-            readCmd.Parameters.AddWithValue("@entity", EntityName);
+            readCmd.Parameters.AddVarChar("@entity", EntityName);
             var raw = await readCmd.ExecuteScalarAsync(ct);
             currentHi = raw == null || raw == DBNull.Value ? null : Convert.ToInt64(raw);
         }
@@ -163,7 +163,7 @@ internal class HiloSequence : HiloSequenceBase
                 await using var insertCmd = conn.CreateCommand();
                 insertCmd.CommandText =
                     $"INSERT INTO [{_schemaName}].[pc_hilo] (entity_name, hi_value) VALUES (@entity, 0);";
-                insertCmd.Parameters.AddWithValue("@entity", EntityName);
+                insertCmd.Parameters.AddVarChar("@entity", EntityName);
                 await insertCmd.ExecuteNonQueryAsync(ct);
                 return 0;
             }
@@ -181,7 +181,7 @@ internal class HiloSequence : HiloSequenceBase
             updateCmd.CommandText =
                 $"UPDATE [{_schemaName}].[pc_hilo] SET hi_value = @next WHERE entity_name = @entity AND hi_value = @current;";
             updateCmd.Parameters.AddWithValue("@next", nextHi);
-            updateCmd.Parameters.AddWithValue("@entity", EntityName);
+            updateCmd.Parameters.AddVarChar("@entity", EntityName);
             updateCmd.Parameters.AddWithValue("@current", currentHi.Value);
             var rows = await updateCmd.ExecuteNonQueryAsync(ct);
             return rows == 0 ? -1 : nextHi;
@@ -196,7 +196,7 @@ internal class HiloSequence : HiloSequenceBase
         {
             readCmd.CommandText =
                 $"SELECT hi_value FROM [{_schemaName}].[pc_hilo] WHERE entity_name = @entity;";
-            readCmd.Parameters.AddWithValue("@entity", EntityName);
+            readCmd.Parameters.AddVarChar("@entity", EntityName);
             var raw = readCmd.ExecuteScalar();
             currentHi = raw == null || raw == DBNull.Value ? null : Convert.ToInt64(raw);
         }
@@ -208,7 +208,7 @@ internal class HiloSequence : HiloSequenceBase
                 using var insertCmd = conn.CreateCommand();
                 insertCmd.CommandText =
                     $"INSERT INTO [{_schemaName}].[pc_hilo] (entity_name, hi_value) VALUES (@entity, 0);";
-                insertCmd.Parameters.AddWithValue("@entity", EntityName);
+                insertCmd.Parameters.AddVarChar("@entity", EntityName);
                 insertCmd.ExecuteNonQuery();
                 return 0;
             }
@@ -224,7 +224,7 @@ internal class HiloSequence : HiloSequenceBase
             updateCmd.CommandText =
                 $"UPDATE [{_schemaName}].[pc_hilo] SET hi_value = @next WHERE entity_name = @entity AND hi_value = @current;";
             updateCmd.Parameters.AddWithValue("@next", nextHi);
-            updateCmd.Parameters.AddWithValue("@entity", EntityName);
+            updateCmd.Parameters.AddVarChar("@entity", EntityName);
             updateCmd.Parameters.AddWithValue("@current", currentHi.Value);
             var rows = updateCmd.ExecuteNonQuery();
             return rows == 0 ? -1 : nextHi;

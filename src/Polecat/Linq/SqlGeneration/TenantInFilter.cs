@@ -33,7 +33,7 @@ internal class TenantInFilter : ISqlFragment
         for (var i = 0; i < _tenantIds.Length; i++)
         {
             if (i > 0) builder.Append(", ");
-            builder.AppendParameter(_tenantIds[i]);
+            builder.AppendParameter(_tenantIds[i], System.Data.SqlDbType.VarChar);
         }
 
         builder.Append(")");

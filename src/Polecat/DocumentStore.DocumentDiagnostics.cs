@@ -8,6 +8,7 @@ using JasperFx.Documents;
 using JasperFx.MultiTenancy;
 using Microsoft.Data.SqlClient;
 
+using Polecat.Internal;
 namespace Polecat;
 
 public partial class DocumentStore : IDocumentStoreDiagnostics
@@ -71,10 +72,10 @@ public partial class DocumentStore : IDocumentStoreDiagnostics
         void BindParameters(SqlCommand command)
         {
             if (options.IdEquals != null) command.Parameters.AddWithValue("@id", options.IdEquals);
-            if (filterByTenant) command.Parameters.AddWithValue("@tenant", options.TenantId!);
-            if (filterCorrelation) command.Parameters.AddWithValue("@correlation", options.CorrelationId!);
-            if (filterCausation) command.Parameters.AddWithValue("@causation", options.CausationId!);
-            if (filterLastModifiedBy) command.Parameters.AddWithValue("@last_modified_by", options.LastModifiedBy!);
+            if (filterByTenant) command.Parameters.AddVarChar("@tenant", options.TenantId!);
+            if (filterCorrelation) command.Parameters.AddVarChar("@correlation", options.CorrelationId!);
+            if (filterCausation) command.Parameters.AddVarChar("@causation", options.CausationId!);
+            if (filterLastModifiedBy) command.Parameters.AddVarChar("@last_modified_by", options.LastModifiedBy!);
         }
 
         await using var conn = new SqlConnection(Database.ConnectionString);

@@ -62,8 +62,8 @@ internal partial class QuerySession
         cmd.CommandText =
             $"SELECT {string.Join(", ", columns)} FROM {mapping.QualifiedTableName} " +
             (isConjoined ? "WHERE id = @id AND tenant_id = @tenant_id" : "WHERE id = @id");
-        cmd.Parameters.AddWithValue("@id", id);
-        if (isConjoined) cmd.Parameters.AddWithValue("@tenant_id", TenantId);
+        cmd.Parameters.AddIdParameter("@id", id);
+        if (isConjoined) cmd.Parameters.AddVarChar("@tenant_id", TenantId);
 
         Logger.OnBeforeExecute(cmd.CommandText);
         try

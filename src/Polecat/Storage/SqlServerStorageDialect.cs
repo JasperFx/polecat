@@ -23,10 +23,13 @@ internal sealed class SqlServerStorageDialect<TId> : IStorageDialect
     // NOTE: not derived from typeof(TId) — for strongly-typed ids TId is the wrapper type
     // while raw sql values are the unwrapped inner (Guid/string/int/long). Type from the
     // runtime value instead (#273 E2a).
+    // #363: string ids MUST bind as varchar — the id columns are varchar(250), and an nvarchar
+    // parameter forces CONVERT_IMPLICIT on the column side, turning every id seek into a scan
+    // under SQL collations.
     private static SqlDbType TypeForRawId(object rawId) => rawId switch
     {
         Guid => SqlDbType.UniqueIdentifier,
-        string => SqlDbType.NVarChar,
+        string => SqlDbType.VarChar,
         int => SqlDbType.Int,
         long => SqlDbType.BigInt,
         _ => SqlServerProvider.Instance.ToParameterType(rawId.GetType())
@@ -42,7 +45,7 @@ internal sealed class SqlServerStorageDialect<TId> : IStorageDialect
         command.Parameters.Add(new SqlParameter("id", rawId) { SqlDbType = TypeForRawId(rawId) });
         if (tenant is not null)
         {
-            command.Parameters.Add(new SqlParameter("tenant_id", tenant) { SqlDbType = SqlDbType.NVarChar });
+            command.Parameters.Add(new SqlParameter("tenant_id", tenant) { SqlDbType = SqlDbType.VarChar });
         }
 
         return command;
@@ -65,7 +68,7 @@ internal sealed class SqlServerStorageDialect<TId> : IStorageDialect
         command.Parameters.Add((SqlParameter)idArrayParameter);
         if (tenant is not null)
         {
-            command.Parameters.Add(new SqlParameter("tenant_id", tenant) { SqlDbType = SqlDbType.NVarChar });
+            command.Parameters.Add(new SqlParameter("tenant_id", tenant) { SqlDbType = SqlDbType.VarChar });
         }
 
         return command;
@@ -77,10 +80,13 @@ internal sealed class SqlServerStorageDialect<TId> : IStorageDialect
     public bool IsUndefinedTable(Exception exception)
         => exception is SqlException sql && sql.Number == 208;
 
+    // #363: StorageColumnType.String always targets Polecat's varchar columns (ids, tenant_id,
+    // type names, correlation/causation) — binding nvarchar defeats their index seeks. JSON stays
+    // nvarchar: payloads are Unicode and the json column type converts the parameter, not the column.
     public void SetParameterType(System.Data.Common.DbParameter parameter, StorageColumnType type)
         => ((SqlParameter)parameter).SqlDbType = type switch
         {
-            StorageColumnType.String => SqlDbType.NVarChar,
+            StorageColumnType.String => SqlDbType.VarChar,
             StorageColumnType.Guid => SqlDbType.UniqueIdentifier,
             StorageColumnType.Long => SqlDbType.BigInt,
             StorageColumnType.Int => SqlDbType.Int,

@@ -83,13 +83,14 @@ internal class AssertDcbConsistencyOperation : IStorageOperation
 
             var registration = _events.FindTagType(condition.TagType)!;
             var value = registration.ExtractValue(condition.TagValue);
-            builder.AppendParameter(value);
+            // #363: string tag values bind varchar to seek the varchar(250) tag value column.
+            builder.AppendParameter(value, value is string ? System.Data.SqlDbType.VarChar : null);
 
             if (condition.EventType != null)
             {
                 builder.Append(" AND e.type = ");
                 var eventTypeName = _events.EventMappingFor(condition.EventType).EventTypeName;
-                builder.AppendParameter(eventTypeName);
+                builder.AppendParameter(eventTypeName, System.Data.SqlDbType.VarChar);
             }
 
             builder.Append(")");
@@ -101,7 +102,7 @@ internal class AssertDcbConsistencyOperation : IStorageOperation
         if (_events.TenancyStyle == TenancyStyle.Conjoined && _tenantId != null)
         {
             builder.Append(" AND t0.tenant_id = ");
-            builder.AppendParameter(_tenantId);
+            builder.AppendParameter(_tenantId, System.Data.SqlDbType.VarChar);
         }
 
         builder.Append(") THEN 1 ELSE 0 END");
