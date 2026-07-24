@@ -164,6 +164,25 @@ The queryable `IEvent` properties available for filtering and projection are:
 These queries search the entire event table and should be used judiciously. For routine application queries, prefer projected views or tag-based queries.
 :::
 
+### AggregateToAsync
+
+`AggregateToAsync<T>()` is a LINQ terminal that folds **every** event matched by an event query into a single live aggregate of type `T`, regardless of which stream each event came from. It uses the same conventional `Create`/`Apply` aggregation that `AggregateStreamAsync` uses, but over an arbitrary event query instead of one stream:
+
+<!-- snippet: sample_aggregate_to_async -->
+<!-- endSnippet -->
+
+You can also seed the fold with initial state:
+
+```cs
+var initial = new QuestParty { Members = ["Lan"] };
+
+var questParty = await session.Events.QueryAllRawEvents()
+    .Where(x => x.StreamId == streamId)
+    .AggregateToAsync(initial);
+```
+
+The aggregate's identity is stamped from the last queried event's stream (`StreamId` or `StreamKey` depending on the store's `StreamIdentity`), and `null` is returned when the query matches no events.
+
 ### AggregateToManyAsync
 
 `AggregateToManyAsync<T>()` is a LINQ terminal that runs the events matched by an event query through the **multi-stream projection** registered for `T` and returns the aggregate it produces for each resulting identity. It drives the projection's real slicer/grouper, `EnrichEventsAsync`, and per-slice build against the live query session — the same building blocks the projection step-through and the async daemon use — so custom groupers that read present-day reference data from the session work for free. Nothing is persisted.
@@ -179,6 +198,8 @@ query any slice of the event store and fan it out to one aggregate per identity:
 <!-- endSnippet -->
 
 Each returned aggregate has its identity stamped from the projection's slice id. Aggregates whose event slice resolves to a delete (`ShouldDelete`) are omitted, an empty query returns an empty list, and calling it for an aggregate type with no registered projection throws `ArgumentException`.
+
+Contrast `AggregateToAsync`, which folds every queried event into a single aggregate; `AggregateToManyAsync` fans them out through the projection's slicer to one aggregate per identity.
 
 ## QueryForNonStaleData
 

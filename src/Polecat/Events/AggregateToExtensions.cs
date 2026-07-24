@@ -32,12 +32,53 @@ public static class AggregateToExtensions
             nameof(queryable));
     }
 
+    private static void setIdentity<T>(QuerySession session, T aggregate, IReadOnlyList<IEvent> events)
+        where T : class
+    {
+        object streamId = session.Options.Events.StreamIdentity == StreamIdentity.AsGuid
+            ? events[^1].StreamId
+            : events[^1].StreamKey!;
+
+        QueryEventStore.TrySetIdentity(aggregate, streamId);
+    }
+
+    /// <summary>
+    ///     Aggregate the events matched by this query into a single instance of <typeparamref name="T"/>,
+    ///     folding every queried event into one aggregate regardless of stream, optionally starting from
+    ///     <paramref name="state"/>. The aggregate's identity is stamped from the last queried event's
+    ///     stream. Returns null when the query matches no events. Contrast
+    ///     <see cref="AggregateToManyAsync{T}"/>, which fans the queried events out through a multi-stream
+    ///     projection to one aggregate per identity.
+    /// </summary>
+    public static async Task<T?> AggregateToAsync<T>(this IQueryable<IEvent> queryable, T? state = null,
+        CancellationToken token = default) where T : class
+    {
+        var session = SessionFor(queryable);
+
+        var events = await queryable.ToListAsync(token).ConfigureAwait(false);
+        if (events.Count == 0)
+        {
+            return null;
+        }
+
+        var aggregator = session.Options.Projections.AggregatorFor<T>();
+        var aggregate = await aggregator.BuildAsync(events, session, state, token).ConfigureAwait(false);
+
+        if (aggregate != null)
+        {
+            setIdentity(session, aggregate, events);
+        }
+
+        return aggregate;
+    }
+
     /// <summary>
     ///     Run the events matched by this query through the multi-stream projection registered for
     ///     <typeparamref name="T"/> and return the aggregate it produces for each resulting identity. This is
     ///     the live-query twin of the projection step-through's multi-stream run: it drives the projection's
     ///     REAL slicer/grouper and per-slice build (the same core the step-through uses, minus the step
     ///     observer) against the live query session, so enrichment that reads reference data works for free.
+    ///     Contrast <see cref="AggregateToAsync{T}"/>, which folds every queried event into a single aggregate.
     /// </summary>
     [RequiresUnreferencedCode("Reflects over the projection's JasperFxAggregationProjectionBase base to close the fold over its TId.")]
     [RequiresDynamicCode("Closes aggregateManyAsync over (T, TId) via MakeGenericMethod.")]
