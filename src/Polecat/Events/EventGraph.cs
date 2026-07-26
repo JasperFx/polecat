@@ -23,7 +23,7 @@ namespace Polecat.Events;
 [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
     Justification = "Class-level: extends JasperFx.Events.EventRegistry (annotated RUC) for type-aliased event construction; also wires aggregator sources via reflection. Event types are preserved by registration on the caller side per the AOT publishing guide.")]
 [UnconditionalSuppressMessage("Trimming", "IL2057:UnrecognizedTypeName",
-    Justification = "Class-level: AggregateTypeFor uses Type.GetType(string) as a fallback to resolve aggregate types persisted by .NET type name in event metadata. The aggregate types are preserved by projection registration on the caller side; AOT consumers should register all aggregate types ahead of time per the AOT publishing guide.")]
+    Justification = "Class-level: ResolveEventType uses Type.GetType(string) to resolve the dotnet_type name persisted on each event row. Event types are preserved by EventGraph registration on the caller side; AOT consumers should register all event types ahead of time per the AOT publishing guide. Aggregate types are NOT resolved this way — TryResolveAggregateType is a registry lookup over registered aliases and projections, no reflection over type names.")]
 [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
     Justification = "Class-level: aggregator-source factories and event-type registration use Type.MakeGenericType — runtime code generation. AOT consumers register concrete event types ahead of time.")]
 public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession>
@@ -342,21 +342,29 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
     }
 
     /// <summary>
-    ///     #370: resolve the alias persisted in <c>pc_streams.type</c> back to its aggregate type, or null
-    ///     when this deployment has no registration for it.
+    ///     #370/#373: resolve the alias persisted in <c>pc_streams.type</c> back to its aggregate type, or
+    ///     null when this deployment has no registration for it. The single answer to "what type is this
+    ///     alias" — <see cref="StreamState.AggregateType" /> hydration and the event store explorer's
+    ///     rehydrate-by-name path both come through here.
     /// </summary>
     /// <remarks>
     ///     <para>
-    ///     Unlike <see cref="AggregateTypeFor" /> this never throws: a stream tagged by a deployment that
-    ///     knew a type this one does not must still report its version and timestamps.
+    ///     Unlike <see cref="AggregateTypeFor" /> this never throws. A stream tagged by a deployment that
+    ///     knew a type this one does not must still report its version and timestamps, and the explorer
+    ///     turns the null into its own argument exception with a message aimed at that caller.
     ///     </para>
     ///     <para>
-    ///     <c>_aggregateTypes</c> alone is not enough. It is only populated by
-    ///     <see cref="AggregateAliasFor" />, which JasperFx.Events calls from
-    ///     <c>StreamAction.PrepareEvents</c> — a path Polecat's QuickAppend closed-shape writer does not go
-    ///     through, since the SQL Server dialect writes <c>stream.AggregateType?.Name</c> straight into the
-    ///     column. So the registered projections are the primary source and the map is the fallback,
-    ///     matching what the event store explorer's <c>ResolveAggregateType</c> already does.
+    ///     Two sources, in order. The alias registry (<c>_aggregateTypes</c>) is authoritative for anything
+    ///     this process wrote, because #373 made the stream insert go through
+    ///     <see cref="AggregateAliasFor" /> as it stamps the column. The registered projections cover
+    ///     everything else — streams written by another process or an earlier run, where nothing has
+    ///     populated the registry yet.
+    ///     </para>
+    ///     <para>
+    ///     Note the alias is the SIMPLE name, because that is what the column stores. Two aggregate types
+    ///     with the same <c>Name</c> in different namespaces therefore share an alias and the first one
+    ///     seen wins. That ambiguity lives in the persisted format, not here — resolving it would mean
+    ///     changing what the column holds.
     ///     </para>
     /// </remarks>
     internal Type? TryResolveAggregateType(string? aggregateTypeName)

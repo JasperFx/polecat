@@ -1,5 +1,3 @@
-using JasperFx.Events.Projections;
-using Polecat.Projections;
 using Polecat.Tests.Harness;
 using Shouldly;
 
@@ -39,14 +37,14 @@ public class batch_event_fetching : IntegrationContext
     ///     <c>StreamState.AggregateType</c> came back null on every stream — which would have made the
     ///     <c>StreamStateResponse.AggregateTypeName</c> wire field structurally dead. Both the standalone
     ///     and batched reads resolve it now.
+    ///     <para>
+    ///     #373 dropped the projection registration this test used to need: the stream writer registers the
+    ///     alias as it stamps it, so a plain <c>StartStream&lt;T&gt;</c> tag is enough.
+    ///     </para>
     /// </summary>
     [Fact]
     public async Task stream_state_reports_the_aggregate_type_it_was_tagged_with()
     {
-        await StoreOptions(opts =>
-            opts.Projections.Add<SingleStreamProjection<BatchTaggedAggregate, Guid>>(
-                ProjectionLifecycle.Live));
-
         var streamId = Guid.NewGuid();
         await using (var session = theStore.LightweightSession())
         {

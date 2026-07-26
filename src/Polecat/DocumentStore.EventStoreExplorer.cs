@@ -393,27 +393,10 @@ public partial class DocumentStore
         return statuses;
     }
 
+    // #373: one answer to "what type is this alias". This used to be a second, near-identical copy of the
+    // scan that now lives on EventGraph — same projection walk, same fallback, but with a bare `catch` that
+    // swallowed every exception rather than only the ArgumentOutOfRangeException an unknown alias raises.
+    // Delegating also means the explorer picks up the alias registry the stream writer populates.
     private Type? ResolveAggregateType(string aggregateTypeName)
-    {
-        foreach (var source in Options.Projections.All)
-        {
-            foreach (var published in source.PublishedTypes())
-            {
-                if (string.Equals(published.FullName, aggregateTypeName, StringComparison.Ordinal)
-                    || string.Equals(published.Name, aggregateTypeName, StringComparison.Ordinal))
-                {
-                    return published;
-                }
-            }
-        }
-
-        try
-        {
-            return Events.AggregateTypeFor(aggregateTypeName);
-        }
-        catch
-        {
-            return null;
-        }
-    }
+        => Events.TryResolveAggregateType(aggregateTypeName);
 }

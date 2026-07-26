@@ -131,7 +131,14 @@ internal sealed class SqlServerEventStoreDialect : IEventStoreSqlDialect
             dialect.SetParameterType(idParam, isGuid ? StorageColumnType.Guid : StorageColumnType.String);
 
             builder.Append(", ");
-            var typeParam = builder.AppendParameter((object?)stream.AggregateType?.Name ?? DBNull.Value);
+            // #373: go through AggregateAliasFor rather than reading .Name directly. The persisted value is
+            // identical — the alias IS the simple name — but the call also registers the alias→Type pair on
+            // the EventGraph, which is the only thing that populates its lookup map. JasperFx.Events would
+            // normally do that from StreamAction.PrepareEvents, a path this QuickAppend closed-shape writer
+            // never goes through, so without this the process that WROTE a stream could not resolve the type
+            // it had just stamped unless that type also happened to be registered as a projection.
+            var typeParam = builder.AppendParameter(
+                stream.AggregateType is null ? DBNull.Value : graph.AggregateAliasFor(stream.AggregateType));
             dialect.SetParameterType(typeParam, StorageColumnType.String);
 
             builder.Append(", ");
