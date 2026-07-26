@@ -47,14 +47,16 @@ internal static class PcStreamsRowReader
     /// <param name="reader"></param>
     /// <param name="streamIdentity"></param>
     /// <param name="events">
-    ///     Supply to resolve the <c>type</c> column's alias into
-    ///     <see cref="StreamState.AggregateType"/>. #370: the column has always been projected but never
-    ///     read, so <c>AggregateType</c> came back null on every stream that was in fact tagged with an
-    ///     aggregate type. An unregistered alias resolves to null rather than throwing — a stream tagged
-    ///     by a deployment that knew a type this one does not is not an error for a metadata read.
+    ///     Resolves the <c>type</c> column's alias into <see cref="StreamState.AggregateType"/>.
+    ///     <para>
+    ///     #373: deliberately REQUIRED rather than an optional null-defaulting parameter. #370 fixed
+    ///     <c>AggregateType</c> coming back null on every stream — the column had always been projected and
+    ///     never read — and an optional parameter would reintroduce exactly that failure mode one forgotten
+    ///     argument at a time, silently and with no compiler help.
+    ///     </para>
     /// </param>
     internal static StreamState ReadStreamState(DbDataReader reader, StreamIdentity streamIdentity,
-        EventGraph? events = null)
+        EventGraph events)
     {
         var state = new StreamState
         {
@@ -64,8 +66,10 @@ internal static class PcStreamsRowReader
             IsArchived = reader.GetBoolean(6)
         };
 
-        if (events != null && !reader.IsDBNull(1))
+        if (!reader.IsDBNull(1))
         {
+            // An unregistered alias resolves to null rather than throwing — a stream tagged by a deployment
+            // that knew a type this one does not is not an error for a metadata read.
             state.AggregateType = events.TryResolveAggregateType(reader.GetString(1));
         }
 
