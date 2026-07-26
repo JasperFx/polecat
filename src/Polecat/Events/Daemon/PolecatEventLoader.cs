@@ -4,6 +4,7 @@ using JasperFx.Events.Daemon;
 using JasperFx.Events.Projections;
 using Microsoft.Data.SqlClient;
 
+using Polecat.Exceptions;
 using Polecat.Internal;
 namespace Polecat.Events.Daemon;
 
@@ -122,8 +123,11 @@ internal class PolecatEventLoader : IEventLoader
                     continue;
                 }
 
-                throw new InvalidOperationException(
-                    $"Unable to resolve event type for dotnet_type '{dotNetTypeName}' at seq_id {seqId}.");
+                // #368 / jasperfx#565: a typed exception carrying its own ShardFailureCategory, so a shard
+                // paused by an unregistered event type reports UnknownEventType with the offending
+                // sequence rather than classifying as Other with no detail. The daemon does not sniff
+                // exception type names — the exception has to declare its own kind.
+                throw new UnknownEventTypeException(dotNetTypeName, seqId);
             }
 
             object data;
@@ -139,8 +143,10 @@ internal class PolecatEventLoader : IEventLoader
                     continue;
                 }
 
-                throw new InvalidOperationException(
-                    $"Failed to deserialize event at seq_id {seqId} of type '{dotNetTypeName}'.", ex);
+                // #368 / jasperfx#565: report the store's type alias (the `type` column) rather than the
+                // assembly-qualified dotnet_type, matching what ShardFailure.Event.EventTypeName carries
+                // everywhere else and what a client-side consumer can act on.
+                throw new EventDeserializationFailureException(seqId, typeName, ex);
             }
 
             var mapping = _events.EventMappingFor(resolvedType);

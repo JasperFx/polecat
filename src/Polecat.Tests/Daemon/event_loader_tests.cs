@@ -2,6 +2,7 @@ using JasperFx.Events.Daemon;
 using JasperFx.Events.Projections;
 using Microsoft.Data.SqlClient;
 using Polecat.Events.Daemon;
+using Polecat.Exceptions;
 using Polecat.Tests.Harness;
 
 namespace Polecat.Tests.Daemon;
@@ -102,6 +103,74 @@ public class event_loader_tests : IntegrationContext
         var page = await loader.LoadAsync(request, CancellationToken.None);
 
         page.Count.ShouldBe(0);
+    }
+
+    // #368 / jasperfx#565: the daemon classifies a paused shard purely from what the store's exception
+    // declares through IEventFailureContext — there is deliberately no fallback type-name sniffing. These
+    // two pin the throw sites that used to raise a bare InvalidOperationException, which classified as
+    // ShardFailureCategory.Other with no event details at all.
+    [Fact]
+    public async Task unresolvable_event_type_throws_a_classified_failure_naming_the_sequence()
+    {
+        await InsertEventsAsync(1);
+        var seqId = (await GetAllSeqIdsAsync()).Single();
+        await CorruptDotNetTypeAsync(seqId, "Nope.NotARealEventType, Nope");
+
+        var loader = CreateLoader();
+        var request = CreateRequest(0, seqId, batchSize: 100);
+
+        var ex = await Should.ThrowAsync<UnknownEventTypeException>(
+            async () => await loader.LoadAsync(request, CancellationToken.None));
+
+        ShardFailure.For(ex, DateTimeOffset.UtcNow).Category.ShouldBe(ShardFailureCategory.UnknownEventType);
+        ex.Sequence.ShouldBe(seqId);
+    }
+
+    [Fact]
+    public async Task corrupted_event_body_throws_a_classified_failure_naming_the_event_type()
+    {
+        await InsertEventsAsync(1);
+        var seqId = (await GetAllSeqIdsAsync()).Single();
+        var alias = theStore.Database.Events.EventMappingFor(typeof(QuestStarted)).EventTypeName;
+        await CorruptEventBodyAsync(seqId);
+
+        var loader = CreateLoader();
+        var request = CreateRequest(0, seqId, batchSize: 100);
+
+        var ex = await Should.ThrowAsync<EventDeserializationFailureException>(
+            async () => await loader.LoadAsync(request, CancellationToken.None));
+
+        // The acceptance case from the issue: EventSerialization, with the failing sequence AND the
+        // store's type alias — the alias a consumer can act on, not the assembly-qualified dotnet_type.
+        var failure = ShardFailure.For(ex, DateTimeOffset.UtcNow);
+        failure.Category.ShouldBe(ShardFailureCategory.EventSerialization);
+        failure.Event.ShouldNotBeNull();
+        failure.Event.Sequence.ShouldBe(seqId);
+        failure.Event.EventTypeName.ShouldBe(alias);
+    }
+
+    private async Task CorruptDotNetTypeAsync(long seqId, string dotNetType)
+    {
+        await using var conn = await OpenConnectionAsync();
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = "UPDATE [dbo].[pc_events] SET dotnet_type = @type WHERE seq_id = @seq;";
+        cmd.Parameters.AddWithValue("@type", dotNetType);
+        cmd.Parameters.AddWithValue("@seq", seqId);
+        await cmd.ExecuteNonQueryAsync();
+    }
+
+    private async Task CorruptEventBodyAsync(long seqId)
+    {
+        // Well-formed JSON (so the native `json` column accepts it) that cannot bind to the event type at
+        // all, so the row reads back fine but STJ throws on materialization — the shape of the failure the
+        // issue is about. A JSON array rather than a bad property value: property NAMES are subject to the
+        // serializer's naming policy, so an unmatched name would silently bind to the default instead.
+        await using var conn = await OpenConnectionAsync();
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = "UPDATE [dbo].[pc_events] SET data = @data WHERE seq_id = @seq;";
+        cmd.Parameters.AddWithValue("@data", "[1, 2, 3]");
+        cmd.Parameters.AddWithValue("@seq", seqId);
+        (await cmd.ExecuteNonQueryAsync()).ShouldBe(1);
     }
 
     private PolecatEventLoader CreateLoader()

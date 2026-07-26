@@ -25,6 +25,40 @@ Every event type that sets or changes the natural key must be declared through t
 
 Events that do not affect the natural key (like `NkOrderItemAdded` in the example above) do not need any mapping.
 
+A `[NaturalKeySource]` method that cannot be bound to an extraction strategy is now a configuration-time
+error — `AssembleAndAssertValidity()` throws an `InvalidProjectionException` naming the method and the
+reason. Previously such a method registered nothing at all, silently, and the lookup table was simply
+never written for that event type.
+
+## Explicit Mappings with `NaturalKeyFor()`
+
+When attribute discovery cannot bind your method — or when you would simply rather be explicit — register
+the mapping directly from the projection:
+
+```cs
+public class OrderProjection: SingleStreamProjection<Order, Guid>
+{
+    public OrderProjection()
+    {
+        NaturalKeyFor(x => x
+            // From the event body
+            .SetBy<ProductRegistered>(e => new ProductCode(e.Code))
+            // From the whole IEvent, when the key depends on event metadata
+            .SetByEvent<ProductCodeChanged>(e => new ProductCode(e.Data.NewCode)));
+    }
+}
+```
+
+An explicit registration replaces any discovered mapping for the same event type, so it always wins over
+the attribute.
+
+::: warning
+The natural key has to be a function of **the event alone**. The lookup table is maintained inline at
+append time, where no prior aggregate exists under an `Async` snapshot lifecycle, so an extraction that
+depends on the current aggregate state has nothing to read. This is the constraint the attribute path now
+enforces as well.
+:::
+
 ## Storage
 
 Polecat automatically creates and manages a lookup table (prefixed with `pc_`) for each aggregate type that has a natural key configured. The table maps natural key values to stream ids and is:

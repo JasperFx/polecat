@@ -420,7 +420,9 @@ public class EventStoreOptions : IEventStoreInstrumentation
     /// <summary>
     ///     Opt into extended columns on the event progression table for CritterWatch alerting.
     ///     Adds nullable heartbeat, agent_status, pause_reason, running_on_node,
-    ///     warning_behind_threshold, and critical_behind_threshold columns. This is the
+    ///     warning_behind_threshold, critical_behind_threshold, and the #368 classified-failure columns
+    ///     (failure_category, failure_event_sequence, failure_event_type, failure_event_tenant_id) that
+    ///     carry <see cref="JasperFx.Events.Daemon.ShardFailure" /> onto the row. This is the
     ///     Polecat-named alias for <see cref="IEventStoreInstrumentation.ExtendedProgressionEnabled" />;
     ///     both read and write the same setting.
     /// </summary>

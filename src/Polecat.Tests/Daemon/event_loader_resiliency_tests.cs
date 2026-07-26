@@ -2,6 +2,7 @@ using JasperFx.Events.Daemon;
 using JasperFx.Events.Projections;
 using Microsoft.Data.SqlClient;
 using Polecat.Events.Daemon;
+using Polecat.Exceptions;
 using Polecat.Tests.Harness;
 
 namespace Polecat.Tests.Daemon;
@@ -73,8 +74,11 @@ public class event_loader_resiliency_tests : IntegrationContext
         var request = CreateRequest(0, highWater, batchSize: 100,
             skipUnknown: false, skipSerialization: false);
 
-        await Should.ThrowAsync<InvalidOperationException>(
+        // #368 / jasperfx#565: a typed exception that declares its own ShardFailureCategory. This used to
+        // be a bare InvalidOperationException, which the daemon could only classify as Other.
+        var ex = await Should.ThrowAsync<UnknownEventTypeException>(
             loader.LoadAsync(request, CancellationToken.None));
+        ex.Category.ShouldBe(ShardFailureCategory.UnknownEventType);
     }
 
     // ===== SkipSerializationErrors =====
@@ -122,8 +126,12 @@ public class event_loader_resiliency_tests : IntegrationContext
         var request = CreateRequest(0, highWater, batchSize: 100,
             skipUnknown: false, skipSerialization: false);
 
-        await Should.ThrowAsync<InvalidOperationException>(
+        // #368 / jasperfx#565: EventSerialization is kept distinct from UnknownEventType on purpose —
+        // bad data is a different operator action from a missing registration.
+        var ex = await Should.ThrowAsync<EventDeserializationFailureException>(
             loader.LoadAsync(request, CancellationToken.None));
+        ex.Category.ShouldBe(ShardFailureCategory.EventSerialization);
+        ex.EventTypeName.ShouldBe(questStartedTypeName);
     }
 
     // ===== Both skip options enabled =====

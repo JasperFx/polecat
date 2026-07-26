@@ -36,9 +36,23 @@
              onto every published ShardState, so the ExtendedProgressionWriter can carry the running node
              into WriteExtendedProgressionAsync's running_on_node column under managed distribution.
              JasperFx 2.34.0: jasperfx#555 (tenant-scoped QueryByTagsAsync + EventQuery.TenantId explorer
-             reads, #353) and jasperfx#557 (extended-progression writer shutdown drain). -->
-        <PackageVersion Include="JasperFx" Version="2.34.0" />
-        <PackageVersion Include="JasperFx.Events" Version="2.34.0" />
+             reads, #353) and jasperfx#557 (extended-progression writer shutdown drain).
+             JasperFx 2.36.1: three Polecat issues ride on this line —
+             (a) jasperfx#564: DaemonSettings.StopAndDrainTimeout, the configurable per-shard bound on the
+                 daemon's graceful stop-and-drain (docs, polecat#367);
+             (b) jasperfx#565: ShardFailureCategory / IEventFailureContext / EventFailureDetails /
+                 ShardFailure + ShardState.Failure — the classified reason a shard paused or stopped.
+                 Polecat implements IEventFailureContext on its read-path exceptions and persists the
+                 failure_* extended-progression columns (polecat#368). The daemon has NO fallback
+                 type-name sniffing, so a store that does not implement this classifies every failure as
+                 ShardFailureCategory.Other;
+             (c) jasperfx#569/#571: NaturalKeyEventMapping.Extractor widens from Func<object, object?> to
+                 Func<IEvent, object?> — SOURCE BREAKING, which is why the bump and the call-site change
+                 land together — plus reachable NaturalKeyBuilder / NaturalKeyFor() and loud failure on an
+                 unbindable [NaturalKeySource] (polecat#369).
+             Also carries jasperfx#568/#572 daemon race fixes, picked up for free. -->
+        <PackageVersion Include="JasperFx" Version="2.36.1" />
+        <PackageVersion Include="JasperFx.Events" Version="2.36.1" />
         <!-- Pin the sibling JasperFx packages for parity with Marten 9's matrix
              even though Polecat doesn't currently reference them directly —
              keeps the lockstep matrix coherent when transitive resolution
@@ -46,7 +60,7 @@
              RuntimeCompiler 5.x line is the active continuation of the 4.x
              lineage; do not pin against the parallel stale 2.0.x series. -->
         <PackageVersion Include="JasperFx.RuntimeCompiler" Version="5.0.0" />
-        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.34.0" />
+        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.36.1" />
         <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
@@ -91,7 +105,7 @@
         <PackageVersion Include="StronglyTypedId" Version="1.0.0-beta08" />
 
         <!-- Source generators (matched to JasperFx.Events above) -->
-        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.34.0" />
+        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.36.1" />
 
         <!-- Build automation -->
         <PackageVersion Include="Nuke.Common" Version="9.0.4" />

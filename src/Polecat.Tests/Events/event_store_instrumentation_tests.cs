@@ -22,7 +22,9 @@ public class event_store_instrumentation_tests : IAsyncLifetime
     private static readonly string[] ExtendedColumns =
     [
         "heartbeat", "agent_status", "pause_reason", "running_on_node",
-        "warning_behind_threshold", "critical_behind_threshold"
+        "warning_behind_threshold", "critical_behind_threshold",
+        // #368 / jasperfx#565: the classified reason a shard is paused or stopped
+        "failure_category", "failure_event_sequence", "failure_event_type", "failure_event_tenant_id"
     ];
 
     public async Task InitializeAsync()
@@ -70,7 +72,7 @@ public class event_store_instrumentation_tests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task enabling_adds_the_six_columns_on_schema_apply()
+    public async Task enabling_adds_the_extended_columns_on_schema_apply()
     {
         using var store = CreateStore(OnSchema, extended: true);
         await store.Database.ApplyAllConfiguredChangesToDatabaseAsync();
