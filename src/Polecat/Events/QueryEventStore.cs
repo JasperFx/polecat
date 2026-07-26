@@ -288,7 +288,7 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
         await using var reader = await _session.ExecuteReaderAsync(cmd, token);
         if (await reader.ReadAsync(token))
         {
-            return PcStreamsRowReader.ReadStreamState(reader, _events.StreamIdentity);
+            return PcStreamsRowReader.ReadStreamState(reader, _events.StreamIdentity, _events);
         }
 
         return null;

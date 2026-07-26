@@ -15,6 +15,13 @@ public interface IBatchedQuery
     IQuerySession Parent { get; }
 
     /// <summary>
+    ///     The batched event store fetches — <c>FetchStreamState</c> and <c>FetchStream</c> — so a raw
+    ///     stream read can share the batch's single round trip with document loads and LINQ queries.
+    ///     See <see cref="IBatchEvents" /> (#370).
+    /// </summary>
+    IBatchEvents Events { get; }
+
+    /// <summary>
     ///     Check if a document of type T with the given Guid id exists in the database
     ///     without loading or deserializing the document.
     /// </summary>

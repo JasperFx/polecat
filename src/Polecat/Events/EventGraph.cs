@@ -341,6 +341,47 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
             $"Unknown aggregate type name '{aggregateTypeName}'.");
     }
 
+    /// <summary>
+    ///     #370: resolve the alias persisted in <c>pc_streams.type</c> back to its aggregate type, or null
+    ///     when this deployment has no registration for it.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///     Unlike <see cref="AggregateTypeFor" /> this never throws: a stream tagged by a deployment that
+    ///     knew a type this one does not must still report its version and timestamps.
+    ///     </para>
+    ///     <para>
+    ///     <c>_aggregateTypes</c> alone is not enough. It is only populated by
+    ///     <see cref="AggregateAliasFor" />, which JasperFx.Events calls from
+    ///     <c>StreamAction.PrepareEvents</c> — a path Polecat's QuickAppend closed-shape writer does not go
+    ///     through, since the SQL Server dialect writes <c>stream.AggregateType?.Name</c> straight into the
+    ///     column. So the registered projections are the primary source and the map is the fallback,
+    ///     matching what the event store explorer's <c>ResolveAggregateType</c> already does.
+    ///     </para>
+    /// </remarks>
+    internal Type? TryResolveAggregateType(string? aggregateTypeName)
+    {
+        if (string.IsNullOrEmpty(aggregateTypeName)) return null;
+
+        if (_aggregateTypes.TryGetValue(aggregateTypeName, out var known)) return known;
+
+        foreach (var source in _options.Projections.All)
+        {
+            foreach (var published in source.PublishedTypes())
+            {
+                if (string.Equals(published.Name, aggregateTypeName, StringComparison.Ordinal)
+                    || string.Equals(published.FullName, aggregateTypeName, StringComparison.Ordinal))
+                {
+                    // Cache it so the next row on this reader is a dictionary hit.
+                    _aggregateTypes.TryAdd(aggregateTypeName, published);
+                    return published;
+                }
+            }
+        }
+
+        return null;
+    }
+
     public override string AggregateAliasFor(Type aggregateType)
     {
         _aggregateTypes.TryAdd(aggregateType.Name, aggregateType);

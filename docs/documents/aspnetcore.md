@@ -125,6 +125,58 @@ Returns `200 application/json` with the latest projected aggregate state, or `40
 stream exists. A constructor overload accepts `string` ids for stores configured with
 string-keyed streams.
 
+## Streaming Event Stream Metadata and Events
+
+`StreamEventState` and `StreamEvents` are the event-side siblings of `StreamAggregate<T>`, backed by
+the `FetchStreamStatePlan` / `FetchStreamPlan` query plans — so the same plan can be batched through
+`IBatchedQuery.QueryByPlan()` and returned from an endpoint.
+
+```csharp
+app.MapGet("/orders/{id:guid}/state",  (Guid id, IQuerySession s) => new StreamEventState(s, id));
+app.MapGet("/orders/{id:guid}/events", (Guid id, IQuerySession s) => new StreamEvents(s, id));
+```
+
+Both take `Guid`, `string` and pre-built-plan constructors, and both implement `IResult` and
+`IEndpointMetadataProvider` so OpenAPI advertises the right `200` and `404` shapes.
+
+### StreamEventState vs StreamAggregate
+
+- **`StreamEventState`** writes the stream's *metadata* — version, created/last timestamps, archived flag.
+- **`StreamAggregate<T>`** writes the projected aggregate *state* built from the stream's events.
+
+### The response DTOs
+
+Neither result writes the framework's own types to the wire, because neither can. `StreamState.AggregateType`
+and `IEvent.EventType` are `System.Type`, and System.Text.Json refuses to serialize those:
+
+```
+NotSupportedException: Serialization and deserialization of 'System.Type' instances
+is not supported. Path: $.AggregateType.
+```
+
+So the bodies are `StreamStateResponse` and `EventResponse`: the aggregate type reduces to its simple
+name, and `IEvent`'s assembly-qualified `DotNetTypeName` is deliberately kept off the wire — use
+`EventTypeName`, Polecat's stable event type alias, as the client-side discriminator. The property names
+match Marten's equivalents, so a client can move between the two stores unchanged.
+
+### Empty streams are ambiguous
+
+`FetchStream` yields an empty list both for a stream that does not exist and for a filter that excludes
+every event, and the two cannot be told apart. `StreamEvents` exposes `OnEmptyStatus`, defaulting to `404`
+to match the other single-resource results. Set it to `200` to return an empty array instead — which is
+what you want when paging forward with `fromVersion` and running off the end is expected:
+
+```csharp
+app.MapGet("/orders/{id:guid}/events", (Guid id, long fromVersion, IQuerySession s) =>
+    new StreamEvents(s, id, fromVersion: fromVersion)
+    {
+        OnEmptyStatus = StatusCodes.Status200OK
+    });
+```
+
+Both responses set `Content-Length`, and serialization buffers through an `ArrayBufferWriter<byte>` so the
+JSON never round-trips through a .NET string.
+
 ### StreamOne vs StreamAggregate
 
 - **`StreamOne<T>`** is for regular documents — objects stored via `session.Store()` and

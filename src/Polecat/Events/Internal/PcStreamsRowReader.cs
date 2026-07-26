@@ -44,7 +44,17 @@ internal static class PcStreamsRowReader
     ///     <see cref="StreamState"/>. The caller is responsible for
     ///     <c>await reader.ReadAsync(...)</c> beforehand.
     /// </summary>
-    internal static StreamState ReadStreamState(DbDataReader reader, StreamIdentity streamIdentity)
+    /// <param name="reader"></param>
+    /// <param name="streamIdentity"></param>
+    /// <param name="events">
+    ///     Supply to resolve the <c>type</c> column's alias into
+    ///     <see cref="StreamState.AggregateType"/>. #370: the column has always been projected but never
+    ///     read, so <c>AggregateType</c> came back null on every stream that was in fact tagged with an
+    ///     aggregate type. An unregistered alias resolves to null rather than throwing — a stream tagged
+    ///     by a deployment that knew a type this one does not is not an error for a metadata read.
+    /// </param>
+    internal static StreamState ReadStreamState(DbDataReader reader, StreamIdentity streamIdentity,
+        EventGraph? events = null)
     {
         var state = new StreamState
         {
@@ -53,6 +63,11 @@ internal static class PcStreamsRowReader
             LastTimestamp = reader.GetFieldValue<DateTimeOffset>(4),
             IsArchived = reader.GetBoolean(6)
         };
+
+        if (events != null && !reader.IsDBNull(1))
+        {
+            state.AggregateType = events.TryResolveAggregateType(reader.GetString(1));
+        }
 
         if (streamIdentity == StreamIdentity.AsGuid)
         {

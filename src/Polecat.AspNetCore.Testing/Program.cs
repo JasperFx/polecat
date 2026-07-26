@@ -59,6 +59,29 @@ app.MapGet("/api/issues/paged-cursor/{pageSize:int}",
         new StreamPagedByCursor<StreamingIssue>(
             session.Query<StreamingIssue>().OrderBy(x => x.Number).ThenBy(x => x.Id), cursor, pageSize));
 
+// #370 StreamEventState endpoint — stream metadata (version/timestamps/archived) or 404
+app.MapGet("/api/streams/{id:guid}/state", (Guid id, IQuerySession session) =>
+    new StreamEventState(session, id));
+
+// #370 StreamEvents endpoint — the stream's raw events as a JSON array, or 404 when empty
+app.MapGet("/api/streams/{id:guid}/events", (Guid id, IQuerySession session) =>
+    new StreamEvents(session, id));
+
+// OnEmptyStatus opt-out — an empty stream answers 200 with an empty array rather than 404, which is
+// what a caller paging forward with fromVersion wants when it runs off the end.
+app.MapGet("/api/streams/{id:guid}/events-empty200", (Guid id, long? fromVersion, IQuerySession session) =>
+    new StreamEvents(session, id, fromVersion: fromVersion ?? 0)
+    {
+        OnEmptyStatus = StatusCodes.Status200OK
+    });
+
+// Pre-built plan constructor — a handler can build the plan once and either batch it or return it
+app.MapGet("/api/streams/{id:guid}/events-by-plan", (Guid id, IQuerySession session) =>
+    new StreamEvents(session, new FetchStreamPlan(id, version: 1)));
+
+app.MapGet("/api/streams/{id:guid}/state-by-plan", (Guid id, IQuerySession session) =>
+    new StreamEventState(session, new FetchStreamStatePlan(id)));
+
 app.Run();
 
 namespace Polecat.AspNetCore.Testing
