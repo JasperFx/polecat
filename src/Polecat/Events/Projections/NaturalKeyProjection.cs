@@ -93,7 +93,12 @@ internal class NaturalKeyProjection : IInlineProjection<IDocumentSession>
 
         if (mapping == null) return;
 
-        var naturalKeyValue = mapping.Extractor(e.Data);
+        // #369 / jasperfx#569: the extraction contract widened from the event *data* to the whole IEvent,
+        // which is what makes an IEvent<T> [NaturalKeySource] handler bindable at all (before, discovery
+        // silently dropped those and the lookup table was simply never written for that event type) and
+        // what lets a key be derived from event metadata. Both call sites into this method — the inline
+        // append path and the rebuild path — already hold the real IEvent.
+        var naturalKeyValue = mapping.Extractor(e);
         if (naturalKeyValue == null) return;
 
         // Unwrap strong-typed id to primitive value

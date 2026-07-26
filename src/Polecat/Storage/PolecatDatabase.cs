@@ -186,6 +186,14 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
     // "clobber" defect). If no row exists yet, the zero-row UPDATE simply skips until the first commit
     // creates it. running_on_node stays NULL until a distribution layer stamps AssignedNodeNumber onto
     // the published ShardState (Wolverine-managed distribution), which the writer carries into RunningOnNode.
+    //
+    // #368 / jasperfx#565: the four failure_* columns follow a DIFFERENT rule from the rest. They are
+    // written when the state carries a ShardFailure, CLEARED when a ShardAction.Started arrives without
+    // one (a recovered shard must stop reporting the reason it paused an hour ago, or every supervisor
+    // built on this alerts forever), and otherwise LEFT ALONE. That last case is load-bearing:
+    // SubscriptionAgent publishes a plain Stopped right behind a Paused, and an unconditional write would
+    // erase the reason microseconds after recording it. The CASE expressions keep that conditional in the
+    // one statement rather than branching the SQL.
     public async Task WriteExtendedProgressionAsync(ShardState state, CancellationToken token = default)
     {
         await _resilience.ExecuteAsync(static async (s, ct) =>
@@ -200,7 +208,11 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
                 SET heartbeat = @heartbeat,
                     agent_status = @status,
                     pause_reason = @reason,
-                    running_on_node = @node
+                    running_on_node = @node,
+                    failure_category = CASE WHEN @touchFailure = 1 THEN @failureCategory ELSE failure_category END,
+                    failure_event_sequence = CASE WHEN @touchFailure = 1 THEN @failureSequence ELSE failure_event_sequence END,
+                    failure_event_type = CASE WHEN @touchFailure = 1 THEN @failureEventType ELSE failure_event_type END,
+                    failure_event_tenant_id = CASE WHEN @touchFailure = 1 THEN @failureTenantId ELSE failure_event_tenant_id END
                 WHERE name = @name;
                 """;
             cmd.Parameters.AddVarChar("@name", shardState.ShardName);
@@ -208,6 +220,17 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
             cmd.Parameters.AddWithValue("@status", (object?)shardState.AgentStatus ?? DBNull.Value);
             cmd.Parameters.AddWithValue("@reason", (object?)shardState.PauseReason ?? DBNull.Value);
             cmd.Parameters.AddWithValue("@node", (object?)shardState.RunningOnNode ?? DBNull.Value);
+
+            var failure = shardState.Failure;
+            var touchFailure = failure != null || shardState.Action == ShardAction.Started;
+            cmd.Parameters.AddWithValue("@touchFailure", touchFailure ? 1 : 0);
+            // The enum NAME, never the ordinal — reordering ShardFailureCategory must not silently
+            // re-label rows written by an older deployment.
+            cmd.Parameters.AddVarChar("@failureCategory", failure?.Category.ToString());
+            cmd.Parameters.AddWithValue("@failureSequence", (object?)failure?.Event?.Sequence ?? DBNull.Value);
+            cmd.Parameters.AddVarChar("@failureEventType", failure?.Event?.EventTypeName);
+            cmd.Parameters.AddVarChar("@failureTenantId", failure?.Event?.TenantId);
+
             await cmd.ExecuteNonQueryAsync(ct);
         }, (_connectionString, _events.ProgressionTableName, state), token);
     }
@@ -225,7 +248,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
             await using var cmd = conn.CreateCommand();
             if (events.EnableExtendedProgressionTracking)
             {
-                cmd.CommandText = $"SELECT name, last_seq_id, heartbeat, agent_status, pause_reason, running_on_node, warning_behind_threshold, critical_behind_threshold FROM {events.ProgressionTableName};";
+                cmd.CommandText = $"SELECT name, last_seq_id, heartbeat, agent_status, pause_reason, running_on_node, warning_behind_threshold, critical_behind_threshold, failure_category, failure_event_sequence, failure_event_type, failure_event_tenant_id FROM {events.ProgressionTableName};";
             }
             else
             {
@@ -247,6 +270,17 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
                     if (!reader.IsDBNull(5)) shardState.RunningOnNode = reader.GetInt32(5);
                     if (!reader.IsDBNull(6)) shardState.WarningBehindThreshold = reader.GetInt64(6);
                     if (!reader.IsDBNull(7)) shardState.CriticalBehindThreshold = reader.GetInt64(7);
+
+                    // #368 / jasperfx#565: rehydrate the classified failure so a consumer polling the
+                    // database — which is the only channel left when the publishing node is down — gets
+                    // the same shape a live ShardState observer does, rather than only being able to see
+                    // that the shard is Paused.
+                    shardState.Failure = BuildFailure(
+                        reader.IsDBNull(8) ? null : reader.GetString(8),
+                        reader.IsDBNull(9) ? null : reader.GetInt64(9),
+                        reader.IsDBNull(10) ? null : reader.GetString(10),
+                        reader.IsDBNull(11) ? null : reader.GetString(11),
+                        shardState);
                 }
 
                 list.Add(shardState);
@@ -254,6 +288,55 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
 
             return (IReadOnlyList<ShardState>)list;
         }, (_connectionString, _events), token);
+    }
+
+    /// <summary>
+    ///     Placeholder for <see cref="ShardFailure.ExceptionType" /> / <see cref="ShardFailure.RootExceptionType" />
+    ///     on a failure rehydrated from the database, where the exception types were never persisted. Both
+    ///     members are <c>required</c> on the record, so a sentinel is unavoidable; a distinctive one beats
+    ///     an empty string that reads like a real (blank) type name.
+    /// </summary>
+    internal const string UnknownExceptionType = "Unknown";
+
+    /// <summary>
+    ///     #368 / jasperfx#565: the persisted row is a lossy projection of <see cref="ShardFailure" /> — by
+    ///     design, since the columns exist to answer "why is this shard down" and not to reconstitute an
+    ///     exception. <c>failure_category</c> is the presence flag: no category means no failure to report,
+    ///     and an unparseable one (a category name written by a newer deployment) is treated the same way
+    ///     rather than guessing.
+    /// </summary>
+    private static ShardFailure? BuildFailure(string? category, long? sequence, string? eventTypeName,
+        string? tenantId, ShardState state)
+    {
+        if (string.IsNullOrEmpty(category) || !Enum.TryParse<ShardFailureCategory>(category, out var parsed))
+        {
+            return null;
+        }
+
+        // ShardFailure.Detail is exactly what PauseReason has always carried, which is why the text needed
+        // no column of its own. Message is the same text here: the short form is a property of the live
+        // Exception, and that is not persisted.
+        var detail = state.PauseReason ?? string.Empty;
+
+        return new ShardFailure
+        {
+            Category = parsed,
+            // Not persisted — the reason text in Detail is what an operator acts on, and inventing a type
+            // name would be worse than admitting we don't have one.
+            ExceptionType = UnknownExceptionType,
+            RootExceptionType = UnknownExceptionType,
+            Message = detail,
+            Detail = detail,
+            // The pause/stop publication stamps LastHeartbeat at the moment it classifies the failure, so
+            // the persisted heartbeat is the closest thing the row has to the failure's timestamp.
+            OccurredAt = state.LastHeartbeat ?? default,
+            Event = sequence.HasValue
+                ? new EventFailureDetails
+                {
+                    Sequence = sequence.Value, EventTypeName = eventTypeName, TenantId = tenantId
+                }
+                : null
+        };
     }
 
     // #324 (jasperfx#435 / jasperfx#518): targeted per-cell progression read. The JasperFx.Events

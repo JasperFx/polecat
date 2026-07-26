@@ -743,9 +743,15 @@ internal class EventOperations : QueryEventStore, IEventOperations
             if (definition != null) return definition;
         }
 
+        // #369 / jasperfx#571: this used to point users at a "NaturalKey()" API that exists in neither
+        // Polecat nor JasperFx.Events. NaturalKeyFor() is the real escape hatch — it reaches the
+        // NaturalKeyBuilder<TDoc> that was unreachable dead code until jasperfx#571 made its constructor
+        // public.
         throw new InvalidOperationException(
             $"No natural key definition found for aggregate type '{typeof(T).Name}'. " +
-            "Configure a natural key via NaturalKey() in a SingleStreamProjection registration.");
+            $"Mark the key property on {typeof(T).Name} with [NaturalKey] and annotate the event handler(s) " +
+            "that set it with [NaturalKeySource], or register the mapping explicitly from the projection with " +
+            "NaturalKeyFor(x => x.SetBy<TEvent>(e => ...)).");
     }
 
     public async Task CompactStreamAsync<T>(Guid streamId, Action<StreamCompactingRequest<T>>? configure = null)
