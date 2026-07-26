@@ -14,6 +14,16 @@ var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 builder.Services.AddPolecat(opts =>
 {
     opts.ConnectionString = ConnectionSource.ConnectionString;
+
+    // #374: an isolated schema, NOT the default dbo. Polecat.Tests owns dbo, and its per-tenant
+    // partitioning coverage reshapes dbo.pc_streams; this host's ApplyAllConfiguredChangesToDatabaseAsync
+    // would then try to migrate that back, which means dropping the pc_streams primary key that
+    // pc_events has a foreign key onto — "Could not drop constraint", 37 failures that look exactly
+    // like a regression in whatever you just changed. CI never sees it (fresh database per project),
+    // so it only ever bites locally. Mirrors what Polecat.EntityFrameworkCore.Tests and this
+    // assembly's own HighWaterHealthCheckTests already do.
+    opts.DatabaseSchemaName = "polecat_aspnetcore";
+
     opts.UseNativeJsonType = ConnectionSource.SupportsNativeJson;
     opts.AutoCreateSchemaObjects = AutoCreate.All;
     opts.Events.StreamIdentity = StreamIdentity.AsGuid;
