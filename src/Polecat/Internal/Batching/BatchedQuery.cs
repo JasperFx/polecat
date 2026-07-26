@@ -26,7 +26,18 @@ internal class BatchedQuery : IBatchedQuery
 
     public IQuerySession Parent => _session;
 
+    // #370: lazily built so a batch that never touches the event store pays nothing for it.
+    public IBatchEvents Events => _events ??= new BatchEvents(this, _session);
+    private IBatchEvents? _events;
+
     internal void AddItem(IBatchQueryItem item) => _items.Add(item);
+
+    // #219 create-on-first-use: the standalone FetchStream/FetchStreamState calls ensure the event store
+    // schema before reading. A batched fetch has to do the same, or the very first event read against a
+    // fresh store fails on a missing table. Flagged rather than ensured eagerly so a document-only batch
+    // never pays for it.
+    internal void RequireEventStore() => _needsEventStore = true;
+    private bool _needsEventStore;
 
     internal void TrackProvider(DocumentProvider provider) => _involvedProviders.Add(provider);
 
@@ -103,6 +114,11 @@ internal class BatchedQuery : IBatchedQuery
 
         // Ensure tables exist for all involved document types
         await _tableEnsurer.EnsureTablesAsync(_involvedProviders, token);
+
+        if (_needsEventStore)
+        {
+            await _tableEnsurer.EnsureEventStoreSchemaAsync(token);
+        }
 
         // Build the combined batch (connection-less; lifetime sets it at execution)
         await using var batch = new SqlBatch();

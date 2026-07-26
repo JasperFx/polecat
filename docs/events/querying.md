@@ -17,6 +17,33 @@ foreach (var @event in events)
 
 Events are returned in version order. Archived streams are automatically excluded.
 
+## Stream Fetches as Query Plans
+
+`FetchStreamStatePlan` and `FetchStreamPlan` wrap the two raw stream fetches as reusable query plans.
+Both implement `IQueryPlan<T>` **and** `IBatchQueryPlan<T>`, so the same plan works standalone or inside
+a batched query, and both offer `Guid streamId` / `string streamKey` constructor overloads:
+
+```cs
+// Standalone
+var state  = await session.QueryByPlanAsync(new FetchStreamStatePlan(streamId));
+var events = await session.QueryByPlanAsync(new FetchStreamPlan(streamId, version: 5));
+
+// Batched — one round trip
+var batch = session.CreateBatchQuery();
+var stateFetcher  = batch.QueryByPlan(new FetchStreamStatePlan(streamId));
+var eventsFetcher = batch.QueryByPlan(new FetchStreamPlan(streamId));
+await batch.Execute();
+```
+
+`FetchStreamStatePlan` yields `null` when the stream does not exist; `FetchStreamPlan` yields an empty
+list and carries `FetchStream`'s optional `version` / `timestamp` / `fromVersion` arguments.
+
+The underlying batched fetchers are also available directly as `batch.Events.FetchStreamState(...)` and
+`batch.Events.FetchStream(...)` — see [Batched Queries](/documents/querying/batched-queries#batched-event-store-fetches).
+
+To return either straight from an ASP.NET Core endpoint, see the `StreamEventState` and `StreamEvents`
+result types in [ASP.NET Core Integration](/documents/aspnetcore#streaming-event-stream-metadata-and-events).
+
 ## AggregateStreamAsync
 
 Replay events to build the current aggregate state:
