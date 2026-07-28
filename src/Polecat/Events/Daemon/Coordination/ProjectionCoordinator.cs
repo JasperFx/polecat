@@ -65,6 +65,12 @@ internal class ProjectionCoordinator : ProjectionCoordinatorBase, IProjectionCoo
     protected override IReadOnlyList<IProjectionDaemon> ResolvedDaemons()
         => _daemons.Values.Cast<IProjectionDaemon>().ToList();
 
+    // marten#5055: StopAsync disposes everything ResolvedDaemons() hands back, so the cache must be
+    // purged too — otherwise a second Pause/Stop fans StopAllAsync out over disposed daemons and a
+    // later ResumeAsync hands back a dead instance instead of building a fresh one. No lock needed
+    // for the same reason the dictionary is unsynchronized (see the _daemons declaration above).
+    protected override void ClearResolvedDaemons() => _daemons.Clear();
+
     public override IProjectionDaemon DaemonForMainDatabase()
     {
         var main = _options.Tenancy?.AllDatabases().FirstOrDefault()
