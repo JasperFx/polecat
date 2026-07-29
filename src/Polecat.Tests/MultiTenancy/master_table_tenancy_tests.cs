@@ -21,7 +21,7 @@ public class master_table_tenancy_tests : IAsyncLifetime
     private static string Db(string name) =>
         ConnectionSource.ConnectionString.Replace("Initial Catalog=master", $"Database={name}");
 
-    public async Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
         await using var conn = new SqlConnection(MasterConnectionString);
         await conn.OpenAsync();
@@ -34,7 +34,7 @@ public class master_table_tenancy_tests : IAsyncLifetime
         }
     }
 
-    public async Task DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
         await using var conn = new SqlConnection(MasterConnectionString);
         await conn.OpenAsync();

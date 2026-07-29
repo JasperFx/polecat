@@ -16,9 +16,9 @@ public class aggregate_type_resolution_tests : IAsyncLifetime
 {
     private const string Schema = "aggregate_type_resolution";
 
-    public async Task InitializeAsync() => await DropSchemaTablesAsync(Schema);
+    public async ValueTask InitializeAsync() => await DropSchemaTablesAsync(Schema);
 
-    public Task DisposeAsync() => Task.CompletedTask;
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
     private static DocumentStore CreateStore(bool registerProjection = false)
     {

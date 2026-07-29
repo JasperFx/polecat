@@ -21,14 +21,14 @@ public class per_tenant_rebuild_tests : IAsyncLifetime
     private const string Schema = "pt_rebuild";
     private static readonly string[] Tenants = ["Red", "Blue", "Green"];
 
-    public async Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
         await DropSchemaTablesAsync(Schema);
         await PartitionTestCleanup.DropEventsPartitionObjectsAsync();
         await DropSequencesAsync(Schema);
     }
 
-    public Task DisposeAsync() => Task.CompletedTask;
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
     private static DocumentStore CreateStore()
     {

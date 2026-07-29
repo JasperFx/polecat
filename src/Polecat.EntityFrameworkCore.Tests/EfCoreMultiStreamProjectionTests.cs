@@ -7,12 +7,12 @@ public abstract class ef_core_multi_stream_projection_tests_base : IAsyncLifetim
     protected DocumentStore Store = null!;
     protected abstract ProjectionLifecycle Lifecycle { get; }
 
-    public async Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
         Store = await EfCoreTestHelper.CreateStoreWithMultiStreamProjection(Lifecycle);
     }
 
-    public async Task DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
         Store?.Dispose();
     }
@@ -123,15 +123,15 @@ public class ef_core_multi_stream_live_tests : IAsyncLifetime
 {
     private DocumentStore _store = null!;
 
-    public async Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
         _store = await EfCoreTestHelper.CreateStoreWithMultiStreamProjection(ProjectionLifecycle.Inline);
     }
 
-    public Task DisposeAsync()
+    public ValueTask DisposeAsync()
     {
         _store?.Dispose();
-        return Task.CompletedTask;
+        return ValueTask.CompletedTask;
     }
 
     [RequiresNativeJsonFact(true)]

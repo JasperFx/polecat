@@ -78,8 +78,18 @@
         <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
         <PackageVersion Include="NSubstitute" Version="5.3.0" />
         <PackageVersion Include="Shouldly" Version="4.3.0" />
-        <PackageVersion Include="xunit" Version="2.9.3" />
-        <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.4" />
+        <!-- xUnit v3. The test projects reference xunit.v3; Polecat.TestUtils, which is a plain
+             library that only authors custom [Fact]/[Theory] attributes, references
+             xunit.v3.extensibility.core instead — xunit.v3 forces OutputType=Exe onto whatever
+             references it, which is wrong for a library.
+
+             The xUnit analyzers ride in transitively (xunit.v3 -> xunit.v3.mtp-v1 ->
+             xunit.analyzers) and are switched off for now — see the RemoveXunitAnalyzers target in
+             Directory.Build.targets, which also records why this cannot be expressed as an
+             ExcludeAssets on any PackageReference here. -->
+        <PackageVersion Include="xunit.v3" Version="3.2.2" />
+        <PackageVersion Include="xunit.v3.extensibility.core" Version="3.2.2" />
+        <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.5" />
         <!-- Weasel 9.8.0/9.9.0 introduce Weasel.Storage: the dialect-neutral closed-shape
              storage contracts extracted from Marten (marten#4821/#4830, weasel#329/#331) —
              IStorageSession / IStorageDatabase / IStorageSerializer / IDocumentStorage /

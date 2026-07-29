@@ -27,9 +27,9 @@ public class Bug_369_natural_key_source_discovery : IAsyncLifetime
     private const string Schema = "bug_369_natural_key";
     private const string Table = "pc_natural_key_nkproduct";
 
-    public async Task InitializeAsync() => await DropSchemaTablesAsync(Schema);
+    public async ValueTask InitializeAsync() => await DropSchemaTablesAsync(Schema);
 
-    public Task DisposeAsync() => Task.CompletedTask;
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
     private static DocumentStore CreateStore(Action<SingleStreamProjection<NkProduct, Guid>>? configure = null)
     {

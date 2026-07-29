@@ -18,7 +18,7 @@ public class strong_typed_id_column_type_tests : IntegrationContext
     {
     }
 
-    public override async Task InitializeAsync()
+    public override async ValueTask InitializeAsync()
     {
         await StoreOptions(opts => { opts.DatabaseSchemaName = "strong_id_column"; });
     }

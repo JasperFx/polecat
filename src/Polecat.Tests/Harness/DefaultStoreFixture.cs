@@ -14,7 +14,7 @@ public class DefaultStoreFixture : IAsyncLifetime
     public StoreOptions Options { get; private set; } = null!;
     public DocumentStore Store { get; private set; } = null!;
 
-    public async Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
         Options = new StoreOptions
         {
@@ -31,10 +31,10 @@ public class DefaultStoreFixture : IAsyncLifetime
         await Database.ApplyAllConfiguredChangesToDatabaseAsync();
     }
 
-    public Task DisposeAsync()
+    public ValueTask DisposeAsync()
     {
         Store?.Dispose();
-        return Task.CompletedTask;
+        return ValueTask.CompletedTask;
     }
 
     internal async Task DropAllEventStoreTablesAsync()

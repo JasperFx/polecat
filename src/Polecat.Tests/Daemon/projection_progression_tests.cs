@@ -17,7 +17,7 @@ public class projection_progression_tests : IntegrationContext
     {
     }
 
-    public override async Task InitializeAsync()
+    public override async ValueTask InitializeAsync()
     {
         await base.InitializeAsync();
         // Clean progression table for each test

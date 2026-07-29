@@ -6,15 +6,15 @@ public class ef_core_event_projection_tests : IAsyncLifetime
 {
     private DocumentStore _store = null!;
 
-    public async Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
         _store = await EfCoreTestHelper.CreateStoreWithEventProjection(ProjectionLifecycle.Inline);
     }
 
-    public Task DisposeAsync()
+    public ValueTask DisposeAsync()
     {
         _store?.Dispose();
-        return Task.CompletedTask;
+        return ValueTask.CompletedTask;
     }
 
     [RequiresNativeJsonFact(true)]

@@ -17,7 +17,7 @@ public class per_tenant_event_sequence_tests : IAsyncLifetime
     private const string PartitionedSchema = "pt_on";
     private const string DefaultSchema = "pt_off";
 
-    public async Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
         await DropSchemaTablesAsync(PartitionedSchema);
         await DropSchemaTablesAsync(DefaultSchema);
@@ -25,7 +25,7 @@ public class per_tenant_event_sequence_tests : IAsyncLifetime
         await DropSequencesAsync(PartitionedSchema);
     }
 
-    public Task DisposeAsync() => Task.CompletedTask;
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
     private static DocumentStore CreatePartitionedStore(string schema = PartitionedSchema)
     {

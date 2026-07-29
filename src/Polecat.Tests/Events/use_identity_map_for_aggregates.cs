@@ -9,7 +9,7 @@ public class use_identity_map_for_aggregates : IntegrationContext
     {
     }
 
-    public override async Task InitializeAsync()
+    public override async ValueTask InitializeAsync()
     {
         await StoreOptions(opts =>
         {

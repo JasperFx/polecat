@@ -19,7 +19,7 @@ public class int_based_document_operations : IntegrationContext
     {
     }
 
-    public override async Task InitializeAsync()
+    public override async ValueTask InitializeAsync()
     {
         await StoreOptions(opts => { opts.DatabaseSchemaName = "strong_int"; });
     }

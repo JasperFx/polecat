@@ -21,7 +21,7 @@ public class event_store_usage_integration_tests : IntegrationContext
     {
     }
 
-    public override async Task InitializeAsync()
+    public override async ValueTask InitializeAsync()
     {
         await base.InitializeAsync();
         await using var conn = await OpenConnectionAsync();

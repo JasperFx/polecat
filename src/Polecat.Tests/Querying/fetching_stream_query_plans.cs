@@ -181,7 +181,7 @@ public class fetching_stream_query_plans_by_string_key : IAsyncLifetime
     private const string Schema = "fetch_stream_plans_str";
     private DocumentStore _store = null!;
 
-    public Task InitializeAsync()
+    public ValueTask InitializeAsync()
     {
         _store = DocumentStore.For(opts =>
         {
@@ -192,13 +192,13 @@ public class fetching_stream_query_plans_by_string_key : IAsyncLifetime
             opts.Events.StreamIdentity = StreamIdentity.AsString;
         });
 
-        return Task.CompletedTask;
+        return ValueTask.CompletedTask;
     }
 
-    public Task DisposeAsync()
+    public ValueTask DisposeAsync()
     {
         _store.Dispose();
-        return Task.CompletedTask;
+        return ValueTask.CompletedTask;
     }
 
     [Fact]

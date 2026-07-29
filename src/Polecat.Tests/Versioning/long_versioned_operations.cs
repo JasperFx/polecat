@@ -14,7 +14,7 @@ public class long_versioned_operations : IntegrationContext
     {
     }
 
-    public override async Task InitializeAsync()
+    public override async ValueTask InitializeAsync()
     {
         await StoreOptions(opts =>
         {

@@ -23,9 +23,9 @@ public partial class bluegreen_side_effect_gate_tests : IAsyncLifetime
 {
     private const string Schema = "bluegreen_gate";
 
-    public async Task InitializeAsync() => await DropSchemaTablesAsync(Schema);
+    public async ValueTask InitializeAsync() => await DropSchemaTablesAsync(Schema);
 
-    public Task DisposeAsync() => Task.CompletedTask;
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
     private static DocumentStore CreateStore(uint version, GateOutbox outbox, bool gate)
     {

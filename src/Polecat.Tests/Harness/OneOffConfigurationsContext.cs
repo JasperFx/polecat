@@ -78,7 +78,7 @@ public abstract class OneOffConfigurationsContext : IAsyncLifetime
         return conn;
     }
 
-    public virtual async Task InitializeAsync()
+    public virtual async ValueTask InitializeAsync()
     {
         // Drop the schema if it exists for a clean slate
         await using var conn = new SqlConnection(ConnectionSource.ConnectionString);
@@ -113,7 +113,7 @@ public abstract class OneOffConfigurationsContext : IAsyncLifetime
         }
     }
 
-    public virtual async Task DisposeAsync()
+    public virtual async ValueTask DisposeAsync()
     {
         foreach (var disposable in AsyncDisposables)
         {

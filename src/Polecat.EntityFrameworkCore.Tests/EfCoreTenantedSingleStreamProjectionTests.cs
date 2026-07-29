@@ -7,7 +7,7 @@ public abstract class ef_core_tenanted_single_stream_tests_base : IAsyncLifetime
     protected DocumentStore Store = null!;
     protected abstract ProjectionLifecycle Lifecycle { get; }
 
-    public async Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
         Store = DocumentStore.For(opts =>
         {
@@ -25,10 +25,10 @@ public abstract class ef_core_tenanted_single_stream_tests_base : IAsyncLifetime
         await EfCoreTestHelper.CleanEfCoreTablesAsync(ConnectionSource.ConnectionString, "ef_tenanted_orders");
     }
 
-    public Task DisposeAsync()
+    public ValueTask DisposeAsync()
     {
         Store?.Dispose();
-        return Task.CompletedTask;
+        return ValueTask.CompletedTask;
     }
 
     protected virtual Task WaitForProjectionAsync() => Task.CompletedTask;

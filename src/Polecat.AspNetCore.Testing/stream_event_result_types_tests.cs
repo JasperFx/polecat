@@ -14,7 +14,7 @@ public class stream_event_result_types_tests : IAsyncLifetime
 {
     private IAlbaHost _host = null!;
 
-    public async Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
         _host = await AlbaHost.For(TestApp.CreateBuilder(), TestApp.Configure);
 
@@ -22,7 +22,7 @@ public class stream_event_result_types_tests : IAsyncLifetime
         await store.Database.ApplyAllConfiguredChangesToDatabaseAsync();
     }
 
-    public async Task DisposeAsync() => await _host.DisposeAsync();
+    public async ValueTask DisposeAsync() => await _host.DisposeAsync();
 
     [Fact]
     public async Task stream_event_state_returns_200_with_the_metadata()

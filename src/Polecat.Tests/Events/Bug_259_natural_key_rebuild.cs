@@ -22,9 +22,9 @@ public class Bug_259_natural_key_rebuild : IAsyncLifetime
     private const string Schema = "natural_key_rebuild";
     private const string Table = "pc_natural_key_orderaggregate";
 
-    public async Task InitializeAsync() => await DropSchemaTablesAsync(Schema);
+    public async ValueTask InitializeAsync() => await DropSchemaTablesAsync(Schema);
 
-    public Task DisposeAsync() => Task.CompletedTask;
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
     private static DocumentStore CreateStore()
     {

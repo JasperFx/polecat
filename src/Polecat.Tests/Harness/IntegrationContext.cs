@@ -86,9 +86,9 @@ public abstract class IntegrationContext : IAsyncLifetime
         return conn;
     }
 
-    public virtual Task InitializeAsync() => Task.CompletedTask;
+    public virtual ValueTask InitializeAsync() => ValueTask.CompletedTask;
 
-    public virtual async Task DisposeAsync()
+    public virtual async ValueTask DisposeAsync()
     {
         foreach (var disposable in AsyncDisposables)
         {

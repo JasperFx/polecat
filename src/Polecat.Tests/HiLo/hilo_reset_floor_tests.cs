@@ -10,7 +10,7 @@ public class hilo_reset_floor_tests : IntegrationContext
     {
     }
 
-    public override async Task InitializeAsync()
+    public override async ValueTask InitializeAsync()
     {
         await StoreOptions(opts => { opts.DatabaseSchemaName = "hilo_reset"; });
     }

@@ -11,7 +11,7 @@ public class soft_delete_querying : IntegrationContext
     {
     }
 
-    public override async Task InitializeAsync()
+    public override async ValueTask InitializeAsync()
     {
         // Use a custom schema so the table is created fresh with soft delete columns
         await StoreOptions(opts =>

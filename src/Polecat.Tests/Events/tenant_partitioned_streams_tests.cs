@@ -16,14 +16,14 @@ public class tenant_partitioned_streams_tests : IAsyncLifetime
 {
     private const string Schema = "pt_streams";
 
-    public async Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
         await TestSchema.DropSchemaTablesAsync(Schema);
         await PartitionTestCleanup.DropEventsPartitionObjectsAsync();
         await TestSchema.DropSequencesAsync(Schema);
     }
 
-    public Task DisposeAsync() => Task.CompletedTask;
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
     private static DocumentStore CreateStore()
     {

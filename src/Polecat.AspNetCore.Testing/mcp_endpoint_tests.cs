@@ -9,12 +9,12 @@ public class mcp_endpoint_tests : IAsyncLifetime
 {
     private IAlbaHost _host = null!;
 
-    public async Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
         _host = await AlbaHost.For(TestApp.CreateBuilder(), TestApp.Configure);
     }
 
-    public async Task DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
         await _host.DisposeAsync();
     }

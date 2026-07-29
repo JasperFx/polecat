@@ -11,9 +11,9 @@ namespace Polecat.Tests.Schema;
 /// </summary>
 public class SchemaCreationTests : IAsyncLifetime
 {
-    public Task InitializeAsync() => SchemaInspector.DropEventStoreTablesAsync();
+    public async ValueTask InitializeAsync() => await SchemaInspector.DropEventStoreTablesAsync();
 
-    public Task DisposeAsync() => Task.CompletedTask;
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
     private static PolecatDatabase CreateDatabase(Action<StoreOptions>? configure = null)
     {

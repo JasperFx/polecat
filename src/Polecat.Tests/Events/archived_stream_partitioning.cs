@@ -10,7 +10,7 @@ public class archived_stream_partitioning : IntegrationContext
     {
     }
 
-    public override async Task InitializeAsync()
+    public override async ValueTask InitializeAsync()
     {
         // The partition scheme/function ps_pc_events_is_archived /
         // pf_pc_events_is_archived are global SQL Server objects (Weasel does not
