@@ -2,15 +2,17 @@
 
     <PropertyGroup>
         <IsPackable>false</IsPackable>
+        <!-- Explicit now that Microsoft.NET.Test.Sdk is gone: it used to set this. An xunit v3
+             test project is its own MTP executable and will not build without it. -->
+        <OutputType>Exe</OutputType>
     </PropertyGroup>
 
     <ItemGroup>
-        <PackageReference Include="coverlet.collector" />
-        <PackageReference Include="Microsoft.NET.Test.Sdk" />
         <PackageReference Include="Shouldly" />
         <PackageReference Include="Weasel.SqlServer" />
+        <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" />
+        <PackageReference Include="Microsoft.Testing.Extensions.TrxReport" />
         <PackageReference Include="xunit.v3" />
-        <PackageReference Include="xunit.runner.visualstudio" />
         <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" />
     </ItemGroup>
 
