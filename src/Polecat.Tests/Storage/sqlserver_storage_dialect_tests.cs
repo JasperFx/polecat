@@ -129,8 +129,8 @@ public class sqlserver_storage_dialect_tests : OneOffConfigurationsContext
         command.Connection = (SqlConnection)conn;
 
         var returned = new List<Guid>();
-        await using var reader = await command.ExecuteReaderAsync();
-        while (await reader.ReadAsync())
+        await using var reader = await command.ExecuteReaderAsync(TestContext.Current.CancellationToken);
+        while (await reader.ReadAsync(TestContext.Current.CancellationToken))
         {
             returned.Add(Guid.Parse(reader.GetString(0)));
         }
@@ -153,8 +153,8 @@ public class sqlserver_storage_dialect_tests : OneOffConfigurationsContext
         {
             cmd.Parameters.Add((SqlParameter)longParam);
             var values = new List<long>();
-            await using var reader = await cmd.ExecuteReaderAsync();
-            while (await reader.ReadAsync()) values.Add(reader.GetInt64(0));
+            await using var reader = await cmd.ExecuteReaderAsync(TestContext.Current.CancellationToken);
+            while (await reader.ReadAsync(TestContext.Current.CancellationToken)) values.Add(reader.GetInt64(0));
             values.ShouldBe([1L, 42L, long.MaxValue]);
         }
 
@@ -162,8 +162,8 @@ public class sqlserver_storage_dialect_tests : OneOffConfigurationsContext
         {
             cmd.Parameters.Add((SqlParameter)stringParam);
             var values = new List<string>();
-            await using var reader = await cmd.ExecuteReaderAsync();
-            while (await reader.ReadAsync()) values.Add(reader.GetString(0));
+            await using var reader = await cmd.ExecuteReaderAsync(TestContext.Current.CancellationToken);
+            while (await reader.ReadAsync(TestContext.Current.CancellationToken)) values.Add(reader.GetString(0));
             values.ShouldBe(["a", "quo\"te", "c"]);
         }
     }

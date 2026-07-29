@@ -15,18 +15,18 @@ public class event_projection_enrichment_tests : OneOffConfigurationsContext
         {
             opts.Projections.Add(new SimpleEnrichmentProjection(), ProjectionLifecycle.Inline);
         });
-        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync();
+        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         var taskId = Guid.NewGuid();
         await using (var session = theStore.LightweightSession())
         {
             session.Events.StartStream(taskId,
                 new EnrichmentTaskAssigned { TaskId = taskId, UserId = Guid.NewGuid() });
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using var query = theStore.QuerySession();
-        var summary = await query.LoadAsync<EnrichmentTaskSummary>(taskId);
+        var summary = await query.LoadAsync<EnrichmentTaskSummary>(taskId, TestContext.Current.CancellationToken);
         summary.ShouldNotBeNull();
         summary.AssignedUserName.ShouldBe("Enriched User");
     }
@@ -41,13 +41,13 @@ public class event_projection_enrichment_tests : OneOffConfigurationsContext
                 new EnrichmentCallOrderProjection(callOrder),
                 ProjectionLifecycle.Inline);
         });
-        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync();
+        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         var streamId = Guid.NewGuid();
         await using var session = theStore.LightweightSession();
         session.Events.StartStream(streamId,
             new EnrichmentTaskAssigned { TaskId = streamId, UserId = Guid.NewGuid() });
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         callOrder.ShouldBe(new[] { "EnrichEventsAsync", "Apply:EnrichmentTaskAssigned" });
     }
@@ -59,14 +59,14 @@ public class event_projection_enrichment_tests : OneOffConfigurationsContext
         {
             opts.Projections.Add(new DbLookupEnrichmentProjection(), ProjectionLifecycle.Inline);
         });
-        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync();
+        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         // Pre-store a lookup document
         var userId = Guid.NewGuid();
         await using (var session = theStore.LightweightSession())
         {
             session.Store(new EnrichmentUser { Id = userId, Name = "Alice Smith" });
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         var taskId = Guid.NewGuid();
@@ -74,11 +74,11 @@ public class event_projection_enrichment_tests : OneOffConfigurationsContext
         {
             session.Events.StartStream(taskId,
                 new EnrichmentTaskAssigned { TaskId = taskId, UserId = userId });
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using var query = theStore.QuerySession();
-        var summary = await query.LoadAsync<EnrichmentTaskSummary>(taskId);
+        var summary = await query.LoadAsync<EnrichmentTaskSummary>(taskId, TestContext.Current.CancellationToken);
         summary.ShouldNotBeNull();
         summary.AssignedUserName.ShouldBe("Alice Smith");
     }

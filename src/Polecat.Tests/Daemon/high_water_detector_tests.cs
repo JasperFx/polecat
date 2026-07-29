@@ -85,7 +85,7 @@ public class high_water_detector_tests : IntegrationContext
             SET last_updated = DATEADD(SECOND, -10, SYSDATETIMEOFFSET())
             WHERE name = 'HighWaterMark';
             """;
-        await cmd.ExecuteNonQueryAsync();
+        await cmd.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
 
         var stats = await detector.DetectInSafeZone(CancellationToken.None);
 
@@ -109,7 +109,7 @@ public class high_water_detector_tests : IntegrationContext
             SELECT last_seq_id FROM [dbo].[pc_event_progression]
             WHERE name = 'HighWaterMark';
             """;
-        var result = await cmd.ExecuteScalarAsync();
+        var result = await cmd.ExecuteScalarAsync(TestContext.Current.CancellationToken);
         result.ShouldNotBeNull();
         ((long)result!).ShouldBe(seqIds.Last());
     }

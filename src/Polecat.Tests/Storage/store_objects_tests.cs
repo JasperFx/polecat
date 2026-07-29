@@ -26,11 +26,11 @@ public class store_objects_tests : IntegrationContext
         };
 
         theSession.StoreObjects(docs);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var loaded1 = await query.LoadAsync<GreenDoc>(((GreenDoc)docs[0]).Id);
-        var loaded2 = await query.LoadAsync<GreenDoc>(((GreenDoc)docs[1]).Id);
+        var loaded1 = await query.LoadAsync<GreenDoc>(((GreenDoc)docs[0]).Id, TestContext.Current.CancellationToken);
+        var loaded2 = await query.LoadAsync<GreenDoc>(((GreenDoc)docs[1]).Id, TestContext.Current.CancellationToken);
 
         loaded1.ShouldNotBeNull();
         loaded1!.Color.ShouldBe("green-1");
@@ -50,11 +50,11 @@ public class store_objects_tests : IntegrationContext
         };
 
         theSession.StoreObjects(docs);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        (await query.LoadAsync<GreenDoc>(greenId))!.Color.ShouldBe("leaf");
-        (await query.LoadAsync<RedDoc>(redId))!.Label.ShouldBe("tomato");
+        (await query.LoadAsync<GreenDoc>(greenId, TestContext.Current.CancellationToken))!.Color.ShouldBe("leaf");
+        (await query.LoadAsync<RedDoc>(redId, TestContext.Current.CancellationToken))!.Label.ShouldBe("tomato");
     }
 
     [Fact]
@@ -69,10 +69,10 @@ public class store_objects_tests : IntegrationContext
         };
 
         theSession.StoreObjects(docs!);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        (await query.LoadAsync<GreenDoc>(id))!.Color.ShouldBe("alone");
+        (await query.LoadAsync<GreenDoc>(id, TestContext.Current.CancellationToken))!.Color.ShouldBe("alone");
     }
 
     [Fact]
@@ -81,21 +81,21 @@ public class store_objects_tests : IntegrationContext
         var id = Guid.NewGuid();
 
         theSession.StoreObjects(new object[] { new GreenDoc { Id = id, Color = "v1" } });
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         session2.StoreObjects(new object[] { new GreenDoc { Id = id, Color = "v2" } });
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        (await query.LoadAsync<GreenDoc>(id))!.Color.ShouldBe("v2");
+        (await query.LoadAsync<GreenDoc>(id, TestContext.Current.CancellationToken))!.Color.ShouldBe("v2");
     }
 
     [Fact]
     public async Task empty_collection_is_a_no_op()
     {
         theSession.StoreObjects(Array.Empty<object>());
-        await theSession.SaveChangesAsync(); // should not throw
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken); // should not throw
     }
 
     public class GreenDoc

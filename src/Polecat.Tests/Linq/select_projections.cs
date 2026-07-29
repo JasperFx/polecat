@@ -32,7 +32,7 @@ public class select_projections : OneOffConfigurationsContext
         var results = await query.Query<LinqTarget>()
             .OrderBy(x => x.Name)
             .Select(x => x.Name)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(4);
         results[0].ShouldBe("Alice");
@@ -50,7 +50,7 @@ public class select_projections : OneOffConfigurationsContext
         var results = await query.Query<LinqTarget>()
             .OrderBy(x => x.Age)
             .Select(x => x.Age)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(4);
         results[0].ShouldBe(25);
@@ -68,7 +68,7 @@ public class select_projections : OneOffConfigurationsContext
         var results = await query.Query<LinqTarget>()
             .Where(x => x.Name == "Bob")
             .Select(x => new { x.Name, x.Age })
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(1);
         results[0].Name.ShouldBe("Bob");
@@ -84,7 +84,7 @@ public class select_projections : OneOffConfigurationsContext
         var results = await query.Query<LinqTarget>()
             .Where(x => x.Name == "Bob")
             .Select(x => new NameAge { Name = x.Name, Age = x.Age })
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(1);
         results[0].Name.ShouldBe("Bob");
@@ -100,7 +100,7 @@ public class select_projections : OneOffConfigurationsContext
         var results = await query.Query<LinqTarget>()
             .Where(x => x.Age >= 30)
             .Select(x => x.Name)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(3); // Bob(35), Charlie(30), Alice(40)
     }
@@ -115,7 +115,7 @@ public class select_projections : OneOffConfigurationsContext
             .Select(x => x.Name)
             .Distinct()
             .OrderBy(x => x)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(3); // Alice, Bob, Charlie (deduplicated)
         results.ShouldContain("Alice");

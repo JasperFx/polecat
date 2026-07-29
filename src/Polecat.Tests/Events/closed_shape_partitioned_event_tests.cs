@@ -43,7 +43,7 @@ public class closed_shape_partitioned_event_tests : IAsyncLifetime
     public async Task per_tenant_sequences_are_isolated_and_round_trip()
     {
         using var store = CreateStore();
-        await store.Database.ApplyAllConfiguredChangesToDatabaseAsync();
+        await store.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         var redStream = Guid.NewGuid();
         var blueStream = Guid.NewGuid();
@@ -53,7 +53,7 @@ public class closed_shape_partitioned_event_tests : IAsyncLifetime
             red.Events.StartStream(redStream,
                 new QuestStarted("Red Quest"),
                 new MembersJoined(1, "Red Town", ["RedHero"]));
-            await red.SaveChangesAsync();
+            await red.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using (var blue = store.LightweightSession(new SessionOptions { TenantId = "Blue" }))
@@ -62,7 +62,7 @@ public class closed_shape_partitioned_event_tests : IAsyncLifetime
                 new QuestStarted("Blue Quest"),
                 new MembersJoined(1, "Blue Town", ["BlueHero"]),
                 new MonsterSlain("Grendel", 10));
-            await blue.SaveChangesAsync();
+            await blue.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         // Distinct ordinals per tenant.
@@ -77,35 +77,35 @@ public class closed_shape_partitioned_event_tests : IAsyncLifetime
 
         // Round-trip is tenant-scoped.
         await using var redQuery = store.QuerySession(new SessionOptions { TenantId = "Red" });
-        (await redQuery.Events.FetchStreamAsync(redStream)).Count.ShouldBe(2);
-        (await redQuery.Events.FetchStreamAsync(blueStream)).Count.ShouldBe(0);
+        (await redQuery.Events.FetchStreamAsync(redStream, token: TestContext.Current.CancellationToken)).Count.ShouldBe(2);
+        (await redQuery.Events.FetchStreamAsync(blueStream, token: TestContext.Current.CancellationToken)).Count.ShouldBe(0);
 
         await using var blueQuery = store.QuerySession(new SessionOptions { TenantId = "Blue" });
-        (await blueQuery.Events.FetchStreamAsync(blueStream)).Count.ShouldBe(3);
+        (await blueQuery.Events.FetchStreamAsync(blueStream, token: TestContext.Current.CancellationToken)).Count.ShouldBe(3);
     }
 
     [Fact]
     public async Task append_to_existing_partitioned_stream_continues_versions_and_sequence()
     {
         using var store = CreateStore();
-        await store.Database.ApplyAllConfiguredChangesToDatabaseAsync();
+        await store.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         var streamId = Guid.NewGuid();
 
         await using (var s1 = store.LightweightSession(new SessionOptions { TenantId = "Red" }))
         {
             s1.Events.StartStream(streamId, new QuestStarted("Red Quest"));
-            await s1.SaveChangesAsync();
+            await s1.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using (var s2 = store.LightweightSession(new SessionOptions { TenantId = "Red" }))
         {
             s2.Events.Append(streamId, new MembersJoined(1, "Town", ["X"]), new MonsterSlain("Orc", 1));
-            await s2.SaveChangesAsync();
+            await s2.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using var query = store.QuerySession(new SessionOptions { TenantId = "Red" });
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
         events.Count.ShouldBe(3);
         events.Select(e => e.Version).ShouldBe([1, 2, 3]);
 

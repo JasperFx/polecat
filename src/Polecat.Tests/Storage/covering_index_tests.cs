@@ -50,7 +50,7 @@ public class covering_index_tests : OneOffConfigurationsContext
         await using (var session = theStore.LightweightSession())
         {
             session.Store(new Doc { Id = Guid.NewGuid(), ServiceName = "svc", BucketEnd = DateTimeOffset.UtcNow, Count = 3 });
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using var conn = await OpenConnectionAsync();
@@ -64,9 +64,9 @@ public class covering_index_tests : OneOffConfigurationsContext
             """;
 
         var included = new Dictionary<string, bool>();
-        await using (var reader = await cmd.ExecuteReaderAsync())
+        await using (var reader = await cmd.ExecuteReaderAsync(TestContext.Current.CancellationToken))
         {
-            while (await reader.ReadAsync()) included[reader.GetString(0)] = reader.GetBoolean(1);
+            while (await reader.ReadAsync(TestContext.Current.CancellationToken)) included[reader.GetString(0)] = reader.GetBoolean(1);
         }
 
         included["cc_servicename"].ShouldBeFalse(); // key column
@@ -85,11 +85,11 @@ public class covering_index_tests : OneOffConfigurationsContext
             session.Store(new Doc { Id = Guid.NewGuid(), ServiceName = "svc-A", Count = 1 });
             session.Store(new Doc { Id = Guid.NewGuid(), ServiceName = "svc-A", Count = 2 });
             session.Store(new Doc { Id = Guid.NewGuid(), ServiceName = "svc-B", Count = 3 });
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using var session2 = theStore.QuerySession();
-        var rows = await session2.Query<Doc>().Where(x => x.ServiceName == "svc-A").ToListAsync();
+        var rows = await session2.Query<Doc>().Where(x => x.ServiceName == "svc-A").ToListAsync(TestContext.Current.CancellationToken);
         rows.Count.ShouldBe(2);
     }
 }

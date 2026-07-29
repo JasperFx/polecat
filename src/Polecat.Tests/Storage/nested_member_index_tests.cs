@@ -60,7 +60,7 @@ public class nested_member_index_tests : OneOffConfigurationsContext
         await using (var session = theStore.LightweightSession())
         {
             session.Store(new Customer { Id = Guid.NewGuid(), Name = "A", Address = new Address { City = "Austin" } });
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using var conn = await OpenConnectionAsync();
@@ -69,14 +69,14 @@ public class nested_member_index_tests : OneOffConfigurationsContext
             SELECT COUNT(*) FROM sys.computed_columns
             WHERE object_id = OBJECT_ID('[{Schema}].[{Table}]') AND name = 'cc_address_city';
             """;
-        ((int)(await cmd.ExecuteScalarAsync())!).ShouldBe(1);
+        ((int)(await cmd.ExecuteScalarAsync(TestContext.Current.CancellationToken))!).ShouldBe(1);
     }
 
     [Fact]
     public async Task nested_member_query_targets_the_index_path_not_the_leaf()
     {
         ConfigureStore(opts => opts.Schema.For<Customer>().Index(x => x.Address.City));
-        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync();
+        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         await using var session = theStore.QuerySession();
         var query = session.Query<Customer>().Where(x => x.Address.City == "Austin");
@@ -101,13 +101,13 @@ public class nested_member_index_tests : OneOffConfigurationsContext
             session.Store(new Customer { Id = Guid.NewGuid(), Name = "A", Address = new Address { City = "Austin" } });
             session.Store(new Customer { Id = Guid.NewGuid(), Name = "B", Address = new Address { City = "Austin" } });
             session.Store(new Customer { Id = Guid.NewGuid(), Name = "C", Address = new Address { City = "Dallas" } });
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using var session2 = theStore.QuerySession();
         var austin = await session2.Query<Customer>()
             .Where(x => x.Address.City == "Austin")
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         austin.Count.ShouldBe(2);
         austin.ShouldAllBe(c => c.Address.City == "Austin");

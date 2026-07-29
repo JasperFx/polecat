@@ -137,7 +137,7 @@ public class hilo_concurrency_tests : OneOffConfigurationsContext
             docs.Add(doc);
         }
 
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Within a single session, IDs should be monotonically increasing
         for (var i = 1; i < docs.Count; i++)

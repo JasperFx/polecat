@@ -19,10 +19,10 @@ public class start_stream_tests : IntegrationContext
             new QuestStarted("Destroy the Ring"),
             new MembersJoined(1, "Hobbiton", ["Frodo", "Sam"]));
 
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
 
         events.Count.ShouldBe(2);
         events[0].Data.ShouldBeOfType<QuestStarted>();
@@ -38,10 +38,10 @@ public class start_stream_tests : IntegrationContext
             new MembersJoined(1, "Start", ["Hero"]),
             new ArrivedAtLocation("Dungeon", 2));
 
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
 
         events[0].Version.ShouldBe(1);
         events[1].Version.ShouldBe(2);
@@ -56,10 +56,10 @@ public class start_stream_tests : IntegrationContext
             new QuestStarted("Quest1"),
             new MembersJoined(1, "Start", ["A"]));
 
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
 
         events[0].Sequence.ShouldBeGreaterThan(0);
         events[1].Sequence.ShouldBeGreaterThan(events[0].Sequence);
@@ -72,10 +72,10 @@ public class start_stream_tests : IntegrationContext
         theSession.Events.StartStream(streamId,
             new QuestStarted("Quest"));
 
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
 
         events[0].EventTypeName.ShouldBe("quest_started");
         events[0].DotNetTypeName.ShouldContain("QuestStarted");
@@ -88,10 +88,10 @@ public class start_stream_tests : IntegrationContext
         theSession.Events.StartStream(streamId,
             new QuestStarted("Quest"));
 
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
 
         events[0].StreamId.ShouldBe(streamId);
     }
@@ -104,10 +104,10 @@ public class start_stream_tests : IntegrationContext
             new QuestStarted("Quest"),
             new MembersJoined(1, "Start", ["A", "B"]));
 
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var state = await query.Events.FetchStreamStateAsync(streamId);
+        var state = await query.Events.FetchStreamStateAsync(streamId, TestContext.Current.CancellationToken);
 
         state.ShouldNotBeNull();
         state.Id.ShouldBe(streamId);
@@ -121,10 +121,10 @@ public class start_stream_tests : IntegrationContext
             new QuestStarted("Auto Quest"));
 
         action.Id.ShouldNotBe(Guid.Empty);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(action.Id);
+        var events = await query.Events.FetchStreamAsync(action.Id, token: TestContext.Current.CancellationToken);
         events.Count.ShouldBe(1);
     }
 
@@ -135,10 +135,10 @@ public class start_stream_tests : IntegrationContext
         theSession.Events.StartStream<QuestParty>(streamId,
             new QuestStarted("Typed Quest"));
 
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var state = await query.Events.FetchStreamStateAsync(streamId);
+        var state = await query.Events.FetchStreamStateAsync(streamId, TestContext.Current.CancellationToken);
         state.ShouldNotBeNull();
         state.Version.ShouldBe(1);
     }
@@ -149,14 +149,14 @@ public class start_stream_tests : IntegrationContext
         var streamId = Guid.NewGuid();
         theSession.Events.StartStream(streamId,
             new QuestStarted("First"));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         session2.Events.StartStream(streamId,
             new QuestStarted("Duplicate"));
 
         await Should.ThrowAsync<ExistingStreamIdCollisionException>(
-            session2.SaveChangesAsync());
+            session2.SaveChangesAsync(TestContext.Current.CancellationToken));
     }
 
     [Fact]

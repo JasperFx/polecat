@@ -40,7 +40,7 @@ public class event_loader_resiliency_tests : IntegrationContext
     {
         // Insert a valid event
         theSession.Events.StartStream(Guid.NewGuid(), new QuestStarted("Valid Quest"));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Insert a poison pill with an unknown type directly via SQL
         await InsertPoisonPillEventAsync("unknown_event_type", "{\"data\": \"poison\"}",
@@ -62,7 +62,7 @@ public class event_loader_resiliency_tests : IntegrationContext
     {
         // Insert a valid event
         theSession.Events.StartStream(Guid.NewGuid(), new QuestStarted("Valid Quest"));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Insert a poison pill
         await InsertPoisonPillEventAsync("unknown_event_type", "{\"data\": \"poison\"}",
@@ -174,7 +174,7 @@ public class event_loader_resiliency_tests : IntegrationContext
         {
             await using var session = theStore.LightweightSession();
             session.Events.StartStream(Guid.NewGuid(), new QuestStarted($"Quest {i + 1}"));
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         var highWater = await GetHighestSeqIdAsync();

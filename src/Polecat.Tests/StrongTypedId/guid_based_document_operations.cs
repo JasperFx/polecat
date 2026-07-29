@@ -32,7 +32,7 @@ public class guid_based_document_operations : IntegrationContext
 
         await using var session = theStore.LightweightSession();
         session.Store(invoice);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         invoice.Id.Value.ShouldNotBe(Guid.Empty);
     }
@@ -43,10 +43,10 @@ public class guid_based_document_operations : IntegrationContext
         var invoice = new Invoice { Name = "Smoke" };
         await using var session = theStore.LightweightSession();
         session.Store(invoice);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        (await query.Query<Invoice>().AnyAsync()).ShouldBeTrue();
+        (await query.Query<Invoice>().AnyAsync(TestContext.Current.CancellationToken)).ShouldBeTrue();
     }
 
     [Fact]
@@ -55,10 +55,10 @@ public class guid_based_document_operations : IntegrationContext
         var invoice = new Invoice { Name = "Inserted" };
         await using var session = theStore.LightweightSession();
         session.Insert(invoice);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var loaded = await query.LoadAsync<Invoice>(invoice.Id.Value);
+        var loaded = await query.LoadAsync<Invoice>(invoice.Id.Value, TestContext.Current.CancellationToken);
         loaded.ShouldNotBeNull();
         loaded!.Name.ShouldBe("Inserted");
     }
@@ -69,15 +69,15 @@ public class guid_based_document_operations : IntegrationContext
         var invoice = new Invoice { Name = "Original" };
         await using var session = theStore.LightweightSession();
         session.Insert(invoice);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         invoice.Name = "Updated";
         await using var session2 = theStore.LightweightSession();
         session2.Update(invoice);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var loaded = await query.LoadAsync<Invoice>(invoice.Id.Value);
+        var loaded = await query.LoadAsync<Invoice>(invoice.Id.Value, TestContext.Current.CancellationToken);
         loaded.ShouldNotBeNull();
         loaded!.Name.ShouldBe("Updated");
     }
@@ -88,10 +88,10 @@ public class guid_based_document_operations : IntegrationContext
         var invoice = new Invoice { Id = new InvoiceId(Guid.NewGuid()), Name = "Load Me" };
         await using var session = theStore.LightweightSession();
         session.Store(invoice);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var loaded = await query.LoadAsync<Invoice>(invoice.Id.Value);
+        var loaded = await query.LoadAsync<Invoice>(invoice.Id.Value, TestContext.Current.CancellationToken);
         loaded.ShouldNotBeNull();
         loaded!.Id.ShouldBe(invoice.Id);
         loaded.Name.ShouldBe("Load Me");
@@ -103,10 +103,10 @@ public class guid_based_document_operations : IntegrationContext
         var invoice = new Invoice { Id = new InvoiceId(Guid.NewGuid()), Name = "Identity" };
         await using var session = theStore.IdentitySession();
         session.Store(invoice);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
-        var first = await session.LoadAsync<Invoice>(invoice.Id.Value);
-        var second = await session.LoadAsync<Invoice>(invoice.Id.Value);
+        var first = await session.LoadAsync<Invoice>(invoice.Id.Value, TestContext.Current.CancellationToken);
+        var second = await session.LoadAsync<Invoice>(invoice.Id.Value, TestContext.Current.CancellationToken);
 
         first.ShouldNotBeNull();
         ReferenceEquals(first, second).ShouldBeTrue();
@@ -118,14 +118,14 @@ public class guid_based_document_operations : IntegrationContext
         var invoice = new Invoice { Id = new InvoiceId(Guid.NewGuid()), Name = "Delete" };
         await using var session = theStore.LightweightSession();
         session.Store(invoice);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         session2.Delete<Invoice>(invoice.Id.Value);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var loaded = await query.LoadAsync<Invoice>(invoice.Id.Value);
+        var loaded = await query.LoadAsync<Invoice>(invoice.Id.Value, TestContext.Current.CancellationToken);
         loaded.ShouldBeNull();
     }
 
@@ -135,14 +135,14 @@ public class guid_based_document_operations : IntegrationContext
         var invoice = new Invoice { Id = new InvoiceId(Guid.NewGuid()), Name = "Delete Doc" };
         await using var session = theStore.LightweightSession();
         session.Store(invoice);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         session2.Delete(invoice);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var loaded = await query.LoadAsync<Invoice>(invoice.Id.Value);
+        var loaded = await query.LoadAsync<Invoice>(invoice.Id.Value, TestContext.Current.CancellationToken);
         loaded.ShouldBeNull();
     }
 
@@ -152,12 +152,12 @@ public class guid_based_document_operations : IntegrationContext
         var invoice = new Invoice { Id = new InvoiceId(Guid.NewGuid()), Name = "LINQ Where" };
         await using var session = theStore.LightweightSession();
         session.Store(invoice);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
         var result = await query.Query<Invoice>()
             .Where(x => x.Id == invoice.Id)
-            .FirstOrDefaultAsync();
+            .FirstOrDefaultAsync(TestContext.Current.CancellationToken);
 
         result.ShouldNotBeNull();
         result!.Name.ShouldBe("LINQ Where");
@@ -169,12 +169,12 @@ public class guid_based_document_operations : IntegrationContext
         await using var session = theStore.LightweightSession();
         session.Store(new Invoice { Id = new InvoiceId(Guid.NewGuid()), Name = "A" });
         session.Store(new Invoice { Id = new InvoiceId(Guid.NewGuid()), Name = "B" });
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
         var results = await query.Query<Invoice>()
             .OrderBy(x => x.Id)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBeGreaterThanOrEqualTo(2);
     }
@@ -190,12 +190,12 @@ public class guid_based_document_operations : IntegrationContext
         session.Store(i1);
         session.Store(i2);
         session.Store(i3);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
         var results = await query.Query<Invoice>()
             .Where(x => x.Id.IsOneOf(i1.Id, i2.Id, i3.Id))
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(3);
     }
@@ -207,12 +207,12 @@ public class guid_based_document_operations : IntegrationContext
             .Select(i => new Invoice { Id = new InvoiceId(Guid.NewGuid()), Name = $"Bulk {i}" })
             .ToList();
 
-        await theStore.Advanced.BulkInsertAsync(invoices);
+        await theStore.Advanced.BulkInsertAsync(invoices, TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
         foreach (var invoice in invoices)
         {
-            var loaded = await query.LoadAsync<Invoice>(invoice.Id.Value);
+            var loaded = await query.LoadAsync<Invoice>(invoice.Id.Value, TestContext.Current.CancellationToken);
             loaded.ShouldNotBeNull();
         }
     }
@@ -223,10 +223,10 @@ public class guid_based_document_operations : IntegrationContext
         var invoice = new Invoice { Id = new InvoiceId(Guid.NewGuid()), Name = "Exists" };
         await using var session = theStore.LightweightSession();
         session.Store(invoice);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        (await query.CheckExistsAsync<Invoice>(invoice.Id.Value)).ShouldBeTrue();
-        (await query.CheckExistsAsync<Invoice>(Guid.NewGuid())).ShouldBeFalse();
+        (await query.CheckExistsAsync<Invoice>(invoice.Id.Value, TestContext.Current.CancellationToken)).ShouldBeTrue();
+        (await query.CheckExistsAsync<Invoice>(Guid.NewGuid(), TestContext.Current.CancellationToken)).ShouldBeFalse();
     }
 }

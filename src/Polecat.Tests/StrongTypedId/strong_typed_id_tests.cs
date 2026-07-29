@@ -55,10 +55,10 @@ public class strong_typed_id_tests : IntegrationContext
 
         await using var session = theStore.LightweightSession();
         session.Store(order);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var loaded = await query.LoadAsync<Order>(orderId.Value);
+        var loaded = await query.LoadAsync<Order>(orderId.Value, TestContext.Current.CancellationToken);
         loaded.ShouldNotBeNull();
         loaded!.Id.ShouldBe(orderId);
         loaded.Name.ShouldBe("Widget");
@@ -72,12 +72,12 @@ public class strong_typed_id_tests : IntegrationContext
 
         await using var session = theStore.LightweightSession();
         session.Store(order);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         order.Id.Value.ShouldNotBe(Guid.Empty);
 
         await using var query = theStore.QuerySession();
-        var loaded = await query.LoadAsync<Order>(order.Id.Value);
+        var loaded = await query.LoadAsync<Order>(order.Id.Value, TestContext.Current.CancellationToken);
         loaded.ShouldNotBeNull();
         loaded!.Name.ShouldBe("Auto Assign");
     }
@@ -88,12 +88,12 @@ public class strong_typed_id_tests : IntegrationContext
         await using var session = theStore.LightweightSession();
         var item = new Item { Name = "Bolt" };
         session.Store(item);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         item.Id.Value.ShouldBeGreaterThan(0);
 
         await using var query = theStore.QuerySession();
-        var loaded = await query.LoadAsync<Item>(item.Id.Value);
+        var loaded = await query.LoadAsync<Item>(item.Id.Value, TestContext.Current.CancellationToken);
         loaded.ShouldNotBeNull();
         loaded!.Id.ShouldBe(item.Id);
         loaded.Name.ShouldBe("Bolt");
@@ -111,7 +111,7 @@ public class strong_typed_id_tests : IntegrationContext
             items.Add(item);
         }
 
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         foreach (var item in items)
         {
@@ -130,10 +130,10 @@ public class strong_typed_id_tests : IntegrationContext
 
         await using var session = theStore.LightweightSession();
         session.Store(task);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var loaded = await query.LoadAsync<TaskDoc>(taskId.Value);
+        var loaded = await query.LoadAsync<TaskDoc>(taskId.Value, TestContext.Current.CancellationToken);
         loaded.ShouldNotBeNull();
         loaded!.Id.Value.ShouldBe(taskId.Value);
         loaded.Title.ShouldBe("Build Feature");
@@ -147,15 +147,15 @@ public class strong_typed_id_tests : IntegrationContext
 
         await using var session1 = theStore.LightweightSession();
         session1.Insert(order);
-        await session1.SaveChangesAsync();
+        await session1.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         order.Name = "Updated";
         session2.Update(order);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var loaded = await query.LoadAsync<Order>(orderId.Value);
+        var loaded = await query.LoadAsync<Order>(orderId.Value, TestContext.Current.CancellationToken);
         loaded.ShouldNotBeNull();
         loaded!.Name.ShouldBe("Updated");
     }
@@ -168,14 +168,14 @@ public class strong_typed_id_tests : IntegrationContext
 
         await using var session1 = theStore.LightweightSession();
         session1.Store(order);
-        await session1.SaveChangesAsync();
+        await session1.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         session2.Delete<Order>(orderId.Value);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var loaded = await query.LoadAsync<Order>(orderId.Value);
+        var loaded = await query.LoadAsync<Order>(orderId.Value, TestContext.Current.CancellationToken);
         loaded.ShouldBeNull();
     }
 
@@ -187,14 +187,14 @@ public class strong_typed_id_tests : IntegrationContext
 
         await using var session1 = theStore.LightweightSession();
         session1.Store(order);
-        await session1.SaveChangesAsync();
+        await session1.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         session2.Delete(order);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var loaded = await query.LoadAsync<Order>(orderId.Value);
+        var loaded = await query.LoadAsync<Order>(orderId.Value, TestContext.Current.CancellationToken);
         loaded.ShouldBeNull();
     }
 
@@ -206,11 +206,11 @@ public class strong_typed_id_tests : IntegrationContext
 
         await using var session = theStore.IdentitySession();
         session.Store(order);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Load twice — should return the same reference
-        var first = await session.LoadAsync<Order>(orderId.Value);
-        var second = await session.LoadAsync<Order>(orderId.Value);
+        var first = await session.LoadAsync<Order>(orderId.Value, TestContext.Current.CancellationToken);
+        var second = await session.LoadAsync<Order>(orderId.Value, TestContext.Current.CancellationToken);
 
         first.ShouldNotBeNull();
         ReferenceEquals(first, second).ShouldBeTrue();
@@ -223,12 +223,12 @@ public class strong_typed_id_tests : IntegrationContext
             .Select(i => new Order { Id = new OrderId(Guid.NewGuid()), Name = $"Bulk {i}" })
             .ToList();
 
-        await theStore.Advanced.BulkInsertAsync(orders);
+        await theStore.Advanced.BulkInsertAsync(orders, TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
         foreach (var order in orders)
         {
-            var loaded = await query.LoadAsync<Order>(order.Id.Value);
+            var loaded = await query.LoadAsync<Order>(order.Id.Value, TestContext.Current.CancellationToken);
             loaded.ShouldNotBeNull();
         }
     }
@@ -241,12 +241,12 @@ public class strong_typed_id_tests : IntegrationContext
 
         await using var session = theStore.LightweightSession();
         session.Store(order);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
         var result = await query.Query<Order>()
             .Where(x => x.Id == orderId)
-            .FirstOrDefaultAsync();
+            .FirstOrDefaultAsync(TestContext.Current.CancellationToken);
 
         result.ShouldNotBeNull();
         result!.Name.ShouldBe("LINQ Lookup");
@@ -261,12 +261,12 @@ public class strong_typed_id_tests : IntegrationContext
         await using var session = theStore.LightweightSession();
         session.Store(new Order { Id = id1, Name = "First" });
         session.Store(new Order { Id = id2, Name = "Second" });
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
         var results = await query.Query<Order>()
             .OrderBy(x => x.Id)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBeGreaterThanOrEqualTo(2);
     }
@@ -281,13 +281,13 @@ public class strong_typed_id_tests : IntegrationContext
         session.Store(order);
         var item = new Item { Name = "Multi Type Item" };
         session.Store(item);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         item.Id.Value.ShouldBeGreaterThan(0);
 
         await using var query = theStore.QuerySession();
-        var loadedOrder = await query.LoadAsync<Order>(orderId.Value);
-        var loadedItem = await query.LoadAsync<Item>(item.Id.Value);
+        var loadedOrder = await query.LoadAsync<Order>(orderId.Value, TestContext.Current.CancellationToken);
+        var loadedItem = await query.LoadAsync<Item>(item.Id.Value, TestContext.Current.CancellationToken);
 
         loadedOrder.ShouldNotBeNull();
         loadedItem.ShouldNotBeNull();
@@ -307,7 +307,7 @@ public class strong_typed_id_tests : IntegrationContext
         session.PendingChanges.HasOutstandingWork().ShouldBeTrue();
         session.PendingChanges.Operations.Count.ShouldBe(1);
 
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         session.PendingChanges.HasOutstandingWork().ShouldBeFalse();
     }
 }

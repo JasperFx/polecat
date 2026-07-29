@@ -69,7 +69,7 @@ public class document_metadata_columns_tests : OneOffConfigurationsContext
             session.LastModifiedBy = "user-1";
             session.SetHeader("k", "v");
             session.Store(doc);
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         var (corr, cause, user, headers) = await ReadMetadataAsync(doc.Id);
@@ -90,7 +90,7 @@ public class document_metadata_columns_tests : OneOffConfigurationsContext
         {
             session.CorrelationId = "first";
             session.Store(doc);
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using (var session = theStore.LightweightSession())
@@ -99,7 +99,7 @@ public class document_metadata_columns_tests : OneOffConfigurationsContext
             session.LastModifiedBy = "editor";
             doc.Name = "B";
             session.Update(doc);
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         var (corr, _, user, _) = await ReadMetadataAsync(doc.Id);
@@ -116,7 +116,7 @@ public class document_metadata_columns_tests : OneOffConfigurationsContext
         await using (var session = theStore.LightweightSession())
         {
             session.Store(doc); // no correlation/causation/user/headers set
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         var (corr, cause, user, headers) = await ReadMetadataAsync(doc.Id);
@@ -134,13 +134,13 @@ public class document_metadata_columns_tests : OneOffConfigurationsContext
         await using (var session = theStore.LightweightSession())
         {
             session.Store(new PlainDoc { Id = Guid.NewGuid(), Name = "A" });
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using var conn = await OpenConnectionAsync();
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = $"SELECT COL_LENGTH('[{Schema}].[pc_doc_plaindoc]', 'correlation_id')";
-        var result = await cmd.ExecuteScalarAsync();
+        var result = await cmd.ExecuteScalarAsync(TestContext.Current.CancellationToken);
         (result == null || result == DBNull.Value).ShouldBeTrue();
     }
 }

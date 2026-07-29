@@ -24,7 +24,7 @@ public class single_value_queries : OneOffConfigurationsContext
         await using var query = theStore.QuerySession();
         var result = await query.Query<LinqTarget>()
             .OrderBy(x => x.Name)
-            .FirstAsync();
+            .FirstAsync(TestContext.Current.CancellationToken);
 
         result.ShouldNotBeNull();
         result.Name.ShouldBe("Alice");
@@ -38,7 +38,7 @@ public class single_value_queries : OneOffConfigurationsContext
         await using var query = theStore.QuerySession();
         var result = await query.Query<LinqTarget>()
             .Where(x => x.Name == "Bob")
-            .FirstOrDefaultAsync();
+            .FirstOrDefaultAsync(TestContext.Current.CancellationToken);
 
         result.ShouldNotBeNull();
         result.Name.ShouldBe("Bob");
@@ -52,7 +52,7 @@ public class single_value_queries : OneOffConfigurationsContext
         await using var query = theStore.QuerySession();
         var result = await query.Query<LinqTarget>()
             .Where(x => x.Name == "Nobody")
-            .FirstOrDefaultAsync();
+            .FirstOrDefaultAsync(TestContext.Current.CancellationToken);
 
         result.ShouldBeNull();
     }
@@ -65,7 +65,7 @@ public class single_value_queries : OneOffConfigurationsContext
         await using var query = theStore.QuerySession();
         var result = await query.Query<LinqTarget>()
             .OrderBy(x => x.Name)
-            .FirstAsync(x => x.Age > 30);
+            .FirstAsync(x => x.Age > 30, TestContext.Current.CancellationToken);
 
         result.ShouldNotBeNull();
         result.Name.ShouldBe("Bob");
@@ -79,7 +79,7 @@ public class single_value_queries : OneOffConfigurationsContext
         await using var query = theStore.QuerySession();
         var result = await query.Query<LinqTarget>()
             .Where(x => x.Name == "Bob")
-            .SingleAsync();
+            .SingleAsync(TestContext.Current.CancellationToken);
 
         result.ShouldNotBeNull();
         result.Name.ShouldBe("Bob");
@@ -93,7 +93,7 @@ public class single_value_queries : OneOffConfigurationsContext
         await using var query = theStore.QuerySession();
         var result = await query.Query<LinqTarget>()
             .Where(x => x.Name == "Nobody")
-            .SingleOrDefaultAsync();
+            .SingleOrDefaultAsync(TestContext.Current.CancellationToken);
 
         result.ShouldBeNull();
     }
@@ -115,7 +115,7 @@ public class single_value_queries : OneOffConfigurationsContext
         await StoreSeedDataAsync();
 
         await using var query = theStore.QuerySession();
-        var count = await query.Query<LinqTarget>().CountAsync();
+        var count = await query.Query<LinqTarget>().CountAsync(TestContext.Current.CancellationToken);
 
         count.ShouldBe(3);
     }
@@ -127,7 +127,7 @@ public class single_value_queries : OneOffConfigurationsContext
 
         await using var query = theStore.QuerySession();
         var count = await query.Query<LinqTarget>()
-            .CountAsync(x => x.Age >= 30);
+            .CountAsync(x => x.Age >= 30, TestContext.Current.CancellationToken);
 
         count.ShouldBe(2);
     }
@@ -138,7 +138,7 @@ public class single_value_queries : OneOffConfigurationsContext
         await StoreSeedDataAsync();
 
         await using var query = theStore.QuerySession();
-        var count = await query.Query<LinqTarget>().LongCountAsync();
+        var count = await query.Query<LinqTarget>().LongCountAsync(TestContext.Current.CancellationToken);
 
         count.ShouldBe(3L);
     }
@@ -149,7 +149,7 @@ public class single_value_queries : OneOffConfigurationsContext
         await StoreSeedDataAsync();
 
         await using var query = theStore.QuerySession();
-        var result = await query.Query<LinqTarget>().AnyAsync();
+        var result = await query.Query<LinqTarget>().AnyAsync(TestContext.Current.CancellationToken);
 
         result.ShouldBeTrue();
     }
@@ -162,7 +162,7 @@ public class single_value_queries : OneOffConfigurationsContext
         await using var query = theStore.QuerySession();
         var result = await query.Query<LinqTarget>()
             .Where(x => x.Name == "Nobody")
-            .AnyAsync();
+            .AnyAsync(TestContext.Current.CancellationToken);
 
         result.ShouldBeFalse();
     }
@@ -174,7 +174,7 @@ public class single_value_queries : OneOffConfigurationsContext
 
         await using var query = theStore.QuerySession();
         var result = await query.Query<LinqTarget>()
-            .AnyAsync(x => x.Age > 30);
+            .AnyAsync(x => x.Age > 30, TestContext.Current.CancellationToken);
 
         result.ShouldBeTrue();
     }
@@ -186,7 +186,7 @@ public class single_value_queries : OneOffConfigurationsContext
 
         await using var query = theStore.QuerySession();
         var result = await query.Query<LinqTarget>()
-            .SumAsync(x => x.Age);
+            .SumAsync(x => x.Age, TestContext.Current.CancellationToken);
 
         result.ShouldBe(90); // 25 + 35 + 30
     }
@@ -198,7 +198,7 @@ public class single_value_queries : OneOffConfigurationsContext
 
         await using var query = theStore.QuerySession();
         var result = await query.Query<LinqTarget>()
-            .SumAsync(x => x.BigNumber);
+            .SumAsync(x => x.BigNumber, TestContext.Current.CancellationToken);
 
         result.ShouldBe(600L); // 100 + 200 + 300
     }
@@ -210,7 +210,7 @@ public class single_value_queries : OneOffConfigurationsContext
 
         await using var query = theStore.QuerySession();
         var result = await query.Query<LinqTarget>()
-            .MinAsync(x => x.Age);
+            .MinAsync(x => x.Age, TestContext.Current.CancellationToken);
 
         result.ShouldBe(25);
     }
@@ -222,7 +222,7 @@ public class single_value_queries : OneOffConfigurationsContext
 
         await using var query = theStore.QuerySession();
         var result = await query.Query<LinqTarget>()
-            .MaxAsync(x => x.Age);
+            .MaxAsync(x => x.Age, TestContext.Current.CancellationToken);
 
         result.ShouldBe(35);
     }
@@ -234,7 +234,7 @@ public class single_value_queries : OneOffConfigurationsContext
 
         await using var query = theStore.QuerySession();
         var result = await query.Query<LinqTarget>()
-            .AverageAsync(x => x.Age);
+            .AverageAsync(x => x.Age, TestContext.Current.CancellationToken);
 
         result.ShouldBe(30.0); // (25 + 35 + 30) / 3
     }

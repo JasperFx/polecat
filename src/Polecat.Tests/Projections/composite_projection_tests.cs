@@ -63,12 +63,12 @@ public class composite_projection_tests : IntegrationContext
         session.Events.StartStream(streamId,
             new QuestStarted("Composite Quest"),
             new MembersJoined(1, "Town", ["Frodo", "Sam"]));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await theStore.WaitForProjectionAsync();
 
         await using var query = theStore.QuerySession();
-        var party = await query.LoadAsync<CompositeQuestParty>(streamId);
+        var party = await query.LoadAsync<CompositeQuestParty>(streamId, TestContext.Current.CancellationToken);
 
         party.ShouldNotBeNull();
         party!.Name.ShouldBe("Composite Quest");
@@ -95,13 +95,13 @@ public class composite_projection_tests : IntegrationContext
             new QuestStarted("Multi-Stage Quest"),
             new MembersJoined(1, "Village", ["Aragorn", "Legolas"]),
             new MembersDeparted(2, "Village", ["Legolas"]));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await theStore.WaitForProjectionAsync();
 
         await using var query = theStore.QuerySession();
-        var party = await query.LoadAsync<CompositeQuestParty>(streamId);
-        var stats = await query.LoadAsync<QuestStats>(streamId);
+        var party = await query.LoadAsync<CompositeQuestParty>(streamId, TestContext.Current.CancellationToken);
+        var stats = await query.LoadAsync<QuestStats>(streamId, TestContext.Current.CancellationToken);
 
         party.ShouldNotBeNull();
         party!.Name.ShouldBe("Multi-Stage Quest");
@@ -131,13 +131,13 @@ public class composite_projection_tests : IntegrationContext
         session.Events.StartStream(streamId,
             new QuestStarted("Parallel Quest"),
             new MembersJoined(1, "Forest", ["Gandalf"]));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await theStore.WaitForProjectionAsync();
 
         await using var query = theStore.QuerySession();
-        var party = await query.LoadAsync<CompositeQuestParty>(streamId);
-        var stats = await query.LoadAsync<QuestStats>(streamId);
+        var party = await query.LoadAsync<CompositeQuestParty>(streamId, TestContext.Current.CancellationToken);
+        var stats = await query.LoadAsync<QuestStats>(streamId, TestContext.Current.CancellationToken);
 
         party.ShouldNotBeNull();
         party!.Name.ShouldBe("Parallel Quest");
@@ -162,7 +162,7 @@ public class composite_projection_tests : IntegrationContext
         var streamId = Guid.NewGuid();
         await using var session1 = theStore.LightweightSession();
         session1.Events.StartStream(streamId, new QuestStarted("Append Quest"));
-        await session1.SaveChangesAsync();
+        await session1.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Process initial events
         await theStore.WaitForProjectionAsync();
@@ -170,12 +170,12 @@ public class composite_projection_tests : IntegrationContext
         // Append more events
         await using var session2 = theStore.LightweightSession();
         session2.Events.Append(streamId, new MembersJoined(2, "Cave", ["Bilbo"]));
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await theStore.WaitForProjectionAsync();
 
         await using var query = theStore.QuerySession();
-        var party = await query.LoadAsync<CompositeQuestParty>(streamId);
+        var party = await query.LoadAsync<CompositeQuestParty>(streamId, TestContext.Current.CancellationToken);
 
         party.ShouldNotBeNull();
         party!.Members.ShouldContain("Bilbo");

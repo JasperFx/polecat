@@ -26,7 +26,7 @@ public class linq_extensions : OneOffConfigurationsContext
         var results = await query.Query<LinqTarget>()
             .Where(x => x.Name!.IsOneOf("Alice", "Charlie"))
             .OrderBy(x => x.Name)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(2);
         results[0].Name.ShouldBe("Alice");
@@ -43,7 +43,7 @@ public class linq_extensions : OneOffConfigurationsContext
         var results = await query.Query<LinqTarget>()
             .Where(x => x.Name!.IsOneOf(names))
             .OrderBy(x => x.Name)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(2);
         results[0].Name.ShouldBe("Bob");
@@ -59,7 +59,7 @@ public class linq_extensions : OneOffConfigurationsContext
         var results = await query.Query<LinqTarget>()
             .Where(x => x.Age.In(25, 30))
             .OrderBy(x => x.Age)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(2);
         results[0].Name.ShouldBe("Alice");
@@ -74,7 +74,7 @@ public class linq_extensions : OneOffConfigurationsContext
         await using var query = theStore.QuerySession();
         var results = await query.Query<LinqTarget>()
             .Where(x => x.Name!.IsOneOf(Array.Empty<string>()))
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(0);
     }
@@ -88,7 +88,7 @@ public class linq_extensions : OneOffConfigurationsContext
         var results = await query.Query<LinqTarget>()
             .Where(x => x.Color.IsOneOf(TargetColor.Red, TargetColor.Blue))
             .OrderBy(x => x.Name)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(3);
         results[0].Name.ShouldBe("Alice");
@@ -108,18 +108,18 @@ public class linq_extensions : OneOffConfigurationsContext
         await using (var session = theStore.LightweightSession(new SessionOptions { TenantId = "tenant-a" }))
         {
             session.Store(new LinqTarget { Id = Guid.NewGuid(), Name = "Alice", Age = 25 });
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using (var session = theStore.LightweightSession(new SessionOptions { TenantId = "tenant-b" }))
         {
             session.Store(new LinqTarget { Id = Guid.NewGuid(), Name = "Bob", Age = 35 });
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         // Normal query should only see current tenant
         await using var queryA = theStore.QuerySession(new SessionOptions { TenantId = "tenant-a" });
-        var tenantAResults = await queryA.Query<LinqTarget>().ToListAsync();
+        var tenantAResults = await queryA.Query<LinqTarget>().ToListAsync(TestContext.Current.CancellationToken);
         tenantAResults.Count.ShouldBe(1);
         tenantAResults[0].Name.ShouldBe("Alice");
 
@@ -127,7 +127,7 @@ public class linq_extensions : OneOffConfigurationsContext
         var allResults = await queryA.Query<LinqTarget>()
             .AnyTenant()
             .OrderBy(x => x.Name)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         allResults.Count.ShouldBe(2);
         allResults[0].Name.ShouldBe("Alice");
@@ -146,19 +146,19 @@ public class linq_extensions : OneOffConfigurationsContext
         await using (var session = theStore.LightweightSession(new SessionOptions { TenantId = "tenant-a" }))
         {
             session.Store(new LinqTarget { Id = Guid.NewGuid(), Name = "Alice" });
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using (var session = theStore.LightweightSession(new SessionOptions { TenantId = "tenant-b" }))
         {
             session.Store(new LinqTarget { Id = Guid.NewGuid(), Name = "Bob" });
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using (var session = theStore.LightweightSession(new SessionOptions { TenantId = "tenant-c" }))
         {
             session.Store(new LinqTarget { Id = Guid.NewGuid(), Name = "Charlie" });
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         // TenantIsOneOf should only see specified tenants
@@ -166,7 +166,7 @@ public class linq_extensions : OneOffConfigurationsContext
         var results = await query.Query<LinqTarget>()
             .TenantIsOneOf("tenant-a", "tenant-c")
             .OrderBy(x => x.Name)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(2);
         results[0].Name.ShouldBe("Alice");

@@ -39,14 +39,14 @@ public class batch_load_parity : IntegrationContext
     {
         var doc = new VersionedDoc { Id = Guid.NewGuid(), Name = "Optimistic" };
         theSession.Store(doc);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
         var savedVersion = doc.Version;
         savedVersion.ShouldNotBe(Guid.Empty);
 
         await using var query = theStore.QuerySession();
         var batch = query.CreateBatchQuery();
         var loaded = batch.Load<VersionedDoc>(doc.Id);
-        await batch.Execute();
+        await batch.Execute(TestContext.Current.CancellationToken);
 
         var result = await loaded;
         result.ShouldNotBeNull();
@@ -58,13 +58,13 @@ public class batch_load_parity : IntegrationContext
     {
         var doc = new RevisionedDoc { Id = Guid.NewGuid(), Name = "Revisioned" };
         theSession.Store(doc);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
         var batch = query.CreateBatchQuery();
         var loaded = batch.Load<RevisionedDoc>(doc.Id);
         var loadedMany = batch.LoadMany<RevisionedDoc>(doc.Id);
-        await batch.Execute();
+        await batch.Execute(TestContext.Current.CancellationToken);
 
         (await loaded).ShouldNotBeNull();
         (await loaded)!.Version.ShouldBe(1);
@@ -77,17 +77,17 @@ public class batch_load_parity : IntegrationContext
         var live = new SoftDeletedDoc { Id = Guid.NewGuid(), Name = "Live" };
         var gone = new SoftDeletedDoc { Id = Guid.NewGuid(), Name = "Gone" };
         theSession.Store(live, gone);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         theSession.Delete(gone); // soft delete
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
         var batch = query.CreateBatchQuery();
         var loadLive = batch.Load<SoftDeletedDoc>(live.Id);
         var loadGone = batch.Load<SoftDeletedDoc>(gone.Id);
         var loadMany = batch.LoadMany<SoftDeletedDoc>(live.Id, gone.Id);
-        await batch.Execute();
+        await batch.Execute(TestContext.Current.CancellationToken);
 
         (await loadLive).ShouldNotBeNull();
         (await loadGone).ShouldBeNull();
@@ -106,13 +106,13 @@ public class batch_load_parity : IntegrationContext
         var id = Guid.NewGuid();
         theSession.ForTenant("tenant-a").Store(new TenantScopedDoc { Id = id, Name = "A" });
         theSession.ForTenant("tenant-b").Store(new TenantScopedDoc { Id = id, Name = "B" });
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession(new SessionOptions { TenantId = "tenant-a" });
         var batch = query.CreateBatchQuery();
         var loadOne = batch.Load<TenantScopedDoc>(id);
         var loadMany = batch.LoadMany<TenantScopedDoc>(id);
-        await batch.Execute();
+        await batch.Execute(TestContext.Current.CancellationToken);
 
         (await loadOne).ShouldNotBeNull();
         (await loadOne)!.Name.ShouldBe("A");
@@ -133,7 +133,7 @@ public class batch_load_parity : IntegrationContext
         var employee = new BatchEmployee { Id = Guid.NewGuid(), Name = "Emp", Department = "Eng" };
         var contractor = new BatchContractor { Id = Guid.NewGuid(), Name = "Con", Agency = "Acme" };
         theSession.Store<BatchPerson>(employee, contractor);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
         var batch = query.CreateBatchQuery();
@@ -141,7 +141,7 @@ public class batch_load_parity : IntegrationContext
         var asEmployee = batch.Load<BatchEmployee>(employee.Id);
         var wrongSubclass = batch.Load<BatchEmployee>(contractor.Id); // contractor row, filtered by doc_type
         var manyEmployees = batch.LoadMany<BatchEmployee>(employee.Id, contractor.Id);
-        await batch.Execute();
+        await batch.Execute(TestContext.Current.CancellationToken);
 
         (await asBase).ShouldBeOfType<BatchEmployee>();
         (await asEmployee).ShouldNotBeNull();

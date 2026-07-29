@@ -57,14 +57,14 @@ public class delete_projection_progress_by_shard_name_tests : IntegrationContext
         await InsertProgressAsync(shard, 12);
 
         // sanity: the row exists before the delete
-        (await theStore.Database.ProjectionProgressFor(shard)).ShouldBe(12);
+        (await theStore.Database.ProjectionProgressFor(shard, TestContext.Current.CancellationToken)).ShouldBe(12);
 
         // Reach it through the store-agnostic abstraction (issue requirement #2) — no reflection.
         await ((IEventDatabase)theStore.Database)
             .DeleteProjectionProgressByShardNameAsync(shard.Identity, CancellationToken.None);
 
-        (await theStore.Database.ProjectionProgressFor(shard)).ShouldBe(0);
-        var all = await theStore.Database.AllProjectionProgress();
+        (await theStore.Database.ProjectionProgressFor(shard, TestContext.Current.CancellationToken)).ShouldBe(0);
+        var all = await theStore.Database.AllProjectionProgress(TestContext.Current.CancellationToken);
         all.ShouldNotContain(s => s.ShardName == shard.Identity);
     }
 
@@ -82,8 +82,8 @@ public class delete_projection_progress_by_shard_name_tests : IntegrationContext
         await ((IEventDatabase)theStore.Database)
             .DeleteProjectionProgressByShardNameAsync(target.Identity, CancellationToken.None);
 
-        (await theStore.Database.ProjectionProgressFor(target)).ShouldBe(0);
-        (await theStore.Database.ProjectionProgressFor(sibling)).ShouldBe(20); // survives
+        (await theStore.Database.ProjectionProgressFor(target, TestContext.Current.CancellationToken)).ShouldBe(0);
+        (await theStore.Database.ProjectionProgressFor(sibling, TestContext.Current.CancellationToken)).ShouldBe(20); // survives
     }
 
     [Fact]
@@ -100,8 +100,8 @@ public class delete_projection_progress_by_shard_name_tests : IntegrationContext
         await ((IEventDatabase)theStore.Database)
             .DeleteProjectionProgressByShardNameAsync(shared.Identity, CancellationToken.None);
 
-        (await theStore.Database.ProjectionProgressFor(shared)).ShouldBe(0);
-        (await theStore.Database.ProjectionProgressFor(perTenant)).ShouldBe(7); // survives
+        (await theStore.Database.ProjectionProgressFor(shared, TestContext.Current.CancellationToken)).ShouldBe(0);
+        (await theStore.Database.ProjectionProgressFor(perTenant, TestContext.Current.CancellationToken)).ShouldBe(7); // survives
     }
 
     [Fact]
@@ -114,7 +114,7 @@ public class delete_projection_progress_by_shard_name_tests : IntegrationContext
         await Should.NotThrowAsync(((IEventDatabase)theStore.Database)
             .DeleteProjectionProgressByShardNameAsync("does_not_exist:V3:All:nobody", CancellationToken.None));
 
-        (await theStore.Database.ProjectionProgressFor(keep)).ShouldBe(3);
+        (await theStore.Database.ProjectionProgressFor(keep, TestContext.Current.CancellationToken)).ShouldBe(3);
     }
 
     [Fact]
@@ -133,7 +133,7 @@ public class delete_projection_progress_by_shard_name_tests : IntegrationContext
         for (var i = 0; i < shards.Length; i++)
         {
             var expected = shards[i].Identity == victim.Identity ? 0 : (i + 1) * 10;
-            (await theStore.Database.ProjectionProgressFor(shards[i])).ShouldBe(expected);
+            (await theStore.Database.ProjectionProgressFor(shards[i], TestContext.Current.CancellationToken)).ShouldBe(expected);
         }
     }
 

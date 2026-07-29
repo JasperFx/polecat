@@ -201,7 +201,7 @@ public class etag_streaming_tests : IAsyncLifetime
         await using (var session = store.LightweightSession())
         {
             session.Events.Append(id, new StreamingMembersJoined(["Gandalf"]));
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         var after = await _host.Scenario(s => s.Get.Url($"/api/aggregates/{id}"));

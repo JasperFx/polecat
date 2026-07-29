@@ -26,7 +26,7 @@ public class distinct_by_operator : OneOffConfigurationsContext
         await using var query = theStore.QuerySession();
         var results = await query.Query<LinqTarget>()
             .DistinctBy(x => x.Name)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(3);
         results.Select(x => x.Name).OrderBy(x => x)
@@ -43,7 +43,7 @@ public class distinct_by_operator : OneOffConfigurationsContext
         var results = await query.Query<LinqTarget>()
             .Select(x => new { x.Name, x.Age })
             .DistinctBy(x => x.Name)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(3);
         results.Select(x => x.Name).OrderBy(x => x)
@@ -59,7 +59,7 @@ public class distinct_by_operator : OneOffConfigurationsContext
         var results = await query.Query<LinqTarget>()
             .Select(x => new NameAge { Name = x.Name, Age = x.Age })
             .DistinctBy(x => x.Name)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(3);
         results.Select(x => x.Name).OrderBy(x => x)
@@ -76,7 +76,7 @@ public class distinct_by_operator : OneOffConfigurationsContext
             .Where(x => x.Age >= 30)
             .Select(x => new { x.Name, x.Age })
             .DistinctBy(x => x.Name)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         // Age >= 30: Bob(35), Charlie(30), Alice(40) -> distinct Name -> 3
         results.Count.ShouldBe(3);
@@ -93,7 +93,7 @@ public class distinct_by_operator : OneOffConfigurationsContext
         var results = await query.Query<LinqTarget>()
             .OrderBy(x => x.Age)
             .DistinctBy(x => x.Name)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(3);
         // The lowest-age row survives per name, and the final list is ordered by age.
@@ -111,7 +111,7 @@ public class distinct_by_operator : OneOffConfigurationsContext
         var results = await query.Query<LinqTarget>()
             .OrderByDescending(x => x.Age)
             .DistinctBy(x => x.Name)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(3);
         // The highest-age Alice (40) survives this time.

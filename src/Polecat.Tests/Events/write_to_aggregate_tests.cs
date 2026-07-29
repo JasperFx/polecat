@@ -15,7 +15,7 @@ public class write_to_aggregate_tests : IntegrationContext
         var streamId = Guid.NewGuid();
         theSession.Events.StartStream(streamId,
             new QuestStarted("Callback Quest"));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         await session2.Events.WriteToAggregate<QuestAggregate>(streamId, stream =>
@@ -23,10 +23,10 @@ public class write_to_aggregate_tests : IntegrationContext
             stream.Aggregate.ShouldNotBeNull();
             stream.Aggregate!.Name.ShouldBe("Callback Quest");
             stream.AppendOne(new MembersJoined(1, "Town", ["Hero"]));
-        });
+        }, TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
         events.Count.ShouldBe(2);
     }
 
@@ -36,7 +36,7 @@ public class write_to_aggregate_tests : IntegrationContext
         var streamId = Guid.NewGuid();
         theSession.Events.StartStream(streamId,
             new QuestStarted("Async Callback"));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         await session2.Events.WriteToAggregate<QuestAggregate>(streamId, async stream =>
@@ -45,10 +45,10 @@ public class write_to_aggregate_tests : IntegrationContext
             stream.AppendMany(
                 new MembersJoined(1, "Castle", ["Knight"]),
                 new MonsterSlain("Dragon", 100));
-        });
+        }, TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
         events.Count.ShouldBe(3);
     }
 
@@ -59,17 +59,17 @@ public class write_to_aggregate_tests : IntegrationContext
         theSession.Events.StartStream(streamId,
             new QuestStarted("Persist Check"),
             new MembersJoined(1, "Start", ["A"]));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         await session2.Events.WriteToAggregate<QuestAggregate>(streamId, stream =>
         {
             stream.AppendOne(new MonsterSlain("Goblin", 10));
-        });
+        }, TestContext.Current.CancellationToken);
 
         // Verify via a fresh session that events are persisted
         await using var session3 = theStore.LightweightSession();
-        var aggregate = await session3.Events.FetchLatest<QuestAggregate>(streamId);
+        var aggregate = await session3.Events.FetchLatest<QuestAggregate>(streamId, TestContext.Current.CancellationToken);
         aggregate.ShouldNotBeNull();
         aggregate!.MonstersSlain.ShouldBe(1);
         aggregate.Members.ShouldBe(["A"]);
@@ -82,16 +82,16 @@ public class write_to_aggregate_tests : IntegrationContext
         theSession.Events.StartStream(streamId,
             new QuestStarted("Versioned Quest"),
             new MembersJoined(1, "Town", ["Hero"]));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         await session2.Events.WriteToAggregate<QuestAggregate>(streamId, 2, stream =>
         {
             stream.AppendOne(new MonsterSlain("Troll", 50));
-        });
+        }, TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
         events.Count.ShouldBe(3);
     }
 
@@ -101,17 +101,17 @@ public class write_to_aggregate_tests : IntegrationContext
         var streamId = Guid.NewGuid();
         theSession.Events.StartStream(streamId,
             new QuestStarted("Versioned Async"));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         await session2.Events.WriteToAggregate<QuestAggregate>(streamId, 1, async stream =>
         {
             await Task.Yield();
             stream.AppendOne(new MembersJoined(1, "Castle", ["Knight"]));
-        });
+        }, TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
         events.Count.ShouldBe(2);
     }
 
@@ -121,7 +121,7 @@ public class write_to_aggregate_tests : IntegrationContext
         var streamId = Guid.NewGuid();
         theSession.Events.StartStream(streamId,
             new QuestStarted("Wrong Version"));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         await Should.ThrowAsync<Exception>(async () =>
@@ -139,7 +139,7 @@ public class write_to_aggregate_tests : IntegrationContext
         var streamId = Guid.NewGuid();
         theSession.Events.StartStream(streamId,
             new QuestStarted("Exclusive Quest"));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         await session2.Events.WriteExclusivelyToAggregate<QuestAggregate>(streamId, stream =>
@@ -147,10 +147,10 @@ public class write_to_aggregate_tests : IntegrationContext
             stream.Aggregate.ShouldNotBeNull();
             stream.Aggregate!.Name.ShouldBe("Exclusive Quest");
             stream.AppendOne(new MembersJoined(1, "Dungeon", ["Warrior"]));
-        });
+        }, TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
         events.Count.ShouldBe(2);
     }
 
@@ -160,7 +160,7 @@ public class write_to_aggregate_tests : IntegrationContext
         var streamId = Guid.NewGuid();
         theSession.Events.StartStream(streamId,
             new QuestStarted("Exclusive Async"));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         await session2.Events.WriteExclusivelyToAggregate<QuestAggregate>(streamId, async stream =>
@@ -169,10 +169,10 @@ public class write_to_aggregate_tests : IntegrationContext
             stream.AppendMany(
                 new MembersJoined(1, "Forest", ["Elf"]),
                 new MonsterSlain("Orc", 30));
-        });
+        }, TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
         events.Count.ShouldBe(3);
     }
 
@@ -183,7 +183,7 @@ public class write_to_aggregate_tests : IntegrationContext
         theSession.Events.StartStream(streamId,
             new QuestStarted("Exclusive Persist"),
             new MembersJoined(1, "Start", ["A"]));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         await session2.Events.WriteExclusivelyToAggregate<QuestAggregate>(streamId, stream =>
@@ -191,10 +191,10 @@ public class write_to_aggregate_tests : IntegrationContext
             stream.Aggregate.ShouldNotBeNull();
             stream.Aggregate!.Members.ShouldBe(["A"]);
             stream.AppendOne(new MonsterSlain("Spider", 15));
-        });
+        }, TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var aggregate = await query.Events.FetchLatest<QuestAggregate>(streamId);
+        var aggregate = await query.Events.FetchLatest<QuestAggregate>(streamId, TestContext.Current.CancellationToken);
         aggregate.ShouldNotBeNull();
         aggregate!.MonstersSlain.ShouldBe(1);
     }
@@ -205,14 +205,14 @@ public class write_to_aggregate_tests : IntegrationContext
         var streamId = Guid.NewGuid();
         theSession.Events.StartStream(streamId,
             new QuestStarted("Lock Release"));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // First exclusive write
         await using var session2 = theStore.LightweightSession();
         await session2.Events.WriteExclusivelyToAggregate<QuestAggregate>(streamId, stream =>
         {
             stream.AppendOne(new MembersJoined(1, "Camp", ["Scout"]));
-        });
+        }, TestContext.Current.CancellationToken);
 
         // Second exclusive write should succeed (lock released after first)
         await using var session3 = theStore.LightweightSession();
@@ -220,10 +220,10 @@ public class write_to_aggregate_tests : IntegrationContext
         {
             stream.Aggregate.ShouldNotBeNull();
             stream.AppendOne(new MonsterSlain("Rat", 1));
-        });
+        }, TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
         events.Count.ShouldBe(3);
     }
 }

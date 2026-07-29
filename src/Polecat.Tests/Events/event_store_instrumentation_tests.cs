@@ -75,7 +75,7 @@ public class event_store_instrumentation_tests : IAsyncLifetime
     public async Task enabling_adds_the_extended_columns_on_schema_apply()
     {
         using var store = CreateStore(OnSchema, extended: true);
-        await store.Database.ApplyAllConfiguredChangesToDatabaseAsync();
+        await store.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         var columns = (await SchemaInspector.GetColumnInfoAsync("pc_event_progression", OnSchema))
             .Select(c => c.Name).ToList();
@@ -90,7 +90,7 @@ public class event_store_instrumentation_tests : IAsyncLifetime
     public async Task opting_out_produces_no_schema_delta()
     {
         using var store = CreateStore(OffSchema, extended: false);
-        await store.Database.ApplyAllConfiguredChangesToDatabaseAsync();
+        await store.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         var columns = (await SchemaInspector.GetColumnInfoAsync("pc_event_progression", OffSchema))
             .Select(c => c.Name).ToList();
@@ -116,12 +116,12 @@ public class event_store_instrumentation_tests : IAsyncLifetime
     public async Task extended_columns_are_read_back_into_shard_state()
     {
         using var store = CreateStore(OnSchema, extended: true);
-        await store.Database.ApplyAllConfiguredChangesToDatabaseAsync();
+        await store.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         await SeedExtendedRowAsync(
             store, shardName: "Instrumented:All", sequence: 42, agentStatus: "Running", runningOnNode: 7);
 
-        var all = await store.Database.AllProjectionProgress();
+        var all = await store.Database.AllProjectionProgress(TestContext.Current.CancellationToken);
         var state = all.ShouldHaveSingleItem();
 
         state.ShardName.ShouldBe("Instrumented:All");
@@ -142,7 +142,7 @@ public class event_store_instrumentation_tests : IAsyncLifetime
     public async Task production_write_sets_heartbeat_but_leaves_agent_state_null()
     {
         using var store = CreateStore(OnSchema, extended: true);
-        await store.Database.ApplyAllConfiguredChangesToDatabaseAsync();
+        await store.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         var events = store.Database.Events;
         await ExecuteAsync(new RecordProgressionOperation(
@@ -152,7 +152,7 @@ public class event_store_instrumentation_tests : IAsyncLifetime
             extendedTracking: true,
             upsert: true));
 
-        var state = (await store.Database.AllProjectionProgress()).ShouldHaveSingleItem();
+        var state = (await store.Database.AllProjectionProgress(TestContext.Current.CancellationToken)).ShouldHaveSingleItem();
 
         state.Sequence.ShouldBe(42);
         state.LastHeartbeat.ShouldNotBeNull("the production extended write does set heartbeat");

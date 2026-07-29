@@ -40,7 +40,7 @@ public class collection_querying : OneOffConfigurationsContext
         var results = await query.Query<LinqTarget>()
             .Where(x => x.Tags.Contains("sql"))
             .OrderBy(x => x.Name)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(2);
         results[0].Name.ShouldBe("Alice");
@@ -55,7 +55,7 @@ public class collection_querying : OneOffConfigurationsContext
         await using var query = theStore.QuerySession();
         var results = await query.Query<LinqTarget>()
             .Where(x => x.Tags.Contains("ruby"))
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(0);
     }
@@ -70,7 +70,7 @@ public class collection_querying : OneOffConfigurationsContext
         var results = await query.Query<LinqTarget>()
             .Where(x => names.Contains(x.Name!))
             .OrderBy(x => x.Name)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(2);
         results[0].Name.ShouldBe("Alice");
@@ -86,7 +86,7 @@ public class collection_querying : OneOffConfigurationsContext
         var names = new[] { "Bob" };
         var results = await query.Query<LinqTarget>()
             .Where(x => names.Contains(x.Name!))
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(1);
         results[0].Name.ShouldBe("Bob");
@@ -100,7 +100,7 @@ public class collection_querying : OneOffConfigurationsContext
         await using var query = theStore.QuerySession();
         var results = await query.Query<LinqTarget>()
             .Where(x => x.Tags.IsEmpty())
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(1);
         results[0].Name.ShouldBe("Charlie");
@@ -114,7 +114,7 @@ public class collection_querying : OneOffConfigurationsContext
         await using var query = theStore.QuerySession();
         var results = await query.Query<LinqTarget>()
             .Where(x => x.Tags.Contains("sql") && x.Name == "Alice")
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(1);
         results[0].Name.ShouldBe("Alice");

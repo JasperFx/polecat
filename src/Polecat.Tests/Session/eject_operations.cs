@@ -56,10 +56,10 @@ public class eject_operations : IntegrationContext
 
         theSession.Store(doc);
         theSession.Eject(doc);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var loaded = await query.LoadAsync<LinqTarget>(doc.Id);
+        var loaded = await query.LoadAsync<LinqTarget>(doc.Id, TestContext.Current.CancellationToken);
         loaded.ShouldBeNull();
     }
 
@@ -101,17 +101,17 @@ public class eject_operations : IntegrationContext
         // Store and save using identity session
         await using var session = theStore.IdentitySession();
         session.Store(doc);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Load to populate identity map
-        var loaded1 = await session.LoadAsync<LinqTarget>(doc.Id);
+        var loaded1 = await session.LoadAsync<LinqTarget>(doc.Id, TestContext.Current.CancellationToken);
         loaded1.ShouldNotBeNull();
 
         // Eject
         session.Eject(doc);
 
         // Loading again should fetch from database, not identity map
-        var loaded2 = await session.LoadAsync<LinqTarget>(doc.Id);
+        var loaded2 = await session.LoadAsync<LinqTarget>(doc.Id, TestContext.Current.CancellationToken);
         loaded2.ShouldNotBeNull();
 
         // Different reference since identity map entry was ejected
@@ -127,17 +127,17 @@ public class eject_operations : IntegrationContext
         var doc2 = new LinqTarget { Id = Guid.NewGuid(), Name = "idmap2" };
 
         session.Store(doc1, doc2);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Load to populate identity map
-        var loaded1 = await session.LoadAsync<LinqTarget>(doc1.Id);
+        var loaded1 = await session.LoadAsync<LinqTarget>(doc1.Id, TestContext.Current.CancellationToken);
         loaded1.ShouldNotBeNull();
 
         // Eject all of type
         session.EjectAllOfType(typeof(LinqTarget));
 
         // Loading again should get new references
-        var loaded1Again = await session.LoadAsync<LinqTarget>(doc1.Id);
+        var loaded1Again = await session.LoadAsync<LinqTarget>(doc1.Id, TestContext.Current.CancellationToken);
         loaded1Again.ShouldNotBeNull();
         ReferenceEquals(loaded1, loaded1Again).ShouldBeFalse();
     }

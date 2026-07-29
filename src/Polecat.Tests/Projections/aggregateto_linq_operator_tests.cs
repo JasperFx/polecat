@@ -33,7 +33,7 @@ public class aggregateto_linq_operator_tests : OneOffConfigurationsContext
 
         session.Events.StartStream(Guid.NewGuid(), _joined1, _departed1);
         session.Events.StartStream(Guid.NewGuid(), _joined2, _departed2);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         #region sample_aggregate_to_async
 
@@ -44,7 +44,7 @@ public class aggregateto_linq_operator_tests : OneOffConfigurationsContext
             // Where()/OrderBy()/Take()/Skip() operators
             // you need here
 
-            .AggregateToAsync<QuestParty>();
+            .AggregateToAsync<QuestParty>(token: TestContext.Current.CancellationToken);
 
         #endregion
 
@@ -61,9 +61,9 @@ public class aggregateto_linq_operator_tests : OneOffConfigurationsContext
         var initialParty = new QuestParty { Members = ["Lan"] };
         session.Events.StartStream(Guid.NewGuid(), _joined1, _departed1);
         session.Events.StartStream(Guid.NewGuid(), _joined2, _departed2);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
-        var questParty = await session.Events.QueryAllRawEvents().AggregateToAsync(initialParty);
+        var questParty = await session.Events.QueryAllRawEvents().AggregateToAsync(initialParty, TestContext.Current.CancellationToken);
 
         questParty.ShouldNotBeNull();
         questParty.Members.ShouldBe(["Lan", "Rand", "Matrim", "Perrin", "Elayne", "Elmindreda"]);
@@ -77,7 +77,7 @@ public class aggregateto_linq_operator_tests : OneOffConfigurationsContext
 
         var questParty = await session.Events.QueryAllRawEvents()
             .Where(x => x.StreamId == Guid.NewGuid())
-            .AggregateToAsync<QuestParty>();
+            .AggregateToAsync<QuestParty>(token: TestContext.Current.CancellationToken);
 
         questParty.ShouldBeNull();
     }
@@ -91,11 +91,11 @@ public class aggregateto_linq_operator_tests : OneOffConfigurationsContext
         var id = Guid.NewGuid();
         session.Events.StartStream(id, _joined1, _departed1);
         session.Events.StartStream(Guid.NewGuid(), _joined2, _departed2);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var questParty = await session.Events.QueryAllRawEvents()
             .Where(x => x.StreamId == id)
-            .AggregateToAsync<QuestParty>();
+            .AggregateToAsync<QuestParty>(token: TestContext.Current.CancellationToken);
 
         questParty.ShouldNotBeNull();
         questParty.Id.ShouldBe(id);
@@ -105,17 +105,17 @@ public class aggregateto_linq_operator_tests : OneOffConfigurationsContext
     public async Task gets_the_key_set()
     {
         ConfigureStore(opts => opts.Events.StreamIdentity = StreamIdentity.AsString);
-        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync();
+        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
         await using var session = theStore.LightweightSession();
 
         var key = Guid.NewGuid().ToString();
         session.Events.StartStream(key, new QuestStarted("Save the World"), _joined1);
         session.Events.StartStream(Guid.NewGuid().ToString(), new QuestStarted("Other"), _joined2);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var quest = await session.Events.QueryAllRawEvents()
             .Where(x => x.StreamKey == key)
-            .AggregateToAsync<SelfAggregatingStringQuest>();
+            .AggregateToAsync<SelfAggregatingStringQuest>(token: TestContext.Current.CancellationToken);
 
         quest.ShouldNotBeNull();
         quest.Id.ShouldBe(key);

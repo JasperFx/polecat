@@ -107,7 +107,7 @@ public class flat_table_projection_tests : IntegrationContext
         await using var session = store.LightweightSession();
         session.Events.StartStream(streamId,
             new QuestStarted("Destroy the Ring"));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var questName = await ReadMetric<string>("quest_name", streamId);
         questName.ShouldBe("Destroy the Ring");
@@ -126,7 +126,7 @@ public class flat_table_projection_tests : IntegrationContext
         session.Events.StartStream(streamId,
             new QuestStarted("Fellowship"),
             new MembersJoined(1, "Rivendell", ["Aragorn", "Legolas", "Gimli"]));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var questName = await ReadMetric<string>("quest_name", streamId);
         questName.ShouldBe("Fellowship");
@@ -145,7 +145,7 @@ public class flat_table_projection_tests : IntegrationContext
         session1.Events.StartStream(streamId,
             new QuestStarted("Counter Quest"),
             new MembersJoined(1, "Town", ["A", "B"]));
-        await session1.SaveChangesAsync();
+        await session1.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var count1 = await ReadMetric<int>("member_count", streamId);
         count1.ShouldBe(2); // 0 from SetValue + 2 from Increment
@@ -154,7 +154,7 @@ public class flat_table_projection_tests : IntegrationContext
         await using var session2 = store.LightweightSession();
         session2.Events.Append(streamId,
             new MembersJoined(2, "Forest", ["C", "D", "E"]));
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var count2 = await ReadMetric<int>("member_count", streamId);
         count2.ShouldBe(5); // 2 + 3
@@ -169,7 +169,7 @@ public class flat_table_projection_tests : IntegrationContext
         await using var session1 = store.LightweightSession();
         session1.Events.StartStream(streamId,
             new QuestStarted("Doomed Quest"));
-        await session1.SaveChangesAsync();
+        await session1.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Verify row exists
         var count1 = await CountMetrics();
@@ -179,7 +179,7 @@ public class flat_table_projection_tests : IntegrationContext
         await using var session2 = store.LightweightSession();
         session2.Events.Append(streamId,
             new QuestEnded("Doomed Quest"));
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Row should be gone
         var count2 = await CountMetrics();
@@ -195,7 +195,7 @@ public class flat_table_projection_tests : IntegrationContext
         await using var session = store.LightweightSession();
         session.Events.StartStream(streamId,
             new QuestStarted("Set Value Quest"));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // SetValue("member_count", 0) should set the initial value
         var memberCount = await ReadMetric<int>("member_count", streamId);
@@ -219,7 +219,7 @@ public class flat_table_projection_tests : IntegrationContext
         await using (var dropCmd = conn.CreateCommand())
         {
             dropCmd.CommandText = "IF OBJECT_ID('dbo.order_history', 'U') IS NOT NULL DROP TABLE dbo.order_history;";
-            await dropCmd.ExecuteNonQueryAsync();
+            await dropCmd.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
         }
 
         var streamId = Guid.NewGuid();
@@ -227,7 +227,7 @@ public class flat_table_projection_tests : IntegrationContext
         session.Events.StartStream(streamId,
             new OrderCreated(100m),
             new OrderShipped(25m));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Verify the column was created with the expected PascalCase name
         await using var conn2 = await OpenConnectionAsync();
@@ -239,9 +239,9 @@ public class flat_table_projection_tests : IntegrationContext
             ORDER BY COLUMN_NAME;
             """;
         var columns = new List<string>();
-        await using (var reader = await cmd.ExecuteReaderAsync())
+        await using (var reader = await cmd.ExecuteReaderAsync(TestContext.Current.CancellationToken))
         {
-            while (await reader.ReadAsync())
+            while (await reader.ReadAsync(TestContext.Current.CancellationToken))
             {
                 columns.Add(reader.GetString(0));
             }
@@ -263,7 +263,7 @@ public class flat_table_projection_tests : IntegrationContext
         session.Events.StartStream(streamId,
             new QuestStarted("Async Flat Quest"),
             new MembersJoined(1, "Castle", ["Knight", "Wizard"]));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await store.WaitForProjectionAsync();
 
@@ -283,12 +283,12 @@ public class flat_table_projection_tests : IntegrationContext
         await using (var session = store.LightweightSession())
         {
             session.Events.StartStream(Guid.NewGuid(), new QuestStarted("Cleanup Quest"));
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         (await CountMetrics()).ShouldBeGreaterThan(0);
 
-        await store.Advanced.CleanAllDocumentsAsync();
+        await store.Advanced.CleanAllDocumentsAsync(TestContext.Current.CancellationToken);
 
         (await CountMetrics()).ShouldBe(0);
     }
@@ -301,12 +301,12 @@ public class flat_table_projection_tests : IntegrationContext
         await using (var session = store.LightweightSession())
         {
             session.Events.StartStream(Guid.NewGuid(), new QuestStarted("Cleanup Quest"));
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         (await CountMetrics()).ShouldBeGreaterThan(0);
 
-        await store.Advanced.CleanAllEventDataAsync();
+        await store.Advanced.CleanAllEventDataAsync(TestContext.Current.CancellationToken);
 
         (await CountMetrics()).ShouldBe(0);
     }

@@ -22,17 +22,17 @@ public class session_lifecycle_tests : IntegrationContext
 
         var user1 = new User { Id = Guid.NewGuid(), FirstName = "Round1", LastName = "A", Age = 1 };
         session.Store(user1);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         session.PendingChanges.HasOutstandingWork().ShouldBeFalse();
 
         var user2 = new User { Id = Guid.NewGuid(), FirstName = "Round2", LastName = "B", Age = 2 };
         session.Store(user2);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        (await query.LoadAsync<User>(user1.Id)).ShouldNotBeNull();
-        (await query.LoadAsync<User>(user2.Id)).ShouldNotBeNull();
+        (await query.LoadAsync<User>(user1.Id, TestContext.Current.CancellationToken)).ShouldNotBeNull();
+        (await query.LoadAsync<User>(user2.Id, TestContext.Current.CancellationToken)).ShouldNotBeNull();
     }
 
     // ===== Identity map session tracks stored documents =====
@@ -42,11 +42,11 @@ public class session_lifecycle_tests : IntegrationContext
     {
         var id = Guid.NewGuid();
         theSession.Store(new User { Id = id, FirstName = "Identity", LastName = "Map", Age = 30 });
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session = theStore.IdentitySession();
-        var load1 = await session.LoadAsync<User>(id);
-        var load2 = await session.LoadAsync<User>(id);
+        var load1 = await session.LoadAsync<User>(id, TestContext.Current.CancellationToken);
+        var load2 = await session.LoadAsync<User>(id, TestContext.Current.CancellationToken);
 
         // Identity map: same object reference
         ReferenceEquals(load1, load2).ShouldBeTrue();
@@ -61,15 +61,15 @@ public class session_lifecycle_tests : IntegrationContext
         await using var session = theStore.IdentitySession();
 
         session.Store(new User { Id = id, FirstName = "Eject", LastName = "Me", Age = 1 });
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
-        var loaded1 = await session.LoadAsync<User>(id);
+        var loaded1 = await session.LoadAsync<User>(id, TestContext.Current.CancellationToken);
         loaded1.ShouldNotBeNull();
 
         session.Eject(loaded1);
 
         // After eject, loading again should get a fresh instance from DB
-        var loaded2 = await session.LoadAsync<User>(id);
+        var loaded2 = await session.LoadAsync<User>(id, TestContext.Current.CancellationToken);
         loaded2.ShouldNotBeNull();
         ReferenceEquals(loaded1, loaded2).ShouldBeFalse();
     }
@@ -89,7 +89,7 @@ public class session_lifecycle_tests : IntegrationContext
 
         // Document should not exist
         await using var query = theStore.QuerySession();
-        var loaded = await query.LoadAsync<User>(id);
+        var loaded = await query.LoadAsync<User>(id, TestContext.Current.CancellationToken);
         loaded.ShouldBeNull();
     }
 
@@ -99,7 +99,7 @@ public class session_lifecycle_tests : IntegrationContext
     public async Task save_changes_with_no_pending_work_is_noop()
     {
         // Should not throw
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         theSession.PendingChanges.HasOutstandingWork().ShouldBeFalse();
     }
@@ -127,10 +127,10 @@ public class session_lifecycle_tests : IntegrationContext
     {
         var id = Guid.NewGuid();
         theSession.Store(new User { Id = id, FirstName = "ReadOnly", LastName = "Query", Age = 50 });
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var loaded = await query.LoadAsync<User>(id);
+        var loaded = await query.LoadAsync<User>(id, TestContext.Current.CancellationToken);
         loaded.ShouldNotBeNull();
         loaded.FirstName.ShouldBe("ReadOnly");
     }
@@ -146,10 +146,10 @@ public class session_lifecycle_tests : IntegrationContext
         user.FirstName = "V2";
         theSession.Store(user);
 
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var loaded = await query.LoadAsync<User>(user.Id);
+        var loaded = await query.LoadAsync<User>(user.Id, TestContext.Current.CancellationToken);
         loaded.ShouldNotBeNull();
         loaded.FirstName.ShouldBe("V2");
     }
@@ -171,14 +171,14 @@ public class session_lifecycle_tests : IntegrationContext
         theSession.PendingChanges.Operations.ShouldBeEmpty();
         theSession.PendingChanges.Streams.Count.ShouldBe(1);
 
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Document should NOT exist (ejected)
         await using var query = theStore.QuerySession();
-        (await query.LoadAsync<User>(user.Id)).ShouldBeNull();
+        (await query.LoadAsync<User>(user.Id, TestContext.Current.CancellationToken)).ShouldBeNull();
 
         // Stream SHOULD exist (not ejected)
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
         events.Count.ShouldBe(1);
     }
 }

@@ -16,14 +16,14 @@ public class Bug_save_changes_runs_participants_only : OneOffConfigurationsConte
     public async Task save_changes_runs_participants_when_only_participants_are_pending()
     {
         ConfigureStore(_ => { });
-        await theStore.Database.ApplyAllConfiguredChangesToDatabaseAsync();
+        await theStore.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         var participant = new RecordingParticipant();
 
         await using (var session = theStore.LightweightSession())
         {
             session.AddTransactionParticipant(participant);
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         // Before the fix the participant was silently skipped (BeforeCommitAsync never ran).

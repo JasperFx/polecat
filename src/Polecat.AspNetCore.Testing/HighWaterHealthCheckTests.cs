@@ -182,7 +182,7 @@ public class HighWaterHealthCheckTests: IAsyncLifetime
         configure(_ => { });
         await appendEventsAsync(20);
 
-        var result = await buildCheck().CheckHealthAsync(new HealthCheckContext());
+        var result = await buildCheck().CheckHealthAsync(new HealthCheckContext(), TestContext.Current.CancellationToken);
 
         result.Status.ShouldBe(HealthStatus.Healthy);
     }
@@ -195,11 +195,11 @@ public class HighWaterHealthCheckTests: IAsyncLifetime
             opts.Projections.Add<HwFakeProjection>(ProjectionLifecycle.Async);
             opts.DaemonSettings.AsyncMode = DaemonMode.Disabled;
         });
-        await _store!.Database.ApplyAllConfiguredChangesToDatabaseAsync();
+        await _store!.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
         await appendEventsAsync(20);
         await seedHighWaterMarkAsync(1);
 
-        var result = await buildCheck().CheckHealthAsync(new HealthCheckContext());
+        var result = await buildCheck().CheckHealthAsync(new HealthCheckContext(), TestContext.Current.CancellationToken);
 
         result.Status.ShouldBe(HealthStatus.Healthy);
     }
@@ -214,12 +214,12 @@ public class HighWaterHealthCheckTests: IAsyncLifetime
             opts.Projections.Add<HwFakeProjection>(ProjectionLifecycle.Async);
             opts.DaemonSettings.AsyncMode = DaemonMode.Solo;
         });
-        await _store!.Database.ApplyAllConfiguredChangesToDatabaseAsync();
+        await _store!.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
         await appendEventsAsync(20);
         var highest = await _store.Database.FetchHighestEventSequenceNumber(CancellationToken.None);
         await seedHighWaterMarkAsync(highest);
 
-        var result = await buildCheck().CheckHealthAsync(new HealthCheckContext());
+        var result = await buildCheck().CheckHealthAsync(new HealthCheckContext(), TestContext.Current.CancellationToken);
 
         result.Status.ShouldBe(HealthStatus.Healthy);
     }
@@ -232,12 +232,12 @@ public class HighWaterHealthCheckTests: IAsyncLifetime
             opts.Projections.Add<HwFakeProjection>(ProjectionLifecycle.Async);
             opts.DaemonSettings.AsyncMode = DaemonMode.Solo;
         });
-        await _store!.Database.ApplyAllConfiguredChangesToDatabaseAsync();
+        await _store!.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
         await appendEventsAsync(20);
         await seedHighWaterMarkAsync(1);
 
         // First observation of the gap only starts the clock; not yet stale.
-        var result = await buildCheck().CheckHealthAsync(new HealthCheckContext());
+        var result = await buildCheck().CheckHealthAsync(new HealthCheckContext(), TestContext.Current.CancellationToken);
 
         result.Status.ShouldBe(HealthStatus.Healthy);
     }
@@ -250,19 +250,19 @@ public class HighWaterHealthCheckTests: IAsyncLifetime
             opts.Projections.Add<HwFakeProjection>(ProjectionLifecycle.Async);
             opts.DaemonSettings.AsyncMode = DaemonMode.Solo;
         });
-        await _store!.Database.ApplyAllConfiguredChangesToDatabaseAsync();
+        await _store!.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
         await appendEventsAsync(20);
         await seedHighWaterMarkAsync(1);
 
         var check = buildCheck(TimeSpan.FromSeconds(30));
 
         // First check records the stalled mark at _now.
-        (await check.CheckHealthAsync(new HealthCheckContext())).Status.ShouldBe(HealthStatus.Healthy);
+        (await check.CheckHealthAsync(new HealthCheckContext(), TestContext.Current.CancellationToken)).Status.ShouldBe(HealthStatus.Healthy);
 
         // Advance the clock past the threshold with the mark still stuck.
         _timeProvider.Now = _now.AddSeconds(60);
 
-        var result = await check.CheckHealthAsync(new HealthCheckContext());
+        var result = await check.CheckHealthAsync(new HealthCheckContext(), TestContext.Current.CancellationToken);
 
         result.Status.ShouldBe(HealthStatus.Unhealthy);
     }
@@ -275,21 +275,21 @@ public class HighWaterHealthCheckTests: IAsyncLifetime
             opts.Projections.Add<HwFakeProjection>(ProjectionLifecycle.Async);
             opts.DaemonSettings.AsyncMode = DaemonMode.Solo;
         });
-        await _store!.Database.ApplyAllConfiguredChangesToDatabaseAsync();
+        await _store!.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
         await appendEventsAsync(20);
         await seedHighWaterMarkAsync(1);
 
         var check = buildCheck(TimeSpan.FromSeconds(30));
 
         // First check: gap observed, clock starts.
-        (await check.CheckHealthAsync(new HealthCheckContext())).Status.ShouldBe(HealthStatus.Healthy);
+        (await check.CheckHealthAsync(new HealthCheckContext(), TestContext.Current.CancellationToken)).Status.ShouldBe(HealthStatus.Healthy);
 
         // The mark advances (agent alive) and time moves forward past the threshold.
         await seedHighWaterMarkAsync(10);
         _timeProvider.Now = _now.AddSeconds(60);
 
         // The advance resets the clock, so it must not be reported stale.
-        var result = await check.CheckHealthAsync(new HealthCheckContext());
+        var result = await check.CheckHealthAsync(new HealthCheckContext(), TestContext.Current.CancellationToken);
 
         result.Status.ShouldBe(HealthStatus.Healthy);
     }
@@ -308,11 +308,11 @@ public class HighWaterHealthCheckTests: IAsyncLifetime
             opts.DaemonSettings.AsyncMode = DaemonMode.Solo;
             opts.Events.EnableExtendedProgressionTracking = true;
         });
-        await _store!.Database.ApplyAllConfiguredChangesToDatabaseAsync();
+        await _store!.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
         await appendEventsAsync(20);
         await seedHighWaterHeartbeatAsync(1, _now.AddSeconds(-5)); // mark stuck at 1, heartbeat only 5s old
 
-        var result = await buildCheck(TimeSpan.FromSeconds(30)).CheckHealthAsync(new HealthCheckContext());
+        var result = await buildCheck(TimeSpan.FromSeconds(30)).CheckHealthAsync(new HealthCheckContext(), TestContext.Current.CancellationToken);
 
         result.Status.ShouldBe(HealthStatus.Healthy);
     }
@@ -328,12 +328,12 @@ public class HighWaterHealthCheckTests: IAsyncLifetime
             opts.DaemonSettings.AsyncMode = DaemonMode.Solo;
             opts.Events.EnableExtendedProgressionTracking = true;
         });
-        await _store!.Database.ApplyAllConfiguredChangesToDatabaseAsync();
+        await _store!.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
         await appendEventsAsync(20);
         var highest = await _store.Database.FetchHighestEventSequenceNumber(CancellationToken.None);
         await seedHighWaterHeartbeatAsync(highest, _now.AddSeconds(-90)); // caught up, heartbeat 90s old
 
-        var result = await buildCheck(TimeSpan.FromSeconds(30)).CheckHealthAsync(new HealthCheckContext());
+        var result = await buildCheck(TimeSpan.FromSeconds(30)).CheckHealthAsync(new HealthCheckContext(), TestContext.Current.CancellationToken);
 
         result.Status.ShouldBe(HealthStatus.Unhealthy);
     }
@@ -349,7 +349,7 @@ public class HighWaterHealthCheckTests: IAsyncLifetime
             opts.DaemonSettings.AsyncMode = DaemonMode.Solo;
             opts.Events.EnableExtendedProgressionTracking = true;
         });
-        await _store!.Database.ApplyAllConfiguredChangesToDatabaseAsync();
+        await _store!.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
         await appendEventsAsync(20);
         var highest = await _store.Database.FetchHighestEventSequenceNumber(CancellationToken.None);
         await seedHighWaterHeartbeatAsync(highest, _now.AddSeconds(-90));
@@ -360,11 +360,11 @@ public class HighWaterHealthCheckTests: IAsyncLifetime
         var check = buildCheck(TimeSpan.FromSeconds(30), autoRestart: true, coordinator: coordinator);
 
         // First stale cycle: restart the loop, still report Unhealthy so an alert fires.
-        (await check.CheckHealthAsync(new HealthCheckContext())).Status.ShouldBe(HealthStatus.Unhealthy);
+        (await check.CheckHealthAsync(new HealthCheckContext(), TestContext.Current.CancellationToken)).Status.ShouldBe(HealthStatus.Unhealthy);
         await daemon.Received(1).RestartHighWaterAgentAsync(Arg.Any<CancellationToken>());
 
         // Second cycle inside the same staleness window: still Unhealthy, but NOT restarted again (capped).
-        (await check.CheckHealthAsync(new HealthCheckContext())).Status.ShouldBe(HealthStatus.Unhealthy);
+        (await check.CheckHealthAsync(new HealthCheckContext(), TestContext.Current.CancellationToken)).Status.ShouldBe(HealthStatus.Unhealthy);
         await daemon.Received(1).RestartHighWaterAgentAsync(Arg.Any<CancellationToken>());
     }
 
@@ -377,7 +377,7 @@ public class HighWaterHealthCheckTests: IAsyncLifetime
             opts.DaemonSettings.AsyncMode = DaemonMode.Solo;
             opts.Events.EnableExtendedProgressionTracking = true;
         });
-        await _store!.Database.ApplyAllConfiguredChangesToDatabaseAsync();
+        await _store!.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
         await appendEventsAsync(20);
         var highest = await _store.Database.FetchHighestEventSequenceNumber(CancellationToken.None);
         await seedHighWaterHeartbeatAsync(highest, _now.AddSeconds(-90));
@@ -386,7 +386,7 @@ public class HighWaterHealthCheckTests: IAsyncLifetime
         var coordinator = new FakeCoordinator(daemon);
 
         var result = await buildCheck(TimeSpan.FromSeconds(30), coordinator: coordinator)
-            .CheckHealthAsync(new HealthCheckContext());
+            .CheckHealthAsync(new HealthCheckContext(), TestContext.Current.CancellationToken);
 
         result.Status.ShouldBe(HealthStatus.Unhealthy);
         await daemon.DidNotReceive().RestartHighWaterAgentAsync(Arg.Any<CancellationToken>());

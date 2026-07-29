@@ -38,7 +38,7 @@ public class Bug_4197_fetch_for_writing_natural_key : OneOffConfigurationsContex
         // Manually register (simulating auto-discovery) then apply schema so
         // the natural key table exists before the first FetchForWriting call.
         theStore.Options.Projections.Add<SingleStreamProjection<Bug4197Aggregate, Guid>>(ProjectionLifecycle.Inline);
-        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync();
+        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         await using var session = theStore.LightweightSession();
 
@@ -47,10 +47,10 @@ public class Bug_4197_fetch_for_writing_natural_key : OneOffConfigurationsContex
         var e = new Bug4197AggregateCreatedEvent(aggregateId, aggregateKey.Value);
 
         session.Events.StartStream<Bug4197Aggregate>(aggregateId, e);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // This should NOT throw InvalidOperationException about missing natural key definition
-        var stream = await session.Events.FetchForWriting<Bug4197Aggregate, Bug4197AggregateKey>(aggregateKey);
+        var stream = await session.Events.FetchForWriting<Bug4197Aggregate, Bug4197AggregateKey>(aggregateKey, TestContext.Current.CancellationToken);
 
         stream.ShouldNotBeNull();
         stream.Aggregate.ShouldNotBeNull();
@@ -65,7 +65,7 @@ public class Bug_4197_fetch_for_writing_natural_key : OneOffConfigurationsContex
             opts.Projections.Add<SingleStreamProjection<Bug4197Aggregate, Guid>>(ProjectionLifecycle.Inline);
         });
 
-        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync();
+        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         await using var session = theStore.LightweightSession();
 
@@ -74,9 +74,9 @@ public class Bug_4197_fetch_for_writing_natural_key : OneOffConfigurationsContex
         var e = new Bug4197AggregateCreatedEvent(aggregateId, aggregateKey.Value);
 
         session.Events.StartStream<Bug4197Aggregate>(aggregateId, e);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
-        var stream = await session.Events.FetchForWriting<Bug4197Aggregate, Bug4197AggregateKey>(aggregateKey);
+        var stream = await session.Events.FetchForWriting<Bug4197Aggregate, Bug4197AggregateKey>(aggregateKey, TestContext.Current.CancellationToken);
 
         stream.ShouldNotBeNull();
         stream.Aggregate.ShouldNotBeNull();

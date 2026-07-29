@@ -36,7 +36,7 @@ public class paged_list_tests : IntegrationContext
         await using var session = theStore.QuerySession();
         var page = await session.Query<Target>()
             .OrderBy(x => x.Number)
-            .ToPagedListAsync(1, 10);
+            .ToPagedListAsync(1, 10, TestContext.Current.CancellationToken);
 
         page.Count.ShouldBe(10);
         page[0].Number.ShouldBe(1);
@@ -49,7 +49,7 @@ public class paged_list_tests : IntegrationContext
         await using var session = theStore.QuerySession();
         var page = await session.Query<Target>()
             .OrderBy(x => x.Number)
-            .ToPagedListAsync(1, 10);
+            .ToPagedListAsync(1, 10, TestContext.Current.CancellationToken);
 
         page.TotalItemCount.ShouldBe(50);
     }
@@ -60,7 +60,7 @@ public class paged_list_tests : IntegrationContext
         await using var session = theStore.QuerySession();
         var page = await session.Query<Target>()
             .OrderBy(x => x.Number)
-            .ToPagedListAsync(1, 10);
+            .ToPagedListAsync(1, 10, TestContext.Current.CancellationToken);
 
         page.PageCount.ShouldBe(5);
     }
@@ -71,7 +71,7 @@ public class paged_list_tests : IntegrationContext
         await using var session = theStore.QuerySession();
         var page = await session.Query<Target>()
             .OrderBy(x => x.Number)
-            .ToPagedListAsync(1, 10);
+            .ToPagedListAsync(1, 10, TestContext.Current.CancellationToken);
 
         page.HasNextPage.ShouldBeTrue();
         page.HasPreviousPage.ShouldBeFalse();
@@ -85,7 +85,7 @@ public class paged_list_tests : IntegrationContext
         await using var session = theStore.QuerySession();
         var page = await session.Query<Target>()
             .OrderBy(x => x.Number)
-            .ToPagedListAsync(5, 10);
+            .ToPagedListAsync(5, 10, TestContext.Current.CancellationToken);
 
         page.HasNextPage.ShouldBeFalse();
         page.HasPreviousPage.ShouldBeTrue();
@@ -99,7 +99,7 @@ public class paged_list_tests : IntegrationContext
         await using var session = theStore.QuerySession();
         var page = await session.Query<Target>()
             .OrderBy(x => x.Number)
-            .ToPagedListAsync(3, 10);
+            .ToPagedListAsync(3, 10, TestContext.Current.CancellationToken);
 
         page.HasNextPage.ShouldBeTrue();
         page.HasPreviousPage.ShouldBeTrue();
@@ -113,7 +113,7 @@ public class paged_list_tests : IntegrationContext
         await using var session = theStore.QuerySession();
         var page = await session.Query<Target>()
             .OrderBy(x => x.Number)
-            .ToPagedListAsync(2, 10);
+            .ToPagedListAsync(2, 10, TestContext.Current.CancellationToken);
 
         page.FirstItemOnPage.ShouldBe(11);
         page.LastItemOnPage.ShouldBe(20);
@@ -125,7 +125,7 @@ public class paged_list_tests : IntegrationContext
         await using var session = theStore.QuerySession();
         var page = await session.Query<Target>()
             .OrderBy(x => x.Number)
-            .ToPagedListAsync(5, 10);
+            .ToPagedListAsync(5, 10, TestContext.Current.CancellationToken);
 
         page.FirstItemOnPage.ShouldBe(41);
         page.LastItemOnPage.ShouldBe(50);
@@ -138,7 +138,7 @@ public class paged_list_tests : IntegrationContext
         var page = await session.Query<Target>()
             .Where(x => x.Color == "Blue")
             .OrderBy(x => x.Number)
-            .ToPagedListAsync(1, 10);
+            .ToPagedListAsync(1, 10, TestContext.Current.CancellationToken);
 
         page.TotalItemCount.ShouldBe(30);
         page.PageCount.ShouldBe(3);
@@ -151,7 +151,7 @@ public class paged_list_tests : IntegrationContext
         await using var session = theStore.QuerySession();
         var page = await session.Query<Target>()
             .OrderBy(x => x.Number)
-            .ToPagedListAsync(10, 10);
+            .ToPagedListAsync(10, 10, TestContext.Current.CancellationToken);
 
         page.Count.ShouldBe(0);
         page.TotalItemCount.ShouldBe(50);
@@ -185,7 +185,7 @@ public class paged_list_tests : IntegrationContext
         // 50 items / 7 per page = 8 pages (7*7=49 + 1 on last page)
         var page = await session.Query<Target>()
             .OrderBy(x => x.Number)
-            .ToPagedListAsync(8, 7);
+            .ToPagedListAsync(8, 7, TestContext.Current.CancellationToken);
 
         page.PageCount.ShouldBe(8);
         page.Count.ShouldBe(1);

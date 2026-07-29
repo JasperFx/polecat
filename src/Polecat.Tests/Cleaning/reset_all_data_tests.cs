@@ -62,12 +62,12 @@ public class reset_all_data_tests
 
         await SeedAsync(store);
         (await DocCountAsync(store)).ShouldBe(2);
-        (await store.Advanced.FetchEventStoreStatistics()).EventCount.ShouldBe(1);
+        (await store.Advanced.FetchEventStoreStatistics(TestContext.Current.CancellationToken)).EventCount.ShouldBe(1);
 
-        await store.Advanced.ResetAllData();
+        await store.Advanced.ResetAllData(TestContext.Current.CancellationToken);
 
         (await DocCountAsync(store)).ShouldBe(0);
-        var stats = await store.Advanced.FetchEventStoreStatistics();
+        var stats = await store.Advanced.FetchEventStoreStatistics(TestContext.Current.CancellationToken);
         stats.EventCount.ShouldBe(0);
         stats.StreamCount.ShouldBe(0);
     }
@@ -79,13 +79,13 @@ public class reset_all_data_tests
         await SeedAsync(store);
 
         // DeleteAllDocuments leaves event data alone.
-        await store.Advanced.Clean.DeleteAllDocumentsAsync();
+        await store.Advanced.Clean.DeleteAllDocumentsAsync(TestContext.Current.CancellationToken);
         (await DocCountAsync(store)).ShouldBe(0);
-        (await store.Advanced.FetchEventStoreStatistics()).EventCount.ShouldBe(1);
+        (await store.Advanced.FetchEventStoreStatistics(TestContext.Current.CancellationToken)).EventCount.ShouldBe(1);
 
         // DeleteAllEventData clears the events.
-        await store.Advanced.Clean.DeleteAllEventDataAsync();
-        (await store.Advanced.FetchEventStoreStatistics()).EventCount.ShouldBe(0);
+        await store.Advanced.Clean.DeleteAllEventDataAsync(TestContext.Current.CancellationToken);
+        (await store.Advanced.FetchEventStoreStatistics(TestContext.Current.CancellationToken)).EventCount.ShouldBe(0);
     }
 
     [Fact]
@@ -99,13 +99,13 @@ public class reset_all_data_tests
         }
 
         // Resetting store A must NOT touch store B's data — the core CritterWatch.Embedded contract.
-        await storeA.Advanced.ResetAllData();
+        await storeA.Advanced.ResetAllData(TestContext.Current.CancellationToken);
 
         (await DocCountAsync(storeA)).ShouldBe(0);
-        (await storeA.Advanced.FetchEventStoreStatistics()).EventCount.ShouldBe(0);
+        (await storeA.Advanced.FetchEventStoreStatistics(TestContext.Current.CancellationToken)).EventCount.ShouldBe(0);
 
         (await DocCountAsync(storeB)).ShouldBe(2);
-        (await storeB.Advanced.FetchEventStoreStatistics()).EventCount.ShouldBe(1);
+        (await storeB.Advanced.FetchEventStoreStatistics(TestContext.Current.CancellationToken)).EventCount.ShouldBe(1);
     }
 
     [Fact]
@@ -125,18 +125,18 @@ public class reset_all_data_tests
                 await session.SaveChangesAsync(ct);
             });
         });
-        await store.Database.ApplyAllConfiguredChangesToDatabaseAsync();
-        await store.Advanced.CleanAllDocumentsAsync();
-        await store.Advanced.CleanAllEventDataAsync();
+        await store.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
+        await store.Advanced.CleanAllDocumentsAsync(TestContext.Current.CancellationToken);
+        await store.Advanced.CleanAllEventDataAsync(TestContext.Current.CancellationToken);
 
         await SeedAsync(store); // 2 extra docs + an event
         (await DocCountAsync(store)).ShouldBe(2);
 
-        await store.Advanced.ResetAllData();
+        await store.Advanced.ResetAllData(TestContext.Current.CancellationToken);
 
         // Only the InitialData-seeded document should remain after a reset.
         await using var query = store.QuerySession();
-        var docs = await query.Query<ResetDoc>().ToListAsync();
+        var docs = await query.Query<ResetDoc>().ToListAsync(TestContext.Current.CancellationToken);
         docs.ShouldHaveSingleItem().Id.ShouldBe(seededId);
     }
 
@@ -152,7 +152,7 @@ public class reset_all_data_tests
         before.ShouldContain(t => t.StartsWith("pc_doc_"));
         before.ShouldContain("pc_events");
 
-        await store.Advanced.Clean.CompletelyRemoveAllAsync();
+        await store.Advanced.Clean.CompletelyRemoveAllAsync(TestContext.Current.CancellationToken);
 
         // All pc_* tables are gone.
         var after = await SchemaInspector.GetTableNamesAsync(schema);

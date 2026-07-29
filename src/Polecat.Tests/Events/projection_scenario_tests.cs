@@ -41,7 +41,7 @@ public class projection_scenario_tests : IntegrationContext
             {
                 doc.Name.ShouldBe("The Ring Quest");
             });
-        });
+        }, TestContext.Current.CancellationToken);
     }
 
     [Fact]
@@ -82,7 +82,7 @@ public class projection_scenario_tests : IntegrationContext
                 doc.Members.Count.ShouldBe(2);
                 doc.Members.ShouldNotContain("Gandalf");
             });
-        });
+        }, TestContext.Current.CancellationToken);
     }
 
     [Fact]
@@ -99,7 +99,7 @@ public class projection_scenario_tests : IntegrationContext
         await theStore.Advanced.EventProjectionScenario(scenario =>
         {
             scenario.DocumentShouldNotExist<ScenarioQuestParty>(missingId);
-        });
+        }, TestContext.Current.CancellationToken);
     }
 
     [Fact]
@@ -126,7 +126,7 @@ public class projection_scenario_tests : IntegrationContext
                 doc.Name.ShouldBe("Lambda Quest");
                 doc.Members.ShouldContain("Bilbo");
             });
-        });
+        }, TestContext.Current.CancellationToken);
     }
 
     [Fact]

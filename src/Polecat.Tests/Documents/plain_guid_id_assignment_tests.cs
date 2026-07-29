@@ -44,14 +44,14 @@ public class plain_guid_id_assignment_tests : IntegrationContext
 
         await using var session = theStore.LightweightSession();
         session.Store(user);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // The in-memory instance is updated...
         user.Id.ShouldNotBe(Guid.Empty);
 
         // ...and the row actually persisted under that id (not Guid.Empty).
         await using var query = theStore.QuerySession();
-        var loaded = await query.LoadAsync<User>(user.Id);
+        var loaded = await query.LoadAsync<User>(user.Id, TestContext.Current.CancellationToken);
         loaded.ShouldNotBeNull();
         loaded.FirstName.ShouldBe("Marco");
     }
@@ -64,12 +64,12 @@ public class plain_guid_id_assignment_tests : IntegrationContext
 
         await using var session = theStore.LightweightSession();
         session.Store(user);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         user.Id.ShouldBe(id); // not overwritten
 
         await using var query = theStore.QuerySession();
-        (await query.LoadAsync<User>(id)).ShouldNotBeNull();
+        (await query.LoadAsync<User>(id, TestContext.Current.CancellationToken)).ShouldNotBeNull();
     }
 
     [Fact]
@@ -79,10 +79,10 @@ public class plain_guid_id_assignment_tests : IntegrationContext
 
         await using var session = theStore.LightweightSession();
         session.Store(doc);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         doc.Id.ShouldNotBe(Guid.Empty);
         await using var query = theStore.QuerySession();
-        (await query.LoadAsync<IdentityAttributedUser>(doc.Id)).ShouldNotBeNull();
+        (await query.LoadAsync<IdentityAttributedUser>(doc.Id, TestContext.Current.CancellationToken)).ShouldNotBeNull();
     }
 }

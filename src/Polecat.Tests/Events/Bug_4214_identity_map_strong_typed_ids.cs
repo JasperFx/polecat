@@ -34,10 +34,10 @@ public class Bug_4214_identity_map_strong_typed_ids : IntegrationContext
             new PaymentCreated(DateTimeOffset.UtcNow),
             new PaymentVerified(DateTimeOffset.UtcNow));
 
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // This threw InvalidCastException before the fix
-        var stream = await session.Events.FetchForWriting<Payment>(id);
+        var stream = await session.Events.FetchForWriting<Payment>(id, TestContext.Current.CancellationToken);
         stream.Aggregate.ShouldNotBeNull();
         stream.Aggregate!.State.ShouldBe(PaymentState.Verified);
     }
@@ -59,9 +59,9 @@ public class Bug_4214_identity_map_strong_typed_ids : IntegrationContext
             new PaymentCreated(DateTimeOffset.UtcNow),
             new PaymentVerified(DateTimeOffset.UtcNow));
 
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
-        var stream = await session.Events.FetchForWriting<Payment>(id);
+        var stream = await session.Events.FetchForWriting<Payment>(id, TestContext.Current.CancellationToken);
         stream.Aggregate.ShouldNotBeNull();
         stream.Aggregate!.State.ShouldBe(PaymentState.Verified);
     }
@@ -83,17 +83,17 @@ public class Bug_4214_identity_map_strong_typed_ids : IntegrationContext
             new PaymentCreated(DateTimeOffset.UtcNow),
             new PaymentVerified(DateTimeOffset.UtcNow));
 
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // First fetch stores in identity map
-        var stream1 = await session.Events.FetchForWriting<Payment>(id);
+        var stream1 = await session.Events.FetchForWriting<Payment>(id, TestContext.Current.CancellationToken);
         stream1.Aggregate.ShouldNotBeNull();
 
         stream1.AppendOne(new PaymentCanceled(DateTimeOffset.UtcNow));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Second fetch should retrieve from identity map without cast error
-        var stream2 = await session.Events.FetchForWriting<Payment>(id);
+        var stream2 = await session.Events.FetchForWriting<Payment>(id, TestContext.Current.CancellationToken);
         stream2.Aggregate.ShouldNotBeNull();
         stream2.Aggregate!.State.ShouldBe(PaymentState.Canceled);
     }

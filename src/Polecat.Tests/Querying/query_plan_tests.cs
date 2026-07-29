@@ -31,10 +31,10 @@ public class query_plan_tests : IntegrationContext
         session.Store(new Target { Id = Guid.NewGuid(), Color = "Blue", Number = 1 });
         session.Store(new Target { Id = Guid.NewGuid(), Color = "Blue", Number = 2 });
         session.Store(new Target { Id = Guid.NewGuid(), Color = "Green", Number = 3 });
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = store.QuerySession();
-        var results = await query.QueryByPlanAsync(new ColorTargetsPlan("Blue"));
+        var results = await query.QueryByPlanAsync(new ColorTargetsPlan("Blue"), TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(2);
         results.ShouldAllBe(t => t.Color == "Blue");
@@ -49,10 +49,10 @@ public class query_plan_tests : IntegrationContext
         session.Store(new Target { Id = Guid.NewGuid(), Color = "Red", Number = 30 });
         session.Store(new Target { Id = Guid.NewGuid(), Color = "Red", Number = 10 });
         session.Store(new Target { Id = Guid.NewGuid(), Color = "Red", Number = 20 });
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = store.QuerySession();
-        var results = await query.QueryByPlanAsync(new ColorTargetsPlan("Red"));
+        var results = await query.QueryByPlanAsync(new ColorTargetsPlan("Red"), TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(3);
         results[0].Number.ShouldBe(10);
@@ -67,10 +67,10 @@ public class query_plan_tests : IntegrationContext
         await using var session = store.LightweightSession();
 
         session.Store(new Target { Id = Guid.NewGuid(), Color = "Blue", Number = 1 });
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = store.QuerySession();
-        var results = await query.QueryByPlanAsync(new ColorTargetsPlan("Yellow"));
+        var results = await query.QueryByPlanAsync(new ColorTargetsPlan("Yellow"), TestContext.Current.CancellationToken);
 
         results.ShouldBeEmpty();
     }
@@ -84,10 +84,10 @@ public class query_plan_tests : IntegrationContext
         session.Store(new Target { Id = Guid.NewGuid(), Color = "Blue", Number = 5 });
         session.Store(new Target { Id = Guid.NewGuid(), Color = "Blue", Number = 15 });
         session.Store(new Target { Id = Guid.NewGuid(), Color = "Green", Number = 25 });
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = store.QuerySession();
-        var count = await query.QueryByPlanAsync(new CountByColorPlan("Blue"));
+        var count = await query.QueryByPlanAsync(new CountByColorPlan("Blue"), TestContext.Current.CancellationToken);
 
         count.ShouldBe(2);
     }
@@ -100,10 +100,10 @@ public class query_plan_tests : IntegrationContext
 
         session.Store(new Target { Id = Guid.NewGuid(), Color = "Green", Number = 7 });
         session.Store(new Target { Id = Guid.NewGuid(), Color = "Green", Number = 3 });
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // QueryByPlanAsync works on IDocumentSession too (inherits from IQuerySession)
-        var results = await session.QueryByPlanAsync(new ColorTargetsPlan("Green"));
+        var results = await session.QueryByPlanAsync(new ColorTargetsPlan("Green"), TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(2);
     }
@@ -117,7 +117,7 @@ public class query_plan_tests : IntegrationContext
         session.Store(new Target { Id = Guid.NewGuid(), Color = "Blue", Number = 1 });
         session.Store(new Target { Id = Guid.NewGuid(), Color = "Blue", Number = 2 });
         session.Store(new Target { Id = Guid.NewGuid(), Color = "Green", Number = 3 });
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = store.QuerySession();
         var batch = query.CreateBatchQuery();
@@ -125,7 +125,7 @@ public class query_plan_tests : IntegrationContext
         var blueFetcher = batch.QueryByPlan(new ManualBatchColorPlan("Blue"));
         var greenFetcher = batch.QueryByPlan(new ManualBatchColorPlan("Green"));
 
-        await batch.Execute();
+        await batch.Execute(TestContext.Current.CancellationToken);
 
         var blues = await blueFetcher;
         var greens = await greenFetcher;
@@ -143,7 +143,7 @@ public class query_plan_tests : IntegrationContext
         session.Store(new Target { Id = Guid.NewGuid(), Color = "Blue", Number = 10 });
         session.Store(new Target { Id = Guid.NewGuid(), Color = "Blue", Number = 20 });
         session.Store(new Target { Id = Guid.NewGuid(), Color = "Red", Number = 30 });
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = store.QuerySession();
         var batch = query.CreateBatchQuery();
@@ -152,7 +152,7 @@ public class query_plan_tests : IntegrationContext
         var blueFetcher = batch.QueryByPlan(new ColorTargetsPlan("Blue"));
         var redFetcher = batch.QueryByPlan(new ColorTargetsPlan("Red"));
 
-        await batch.Execute();
+        await batch.Execute(TestContext.Current.CancellationToken);
 
         var blues = await blueFetcher;
         var reds = await redFetcher;
@@ -172,10 +172,10 @@ public class query_plan_tests : IntegrationContext
         {
             session.Store(new Target { Id = Guid.NewGuid(), Color = "Blue", Number = i });
         }
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = store.QuerySession();
-        var results = await query.QueryByPlanAsync(new PagedColorPlan("Blue", skip: 2, take: 3));
+        var results = await query.QueryByPlanAsync(new PagedColorPlan("Blue", skip: 2, take: 3), TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(3);
         results[0].Number.ShouldBe(3);

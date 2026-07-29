@@ -17,10 +17,10 @@ public class open_serializable_session_tests : IntegrationContext
         await using var session = await theStore.OpenSessionAsync(new SessionOptions
         {
             IsolationLevel = IsolationLevel.Serializable
-        });
+        }, TestContext.Current.CancellationToken);
 
         session.Store(new Target { Id = Guid.NewGuid(), Color = "Blue" });
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
     }
 
     [Fact]
@@ -29,10 +29,10 @@ public class open_serializable_session_tests : IntegrationContext
         await using var session = await theStore.OpenSessionAsync(new SessionOptions
         {
             IsolationLevel = IsolationLevel.ReadCommitted
-        });
+        }, TestContext.Current.CancellationToken);
 
         session.Store(new Target { Id = Guid.NewGuid(), Color = "Green" });
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
     }
 
     [Fact]
@@ -40,22 +40,22 @@ public class open_serializable_session_tests : IntegrationContext
     {
         var id = Guid.NewGuid();
         theSession.Store(new Target { Id = id, Color = "Original" });
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session = await theStore.OpenSessionAsync(new SessionOptions
         {
             IsolationLevel = IsolationLevel.Serializable
-        });
+        }, TestContext.Current.CancellationToken);
 
-        var loaded = await session.LoadAsync<Target>(id);
+        var loaded = await session.LoadAsync<Target>(id, TestContext.Current.CancellationToken);
         loaded.ShouldNotBeNull();
         loaded!.Color.ShouldBe("Original");
 
         session.Store(new Target { Id = id, Color = "Updated" });
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var final = await query.LoadAsync<Target>(id);
+        var final = await query.LoadAsync<Target>(id, TestContext.Current.CancellationToken);
         final!.Color.ShouldBe("Updated");
     }
 
@@ -67,13 +67,13 @@ public class open_serializable_session_tests : IntegrationContext
         await using var session = await theStore.OpenSessionAsync(new SessionOptions
         {
             IsolationLevel = IsolationLevel.Serializable
-        });
+        }, TestContext.Current.CancellationToken);
 
         session.Events.StartStream(streamId, new QuestStarted("Serializable Quest"));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
         events.Count.ShouldBe(1);
     }
 }

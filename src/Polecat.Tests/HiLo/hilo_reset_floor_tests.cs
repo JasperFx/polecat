@@ -21,7 +21,7 @@ public class hilo_reset_floor_tests : IntegrationContext
         // Store one doc to initialize the sequence
         await using var session1 = theStore.LightweightSession();
         session1.Store(new IntDoc { Name = "Init" });
-        await session1.SaveChangesAsync();
+        await session1.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Reset floor to 100
         await theStore.Advanced.ResetHiloSequenceFloor<IntDoc>(100);
@@ -30,7 +30,7 @@ public class hilo_reset_floor_tests : IntegrationContext
         await using var session2 = theStore.LightweightSession();
         var doc = new IntDoc { Name = "After Reset" };
         session2.Store(doc);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         doc.Id.ShouldBeGreaterThan(100);
     }
@@ -48,7 +48,7 @@ public class hilo_reset_floor_tests : IntegrationContext
             session.Store(doc);
             docs.Add(doc);
         }
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         foreach (var doc in docs)
         {
@@ -63,7 +63,7 @@ public class hilo_reset_floor_tests : IntegrationContext
         await using var session1 = theStore.LightweightSession();
         var doc1 = new IntDoc { Name = "Before" };
         session1.Store(doc1);
-        await session1.SaveChangesAsync();
+        await session1.SaveChangesAsync(TestContext.Current.CancellationToken);
         var firstId = doc1.Id;
         firstId.ShouldBeGreaterThan(0);
 
@@ -73,7 +73,7 @@ public class hilo_reset_floor_tests : IntegrationContext
         await using var session2 = theStore.LightweightSession();
         var doc2 = new IntDoc { Name = "After Zero" };
         session2.Store(doc2);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         doc2.Id.ShouldBeGreaterThan(0);
     }

@@ -99,7 +99,7 @@ public class time_based_multi_stream_projection_tests : IntegrationContext
         // Start the account stream with events spread across two months
         await using var session = store.LightweightSession();
         session.Events.StartStream(accountId, new AccountOpened("Checking"));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Append debits and credits
         await using var session2 = store.LightweightSession();
@@ -107,14 +107,14 @@ public class time_based_multi_stream_projection_tests : IntegrationContext
             new AccountDebited(100m, "Groceries"),
             new AccountCredited(2500m, "Salary"),
             new AccountDebited(50m, "Coffee"));
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // All events land in the same month (current month) since timestamps are set by the server
         var currentMonth = DateTime.UtcNow.ToString("yyyy-MM");
         var expectedId = $"{accountId}:{currentMonth}";
 
         await using var query = store.QuerySession();
-        var activity = await query.LoadAsync<MonthlyAccountActivity>(expectedId);
+        var activity = await query.LoadAsync<MonthlyAccountActivity>(expectedId, TestContext.Current.CancellationToken);
 
         activity.ShouldNotBeNull();
         activity.AccountId.ShouldBe(accountId);
@@ -137,7 +137,7 @@ public class time_based_multi_stream_projection_tests : IntegrationContext
         await using (var session = theStore.LightweightSession())
         {
             session.Events.StartStream(accountId, new AccountOpened("Checking"));
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using (var session = theStore.LightweightSession())
@@ -145,7 +145,7 @@ public class time_based_multi_stream_projection_tests : IntegrationContext
             session.Events.Append(accountId,
                 new AccountDebited(75m, "Gas"),
                 new AccountCredited(3000m, "Paycheck"));
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         // Run the async daemon to catch up
@@ -157,7 +157,7 @@ public class time_based_multi_stream_projection_tests : IntegrationContext
         var currentMonth = DateTime.UtcNow.ToString("yyyy-MM");
 
         await using var query = theStore.QuerySession();
-        var activity = await query.LoadAsync<MonthlyAccountActivity>($"{accountId}:{currentMonth}");
+        var activity = await query.LoadAsync<MonthlyAccountActivity>($"{accountId}:{currentMonth}", TestContext.Current.CancellationToken);
 
         activity.ShouldNotBeNull();
         activity.TotalDebits.ShouldBe(75m);
@@ -175,18 +175,18 @@ public class time_based_multi_stream_projection_tests : IntegrationContext
         await using var session = store.LightweightSession();
         session.Events.StartStream(account1, new AccountOpened("Checking"));
         session.Events.StartStream(account2, new AccountOpened("Savings"));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = store.LightweightSession();
         session2.Events.Append(account1, new AccountDebited(200m, "Rent"));
         session2.Events.Append(account2, new AccountCredited(5000m, "Deposit"));
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var currentMonth = DateTime.UtcNow.ToString("yyyy-MM");
 
         await using var query = store.QuerySession();
-        var activity1 = await query.LoadAsync<MonthlyAccountActivity>($"{account1}:{currentMonth}");
-        var activity2 = await query.LoadAsync<MonthlyAccountActivity>($"{account2}:{currentMonth}");
+        var activity1 = await query.LoadAsync<MonthlyAccountActivity>($"{account1}:{currentMonth}", TestContext.Current.CancellationToken);
+        var activity2 = await query.LoadAsync<MonthlyAccountActivity>($"{account2}:{currentMonth}", TestContext.Current.CancellationToken);
 
         activity1.ShouldNotBeNull();
         activity1.TotalDebits.ShouldBe(200m);

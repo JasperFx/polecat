@@ -112,14 +112,14 @@ public class json_value_returning_tests : OneOffConfigurationsContext
             session.Store(new Doc { Id = Guid.NewGuid(), Count = 1, Price = 5m, BucketEnd = t0, Status = Status.Active });
             session.Store(new Doc { Id = Guid.NewGuid(), Count = 7, Price = 50m, BucketEnd = t0.AddHours(3), Status = Status.Inactive });
             session.Store(new Doc { Id = Guid.NewGuid(), Count = 9, Price = 99m, BucketEnd = t0.AddHours(6), Status = Status.Inactive });
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using var session2 = theStore.QuerySession();
 
-        (await session2.Query<Doc>().Where(x => x.Count >= 7).ToListAsync()).Count.ShouldBe(2);
-        (await session2.Query<Doc>().Where(x => x.Price > 10m).ToListAsync()).Count.ShouldBe(2);
-        (await session2.Query<Doc>().Where(x => x.BucketEnd >= t0.AddHours(1)).ToListAsync()).Count.ShouldBe(2);
-        (await session2.Query<Doc>().Where(x => x.Status == Status.Inactive).ToListAsync()).Count.ShouldBe(2);
+        (await session2.Query<Doc>().Where(x => x.Count >= 7).ToListAsync(TestContext.Current.CancellationToken)).Count.ShouldBe(2);
+        (await session2.Query<Doc>().Where(x => x.Price > 10m).ToListAsync(TestContext.Current.CancellationToken)).Count.ShouldBe(2);
+        (await session2.Query<Doc>().Where(x => x.BucketEnd >= t0.AddHours(1)).ToListAsync(TestContext.Current.CancellationToken)).Count.ShouldBe(2);
+        (await session2.Query<Doc>().Where(x => x.Status == Status.Inactive).ToListAsync(TestContext.Current.CancellationToken)).Count.ShouldBe(2);
     }
 }

@@ -48,11 +48,11 @@ public class enum_asstring_naming_policy_queries : OneOffConfigurationsContext
         // The exact repro from the issue: stored as "minute", must match.
         var minutes = await query.Query<Sample>()
             .Where(x => x.Granularity == Granularity.Minute)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
         minutes.Count.ShouldBe(2);
 
         var hours = await query.Query<Sample>()
-            .CountAsync(x => x.Granularity == Granularity.Hour);
+            .CountAsync(x => x.Granularity == Granularity.Hour, TestContext.Current.CancellationToken);
         hours.ShouldBe(1);
     }
 
@@ -65,7 +65,7 @@ public class enum_asstring_naming_policy_queries : OneOffConfigurationsContext
 
         // FifteenMinute → "fifteenMinute" (not "FifteenMinute", not "fifteenminute").
         var count = await query.Query<Sample>()
-            .CountAsync(x => x.Granularity == Granularity.FifteenMinute);
+            .CountAsync(x => x.Granularity == Granularity.FifteenMinute, TestContext.Current.CancellationToken);
         count.ShouldBe(1);
     }
 
@@ -78,7 +78,7 @@ public class enum_asstring_naming_policy_queries : OneOffConfigurationsContext
 
         // FifteenMinute → "fifteen_minute".
         var count = await query.Query<Sample>()
-            .CountAsync(x => x.Granularity == Granularity.FifteenMinute);
+            .CountAsync(x => x.Granularity == Granularity.FifteenMinute, TestContext.Current.CancellationToken);
         count.ShouldBe(1);
     }
 
@@ -92,7 +92,7 @@ public class enum_asstring_naming_policy_queries : OneOffConfigurationsContext
         await using var query = theStore.QuerySession();
 
         var count = await query.Query<Sample>()
-            .CountAsync(x => x.Granularity == Granularity.Minute);
+            .CountAsync(x => x.Granularity == Granularity.Minute, TestContext.Current.CancellationToken);
         count.ShouldBe(2);
     }
 
@@ -106,7 +106,7 @@ public class enum_asstring_naming_policy_queries : OneOffConfigurationsContext
         // != Minute → the Hour and FifteenMinute rows (2).
         var results = await query.Query<Sample>()
             .Where(x => x.Granularity != Granularity.Minute)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
         results.Count.ShouldBe(2);
         results.ShouldAllBe(x => x.Granularity != Granularity.Minute);
     }
@@ -121,7 +121,7 @@ public class enum_asstring_naming_policy_queries : OneOffConfigurationsContext
         await using var query = theStore.QuerySession();
         var results = await query.Query<Sample>()
             .Where(x => wanted.Contains(x.Granularity))
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
         results.Count.ShouldBe(2);
     }
 
@@ -134,12 +134,12 @@ public class enum_asstring_naming_policy_queries : OneOffConfigurationsContext
         await using (var session = theStore.LightweightSession())
         {
             session.Store(new Sample { Id = Guid.NewGuid(), Granularity = Granularity.Hour });
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using var query = theStore.QuerySession();
         var count = await query.Query<Sample>()
-            .CountAsync(x => x.Granularity == Granularity.Hour);
+            .CountAsync(x => x.Granularity == Granularity.Hour, TestContext.Current.CancellationToken);
         count.ShouldBe(1);
     }
 
@@ -170,13 +170,13 @@ public class enum_asstring_naming_policy_queries : OneOffConfigurationsContext
         {
             session.Store(new User { Id = Guid.NewGuid(), FirstName = "Marco", LastName = "Minerva", Status = ActiveStatus.Inactive });
             session.Store(new User { Id = Guid.NewGuid(), FirstName = "Jane", LastName = "Doe", Status = ActiveStatus.Active });
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using var query = theStore.QuerySession();
         var inactive = await query.Query<User>()
             .Where(x => x.Status == ActiveStatus.Inactive)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         inactive.Count.ShouldBe(1);
         inactive[0].FirstName.ShouldBe("Marco");

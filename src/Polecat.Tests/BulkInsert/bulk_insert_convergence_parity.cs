@@ -46,21 +46,21 @@ public class bulk_insert_convergence_parity : IntegrationContext
         var employee = new BulkEmployee { Id = Guid.NewGuid(), Name = "Emp", Department = "Eng" };
         var contractor = new BulkContractor { Id = Guid.NewGuid(), Name = "Con", Agency = "Acme" };
 
-        await theStore.Advanced.BulkInsertAsync(new BulkPerson[] { employee, contractor });
+        await theStore.Advanced.BulkInsertAsync(new BulkPerson[] { employee, contractor }, TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
 
         // Without a persisted doc_type these loads could not resolve the concrete subclass.
-        var asBase = await query.LoadAsync<BulkPerson>(employee.Id);
+        var asBase = await query.LoadAsync<BulkPerson>(employee.Id, TestContext.Current.CancellationToken);
         asBase.ShouldBeOfType<BulkEmployee>();
         ((BulkEmployee)asBase).Department.ShouldBe("Eng");
 
-        var asContractor = await query.LoadAsync<BulkContractor>(contractor.Id);
+        var asContractor = await query.LoadAsync<BulkContractor>(contractor.Id, TestContext.Current.CancellationToken);
         asContractor.ShouldNotBeNull();
         asContractor.Agency.ShouldBe("Acme");
 
         // doc_type discrimination: loading a contractor row as the wrong subclass returns null.
-        (await query.LoadAsync<BulkEmployee>(contractor.Id)).ShouldBeNull();
+        (await query.LoadAsync<BulkEmployee>(contractor.Id, TestContext.Current.CancellationToken)).ShouldBeNull();
     }
 
     [Fact]
@@ -70,13 +70,13 @@ public class bulk_insert_convergence_parity : IntegrationContext
 
         var doc = new VersionedDoc { Id = Guid.NewGuid(), Name = "Optimistic" };
 
-        await theStore.Advanced.BulkInsertAsync(new[] { doc });
+        await theStore.Advanced.BulkInsertAsync(new[] { doc }, TestContext.Current.CancellationToken);
 
         // The optimistic insert op stamps a fresh guid_version and applies it in place.
         doc.Version.ShouldNotBe(Guid.Empty);
 
         await using var query = theStore.QuerySession();
-        var loaded = await query.LoadAsync<VersionedDoc>(doc.Id);
+        var loaded = await query.LoadAsync<VersionedDoc>(doc.Id, TestContext.Current.CancellationToken);
         loaded.ShouldNotBeNull();
         // A persisted guid_version round-trips back onto the reloaded document.
         loaded.Version.ShouldBe(doc.Version);
@@ -96,10 +96,10 @@ public class bulk_insert_convergence_parity : IntegrationContext
         var employee = new BulkEmployee { Id = Guid.NewGuid(), Name = "VEmp", Department = "Eng" };
 
         // Expected version 0 → the row is absent → WHEN NOT MATCHED → INSERT.
-        await theStore.Advanced.BulkInsertWithVersionAsync(new[] { (employee, 0L) });
+        await theStore.Advanced.BulkInsertWithVersionAsync(new[] { (employee, 0L) }, TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var loaded = await query.LoadAsync<BulkPerson>(employee.Id);
+        var loaded = await query.LoadAsync<BulkPerson>(employee.Id, TestContext.Current.CancellationToken);
         loaded.ShouldBeOfType<BulkEmployee>();
         ((BulkEmployee)loaded).Department.ShouldBe("Eng");
     }
@@ -110,10 +110,10 @@ public class bulk_insert_convergence_parity : IntegrationContext
         await StoreOptions(opts => opts.DatabaseSchemaName = "bulk_ver_optimistic");
 
         var doc = new VersionedDoc { Id = Guid.NewGuid(), Name = "VOpt" };
-        await theStore.Advanced.BulkInsertWithVersionAsync(new[] { (doc, 0L) });
+        await theStore.Advanced.BulkInsertWithVersionAsync(new[] { (doc, 0L) }, TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var loaded = await query.LoadAsync<VersionedDoc>(doc.Id);
+        var loaded = await query.LoadAsync<VersionedDoc>(doc.Id, TestContext.Current.CancellationToken);
         loaded.ShouldNotBeNull();
         // guid_version is now written (bound via the version binder's session-free bulk value).
         loaded.Version.ShouldNotBe(Guid.Empty);

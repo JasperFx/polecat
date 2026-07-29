@@ -38,7 +38,7 @@ public class open_telemetry_tracing_tests : IntegrationContext
 
         var doc = new TracedDoc { Id = Guid.NewGuid(), Name = "Traced" };
         theSession.Store(doc);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         captured.ShouldNotBeNull();
         captured.OperationName.ShouldBe("polecat.save_changes");
@@ -66,7 +66,7 @@ public class open_telemetry_tracing_tests : IntegrationContext
 
         var doc = new TracedDoc { Id = Guid.NewGuid(), Name = "NotTraced" };
         theSession.Store(doc);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         captured.ShouldBeNull();
     }
@@ -92,7 +92,7 @@ public class open_telemetry_tracing_tests : IntegrationContext
 
         var doc = new TracedDoc { Id = Guid.NewGuid(), Name = "Verbose" };
         theSession.Store(doc);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         captured.ShouldNotBeNull();
         captured.Events.ShouldContain(e => e.Name.StartsWith("polecat."));
@@ -120,7 +120,7 @@ public class open_telemetry_tracing_tests : IntegrationContext
         // Store a doc, then try to Insert a duplicate to trigger an error
         var doc = new TracedDoc { Id = Guid.NewGuid(), Name = "Original" };
         theSession.Store(doc);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         session2.Insert(new TracedDoc { Id = doc.Id, Name = "Duplicate" });

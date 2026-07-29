@@ -15,14 +15,14 @@ public class concurrent_append_tests : IntegrationContext
     {
         var streamId = Guid.NewGuid();
         theSession.Events.StartStream(streamId, new QuestStarted("Optimistic Quest"));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         await session2.Events.AppendOptimistic(streamId, new MembersJoined(1, "Town", ["Hero"]));
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
         events.Count.ShouldBe(2);
     }
 
@@ -43,14 +43,14 @@ public class concurrent_append_tests : IntegrationContext
     {
         var streamId = Guid.NewGuid();
         theSession.Events.StartStream(streamId, new QuestStarted("Exclusive Quest"));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         await session2.Events.AppendExclusive(streamId, new MembersJoined(1, "Castle", ["Knight"]));
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
         events.Count.ShouldBe(2);
     }
 
@@ -71,20 +71,20 @@ public class concurrent_append_tests : IntegrationContext
     {
         var streamId = Guid.NewGuid();
         theSession.Events.StartStream(streamId, new QuestStarted("Lock Test"));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // First exclusive append + save
         await using var session2 = theStore.LightweightSession();
         await session2.Events.AppendExclusive(streamId, new MembersJoined(1, "Town", ["A"]));
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Second exclusive append should succeed (lock released)
         await using var session3 = theStore.LightweightSession();
         await session3.Events.AppendExclusive(streamId, new MonsterSlain("Rat", 1));
-        await session3.SaveChangesAsync();
+        await session3.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
         events.Count.ShouldBe(3);
     }
 }

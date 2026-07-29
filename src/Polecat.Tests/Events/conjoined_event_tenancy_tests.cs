@@ -31,10 +31,10 @@ public class conjoined_event_tenancy_tests : IntegrationContext
         redSession.Events.StartStream(streamId,
             new QuestStarted("Red Quest"),
             new MembersJoined(1, "Red Town", ["RedHero"]));
-        await redSession.SaveChangesAsync();
+        await redSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var blueQuery = store.QuerySession(new SessionOptions { TenantId = "Blue" });
-        var events = await blueQuery.Events.FetchStreamAsync(streamId);
+        var events = await blueQuery.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
         events.Count.ShouldBe(0);
     }
 
@@ -47,22 +47,22 @@ public class conjoined_event_tenancy_tests : IntegrationContext
         await using var redSession = store.LightweightSession(new SessionOptions { TenantId = "Red" });
         redSession.Events.StartStream(streamId,
             new QuestStarted("Red Quest"));
-        await redSession.SaveChangesAsync();
+        await redSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Same stream ID in Blue should NOT conflict
         await using var blueSession = store.LightweightSession(new SessionOptions { TenantId = "Blue" });
         blueSession.Events.StartStream(streamId,
             new QuestStarted("Blue Quest"),
             new MembersJoined(1, "Blue Town", ["BlueHero"]));
-        await blueSession.SaveChangesAsync();
+        await blueSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var redQuery = store.QuerySession(new SessionOptions { TenantId = "Red" });
-        var redEvents = await redQuery.Events.FetchStreamAsync(streamId);
+        var redEvents = await redQuery.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
         redEvents.Count.ShouldBe(1);
         redEvents[0].Data.ShouldBeOfType<QuestStarted>().Name.ShouldBe("Red Quest");
 
         await using var blueQuery = store.QuerySession(new SessionOptions { TenantId = "Blue" });
-        var blueEvents = await blueQuery.Events.FetchStreamAsync(streamId);
+        var blueEvents = await blueQuery.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
         blueEvents.Count.ShouldBe(2);
         blueEvents[0].Data.ShouldBeOfType<QuestStarted>().Name.ShouldBe("Blue Quest");
     }
@@ -77,22 +77,22 @@ public class conjoined_event_tenancy_tests : IntegrationContext
         redSession.Events.StartStream(streamId,
             new QuestStarted("Red Quest"),
             new MembersJoined(1, "Red Town", ["RedHero"]));
-        await redSession.SaveChangesAsync();
+        await redSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var blueSession = store.LightweightSession(new SessionOptions { TenantId = "Blue" });
         blueSession.Events.StartStream(streamId,
             new QuestStarted("Blue Quest"),
             new MembersJoined(1, "Blue Town", ["BlueHero"]));
-        await blueSession.SaveChangesAsync();
+        await blueSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var redQuery = store.QuerySession(new SessionOptions { TenantId = "Red" });
-        var redParty = await redQuery.Events.AggregateStreamAsync<QuestParty>(streamId);
+        var redParty = await redQuery.Events.AggregateStreamAsync<QuestParty>(streamId, token: TestContext.Current.CancellationToken);
         redParty.ShouldNotBeNull();
         redParty.Name.ShouldBe("Red Quest");
         redParty.Members.ShouldBe(["RedHero"]);
 
         await using var blueQuery = store.QuerySession(new SessionOptions { TenantId = "Blue" });
-        var blueParty = await blueQuery.Events.AggregateStreamAsync<QuestParty>(streamId);
+        var blueParty = await blueQuery.Events.AggregateStreamAsync<QuestParty>(streamId, token: TestContext.Current.CancellationToken);
         blueParty.ShouldNotBeNull();
         blueParty.Name.ShouldBe("Blue Quest");
         blueParty.Members.ShouldBe(["BlueHero"]);
@@ -108,14 +108,14 @@ public class conjoined_event_tenancy_tests : IntegrationContext
         redSession.Events.StartStream(streamId,
             new QuestStarted("Red Quest"),
             new MembersJoined(1, "Red Town", ["A", "B"]));
-        await redSession.SaveChangesAsync();
+        await redSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var blueQuery = store.QuerySession(new SessionOptions { TenantId = "Blue" });
-        var state = await blueQuery.Events.FetchStreamStateAsync(streamId);
+        var state = await blueQuery.Events.FetchStreamStateAsync(streamId, TestContext.Current.CancellationToken);
         state.ShouldBeNull();
 
         await using var redQuery = store.QuerySession(new SessionOptions { TenantId = "Red" });
-        var redState = await redQuery.Events.FetchStreamStateAsync(streamId);
+        var redState = await redQuery.Events.FetchStreamStateAsync(streamId, TestContext.Current.CancellationToken);
         redState.ShouldNotBeNull();
         redState.Version.ShouldBe(2);
     }
@@ -130,21 +130,21 @@ public class conjoined_event_tenancy_tests : IntegrationContext
         await using var redSession = store.LightweightSession(new SessionOptions { TenantId = "Red" });
         redSession.Events.StartStream(streamId,
             new QuestStarted("Red Quest"));
-        await redSession.SaveChangesAsync();
+        await redSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Append to Red's stream
         await using var redAppend = store.LightweightSession(new SessionOptions { TenantId = "Red" });
         redAppend.Events.Append(streamId, new MembersJoined(1, "Red Town", ["Hero"]));
-        await redAppend.SaveChangesAsync();
+        await redAppend.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Blue should see nothing
         await using var blueQuery = store.QuerySession(new SessionOptions { TenantId = "Blue" });
-        var blueEvents = await blueQuery.Events.FetchStreamAsync(streamId);
+        var blueEvents = await blueQuery.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
         blueEvents.Count.ShouldBe(0);
 
         // Red should see 2 events
         await using var redQuery = store.QuerySession(new SessionOptions { TenantId = "Red" });
-        var redEvents = await redQuery.Events.FetchStreamAsync(streamId);
+        var redEvents = await redQuery.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
         redEvents.Count.ShouldBe(2);
     }
 }

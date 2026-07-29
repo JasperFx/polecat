@@ -16,15 +16,15 @@ public class session_logging_tests : IntegrationContext
     {
         var id = Guid.NewGuid();
         theSession.Store(new User { Id = id, FirstName = "Counter" });
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
         query.RequestCount.ShouldBe(0);
 
-        await query.LoadAsync<User>(id);
+        await query.LoadAsync<User>(id, TestContext.Current.CancellationToken);
         query.RequestCount.ShouldBe(1);
 
-        await query.LoadAsync<User>(id);
+        await query.LoadAsync<User>(id, TestContext.Current.CancellationToken);
         query.RequestCount.ShouldBe(2);
     }
 
@@ -35,10 +35,10 @@ public class session_logging_tests : IntegrationContext
         var id2 = Guid.NewGuid();
         theSession.Store(new User { Id = id1, FirstName = "A" });
         theSession.Store(new User { Id = id2, FirstName = "B" });
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        await query.LoadManyAsync<User>([id1, id2]);
+        await query.LoadManyAsync<User>([id1, id2], TestContext.Current.CancellationToken);
 
         query.RequestCount.ShouldBe(1);
     }
@@ -48,10 +48,10 @@ public class session_logging_tests : IntegrationContext
     {
         var id = Guid.NewGuid();
         theSession.Store(new User { Id = id, FirstName = "Json" });
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        await query.LoadJsonAsync<User>(id);
+        await query.LoadJsonAsync<User>(id, TestContext.Current.CancellationToken);
 
         query.RequestCount.ShouldBe(1);
     }
@@ -70,11 +70,11 @@ public class session_logging_tests : IntegrationContext
         var id = Guid.NewGuid();
         await using var session = theStore.LightweightSession();
         session.Store(new User { Id = id, FirstName = "Logged" });
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
         query.Logger = logger;
-        await query.LoadAsync<User>(id);
+        await query.LoadAsync<User>(id, TestContext.Current.CancellationToken);
 
         logger.BeforeExecuteCount.ShouldBeGreaterThan(0);
         logger.SuccessCount.ShouldBeGreaterThan(0);
@@ -93,7 +93,7 @@ public class session_logging_tests : IntegrationContext
 
         await using var session = theStore.LightweightSession();
         session.Store(new User { Id = Guid.NewGuid(), FirstName = "SaveLog" });
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         logger.SavedChangesCount.ShouldBe(1);
     }
@@ -111,7 +111,7 @@ public class session_logging_tests : IntegrationContext
 
         await using var session = theStore.LightweightSession();
         session.Store(new User { Id = Guid.NewGuid(), FirstName = "Store" });
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         storeLogger.SessionsCreated.ShouldBeGreaterThan(0);
     }
@@ -123,11 +123,11 @@ public class session_logging_tests : IntegrationContext
 
         var id = Guid.NewGuid();
         theSession.Store(new User { Id = id, FirstName = "Override" });
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
         query.Logger = customLogger;
-        await query.LoadAsync<User>(id);
+        await query.LoadAsync<User>(id, TestContext.Current.CancellationToken);
 
         customLogger.SuccessCount.ShouldBe(1);
     }

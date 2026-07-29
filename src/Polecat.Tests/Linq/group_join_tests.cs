@@ -71,7 +71,7 @@ public class group_join_tests : OneOffConfigurationsContext
                 c => c.Id, o => o.CustomerId,
                 (c, orders) => new { c, orders })
             .SelectMany(x => x.orders, (x, o) => new { CustomerName = x.c.Name, o.Amount })
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         // Alice has 2 orders, Bob has 1, Charlie has 0 (excluded by inner join)
         results.Count.ShouldBe(3);
@@ -92,7 +92,7 @@ public class group_join_tests : OneOffConfigurationsContext
                 c => c.Id, o => o.CustomerId,
                 (c, orders) => new { c, orders })
             .SelectMany(x => x.orders, (x, o) => new { x.c.Name, x.c.City, o.Status, o.Amount })
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(3);
 
@@ -117,7 +117,7 @@ public class group_join_tests : OneOffConfigurationsContext
                 c => c.Id, o => o.CustomerId,
                 (c, orders) => new { c, orders })
             .SelectMany(x => x.orders.DefaultIfEmpty(), (x, o) => new { x.c.Name, Order = o })
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         // Alice: 2 orders, Bob: 1 order, Charlie: 1 null row = 4 total
         results.Count.ShouldBe(4);
@@ -142,7 +142,7 @@ public class group_join_tests : OneOffConfigurationsContext
                 (c, orders) => new { c, orders })
             .SelectMany(x => x.orders.DefaultIfEmpty(),
                 (x, o) => new { x.c.Name, Amount = o != null ? o.Amount : 0m })
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(4);
 
@@ -167,7 +167,7 @@ public class group_join_tests : OneOffConfigurationsContext
                 c => c.Id, o => o.CustomerId,
                 (c, orders) => new { c, orders })
             .SelectMany(x => x.orders, (x, o) => new { x.c.Name, o.Amount })
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         // Only Alice is in Seattle with orders (Charlie is in Seattle but has no orders)
         results.Count.ShouldBe(2);
@@ -187,7 +187,7 @@ public class group_join_tests : OneOffConfigurationsContext
                 (c, orders) => new { c, orders })
             .SelectMany(x => x.orders, (x, o) => new { x.c.Name, o.Amount })
             .OrderBy(r => r.Amount)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(3);
         results[0].Amount.ShouldBe(50m);   // Bob's order
@@ -207,7 +207,7 @@ public class group_join_tests : OneOffConfigurationsContext
                 c => c.Id, o => o.CustomerId,
                 (c, orders) => new { c, orders })
             .SelectMany(x => x.orders, (x, o) => new { x.c.Name, o.Amount })
-            .CountAsync();
+            .CountAsync(TestContext.Current.CancellationToken);
 
         count.ShouldBe(3);
     }
@@ -225,7 +225,7 @@ public class group_join_tests : OneOffConfigurationsContext
                 (c, orders) => new { c, orders })
             .SelectMany(x => x.orders, (x, o) => new { x.c.Name, o.Amount })
             .OrderByDescending(r => r.Amount)
-            .FirstAsync();
+            .FirstAsync(TestContext.Current.CancellationToken);
 
         result.Amount.ShouldBe(250m);
         result.Name.ShouldBe("Alice");
@@ -244,7 +244,7 @@ public class group_join_tests : OneOffConfigurationsContext
                 c => c.City, c2 => c2.City,
                 (c, matches) => new { c, matches })
             .SelectMany(x => x.matches, (x, m) => new { OriginalName = x.c.Name, MatchName = m.Name })
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         // Seattle: Alice-Alice, Alice-Charlie, Charlie-Alice, Charlie-Charlie = 4
         // Portland: Bob-Bob = 1
@@ -267,7 +267,7 @@ public class group_join_tests : OneOffConfigurationsContext
                 c => c.Id, o => o.CustomerId,
                 (c, orders) => new { Customer = c, orders })
             .SelectMany(x => x.orders, (x, o) => new { x.Customer, Order = o })
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(3);
 
@@ -293,7 +293,7 @@ public class group_join_tests : OneOffConfigurationsContext
                 c => c.Id, o => o.CustomerId,
                 (c, orders) => new { c, orders })
             .SelectMany(x => x.orders, (x, o) => new { x.c.Name, x.c.City })
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         // One row per matching join pair (Alice:2, Bob:1) = 3
         results.Count.ShouldBe(3);
@@ -332,7 +332,7 @@ public class group_join_tests : OneOffConfigurationsContext
                 (c, employees) => new { c, employees })
             .SelectMany(x => x.employees,
                 (x, e) => new { Customer = x.c.Name, Employee = e.Name, x.c.City })
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         // Seattle: Alice-Eve, Charlie-Eve = 2
         // Portland: Bob-Frank = 1
@@ -357,7 +357,7 @@ public class group_join_tests : OneOffConfigurationsContext
                 (c, orders) => new { c, orders })
             .SelectMany(x => x.orders.DefaultIfEmpty(),
                 (x, o) => new { CustomerName = x.c.Name, OrderAmount = o != null ? o.Amount : 0m })
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         // Alice:2, Bob:1, Charlie:1 (null inner) = 4
         results.Count.ShouldBe(4);

@@ -42,7 +42,7 @@ public class tenant_partitioned_streams_tests : IAsyncLifetime
     public async Task streams_table_is_partitioned_alongside_events()
     {
         using var store = CreateStore();
-        await store.Database.ApplyAllConfiguredChangesToDatabaseAsync();
+        await store.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         // pc_streams carries the tenant_ordinal partition column and sits on its own
         // partition scheme, exactly like pc_events.
@@ -55,18 +55,18 @@ public class tenant_partitioned_streams_tests : IAsyncLifetime
     public async Task stream_rows_land_in_their_tenant_partition()
     {
         using var store = CreateStore();
-        await store.Database.ApplyAllConfiguredChangesToDatabaseAsync();
+        await store.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         await using (var red = store.LightweightSession(new SessionOptions { TenantId = "Red" }))
         {
             red.Events.StartStream(Guid.NewGuid(), new QuestStarted("Red"), new MonsterSlain("a", 1));
-            await red.SaveChangesAsync();
+            await red.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using (var blue = store.LightweightSession(new SessionOptions { TenantId = "Blue" }))
         {
             blue.Events.StartStream(Guid.NewGuid(), new QuestStarted("Blue"));
-            await blue.SaveChangesAsync();
+            await blue.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         // Stream rows carry their tenant's registry ordinal and land in distinct physical
@@ -91,14 +91,14 @@ public class tenant_partitioned_streams_tests : IAsyncLifetime
     public async Task appending_to_an_existing_stream_updates_the_partitioned_stream_row()
     {
         using var store = CreateStore();
-        await store.Database.ApplyAllConfiguredChangesToDatabaseAsync();
+        await store.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         var stream = Guid.NewGuid();
 
         await using (var session = store.LightweightSession(new SessionOptions { TenantId = "Red" }))
         {
             session.Events.StartStream(stream, new QuestStarted("Quest"));
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         // Second append hits the UPDATE path against the partitioned pc_streams (with the
@@ -106,15 +106,15 @@ public class tenant_partitioned_streams_tests : IAsyncLifetime
         await using (var session = store.LightweightSession(new SessionOptions { TenantId = "Red" }))
         {
             session.Events.Append(stream, new MembersJoined(1, "Town", ["Hero"]), new MonsterSlain("b", 2));
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using var query = store.QuerySession(new SessionOptions { TenantId = "Red" });
-        var state = await query.Events.FetchStreamStateAsync(stream);
+        var state = await query.Events.FetchStreamStateAsync(stream, TestContext.Current.CancellationToken);
         state.ShouldNotBeNull();
         state.Version.ShouldBe(3);
 
-        (await query.Events.FetchStreamAsync(stream)).Count.ShouldBe(3);
+        (await query.Events.FetchStreamAsync(stream, token: TestContext.Current.CancellationToken)).Count.ShouldBe(3);
     }
 
     private static async Task<bool> TableIsOnPartitionSchemeAsync(string table, string scheme)

@@ -57,19 +57,19 @@ public class Bug_369_natural_key_source_discovery : IAsyncLifetime
         await using (var session = store.LightweightSession())
         {
             session.Events.StartStream(streamId, new NkProductRegistered(streamId, "PROD-001"));
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using (var session = store.LightweightSession())
         {
             session.Events.Append(streamId, new NkProductCodeChanged(streamId, "PROD-999"));
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         // Inline append: the IEvent<T>-sourced rename is what used to go missing.
         await using (var query = store.LightweightSession())
         {
-            var product = await query.Events.FetchLatest<NkProduct, NkProductCode>(new NkProductCode("PROD-999"));
+            var product = await query.Events.FetchLatest<NkProduct, NkProductCode>(new NkProductCode("PROD-999"), TestContext.Current.CancellationToken);
             product.ShouldNotBeNull();
             product.Id.ShouldBe(streamId);
             product.Code.Value.ShouldBe("PROD-999");
@@ -88,7 +88,7 @@ public class Bug_369_natural_key_source_discovery : IAsyncLifetime
         {
             session.Events.StartStream(streamId, new NkProductRegistered(streamId, "PROD-001"));
             session.Events.Append(streamId, new NkProductCodeChanged(streamId, "PROD-999"));
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await ExecuteAsync($"DELETE FROM [{Schema}].[{Table}];");
@@ -98,7 +98,7 @@ public class Bug_369_natural_key_source_discovery : IAsyncLifetime
         await daemon.RebuildProjectionAsync(store.Options.Projections.All.Single().Name, CancellationToken.None);
 
         await using var query = store.LightweightSession();
-        var product = await query.Events.FetchLatest<NkProduct, NkProductCode>(new NkProductCode("PROD-999"));
+        var product = await query.Events.FetchLatest<NkProduct, NkProductCode>(new NkProductCode("PROD-999"), TestContext.Current.CancellationToken);
         product.ShouldNotBeNull();
         product!.Id.ShouldBe(streamId);
     }
@@ -118,11 +118,11 @@ public class Bug_369_natural_key_source_discovery : IAsyncLifetime
         {
             session.Events.StartStream(streamId, new NkProductRegistered(streamId, "PROD-001"));
             session.Events.Append(streamId, new NkProductCodeChanged(streamId, "PROD-777"));
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using var query = store.LightweightSession();
-        var product = await query.Events.FetchLatest<NkProduct, NkProductCode>(new NkProductCode("PROD-777"));
+        var product = await query.Events.FetchLatest<NkProduct, NkProductCode>(new NkProductCode("PROD-777"), TestContext.Current.CancellationToken);
         product.ShouldNotBeNull();
         product!.Id.ShouldBe(streamId);
     }

@@ -29,11 +29,11 @@ public class for_tenant_tests : IntegrationContext
 
         theSession.Store(doc1);
         theSession.ForTenant("tenant-b").Store(doc2);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Verify doc1 is stored for default tenant
         await using var queryDefault = theStore.QuerySession();
-        var loaded1 = await queryDefault.LoadAsync<TenantDoc>(doc1.Id);
+        var loaded1 = await queryDefault.LoadAsync<TenantDoc>(doc1.Id, TestContext.Current.CancellationToken);
         loaded1.ShouldNotBeNull();
         loaded1.Name.ShouldBe("Tenant A Doc");
     }
@@ -78,11 +78,11 @@ public class for_tenant_tests : IntegrationContext
         var stream2 = Guid.NewGuid();
         theSession.ForTenant("tenant-alt").Events.StartStream(stream2, new QuestStarted("Alt Quest"));
 
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Verify both streams exist
         await using var query = theStore.QuerySession();
-        var events1 = await query.Events.FetchStreamAsync(streamId);
+        var events1 = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
         events1.Count.ShouldBe(1);
     }
 }

@@ -20,13 +20,13 @@ public class read_projection_progress_extended_tests : OneOffConfigurationsConte
     public async Task reads_heartbeat_when_extended_tracking_is_enabled()
     {
         ConfigureStore(opts => opts.Events.EnableExtendedProgressionTracking = true);
-        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync();
+        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         var shardName = new ShardName("ExtendedRead");
         // RecordProgressionOperation stamps heartbeat = SYSDATETIMEOFFSET() under extended tracking.
         await RecordProgressAsync(shardName, ceiling: 99, upsert: true, extended: true);
 
-        var row = await theDatabase.ReadProjectionProgressAsync(shardName.Identity, null, default);
+        var row = await theDatabase.ReadProjectionProgressAsync(shardName.Identity, null, TestContext.Current.CancellationToken);
 
         row.ShouldNotBeNull();
         row!.Sequence.ShouldBe(99);

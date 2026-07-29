@@ -59,10 +59,10 @@ public class required_member_primary_ctor_projection_tests : IntegrationContext
         session.Events.StartStream(streamKey,
             new CareReceived(streamKey, subContractor, "ABC123", 42),
             new CareImported("imported"));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var doc = await query.LoadAsync<DiagnostiekActiviteit>(streamKey);
+        var doc = await query.LoadAsync<DiagnostiekActiviteit>(streamKey, TestContext.Current.CancellationToken);
 
         doc.ShouldNotBeNull();
         doc.Id.ShouldBe(streamKey);

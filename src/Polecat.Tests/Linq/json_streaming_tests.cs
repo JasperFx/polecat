@@ -16,10 +16,10 @@ public class json_streaming_tests : IntegrationContext
     {
         var user = new User { Id = Guid.NewGuid(), FirstName = "JsonAlice", LastName = "Smith" };
         theSession.Store(user);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var json = await query.LoadJsonAsync<User>(user.Id);
+        var json = await query.LoadJsonAsync<User>(user.Id, TestContext.Current.CancellationToken);
 
         json.ShouldNotBeNull();
         json.ShouldContain("JsonAlice");
@@ -35,10 +35,10 @@ public class json_streaming_tests : IntegrationContext
     {
         var doc = new StringDoc { Id = "json-test-1", Name = "JsonTest" };
         theSession.Store(doc);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var json = await query.LoadJsonAsync<StringDoc>("json-test-1");
+        var json = await query.LoadJsonAsync<StringDoc>("json-test-1", TestContext.Current.CancellationToken);
 
         json.ShouldNotBeNull();
         json.ShouldContain("JsonTest");
@@ -48,7 +48,7 @@ public class json_streaming_tests : IntegrationContext
     public async Task load_json_returns_null_for_missing()
     {
         await using var query = theStore.QuerySession();
-        var json = await query.LoadJsonAsync<User>(Guid.NewGuid());
+        var json = await query.LoadJsonAsync<User>(Guid.NewGuid(), TestContext.Current.CancellationToken);
 
         json.ShouldBeNull();
     }
@@ -61,12 +61,12 @@ public class json_streaming_tests : IntegrationContext
         var t2 = new Target { Id = Guid.NewGuid(), Color = uniqueColor, Number = 2 };
 
         theSession.Store(t1, t2);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
         var json = await query.Query<Target>()
             .Where(t => t.Color == uniqueColor)
-            .ToJsonArrayAsync();
+            .ToJsonArrayAsync(TestContext.Current.CancellationToken);
 
         json.ShouldNotBeNull();
         json.ShouldStartWith("[");
@@ -83,7 +83,7 @@ public class json_streaming_tests : IntegrationContext
         await using var query = theStore.QuerySession();
         var json = await query.Query<Target>()
             .Where(t => t.Color == "NeverExistsColor999")
-            .ToJsonArrayAsync();
+            .ToJsonArrayAsync(TestContext.Current.CancellationToken);
 
         json.ShouldBe("[]");
     }
@@ -95,12 +95,12 @@ public class json_streaming_tests : IntegrationContext
         var t = new Target { Id = Guid.NewGuid(), Color = uniqueColor, Number = 42 };
 
         theSession.Store(t);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
         var json = await query.Query<Target>()
             .Where(t => t.Color == uniqueColor)
-            .ToJsonArrayAsync();
+            .ToJsonArrayAsync(TestContext.Current.CancellationToken);
 
         var array = JsonDocument.Parse(json).RootElement;
         array.GetArrayLength().ShouldBe(1);

@@ -30,7 +30,7 @@ public class SchemaCreationTests : IAsyncLifetime
     public async Task creates_all_three_event_store_tables()
     {
         var database = CreateDatabase();
-        await database.ApplyAllConfiguredChangesToDatabaseAsync();
+        await database.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         var tables = await SchemaInspector.GetTableNamesAsync();
         tables.ShouldContain("pc_streams");
@@ -42,7 +42,7 @@ public class SchemaCreationTests : IAsyncLifetime
     public async Task streams_table_has_guid_id_by_default()
     {
         var database = CreateDatabase();
-        await database.ApplyAllConfiguredChangesToDatabaseAsync();
+        await database.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         var columns = await SchemaInspector.GetColumnInfoAsync("pc_streams");
         var idCol = columns.Single(c => c.Name == "id");
@@ -53,7 +53,7 @@ public class SchemaCreationTests : IAsyncLifetime
     public async Task streams_table_has_string_id_when_configured()
     {
         var database = CreateDatabase(o => o.Events.StreamIdentity = StreamIdentity.AsString);
-        await database.ApplyAllConfiguredChangesToDatabaseAsync();
+        await database.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         var columns = await SchemaInspector.GetColumnInfoAsync("pc_streams");
         var idCol = columns.Single(c => c.Name == "id");
@@ -64,7 +64,7 @@ public class SchemaCreationTests : IAsyncLifetime
     public async Task streams_table_has_expected_columns()
     {
         var database = CreateDatabase();
-        await database.ApplyAllConfiguredChangesToDatabaseAsync();
+        await database.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         var columns = await SchemaInspector.GetColumnInfoAsync("pc_streams");
         var names = columns.Select(c => c.Name).ToList();
@@ -82,7 +82,7 @@ public class SchemaCreationTests : IAsyncLifetime
     public async Task events_table_has_expected_columns()
     {
         var database = CreateDatabase();
-        await database.ApplyAllConfiguredChangesToDatabaseAsync();
+        await database.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         var columns = await SchemaInspector.GetColumnInfoAsync("pc_events");
         var names = columns.Select(c => c.Name).ToList();
@@ -103,7 +103,7 @@ public class SchemaCreationTests : IAsyncLifetime
     public async Task events_table_seq_id_is_identity()
     {
         var database = CreateDatabase();
-        await database.ApplyAllConfiguredChangesToDatabaseAsync();
+        await database.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         var isIdentity = await SchemaInspector.IsColumnIdentityAsync("pc_events", "seq_id");
         isIdentity.ShouldBeTrue();
@@ -113,7 +113,7 @@ public class SchemaCreationTests : IAsyncLifetime
     public async Task events_table_has_unique_index_on_stream_and_version()
     {
         var database = CreateDatabase();
-        await database.ApplyAllConfiguredChangesToDatabaseAsync();
+        await database.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         var indexes = await SchemaInspector.GetIndexInfoAsync("pc_events");
         var streamVersionIndex = indexes.Where(i => i.Name == "ix_pc_events_stream_and_version").ToList();
@@ -130,7 +130,7 @@ public class SchemaCreationTests : IAsyncLifetime
             o.Events.EnableCausationId = true;
             o.Events.EnableHeaders = true;
         });
-        await database.ApplyAllConfiguredChangesToDatabaseAsync();
+        await database.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         var columns = await SchemaInspector.GetColumnInfoAsync("pc_events");
         var names = columns.Select(c => c.Name).ToList();
@@ -144,7 +144,7 @@ public class SchemaCreationTests : IAsyncLifetime
     public async Task events_table_omits_metadata_columns_when_disabled()
     {
         var database = CreateDatabase();
-        await database.ApplyAllConfiguredChangesToDatabaseAsync();
+        await database.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         var columns = await SchemaInspector.GetColumnInfoAsync("pc_events");
         var names = columns.Select(c => c.Name).ToList();
@@ -158,7 +158,7 @@ public class SchemaCreationTests : IAsyncLifetime
     public async Task event_progression_table_has_expected_columns()
     {
         var database = CreateDatabase();
-        await database.ApplyAllConfiguredChangesToDatabaseAsync();
+        await database.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         var columns = await SchemaInspector.GetColumnInfoAsync("pc_event_progression");
         var names = columns.Select(c => c.Name).ToList();
@@ -172,7 +172,7 @@ public class SchemaCreationTests : IAsyncLifetime
     public async Task conjoined_tenancy_adds_tenant_id_to_streams_primary_key()
     {
         var database = CreateDatabase(o => o.Events.TenancyStyle = TenancyStyle.Conjoined);
-        await database.ApplyAllConfiguredChangesToDatabaseAsync();
+        await database.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         var pkColumns = await SchemaInspector.GetPrimaryKeyColumnsAsync("pc_streams");
         pkColumns.ShouldContain("tenant_id");
@@ -183,7 +183,7 @@ public class SchemaCreationTests : IAsyncLifetime
     public async Task conjoined_tenancy_includes_tenant_id_in_events_unique_index()
     {
         var database = CreateDatabase(o => o.Events.TenancyStyle = TenancyStyle.Conjoined);
-        await database.ApplyAllConfiguredChangesToDatabaseAsync();
+        await database.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         var indexes = await SchemaInspector.GetIndexInfoAsync("pc_events");
         var streamVersionIndex = indexes
@@ -203,8 +203,8 @@ public class SchemaCreationTests : IAsyncLifetime
         var database = CreateDatabase();
 
         // Apply twice — second call should not throw
-        await database.ApplyAllConfiguredChangesToDatabaseAsync();
-        await database.ApplyAllConfiguredChangesToDatabaseAsync();
+        await database.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
+        await database.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         var tables = await SchemaInspector.GetTableNamesAsync();
         tables.ShouldContain("pc_streams");
@@ -216,7 +216,7 @@ public class SchemaCreationTests : IAsyncLifetime
     public async Task events_table_has_foreign_key_to_streams()
     {
         var database = CreateDatabase();
-        await database.ApplyAllConfiguredChangesToDatabaseAsync();
+        await database.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         var fks = await SchemaInspector.GetForeignKeysAsync("pc_events");
         fks.ShouldNotBeEmpty();

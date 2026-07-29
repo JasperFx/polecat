@@ -68,7 +68,7 @@ public class json_naming_attribute_queries : OneOffConfigurationsContext
         // City is stored under "cityName" — the predicate must target $.cityName, not $.city.
         var results = await query.Query<User>()
             .Where(u => u.City == "Taggia")
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(2);
         results.ShouldAllBe(u => u.City == "Taggia");
@@ -84,7 +84,7 @@ public class json_naming_attribute_queries : OneOffConfigurationsContext
         // Active is stored as "enabled" — the predicate must compare against "enabled".
         var active = await query.Query<User>()
             .Where(u => u.Status == ActiveStatus.Active)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         active.Count.ShouldBe(2);
         active.ShouldAllBe(u => u.Status == ActiveStatus.Active);
@@ -101,7 +101,7 @@ public class json_naming_attribute_queries : OneOffConfigurationsContext
         var users = await query.Query<User>()
             .Where(u => u.Status == ActiveStatus.Active && u.City == "Taggia")
             .OrderBy(u => u.FirstName).ThenBy(u => u.LastName)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         users.Count.ShouldBe(1);
         users[0].FirstName.ShouldBe("Evan");

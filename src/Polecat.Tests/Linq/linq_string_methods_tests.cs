@@ -37,7 +37,7 @@ public class linq_string_methods_tests : IntegrationContext
 
         var results = await theSession.Query<StringMethodDoc>()
             .Where(x => x.Name.ToLower() == "alice")
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(1);
         results[0].Name.ShouldBe("Alice");
@@ -50,7 +50,7 @@ public class linq_string_methods_tests : IntegrationContext
 
         var results = await theSession.Query<StringMethodDoc>()
             .Where(x => x.Name.ToLowerInvariant() == "bob")
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(1);
         results[0].Name.ShouldBe("Bob");
@@ -63,7 +63,7 @@ public class linq_string_methods_tests : IntegrationContext
 
         var results = await theSession.Query<StringMethodDoc>()
             .Where(x => x.Name.ToUpper() == "ALICE")
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(1);
         results[0].Name.ShouldBe("Alice");
@@ -76,7 +76,7 @@ public class linq_string_methods_tests : IntegrationContext
 
         var results = await theSession.Query<StringMethodDoc>()
             .Where(x => x.Code.Trim() == "ABC")
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(1);
         results[0].Name.ShouldBe("Alice");
@@ -89,7 +89,7 @@ public class linq_string_methods_tests : IntegrationContext
 
         var results = await theSession.Query<StringMethodDoc>()
             .Where(x => x.Code.TrimStart() == "ABC  ")
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(1);
         results[0].Name.ShouldBe("Alice");
@@ -102,7 +102,7 @@ public class linq_string_methods_tests : IntegrationContext
 
         var results = await theSession.Query<StringMethodDoc>()
             .Where(x => x.Code.TrimEnd() == "  ABC")
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(1);
         results[0].Name.ShouldBe("Alice");
@@ -115,7 +115,7 @@ public class linq_string_methods_tests : IntegrationContext
 
         var results = await theSession.Query<StringMethodDoc>()
             .Where(x => x.Name.Length == 3)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(1);
         results[0].Name.ShouldBe("Bob");
@@ -128,7 +128,7 @@ public class linq_string_methods_tests : IntegrationContext
 
         var results = await theSession.Query<StringMethodDoc>()
             .Where(x => x.Name.Length > 3)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(2);
     }

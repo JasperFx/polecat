@@ -24,14 +24,14 @@ public class projection_message_outbox_tests : OneOffConfigurationsContext
             opts.DatabaseSchemaName = "msg_outbox_lazy";
             opts.Events.MessageOutbox = outbox;
         });
-        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync();
+        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         var batch = new PolecatProjectionBatch(theStore, theStore.Options.EventGraph,
             ConnectionSource.ConnectionString);
         var session = batch.SessionForTenant(theStore.Options.Tenancy!.DefaultTenantId);
         session.Store(new SimpleDoc { Id = Guid.NewGuid() });
 
-        await batch.ExecuteAsync(default);
+        await batch.ExecuteAsync(TestContext.Current.CancellationToken);
 
         outbox.CreateBatchCount.ShouldBe(0);
         outbox.LastBatch.ShouldBeNull();
@@ -46,7 +46,7 @@ public class projection_message_outbox_tests : OneOffConfigurationsContext
             opts.DatabaseSchemaName = "msg_outbox_publish";
             opts.Events.MessageOutbox = outbox;
         });
-        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync();
+        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         var batch = new PolecatProjectionBatch(theStore, theStore.Options.EventGraph,
             ConnectionSource.ConnectionString);
@@ -74,7 +74,7 @@ public class projection_message_outbox_tests : OneOffConfigurationsContext
             opts.DatabaseSchemaName = "msg_outbox_hooks";
             opts.Events.MessageOutbox = outbox;
         });
-        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync();
+        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         var batch = new PolecatProjectionBatch(theStore, theStore.Options.EventGraph,
             ConnectionSource.ConnectionString);
@@ -82,7 +82,7 @@ public class projection_message_outbox_tests : OneOffConfigurationsContext
         session.Store(new SimpleDoc { Id = Guid.NewGuid() });
 
         await batch.PublishMessageAsync(new SideEffect("evt"), "default");
-        await batch.ExecuteAsync(default);
+        await batch.ExecuteAsync(TestContext.Current.CancellationToken);
 
         outbox.LastBatch!.BeforeCommitCalls.ShouldBe(1);
         outbox.LastBatch!.AfterCommitCalls.ShouldBe(1);
@@ -99,7 +99,7 @@ public class projection_message_outbox_tests : OneOffConfigurationsContext
             opts.DatabaseSchemaName = "msg_outbox_metadata";
             opts.Events.MessageOutbox = outbox;
         });
-        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync();
+        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         var batch = new PolecatProjectionBatch(theStore, theStore.Options.EventGraph,
             ConnectionSource.ConnectionString);
@@ -108,7 +108,7 @@ public class projection_message_outbox_tests : OneOffConfigurationsContext
 
         var metadata = new MessageMetadata { TenantId = "tenant-z" };
         await batch.PublishMessageAsync(new SideEffect("with-meta"), metadata);
-        await batch.ExecuteAsync(default);
+        await batch.ExecuteAsync(TestContext.Current.CancellationToken);
 
         // The default IMessageSink.PublishAsync(T, MessageMetadata) impl
         // forwards to PublishAsync(T, metadata.TenantId), so we should see

@@ -47,12 +47,12 @@ public class document_foreign_key_tests : IntegrationContext
         // Store the referenced user first
         var user = new FkUser { Id = Guid.NewGuid(), Name = "Alice" };
         theSession.Store(user);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Store the issue referencing the user
         var issue = new FkIssue { Id = Guid.NewGuid(), Title = "Bug #1", AssigneeId = user.Id };
         theSession.Store(issue);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Verify FK constraint exists
         await using var conn = await OpenConnectionAsync();
@@ -63,7 +63,7 @@ public class document_foreign_key_tests : IntegrationContext
               AND parent_object_id = OBJECT_ID('[fk_basic].[pc_doc_fkissue]')
               AND referenced_object_id = OBJECT_ID('[fk_basic].[pc_doc_fkuser]')
             """;
-        var count = (int)(await cmd.ExecuteScalarAsync())!;
+        var count = (int)(await cmd.ExecuteScalarAsync(TestContext.Current.CancellationToken))!;
         count.ShouldBe(1);
     }
 
@@ -81,7 +81,7 @@ public class document_foreign_key_tests : IntegrationContext
         // Ensure both tables exist
         var user = new FkUser { Id = Guid.NewGuid(), Name = "Setup" };
         theSession.Store(user);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Try to insert issue with non-existent user ID
         await using var session2 = theStore.LightweightSession();
@@ -107,12 +107,12 @@ public class document_foreign_key_tests : IntegrationContext
 
         var user = new FkUser { Id = Guid.NewGuid(), Name = "Bob" };
         theSession.Store(user);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         var issue = new FkIssue { Id = Guid.NewGuid(), Title = "Cascaded", AssigneeId = user.Id };
         session2.Store(issue);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Verify CASCADE is set on the FK
         await using var conn = await OpenConnectionAsync();
@@ -122,7 +122,7 @@ public class document_foreign_key_tests : IntegrationContext
             WHERE name = 'fk_pc_doc_fkissue_cc_assigneeid'
               AND parent_object_id = OBJECT_ID('[fk_cascade].[pc_doc_fkissue]')
             """;
-        var action = (byte)(await cmd.ExecuteScalarAsync())!;
+        var action = (byte)(await cmd.ExecuteScalarAsync(TestContext.Current.CancellationToken))!;
         // 1 = CASCADE
         action.ShouldBe((byte)1);
     }
@@ -143,17 +143,17 @@ public class document_foreign_key_tests : IntegrationContext
 
         var user = new FkUser { Id = Guid.NewGuid(), Name = "Charlie" };
         theSession.Store(user);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         var issue = new FkIssue { Id = Guid.NewGuid(), Title = "Multi FK", AssigneeId = user.Id };
         session2.Store(issue);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session3 = theStore.LightweightSession();
         var comment = new FkComment { Id = Guid.NewGuid(), Body = "Nice!", IssueId = issue.Id, AuthorId = user.Id };
         session3.Store(comment);
-        await session3.SaveChangesAsync();
+        await session3.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Verify 2 FK constraints on FkComment
         await using var conn = await OpenConnectionAsync();
@@ -162,7 +162,7 @@ public class document_foreign_key_tests : IntegrationContext
             SELECT COUNT(*) FROM sys.foreign_keys
             WHERE parent_object_id = OBJECT_ID('[fk_multi].[pc_doc_fkcomment]')
             """;
-        var count = (int)(await cmd.ExecuteScalarAsync())!;
+        var count = (int)(await cmd.ExecuteScalarAsync(TestContext.Current.CancellationToken))!;
         count.ShouldBe(2);
     }
 
@@ -179,12 +179,12 @@ public class document_foreign_key_tests : IntegrationContext
 
         var user = new FkUser { Id = Guid.NewGuid(), Name = "Eve" };
         theSession.Store(user);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         var issue = new FkIssue { Id = Guid.NewGuid(), Title = "Custom Name", AssigneeId = user.Id };
         session2.Store(issue);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var conn = await OpenConnectionAsync();
         await using var cmd = conn.CreateCommand();
@@ -193,7 +193,7 @@ public class document_foreign_key_tests : IntegrationContext
             WHERE name = 'my_custom_fk'
               AND parent_object_id = OBJECT_ID('[fk_custom_name].[pc_doc_fkissue]')
             """;
-        var count = (int)(await cmd.ExecuteScalarAsync())!;
+        var count = (int)(await cmd.ExecuteScalarAsync(TestContext.Current.CancellationToken))!;
         count.ShouldBe(1);
     }
 
@@ -210,7 +210,7 @@ public class document_foreign_key_tests : IntegrationContext
 
         var user = new FkUser { Id = Guid.NewGuid(), Name = "Setup" };
         theSession.Store(user);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Create second store with same config — should not fail
         var opts2 = new StoreOptions
@@ -226,6 +226,6 @@ public class document_foreign_key_tests : IntegrationContext
         await using var session2 = store2.LightweightSession();
         var issue = new FkIssue { Id = Guid.NewGuid(), Title = "Idempotent", AssigneeId = user.Id };
         session2.Store(issue);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
     }
 }

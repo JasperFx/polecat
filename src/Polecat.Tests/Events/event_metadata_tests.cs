@@ -31,10 +31,10 @@ public class event_metadata_tests : OneOffConfigurationsContext
         await using var session = theStore.LightweightSession();
         session.CorrelationId = "my-correlation-123";
         session.Events.StartStream(streamId, new QuestStarted("Correlated Quest"));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
 
         events.Count.ShouldBe(1);
         events[0].CorrelationId.ShouldBe("my-correlation-123");
@@ -53,10 +53,10 @@ public class event_metadata_tests : OneOffConfigurationsContext
         await using var session = theStore.LightweightSession();
         session.CausationId = "caused-by-command-456";
         session.Events.StartStream(streamId, new QuestStarted("Caused Quest"));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
 
         events.Count.ShouldBe(1);
         events[0].CausationId.ShouldBe("caused-by-command-456");
@@ -79,10 +79,10 @@ public class event_metadata_tests : OneOffConfigurationsContext
         session.Events.StartStream(streamId,
             new QuestStarted("Both IDs"),
             new MembersJoined(1, "Town", ["Alice"]));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
 
         events.Count.ShouldBe(2);
         events[0].CorrelationId.ShouldBe("corr-789");
@@ -107,10 +107,10 @@ public class event_metadata_tests : OneOffConfigurationsContext
         var action = session.Events.StartStream(streamId, new QuestStarted("Override"));
         // Set event-level correlation directly
         action.Events[0].CorrelationId = "event-level";
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
 
         events[0].CorrelationId.ShouldBe("event-level");
     }
@@ -127,10 +127,10 @@ public class event_metadata_tests : OneOffConfigurationsContext
 
         await using var session = theStore.LightweightSession();
         session.Events.StartStream(streamId, new QuestStarted("No Correlation"));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
 
         events[0].CorrelationId.ShouldBeNull();
     }
@@ -151,10 +151,10 @@ public class event_metadata_tests : OneOffConfigurationsContext
         var action = session.Events.StartStream(streamId, new QuestStarted("Headers Quest"));
         action.Events[0].SetHeader("user", "admin");
         action.Events[0].SetHeader("source", "api");
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
 
         events[0].Headers.ShouldNotBeNull();
         events[0].GetHeader("user")!.ToString().ShouldBe("admin");
@@ -173,10 +173,10 @@ public class event_metadata_tests : OneOffConfigurationsContext
 
         await using var session = theStore.LightweightSession();
         session.Events.StartStream(streamId, new QuestStarted("No Headers"));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
 
         events[0].Headers.ShouldBeNull();
     }
@@ -198,10 +198,10 @@ public class event_metadata_tests : OneOffConfigurationsContext
         session.Events.StartStream(streamId,
             new QuestStarted("User Quest"),
             new MembersJoined(1, "Town", ["A"]));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
 
         events.Count.ShouldBe(2);
         events[0].UserName.ShouldBe("alice@example.com");
@@ -223,10 +223,10 @@ public class event_metadata_tests : OneOffConfigurationsContext
 
         var action = session.Events.StartStream(streamId, new QuestStarted("Override"));
         action.Events[0].UserName = "event-user";
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
 
         events[0].UserName.ShouldBe("event-user");
     }
@@ -243,10 +243,10 @@ public class event_metadata_tests : OneOffConfigurationsContext
 
         await using var session = theStore.LightweightSession();
         session.Events.StartStream(streamId, new QuestStarted("No User"));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
 
         events[0].UserName.ShouldBeNull();
     }
@@ -259,7 +259,7 @@ public class event_metadata_tests : OneOffConfigurationsContext
         await using var conn = await OpenConnectionAsync();
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = $"SELECT COL_LENGTH('[{_schema()}].[pc_events]', 'user_name')";
-        var result = await cmd.ExecuteScalarAsync();
+        var result = await cmd.ExecuteScalarAsync(TestContext.Current.CancellationToken);
         (result == null || result == DBNull.Value).ShouldBeTrue();
     }
 
@@ -283,10 +283,10 @@ public class event_metadata_tests : OneOffConfigurationsContext
         session.Events.StartStream(streamId,
             new QuestStarted("Session Headers"),
             new MembersJoined(1, "Town", ["A"]));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
 
         events.Count.ShouldBe(2);
         foreach (var @event in events)
@@ -312,10 +312,10 @@ public class event_metadata_tests : OneOffConfigurationsContext
 
         var action = session.Events.StartStream(streamId, new QuestStarted("Override"));
         action.Events[0].SetHeader("scope", "event"); // event-level value must win
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
 
         events[0].GetHeader("scope")!.ToString().ShouldBe("event");
     }
@@ -345,7 +345,7 @@ public class event_metadata_tests : OneOffConfigurationsContext
         var action = session.Events.StartStream(streamId,
             new QuestStarted("Sequence Quest"),
             new MembersJoined(1, "Town", ["A"]));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Verify sequences were assigned (positive, monotonically increasing)
         action.Events[0].Sequence.ShouldBeGreaterThan(0);
@@ -364,7 +364,7 @@ public class event_metadata_tests : OneOffConfigurationsContext
             new QuestStarted("Version Quest"),
             new MembersJoined(1, "Town", ["A"]),
             new ArrivedAtLocation("Castle", 2));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         action.Events[0].Version.ShouldBe(1);
         action.Events[1].Version.ShouldBe(2);
@@ -383,7 +383,7 @@ public class event_metadata_tests : OneOffConfigurationsContext
         var action = session.Events.StartStream(streamId,
             new QuestStarted("ID Quest"),
             new MembersJoined(1, "Town", ["A"]));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         action.Events[0].Id.ShouldNotBe(Guid.Empty);
         action.Events[1].Id.ShouldNotBe(Guid.Empty);
@@ -401,7 +401,7 @@ public class event_metadata_tests : OneOffConfigurationsContext
 
         await using var session1 = theStore.LightweightSession();
         session1.Events.StartStream(streamId, new QuestStarted("Conflict Quest"));
-        await session1.SaveChangesAsync();
+        await session1.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Two sessions both read version 1 and try to append at version 2
         await using var sessionA = theStore.LightweightSession();
@@ -411,11 +411,11 @@ public class event_metadata_tests : OneOffConfigurationsContext
         sessionB.Events.Append(streamId, 2, new MembersJoined(1, "B", ["Y"]));
 
         // First one succeeds
-        await sessionA.SaveChangesAsync();
+        await sessionA.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Second one should fail — expected version 2 but now it's already at 2
         await Should.ThrowAsync<EventStreamUnexpectedMaxEventIdException>(
-            sessionB.SaveChangesAsync());
+            sessionB.SaveChangesAsync(TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -427,13 +427,13 @@ public class event_metadata_tests : OneOffConfigurationsContext
 
         await using var session1 = theStore.LightweightSession();
         session1.Events.StartStream(streamId, new QuestStarted("Original"));
-        await session1.SaveChangesAsync();
+        await session1.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         session2.Events.StartStream(streamId, new QuestStarted("Duplicate"));
 
         await Should.ThrowAsync<ExistingStreamIdCollisionException>(
-            session2.SaveChangesAsync());
+            session2.SaveChangesAsync(TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -445,19 +445,19 @@ public class event_metadata_tests : OneOffConfigurationsContext
 
         await using var session1 = theStore.LightweightSession();
         session1.Events.StartStream(streamId, new QuestStarted("No Version Check"));
-        await session1.SaveChangesAsync();
+        await session1.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Two appends without expected version — both should succeed
         await using var sessionA = theStore.LightweightSession();
         sessionA.Events.Append(streamId, new MembersJoined(1, "A", ["X"]));
-        await sessionA.SaveChangesAsync();
+        await sessionA.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var sessionB = theStore.LightweightSession();
         sessionB.Events.Append(streamId, new MembersJoined(2, "B", ["Y"]));
-        await sessionB.SaveChangesAsync();
+        await sessionB.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
         events.Count.ShouldBe(3);
     }
 
@@ -469,7 +469,7 @@ public class event_metadata_tests : OneOffConfigurationsContext
         await ConfigureAndApply(_ => { });
 
         await using var query = theStore.QuerySession();
-        var state = await query.Events.FetchStreamStateAsync(Guid.NewGuid());
+        var state = await query.Events.FetchStreamStateAsync(Guid.NewGuid(), TestContext.Current.CancellationToken);
 
         state.ShouldBeNull();
     }
@@ -480,7 +480,7 @@ public class event_metadata_tests : OneOffConfigurationsContext
         await ConfigureAndApply(_ => { });
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(Guid.NewGuid());
+        var events = await query.Events.FetchStreamAsync(Guid.NewGuid(), token: TestContext.Current.CancellationToken);
 
         events.ShouldBeEmpty();
     }
@@ -496,16 +496,16 @@ public class event_metadata_tests : OneOffConfigurationsContext
         session1.Events.StartStream(streamId,
             new QuestStarted("Multi Append"),
             new MembersJoined(1, "Town", ["A"]));
-        await session1.SaveChangesAsync();
+        await session1.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         session2.Events.Append(streamId,
             new ArrivedAtLocation("Castle", 2),
             new MonsterSlain("Dragon", 100));
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var state = await query.Events.FetchStreamStateAsync(streamId);
+        var state = await query.Events.FetchStreamStateAsync(streamId, TestContext.Current.CancellationToken);
 
         state.ShouldNotBeNull();
         state.Version.ShouldBe(4);
@@ -525,10 +525,10 @@ public class event_metadata_tests : OneOffConfigurationsContext
 
         await using var session = theStore.LightweightSession();
         session.Events.StartStream(streamKey, new QuestStarted("String Key Quest"));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamKey);
+        var events = await query.Events.FetchStreamAsync(streamKey, token: TestContext.Current.CancellationToken);
 
         events.Count.ShouldBe(1);
         events[0].StreamKey.ShouldBe(streamKey);
@@ -547,17 +547,17 @@ public class event_metadata_tests : OneOffConfigurationsContext
 
         await using var session1 = theStore.LightweightSession();
         session1.Events.StartStream(streamKey, new QuestStarted("String Append"));
-        await session1.SaveChangesAsync();
+        await session1.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         session2.Events.Append(streamKey, new MembersJoined(1, "Town", ["A"]));
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamKey);
+        var events = await query.Events.FetchStreamAsync(streamKey, token: TestContext.Current.CancellationToken);
         events.Count.ShouldBe(2);
 
-        var state = await query.Events.FetchStreamStateAsync(streamKey);
+        var state = await query.Events.FetchStreamStateAsync(streamKey, TestContext.Current.CancellationToken);
         state.ShouldNotBeNull();
         state.Version.ShouldBe(2);
     }
@@ -574,13 +574,13 @@ public class event_metadata_tests : OneOffConfigurationsContext
 
         await using var session1 = theStore.LightweightSession();
         session1.Events.StartStream(streamKey, new QuestStarted("Concurrency"));
-        await session1.SaveChangesAsync();
+        await session1.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         session2.Events.Append(streamKey, 5, new MembersJoined(1, "Town", ["A"]));
 
         await Should.ThrowAsync<EventStreamUnexpectedMaxEventIdException>(
-            session2.SaveChangesAsync());
+            session2.SaveChangesAsync(TestContext.Current.CancellationToken));
     }
 
     // ===== Fetch with version/timestamp filters =====
@@ -598,10 +598,10 @@ public class event_metadata_tests : OneOffConfigurationsContext
             new MembersJoined(1, "Town", ["A"]),
             new ArrivedAtLocation("Castle", 2),
             new MonsterSlain("Dragon", 100));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId, version: 2);
+        var events = await query.Events.FetchStreamAsync(streamId, version: 2, token: TestContext.Current.CancellationToken);
 
         events.Count.ShouldBe(2);
         events[0].Version.ShouldBe(1);
@@ -621,10 +621,10 @@ public class event_metadata_tests : OneOffConfigurationsContext
             new MembersJoined(1, "Town", ["A"]),
             new ArrivedAtLocation("Castle", 2),
             new MonsterSlain("Dragon", 100));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId, fromVersion: 3);
+        var events = await query.Events.FetchStreamAsync(streamId, fromVersion: 3, token: TestContext.Current.CancellationToken);
 
         events.Count.ShouldBe(2);
         events[0].Version.ShouldBe(3);
@@ -653,10 +653,10 @@ public class event_metadata_tests : OneOffConfigurationsContext
         var action = session.Events.StartStream(streamId, new QuestStarted("Full Metadata"));
         action.Events[0].SetHeader("env", "test");
         action.Events[0].SetHeader("version", "1.0");
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
 
         events.Count.ShouldBe(1);
         events[0].CorrelationId.ShouldBe("full-meta-corr");

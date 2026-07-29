@@ -63,7 +63,7 @@ public class SerializerTests
         var json = _serializer.ToJson(original);
 
         using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(json));
-        var deserialized = await _serializer.FromJsonAsync<TestDocument>(stream);
+        var deserialized = await _serializer.FromJsonAsync<TestDocument>(stream, TestContext.Current.CancellationToken);
 
         deserialized.Id.ShouldBe(original.Id);
         deserialized.Name.ShouldBe(original.Name);

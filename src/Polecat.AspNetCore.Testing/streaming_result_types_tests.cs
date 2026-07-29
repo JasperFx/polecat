@@ -33,7 +33,7 @@ public class streaming_result_types_tests : IAsyncLifetime
         await using (var session = store.LightweightSession())
         {
             session.Store(issue);
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         var result = await _host.Scenario(s =>
@@ -66,7 +66,7 @@ public class streaming_result_types_tests : IAsyncLifetime
         {
             session.Store(new StreamingIssue { Id = Guid.NewGuid(), Title = "Issue A" });
             session.Store(new StreamingIssue { Id = Guid.NewGuid(), Title = "Issue B" });
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         var result = await _host.Scenario(s =>
@@ -86,7 +86,7 @@ public class streaming_result_types_tests : IAsyncLifetime
     public async Task stream_many_returns_empty_array_when_no_results()
     {
         var store = _host.Services.GetRequiredService<IDocumentStore>();
-        await store.Advanced.CleanAllDocumentsAsync();
+        await store.Advanced.CleanAllDocumentsAsync(TestContext.Current.CancellationToken);
 
         var result = await _host.Scenario(s =>
         {
@@ -110,7 +110,7 @@ public class streaming_result_types_tests : IAsyncLifetime
             session.Events.StartStream(streamId,
                 new StreamingQuestStarted("Fellowship"),
                 new StreamingMembersJoined(["Frodo", "Sam", "Gandalf"]));
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         var result = await _host.Scenario(s =>

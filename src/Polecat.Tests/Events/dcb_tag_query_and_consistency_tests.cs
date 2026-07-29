@@ -87,13 +87,13 @@ public class dcb_tag_query_and_consistency_tests : IntegrationContext
         var enrolled = theSession.Events.BuildEvent(new StudentEnrolled("Alice", "Math"));
         enrolled.WithTag(studentId, courseId);
         theSession.Events.Append(streamId, enrolled);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
         #endregion
 
         await using var session2 = theStore.LightweightSession();
         #region sample_polecat_dcb_query_by_single_tag
         var query = new EventTagQuery().Or<StudentId>(studentId);
-        var events = await session2.Events.QueryByTagsAsync(query);
+        var events = await session2.Events.QueryByTagsAsync(query, TestContext.Current.CancellationToken);
         #endregion
 
         events.Count.ShouldBe(1);
@@ -117,7 +117,7 @@ public class dcb_tag_query_and_consistency_tests : IntegrationContext
         e2.WithTag(student2, course);
         theSession.Events.Append(stream2, e2);
 
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         #region sample_polecat_dcb_query_multiple_tags_or
@@ -125,7 +125,7 @@ public class dcb_tag_query_and_consistency_tests : IntegrationContext
             .Or<StudentId>(student1)
             .Or<StudentId>(student2);
 
-        var events = await session2.Events.QueryByTagsAsync(query);
+        var events = await session2.Events.QueryByTagsAsync(query, TestContext.Current.CancellationToken);
         #endregion
         events.Count.ShouldBe(2);
     }
@@ -150,14 +150,14 @@ public class dcb_tag_query_and_consistency_tests : IntegrationContext
         submitted.WithTag(courseId);
         theSession.Events.Append(Guid.NewGuid(), submitted);
 
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         var query = new EventTagQuery()
             .Or<StudentId>(studentId)
             .Or<CourseId>(courseId);
 
-        var events = await session2.Events.QueryByTagsAsync(query);
+        var events = await session2.Events.QueryByTagsAsync(query, TestContext.Current.CancellationToken);
         events.Count.ShouldBe(2);
         events.ShouldContain(e => e.Data is StudentEnrolled);
         events.ShouldContain(e => e.Data is AssignmentSubmitted);
@@ -177,14 +177,14 @@ public class dcb_tag_query_and_consistency_tests : IntegrationContext
         submitted.WithTag(studentId, courseId);
 
         theSession.Events.Append(streamId, enrolled, submitted);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         #region sample_polecat_dcb_query_by_event_type
         var query = new EventTagQuery()
             .Or<AssignmentSubmitted, StudentId>(studentId);
 
-        var events = await session2.Events.QueryByTagsAsync(query);
+        var events = await session2.Events.QueryByTagsAsync(query, TestContext.Current.CancellationToken);
         #endregion
         events.Count.ShouldBe(1);
         events[0].Data.ShouldBeOfType<AssignmentSubmitted>().AssignmentName.ShouldBe("HW1");
@@ -201,11 +201,11 @@ public class dcb_tag_query_and_consistency_tests : IntegrationContext
         var enrolled = theSession.Events.BuildEvent(new StudentEnrolled("Alice", "Math"));
         enrolled.WithTag(studentId, courseId);
         theSession.Events.Append(streamId, enrolled);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         var query = new EventTagQuery().Or<StudentId>(otherStudentId);
-        var events = await session2.Events.QueryByTagsAsync(query);
+        var events = await session2.Events.QueryByTagsAsync(query, TestContext.Current.CancellationToken);
         events.Count.ShouldBe(0);
     }
 
@@ -223,7 +223,7 @@ public class dcb_tag_query_and_consistency_tests : IntegrationContext
         submitted.WithTag(studentId, courseId);
 
         theSession.Events.Append(streamId, enrolled, submitted);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         #region sample_polecat_dcb_aggregate_by_tags
@@ -231,7 +231,7 @@ public class dcb_tag_query_and_consistency_tests : IntegrationContext
             .Or<StudentId>(studentId)
             .Or<CourseId>(courseId);
 
-        var aggregate = await session2.Events.AggregateByTagsAsync<StudentCourseEnrollment>(query);
+        var aggregate = await session2.Events.AggregateByTagsAsync<StudentCourseEnrollment>(query, TestContext.Current.CancellationToken);
         #endregion
         aggregate.ShouldNotBeNull();
         aggregate.StudentName.ShouldBe("Alice");
@@ -246,7 +246,7 @@ public class dcb_tag_query_and_consistency_tests : IntegrationContext
 
         await using var session2 = theStore.LightweightSession();
         var query = new EventTagQuery().Or<StudentId>(studentId);
-        var aggregate = await session2.Events.AggregateByTagsAsync<StudentCourseEnrollment>(query);
+        var aggregate = await session2.Events.AggregateByTagsAsync<StudentCourseEnrollment>(query, TestContext.Current.CancellationToken);
         aggregate.ShouldBeNull();
     }
 
@@ -260,12 +260,12 @@ public class dcb_tag_query_and_consistency_tests : IntegrationContext
         var enrolled = theSession.Events.BuildEvent(new StudentEnrolled("Alice", "Math"));
         enrolled.WithTag(studentId, courseId);
         theSession.Events.Append(streamId, enrolled);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         #region sample_polecat_dcb_fetch_for_writing_by_tags
         await using var session2 = theStore.LightweightSession();
         var query = new EventTagQuery().Or<StudentId>(studentId);
-        var boundary = await session2.Events.FetchForWritingByTags<StudentCourseEnrollment>(query);
+        var boundary = await session2.Events.FetchForWritingByTags<StudentCourseEnrollment>(query, TestContext.Current.CancellationToken);
 
         // Read current state
         var aggregate = boundary.Aggregate; // may be null if no events yet
@@ -278,7 +278,7 @@ public class dcb_tag_query_and_consistency_tests : IntegrationContext
 
         // Save -- will throw DcbConcurrencyException if another session
         // appended matching events after our read
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
         #endregion
 
         boundary.Aggregate.ShouldNotBeNull();
@@ -298,11 +298,11 @@ public class dcb_tag_query_and_consistency_tests : IntegrationContext
         var enrolled = theSession.Events.BuildEvent(new StudentEnrolled("Alice", "Math"));
         enrolled.WithTag(studentId);
         theSession.Events.Append(studentId.Value, enrolled);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         var query = new EventTagQuery().Or<StudentId>(studentId);
-        var boundary = await session2.Events.FetchForWritingByTags<StudentCourseEnrollment>(query);
+        var boundary = await session2.Events.FetchForWritingByTags<StudentCourseEnrollment>(query, TestContext.Current.CancellationToken);
 
         var submitted = session2.Events.BuildEvent(new AssignmentSubmitted("HW1", 95));
         submitted.WithTag(studentId);
@@ -311,7 +311,7 @@ public class dcb_tag_query_and_consistency_tests : IntegrationContext
         await Should.NotThrowAsync(async () => await session2.SaveChangesAsync());
 
         await using var session3 = theStore.LightweightSession();
-        var events = await session3.Events.QueryByTagsAsync(new EventTagQuery().Or<StudentId>(studentId));
+        var events = await session3.Events.QueryByTagsAsync(new EventTagQuery().Or<StudentId>(studentId), TestContext.Current.CancellationToken);
         events.ShouldContain(e => e.Data is AssignmentSubmitted);
     }
 
@@ -325,19 +325,19 @@ public class dcb_tag_query_and_consistency_tests : IntegrationContext
         var enrolled = theSession.Events.BuildEvent(new StudentEnrolled("Alice", "Math"));
         enrolled.WithTag(studentId, courseId);
         theSession.Events.Append(streamId, enrolled);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Session 1: fetch for writing
         await using var session1 = theStore.LightweightSession();
         var query = new EventTagQuery().Or<StudentId>(studentId);
-        var boundary = await session1.Events.FetchForWritingByTags<StudentCourseEnrollment>(query);
+        var boundary = await session1.Events.FetchForWritingByTags<StudentCourseEnrollment>(query, TestContext.Current.CancellationToken);
 
         // Session 2: append a conflicting event BEFORE session 1 saves
         await using var session2 = theStore.LightweightSession();
         var conflicting = session2.Events.BuildEvent(new AssignmentSubmitted("HW-conflict", 50));
         conflicting.WithTag(studentId, courseId);
         session2.Events.Append(streamId, conflicting);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Session 1: try to save — should throw DcbConcurrencyException
         var assignment = session1.Events.BuildEvent(new AssignmentSubmitted("HW1", 95));
@@ -347,7 +347,7 @@ public class dcb_tag_query_and_consistency_tests : IntegrationContext
         #region sample_polecat_dcb_handling_concurrency
         try
         {
-            await session1.SaveChangesAsync();
+            await session1.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
         catch (AggregateException ex) when (ex.InnerExceptions.OfType<DcbConcurrencyException>().Any())
         {
@@ -371,26 +371,26 @@ public class dcb_tag_query_and_consistency_tests : IntegrationContext
         var enrolled1 = theSession.Events.BuildEvent(new StudentEnrolled("Alice", "Math"));
         enrolled1.WithTag(student1, course);
         theSession.Events.Append(stream1, enrolled1);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Session 1: fetch for writing for student1
         await using var session1 = theStore.LightweightSession();
         var query = new EventTagQuery().Or<StudentId>(student1);
-        var boundary = await session1.Events.FetchForWritingByTags<StudentCourseEnrollment>(query);
+        var boundary = await session1.Events.FetchForWritingByTags<StudentCourseEnrollment>(query, TestContext.Current.CancellationToken);
 
         // Session 2: append event for DIFFERENT student — should NOT conflict
         await using var session2 = theStore.LightweightSession();
         var enrolled2 = session2.Events.BuildEvent(new StudentEnrolled("Bob", "Math"));
         enrolled2.WithTag(student2, course);
         session2.Events.Append(stream2, enrolled2);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Session 1: save should succeed
         var assignment = session1.Events.BuildEvent(new AssignmentSubmitted("HW1", 95));
         assignment.WithTag(student1, course);
         boundary.AppendOne(assignment);
 
-        await session1.SaveChangesAsync(); // Should not throw
+        await session1.SaveChangesAsync(TestContext.Current.CancellationToken); // Should not throw
     }
 
     [Fact]
@@ -410,11 +410,11 @@ public class dcb_tag_query_and_consistency_tests : IntegrationContext
         enrolled2.WithTag(studentId, course2);
         theSession.Events.Append(stream2, enrolled2);
 
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         var query = new EventTagQuery().Or<StudentId>(studentId);
-        var events = await session2.Events.QueryByTagsAsync(query);
+        var events = await session2.Events.QueryByTagsAsync(query, TestContext.Current.CancellationToken);
 
         events.Count.ShouldBe(2);
     }
@@ -436,11 +436,11 @@ public class dcb_tag_query_and_consistency_tests : IntegrationContext
         hw2.WithTag(studentId, courseId);
 
         theSession.Events.Append(streamId, enrolled, hw1, hw2);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         var query = new EventTagQuery().Or<StudentId>(studentId);
-        var events = await session2.Events.QueryByTagsAsync(query);
+        var events = await session2.Events.QueryByTagsAsync(query, TestContext.Current.CancellationToken);
 
         events.Count.ShouldBe(3);
         events[0].Sequence.ShouldBeLessThan(events[1].Sequence);
@@ -456,7 +456,7 @@ public class dcb_tag_query_and_consistency_tests : IntegrationContext
         // Fetch for writing when no events exist
         await using var session1 = theStore.LightweightSession();
         var query = new EventTagQuery().Or<StudentId>(studentId);
-        var boundary = await session1.Events.FetchForWritingByTags<StudentCourseEnrollment>(query);
+        var boundary = await session1.Events.FetchForWritingByTags<StudentCourseEnrollment>(query, TestContext.Current.CancellationToken);
 
         boundary.Aggregate.ShouldBeNull();
         boundary.Events.Count.ShouldBe(0);
@@ -468,7 +468,7 @@ public class dcb_tag_query_and_consistency_tests : IntegrationContext
         enrolled.WithTag(studentId, courseId);
         var streamId = Guid.NewGuid();
         session2.Events.Append(streamId, enrolled);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Session 1 tries to save — should detect the new matching event
         var e = session1.Events.BuildEvent(new StudentEnrolled("Alice", "Math"));
@@ -492,13 +492,13 @@ public class dcb_tag_query_and_consistency_tests : IntegrationContext
         var enrolled = theSession.Events.BuildEvent(new StudentEnrolled("Alice", "Math"));
         enrolled.WithTag(studentId, courseId);
         theSession.Events.Append(streamId, enrolled);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         var batch = session2.CreateBatchQuery();
         var query = new EventTagQuery().Or<StudentId>(studentId);
         var boundaryTask = batch.FetchForWritingByTags<StudentCourseEnrollment>(query);
-        await batch.Execute();
+        await batch.Execute(TestContext.Current.CancellationToken);
 
         var boundary = await boundaryTask;
         boundary.Aggregate.ShouldNotBeNull();
@@ -510,7 +510,7 @@ public class dcb_tag_query_and_consistency_tests : IntegrationContext
         var assignment = session2.Events.BuildEvent(new AssignmentSubmitted("HW1", 95));
         assignment.WithTag(studentId, courseId);
         boundary.AppendOne(assignment);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
     }
 
     [Fact]
@@ -523,14 +523,14 @@ public class dcb_tag_query_and_consistency_tests : IntegrationContext
         var enrolled = theSession.Events.BuildEvent(new StudentEnrolled("Alice", "Math"));
         enrolled.WithTag(studentId, courseId);
         theSession.Events.Append(streamId, enrolled);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Session 1: fetch via batch query
         await using var session1 = theStore.LightweightSession();
         var batch = session1.CreateBatchQuery();
         var query = new EventTagQuery().Or<StudentId>(studentId);
         var boundaryTask = batch.FetchForWritingByTags<StudentCourseEnrollment>(query);
-        await batch.Execute();
+        await batch.Execute(TestContext.Current.CancellationToken);
         var boundary = await boundaryTask;
 
         // Session 2: append conflicting event
@@ -538,7 +538,7 @@ public class dcb_tag_query_and_consistency_tests : IntegrationContext
         var conflicting = session2.Events.BuildEvent(new AssignmentSubmitted("HW-conflict", 50));
         conflicting.WithTag(studentId, courseId);
         session2.Events.Append(streamId, conflicting);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Session 1: try to save — should throw
         var assignment = session1.Events.BuildEvent(new AssignmentSubmitted("HW1", 95));
@@ -563,12 +563,12 @@ public class dcb_tag_query_and_consistency_tests : IntegrationContext
         var enrolled = theSession.Events.BuildEvent(new StudentEnrolled("Alice", "Math"));
         enrolled.WithTag(studentId, courseId);
         theSession.Events.Append(streamId, enrolled);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Check existence -- lightweight, no event loading
         await using var session2 = theStore.LightweightSession();
         var query = new EventTagQuery().Or<StudentId>(studentId);
-        var exists = await session2.Events.EventsExistAsync(query);
+        var exists = await session2.Events.EventsExistAsync(query, TestContext.Current.CancellationToken);
         exists.ShouldBeTrue();
     }
     #endregion
@@ -580,7 +580,7 @@ public class dcb_tag_query_and_consistency_tests : IntegrationContext
 
         await using var session2 = theStore.LightweightSession();
         var query = new EventTagQuery().Or<StudentId>(studentId);
-        var exists = await session2.Events.EventsExistAsync(query);
+        var exists = await session2.Events.EventsExistAsync(query, TestContext.Current.CancellationToken);
         exists.ShouldBeFalse();
     }
 
@@ -594,17 +594,17 @@ public class dcb_tag_query_and_consistency_tests : IntegrationContext
         var enrolled = theSession.Events.BuildEvent(new StudentEnrolled("Alice", "Math"));
         enrolled.WithTag(studentId, courseId);
         theSession.Events.Append(streamId, enrolled);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
 
         // Should find StudentEnrolled
         var query1 = new EventTagQuery().Or<StudentEnrolled, StudentId>(studentId);
-        (await session2.Events.EventsExistAsync(query1)).ShouldBeTrue();
+        (await session2.Events.EventsExistAsync(query1, TestContext.Current.CancellationToken)).ShouldBeTrue();
 
         // Should NOT find AssignmentSubmitted (none appended)
         var query2 = new EventTagQuery().Or<AssignmentSubmitted, StudentId>(studentId);
-        (await session2.Events.EventsExistAsync(query2)).ShouldBeFalse();
+        (await session2.Events.EventsExistAsync(query2, TestContext.Current.CancellationToken)).ShouldBeFalse();
     }
 
     [Fact]
@@ -617,13 +617,13 @@ public class dcb_tag_query_and_consistency_tests : IntegrationContext
         var enrolled = theSession.Events.BuildEvent(new StudentEnrolled("Alice", "Math"));
         enrolled.WithTag(studentId, courseId);
         theSession.Events.Append(streamId, enrolled);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         var batch = session2.CreateBatchQuery();
         var query = new EventTagQuery().Or<StudentId>(studentId);
         var existsTask = batch.EventsExist(query);
-        await batch.Execute();
+        await batch.Execute(TestContext.Current.CancellationToken);
 
         (await existsTask).ShouldBeTrue();
     }
@@ -637,7 +637,7 @@ public class dcb_tag_query_and_consistency_tests : IntegrationContext
         var batch = session2.CreateBatchQuery();
         var query = new EventTagQuery().Or<StudentId>(studentId);
         var existsTask = batch.EventsExist(query);
-        await batch.Execute();
+        await batch.Execute(TestContext.Current.CancellationToken);
 
         (await existsTask).ShouldBeFalse();
     }
@@ -663,24 +663,24 @@ public class dcb_tag_query_and_consistency_tests : IntegrationContext
         var enrolled = theSession.Events.BuildEvent(new StudentEnrolled("Alice", "Math"));
         enrolled.WithTag(studentId, courseId);
         theSession.Events.Append(streamId, enrolled);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Fetch for writing
         await using var session2 = theStore.LightweightSession();
         var query = new EventTagQuery().Or<StudentId>(studentId);
-        var boundary = await session2.Events.FetchForWritingByTags<StudentCourseEnrollment>(query);
+        var boundary = await session2.Events.FetchForWritingByTags<StudentCourseEnrollment>(query, TestContext.Current.CancellationToken);
 
         // Append a raw event that has StudentId and CourseId properties —
         // tags should be inferred automatically
         boundary.AppendOne(new StudentGraded(studentId, courseId, 95));
 
         // Should succeed — tags inferred from properties
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Verify the event is discoverable by tag query
         await using var session3 = theStore.LightweightSession();
         var events = await session3.Events.QueryByTagsAsync(
-            new EventTagQuery().Or<StudentId>(studentId));
+            new EventTagQuery().Or<StudentId>(studentId), TestContext.Current.CancellationToken);
         events.Count.ShouldBe(2);
         events[1].Data.ShouldBeOfType<StudentGraded>().Grade.ShouldBe(95);
     }
@@ -696,12 +696,12 @@ public class dcb_tag_query_and_consistency_tests : IntegrationContext
         var enrolled = theSession.Events.BuildEvent(new StudentEnrolled("Alice", "Math"));
         enrolled.WithTag(studentId, courseId);
         theSession.Events.Append(streamId, enrolled);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Fetch for writing
         await using var session2 = theStore.LightweightSession();
         var query = new EventTagQuery().Or<StudentId>(studentId);
-        var boundary = await session2.Events.FetchForWritingByTags<StudentCourseEnrollment>(query);
+        var boundary = await session2.Events.FetchForWritingByTags<StudentCourseEnrollment>(query, TestContext.Current.CancellationToken);
 
         // Append an event with no tags and no tag-typed properties — should throw
         Should.Throw<InvalidOperationException>(() =>
@@ -721,19 +721,19 @@ public class dcb_tag_query_and_consistency_tests : IntegrationContext
         var enrolled = theSession.Events.BuildEvent(new StudentEnrolled("Alice", "Math"));
         enrolled.WithTag(studentId, courseId);
         theSession.Events.Append(streamId, enrolled);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Fetch for writing
         await using var session2 = theStore.LightweightSession();
         var query = new EventTagQuery().Or<StudentId>(studentId);
-        var boundary = await session2.Events.FetchForWritingByTags<StudentCourseEnrollment>(query);
+        var boundary = await session2.Events.FetchForWritingByTags<StudentCourseEnrollment>(query, TestContext.Current.CancellationToken);
 
         // Append an already-wrapped event with explicit tags
         var graded = session2.Events.BuildEvent(new StudentGraded(studentId, courseId, 88));
         graded.WithTag(studentId, courseId);
         boundary.AppendOne(graded);
 
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
     }
 
     [Fact]
@@ -754,11 +754,11 @@ public class dcb_tag_query_and_consistency_tests : IntegrationContext
         var enrolled = theSession.Events.BuildEvent(new StudentEnrolled("Alice", "Math"));
         enrolled.WithTag(studentId, courseId);
         theSession.Events.Append(streamId, enrolled);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         var query = new EventTagQuery().Or<StudentId>(studentId);
-        var boundary = await session2.Events.FetchForWritingByTags<StudentCourseEnrollment>(query);
+        var boundary = await session2.Events.FetchForWritingByTags<StudentCourseEnrollment>(query, TestContext.Current.CancellationToken);
 
         // CourseId tag has no AggregateType — should create a new stream per event
         var graded = session2.Events.BuildEvent(new StudentGraded(studentId, courseId, 90));
@@ -766,6 +766,6 @@ public class dcb_tag_query_and_consistency_tests : IntegrationContext
         boundary.AppendOne(graded);
 
         // Should succeed — unrouted tag creates a new stream
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
     }
 }

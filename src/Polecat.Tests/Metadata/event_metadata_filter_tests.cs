@@ -159,7 +159,7 @@ public class event_metadata_filter_tests
         {
             session.Events.StartStream(streamA, new MetricRecorded(1), new MetricRecorded(2));
             session.Events.StartStream(streamB, new MetricRecorded(3));
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         // EventTypeName matches the only type → all 3 events.

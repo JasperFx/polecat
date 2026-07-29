@@ -39,13 +39,13 @@ public class event_store_explorer_tests : IntegrationContext
         await using (var s = store.LightweightSession())
         {
             s.Events.StartStream<QuestParty>(firstId, new QuestStarted("first"));
-            await s.SaveChangesAsync();
+            await s.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using (var s = store.LightweightSession())
         {
             s.Events.StartStream<QuestParty>(secondId, new QuestStarted("second"));
-            await s.SaveChangesAsync();
+            await s.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         IEventStore es = store;
@@ -71,7 +71,7 @@ public class event_store_explorer_tests : IntegrationContext
                 new QuestStarted("explorer"),
                 new MembersJoined(1, "Town", new[] { "Frodo" }),
                 new MonsterSlain("orc", 5));
-            await s.SaveChangesAsync();
+            await s.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         IEventStore es = store;
@@ -97,7 +97,7 @@ public class event_store_explorer_tests : IntegrationContext
         {
             s.Events.StartStream<QuestParty>(streamId, new QuestStarted("meta"),
                 new MembersJoined(1, "T", new[] { "P" }));
-            await s.SaveChangesAsync();
+            await s.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         IEventStore es = store;
@@ -153,7 +153,7 @@ public class event_store_explorer_tests : IntegrationContext
             s.Events.StartStream<QuestParty>(streamId,
                 new QuestStarted("rehydrate"),
                 new MembersJoined(1, "T", new[] { "Sam" }));
-            await s.SaveChangesAsync();
+            await s.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         IEventStore es = store;
@@ -176,7 +176,7 @@ public class event_store_explorer_tests : IntegrationContext
             s.Events.StartStream<QuestParty>(streamId,
                 new QuestStarted("by-name"),
                 new MembersJoined(2, "T", new[] { "Merry" }));
-            await s.SaveChangesAsync();
+            await s.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         IEventStore es = store;
@@ -238,7 +238,7 @@ public class event_store_explorer_tests : IntegrationContext
         await using (var s = store.LightweightSession())
         {
             s.Events.StartStream<QuestParty>(Guid.NewGuid(), new QuestStarted("registry"));
-            await s.SaveChangesAsync();
+            await s.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         IEventStore es = store;

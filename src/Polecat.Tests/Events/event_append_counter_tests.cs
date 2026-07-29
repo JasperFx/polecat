@@ -65,7 +65,7 @@ public class event_append_counter_tests : IAsyncLifetime
         {
             await using var session = store.LightweightSession();
             session.Events.StartStream(Guid.NewGuid(), new QuestStarted("No counter"));
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         measurements.ShouldBeEmpty();
@@ -86,7 +86,7 @@ public class event_append_counter_tests : IAsyncLifetime
                 new QuestStarted("Counter Quest"),
                 new MembersJoined(1, "Town", ["A"]),
                 new MembersJoined(2, "City", ["B"]));
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
             listener.RecordObservableInstruments();
         }

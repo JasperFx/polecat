@@ -92,7 +92,7 @@ public class natural_key_inline_guid_tests : OneOffConfigurationsContext
 
         await using var session = theStore.LightweightSession();
         await Should.ThrowAsync<InvalidOperationException>(
-            session.Events.FetchForWriting<OrderAggregate, OrderNumber>(orderNumber));
+            session.Events.FetchForWriting<OrderAggregate, OrderNumber>(orderNumber, TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -107,19 +107,19 @@ public class natural_key_inline_guid_tests : OneOffConfigurationsContext
         session1.Events.StartStream(streamId,
             new NkOrderCreated(orderNumber, "Alice"),
             new NkOrderItemAdded("Widget", 9.99m));
-        await session1.SaveChangesAsync();
+        await session1.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         #region sample_polecat_fetch_for_writing_by_natural_key
         // FetchForWriting by the business identifier instead of stream id
-        var stream = await session2.Events.FetchForWriting<OrderAggregate, OrderNumber>(orderNumber);
+        var stream = await session2.Events.FetchForWriting<OrderAggregate, OrderNumber>(orderNumber, TestContext.Current.CancellationToken);
 
         stream.Aggregate.ShouldNotBeNull();
         stream.Aggregate!.OrderNum.ShouldBe(orderNumber);
 
         // Append new events through the stream
         stream.AppendOne(new NkOrderItemAdded("Gadget", 19.99m));
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
         #endregion
     }
 
@@ -134,16 +134,16 @@ public class natural_key_inline_guid_tests : OneOffConfigurationsContext
         await using var session1 = theStore.LightweightSession();
         session1.Events.StartStream(streamId,
             new NkOrderCreated(orderNumber, "Bob"));
-        await session1.SaveChangesAsync();
+        await session1.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
-        var stream = await session2.Events.FetchForWriting<OrderAggregate, OrderNumber>(orderNumber);
+        var stream = await session2.Events.FetchForWriting<OrderAggregate, OrderNumber>(orderNumber, TestContext.Current.CancellationToken);
         stream.AppendOne(new NkOrderItemAdded("Gadget", 19.99m));
         stream.AppendOne(new NkOrderCompleted());
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session3 = theStore.LightweightSession();
-        var verify = await session3.Events.FetchForWriting<OrderAggregate, OrderNumber>(orderNumber);
+        var verify = await session3.Events.FetchForWriting<OrderAggregate, OrderNumber>(orderNumber, TestContext.Current.CancellationToken);
 
         verify.Aggregate.ShouldNotBeNull();
         verify.Aggregate!.TotalAmount.ShouldBe(19.99m);
@@ -163,12 +163,12 @@ public class natural_key_inline_guid_tests : OneOffConfigurationsContext
         session1.Events.StartStream(streamId,
             new NkOrderCreated(orderNumber, "Charlie"),
             new NkOrderItemAdded("Doohickey", 5.50m));
-        await session1.SaveChangesAsync();
+        await session1.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         #region sample_polecat_fetch_latest_by_natural_key
         // Read-only access by natural key
-        var aggregate = await session2.Events.FetchLatest<OrderAggregate, OrderNumber>(orderNumber);
+        var aggregate = await session2.Events.FetchLatest<OrderAggregate, OrderNumber>(orderNumber, TestContext.Current.CancellationToken);
         #endregion
 
         aggregate.ShouldNotBeNull();
@@ -185,7 +185,7 @@ public class natural_key_inline_guid_tests : OneOffConfigurationsContext
         var orderNumber = new OrderNumber("ORD-NO-SUCH-KEY");
 
         await using var session = theStore.LightweightSession();
-        var aggregate = await session.Events.FetchLatest<OrderAggregate, OrderNumber>(orderNumber);
+        var aggregate = await session.Events.FetchLatest<OrderAggregate, OrderNumber>(orderNumber, TestContext.Current.CancellationToken);
 
         aggregate.ShouldBeNull();
     }
@@ -202,10 +202,10 @@ public class natural_key_inline_guid_tests : OneOffConfigurationsContext
         session1.Events.StartStream(streamId,
             new NkOrderCreated(orderNumber, "Dana"),
             new NkOrderItemAdded("Thingamajig", 12.00m));
-        await session1.SaveChangesAsync();
+        await session1.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
-        var stream = await session2.Events.FetchForExclusiveWriting<OrderAggregate, OrderNumber>(orderNumber);
+        var stream = await session2.Events.FetchForExclusiveWriting<OrderAggregate, OrderNumber>(orderNumber, TestContext.Current.CancellationToken);
 
         stream.Aggregate.ShouldNotBeNull();
         stream.Aggregate!.OrderNum.ShouldBe(orderNumber);
@@ -213,10 +213,10 @@ public class natural_key_inline_guid_tests : OneOffConfigurationsContext
         stream.StartingVersion.ShouldBe(2);
 
         stream.AppendOne(new NkOrderCompleted());
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
         events.Count.ShouldBe(3);
     }
 
@@ -233,18 +233,18 @@ public class natural_key_inline_guid_tests : OneOffConfigurationsContext
         await using var session1 = theStore.LightweightSession();
         session1.Events.StartStream(streamId,
             new NkOrderCreated(originalKey, "Eve"));
-        await session1.SaveChangesAsync();
+        await session1.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Change the natural key
         await using var session2 = theStore.LightweightSession();
-        var stream = await session2.Events.FetchForWriting<OrderAggregate, OrderNumber>(originalKey);
+        var stream = await session2.Events.FetchForWriting<OrderAggregate, OrderNumber>(originalKey, TestContext.Current.CancellationToken);
         stream.AppendOne(new NkOrderNumberChanged(newKey));
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Fetch by new key should work
         {
             await using var session3 = theStore.LightweightSession();
-            var byNewKey = await session3.Events.FetchForWriting<OrderAggregate, OrderNumber>(newKey);
+            var byNewKey = await session3.Events.FetchForWriting<OrderAggregate, OrderNumber>(newKey, TestContext.Current.CancellationToken);
 
             byNewKey.Aggregate.ShouldNotBeNull();
             byNewKey.Aggregate!.OrderNum.ShouldBe(newKey);
@@ -255,7 +255,7 @@ public class natural_key_inline_guid_tests : OneOffConfigurationsContext
         // Fetch by old key still works because the old mapping row persists
         {
             await using var session4 = theStore.LightweightSession();
-            var byOldKey = await session4.Events.FetchForWriting<OrderAggregate, OrderNumber>(originalKey);
+            var byOldKey = await session4.Events.FetchForWriting<OrderAggregate, OrderNumber>(originalKey, TestContext.Current.CancellationToken);
             byOldKey.Aggregate.ShouldNotBeNull();
             byOldKey.Id.ShouldBe(streamId);
         }
@@ -268,7 +268,7 @@ public class natural_key_inline_guid_tests : OneOffConfigurationsContext
         {
             opts.Projections.Add<SingleStreamProjection<InvoiceAggregate, Guid>>(ProjectionLifecycle.Inline);
         });
-        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync();
+        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         var streamId = Guid.NewGuid();
         var invoiceCode = "INV-2024-001";
@@ -276,11 +276,11 @@ public class natural_key_inline_guid_tests : OneOffConfigurationsContext
         await using var session1 = theStore.LightweightSession();
         session1.Events.StartStream(streamId,
             new NkInvoiceCreated(invoiceCode, 250.00m));
-        await session1.SaveChangesAsync();
+        await session1.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // FetchForWriting by primitive string key
         await using var session2 = theStore.LightweightSession();
-        var stream = await session2.Events.FetchForWriting<InvoiceAggregate, string>(invoiceCode);
+        var stream = await session2.Events.FetchForWriting<InvoiceAggregate, string>(invoiceCode, TestContext.Current.CancellationToken);
 
         stream.Aggregate.ShouldNotBeNull();
         stream.Aggregate!.InvoiceCode.ShouldBe(invoiceCode);
@@ -289,7 +289,7 @@ public class natural_key_inline_guid_tests : OneOffConfigurationsContext
 
         // FetchLatest by primitive string key
         await using var session3 = theStore.LightweightSession();
-        var latest = await session3.Events.FetchLatest<InvoiceAggregate, string>(invoiceCode);
+        var latest = await session3.Events.FetchLatest<InvoiceAggregate, string>(invoiceCode, TestContext.Current.CancellationToken);
 
         latest.ShouldNotBeNull();
         latest!.InvoiceCode.ShouldBe(invoiceCode);
@@ -327,10 +327,10 @@ public class natural_key_live_tests : OneOffConfigurationsContext
             new NkOrderCreated(orderNumber, "Frank"),
             new NkOrderItemAdded("Live Widget", 15.00m),
             new NkOrderItemAdded("Live Gadget", 25.00m));
-        await session1.SaveChangesAsync();
+        await session1.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
-        var stream = await session2.Events.FetchForWriting<OrderAggregate, OrderNumber>(orderNumber);
+        var stream = await session2.Events.FetchForWriting<OrderAggregate, OrderNumber>(orderNumber, TestContext.Current.CancellationToken);
 
         stream.Aggregate.ShouldNotBeNull();
         stream.Aggregate!.OrderNum.ShouldBe(orderNumber);
@@ -351,10 +351,10 @@ public class natural_key_live_tests : OneOffConfigurationsContext
         session1.Events.StartStream(streamId,
             new NkOrderCreated(orderNumber, "Grace"),
             new NkOrderItemAdded("Item A", 10.00m));
-        await session1.SaveChangesAsync();
+        await session1.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
-        var aggregate = await session2.Events.FetchLatest<OrderAggregate, OrderNumber>(orderNumber);
+        var aggregate = await session2.Events.FetchLatest<OrderAggregate, OrderNumber>(orderNumber, TestContext.Current.CancellationToken);
 
         aggregate.ShouldNotBeNull();
         aggregate!.OrderNum.ShouldBe(orderNumber);
@@ -391,10 +391,10 @@ public class natural_key_string_identity_tests : OneOffConfigurationsContext
         session1.Events.StartStream(streamKey,
             new NkOrderCreated(orderNumber, "Hank"),
             new NkOrderItemAdded("String Widget", 7.50m));
-        await session1.SaveChangesAsync();
+        await session1.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
-        var stream = await session2.Events.FetchForWriting<OrderAggregate, OrderNumber>(orderNumber);
+        var stream = await session2.Events.FetchForWriting<OrderAggregate, OrderNumber>(orderNumber, TestContext.Current.CancellationToken);
 
         stream.Aggregate.ShouldNotBeNull();
         stream.Aggregate!.OrderNum.ShouldBe(orderNumber);
@@ -404,10 +404,10 @@ public class natural_key_string_identity_tests : OneOffConfigurationsContext
 
         // Append and save via natural key
         stream.AppendOne(new NkOrderCompleted());
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamKey);
+        var events = await query.Events.FetchStreamAsync(streamKey, token: TestContext.Current.CancellationToken);
         events.Count.ShouldBe(3);
     }
 
@@ -423,10 +423,10 @@ public class natural_key_string_identity_tests : OneOffConfigurationsContext
         session1.Events.StartStream(streamKey,
             new NkOrderCreated(orderNumber, "Irene"),
             new NkOrderItemAdded("String Gadget", 30.00m));
-        await session1.SaveChangesAsync();
+        await session1.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
-        var aggregate = await session2.Events.FetchLatest<OrderAggregate, OrderNumber>(orderNumber);
+        var aggregate = await session2.Events.FetchLatest<OrderAggregate, OrderNumber>(orderNumber, TestContext.Current.CancellationToken);
 
         aggregate.ShouldNotBeNull();
         aggregate!.OrderNum.ShouldBe(orderNumber);

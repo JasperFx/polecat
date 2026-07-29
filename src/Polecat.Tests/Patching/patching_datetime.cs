@@ -28,14 +28,14 @@ public class patching_datetime : IntegrationContext
     {
         var target = Target.Random();
         theSession.Store(target);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var expected = new DateTime(2026, 6, 29, 12, 13, 26, DateTimeKind.Utc);
         theSession.Patch<Target>(target.Id).Set(x => x.DateTime, expected);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        (await query.LoadAsync<Target>(target.Id))!.DateTime.ShouldBe(expected);
+        (await query.LoadAsync<Target>(target.Id, TestContext.Current.CancellationToken))!.DateTime.ShouldBe(expected);
     }
 
     [Fact]
@@ -43,14 +43,14 @@ public class patching_datetime : IntegrationContext
     {
         var target = Target.Random();
         theSession.Store(target);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var expected = new DateTimeOffset(2026, 6, 29, 12, 13, 26, TimeSpan.FromHours(2));
         theSession.Patch<Target>(target.Id).Set(x => x.DateTimeOffset, expected);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        (await query.LoadAsync<Target>(target.Id))!.DateTimeOffset.ShouldBe(expected);
+        (await query.LoadAsync<Target>(target.Id, TestContext.Current.CancellationToken))!.DateTimeOffset.ShouldBe(expected);
     }
 
     [Fact]
@@ -58,14 +58,14 @@ public class patching_datetime : IntegrationContext
     {
         var target = Target.Random();
         theSession.Store(target);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var expected = new DateOnly(2026, 6, 29);
         theSession.Patch<Target>(target.Id).Set(x => x.DateOnly, expected);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        (await query.LoadAsync<Target>(target.Id))!.DateOnly.ShouldBe(expected);
+        (await query.LoadAsync<Target>(target.Id, TestContext.Current.CancellationToken))!.DateOnly.ShouldBe(expected);
     }
 
     [Fact]
@@ -73,14 +73,14 @@ public class patching_datetime : IntegrationContext
     {
         var target = Target.Random();
         theSession.Store(target);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var expected = new TimeOnly(12, 13, 26);
         theSession.Patch<Target>(target.Id).Set(x => x.TimeOnly, expected);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        (await query.LoadAsync<Target>(target.Id))!.TimeOnly.ShouldBe(expected);
+        (await query.LoadAsync<Target>(target.Id, TestContext.Current.CancellationToken))!.TimeOnly.ShouldBe(expected);
     }
 
     [Fact]
@@ -88,14 +88,14 @@ public class patching_datetime : IntegrationContext
     {
         var target = Target.Random();
         theSession.Store(target);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var expected = new DateTimeOffset(2026, 6, 29, 12, 13, 26, TimeSpan.FromHours(2));
         theSession.Patch<Target>(target.Id).Set(x => x.NullableDateTimeOffset, expected);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        (await query.LoadAsync<Target>(target.Id))!.NullableDateTimeOffset.ShouldBe(expected);
+        (await query.LoadAsync<Target>(target.Id, TestContext.Current.CancellationToken))!.NullableDateTimeOffset.ShouldBe(expected);
     }
 
     [Fact]
@@ -103,13 +103,13 @@ public class patching_datetime : IntegrationContext
     {
         var target = new Target { Id = Guid.NewGuid(), Color = "Blue" };
         theSession.Store(target);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var expected = new DateTimeOffset(2026, 6, 29, 12, 13, 26, TimeSpan.FromHours(2));
         theSession.Patch<Target>(x => x.Color == "Blue").Set(x => x.DateTimeOffset, expected);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        (await query.LoadAsync<Target>(target.Id))!.DateTimeOffset.ShouldBe(expected);
+        (await query.LoadAsync<Target>(target.Id, TestContext.Current.CancellationToken))!.DateTimeOffset.ShouldBe(expected);
     }
 }

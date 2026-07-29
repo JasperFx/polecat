@@ -16,11 +16,11 @@ public class IdentityMapTests : IntegrationContext
 
         await using var session = theStore.LightweightSession();
         session.Store(user);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var identitySession = theStore.IdentitySession();
-        var first = await identitySession.LoadAsync<User>(user.Id);
-        var second = await identitySession.LoadAsync<User>(user.Id);
+        var first = await identitySession.LoadAsync<User>(user.Id, TestContext.Current.CancellationToken);
+        var second = await identitySession.LoadAsync<User>(user.Id, TestContext.Current.CancellationToken);
 
         first.ShouldNotBeNull();
         ReferenceEquals(first, second).ShouldBeTrue();
@@ -35,7 +35,7 @@ public class IdentityMapTests : IntegrationContext
         session.Store(user);
 
         // Even before SaveChanges, the identity map should return the stored object
-        var loaded = await session.LoadAsync<User>(user.Id);
+        var loaded = await session.LoadAsync<User>(user.Id, TestContext.Current.CancellationToken);
         loaded.ShouldNotBeNull();
         ReferenceEquals(loaded, user).ShouldBeTrue();
     }
@@ -48,15 +48,15 @@ public class IdentityMapTests : IntegrationContext
 
         await using var insertSession = theStore.LightweightSession();
         insertSession.Store(user1, user2);
-        await insertSession.SaveChangesAsync();
+        await insertSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session = theStore.IdentitySession();
-        var loaded = await session.LoadManyAsync<User>([user1.Id, user2.Id]);
+        var loaded = await session.LoadManyAsync<User>([user1.Id, user2.Id], TestContext.Current.CancellationToken);
         loaded.Count.ShouldBe(2);
 
         // Subsequent loads should return the same references
-        var r2 = await session.LoadAsync<User>(user1.Id);
-        var c3 = await session.LoadAsync<User>(user2.Id);
+        var r2 = await session.LoadAsync<User>(user1.Id, TestContext.Current.CancellationToken);
+        var c3 = await session.LoadAsync<User>(user2.Id, TestContext.Current.CancellationToken);
 
         loaded.ShouldContain(d => ReferenceEquals(d, r2));
         loaded.ShouldContain(d => ReferenceEquals(d, c3));
@@ -69,11 +69,11 @@ public class IdentityMapTests : IntegrationContext
 
         await using var insertSession = theStore.LightweightSession();
         insertSession.Store(user);
-        await insertSession.SaveChangesAsync();
+        await insertSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session = theStore.LightweightSession();
-        var first = await session.LoadAsync<User>(user.Id);
-        var second = await session.LoadAsync<User>(user.Id);
+        var first = await session.LoadAsync<User>(user.Id, TestContext.Current.CancellationToken);
+        var second = await session.LoadAsync<User>(user.Id, TestContext.Current.CancellationToken);
 
         first.ShouldNotBeNull();
         second.ShouldNotBeNull();

@@ -33,11 +33,11 @@ public class metadata_for_async_tests : OneOffConfigurationsContext
         await using (var session = theStore.LightweightSession())
         {
             session.Store(doc);
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using var query = theStore.QuerySession();
-        var metadata = await query.MetadataForAsync(doc);
+        var metadata = await query.MetadataForAsync(doc, TestContext.Current.CancellationToken);
 
         metadata.ShouldNotBeNull();
         metadata.Id.ShouldBe(doc.Id);
@@ -57,14 +57,14 @@ public class metadata_for_async_tests : OneOffConfigurationsContext
         await using (var session = theStore.LightweightSession())
         {
             session.Store(doc);
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
             doc.Name = "B";
             session.Store(doc);
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using var query = theStore.QuerySession();
-        var metadata = await query.MetadataForAsync<Doc>(doc.Id);
+        var metadata = await query.MetadataForAsync<Doc>(doc.Id, TestContext.Current.CancellationToken);
         metadata!.Version.ShouldBe(2);
     }
 
@@ -87,11 +87,11 @@ public class metadata_for_async_tests : OneOffConfigurationsContext
             session.LastModifiedBy = "user-9";
             session.SetHeader("region", "us");
             session.Store(doc);
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using var query = theStore.QuerySession();
-        var metadata = await query.MetadataForAsync(doc);
+        var metadata = await query.MetadataForAsync(doc, TestContext.Current.CancellationToken);
 
         metadata!.CorrelationId.ShouldBe("corr-9");
         metadata.CausationId.ShouldBe("cause-9");
@@ -108,11 +108,11 @@ public class metadata_for_async_tests : OneOffConfigurationsContext
         await using (var session = theStore.LightweightSession())
         {
             session.Store(new Doc { Id = Guid.NewGuid(), Name = "seed" });
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using var query = theStore.QuerySession();
-        (await query.MetadataForAsync<Doc>(Guid.NewGuid())).ShouldBeNull();
+        (await query.MetadataForAsync<Doc>(Guid.NewGuid(), TestContext.Current.CancellationToken)).ShouldBeNull();
     }
 
     [Fact]
@@ -124,13 +124,13 @@ public class metadata_for_async_tests : OneOffConfigurationsContext
         await using (var session = theStore.LightweightSession())
         {
             session.Store(doc);
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
             session.Delete(doc); // soft delete
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using var query = theStore.QuerySession();
-        var metadata = await query.MetadataForAsync<SoftDoc>(doc.Id);
+        var metadata = await query.MetadataForAsync<SoftDoc>(doc.Id, TestContext.Current.CancellationToken);
 
         metadata.ShouldNotBeNull();
         metadata.Deleted.ShouldBeTrue();

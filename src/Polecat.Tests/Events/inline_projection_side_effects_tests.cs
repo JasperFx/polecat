@@ -28,12 +28,12 @@ public partial class inline_projection_side_effects_tests : OneOffConfigurations
                 new SingleStreamProjection<InlineSeAggregate, Guid>(),
                 ProjectionLifecycle.Inline);
         });
-        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync();
+        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         var streamId = Guid.NewGuid();
         await using var session = theStore.LightweightSession();
         session.Events.StartStream(streamId, new InlineSeStarted("hello"));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         outbox.CreateBatchCount.ShouldBe(0);
     }
@@ -51,12 +51,12 @@ public partial class inline_projection_side_effects_tests : OneOffConfigurations
                 new InlineSeProjection(),
                 ProjectionLifecycle.Inline);
         });
-        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync();
+        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         var streamId = Guid.NewGuid();
         await using var session = theStore.LightweightSession();
         session.Events.StartStream(streamId, new InlineSeStarted("hello"));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         outbox.CreateBatchCount.ShouldBe(1);
         outbox.LastBatch.ShouldNotBeNull();
@@ -78,12 +78,12 @@ public partial class inline_projection_side_effects_tests : OneOffConfigurations
                 new InlineSeProjection(),
                 ProjectionLifecycle.Inline);
         });
-        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync();
+        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         var streamId = Guid.NewGuid();
         await using var session = theStore.LightweightSession();
         session.Events.StartStream(streamId, new InlineSeStarted("evt"));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         outbox.LastBatch!.Calls.ShouldBe(["publish", "before", "after"]);
     }

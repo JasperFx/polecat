@@ -24,7 +24,7 @@ public class session_listener_tests : IntegrationContext
 
         var doc = new LinqTarget { Id = Guid.NewGuid(), Name = "listener-test" };
         theSession.Store(doc);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         listener.BeforeSaveCalled.ShouldBeTrue();
     }
@@ -42,7 +42,7 @@ public class session_listener_tests : IntegrationContext
 
         var doc = new LinqTarget { Id = Guid.NewGuid(), Name = "listener-test" };
         theSession.Store(doc);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         listener.AfterCommitCalled.ShouldBeTrue();
     }
@@ -59,7 +59,7 @@ public class session_listener_tests : IntegrationContext
 
         var doc = new LinqTarget { Id = Guid.NewGuid(), Name = "session-listener" };
         session.Store(doc);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         listener.BeforeSaveCalled.ShouldBeTrue();
         listener.AfterCommitCalled.ShouldBeTrue();
@@ -84,7 +84,7 @@ public class session_listener_tests : IntegrationContext
 
         var doc = new LinqTarget { Id = Guid.NewGuid(), Name = "both-listeners" };
         session.Store(doc);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         globalListener.BeforeSaveCalled.ShouldBeTrue();
         globalListener.AfterCommitCalled.ShouldBeTrue();
@@ -105,7 +105,7 @@ public class session_listener_tests : IntegrationContext
 
         var doc = new LinqTarget { Id = Guid.NewGuid(), Name = "inspect-pending" };
         theSession.Store(doc);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         listener.PendingCountAtBeforeSave.ShouldBe(1);
         listener.PendingCountAtAfterCommit.ShouldBe(0); // cleared after commit
@@ -123,7 +123,7 @@ public class session_listener_tests : IntegrationContext
         });
 
         // SaveChanges with no pending work
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         listener.BeforeSaveCalled.ShouldBeFalse();
         listener.AfterCommitCalled.ShouldBeFalse();
@@ -147,7 +147,7 @@ public class session_listener_tests : IntegrationContext
         {
             seed.Store(toUpdate);
             seed.Store(toDelete);
-            await seed.SaveChangesAsync();
+            await seed.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         var inserted = new LinqTarget { Id = Guid.NewGuid(), Name = "fresh" };
@@ -155,7 +155,7 @@ public class session_listener_tests : IntegrationContext
         theSession.Insert(inserted);  // Insert role
         theSession.Update(toUpdate);  // Update role
         theSession.Delete(toDelete);  // Deletion role
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         listener.Commit.ShouldNotBeNull();
         var commit = listener.Commit!;
@@ -180,12 +180,12 @@ public class session_listener_tests : IntegrationContext
 
         var doc = new LinqTarget { Id = Guid.NewGuid(), Name = "original" };
         theSession.Store(doc);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Both docs should be saved
         await using var query = theStore.QuerySession();
-        var loaded1 = await query.LoadAsync<LinqTarget>(doc.Id);
-        var loaded2 = await query.LoadAsync<LinqTarget>(extraDoc.Id);
+        var loaded1 = await query.LoadAsync<LinqTarget>(doc.Id, TestContext.Current.CancellationToken);
+        var loaded2 = await query.LoadAsync<LinqTarget>(extraDoc.Id, TestContext.Current.CancellationToken);
 
         loaded1.ShouldNotBeNull();
         loaded2.ShouldNotBeNull();

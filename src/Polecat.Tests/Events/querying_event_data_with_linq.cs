@@ -29,13 +29,13 @@ public class querying_event_data_with_linq : OneOffConfigurationsContext
         await using var session = theStore.LightweightSession();
         session.Events.StartStream(Guid.NewGuid(), joined1, departed1);
         session.Events.StartStream(Guid.NewGuid(), joined2, departed2);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var count = await query.Events.QueryRawEventDataOnly<MembersJoined>().CountAsync();
+        var count = await query.Events.QueryRawEventDataOnly<MembersJoined>().CountAsync(TestContext.Current.CancellationToken);
         count.ShouldBe(2);
 
-        var allJoined = await query.Events.QueryRawEventDataOnly<MembersJoined>().ToListAsync();
+        var allJoined = await query.Events.QueryRawEventDataOnly<MembersJoined>().ToListAsync(TestContext.Current.CancellationToken);
         allJoined.Count.ShouldBe(2);
         allJoined.SelectMany(x => x.Members).Distinct()
             .OrderBy(x => x)
@@ -50,10 +50,10 @@ public class querying_event_data_with_linq : OneOffConfigurationsContext
         await using var session = theStore.LightweightSession();
         session.Events.StartStream(Guid.NewGuid(), joined1, departed1);
         session.Events.StartStream(Guid.NewGuid(), joined2, departed2);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var results = await query.Events.QueryAllRawEvents().ToListAsync();
+        var results = await query.Events.QueryAllRawEvents().ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(4);
     }
@@ -66,11 +66,11 @@ public class querying_event_data_with_linq : OneOffConfigurationsContext
         await using var session = theStore.LightweightSession();
         session.Events.StartStream(Guid.NewGuid(), joined1, departed1);
         session.Events.StartStream(Guid.NewGuid(), joined2, departed2);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
         var count = await query.Events.QueryAllRawEvents()
-            .CountAsync(x => x.Sequence <= 2);
+            .CountAsync(x => x.Sequence <= 2, TestContext.Current.CancellationToken);
         count.ShouldBe(2);
     }
 
@@ -82,11 +82,11 @@ public class querying_event_data_with_linq : OneOffConfigurationsContext
         await using var session = theStore.LightweightSession();
         session.Events.StartStream(Guid.NewGuid(), joined1, departed1);
         session.Events.StartStream(Guid.NewGuid(), joined2, departed2);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
         var count = await query.Events.QueryAllRawEvents()
-            .CountAsync(x => x.Version == 1);
+            .CountAsync(x => x.Version == 1, TestContext.Current.CancellationToken);
         count.ShouldBe(2);
     }
 
@@ -101,11 +101,11 @@ public class querying_event_data_with_linq : OneOffConfigurationsContext
         await using var session = theStore.LightweightSession();
         session.Events.StartStream(stream1, joined1, departed1);
         session.Events.StartStream(stream2, joined2, departed2);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
         var count = await query.Events.QueryAllRawEvents()
-            .CountAsync(x => x.StreamId == stream1);
+            .CountAsync(x => x.StreamId == stream1, TestContext.Current.CancellationToken);
         count.ShouldBe(2);
     }
 
@@ -117,14 +117,14 @@ public class querying_event_data_with_linq : OneOffConfigurationsContext
         await using var session = theStore.LightweightSession();
         session.Events.StartStream(Guid.NewGuid(), joined1, departed1);
         session.Events.StartStream(Guid.NewGuid(), joined2, departed2);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var joinedTypeName = theStore.Options.EventGraph.EventMappingFor(typeof(MembersJoined)).EventTypeName;
 
         await using var query = theStore.QuerySession();
         var events = await query.Events.QueryAllRawEvents()
             .Where(x => x.EventTypeName == joinedTypeName)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         events.Count.ShouldBe(2);
         events.ShouldAllBe(e => e.Data is MembersJoined);
@@ -138,13 +138,13 @@ public class querying_event_data_with_linq : OneOffConfigurationsContext
         await using var session = theStore.LightweightSession();
         session.Events.StartStream(Guid.NewGuid(), joined1, departed1);
         session.Events.StartStream(Guid.NewGuid(), joined2, departed2);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
         var events = await query.Events.QueryAllRawEvents()
             .OrderBy(x => x.Sequence)
             .Take(2)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         events.Count.ShouldBe(2);
         events[0].Sequence.ShouldBeLessThan(events[1].Sequence);
@@ -160,12 +160,12 @@ public class querying_event_data_with_linq : OneOffConfigurationsContext
         await using var session = theStore.LightweightSession();
         session.Events.StartStream(Guid.NewGuid(), joined1, departed1);
         session.Events.StartStream(Guid.NewGuid(), joined2, departed2);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
         var results = await query.Events.QueryAllRawEvents()
             .Where(x => x.Timestamp > before)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(4);
     }
@@ -176,15 +176,15 @@ public class querying_event_data_with_linq : OneOffConfigurationsContext
         await SetupStoreAsync();
 
         await using var query1 = theStore.QuerySession();
-        var anyBefore = await query1.Events.QueryRawEventDataOnly<MembersJoined>().AnyAsync();
+        var anyBefore = await query1.Events.QueryRawEventDataOnly<MembersJoined>().AnyAsync(TestContext.Current.CancellationToken);
         anyBefore.ShouldBeFalse();
 
         await using var session = theStore.LightweightSession();
         session.Events.StartStream(Guid.NewGuid(), joined1);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query2 = theStore.QuerySession();
-        var anyAfter = await query2.Events.QueryRawEventDataOnly<MembersJoined>().AnyAsync();
+        var anyAfter = await query2.Events.QueryRawEventDataOnly<MembersJoined>().AnyAsync(TestContext.Current.CancellationToken);
         anyAfter.ShouldBeTrue();
     }
 
@@ -195,12 +195,12 @@ public class querying_event_data_with_linq : OneOffConfigurationsContext
 
         await using var session = theStore.LightweightSession();
         session.Events.StartStream(Guid.NewGuid(), joined1, departed1);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
         var first = await query.Events.QueryAllRawEvents()
             .OrderBy(x => x.Sequence)
-            .FirstOrDefaultAsync();
+            .FirstOrDefaultAsync(TestContext.Current.CancellationToken);
 
         first.ShouldNotBeNull();
         first.Data.ShouldBeOfType<MembersJoined>();
@@ -217,13 +217,13 @@ public class querying_event_data_with_linq : OneOffConfigurationsContext
         await using var session = theStore.LightweightSession();
         session.Events.StartStream(stream1, joined1, departed1);
         session.Events.StartStream(stream2, joined2, departed2);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
         var streamIds = await query.Events.QueryAllRawEvents()
             .Select(x => x.StreamId)
             .Distinct()
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         streamIds.Count.ShouldBe(2);
         streamIds.ShouldContain(stream1);
@@ -238,12 +238,12 @@ public class querying_event_data_with_linq : OneOffConfigurationsContext
         await using var session = theStore.LightweightSession();
         session.Events.StartStream(Guid.NewGuid(), joined1, departed1);
         session.Events.StartStream(Guid.NewGuid(), joined2, departed2);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
         var events = await query.Events.QueryRawEventDataOnly<MembersJoined>()
             .Where(x => x.Day == 1)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         events.Count.ShouldBe(2);
     }

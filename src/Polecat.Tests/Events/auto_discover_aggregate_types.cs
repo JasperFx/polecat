@@ -31,9 +31,9 @@ public class auto_discover_aggregate_types : IntegrationContext
         // No explicit Snapshot<T>() registration — relies on auto-discovery
         var streamId = Guid.NewGuid();
         theSession.Events.StartStream(streamId, new AEvent(), new BEvent(), new CEvent());
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
-        var aggregate = await theSession.Events.AggregateStreamAsync<MutableIEventEvolveAggregate>(streamId);
+        var aggregate = await theSession.Events.AggregateStreamAsync<MutableIEventEvolveAggregate>(streamId, token: TestContext.Current.CancellationToken);
         aggregate.ShouldNotBeNull();
         aggregate.ACount.ShouldBe(1);
         aggregate.BCount.ShouldBe(1);

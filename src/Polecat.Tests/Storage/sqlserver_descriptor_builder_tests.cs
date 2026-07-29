@@ -124,7 +124,7 @@ public class sqlserver_descriptor_builder_tests : OneOffConfigurationsContext
     {
         await using var bootstrap = theStore.LightweightSession();
         bootstrap.Store(new Target { Number = 1 }); // force table creation
-        await bootstrap.SaveChangesAsync();
+        await bootstrap.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var descriptor = descriptorFor<Target>();
         await using var raw = theStore.LightweightSession();
@@ -148,7 +148,7 @@ public class sqlserver_descriptor_builder_tests : OneOffConfigurationsContext
 
         // And Polecat's own bespoke pipeline sees the same row
         await using var check = theStore.QuerySession();
-        var viaPolecat = await check.LoadAsync<Target>(doc.Id);
+        var viaPolecat = await check.LoadAsync<Target>(doc.Id, TestContext.Current.CancellationToken);
         viaPolecat.ShouldNotBeNull();
         viaPolecat.Number.ShouldBe(43);
     }
@@ -158,7 +158,7 @@ public class sqlserver_descriptor_builder_tests : OneOffConfigurationsContext
     {
         await using var bootstrap = theStore.LightweightSession();
         bootstrap.Store(new VersionedDoc { Name = "seed" }); // force table creation
-        await bootstrap.SaveChangesAsync();
+        await bootstrap.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var descriptor = descriptorFor<VersionedDoc>();
         descriptor.ConcurrencyMode.ShouldBe(ConcurrencyMode.Optimistic);
@@ -196,7 +196,7 @@ public class sqlserver_descriptor_builder_tests : OneOffConfigurationsContext
     {
         await using var bootstrap = theStore.LightweightSession();
         bootstrap.Store(new RevisionedDoc { Name = "seed" }); // force table creation
-        await bootstrap.SaveChangesAsync();
+        await bootstrap.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var descriptor = descriptorFor<RevisionedDoc>();
         descriptor.ConcurrencyMode.ShouldBe(ConcurrencyMode.Numeric);
@@ -247,13 +247,13 @@ public class sqlserver_descriptor_builder_tests : OneOffConfigurationsContext
         await using var bootstrap = theStore.LightweightSession();
         var doc = new SoftDeletedDoc { Id = Guid.NewGuid(), Name = "keep", Number = 5 };
         bootstrap.Store(doc);
-        await bootstrap.SaveChangesAsync();
+        await bootstrap.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Soft-delete through Polecat's bespoke pipeline
         await using (var deleter = theStore.LightweightSession())
         {
             deleter.Delete<SoftDeletedDoc>(doc.Id);
-            await deleter.SaveChangesAsync();
+            await deleter.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         var descriptor = descriptorFor<SoftDeletedDoc>();
@@ -269,7 +269,7 @@ public class sqlserver_descriptor_builder_tests : OneOffConfigurationsContext
         await executeAsync(resave, session);
 
         await using var check = theStore.QuerySession();
-        var loaded = await check.LoadAsync<SoftDeletedDoc>(doc.Id);
+        var loaded = await check.LoadAsync<SoftDeletedDoc>(doc.Id, TestContext.Current.CancellationToken);
         loaded.ShouldNotBeNull(); // visible again — undeleted
     }
 
@@ -313,7 +313,7 @@ public class sqlserver_descriptor_builder_tests : OneOffConfigurationsContext
         await using var bootstrap = theStore.LightweightSession();
         var doc = new Target { Id = Guid.NewGuid(), Number = 1, Color = "red" };
         bootstrap.Store(doc);
-        await bootstrap.SaveChangesAsync();
+        await bootstrap.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var descriptor = descriptorFor<Target>();
         await using var raw = theStore.LightweightSession();
@@ -341,7 +341,7 @@ public class sqlserver_descriptor_builder_tests : OneOffConfigurationsContext
         await using var bootstrap = theStore.LightweightSession();
         var doc = new RevisionedDoc { Id = Guid.NewGuid(), Name = "u1" };
         bootstrap.Store(doc);
-        await bootstrap.SaveChangesAsync(); // bespoke pipeline writes revision 1
+        await bootstrap.SaveChangesAsync(TestContext.Current.CancellationToken); // bespoke pipeline writes revision 1
 
         var descriptor = descriptorFor<RevisionedDoc>();
         await using var raw = theStore.LightweightSession();
@@ -369,7 +369,7 @@ public class sqlserver_descriptor_builder_tests : OneOffConfigurationsContext
 
         await using var bootstrap = theStore.LightweightSession();
         bootstrap.Store(new DescriptorMetricsSample { BucketEnd = jan, Metric = "seed" });
-        await bootstrap.SaveChangesAsync(); // force partitioned table creation
+        await bootstrap.SaveChangesAsync(TestContext.Current.CancellationToken); // force partitioned table creation
 
         var descriptor = descriptorFor<DescriptorMetricsSample>();
         descriptor.PartitionPkBinders.Length.ShouldBe(1);
@@ -395,7 +395,7 @@ public class sqlserver_descriptor_builder_tests : OneOffConfigurationsContext
         await executeAsync(update, session);
 
         await using var check = theStore.QuerySession();
-        var loaded = await check.LoadAsync<DescriptorMetricsSample>(doc.Id);
+        var loaded = await check.LoadAsync<DescriptorMetricsSample>(doc.Id, TestContext.Current.CancellationToken);
         loaded.ShouldNotBeNull();
         loaded.Value.ShouldBe(0.9);
     }
@@ -405,7 +405,7 @@ public class sqlserver_descriptor_builder_tests : OneOffConfigurationsContext
     {
         await using var bootstrap = theStore.LightweightSession();
         bootstrap.Store(new Target { Number = 1 });
-        await bootstrap.SaveChangesAsync();
+        await bootstrap.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var descriptor = descriptorFor<Target>();
         await using var raw = theStore.LightweightSession();

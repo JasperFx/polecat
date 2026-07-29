@@ -26,7 +26,7 @@ public class ordering_and_paging : OneOffConfigurationsContext
         await using var query = theStore.QuerySession();
         var results = await query.Query<LinqTarget>()
             .OrderBy(x => x.Name)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(5);
         results[0].Name.ShouldBe("Alice");
@@ -44,7 +44,7 @@ public class ordering_and_paging : OneOffConfigurationsContext
         await using var query = theStore.QuerySession();
         var results = await query.Query<LinqTarget>()
             .OrderByDescending(x => x.Age)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(5);
         results[0].Name.ShouldBe("Bob");    // 35
@@ -62,7 +62,7 @@ public class ordering_and_paging : OneOffConfigurationsContext
         await using var query = theStore.QuerySession();
         var results = await query.Query<LinqTarget>()
             .OrderBy(x => x.Age)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(5);
         results[0].Name.ShouldBe("Eve");     // 22
@@ -81,7 +81,7 @@ public class ordering_and_paging : OneOffConfigurationsContext
         var results = await query.Query<LinqTarget>()
             .OrderBy(x => x.Score)
             .ThenBy(x => x.Name)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(5);
         results[0].Name.ShouldBe("Eve");     // 6.0
@@ -101,7 +101,7 @@ public class ordering_and_paging : OneOffConfigurationsContext
         var results = await query.Query<LinqTarget>()
             .OrderBy(x => x.Score)
             .ThenByDescending(x => x.Name)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(5);
         results[0].Name.ShouldBe("Eve");     // 6.0
@@ -121,7 +121,7 @@ public class ordering_and_paging : OneOffConfigurationsContext
         var results = await query.Query<LinqTarget>()
             .OrderBy(x => x.Name)
             .Take(3)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(3);
         results[0].Name.ShouldBe("Alice");
@@ -138,7 +138,7 @@ public class ordering_and_paging : OneOffConfigurationsContext
         var results = await query.Query<LinqTarget>()
             .OrderBy(x => x.Name)
             .Skip(2)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(3);
         results[0].Name.ShouldBe("Charlie");
@@ -156,7 +156,7 @@ public class ordering_and_paging : OneOffConfigurationsContext
             .OrderBy(x => x.Name)
             .Skip(1)
             .Take(2)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(2);
         results[0].Name.ShouldBe("Bob");
@@ -172,7 +172,7 @@ public class ordering_and_paging : OneOffConfigurationsContext
         var results = await query.Query<LinqTarget>()
             .Where(x => x.Age >= 28)
             .OrderBy(x => x.Name)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(3); // Bob(35), Charlie(30), Diana(28)
         results[0].Name.ShouldBe("Bob");
@@ -190,7 +190,7 @@ public class ordering_and_paging : OneOffConfigurationsContext
             .Where(x => x.Age >= 25)
             .OrderBy(x => x.Age)
             .Take(2)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(2);
         results[0].Name.ShouldBe("Alice");   // 25
@@ -205,7 +205,7 @@ public class ordering_and_paging : OneOffConfigurationsContext
         await using var query = theStore.QuerySession();
         var results = await query.Query<LinqTarget>()
             .Take(2)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(2);
     }

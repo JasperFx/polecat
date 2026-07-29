@@ -31,7 +31,7 @@ public class version_column_widening_migration : IntegrationContext
         // Seed a row through the normal path (creates the table with a bigint version column).
         var seed = new User { Id = Guid.NewGuid(), FirstName = "seed" };
         theSession.Store(seed);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Recreate the pre-D2 schema exactly: an int version column carrying a DEFAULT 1 constraint
         // (which is itself what blocks a naive ALTER COLUMN). Drop the bigint default, shrink to int,
@@ -53,7 +53,7 @@ public class version_column_widening_migration : IntegrationContext
                 ALTER TABLE {Table} ALTER COLUMN version int NOT NULL;
                 ALTER TABLE {Table} ADD DEFAULT 1 FOR version;
                 """;
-            await alter.ExecuteNonQueryAsync();
+            await alter.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
         }
 
         (await VersionColumnTypeAsync()).ShouldBe("int");
@@ -72,7 +72,7 @@ public class version_column_widening_migration : IntegrationContext
         await using (var session2 = store2.LightweightSession())
         {
             session2.Store(new User { Id = Guid.NewGuid(), FirstName = "second" });
-            await session2.SaveChangesAsync();
+            await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         // The column is bigint again — proving an ALTER, not a drop/recreate...
@@ -80,7 +80,7 @@ public class version_column_widening_migration : IntegrationContext
 
         // ...and the row seeded before the widening is still there.
         await using var query = store2.QuerySession();
-        var loaded = await query.LoadAsync<User>(seed.Id);
+        var loaded = await query.LoadAsync<User>(seed.Id, TestContext.Current.CancellationToken);
         loaded.ShouldNotBeNull();
         loaded.FirstName.ShouldBe("seed");
     }

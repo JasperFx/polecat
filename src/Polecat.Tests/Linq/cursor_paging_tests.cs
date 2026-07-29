@@ -68,7 +68,7 @@ public class cursor_paging_tests : IntegrationContext
         await using var q = theStore.QuerySession();
         var page = await q.Query<Target>().Where(t => t.Color == color)
             .OrderBy(t => t.Number).ThenBy(t => t.Id)
-            .ToJsonPageByCursorAsync(null, 3);
+            .ToJsonPageByCursorAsync(null, 3, TestContext.Current.CancellationToken);
 
         Numbers(page).ShouldBe([0, 1, 2]);
         page.Count.ShouldBe(3);
@@ -84,11 +84,11 @@ public class cursor_paging_tests : IntegrationContext
         await using var q = theStore.QuerySession();
         var first = await q.Query<Target>().Where(t => t.Color == color)
             .OrderBy(t => t.Number).ThenBy(t => t.Id)
-            .ToJsonPageByCursorAsync(null, 3);
+            .ToJsonPageByCursorAsync(null, 3, TestContext.Current.CancellationToken);
 
         var second = await q.Query<Target>().Where(t => t.Color == color)
             .OrderBy(t => t.Number).ThenBy(t => t.Id)
-            .ToJsonPageByCursorAsync(first.NextCursor, 3);
+            .ToJsonPageByCursorAsync(first.NextCursor, 3, TestContext.Current.CancellationToken);
 
         Numbers(second).ShouldBe([3, 4, 5]);
         second.NextCursor.ShouldNotBeNull();
@@ -102,10 +102,10 @@ public class cursor_paging_tests : IntegrationContext
         await using var q = theStore.QuerySession();
         var first = await q.Query<Target>().Where(t => t.Color == color)
             .OrderBy(t => t.Number).ThenBy(t => t.Id)
-            .ToJsonPageByCursorAsync(null, 3);
+            .ToJsonPageByCursorAsync(null, 3, TestContext.Current.CancellationToken);
         var last = await q.Query<Target>().Where(t => t.Color == color)
             .OrderBy(t => t.Number).ThenBy(t => t.Id)
-            .ToJsonPageByCursorAsync(first.NextCursor, 3);
+            .ToJsonPageByCursorAsync(first.NextCursor, 3, TestContext.Current.CancellationToken);
 
         Numbers(last).ShouldBe([3, 4]);
         last.Count.ShouldBe(2);
@@ -138,7 +138,7 @@ public class cursor_paging_tests : IntegrationContext
         await using var q = theStore.QuerySession();
         var page = await q.Query<Target>().Where(t => t.Color == color)
             .OrderBy(t => t.Number).ThenBy(t => t.Id)
-            .ToJsonPageByCursorAsync(null, 3);
+            .ToJsonPageByCursorAsync(null, 3, TestContext.Current.CancellationToken);
 
         page.Count.ShouldBe(0);
         page.NextCursor.ShouldBeNull();
@@ -157,7 +157,7 @@ public class cursor_paging_tests : IntegrationContext
             await using var q = theStore.QuerySession();
             var page = await q.Query<Target>().Where(t => t.Color == color)
                 .OrderByDescending(t => t.Number).ThenBy(t => t.Id)
-                .ToJsonPageByCursorAsync(cursor, 3);
+                .ToJsonPageByCursorAsync(cursor, 3, TestContext.Current.CancellationToken);
 
             all.AddRange(Numbers(page));
             if (page.NextCursor is null) break;
@@ -182,7 +182,7 @@ public class cursor_paging_tests : IntegrationContext
             theSession.Store(new Target { Id = id, Color = color, Number = 5 });
         }
 
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var seen = new List<Guid>();
         string? cursor = null;
@@ -191,7 +191,7 @@ public class cursor_paging_tests : IntegrationContext
             await using var q = theStore.QuerySession();
             var page = await q.Query<Target>().Where(t => t.Color == color)
                 .OrderBy(t => t.Number).ThenBy(t => t.Id)
-                .ToJsonPageByCursorAsync(cursor, 3);
+                .ToJsonPageByCursorAsync(cursor, 3, TestContext.Current.CancellationToken);
 
             foreach (var el in JsonDocument.Parse(page.ItemsJson).RootElement.EnumerateArray())
             {
@@ -223,7 +223,7 @@ public class cursor_paging_tests : IntegrationContext
             theSession.Store(new Target { Id = id, Color = color, Number = i });
         }
 
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var seen = new List<Guid>();
         string? cursor = null;
@@ -232,7 +232,7 @@ public class cursor_paging_tests : IntegrationContext
             await using var q = theStore.QuerySession();
             var page = await q.Query<Target>().Where(t => t.Color == color)
                 .OrderBy(t => t.Id)
-                .ToJsonPageByCursorAsync(cursor, 4);
+                .ToJsonPageByCursorAsync(cursor, 4, TestContext.Current.CancellationToken);
 
             foreach (var el in JsonDocument.Parse(page.ItemsJson).RootElement.EnumerateArray())
             {

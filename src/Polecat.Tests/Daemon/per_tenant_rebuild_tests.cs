@@ -48,7 +48,7 @@ public class per_tenant_rebuild_tests : IAsyncLifetime
     public async Task rebuilding_one_tenant_leaves_other_tenants_untouched()
     {
         using var store = CreateStore();
-        await store.Database.ApplyAllConfiguredChangesToDatabaseAsync();
+        await store.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         var streams = new Dictionary<string, Guid>();
 
@@ -61,7 +61,7 @@ public class per_tenant_rebuild_tests : IAsyncLifetime
             session.Events.StartStream(streamId,
                 new QuestStarted($"{tenant} Quest"),
                 new MembersJoined(1, $"{tenant} Town", [$"{tenant}Hero"]));
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         var projectionName = store.Options.Projections.All.Single().Name;
@@ -78,7 +78,7 @@ public class per_tenant_rebuild_tests : IAsyncLifetime
         foreach (var tenant in Tenants)
         {
             await using var query = store.QuerySession(new SessionOptions { TenantId = tenant });
-            var party = await query.LoadAsync<QuestParty>(streams[tenant]);
+            var party = await query.LoadAsync<QuestParty>(streams[tenant], TestContext.Current.CancellationToken);
             party.ShouldNotBeNull();
             party.Name.ShouldBe($"{tenant} Quest");
             party.Members.ShouldBe([$"{tenant}Hero"]);
@@ -95,7 +95,7 @@ public class per_tenant_rebuild_tests : IAsyncLifetime
         // Red is still correct (rebuilt from scratch)...
         await using (var redQuery = store.QuerySession(new SessionOptions { TenantId = "Red" }))
         {
-            var red = await redQuery.LoadAsync<QuestParty>(streams["Red"]);
+            var red = await redQuery.LoadAsync<QuestParty>(streams["Red"], TestContext.Current.CancellationToken);
             red.ShouldNotBeNull();
             red.Name.ShouldBe("Red Quest");
         }
@@ -105,7 +105,7 @@ public class per_tenant_rebuild_tests : IAsyncLifetime
         foreach (var tenant in new[] { "Blue", "Green" })
         {
             await using var query = store.QuerySession(new SessionOptions { TenantId = tenant });
-            var party = await query.LoadAsync<QuestParty>(streams[tenant]);
+            var party = await query.LoadAsync<QuestParty>(streams[tenant], TestContext.Current.CancellationToken);
             party.ShouldNotBeNull();
             party.Name.ShouldBe($"{tenant} Quest");
             party.Members.ShouldBe([$"{tenant}Hero"]);
@@ -122,7 +122,7 @@ public class per_tenant_rebuild_tests : IAsyncLifetime
     public async Task cancelling_a_per_tenant_rebuild_keeps_progression_consistent()
     {
         using var store = CreateStore();
-        await store.Database.ApplyAllConfiguredChangesToDatabaseAsync();
+        await store.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         // Red gets a longer stream so its rebuild has real work to interrupt.
         const int redEventCount = 26; // QuestStarted + 25 MembersJoined
@@ -131,14 +131,14 @@ public class per_tenant_rebuild_tests : IAsyncLifetime
             var events = new List<object> { new QuestStarted("Red Quest") };
             for (var i = 1; i <= 25; i++) events.Add(new MembersJoined(i, "Town", [$"H{i}"]));
             red.Events.StartStream(Guid.NewGuid(), events.ToArray());
-            await red.SaveChangesAsync();
+            await red.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         foreach (var tenant in new[] { "Blue", "Green" })
         {
             await using var s = store.LightweightSession(new SessionOptions { TenantId = tenant });
             s.Events.StartStream(Guid.NewGuid(), new QuestStarted($"{tenant} Quest"));
-            await s.SaveChangesAsync();
+            await s.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         var projectionName = store.Options.Projections.All.Single().Name;

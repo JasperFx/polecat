@@ -93,10 +93,10 @@ public class snapshot_registration_tests : IntegrationContext
             new SnapshotPartyStarted("Fellowship"),
             new SnapshotMemberJoined("Frodo"),
             new SnapshotMemberJoined("Sam"));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var party = await query.LoadAsync<SnapshotParty>(streamId);
+        var party = await query.LoadAsync<SnapshotParty>(streamId, TestContext.Current.CancellationToken);
 
         party.ShouldNotBeNull();
         party!.Name.ShouldBe("Fellowship");
@@ -117,12 +117,12 @@ public class snapshot_registration_tests : IntegrationContext
         session.Events.StartStream(streamId,
             new SnapshotPartyStarted("Async Party"),
             new SnapshotMemberJoined("Aragorn"));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await theStore.WaitForProjectionAsync();
 
         await using var query = theStore.QuerySession();
-        var party = await query.LoadAsync<SnapshotParty>(streamId);
+        var party = await query.LoadAsync<SnapshotParty>(streamId, TestContext.Current.CancellationToken);
 
         party.ShouldNotBeNull();
         party!.Name.ShouldBe("Async Party");
@@ -146,12 +146,12 @@ public class snapshot_registration_tests : IntegrationContext
         session.Events.StartStream(streamId,
             new SnapshotPartyStarted("Composite Party"),
             new SnapshotMemberJoined("Gandalf"));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await theStore.WaitForProjectionAsync();
 
         await using var query = theStore.QuerySession();
-        var party = await query.LoadAsync<SnapshotParty>(streamId);
+        var party = await query.LoadAsync<SnapshotParty>(streamId, TestContext.Current.CancellationToken);
 
         party.ShouldNotBeNull();
         party!.Name.ShouldBe("Composite Party");

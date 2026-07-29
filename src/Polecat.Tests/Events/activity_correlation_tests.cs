@@ -58,7 +58,7 @@ public class activity_correlation_tests : OneOffConfigurationsContext
         {
             await using var session = theStore.LightweightSession();
             session.Events.StartStream(streamId, new QuestStarted("Traced Quest"));
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
         finally
         {
@@ -67,7 +67,7 @@ public class activity_correlation_tests : OneOffConfigurationsContext
         }
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
 
         events.Count.ShouldBe(1);
         events[0].CorrelationId.ShouldBe(child.RootId);

@@ -50,11 +50,11 @@ public class aggregate_type_resolution_tests : IAsyncLifetime
         await using (var session = store.LightweightSession())
         {
             session.Events.StartStream<UnregisteredTag>(streamId, new AtrThingHappened("one"));
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using var query = store.QuerySession();
-        var state = await query.Events.FetchStreamStateAsync(streamId);
+        var state = await query.Events.FetchStreamStateAsync(streamId, TestContext.Current.CancellationToken);
 
         state.ShouldNotBeNull();
         state.AggregateType.ShouldBe(typeof(UnregisteredTag));
@@ -73,7 +73,7 @@ public class aggregate_type_resolution_tests : IAsyncLifetime
         {
             await using var session = writer.LightweightSession();
             session.Events.StartStream<UnregisteredTag>(streamId, new AtrThingHappened("one"));
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         // A brand new store — nothing has populated its alias registry, exactly like another process or a
@@ -81,7 +81,7 @@ public class aggregate_type_resolution_tests : IAsyncLifetime
         using var reader = CreateStore(registerProjection: true);
         await using var query = reader.QuerySession();
 
-        (await query.Events.FetchStreamStateAsync(streamId))!.AggregateType.ShouldBe(typeof(UnregisteredTag));
+        (await query.Events.FetchStreamStateAsync(streamId, TestContext.Current.CancellationToken))!.AggregateType.ShouldBe(typeof(UnregisteredTag));
     }
 
     /// <summary>
@@ -98,13 +98,13 @@ public class aggregate_type_resolution_tests : IAsyncLifetime
         {
             await using var session = writer.LightweightSession();
             session.Events.StartStream<UnregisteredTag>(streamId, new AtrThingHappened("one"));
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         using var reader = CreateStore();
         await using var query = reader.QuerySession();
 
-        var state = await query.Events.FetchStreamStateAsync(streamId);
+        var state = await query.Events.FetchStreamStateAsync(streamId, TestContext.Current.CancellationToken);
         state.ShouldNotBeNull();
         state.AggregateType.ShouldBeNull();
 
@@ -126,15 +126,15 @@ public class aggregate_type_resolution_tests : IAsyncLifetime
         await using (var session = store.LightweightSession())
         {
             session.Events.StartStream<UnregisteredTag>(streamId, new AtrThingHappened("one"));
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using var query = store.QuerySession();
-        var standalone = await query.Events.FetchStreamStateAsync(streamId);
+        var standalone = await query.Events.FetchStreamStateAsync(streamId, TestContext.Current.CancellationToken);
 
         var batch = query.CreateBatchQuery();
         var fetcher = batch.Events.FetchStreamState(streamId);
-        await batch.Execute();
+        await batch.Execute(TestContext.Current.CancellationToken);
 
         (await fetcher)!.AggregateType.ShouldBe(standalone!.AggregateType);
         (await fetcher)!.AggregateType.ShouldBe(typeof(UnregisteredTag));
