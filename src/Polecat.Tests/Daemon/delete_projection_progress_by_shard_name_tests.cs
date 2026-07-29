@@ -28,7 +28,7 @@ public class delete_projection_progress_by_shard_name_tests : IntegrationContext
     {
     }
 
-    public override async Task InitializeAsync()
+    public override async ValueTask InitializeAsync()
     {
         await base.InitializeAsync();
         // Clean progression table for each test

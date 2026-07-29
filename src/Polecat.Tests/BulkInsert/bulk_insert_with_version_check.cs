@@ -18,7 +18,7 @@ public class bulk_insert_with_version_check : IntegrationContext
     {
     }
 
-    public override async Task InitializeAsync()
+    public override async ValueTask InitializeAsync()
     {
         await StoreOptions(opts => { opts.DatabaseSchemaName = "bulk_insert_version"; });
     }

@@ -27,13 +27,13 @@ public class event_store_instrumentation_tests : IAsyncLifetime
         "failure_category", "failure_event_sequence", "failure_event_type", "failure_event_tenant_id"
     ];
 
-    public async Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
         await DropSchemaTablesAsync(OnSchema);
         await DropSchemaTablesAsync(OffSchema);
     }
 
-    public Task DisposeAsync() => Task.CompletedTask;
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
     private static DocumentStore CreateStore(string schema, bool extended)
     {

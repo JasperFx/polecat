@@ -17,14 +17,14 @@ public class closed_shape_partitioned_event_tests : IAsyncLifetime
 {
     private const string Schema = "closed_pt";
 
-    public async Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
         await DropSchemaTablesAsync(Schema);
         await PartitionTestCleanup.DropEventsPartitionObjectsAsync();
         await DropSequencesAsync(Schema);
     }
 
-    public Task DisposeAsync() => Task.CompletedTask;
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
     private static DocumentStore CreateStore()
     {

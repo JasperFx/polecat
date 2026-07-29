@@ -21,7 +21,7 @@ public class separate_database_tenancy_tests : IAsyncLifetime
     private static string TenantConnectionString(string dbName) =>
         ConnectionSource.ConnectionString.Replace("Initial Catalog=master", $"Database={dbName}");
 
-    public async Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
         // Create tenant databases if they don't exist
         await using var conn = new SqlConnection(MasterConnectionString);
@@ -35,7 +35,7 @@ public class separate_database_tenancy_tests : IAsyncLifetime
         }
     }
 
-    public async Task DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
         // Drop tenant databases
         await using var conn = new SqlConnection(MasterConnectionString);

@@ -12,7 +12,7 @@ public class high_water_detector_tests : IntegrationContext
     {
     }
 
-    public override async Task InitializeAsync()
+    public override async ValueTask InitializeAsync()
     {
         await base.InitializeAsync();
         // Clean slate for each test

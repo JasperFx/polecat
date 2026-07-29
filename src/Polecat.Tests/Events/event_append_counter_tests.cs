@@ -13,8 +13,8 @@ namespace Polecat.Tests.Events;
 /// </summary>
 public class event_append_counter_tests : IAsyncLifetime
 {
-    public Task InitializeAsync() => Task.CompletedTask;
-    public Task DisposeAsync() => Task.CompletedTask;
+    public ValueTask InitializeAsync() => ValueTask.CompletedTask;
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
     private static DocumentStore CreateStore(string schema, bool trackCounters)
     {

@@ -17,7 +17,7 @@ public class plain_guid_id_assignment_tests : IntegrationContext
     {
     }
 
-    public override async Task InitializeAsync()
+    public override async ValueTask InitializeAsync()
     {
         await StoreOptions(opts => { opts.DatabaseSchemaName = "plain_guid_id"; });
     }

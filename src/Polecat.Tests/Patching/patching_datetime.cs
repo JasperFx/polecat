@@ -18,7 +18,7 @@ public class patching_datetime : IntegrationContext
     {
     }
 
-    public override async Task InitializeAsync()
+    public override async ValueTask InitializeAsync()
     {
         await StoreOptions(opts => { opts.DatabaseSchemaName = "patching_dates"; });
     }

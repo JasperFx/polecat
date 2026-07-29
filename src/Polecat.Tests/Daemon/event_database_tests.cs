@@ -10,7 +10,7 @@ public class event_database_tests : IntegrationContext
     {
     }
 
-    public override async Task InitializeAsync()
+    public override async ValueTask InitializeAsync()
     {
         await base.InitializeAsync();
         // Clean slate for each test

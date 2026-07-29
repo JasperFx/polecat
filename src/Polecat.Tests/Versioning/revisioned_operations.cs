@@ -11,7 +11,7 @@ public class revisioned_operations : IntegrationContext
     {
     }
 
-    public override async Task InitializeAsync()
+    public override async ValueTask InitializeAsync()
     {
         await StoreOptions(opts =>
         {

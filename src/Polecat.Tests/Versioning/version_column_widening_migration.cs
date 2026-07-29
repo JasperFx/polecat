@@ -20,7 +20,7 @@ public class version_column_widening_migration : IntegrationContext
     {
     }
 
-    public override async Task InitializeAsync()
+    public override async ValueTask InitializeAsync()
     {
         await StoreOptions(opts => opts.DatabaseSchemaName = Schema);
     }

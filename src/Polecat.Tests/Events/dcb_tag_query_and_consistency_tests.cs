@@ -63,7 +63,7 @@ public class dcb_tag_query_and_consistency_tests : IntegrationContext
     }
 
     #region sample_polecat_dcb_registering_tag_types
-    public override async Task InitializeAsync()
+    public override async ValueTask InitializeAsync()
     {
         await StoreOptions(opts =>
         {

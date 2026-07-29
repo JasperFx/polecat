@@ -15,7 +15,7 @@ public class stream_paged_tests : IAsyncLifetime
 {
     private IAlbaHost _host = null!;
 
-    public async Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
         _host = await AlbaHost.For(TestApp.CreateBuilder(), TestApp.Configure);
 
@@ -32,7 +32,7 @@ public class stream_paged_tests : IAsyncLifetime
         await session.SaveChangesAsync();
     }
 
-    public async Task DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
         await _host.DisposeAsync();
     }

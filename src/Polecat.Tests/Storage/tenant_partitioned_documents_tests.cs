@@ -32,14 +32,14 @@ public class tenant_partitioned_documents_tests : IAsyncLifetime
 {
     private const string Schema = "pt_docs";
 
-    public async Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
         await TestSchema.DropSchemaTablesAsync(Schema);
         await PartitionTestCleanup.DropEventsPartitionObjectsAsync();
         await TestSchema.DropSequencesAsync(Schema);
     }
 
-    public Task DisposeAsync() => Task.CompletedTask;
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
     private static DocumentStore CreateStore(Action<StoreOptions>? configure = null)
     {

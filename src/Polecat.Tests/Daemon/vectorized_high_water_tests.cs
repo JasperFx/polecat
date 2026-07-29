@@ -18,14 +18,14 @@ public class vectorized_high_water_tests : IAsyncLifetime
 {
     private const string Schema = "pt_hw";
 
-    public async Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
         await DropSchemaTablesAsync(Schema);
         await PartitionTestCleanup.DropEventsPartitionObjectsAsync();
         await DropSequencesAsync(Schema);
     }
 
-    public Task DisposeAsync() => Task.CompletedTask;
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
     private static DocumentStore CreateStore(bool partitioned)
     {

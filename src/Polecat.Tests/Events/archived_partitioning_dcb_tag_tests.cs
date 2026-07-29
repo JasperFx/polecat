@@ -17,7 +17,7 @@ public class archived_partitioning_dcb_tag_tests : IntegrationContext
     {
     }
 
-    public override async Task InitializeAsync()
+    public override async ValueTask InitializeAsync()
     {
         var conn = await OpenConnectionAsync();
 

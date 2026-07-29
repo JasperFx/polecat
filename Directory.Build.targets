@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project>
+
+    <!--
+      Turn the xUnit analyzers off for the duration of the v2 -> v3 migration.
+
+      They arrive transitively (xunit.v3 -> xunit.v3.mtp-v1 -> xunit.analyzers) and light up 10,212
+      warnings across the solution, against a previous whole-solution baseline of roughly 120. That
+      buries every real warning, which is a worse outcome than not having the analyzers at all.
+
+      This is done in MSBuild rather than through NuGet because NuGet cannot express it. Both
+      spellings that look like they should work are silently no-ops here:
+
+        <PackageReference Include="xunit.v3" ExcludeAssets="analyzers" />
+            asset exclusions do not propagate down the dependency graph, so this never reaches
+            xunit.analyzers two edges away;
+        <PackageReference Include="xunit.analyzers" ExcludeAssets="all" />
+            a direct reference does not override the assets already flowing along the transitive
+            edge either.
+
+      Both were measured at the full 10,212 warnings before settling on removing the Analyzer items
+      directly, which is unambiguous. Deliberately NOT a NoWarn list: xUnit1051 accounts for all
+      10,212, but xUnit3003 also fires, and pinning a list means the next new rule reintroduces the
+      noise silently.
+
+      Adopting the analyzers for real (mostly threading TestContext.Current.CancellationToken
+      through ~6,500 async database calls) is follow-up work with actual code changes behind it.
+      Delete this target when that lands.
+    -->
+    <Target Name="RemoveXunitAnalyzers" BeforeTargets="CoreCompile">
+        <ItemGroup>
+            <Analyzer Remove="@(Analyzer)"
+                      Condition="$([System.String]::Copy('%(Analyzer.Filename)').StartsWith('xunit.analyzers'))" />
+        </ItemGroup>
+    </Target>
+
+</Project>

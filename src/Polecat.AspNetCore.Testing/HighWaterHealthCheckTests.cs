@@ -53,7 +53,7 @@ public class HighWaterHealthCheckTests: IAsyncLifetime
         _timeProvider = new MutableTimeProvider(_now);
     }
 
-    public async Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
         // Drop the schema for a clean slate.
         await using var conn = new SqlConnection(ConnectionString);
@@ -73,7 +73,7 @@ public class HighWaterHealthCheckTests: IAsyncLifetime
         await cmd.ExecuteNonQueryAsync();
     }
 
-    public async Task DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
         if (_store != null)
         {

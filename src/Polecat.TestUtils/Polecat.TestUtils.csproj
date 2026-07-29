@@ -7,7 +7,10 @@
 
     <ItemGroup>
         <PackageReference Include="Microsoft.Data.SqlClient" />
-        <PackageReference Include="xunit" />
+        <!-- NOT xunit.v3: that package forces OutputType=Exe on anything referencing it, and this
+             is a library. extensibility.core is the supported way to author custom xunit attributes
+             (RepeatAttribute, RequiresNativeJsonFactAttribute) outside a test assembly. -->
+        <PackageReference Include="xunit.v3.extensibility.core" />
     </ItemGroup>
 
     <ItemGroup>

@@ -42,7 +42,7 @@ public class strong_typed_id_tests : IntegrationContext
     {
     }
 
-    public override async Task InitializeAsync()
+    public override async ValueTask InitializeAsync()
     {
         await StoreOptions(opts => { opts.DatabaseSchemaName = "strong_typed_id"; });
     }
