@@ -10,10 +10,11 @@ on:
         required: false
         type: string
         default: "default"
-      TEST_FILTERS:
-        required: false
-        type: string
-        default: "Category!=Flaky"
+      # TEST_FILTERS is gone. It defaulted to "Category!=Flaky" and no caller ever overrode it,
+      # but there is not a single [Trait] attribute anywhere in the repo — so the filter matched
+      # every test and had never excluded anything. Under Microsoft Testing Platform the equivalent
+      # would be `--filter-not-trait "Category=Flaky"`; add it back with real traits behind it if
+      # a flaky-test quarantine is ever actually wanted.
 
 jobs:
   test:
@@ -57,8 +58,32 @@ jobs:
           echo "SQL Server failed to become healthy"
           exit 1
 
+      # Runs the Microsoft Testing Platform executable directly rather than going through
+      # `dotnet test`. An xUnit v3 test project builds as its own MTP executable, and invoking it is
+      # the only way to get the TRX report out on every SDK.
+      #
+      # `dotnet test` does not work here, which is worth recording because two of the three failure
+      # modes are silent:
+      #   dotnet test ... --logger "trx;..."        VSTest-only. MTP warns MTP0001 that the property
+      #                                             is ignored, runs the tests, exits 0 — and writes
+      #                                             no TRX at all, so the reporter step below finds
+      #                                             nothing and the build goes red for the wrong
+      #                                             reason.
+      #   dotnet test ... -- --report-trx           arguments are swallowed. Tests run, exit 0, no TRX.
+      #   dotnet test ... --report-trx              MSBuild rejects it outright: MSB1001 Unknown switch.
+      # All three were measured on SDK 10.0.101 before settling on this.
+      #
+      # Verified that a failing test still fails the build: a deliberately failing probe produced
+      # "failed: 1, succeeded: 37", printed the assertion and a file:line stack trace inline, and
+      # exited 2. A runner swap that quietly stopped failing builds would be the worst outcome here.
+      #
+      # The TRX lands in <project>/bin/Release/net9.0/TestResults/, which the reporter's
+      # **/TestResults/*.trx glob already matches.
       - name: Test
-        run: dotnet test ${{ env.TEST_PROJECT_PATH }} -c Release --no-build --framework net9.0 --logger "trx;LogFileName=test-results.trx" --filter "${{ inputs.TEST_FILTERS }}"  
+        run: |
+          PROJECT_DIR=$(dirname "${{ env.TEST_PROJECT_PATH }}")
+          ASSEMBLY=$(basename "${{ env.TEST_PROJECT_PATH }}" .csproj)
+          "$PROJECT_DIR/bin/Release/net9.0/$ASSEMBLY" --report-trx --report-trx-filename test-results.trx
 
       - name: Report results
         uses: dorny/test-reporter@v3

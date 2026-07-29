@@ -14,6 +14,41 @@
         <RepositoryUrl>https://github.com/JasperFx/polecat</RepositoryUrl>
     </PropertyGroup>
 
+    <!--
+      Microsoft Testing Platform. These are repo-wide rather than per-test-project on purpose:
+      TestingPlatformDotnetTestSupport changes how `dotnet test` invokes a project, so a solution
+      where only some projects answered to MTP would leave `dotnet test polecat.slnx` in a mixed
+      mode. They are inert in projects that don't reference xunit.v3.
+
+      UseMicrosoftTestingPlatformRunner makes xunit v3 build its MTP entry point instead of the
+      VSTest bridge; TestingPlatformDotnetTestSupport makes `dotnet test` run that executable
+      directly rather than going through testhost. Neither Microsoft.NET.Test.Sdk nor
+      xunit.runner.visualstudio is referenced anymore.
+    -->
+    <PropertyGroup>
+        <UseMicrosoftTestingPlatformRunner>true</UseMicrosoftTestingPlatformRunner>
+        <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
+        <!--
+          Without this, a failing test prints only
+
+            error run failed: Tests failed: '.../TestResults/Polecat.Tests_net9.0_x64.log'
+
+          and the test name, assertion and stack trace go to that file. CI never publishes it, so a
+          red build would carry no indication of what broke — strictly worse than the VSTest bridge,
+          which printed failures inline. This restores that.
+        -->
+        <TestingPlatformShowTestsFailure>true</TestingPlatformShowTestsFailure>
+        <!--
+          Every database-backed suite here shares schemas between target frameworks, so running the
+          net9.0 and net10.0 suites concurrently makes them drop each other's schemas mid-test. This
+          repo has long documented that as unexplained local flakiness on a bare `dotnet test`
+          (duplicate-object and deadlock errors that look like real failures); CI never hit it
+          because each job names a single framework explicitly. Serializing the frameworks fixes it
+          at the source.
+        -->
+        <TestTfmsInParallel>false</TestTfmsInParallel>
+    </PropertyGroup>
+
     <ItemGroup>
         <None Include="$(MSBuildThisFileDirectory)logo.png" Pack="true" PackagePath="" Visible="false" />
     </ItemGroup>

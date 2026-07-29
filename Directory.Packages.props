@@ -74,8 +74,27 @@
 
         <!-- Testing -->
         <PackageVersion Include="Alba" Version="8.5.2" />
-        <PackageVersion Include="coverlet.collector" Version="6.0.4" />
-        <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+        <!--
+          Microsoft Testing Platform extensions, replacing coverlet.collector and the TRX logger,
+          both of which are VSTest-only. CodeCoverage is capability parity — no build target asks
+          for coverage today — while TrxReport is what CI's TRX report option and the
+          dorny/test-reporter step depend on.
+
+          BOTH ARE PINNED TO THE MTP 1.x LINE, NOT THE LATEST. xunit.v3 3.2.2 is built against
+          Microsoft.Testing.Platform 1.x — its packages are literally named xunit.v3.core.mtp-v1.
+          The 2.x releases of these extensions (TrxReport 2.x, CodeCoverage 18.1.0+) drag the
+          platform assembly up to 2.x while Microsoft.Testing.Platform.MSBuild stays behind, and
+          every test run then dies at startup with
+
+            TypeLoadException: Could not load type
+            'Microsoft.Testing.Platform.Extensions.TestHost.IDataConsumer'
+            from assembly 'Microsoft.Testing.Platform, Version=2.3.0.0'
+
+          1.9.1 and 18.0.6 are the last releases on MTP 1.x. Move these forward together when
+          xunit.v3 ships an mtp-v2 build, and not before.
+        -->
+        <PackageVersion Include="Microsoft.Testing.Extensions.CodeCoverage" Version="18.0.6" />
+        <PackageVersion Include="Microsoft.Testing.Extensions.TrxReport" Version="1.9.1" />
         <PackageVersion Include="NSubstitute" Version="5.3.0" />
         <PackageVersion Include="Shouldly" Version="4.3.0" />
         <!-- xUnit v3. The test projects reference xunit.v3; Polecat.TestUtils, which is a plain
@@ -89,7 +108,6 @@
              ExcludeAssets on any PackageReference here. -->
         <PackageVersion Include="xunit.v3" Version="3.2.2" />
         <PackageVersion Include="xunit.v3.extensibility.core" Version="3.2.2" />
-        <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.5" />
         <!-- Weasel 9.8.0/9.9.0 introduce Weasel.Storage: the dialect-neutral closed-shape
              storage contracts extracted from Marten (marten#4821/#4830, weasel#329/#331) —
              IStorageSession / IStorageDatabase / IStorageSerializer / IDocumentStorage /
