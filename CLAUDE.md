@@ -102,11 +102,28 @@ Critical path for MVP: Stages 1–5, 7–8, 10–11
 
 ## Testing
 
-- **Framework**: xUnit
+- **Framework**: xUnit v3 on Microsoft Testing Platform (no VSTest bridge). Each test project is its
+  own MTP executable, so `OutputType=Exe` is required — `Microsoft.NET.Test.Sdk` used to set it and is
+  no longer referenced, along with `xunit.runner.visualstudio` and `coverlet.collector`.
 - **Pattern**: Mirror Marten's IntegrationContext base class
 - **Database**: Dockerized SQL Server 2025 on localhost:11433
 - **Test naming**: snake_case file names (e.g., `start_stream_tests.cs`)
 - **Assertions**: Shouldly (or similar fluent assertions)
+- **Lifecycle**: `IAsyncLifetime` is ValueTask-based and inherits `IAsyncDisposable`. If a class
+  implements both `IAsyncDisposable` and `IDisposable`, v3 calls **only** `DisposeAsync` — cleanup put
+  in `Dispose()` silently never runs.
+- **Cancellation**: pass `TestContext.Current.CancellationToken` to async calls. xUnit1051 enforces
+  this and the analyzers are fully enabled; a hung test is this suite's characteristic failure.
+- **No entry points in test projects.** A v3 test assembly launches as a process and must own `Main`.
+  Top-level statements in a test project make discovery time out and report zero tests. An app under
+  test belongs in a factory (see `Polecat.AspNetCore.Testing/TestApp.cs`) driven by
+  `AlbaHost.For(builder, configure)`, not in a `Program.cs`.
+- **TRX for CI**: `dotnet test` cannot emit TRX under MTP — `--logger "trx;..."` and `-- --report-trx`
+  both run, exit 0, and silently write nothing. CI runs the test executable directly with
+  `--report-trx`; see `.github/workflows/test-template.yml`.
+- **MTP extension packages must stay on the 1.x line** (`TrxReport 1.9.1`, `CodeCoverage 18.0.6`).
+  xunit.v3 is built against Microsoft.Testing.Platform 1.x; anything 2.x makes every test run die at
+  startup with a `TypeLoadException`. See the comment in `Directory.Packages.props`.
 
 ## Engineering Principles
 
