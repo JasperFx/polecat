@@ -11,7 +11,7 @@ public class streaming_result_types_tests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        _host = await AlbaHost.For<Program>();
+        _host = await AlbaHost.For(TestApp.CreateBuilder(), TestApp.Configure);
 
         // Ensure schema is created and clean documents for a fresh start
         var store = (DocumentStore)_host.Services.GetRequiredService<IDocumentStore>();

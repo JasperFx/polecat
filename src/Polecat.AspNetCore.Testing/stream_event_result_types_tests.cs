@@ -16,7 +16,7 @@ public class stream_event_result_types_tests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        _host = await AlbaHost.For<Program>();
+        _host = await AlbaHost.For(TestApp.CreateBuilder(), TestApp.Configure);
 
         var store = (DocumentStore)_host.Services.GetRequiredService<IDocumentStore>();
         await store.Database.ApplyAllConfiguredChangesToDatabaseAsync();
