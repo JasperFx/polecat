@@ -62,7 +62,7 @@ public class dead_letter_count_tests : OneOffConfigurationsContext
             opts.Projections.RebuildErrors.SkipApplyErrors = true;
             opts.Projections.Add<PoisonEventProjection>(ProjectionLifecycle.Async);
         });
-        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync();
+        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
         await ClearDeadLetters();
 
         var goodId = Guid.NewGuid();
@@ -72,7 +72,7 @@ public class dead_letter_count_tests : OneOffConfigurationsContext
             session.Events.StartStream(Guid.NewGuid(),
                 new DeadLetterThing(goodId, "ok", Poison: false),
                 new DeadLetterThing(poisonId, "boom", Poison: true)); // <-- Project throws here
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         // Own the daemon lifecycle: dead-letter storage is posted to a background
@@ -93,7 +93,7 @@ public class dead_letter_count_tests : OneOffConfigurationsContext
             {
                 counts = await theStore.Database.FetchDeadLetterCountsAsync(CancellationToken.None);
                 if (counts.Sum(c => c.Count) >= 1) break;
-                await Task.Delay(250);
+                await Task.Delay(250, TestContext.Current.CancellationToken);
             }
 
             counts.ShouldNotBeEmpty();
@@ -121,7 +121,7 @@ public class dead_letter_count_tests : OneOffConfigurationsContext
     public async Task store_and_count_dead_letters_directly()
     {
         ConfigureStore(opts => opts.DatabaseSchemaName = "dead_letters_direct");
-        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync();
+        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
         await ClearDeadLetters();
 
         var db = (IEventDatabase)theDatabase;
@@ -144,10 +144,10 @@ public class dead_letter_count_tests : OneOffConfigurationsContext
             ExceptionType = "InvalidOperationException", ExceptionMessage = "boom3"
         }, CancellationToken.None);
 
-        (await db.CountDeadLetterEventsAsync(new ShardName("Alpha", "All", 1))).ShouldBe(2);
-        (await db.CountDeadLetterEventsAsync(new ShardName("Beta", "All", 1))).ShouldBe(1);
+        (await db.CountDeadLetterEventsAsync(new ShardName("Alpha", "All", 1), TestContext.Current.CancellationToken)).ShouldBe(2);
+        (await db.CountDeadLetterEventsAsync(new ShardName("Beta", "All", 1), TestContext.Current.CancellationToken)).ShouldBe(1);
 
-        var counts = await db.FetchDeadLetterCountsAsync();
+        var counts = await db.FetchDeadLetterCountsAsync(TestContext.Current.CancellationToken);
         counts.Count.ShouldBe(2);
         counts.Sum(c => c.Count).ShouldBe(3);
     }
@@ -159,7 +159,7 @@ public class dead_letter_count_tests : OneOffConfigurationsContext
     public async Task query_dead_letter_events_orders_by_sequence_and_pages()
     {
         ConfigureStore(opts => opts.DatabaseSchemaName = "dead_letters_query");
-        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync();
+        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
         await ClearDeadLetters();
 
         var db = (IEventDatabase)theDatabase;
@@ -206,7 +206,7 @@ public class dead_letter_count_tests : OneOffConfigurationsContext
     public async Task query_and_count_dead_letters_scoped_by_tenant()
     {
         ConfigureStore(opts => opts.DatabaseSchemaName = "dead_letters_tenant");
-        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync();
+        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
         await ClearDeadLetters();
 
         var db = (IEventDatabase)theDatabase;

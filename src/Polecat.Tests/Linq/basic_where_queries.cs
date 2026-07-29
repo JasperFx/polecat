@@ -44,7 +44,7 @@ public class basic_where_queries : OneOffConfigurationsContext
         await using var query = theStore.QuerySession();
         var results = await query.Query<LinqTarget>()
             .Where(x => x.Name == "Han")
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(1);
         results[0].Name.ShouldBe("Han");
@@ -58,7 +58,7 @@ public class basic_where_queries : OneOffConfigurationsContext
         await using var query = theStore.QuerySession();
         var results = await query.Query<LinqTarget>()
             .Where(x => x.Name != "Han")
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(2); // Luke and Leia (null name excluded by JSON_VALUE != comparison)
     }
@@ -71,7 +71,7 @@ public class basic_where_queries : OneOffConfigurationsContext
         await using var query = theStore.QuerySession();
         var results = await query.Query<LinqTarget>()
             .Where(x => x.Age > 30)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(2); // Han (35) and Yoda (900)
     }
@@ -84,7 +84,7 @@ public class basic_where_queries : OneOffConfigurationsContext
         await using var query = theStore.QuerySession();
         var results = await query.Query<LinqTarget>()
             .Where(x => x.Age <= 25)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(2); // Luke and Leia
     }
@@ -97,7 +97,7 @@ public class basic_where_queries : OneOffConfigurationsContext
         await using var query = theStore.QuerySession();
         var results = await query.Query<LinqTarget>()
             .Where(x => x.IsActive)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(3); // Han, Luke, Yoda
     }
@@ -110,7 +110,7 @@ public class basic_where_queries : OneOffConfigurationsContext
         await using var query = theStore.QuerySession();
         var results = await query.Query<LinqTarget>()
             .Where(x => !x.IsActive)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(1); // Leia
         results[0].Name.ShouldBe("Leia");
@@ -124,7 +124,7 @@ public class basic_where_queries : OneOffConfigurationsContext
         await using var query = theStore.QuerySession();
         var results = await query.Query<LinqTarget>()
             .Where(x => x.IsActive == true)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(3);
     }
@@ -137,7 +137,7 @@ public class basic_where_queries : OneOffConfigurationsContext
         await using var query = theStore.QuerySession();
         var results = await query.Query<LinqTarget>()
             .Where(x => x.IsActive == false)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(1);
         results[0].Name.ShouldBe("Leia");
@@ -151,7 +151,7 @@ public class basic_where_queries : OneOffConfigurationsContext
         await using var query = theStore.QuerySession();
         var results = await query.Query<LinqTarget>()
             .Where(x => x.Name == null)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(1);
         results[0].Age.ShouldBe(900);
@@ -165,7 +165,7 @@ public class basic_where_queries : OneOffConfigurationsContext
         await using var query = theStore.QuerySession();
         var results = await query.Query<LinqTarget>()
             .Where(x => x.Name != null)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(3);
     }
@@ -178,7 +178,7 @@ public class basic_where_queries : OneOffConfigurationsContext
         await using var query = theStore.QuerySession();
         var results = await query.Query<LinqTarget>()
             .Where(x => x.Address!.City == "Tatooine")
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(1);
         results[0].Name.ShouldBe("Luke");
@@ -192,7 +192,7 @@ public class basic_where_queries : OneOffConfigurationsContext
         await using var query = theStore.QuerySession();
         var results = await query.Query<LinqTarget>()
             .Where(x => x.Age == 25 && x.IsActive)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(1);
         results[0].Name.ShouldBe("Luke");
@@ -206,7 +206,7 @@ public class basic_where_queries : OneOffConfigurationsContext
         await using var query = theStore.QuerySession();
         var results = await query.Query<LinqTarget>()
             .Where(x => x.Name == "Han" || x.Name == "Leia")
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(2);
     }
@@ -219,7 +219,7 @@ public class basic_where_queries : OneOffConfigurationsContext
         await using var query = theStore.QuerySession();
         var results = await query.Query<LinqTarget>()
             .Where(x => x.Price > 150m)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(2); // Luke (200.75) and Leia (300.00)
     }
@@ -232,7 +232,7 @@ public class basic_where_queries : OneOffConfigurationsContext
         await using var query = theStore.QuerySession();
         var results = await query.Query<LinqTarget>()
             .Where(x => x.Score >= 9.0)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(3); // Han (9.5), Leia (9.0), Yoda (10.0)
     }
@@ -245,7 +245,7 @@ public class basic_where_queries : OneOffConfigurationsContext
         await using var query = theStore.QuerySession();
         var results = await query.Query<LinqTarget>()
             .Where(x => x.BigNumber >= 2_000_000)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(3); // Luke, Leia, Yoda
     }
@@ -258,7 +258,7 @@ public class basic_where_queries : OneOffConfigurationsContext
         await using var query = theStore.QuerySession();
         var results = await query.Query<LinqTarget>()
             .Where(x => x.Color == TargetColor.Green)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(2); // Luke and Yoda
     }
@@ -272,7 +272,7 @@ public class basic_where_queries : OneOffConfigurationsContext
         await using var query = theStore.QuerySession();
         var results = await query.Query<LinqTarget>()
             .Where(x => x.Name == name)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(1);
         results[0].Name.ShouldBe("Luke");
@@ -287,12 +287,12 @@ public class basic_where_queries : OneOffConfigurationsContext
         await using var session = theStore.LightweightSession();
         session.Store(new LinqTarget { Id = id, Name = "Specific", Age = 42 });
         session.Store(new LinqTarget { Id = Guid.NewGuid(), Name = "Other", Age = 10 });
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
         var results = await query.Query<LinqTarget>()
             .Where(x => x.Id == id)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(1);
         results[0].Name.ShouldBe("Specific");
@@ -304,7 +304,7 @@ public class basic_where_queries : OneOffConfigurationsContext
         await StoreSeedDataAsync();
 
         await using var query = theStore.QuerySession();
-        var results = await query.Query<LinqTarget>().ToListAsync();
+        var results = await query.Query<LinqTarget>().ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(4);
     }
@@ -318,7 +318,7 @@ public class basic_where_queries : OneOffConfigurationsContext
         var results = await query.Query<LinqTarget>()
             .Where(x => x.Age >= 25)
             .Where(x => x.IsActive)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(3); // Han, Luke, Yoda
     }

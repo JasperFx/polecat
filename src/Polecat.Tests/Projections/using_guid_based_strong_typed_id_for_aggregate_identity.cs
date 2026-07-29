@@ -69,9 +69,9 @@ public class using_guid_based_strong_typed_id_for_aggregate_identity : Integrati
         session.Events.StartStream(streamId,
             new PaymentCreated(DateTimeOffset.UtcNow),
             new PaymentVerified(DateTimeOffset.UtcNow));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
-        var payment = await session.Events.AggregateStreamAsync<Payment>(streamId);
+        var payment = await session.Events.AggregateStreamAsync<Payment>(streamId, token: TestContext.Current.CancellationToken);
 
         payment.ShouldNotBeNull();
         payment.Id.Value.ShouldBe(streamId);
@@ -96,10 +96,10 @@ public class using_guid_based_strong_typed_id_for_aggregate_identity : Integrati
         session.Events.StartStream(streamId,
             new PaymentCreated(DateTimeOffset.UtcNow),
             new PaymentVerified(DateTimeOffset.UtcNow));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var payment = await query.LoadAsync<Payment>(streamId);
+        var payment = await query.LoadAsync<Payment>(streamId, TestContext.Current.CancellationToken);
 
         payment.ShouldNotBeNull();
         payment.State.ShouldBe(PaymentState.Verified);
@@ -120,10 +120,10 @@ public class using_guid_based_strong_typed_id_for_aggregate_identity : Integrati
         session.Events.StartStream(streamId,
             new PaymentCreated(DateTimeOffset.UtcNow),
             new PaymentVerified(DateTimeOffset.UtcNow));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var payment = await query.LoadAsync<Payment>(streamId);
+        var payment = await query.LoadAsync<Payment>(streamId, TestContext.Current.CancellationToken);
 
         payment.ShouldNotBeNull();
         payment.State.ShouldBe(PaymentState.Verified);
@@ -144,10 +144,10 @@ public class using_guid_based_strong_typed_id_for_aggregate_identity : Integrati
         session.Events.StartStream(streamId,
             new PaymentCreated(DateTimeOffset.UtcNow),
             new PaymentVerified(DateTimeOffset.UtcNow));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
-        var stream = await session2.Events.FetchForWriting<Payment>(streamId);
+        var stream = await session2.Events.FetchForWriting<Payment>(streamId, TestContext.Current.CancellationToken);
 
         stream.ShouldNotBeNull();
         stream.Aggregate.ShouldNotBeNull();
@@ -169,12 +169,12 @@ public class using_guid_based_strong_typed_id_for_aggregate_identity : Integrati
         session.Events.StartStream(streamId,
             new PaymentCreated(DateTimeOffset.UtcNow),
             new PaymentVerified(DateTimeOffset.UtcNow));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await theStore.WaitForProjectionAsync();
 
         await using var query = theStore.QuerySession();
-        var payment = await query.LoadAsync<Payment>(streamId);
+        var payment = await query.LoadAsync<Payment>(streamId, TestContext.Current.CancellationToken);
 
         payment.ShouldNotBeNull();
         payment.State.ShouldBe(PaymentState.Verified);
@@ -182,12 +182,12 @@ public class using_guid_based_strong_typed_id_for_aggregate_identity : Integrati
         // Append more events and verify async daemon catches up
         await using var session2 = theStore.LightweightSession();
         session2.Events.Append(streamId, new PaymentCanceled(DateTimeOffset.UtcNow));
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await theStore.WaitForProjectionAsync();
 
         await using var query2 = theStore.QuerySession();
-        var updated = await query2.LoadAsync<Payment>(streamId);
+        var updated = await query2.LoadAsync<Payment>(streamId, TestContext.Current.CancellationToken);
 
         updated.ShouldNotBeNull();
         updated.State.ShouldBe(PaymentState.Canceled);

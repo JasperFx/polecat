@@ -32,10 +32,10 @@ public class created_at_tests : IntegrationContext
 
         var doc = new CreatedDoc { Id = Guid.NewGuid(), Name = "test" };
         theSession.Store(doc);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var loaded = await query.LoadAsync<CreatedDoc>(doc.Id);
+        var loaded = await query.LoadAsync<CreatedDoc>(doc.Id, TestContext.Current.CancellationToken);
 
         loaded.ShouldNotBeNull();
         loaded.CreatedAt.ShouldNotBe(default);
@@ -49,26 +49,26 @@ public class created_at_tests : IntegrationContext
 
         var doc = new CreatedDoc { Id = Guid.NewGuid(), Name = "original" };
         theSession.Store(doc);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Load to get created_at
         await using var query1 = theStore.QuerySession();
-        var loaded1 = await query1.LoadAsync<CreatedDoc>(doc.Id);
+        var loaded1 = await query1.LoadAsync<CreatedDoc>(doc.Id, TestContext.Current.CancellationToken);
         loaded1.ShouldNotBeNull();
         var originalCreatedAt = loaded1.CreatedAt;
         originalCreatedAt.ShouldNotBe(default);
 
         // Wait briefly and update
-        await Task.Delay(50);
+        await Task.Delay(50, TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         loaded1.Name = "updated";
         session2.Store(loaded1);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Load again and verify created_at unchanged
         await using var query2 = theStore.QuerySession();
-        var loaded2 = await query2.LoadAsync<CreatedDoc>(doc.Id);
+        var loaded2 = await query2.LoadAsync<CreatedDoc>(doc.Id, TestContext.Current.CancellationToken);
         loaded2.ShouldNotBeNull();
         // Use fuzzy comparison — SQL Server datetimeoffset may lose sub-tick precision on round-trip
         (loaded2.CreatedAt - originalCreatedAt).Duration().ShouldBeLessThan(TimeSpan.FromMilliseconds(1));
@@ -83,10 +83,10 @@ public class created_at_tests : IntegrationContext
         var doc2 = new CreatedDoc { Id = Guid.NewGuid(), Name = "two" };
         theSession.Store(doc1);
         theSession.Store(doc2);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var loaded = await query.LoadManyAsync<CreatedDoc>(new[] { doc1.Id, doc2.Id });
+        var loaded = await query.LoadManyAsync<CreatedDoc>(new[] { doc1.Id, doc2.Id }, TestContext.Current.CancellationToken);
 
         loaded.Count.ShouldBe(2);
         loaded.ShouldAllBe(d => d.CreatedAt != default);
@@ -101,12 +101,12 @@ public class created_at_tests : IntegrationContext
 
         var doc = new CreatedDoc { Id = Guid.NewGuid(), Name = "recent" };
         theSession.Store(doc);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
         var results = await query.Query<CreatedDoc>()
             .CreatedSince(before)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.ShouldContain(d => d.Id == doc.Id);
     }
@@ -118,14 +118,14 @@ public class created_at_tests : IntegrationContext
 
         var doc = new CreatedDoc { Id = Guid.NewGuid(), Name = "older" };
         theSession.Store(doc);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var after = DateTimeOffset.UtcNow.AddSeconds(1);
 
         await using var query = theStore.QuerySession();
         var results = await query.Query<CreatedDoc>()
             .CreatedBefore(after)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.ShouldContain(d => d.Id == doc.Id);
     }
@@ -137,10 +137,10 @@ public class created_at_tests : IntegrationContext
 
         var doc = new PlainDoc { Id = Guid.NewGuid(), Name = "no interface" };
         theSession.Store(doc);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var loaded = await query.LoadAsync<PlainDoc>(doc.Id);
+        var loaded = await query.LoadAsync<PlainDoc>(doc.Id, TestContext.Current.CancellationToken);
         loaded.ShouldNotBeNull();
         loaded.Name.ShouldBe("no interface");
     }

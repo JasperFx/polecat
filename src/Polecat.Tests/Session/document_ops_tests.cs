@@ -36,7 +36,7 @@ public class document_ops_tests : IntegrationContext
         // Setup: Store a user first
         var existingUser = new User { Id = Guid.NewGuid(), FirstName = "Existing", LastName = "User", Age = 50 };
         theSession.Store(existingUser);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // New session: insert, update, delete
         await using var session = theStore.LightweightSession();
@@ -82,7 +82,7 @@ public class document_ops_tests : IntegrationContext
 
         theSession.PendingChanges.HasOutstandingWork().ShouldBeTrue();
 
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         theSession.PendingChanges.HasOutstandingWork().ShouldBeFalse();
         theSession.PendingChanges.Operations.ShouldBeEmpty();
@@ -109,13 +109,13 @@ public class document_ops_tests : IntegrationContext
             // The session should be usable — store and load a document
             var user = new User { Id = Guid.NewGuid(), FirstName = "Timeout", LastName = "Test", Age = 1 };
             session.Store(user);
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         // Verify the document was stored
         await using var query = theStore.QuerySession();
         var loaded = await query.LoadAsync<User>(((IDocumentSession)session).PendingChanges.Operations.Count == 0
-            ? Guid.Empty : Guid.Empty);
+            ? Guid.Empty : Guid.Empty, TestContext.Current.CancellationToken);
         // Just verifying no timeout exception was thrown
     }
 
@@ -125,11 +125,11 @@ public class document_ops_tests : IntegrationContext
         // Store a user first
         var userId = Guid.NewGuid();
         theSession.Store(new User { Id = userId, FirstName = "Query", LastName = "Timeout", Age = 2 });
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Create a query session with custom timeout
         await using var query = theStore.QuerySession(new SessionOptions { Timeout = 60 });
-        var loaded = await query.LoadAsync<User>(userId);
+        var loaded = await query.LoadAsync<User>(userId, TestContext.Current.CancellationToken);
 
         loaded.ShouldNotBeNull();
         loaded.FirstName.ShouldBe("Query");
@@ -157,13 +157,13 @@ public class document_ops_tests : IntegrationContext
         ops[1].DocumentType.ShouldBe(typeof(Target));
         ops[2].DocumentType.ShouldBe(typeof(User));
 
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Verify all documents persisted
         await using var query = theStore.QuerySession();
-        (await query.LoadAsync<User>(user1.Id)).ShouldNotBeNull();
-        (await query.LoadAsync<Target>(target.Id)).ShouldNotBeNull();
-        (await query.LoadAsync<User>(user2.Id)).ShouldNotBeNull();
+        (await query.LoadAsync<User>(user1.Id, TestContext.Current.CancellationToken)).ShouldNotBeNull();
+        (await query.LoadAsync<Target>(target.Id, TestContext.Current.CancellationToken)).ShouldNotBeNull();
+        (await query.LoadAsync<User>(user2.Id, TestContext.Current.CancellationToken)).ShouldNotBeNull();
     }
 
     [Fact]
@@ -178,11 +178,11 @@ public class document_ops_tests : IntegrationContext
         // Both operations should be tracked
         theSession.PendingChanges.Operations.Count.ShouldBe(2);
 
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Net effect: document should not exist (delete after insert)
         await using var query = theStore.QuerySession();
-        var loaded = await query.LoadAsync<User>(user.Id);
+        var loaded = await query.LoadAsync<User>(user.Id, TestContext.Current.CancellationToken);
         loaded.ShouldBeNull();
     }
 
@@ -191,7 +191,7 @@ public class document_ops_tests : IntegrationContext
     {
         var user = new User { Id = Guid.NewGuid(), FirstName = "Original", LastName = "Name", Age = 30 };
         theSession.Store(user);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         user.FirstName = "Updated1";
@@ -202,11 +202,11 @@ public class document_ops_tests : IntegrationContext
         // Both store operations queued
         session2.PendingChanges.Operations.Count.ShouldBe(2);
 
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Last write wins
         await using var query = theStore.QuerySession();
-        var loaded = await query.LoadAsync<User>(user.Id);
+        var loaded = await query.LoadAsync<User>(user.Id, TestContext.Current.CancellationToken);
         loaded.ShouldNotBeNull();
         loaded.FirstName.ShouldBe("Updated2");
     }
@@ -223,10 +223,10 @@ public class document_ops_tests : IntegrationContext
         theSession.Store(user1);
         theSession.Store(user2);
         theSession.Store(user3);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var loaded = await query.LoadManyAsync<User>([user1.Id, user3.Id]);
+        var loaded = await query.LoadManyAsync<User>([user1.Id, user3.Id], TestContext.Current.CancellationToken);
 
         loaded.Count.ShouldBe(2);
         loaded.ShouldContain(u => u.FirstName == "Alice");
@@ -239,10 +239,10 @@ public class document_ops_tests : IntegrationContext
         var user1 = new User { Id = Guid.NewGuid(), FirstName = "Exists", LastName = "A", Age = 25 };
 
         theSession.Store(user1);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var loaded = await query.LoadManyAsync<User>([user1.Id, Guid.NewGuid()]);
+        var loaded = await query.LoadManyAsync<User>([user1.Id, Guid.NewGuid()], TestContext.Current.CancellationToken);
 
         loaded.Count.ShouldBe(1);
         loaded[0].FirstName.ShouldBe("Exists");

@@ -111,10 +111,10 @@ public class single_stream_projection_with_string_identity_tests : IntegrationCo
         await using var session = store.LightweightSession();
         session.Events.StartStream(streamKey,
             new QuestStarted("Destroy the Ring"));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = store.QuerySession();
-        var party = await query.LoadAsync<StringQuestParty>(streamKey);
+        var party = await query.LoadAsync<StringQuestParty>(streamKey, TestContext.Current.CancellationToken);
 
         party.ShouldNotBeNull();
         party.Id.ShouldBe(streamKey);
@@ -131,10 +131,10 @@ public class single_stream_projection_with_string_identity_tests : IntegrationCo
         session.Events.StartStream(streamKey,
             new QuestStarted("Fellowship"),
             new MembersJoined(1, "Rivendell", ["Aragorn", "Legolas", "Gimli"]));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = store.QuerySession();
-        var party = await query.LoadAsync<StringQuestParty>(streamKey);
+        var party = await query.LoadAsync<StringQuestParty>(streamKey, TestContext.Current.CancellationToken);
 
         party.ShouldNotBeNull();
         party.Name.ShouldBe("Fellowship");
@@ -152,16 +152,16 @@ public class single_stream_projection_with_string_identity_tests : IntegrationCo
         session.Events.StartStream(streamKey,
             new QuestStarted("Adventure"),
             new MembersJoined(1, "Start", ["Hero"]));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = store.LightweightSession();
         session2.Events.Append(streamKey,
             new ArrivedAtLocation("Dungeon", 2),
             new MonsterSlain("Goblin", 50));
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = store.QuerySession();
-        var party = await query.LoadAsync<StringQuestParty>(streamKey);
+        var party = await query.LoadAsync<StringQuestParty>(streamKey, TestContext.Current.CancellationToken);
 
         party.ShouldNotBeNull();
         party.Location.ShouldBe("Dungeon");
@@ -178,15 +178,15 @@ public class single_stream_projection_with_string_identity_tests : IntegrationCo
         session.Events.StartStream(streamKey,
             new QuestStarted("Doomed Quest"),
             new MembersJoined(1, "Start", ["Hero"]));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = store.LightweightSession();
         session2.Events.Append(streamKey,
             new QuestEnded("Doomed Quest"));
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = store.QuerySession();
-        var party = await query.LoadAsync<StringQuestParty>(streamKey);
+        var party = await query.LoadAsync<StringQuestParty>(streamKey, TestContext.Current.CancellationToken);
         party.ShouldBeNull();
     }
 
@@ -205,11 +205,11 @@ public class single_stream_projection_with_string_identity_tests : IntegrationCo
         session.Events.StartStream(key2,
             new QuestStarted("Quest 2"),
             new MembersJoined(1, "Town B", ["Beta", "Gamma"]));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = store.QuerySession();
-        var party1 = await query.LoadAsync<StringQuestParty>(key1);
-        var party2 = await query.LoadAsync<StringQuestParty>(key2);
+        var party1 = await query.LoadAsync<StringQuestParty>(key1, TestContext.Current.CancellationToken);
+        var party2 = await query.LoadAsync<StringQuestParty>(key2, TestContext.Current.CancellationToken);
 
         party1.ShouldNotBeNull();
         party1.Name.ShouldBe("Quest 1");
@@ -236,10 +236,10 @@ public class single_stream_projection_with_string_identity_tests : IntegrationCo
         session.Events.StartStream(streamKey,
             new QuestStarted("Snapshot Quest"),
             new MembersJoined(1, "Castle", ["Knight"]));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var party = await query.LoadAsync<SelfAggregatingStringQuest>(streamKey);
+        var party = await query.LoadAsync<SelfAggregatingStringQuest>(streamKey, TestContext.Current.CancellationToken);
 
         party.ShouldNotBeNull();
         party.Name.ShouldBe("Snapshot Quest");

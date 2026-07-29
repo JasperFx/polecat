@@ -79,7 +79,7 @@ public class per_tenant_event_sequence_tests : IAsyncLifetime
             opts.Events.TenancyStyle = TenancyStyle.Conjoined;
             // UseTenantPartitionedEvents left false
         });
-        await store.Database.ApplyAllConfiguredChangesToDatabaseAsync();
+        await store.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         // seq_id stays a global IDENTITY column...
         (await IsIdentityAsync(DefaultSchema, "pc_events", "seq_id")).ShouldBeTrue();
@@ -91,7 +91,7 @@ public class per_tenant_event_sequence_tests : IAsyncLifetime
     public async Task enabling_drops_identity_and_creates_registry_table()
     {
         using var store = CreatePartitionedStore();
-        await store.Database.ApplyAllConfiguredChangesToDatabaseAsync();
+        await store.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         (await IsIdentityAsync(PartitionedSchema, "pc_events", "seq_id")).ShouldBeFalse();
         (await TableExistsAsync(PartitionedSchema, "pc_tenant_partitions")).ShouldBeTrue();
@@ -101,7 +101,7 @@ public class per_tenant_event_sequence_tests : IAsyncLifetime
     public async Task per_tenant_sequences_are_isolated()
     {
         using var store = CreatePartitionedStore();
-        await store.Database.ApplyAllConfiguredChangesToDatabaseAsync();
+        await store.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         var redStream = Guid.NewGuid();
         var blueStream = Guid.NewGuid();
@@ -112,7 +112,7 @@ public class per_tenant_event_sequence_tests : IAsyncLifetime
             red.Events.StartStream(redStream,
                 new QuestStarted("Red Quest"),
                 new MembersJoined(1, "Red Town", ["RedHero"]));
-            await red.SaveChangesAsync();
+            await red.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         // Tenant Blue: 3 events.
@@ -122,7 +122,7 @@ public class per_tenant_event_sequence_tests : IAsyncLifetime
                 new QuestStarted("Blue Quest"),
                 new MembersJoined(1, "Blue Town", ["BlueHero"]),
                 new MonsterSlain("Grendel", 10));
-            await blue.SaveChangesAsync();
+            await blue.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         // The registry assigned a distinct ordinal to each tenant.
@@ -141,29 +141,29 @@ public class per_tenant_event_sequence_tests : IAsyncLifetime
 
         // Round-trip: each tenant reads its own stream; cross-tenant is invisible.
         await using var redQuery = store.QuerySession(new SessionOptions { TenantId = "Red" });
-        (await redQuery.Events.FetchStreamAsync(redStream)).Count.ShouldBe(2);
-        (await redQuery.Events.FetchStreamAsync(blueStream)).Count.ShouldBe(0);
+        (await redQuery.Events.FetchStreamAsync(redStream, token: TestContext.Current.CancellationToken)).Count.ShouldBe(2);
+        (await redQuery.Events.FetchStreamAsync(blueStream, token: TestContext.Current.CancellationToken)).Count.ShouldBe(0);
 
         await using var blueQuery = store.QuerySession(new SessionOptions { TenantId = "Blue" });
-        (await blueQuery.Events.FetchStreamAsync(blueStream)).Count.ShouldBe(3);
+        (await blueQuery.Events.FetchStreamAsync(blueStream, token: TestContext.Current.CancellationToken)).Count.ShouldBe(3);
     }
 
     [Fact]
     public async Task events_are_physically_partitioned_by_tenant()
     {
         using var store = CreatePartitionedStore();
-        await store.Database.ApplyAllConfiguredChangesToDatabaseAsync();
+        await store.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         await using (var red = store.LightweightSession(new SessionOptions { TenantId = "Red" }))
         {
             red.Events.StartStream(Guid.NewGuid(), new QuestStarted("Red"), new MonsterSlain("a", 1));
-            await red.SaveChangesAsync();
+            await red.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using (var blue = store.LightweightSession(new SessionOptions { TenantId = "Blue" }))
         {
             blue.Events.StartStream(Guid.NewGuid(), new QuestStarted("Blue"));
-            await blue.SaveChangesAsync();
+            await blue.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         // Each tenant's rows carry that tenant's ordinal and physically land in a distinct partition of

@@ -51,7 +51,7 @@ public class dcb_tag_linq_where_tests : OneOffConfigurationsContext
 
         var events = await session.Events.QueryAllRawEvents()
             .Where(e => e.HasTag<StudentId>(alice))
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         #endregion
 
@@ -78,7 +78,7 @@ public class dcb_tag_linq_where_tests : OneOffConfigurationsContext
 
         var events = await session.Events.QueryAllRawEvents()
             .Where(e => e.HasTag<StudentId>(alice) && e.EventTypeName == enrolledTypeName)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         events.Count.ShouldBe(1);
         events.Single().Data.ShouldBeOfType<StudentEnrolled>();
@@ -97,7 +97,7 @@ public class dcb_tag_linq_where_tests : OneOffConfigurationsContext
 
         var events = await session.Events.QueryAllRawEvents()
             .Where(e => e.HasTag<StudentId>(alice) && e.Timestamp > cutoff)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         events.Count.ShouldBe(1);
     }
@@ -117,7 +117,7 @@ public class dcb_tag_linq_where_tests : OneOffConfigurationsContext
 
         var events = await session.Events.QueryAllRawEvents()
             .Where(e => e.HasTag<StudentId>(alice) && e.HasTag<CourseId>(math))
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         // Only the event tagged with both survives the AND.
         events.Count.ShouldBe(1);
@@ -132,7 +132,7 @@ public class dcb_tag_linq_where_tests : OneOffConfigurationsContext
             opts.Events.TenancyStyle = TenancyStyle.Conjoined;
             opts.Events.RegisterTagType<StudentId>("student");
         });
-        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync();
+        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         var alice = new StudentId(Guid.NewGuid());
 
@@ -145,7 +145,7 @@ public class dcb_tag_linq_where_tests : OneOffConfigurationsContext
 
         var redEvents = await redSession.Events.QueryAllRawEvents()
             .Where(e => e.HasTag<StudentId>(alice))
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         redEvents.Count.ShouldBe(1);
         redEvents.Single().Data.ShouldBeOfType<StudentEnrolled>().CourseName.ShouldBe("Math");

@@ -16,15 +16,15 @@ public class append_stream_tests : IntegrationContext
         var streamId = Guid.NewGuid();
         theSession.Events.StartStream(streamId,
             new QuestStarted("Append Quest"));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         session2.Events.Append(streamId,
             new MembersJoined(2, "Town", ["Gandalf"]));
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
 
         events.Count.ShouldBe(2);
         events[0].Version.ShouldBe(1);
@@ -37,17 +37,17 @@ public class append_stream_tests : IntegrationContext
         var streamId = Guid.NewGuid();
         theSession.Events.StartStream(streamId,
             new QuestStarted("Multi Append"));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         session2.Events.Append(streamId,
             new MembersJoined(1, "Town", ["A"]),
             new ArrivedAtLocation("Castle", 2),
             new MonsterSlain("Dragon", 100));
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
 
         events.Count.ShouldBe(4);
         events[3].Version.ShouldBe(4);
@@ -60,13 +60,13 @@ public class append_stream_tests : IntegrationContext
 
         theSession.Events.Append(streamId,
             new QuestStarted("Implicit Stream"));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
         events.Count.ShouldBe(1);
 
-        var state = await query.Events.FetchStreamStateAsync(streamId);
+        var state = await query.Events.FetchStreamStateAsync(streamId, TestContext.Current.CancellationToken);
         state.ShouldNotBeNull();
         state.Version.ShouldBe(1);
     }
@@ -80,10 +80,10 @@ public class append_stream_tests : IntegrationContext
             new QuestStarted("Same Session"));
         theSession.Events.Append(streamId,
             new MembersJoined(1, "Start", ["Hero"]));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
 
         events.Count.ShouldBe(2);
         events[0].Version.ShouldBe(1);
@@ -97,15 +97,15 @@ public class append_stream_tests : IntegrationContext
         theSession.Events.StartStream(streamId,
             new QuestStarted("Version Quest"),
             new MembersJoined(1, "Start", ["A"]));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         session2.Events.Append(streamId,
             new ArrivedAtLocation("Destination", 5));
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var state = await query.Events.FetchStreamStateAsync(streamId);
+        var state = await query.Events.FetchStreamStateAsync(streamId, TestContext.Current.CancellationToken);
         state.ShouldNotBeNull();
         state.Version.ShouldBe(3);
     }
@@ -116,15 +116,15 @@ public class append_stream_tests : IntegrationContext
         var streamId = Guid.NewGuid();
         theSession.Events.StartStream(streamId,
             new QuestStarted("Concurrency Quest"));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         session2.Events.Append(streamId, 2,
             new MembersJoined(1, "Start", ["B"]));
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
         events.Count.ShouldBe(2);
     }
 
@@ -134,14 +134,14 @@ public class append_stream_tests : IntegrationContext
         var streamId = Guid.NewGuid();
         theSession.Events.StartStream(streamId,
             new QuestStarted("Concurrency Fail"));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         session2.Events.Append(streamId, 5,
             new MembersJoined(1, "Start", ["C"]));
 
         await Should.ThrowAsync<EventStreamUnexpectedMaxEventIdException>(
-            session2.SaveChangesAsync());
+            session2.SaveChangesAsync(TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -168,11 +168,11 @@ public class append_stream_tests : IntegrationContext
         theSession.Events.StartStream(stream2,
             new QuestStarted("Quest 2"),
             new MembersJoined(1, "Start", ["X"]));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events1 = await query.Events.FetchStreamAsync(stream1);
-        var events2 = await query.Events.FetchStreamAsync(stream2);
+        var events1 = await query.Events.FetchStreamAsync(stream1, token: TestContext.Current.CancellationToken);
+        var events2 = await query.Events.FetchStreamAsync(stream2, token: TestContext.Current.CancellationToken);
 
         events1.Count.ShouldBe(1);
         events2.Count.ShouldBe(2);

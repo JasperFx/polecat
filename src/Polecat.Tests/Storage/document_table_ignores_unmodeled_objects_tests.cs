@@ -80,13 +80,13 @@ public class document_table_ignores_unmodeled_objects_tests : OneOffConfiguratio
         await using (var session = theStore.LightweightSession())
         {
             session.Store(new Customer { Id = Guid.NewGuid(), Name = "first" });
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await AddUserManagedObjectsAsync();
 
         // A full schema reconciliation must NOT drop the user-managed objects.
-        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync();
+        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         var (columnExists, indexExists) = await ProbeUserObjectsAsync();
         columnExists.ShouldBeTrue();
@@ -101,7 +101,7 @@ public class document_table_ignores_unmodeled_objects_tests : OneOffConfiguratio
         await using (var session = theStore.LightweightSession())
         {
             session.Store(new Customer { Id = Guid.NewGuid(), Name = "first" });
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await AddUserManagedObjectsAsync();
@@ -112,7 +112,7 @@ public class document_table_ignores_unmodeled_objects_tests : OneOffConfiguratio
         var docTable = new DocumentTable(mapping);
 
         await using var conn = new SqlConnection(ConnectionSource.ConnectionString);
-        await conn.OpenAsync();
+        await conn.OpenAsync(TestContext.Current.CancellationToken);
         var migration = await SchemaMigration.DetermineAsync(conn, CancellationToken.None, docTable);
 
         migration.Difference.ShouldBe(SchemaPatchDifference.None);

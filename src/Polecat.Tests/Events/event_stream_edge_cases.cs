@@ -16,16 +16,16 @@ public class event_stream_edge_cases : IntegrationContext
     {
         var streamId = Guid.NewGuid();
         theSession.Events.StartStream(streamId, new QuestStarted("Empty Append"));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Append with no events
         await using var session2 = theStore.LightweightSession();
         session2.Events.Append(streamId);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Version should remain at 1
         await using var query = theStore.QuerySession();
-        var state = await query.Events.FetchStreamStateAsync(streamId);
+        var state = await query.Events.FetchStreamStateAsync(streamId, TestContext.Current.CancellationToken);
         state.ShouldNotBeNull();
         state!.Version.ShouldBe(1);
     }
@@ -37,15 +37,15 @@ public class event_stream_edge_cases : IntegrationContext
         theSession.Events.StartStream(streamId,
             new QuestStarted("Archived Writing"),
             new MembersJoined(1, "Town", ["A"]));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var archiveSession = theStore.LightweightSession();
         archiveSession.Events.ArchiveStream(streamId);
-        await archiveSession.SaveChangesAsync();
+        await archiveSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // FetchForWriting on archived stream should return null aggregate
         await using var session2 = theStore.LightweightSession();
-        var stream = await session2.Events.FetchForWriting<QuestAggregate>(streamId);
+        var stream = await session2.Events.FetchForWriting<QuestAggregate>(streamId, TestContext.Current.CancellationToken);
 
         // Archived stream events are excluded from fetch, so aggregate should be null
         stream.Aggregate.ShouldBeNull();
@@ -56,12 +56,12 @@ public class event_stream_edge_cases : IntegrationContext
     {
         var streamId = Guid.NewGuid();
         theSession.Events.StartStream(streamId, new QuestStarted("Race"));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Archive the stream first
         await using var archiveSession = theStore.LightweightSession();
         archiveSession.Events.ArchiveStream(streamId);
-        await archiveSession.SaveChangesAsync();
+        await archiveSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Now try to append — should throw because stream is archived
         await using var appendSession = theStore.LightweightSession();
@@ -79,19 +79,19 @@ public class event_stream_edge_cases : IntegrationContext
     {
         var streamId = Guid.NewGuid();
         theSession.Events.StartStream(streamId, new QuestStarted("Original"));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var tombstoneSession = theStore.LightweightSession();
         tombstoneSession.Events.TombstoneStream(streamId);
-        await tombstoneSession.SaveChangesAsync();
+        await tombstoneSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Reuse the same ID
         await using var session3 = theStore.LightweightSession();
         session3.Events.StartStream(streamId, new QuestStarted("Reborn"));
-        await session3.SaveChangesAsync();
+        await session3.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
         events.Count.ShouldBe(1);
         events[0].Data.ShouldBeOfType<QuestStarted>().Name.ShouldBe("Reborn");
     }
@@ -104,10 +104,10 @@ public class event_stream_edge_cases : IntegrationContext
         theSession.Events.StartStream(streamId,
             new QuestStarted("Version Zero"),
             new MembersJoined(1, "Town", ["A"]));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId, version: 0);
+        var events = await query.Events.FetchStreamAsync(streamId, version: 0, token: TestContext.Current.CancellationToken);
 
         events.Count.ShouldBe(2);
     }
@@ -121,11 +121,11 @@ public class event_stream_edge_cases : IntegrationContext
         theSession.Events.StartStream(stream1, new QuestStarted("Quest 1"));
         theSession.Events.StartStream(stream2, new QuestStarted("Quest 2"));
         theSession.Events.Append(stream1, new MembersJoined(1, "Forest", ["Elf"]));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events1 = await query.Events.FetchStreamAsync(stream1);
-        var events2 = await query.Events.FetchStreamAsync(stream2);
+        var events1 = await query.Events.FetchStreamAsync(stream1, token: TestContext.Current.CancellationToken);
+        var events2 = await query.Events.FetchStreamAsync(stream2, token: TestContext.Current.CancellationToken);
 
         events1.Count.ShouldBe(2);
         events2.Count.ShouldBe(1);
@@ -139,14 +139,14 @@ public class event_stream_edge_cases : IntegrationContext
             new QuestStarted("Archived Fetch"),
             new MembersJoined(1, "Start", ["Hero"]),
             new MonsterSlain("Dragon", 100));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var archiveSession = theStore.LightweightSession();
         archiveSession.Events.ArchiveStream(streamId);
-        await archiveSession.SaveChangesAsync();
+        await archiveSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
         events.Count.ShouldBe(0);
     }
 }

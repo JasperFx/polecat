@@ -22,15 +22,15 @@ public class stream_compacting_tests : IntegrationContext
             new MembersJoined(1, "Town", ["Alice", "Bob"]),
             new MonsterSlain("Goblin", 10),
             new MembersJoined(2, "Forest", ["Charlie"]));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         await session2.Events.CompactStreamAsync<QuestParty>(streamId);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // After compaction, only one event should remain (the Compacted<T>)
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
         events.Count.ShouldBe(1);
 
         var compacted = events[0].Data.ShouldBeOfType<Compacted<QuestParty>>();
@@ -52,19 +52,19 @@ public class stream_compacting_tests : IntegrationContext
             new QuestStarted("Version Quest"),
             new MembersJoined(1, "Town", ["Hero"]),
             new MonsterSlain("Dragon", 100));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         await session2.Events.CompactStreamAsync<QuestParty>(streamId);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Can still append events after compaction
         await using var session3 = theStore.LightweightSession();
         session3.Events.Append(streamId, new MembersJoined(3, "Castle", ["Knight"]));
-        await session3.SaveChangesAsync();
+        await session3.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
         events.Count.ShouldBe(2); // Compacted + new event
     }
 
@@ -77,20 +77,20 @@ public class stream_compacting_tests : IntegrationContext
         theSession.Events.StartStream(streamId,
             new QuestStarted("Idempotent Quest"),
             new MembersJoined(1, "Town", ["Hero"]));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // First compaction
         await using var session2 = theStore.LightweightSession();
         await session2.Events.CompactStreamAsync<QuestParty>(streamId);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Second compaction should be a no-op (already compacted)
         await using var session3 = theStore.LightweightSession();
         await session3.Events.CompactStreamAsync<QuestParty>(streamId);
-        await session3.SaveChangesAsync();
+        await session3.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
         events.Count.ShouldBe(1);
         events[0].Data.ShouldBeOfType<Compacted<QuestParty>>();
     }
@@ -105,6 +105,6 @@ public class stream_compacting_tests : IntegrationContext
         // No events for this stream, should not throw
         await using var session = theStore.LightweightSession();
         await session.Events.CompactStreamAsync<QuestParty>(streamId);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
     }
 }

@@ -46,7 +46,7 @@ public class conjoined_tenancy_dcb_and_natural_key_tests : OneOffConfigurationsC
     public async Task dcb_tag_query_isolated_by_tenant()
     {
         ConfigureConjoinedStoreWithTags();
-        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync();
+        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         var studentId = new StudentId(Guid.NewGuid());
         var courseId = new CourseId(Guid.NewGuid());
@@ -56,17 +56,17 @@ public class conjoined_tenancy_dcb_and_natural_key_tests : OneOffConfigurationsC
         var enrolled = redSession.Events.BuildEvent(new StudentEnrolled("Alice", "Math"));
         enrolled.WithTag(studentId, courseId);
         redSession.Events.Append(Guid.NewGuid(), enrolled);
-        await redSession.SaveChangesAsync();
+        await redSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Blue tenant queries by the same tag - should find nothing
         await using var blueSession = theStore.LightweightSession(new SessionOptions { TenantId = BlueTenant });
         var query = new EventTagQuery().Or<StudentId>(studentId);
-        var blueEvents = await blueSession.Events.QueryByTagsAsync(query);
+        var blueEvents = await blueSession.Events.QueryByTagsAsync(query, TestContext.Current.CancellationToken);
         blueEvents.Count.ShouldBe(0);
 
         // Red tenant queries by the same tag - should find the event
         await using var redQuery = theStore.LightweightSession(new SessionOptions { TenantId = RedTenant });
-        var redEvents = await redQuery.Events.QueryByTagsAsync(query);
+        var redEvents = await redQuery.Events.QueryByTagsAsync(query, TestContext.Current.CancellationToken);
         redEvents.Count.ShouldBe(1);
         redEvents[0].Data.ShouldBeOfType<StudentEnrolled>().StudentName.ShouldBe("Alice");
     }
@@ -75,7 +75,7 @@ public class conjoined_tenancy_dcb_and_natural_key_tests : OneOffConfigurationsC
     public async Task events_exist_isolated_by_tenant()
     {
         ConfigureConjoinedStoreWithTags();
-        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync();
+        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         var studentId = new StudentId(Guid.NewGuid());
         var courseId = new CourseId(Guid.NewGuid());
@@ -85,18 +85,18 @@ public class conjoined_tenancy_dcb_and_natural_key_tests : OneOffConfigurationsC
         var enrolled = redSession.Events.BuildEvent(new StudentEnrolled("Alice", "Math"));
         enrolled.WithTag(studentId, courseId);
         redSession.Events.Append(Guid.NewGuid(), enrolled);
-        await redSession.SaveChangesAsync();
+        await redSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var query = new EventTagQuery().Or<StudentId>(studentId);
 
         // Blue tenant checks existence - should be false
         await using var blueSession = theStore.LightweightSession(new SessionOptions { TenantId = BlueTenant });
-        var blueExists = await blueSession.Events.EventsExistAsync(query);
+        var blueExists = await blueSession.Events.EventsExistAsync(query, TestContext.Current.CancellationToken);
         blueExists.ShouldBeFalse();
 
         // Red tenant checks existence - should be true
         await using var redQuery = theStore.LightweightSession(new SessionOptions { TenantId = RedTenant });
-        var redExists = await redQuery.Events.EventsExistAsync(query);
+        var redExists = await redQuery.Events.EventsExistAsync(query, TestContext.Current.CancellationToken);
         redExists.ShouldBeTrue();
     }
 
@@ -104,7 +104,7 @@ public class conjoined_tenancy_dcb_and_natural_key_tests : OneOffConfigurationsC
     public async Task aggregate_by_tags_isolated_by_tenant()
     {
         ConfigureConjoinedStoreWithTags();
-        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync();
+        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         var studentId = new StudentId(Guid.NewGuid());
         var courseId = new CourseId(Guid.NewGuid());
@@ -116,18 +116,18 @@ public class conjoined_tenancy_dcb_and_natural_key_tests : OneOffConfigurationsC
         var e2 = redSession.Events.BuildEvent(new AssignmentSubmitted("HW1", 95));
         e2.WithTag(studentId, courseId);
         redSession.Events.Append(Guid.NewGuid(), e1, e2);
-        await redSession.SaveChangesAsync();
+        await redSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var query = new EventTagQuery().Or<StudentId>(studentId);
 
         // Blue tenant aggregates - should get null
         await using var blueSession = theStore.LightweightSession(new SessionOptions { TenantId = BlueTenant });
-        var blueAggregate = await blueSession.Events.AggregateByTagsAsync<StudentCourseEnrollment>(query);
+        var blueAggregate = await blueSession.Events.AggregateByTagsAsync<StudentCourseEnrollment>(query, TestContext.Current.CancellationToken);
         blueAggregate.ShouldBeNull();
 
         // Red tenant aggregates - should get the enrollment
         await using var redQuery = theStore.LightweightSession(new SessionOptions { TenantId = RedTenant });
-        var redAggregate = await redQuery.Events.AggregateByTagsAsync<StudentCourseEnrollment>(query);
+        var redAggregate = await redQuery.Events.AggregateByTagsAsync<StudentCourseEnrollment>(query, TestContext.Current.CancellationToken);
         redAggregate.ShouldNotBeNull();
         redAggregate!.StudentName.ShouldBe("Alice");
         redAggregate.Assignments.Count.ShouldBe(1);
@@ -137,7 +137,7 @@ public class conjoined_tenancy_dcb_and_natural_key_tests : OneOffConfigurationsC
     public async Task fetch_for_writing_by_tags_isolated_by_tenant()
     {
         ConfigureConjoinedStoreWithTags();
-        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync();
+        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         var studentId = new StudentId(Guid.NewGuid());
         var courseId = new CourseId(Guid.NewGuid());
@@ -147,18 +147,18 @@ public class conjoined_tenancy_dcb_and_natural_key_tests : OneOffConfigurationsC
         var enrolled = redSession.Events.BuildEvent(new StudentEnrolled("Alice", "Math"));
         enrolled.WithTag(studentId, courseId);
         redSession.Events.Append(Guid.NewGuid(), enrolled);
-        await redSession.SaveChangesAsync();
+        await redSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var query = new EventTagQuery().Or<StudentId>(studentId);
 
         // Blue tenant fetches for writing - should get empty boundary
         await using var blueSession = theStore.LightweightSession(new SessionOptions { TenantId = BlueTenant });
-        var blueBoundary = await blueSession.Events.FetchForWritingByTags<StudentCourseEnrollment>(query);
+        var blueBoundary = await blueSession.Events.FetchForWritingByTags<StudentCourseEnrollment>(query, TestContext.Current.CancellationToken);
         blueBoundary.Aggregate.ShouldBeNull();
 
         // Red tenant fetches for writing - should get the aggregate
         await using var redQuery = theStore.LightweightSession(new SessionOptions { TenantId = RedTenant });
-        var redBoundary = await redQuery.Events.FetchForWritingByTags<StudentCourseEnrollment>(query);
+        var redBoundary = await redQuery.Events.FetchForWritingByTags<StudentCourseEnrollment>(query, TestContext.Current.CancellationToken);
         redBoundary.Aggregate.ShouldNotBeNull();
         redBoundary.Aggregate!.StudentName.ShouldBe("Alice");
     }
@@ -167,7 +167,7 @@ public class conjoined_tenancy_dcb_and_natural_key_tests : OneOffConfigurationsC
     public async Task dcb_concurrency_check_cross_tenant_should_not_conflict()
     {
         ConfigureConjoinedStoreWithTags();
-        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync();
+        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         var studentId = new StudentId(Guid.NewGuid());
         var courseId = new CourseId(Guid.NewGuid());
@@ -175,14 +175,14 @@ public class conjoined_tenancy_dcb_and_natural_key_tests : OneOffConfigurationsC
 
         // Red tenant fetches for writing (empty)
         await using var redSession = theStore.LightweightSession(new SessionOptions { TenantId = RedTenant });
-        var redBoundary = await redSession.Events.FetchForWritingByTags<StudentCourseEnrollment>(query);
+        var redBoundary = await redSession.Events.FetchForWritingByTags<StudentCourseEnrollment>(query, TestContext.Current.CancellationToken);
 
         // Blue tenant appends events with the SAME tags
         await using var blueSession = theStore.LightweightSession(new SessionOptions { TenantId = BlueTenant });
         var enrolled = blueSession.Events.BuildEvent(new StudentEnrolled("Bob", "Science"));
         enrolled.WithTag(studentId, courseId);
         blueSession.Events.Append(Guid.NewGuid(), enrolled);
-        await blueSession.SaveChangesAsync();
+        await blueSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Red tenant appends with its own DCB boundary - should NOT conflict
         // because the blue tenant's events are in a different tenant
@@ -196,7 +196,7 @@ public class conjoined_tenancy_dcb_and_natural_key_tests : OneOffConfigurationsC
     public async Task dcb_concurrency_check_same_tenant_should_conflict()
     {
         ConfigureConjoinedStoreWithTags();
-        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync();
+        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         var studentId = new StudentId(Guid.NewGuid());
         var courseId = new CourseId(Guid.NewGuid());
@@ -204,14 +204,14 @@ public class conjoined_tenancy_dcb_and_natural_key_tests : OneOffConfigurationsC
 
         // Red tenant session 1 fetches for writing (empty)
         await using var session1 = theStore.LightweightSession(new SessionOptions { TenantId = RedTenant });
-        var boundary = await session1.Events.FetchForWritingByTags<StudentCourseEnrollment>(query);
+        var boundary = await session1.Events.FetchForWritingByTags<StudentCourseEnrollment>(query, TestContext.Current.CancellationToken);
 
         // Red tenant session 2 appends events with the same tags
         await using var session2 = theStore.LightweightSession(new SessionOptions { TenantId = RedTenant });
         var enrolled = session2.Events.BuildEvent(new StudentEnrolled("Bob", "Math"));
         enrolled.WithTag(studentId, courseId);
         session2.Events.Append(Guid.NewGuid(), enrolled);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Session 1 tries to save - should conflict because same tenant has new events
         var conflictEvent = session1.Events.BuildEvent(new StudentEnrolled("Alice", "Math"));
@@ -234,7 +234,7 @@ public class conjoined_tenancy_dcb_and_natural_key_tests : OneOffConfigurationsC
     public async Task same_tag_values_in_different_tenants()
     {
         ConfigureConjoinedStoreWithTags();
-        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync();
+        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         var studentId = new StudentId(Guid.NewGuid());
         var courseId = new CourseId(Guid.NewGuid());
@@ -244,24 +244,24 @@ public class conjoined_tenancy_dcb_and_natural_key_tests : OneOffConfigurationsC
         var redEvent = redSession.Events.BuildEvent(new StudentEnrolled("Alice", "Math"));
         redEvent.WithTag(studentId, courseId);
         redSession.Events.Append(Guid.NewGuid(), redEvent);
-        await redSession.SaveChangesAsync();
+        await redSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var blueSession = theStore.LightweightSession(new SessionOptions { TenantId = BlueTenant });
         var blueEvent = blueSession.Events.BuildEvent(new StudentEnrolled("Bob", "Science"));
         blueEvent.WithTag(studentId, courseId);
         blueSession.Events.Append(Guid.NewGuid(), blueEvent);
-        await blueSession.SaveChangesAsync();
+        await blueSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var query = new EventTagQuery().Or<StudentId>(studentId);
 
         // Each tenant should see only their own event
         await using var redQuery = theStore.LightweightSession(new SessionOptions { TenantId = RedTenant });
-        var redEvents = await redQuery.Events.QueryByTagsAsync(query);
+        var redEvents = await redQuery.Events.QueryByTagsAsync(query, TestContext.Current.CancellationToken);
         redEvents.Count.ShouldBe(1);
         redEvents[0].Data.ShouldBeOfType<StudentEnrolled>().StudentName.ShouldBe("Alice");
 
         await using var blueQuery = theStore.LightweightSession(new SessionOptions { TenantId = BlueTenant });
-        var blueEvents = await blueQuery.Events.QueryByTagsAsync(query);
+        var blueEvents = await blueQuery.Events.QueryByTagsAsync(query, TestContext.Current.CancellationToken);
         blueEvents.Count.ShouldBe(1);
         blueEvents[0].Data.ShouldBeOfType<StudentEnrolled>().StudentName.ShouldBe("Bob");
     }
@@ -272,7 +272,7 @@ public class conjoined_tenancy_dcb_and_natural_key_tests : OneOffConfigurationsC
         ConfigureConjoinedStoreWithTags();
 
         // This should not throw - schema with conjoined tenancy + tags should be valid
-        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync();
+        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         // Verify we can insert and query without errors
         await using var session = theStore.LightweightSession(new SessionOptions { TenantId = RedTenant });
@@ -281,7 +281,7 @@ public class conjoined_tenancy_dcb_and_natural_key_tests : OneOffConfigurationsC
         var enrolled = session.Events.BuildEvent(new StudentEnrolled("Alice", "Math"));
         enrolled.WithTag(studentId, courseId);
         session.Events.Append(Guid.NewGuid(), enrolled);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
     }
 
     #endregion
@@ -292,7 +292,7 @@ public class conjoined_tenancy_dcb_and_natural_key_tests : OneOffConfigurationsC
     public async Task natural_key_same_key_different_tenants()
     {
         ConfigureConjoinedStoreWithNaturalKeys();
-        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync();
+        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         var orderNumber = new OrderNumber("ORD-001");
 
@@ -300,7 +300,7 @@ public class conjoined_tenancy_dcb_and_natural_key_tests : OneOffConfigurationsC
         await using var redSession = theStore.LightweightSession(new SessionOptions { TenantId = RedTenant });
         redSession.Events.StartStream(Guid.NewGuid(),
             new NkOrderCreated(orderNumber, "Red Alice"));
-        await redSession.SaveChangesAsync();
+        await redSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Blue tenant creates an order with the SAME natural key - should NOT conflict
         await using var blueSession = theStore.LightweightSession(new SessionOptions { TenantId = BlueTenant });
@@ -313,7 +313,7 @@ public class conjoined_tenancy_dcb_and_natural_key_tests : OneOffConfigurationsC
     public async Task fetch_for_writing_by_natural_key_isolated_by_tenant()
     {
         ConfigureConjoinedStoreWithNaturalKeys();
-        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync();
+        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         var orderNumber = new OrderNumber("ORD-002");
 
@@ -322,25 +322,25 @@ public class conjoined_tenancy_dcb_and_natural_key_tests : OneOffConfigurationsC
         redSession.Events.StartStream(Guid.NewGuid(),
             new NkOrderCreated(orderNumber, "Red Alice"),
             new NkOrderItemAdded("Widget", 9.99m));
-        await redSession.SaveChangesAsync();
+        await redSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Red tenant can fetch by natural key
         await using var redQuery = theStore.LightweightSession(new SessionOptions { TenantId = RedTenant });
-        var redStream = await redQuery.Events.FetchForWriting<OrderAggregate, OrderNumber>(orderNumber);
+        var redStream = await redQuery.Events.FetchForWriting<OrderAggregate, OrderNumber>(orderNumber, TestContext.Current.CancellationToken);
         redStream.Aggregate.ShouldNotBeNull();
         redStream.Aggregate!.CustomerName.ShouldBe("Red Alice");
 
         // Blue tenant cannot fetch by the same natural key - should throw because stream doesn't exist
         await using var blueQuery = theStore.LightweightSession(new SessionOptions { TenantId = BlueTenant });
         await Should.ThrowAsync<InvalidOperationException>(
-            blueQuery.Events.FetchForWriting<OrderAggregate, OrderNumber>(orderNumber));
+            blueQuery.Events.FetchForWriting<OrderAggregate, OrderNumber>(orderNumber, TestContext.Current.CancellationToken));
     }
 
     [Fact]
     public async Task fetch_latest_by_natural_key_isolated_by_tenant()
     {
         ConfigureConjoinedStoreWithNaturalKeys();
-        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync();
+        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         var orderNumber = new OrderNumber("ORD-003");
 
@@ -349,17 +349,17 @@ public class conjoined_tenancy_dcb_and_natural_key_tests : OneOffConfigurationsC
         redSession.Events.StartStream(Guid.NewGuid(),
             new NkOrderCreated(orderNumber, "Red Alice"),
             new NkOrderItemAdded("Widget", 9.99m));
-        await redSession.SaveChangesAsync();
+        await redSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Red tenant can fetch latest
         await using var redQuery = theStore.LightweightSession(new SessionOptions { TenantId = RedTenant });
-        var redAggregate = await redQuery.Events.FetchLatest<OrderAggregate, OrderNumber>(orderNumber);
+        var redAggregate = await redQuery.Events.FetchLatest<OrderAggregate, OrderNumber>(orderNumber, TestContext.Current.CancellationToken);
         redAggregate.ShouldNotBeNull();
         redAggregate!.CustomerName.ShouldBe("Red Alice");
 
         // Blue tenant gets null for the same natural key
         await using var blueQuery = theStore.LightweightSession(new SessionOptions { TenantId = BlueTenant });
-        var blueAggregate = await blueQuery.Events.FetchLatest<OrderAggregate, OrderNumber>(orderNumber);
+        var blueAggregate = await blueQuery.Events.FetchLatest<OrderAggregate, OrderNumber>(orderNumber, TestContext.Current.CancellationToken);
         blueAggregate.ShouldBeNull();
     }
 
@@ -369,20 +369,20 @@ public class conjoined_tenancy_dcb_and_natural_key_tests : OneOffConfigurationsC
         ConfigureConjoinedStoreWithNaturalKeys();
 
         // This should not throw - schema with conjoined tenancy + natural keys should be valid
-        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync();
+        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         // Verify we can insert and query without errors
         await using var session = theStore.LightweightSession(new SessionOptions { TenantId = RedTenant });
         session.Events.StartStream(Guid.NewGuid(),
             new NkOrderCreated(new OrderNumber("ORD-SCHEMA"), "Alice"));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
     }
 
     [Fact]
     public async Task natural_key_same_key_different_tenants_both_fetch_for_writing()
     {
         ConfigureConjoinedStoreWithNaturalKeys();
-        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync();
+        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         var orderNumber = new OrderNumber("ORD-004");
 
@@ -391,27 +391,27 @@ public class conjoined_tenancy_dcb_and_natural_key_tests : OneOffConfigurationsC
         {
             redSession.Events.StartStream(Guid.NewGuid(),
                 new NkOrderCreated(orderNumber, "Red Alice"));
-            await redSession.SaveChangesAsync();
+            await redSession.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using (var blueSession = theStore.LightweightSession(new SessionOptions { TenantId = BlueTenant }))
         {
             blueSession.Events.StartStream(Guid.NewGuid(),
                 new NkOrderCreated(orderNumber, "Blue Bob"));
-            await blueSession.SaveChangesAsync();
+            await blueSession.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         // Red tenant fetches and completes before blue starts
         await using (var redQuery = theStore.LightweightSession(new SessionOptions { TenantId = RedTenant }))
         {
-            var redStream = await redQuery.Events.FetchForWriting<OrderAggregate, OrderNumber>(orderNumber);
+            var redStream = await redQuery.Events.FetchForWriting<OrderAggregate, OrderNumber>(orderNumber, TestContext.Current.CancellationToken);
             redStream.Aggregate.ShouldNotBeNull();
             redStream.Aggregate!.CustomerName.ShouldBe("Red Alice");
         }
 
         await using (var blueQuery = theStore.LightweightSession(new SessionOptions { TenantId = BlueTenant }))
         {
-            var blueStream = await blueQuery.Events.FetchForWriting<OrderAggregate, OrderNumber>(orderNumber);
+            var blueStream = await blueQuery.Events.FetchForWriting<OrderAggregate, OrderNumber>(orderNumber, TestContext.Current.CancellationToken);
             blueStream.Aggregate.ShouldNotBeNull();
             blueStream.Aggregate!.CustomerName.ShouldBe("Blue Bob");
         }

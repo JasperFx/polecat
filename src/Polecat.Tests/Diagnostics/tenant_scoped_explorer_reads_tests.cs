@@ -35,7 +35,7 @@ public class tenant_scoped_explorer_reads_tests : OneOffConfigurationsContext
     public async Task query_by_tags_is_isolated_per_tenant_on_conjoined_store()
     {
         ConfigureConjoinedStoreWithTags();
-        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync();
+        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         // The SAME tag values are attached to an event under each tenant — the exact cross-tenant
         // ambiguity #353 closes for the DCB tag query.
@@ -50,7 +50,7 @@ public class tenant_scoped_explorer_reads_tests : OneOffConfigurationsContext
             var e = red.Events.BuildEvent(new StudentEnrolled("Alice", "Math"));
             e.WithTag(studentId, courseId);
             red.Events.Append(redStream, e);
-            await red.SaveChangesAsync();
+            await red.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using (var blue = theStore.LightweightSession(new SessionOptions { TenantId = BlueTenant }))
@@ -58,7 +58,7 @@ public class tenant_scoped_explorer_reads_tests : OneOffConfigurationsContext
             var e = blue.Events.BuildEvent(new StudentEnrolled("Bob", "Science"));
             e.WithTag(studentId, courseId);
             blue.Events.Append(blueStream, e);
-            await blue.SaveChangesAsync();
+            await blue.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         var explorer = (IEventStore)theStore;
@@ -85,19 +85,19 @@ public class tenant_scoped_explorer_reads_tests : OneOffConfigurationsContext
     public async Task query_events_honours_event_query_tenant_id_on_conjoined_store()
     {
         ConfigureConjoinedStoreWithTags();
-        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync();
+        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         await using (var red = theStore.LightweightSession(new SessionOptions { TenantId = RedTenant }))
         {
             red.Events.StartStream<StudentCourseEnrollment>(Guid.NewGuid(), new StudentEnrolled("Alice", "Math"));
             red.Events.StartStream<StudentCourseEnrollment>(Guid.NewGuid(), new StudentEnrolled("Amy", "Math"));
-            await red.SaveChangesAsync();
+            await red.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using (var blue = theStore.LightweightSession(new SessionOptions { TenantId = BlueTenant }))
         {
             blue.Events.StartStream<StudentCourseEnrollment>(Guid.NewGuid(), new StudentEnrolled("Bob", "Science"));
-            await blue.SaveChangesAsync();
+            await blue.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         // EventQuery.TenantId scopes the read-store query. TenantIsOneOf overrides the implicit

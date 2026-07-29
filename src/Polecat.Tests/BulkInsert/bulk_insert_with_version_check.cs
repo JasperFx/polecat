@@ -37,10 +37,10 @@ public class bulk_insert_with_version_check : IntegrationContext
             Age = 30
         };
 
-        await theStore.Advanced.BulkInsertWithVersionAsync(new[] { (doc, 999L) });
+        await theStore.Advanced.BulkInsertWithVersionAsync(new[] { (doc, 999L) }, TestContext.Current.CancellationToken);
 
         await using var session = theStore.QuerySession();
-        var loaded = await session.LoadAsync<User>(doc.Id);
+        var loaded = await session.LoadAsync<User>(doc.Id, TestContext.Current.CancellationToken);
         loaded.ShouldNotBeNull();
         loaded.FirstName.ShouldBe("Fresh");
     }
@@ -50,14 +50,14 @@ public class bulk_insert_with_version_check : IntegrationContext
     {
         var id = Guid.NewGuid();
         var original = new User { Id = id, FirstName = "Original", LastName = "Doe", Age = 25 };
-        await theStore.Advanced.BulkInsertAsync(new[] { original });
+        await theStore.Advanced.BulkInsertAsync(new[] { original }, TestContext.Current.CancellationToken);
 
         // After the initial bulk insert the row is at version 1.
         var updated = new User { Id = id, FirstName = "Updated", LastName = "Doe", Age = 99 };
-        await theStore.Advanced.BulkInsertWithVersionAsync(new[] { (updated, 1L) });
+        await theStore.Advanced.BulkInsertWithVersionAsync(new[] { (updated, 1L) }, TestContext.Current.CancellationToken);
 
         await using var session = theStore.QuerySession();
-        var loaded = await session.LoadAsync<User>(id);
+        var loaded = await session.LoadAsync<User>(id, TestContext.Current.CancellationToken);
         loaded!.FirstName.ShouldBe("Updated");
         loaded.Age.ShouldBe(99);
     }
@@ -67,7 +67,7 @@ public class bulk_insert_with_version_check : IntegrationContext
     {
         var id = Guid.NewGuid();
         var original = new User { Id = id, FirstName = "Original", LastName = "Doe", Age = 25 };
-        await theStore.Advanced.BulkInsertAsync(new[] { original });
+        await theStore.Advanced.BulkInsertAsync(new[] { original }, TestContext.Current.CancellationToken);
 
         // Row is at version 1; pass an expected version of 999 — the
         // WHEN MATCHED AND ... predicate will fail and the row will be
@@ -82,7 +82,7 @@ public class bulk_insert_with_version_check : IntegrationContext
 
         // The original row should be untouched.
         await using var session = theStore.QuerySession();
-        var loaded = await session.LoadAsync<User>(id);
+        var loaded = await session.LoadAsync<User>(id, TestContext.Current.CancellationToken);
         loaded!.FirstName.ShouldBe("Original");
         loaded.Age.ShouldBe(25);
     }
@@ -99,11 +99,11 @@ public class bulk_insert_with_version_check : IntegrationContext
         // best-effort signal, not a transactional rollback.
         var matchedId = Guid.NewGuid();
         var matchedOriginal = new User { Id = matchedId, FirstName = "Matched", LastName = "Initial", Age = 20 };
-        await theStore.Advanced.BulkInsertAsync(new[] { matchedOriginal });
+        await theStore.Advanced.BulkInsertAsync(new[] { matchedOriginal }, TestContext.Current.CancellationToken);
 
         var mismatchedId = Guid.NewGuid();
         var mismatchedOriginal = new User { Id = mismatchedId, FirstName = "Mismatched", LastName = "Initial", Age = 21 };
-        await theStore.Advanced.BulkInsertAsync(new[] { mismatchedOriginal });
+        await theStore.Advanced.BulkInsertAsync(new[] { mismatchedOriginal }, TestContext.Current.CancellationToken);
 
         var newId = Guid.NewGuid();
 
@@ -137,6 +137,6 @@ public class bulk_insert_with_version_check : IntegrationContext
     [Fact]
     public async Task empty_collection_does_nothing()
     {
-        await theStore.Advanced.BulkInsertWithVersionAsync(Array.Empty<(User, long)>());
+        await theStore.Advanced.BulkInsertWithVersionAsync(Array.Empty<(User, long)>(), TestContext.Current.CancellationToken);
     }
 }

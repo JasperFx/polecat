@@ -168,9 +168,9 @@ public class self_aggregating_evolve_method : IntegrationContext
 
         var streamId = Guid.NewGuid();
         theSession.Events.StartStream(streamId, new AEvent(), new BEvent(), new AEvent(), new CEvent());
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
-        var aggregate = await theSession.Events.AggregateStreamAsync<MutableIEventEvolveAggregate>(streamId);
+        var aggregate = await theSession.Events.AggregateStreamAsync<MutableIEventEvolveAggregate>(streamId, token: TestContext.Current.CancellationToken);
         aggregate.ShouldNotBeNull();
         aggregate.ACount.ShouldBe(2);
         aggregate.BCount.ShouldBe(1);
@@ -188,9 +188,9 @@ public class self_aggregating_evolve_method : IntegrationContext
 
         var streamId = Guid.NewGuid();
         theSession.Events.StartStream(streamId, new AEvent(), new BEvent(), new CEvent(), new CEvent());
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
-        var aggregate = await theSession.Events.AggregateStreamAsync<MutableObjectEvolveAggregate>(streamId);
+        var aggregate = await theSession.Events.AggregateStreamAsync<MutableObjectEvolveAggregate>(streamId, token: TestContext.Current.CancellationToken);
         aggregate.ShouldNotBeNull();
         aggregate.ACount.ShouldBe(1);
         aggregate.BCount.ShouldBe(1);
@@ -208,9 +208,9 @@ public class self_aggregating_evolve_method : IntegrationContext
 
         var streamId = Guid.NewGuid();
         theSession.Events.StartStream(streamId, new AEvent(), new AEvent(), new BEvent());
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
-        var aggregate = await theSession.Events.AggregateStreamAsync<ImmutableIEventEvolveAggregate>(streamId);
+        var aggregate = await theSession.Events.AggregateStreamAsync<ImmutableIEventEvolveAggregate>(streamId, token: TestContext.Current.CancellationToken);
         aggregate.ShouldNotBeNull();
         aggregate.ACount.ShouldBe(2);
         aggregate.BCount.ShouldBe(1);
@@ -228,9 +228,9 @@ public class self_aggregating_evolve_method : IntegrationContext
 
         var streamId = Guid.NewGuid();
         theSession.Events.StartStream(streamId, new BEvent(), new CEvent(), new AEvent());
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
-        var aggregate = await theSession.Events.AggregateStreamAsync<ImmutableObjectEvolveAggregate>(streamId);
+        var aggregate = await theSession.Events.AggregateStreamAsync<ImmutableObjectEvolveAggregate>(streamId, token: TestContext.Current.CancellationToken);
         aggregate.ShouldNotBeNull();
         aggregate.ACount.ShouldBe(1);
         aggregate.BCount.ShouldBe(1);
@@ -248,9 +248,9 @@ public class self_aggregating_evolve_method : IntegrationContext
 
         var streamId = Guid.NewGuid();
         theSession.Events.StartStream(streamId, new AEvent(), new AEvent(), new BEvent());
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
-        var aggregate = await theSession.Events.AggregateStreamAsync<AsyncEvolveAggregate>(streamId);
+        var aggregate = await theSession.Events.AggregateStreamAsync<AsyncEvolveAggregate>(streamId, token: TestContext.Current.CancellationToken);
         aggregate.ShouldNotBeNull();
         aggregate.ACount.ShouldBe(2);
         aggregate.BCount.ShouldBe(1);
@@ -267,9 +267,9 @@ public class self_aggregating_evolve_method : IntegrationContext
 
         var streamId = Guid.NewGuid();
         theSession.Events.StartStream(streamId, new AEvent(), new BEvent(), new AEvent());
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
-        var aggregate = await theSession.Events.AggregateStreamAsync<ImmutableAsyncEvolveAggregate>(streamId);
+        var aggregate = await theSession.Events.AggregateStreamAsync<ImmutableAsyncEvolveAggregate>(streamId, token: TestContext.Current.CancellationToken);
         aggregate.ShouldNotBeNull();
         aggregate.ACount.ShouldBe(2);
         aggregate.BCount.ShouldBe(1);
@@ -286,13 +286,13 @@ public class self_aggregating_evolve_method : IntegrationContext
 
         var streamId = Guid.NewGuid();
         theSession.Events.StartStream(streamId, new AEvent(), new BEvent());
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Append more events
         theSession.Events.Append(streamId, new AEvent(), new CEvent());
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
-        var aggregate = await theSession.Events.AggregateStreamAsync<MutableIEventEvolveAggregate>(streamId);
+        var aggregate = await theSession.Events.AggregateStreamAsync<MutableIEventEvolveAggregate>(streamId, token: TestContext.Current.CancellationToken);
         aggregate.ShouldNotBeNull();
         aggregate.ACount.ShouldBe(2);
         aggregate.BCount.ShouldBe(1);
@@ -305,9 +305,9 @@ public class self_aggregating_evolve_method : IntegrationContext
         // No snapshot — live aggregation only
         var streamId = Guid.NewGuid();
         theSession.Events.StartStream(streamId, new AEvent(), new BEvent(), new CEvent());
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
-        var aggregate = await theSession.Events.AggregateStreamAsync<MutableIEventEvolveAggregate>(streamId);
+        var aggregate = await theSession.Events.AggregateStreamAsync<MutableIEventEvolveAggregate>(streamId, token: TestContext.Current.CancellationToken);
         aggregate.ShouldNotBeNull();
         aggregate.ACount.ShouldBe(1);
         aggregate.BCount.ShouldBe(1);

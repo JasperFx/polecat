@@ -34,7 +34,7 @@ public class projection_progression_tests : IntegrationContext
 
         await RecordProgressAsync(shardName, ceiling: 12, upsert: true);
 
-        var progress = await theStore.Database.ProjectionProgressFor(shardName);
+        var progress = await theStore.Database.ProjectionProgressFor(shardName, TestContext.Current.CancellationToken);
         progress.ShouldBe(12);
     }
 
@@ -49,7 +49,7 @@ public class projection_progression_tests : IntegrationContext
         // Floor > 0, so the row is already there — plain update.
         await RecordProgressAsync(shardName, ceiling: 50, upsert: false);
 
-        var progress = await theStore.Database.ProjectionProgressFor(shardName);
+        var progress = await theStore.Database.ProjectionProgressFor(shardName, TestContext.Current.CancellationToken);
         progress.ShouldBe(50);
     }
 
@@ -62,10 +62,10 @@ public class projection_progression_tests : IntegrationContext
         await RecordProgressAsync(shardName, ceiling: 30, upsert: true);
 
         // The MERGE matches the existing row rather than inserting a duplicate.
-        var progress = await theStore.Database.ProjectionProgressFor(shardName);
+        var progress = await theStore.Database.ProjectionProgressFor(shardName, TestContext.Current.CancellationToken);
         progress.ShouldBe(30);
 
-        var all = await theStore.Database.AllProjectionProgress();
+        var all = await theStore.Database.AllProjectionProgress(TestContext.Current.CancellationToken);
         all.Count(x => x.ShardName == shardName.Identity).ShouldBe(1);
     }
 
@@ -80,7 +80,7 @@ public class projection_progression_tests : IntegrationContext
         await RecordProgressAsync(shard2, 20, upsert: true);
         await RecordProgressAsync(shard3, 30, upsert: true);
 
-        var all = await theStore.Database.AllProjectionProgress();
+        var all = await theStore.Database.AllProjectionProgress(TestContext.Current.CancellationToken);
 
         all.Count.ShouldBeGreaterThanOrEqualTo(3);
         all.ShouldContain(s => s.ShardName == shard1.Identity && s.Sequence == 10);
@@ -92,7 +92,7 @@ public class projection_progression_tests : IntegrationContext
     public async Task nonexistent_shard_returns_zero()
     {
         var shardName = new ShardName("DoesNotExist");
-        var progress = await theStore.Database.ProjectionProgressFor(shardName);
+        var progress = await theStore.Database.ProjectionProgressFor(shardName, TestContext.Current.CancellationToken);
         progress.ShouldBe(0);
     }
 
@@ -103,7 +103,7 @@ public class projection_progression_tests : IntegrationContext
         var shardName = new ShardName("ReadOne");
         await RecordProgressAsync(shardName, ceiling: 42, upsert: true);
 
-        var row = await theStore.Database.ReadProjectionProgressAsync(shardName.Identity, null, default);
+        var row = await theStore.Database.ReadProjectionProgressAsync(shardName.Identity, null, TestContext.Current.CancellationToken);
 
         row.ShouldNotBeNull();
         row!.ProjectionName.ShouldBe(shardName.Identity);
@@ -118,7 +118,7 @@ public class projection_progression_tests : IntegrationContext
     [Fact]
     public async Task read_returns_null_for_unknown_projection()
     {
-        var row = await theStore.Database.ReadProjectionProgressAsync("NoSuchProjection:All", null, default);
+        var row = await theStore.Database.ReadProjectionProgressAsync("NoSuchProjection:All", null, TestContext.Current.CancellationToken);
         row.ShouldBeNull();
     }
 
@@ -131,14 +131,14 @@ public class projection_progression_tests : IntegrationContext
         tenantShard.Identity.ShouldBe("TenantRead:All:Red");
         await RecordProgressAsync(tenantShard, ceiling: 7, upsert: true);
 
-        var row = await theStore.Database.ReadProjectionProgressAsync("TenantRead:All", "Red", default);
+        var row = await theStore.Database.ReadProjectionProgressAsync("TenantRead:All", "Red", TestContext.Current.CancellationToken);
         row.ShouldNotBeNull();
         row!.ProjectionName.ShouldBe("TenantRead:All");
         row.TenantId.ShouldBe("Red");
         row.Sequence.ShouldBe(7);
 
         // The store-global lookup (null tenant) must NOT match the tenant-suffixed row.
-        var global = await theStore.Database.ReadProjectionProgressAsync("TenantRead:All", null, default);
+        var global = await theStore.Database.ReadProjectionProgressAsync("TenantRead:All", null, TestContext.Current.CancellationToken);
         global.ShouldBeNull();
     }
 
@@ -149,7 +149,7 @@ public class projection_progression_tests : IntegrationContext
         var shardName = ShardName.Compose("ExactRead");
         await RecordProgressAsync(shardName, ceiling: 55, upsert: true);
 
-        var row = await theStore.Database.ReadProjectionProgressAsync(shardName, default);
+        var row = await theStore.Database.ReadProjectionProgressAsync(shardName, TestContext.Current.CancellationToken);
 
         row.ShouldNotBeNull();
         row!.ProjectionName.ShouldBe("ExactRead");
@@ -165,7 +165,7 @@ public class projection_progression_tests : IntegrationContext
         await RecordProgressAsync(ShardName.Compose("KnownOne"), ceiling: 3, upsert: true);
 
         var row = await theStore.Database.ReadProjectionProgressAsync(
-            ShardName.Compose("KnownOne", "All", null, 9), default);
+            ShardName.Compose("KnownOne", "All", null, 9), TestContext.Current.CancellationToken);
 
         row.ShouldBeNull();
     }
@@ -179,11 +179,11 @@ public class projection_progression_tests : IntegrationContext
 
         // Exact V2 — not the newest V3.
         var v2 = await theStore.Database.ReadProjectionProgressAsync(
-            ShardName.Compose("Versioned", "All", null, 2), default);
+            ShardName.Compose("Versioned", "All", null, 2), TestContext.Current.CancellationToken);
         v2!.Sequence.ShouldBe(25);
 
         var tenant = await theStore.Database.ReadProjectionProgressAsync(
-            ShardName.Compose("Versioned", "All", "Red"), default);
+            ShardName.Compose("Versioned", "All", "Red"), TestContext.Current.CancellationToken);
         tenant!.Sequence.ShouldBe(7);
         tenant.TenantId.ShouldBe("Red");
     }

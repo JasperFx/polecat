@@ -17,7 +17,7 @@ public class batch_query_operations : IntegrationContext
         var user3 = new User { Id = Guid.NewGuid(), FirstName = "Charlie", LastName = "C" };
 
         theSession.Store(user1, user2, user3);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
         var batch = query.CreateBatchQuery();
@@ -26,7 +26,7 @@ public class batch_query_operations : IntegrationContext
         var loadUser2 = batch.Load<User>(user2.Id);
         var loadUser3 = batch.Load<User>(user3.Id);
 
-        await batch.Execute();
+        await batch.Execute(TestContext.Current.CancellationToken);
 
         var result1 = await loadUser1;
         var result2 = await loadUser2;
@@ -48,7 +48,7 @@ public class batch_query_operations : IntegrationContext
 
         var loadMissing = batch.Load<User>(Guid.NewGuid());
 
-        await batch.Execute();
+        await batch.Execute(TestContext.Current.CancellationToken);
 
         var result = await loadMissing;
         result.ShouldBeNull();
@@ -62,14 +62,14 @@ public class batch_query_operations : IntegrationContext
         var user3 = new User { Id = Guid.NewGuid(), FirstName = "Charlie" };
 
         theSession.Store(user1, user2, user3);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
         var batch = query.CreateBatchQuery();
 
         var loadMany = batch.LoadMany<User>(user1.Id, user3.Id);
 
-        await batch.Execute();
+        await batch.Execute(TestContext.Current.CancellationToken);
 
         var results = await loadMany;
         results.Count.ShouldBe(2);
@@ -86,7 +86,7 @@ public class batch_query_operations : IntegrationContext
         var target3 = new Target { Id = Guid.NewGuid(), Color = uniqueColor, Number = 3 };
 
         theSession.Store(target1, target2, target3);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
         var batch = query.CreateBatchQuery();
@@ -95,7 +95,7 @@ public class batch_query_operations : IntegrationContext
             .Where(t => t.Color == uniqueColor)
             .ToList();
 
-        await batch.Execute();
+        await batch.Execute(TestContext.Current.CancellationToken);
 
         var results = await redTargets;
         results.Count.ShouldBe(2);
@@ -110,7 +110,7 @@ public class batch_query_operations : IntegrationContext
         var target3 = new Target { Id = Guid.NewGuid(), Color = "Yellow", Number = 30 };
 
         theSession.Store(target1, target2, target3);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
         var batch = query.CreateBatchQuery();
@@ -119,7 +119,7 @@ public class batch_query_operations : IntegrationContext
             .Where(t => t.Color == "Green")
             .Count();
 
-        await batch.Execute();
+        await batch.Execute(TestContext.Current.CancellationToken);
 
         var count = await greenCount;
         count.ShouldBeGreaterThanOrEqualTo(2);
@@ -131,7 +131,7 @@ public class batch_query_operations : IntegrationContext
         var target = new Target { Id = Guid.NewGuid(), Color = "Purple", Number = 99 };
 
         theSession.Store(target);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
         var batch = query.CreateBatchQuery();
@@ -144,7 +144,7 @@ public class batch_query_operations : IntegrationContext
             .Where(t => t.Color == "OrangeNotExist")
             .Any();
 
-        await batch.Execute();
+        await batch.Execute(TestContext.Current.CancellationToken);
 
         (await hasPurple).ShouldBeTrue();
         (await hasOrange).ShouldBeFalse();
@@ -156,7 +156,7 @@ public class batch_query_operations : IntegrationContext
         var target = new Target { Id = Guid.NewGuid(), Color = "Cyan", Number = 42 };
 
         theSession.Store(target);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
         var batch = query.CreateBatchQuery();
@@ -169,7 +169,7 @@ public class batch_query_operations : IntegrationContext
             .Where(t => t.Color == "MagentaNotExist")
             .FirstOrDefault();
 
-        await batch.Execute();
+        await batch.Execute(TestContext.Current.CancellationToken);
 
         (await found).ShouldNotBeNull();
         (await found)!.Number.ShouldBe(42);
@@ -184,7 +184,7 @@ public class batch_query_operations : IntegrationContext
 
         theSession.Store(user);
         theSession.Store(target);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
         var batch = query.CreateBatchQuery();
@@ -194,7 +194,7 @@ public class batch_query_operations : IntegrationContext
             .Where(t => t.Color == "Silver")
             .ToList();
 
-        await batch.Execute();
+        await batch.Execute(TestContext.Current.CancellationToken);
 
         (await loadUser).ShouldNotBeNull();
         (await loadUser)!.FirstName.ShouldBe("Diana");
@@ -207,14 +207,14 @@ public class batch_query_operations : IntegrationContext
         var doc = new StringDoc { Id = "batch-test-1", Name = "Batch Test" };
 
         theSession.Store(doc);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
         var batch = query.CreateBatchQuery();
 
         var loaded = batch.Load<StringDoc>("batch-test-1");
 
-        await batch.Execute();
+        await batch.Execute(TestContext.Current.CancellationToken);
 
         (await loaded).ShouldNotBeNull();
         (await loaded)!.Name.ShouldBe("Batch Test");
@@ -227,6 +227,6 @@ public class batch_query_operations : IntegrationContext
         var batch = query.CreateBatchQuery();
 
         // Should not throw
-        await batch.Execute();
+        await batch.Execute(TestContext.Current.CancellationToken);
     }
 }

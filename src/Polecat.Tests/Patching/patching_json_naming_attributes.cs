@@ -53,14 +53,14 @@ public class patching_json_naming_attributes : OneOffConfigurationsContext
         await using (var session = theStore.LightweightSession())
         {
             session.Store(user);
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using (var session = theStore.LightweightSession())
         {
             session.Patch<PatchUser>(user.Id).Set(x => x.City, "Taggia");
             session.Patch<PatchUser>(user.Id).Set(x => x.Status, ActiveStatus.Active);
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         var json = await RawJsonAsync(user.Id);
@@ -72,7 +72,7 @@ public class patching_json_naming_attributes : OneOffConfigurationsContext
         json.ShouldContain("\"status\":\"enabled\"");
 
         await using var query = theStore.QuerySession();
-        var reloaded = (await query.LoadAsync<PatchUser>(user.Id))!;
+        var reloaded = (await query.LoadAsync<PatchUser>(user.Id, TestContext.Current.CancellationToken))!;
         reloaded.City.ShouldBe("Taggia");
         reloaded.Status.ShouldBe(ActiveStatus.Active);
     }

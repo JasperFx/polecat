@@ -26,10 +26,10 @@ public class complex_operation_ordering_tests : IntegrationContext
         user.FirstName = "Updated";
         theSession.Store(user);
 
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var loaded = await query.LoadAsync<User>(user.Id);
+        var loaded = await query.LoadAsync<User>(user.Id, TestContext.Current.CancellationToken);
         loaded.ShouldNotBeNull();
         loaded.FirstName.ShouldBe("Updated");
     }
@@ -41,20 +41,20 @@ public class complex_operation_ordering_tests : IntegrationContext
     {
         var id = Guid.NewGuid();
         theSession.Store(new User { Id = id, FirstName = "Original", LastName = "A", Age = 30 });
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Delete in a second session
         await using var session2 = theStore.LightweightSession();
         session2.Delete<User>(id);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Re-insert with same ID in a third session
         await using var session3 = theStore.LightweightSession();
         session3.Store(new User { Id = id, FirstName = "Reinserted", LastName = "B", Age = 31 });
-        await session3.SaveChangesAsync();
+        await session3.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var loaded = await query.LoadAsync<User>(id);
+        var loaded = await query.LoadAsync<User>(id, TestContext.Current.CancellationToken);
         loaded.ShouldNotBeNull();
         loaded.FirstName.ShouldBe("Reinserted");
     }
@@ -72,12 +72,12 @@ public class complex_operation_ordering_tests : IntegrationContext
         theSession.Store(target);
         theSession.Store(stringDoc);
 
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        (await query.LoadAsync<User>(user.Id)).ShouldNotBeNull();
-        (await query.LoadAsync<Target>(target.Id)).ShouldNotBeNull();
-        (await query.LoadAsync<StringDoc>(stringDoc.Id)).ShouldNotBeNull();
+        (await query.LoadAsync<User>(user.Id, TestContext.Current.CancellationToken)).ShouldNotBeNull();
+        (await query.LoadAsync<Target>(target.Id, TestContext.Current.CancellationToken)).ShouldNotBeNull();
+        (await query.LoadAsync<StringDoc>(stringDoc.Id, TestContext.Current.CancellationToken)).ShouldNotBeNull();
     }
 
     // ===== DeleteWhere then Store a matching doc =====
@@ -89,18 +89,18 @@ public class complex_operation_ordering_tests : IntegrationContext
         theSession.Store(new Target { Id = Guid.NewGuid(), Color = "Red", Number = 100 });
         theSession.Store(new Target { Id = Guid.NewGuid(), Color = "Red", Number = 200 });
         theSession.Store(new Target { Id = Guid.NewGuid(), Color = "Blue", Number = 300 });
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // In a new session: delete all Red, then store a new Red
         await using var session2 = theStore.LightweightSession();
         session2.HardDeleteWhere<Target>(t => t.Color == "Red");
         var newRed = new Target { Id = Guid.NewGuid(), Color = "Red", Number = 999 };
         session2.Store(newRed);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // The new red should exist (store after delete executes in FIFO)
         await using var query = theStore.QuerySession();
-        var loaded = await query.LoadAsync<Target>(newRed.Id);
+        var loaded = await query.LoadAsync<Target>(newRed.Id, TestContext.Current.CancellationToken);
         loaded.ShouldNotBeNull();
         loaded.Number.ShouldBe(999);
     }
@@ -112,7 +112,7 @@ public class complex_operation_ordering_tests : IntegrationContext
     {
         var user1 = new User { Id = Guid.NewGuid(), FirstName = "Save1", LastName = "A", Age = 1 };
         theSession.Store(user1);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Pending changes should be empty after save
         theSession.PendingChanges.HasOutstandingWork().ShouldBeFalse();
@@ -121,11 +121,11 @@ public class complex_operation_ordering_tests : IntegrationContext
         var user2 = new User { Id = Guid.NewGuid(), FirstName = "Save2", LastName = "B", Age = 2 };
         theSession.Store(user2);
         theSession.PendingChanges.HasOutstandingWork().ShouldBeTrue();
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        (await query.LoadAsync<User>(user1.Id)).ShouldNotBeNull();
-        (await query.LoadAsync<User>(user2.Id)).ShouldNotBeNull();
+        (await query.LoadAsync<User>(user1.Id, TestContext.Current.CancellationToken)).ShouldNotBeNull();
+        (await query.LoadAsync<User>(user2.Id, TestContext.Current.CancellationToken)).ShouldNotBeNull();
     }
 
     // ===== Multiple saves accumulate documents =====
@@ -140,13 +140,13 @@ public class complex_operation_ordering_tests : IntegrationContext
             var user = new User { Id = Guid.NewGuid(), FirstName = $"Multi{i}", LastName = "Save", Age = i };
             theSession.Store(user);
             ids.Add(user.Id);
-            await theSession.SaveChangesAsync();
+            await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using var query = theStore.QuerySession();
         foreach (var id in ids)
         {
-            (await query.LoadAsync<User>(id)).ShouldNotBeNull();
+            (await query.LoadAsync<User>(id, TestContext.Current.CancellationToken)).ShouldNotBeNull();
         }
     }
 
@@ -157,13 +157,13 @@ public class complex_operation_ordering_tests : IntegrationContext
     {
         var id = Guid.NewGuid();
         theSession.Store(new User { Id = id, FirstName = "First", LastName = "A", Age = 1 });
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         session2.Insert(new User { Id = id, FirstName = "Duplicate", LastName = "B", Age = 2 });
 
         // Insert with existing ID should throw (PK violation)
-        await Should.ThrowAsync<Exception>(session2.SaveChangesAsync());
+        await Should.ThrowAsync<Exception>(session2.SaveChangesAsync(TestContext.Current.CancellationToken));
     }
 
     // ===== Documents and events in same SaveChanges =====
@@ -180,11 +180,11 @@ public class complex_operation_ordering_tests : IntegrationContext
         theSession.PendingChanges.Operations.Count.ShouldBe(1);
         theSession.PendingChanges.Streams.Count.ShouldBe(1);
 
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        (await query.LoadAsync<User>(user.Id)).ShouldNotBeNull();
-        var events = await query.Events.FetchStreamAsync(streamId);
+        (await query.LoadAsync<User>(user.Id, TestContext.Current.CancellationToken)).ShouldNotBeNull();
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
         events.Count.ShouldBe(1);
     }
 
@@ -197,10 +197,10 @@ public class complex_operation_ordering_tests : IntegrationContext
 
         // Store should work as upsert — inserting if not exists
         theSession.Store(user);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var loaded = await query.LoadAsync<User>(user.Id);
+        var loaded = await query.LoadAsync<User>(user.Id, TestContext.Current.CancellationToken);
         loaded.ShouldNotBeNull();
         loaded.FirstName.ShouldBe("Upsert");
     }

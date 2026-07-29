@@ -55,13 +55,13 @@ public class async_daemon_tests : OneOffConfigurationsContext
         session.Events.StartStream(streamId,
             new QuestStarted("Destroy the Ring"),
             new MembersJoined(1, "Rivendell", ["Aragorn", "Legolas", "Gimli"]));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await store.WaitForProjectionAsync();
 
         // Verify projected document
         await using var query = store.QuerySession();
-        var party = await query.LoadAsync<QuestParty>(streamId);
+        var party = await query.LoadAsync<QuestParty>(streamId, TestContext.Current.CancellationToken);
 
         party.ShouldNotBeNull();
         party.Name.ShouldBe("Destroy the Ring");
@@ -80,7 +80,7 @@ public class async_daemon_tests : OneOffConfigurationsContext
         session.Events.StartStream(streamId,
             new QuestStarted("Fellowship"),
             new MembersJoined(1, "Rivendell", ["Aragorn"]));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await store.WaitForProjectionAsync();
 
@@ -108,12 +108,12 @@ public class async_daemon_tests : OneOffConfigurationsContext
         session.Events.StartStream(streamId,
             new QuestStarted("Late Start"),
             new MembersJoined(1, "Town", ["Hero"]));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await store.WaitForProjectionAsync();
 
         await using var query = store.QuerySession();
-        var party = await query.LoadAsync<QuestParty>(streamId);
+        var party = await query.LoadAsync<QuestParty>(streamId, TestContext.Current.CancellationToken);
 
         party.ShouldNotBeNull();
         party.Name.ShouldBe("Late Start");
@@ -129,18 +129,18 @@ public class async_daemon_tests : OneOffConfigurationsContext
         var streamId = Guid.NewGuid();
         await using var session1 = store.LightweightSession();
         session1.Events.StartStream(streamId, new QuestStarted("Growing Quest"));
-        await session1.SaveChangesAsync();
+        await session1.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = store.LightweightSession();
         session2.Events.Append(streamId,
             new MembersJoined(1, "Forest", ["Elf", "Dwarf"]),
             new ArrivedAtLocation("Mountain", 2));
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await store.WaitForProjectionAsync();
 
         await using var query = store.QuerySession();
-        var party = await query.LoadAsync<QuestParty>(streamId);
+        var party = await query.LoadAsync<QuestParty>(streamId, TestContext.Current.CancellationToken);
 
         party.ShouldNotBeNull();
         party.Name.ShouldBe("Growing Quest");
@@ -164,13 +164,13 @@ public class async_daemon_tests : OneOffConfigurationsContext
         session.Events.StartStream(stream2,
             new QuestStarted("Quest Beta"),
             new MembersJoined(1, "Town B", ["B1"]));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await store.WaitForProjectionAsync();
 
         await using var query = store.QuerySession();
-        var party1 = await query.LoadAsync<QuestParty>(stream1);
-        var party2 = await query.LoadAsync<QuestParty>(stream2);
+        var party1 = await query.LoadAsync<QuestParty>(stream1, TestContext.Current.CancellationToken);
+        var party2 = await query.LoadAsync<QuestParty>(stream2, TestContext.Current.CancellationToken);
 
         party1.ShouldNotBeNull();
         party1.Name.ShouldBe("Quest Alpha");

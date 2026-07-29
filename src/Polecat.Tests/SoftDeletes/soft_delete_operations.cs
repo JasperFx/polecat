@@ -25,15 +25,15 @@ public class soft_delete_operations : IntegrationContext
         var doc = new SoftDeletedDoc { Id = Guid.NewGuid(), Name = "to-delete" };
 
         theSession.Store(doc);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         session2.Delete(doc);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Should not be found by normal Load
         await using var query = theStore.QuerySession();
-        var loaded = await query.LoadAsync<SoftDeletedDoc>(doc.Id);
+        var loaded = await query.LoadAsync<SoftDeletedDoc>(doc.Id, TestContext.Current.CancellationToken);
         loaded.ShouldBeNull();
     }
 
@@ -43,14 +43,14 @@ public class soft_delete_operations : IntegrationContext
         var doc = new SoftDeletedDoc { Id = Guid.NewGuid(), Name = "to-delete-by-id" };
 
         theSession.Store(doc);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         session2.Delete<SoftDeletedDoc>(doc.Id);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var loaded = await query.LoadAsync<SoftDeletedDoc>(doc.Id);
+        var loaded = await query.LoadAsync<SoftDeletedDoc>(doc.Id, TestContext.Current.CancellationToken);
         loaded.ShouldBeNull();
     }
 
@@ -60,18 +60,18 @@ public class soft_delete_operations : IntegrationContext
         var doc = new SoftDeletedDoc { Id = Guid.NewGuid(), Name = "hard-delete" };
 
         theSession.Store(doc);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         session2.HardDelete(doc);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Not found by any query — verify row physically removed
         var conn = await OpenConnectionAsync();
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = "SELECT COUNT(*) FROM [soft_delete_ops].[pc_doc_softdeleteddoc] WHERE id = @id";
         cmd.Parameters.AddWithValue("@id", doc.Id);
-        var count = await cmd.ExecuteScalarAsync();
+        var count = await cmd.ExecuteScalarAsync(TestContext.Current.CancellationToken);
         count.ShouldBe(0);
     }
 
@@ -81,17 +81,17 @@ public class soft_delete_operations : IntegrationContext
         var doc = new SoftDeletedDoc { Id = Guid.NewGuid(), Name = "hard-delete-by-id" };
 
         theSession.Store(doc);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         session2.HardDelete<SoftDeletedDoc>(doc.Id);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var conn = await OpenConnectionAsync();
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = "SELECT COUNT(*) FROM [soft_delete_ops].[pc_doc_softdeleteddoc] WHERE id = @id";
         cmd.Parameters.AddWithValue("@id", doc.Id);
-        var count = await cmd.ExecuteScalarAsync();
+        var count = await cmd.ExecuteScalarAsync(TestContext.Current.CancellationToken);
         count.ShouldBe(0);
     }
 
@@ -104,11 +104,11 @@ public class soft_delete_operations : IntegrationContext
         doc.DeletedAt.ShouldBeNull();
 
         theSession.Store(doc);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         session2.Delete(doc);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // In-memory properties should be set
         doc.Deleted.ShouldBeTrue();
@@ -122,25 +122,25 @@ public class soft_delete_operations : IntegrationContext
         var doc2 = new SoftDeletedDoc { Id = Guid.NewGuid(), Name = "stay-deleted", Number = 99 };
 
         theSession.Store(doc1, doc2);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Delete both
         await using var session2 = theStore.LightweightSession();
         session2.Delete(doc1);
         session2.Delete(doc2);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Undo only doc1
         await using var session3 = theStore.LightweightSession();
         session3.UndoDeleteWhere<SoftDeletedDoc>(x => x.Name == "restore-me");
-        await session3.SaveChangesAsync();
+        await session3.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var restored = await query.LoadAsync<SoftDeletedDoc>(doc1.Id);
+        var restored = await query.LoadAsync<SoftDeletedDoc>(doc1.Id, TestContext.Current.CancellationToken);
         restored.ShouldNotBeNull();
         restored.Name.ShouldBe("restore-me");
 
-        var stillDeleted = await query.LoadAsync<SoftDeletedDoc>(doc2.Id);
+        var stillDeleted = await query.LoadAsync<SoftDeletedDoc>(doc2.Id, TestContext.Current.CancellationToken);
         stillDeleted.ShouldBeNull();
     }
 
@@ -152,28 +152,28 @@ public class soft_delete_operations : IntegrationContext
         var doc3 = new SoftDeletedDoc { Id = Guid.NewGuid(), Name = "delete-where-also-remove", Number = 20 };
 
         theSession.Store(doc1, doc2, doc3);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         session2.DeleteWhere<SoftDeletedDoc>(x => x.Number == 20);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // doc1 should still be visible
         await using var query = theStore.QuerySession();
-        var kept = await query.LoadAsync<SoftDeletedDoc>(doc1.Id);
+        var kept = await query.LoadAsync<SoftDeletedDoc>(doc1.Id, TestContext.Current.CancellationToken);
         kept.ShouldNotBeNull();
 
         // doc2 and doc3 should be soft-deleted (hidden from normal queries)
-        var gone2 = await query.LoadAsync<SoftDeletedDoc>(doc2.Id);
+        var gone2 = await query.LoadAsync<SoftDeletedDoc>(doc2.Id, TestContext.Current.CancellationToken);
         gone2.ShouldBeNull();
-        var gone3 = await query.LoadAsync<SoftDeletedDoc>(doc3.Id);
+        var gone3 = await query.LoadAsync<SoftDeletedDoc>(doc3.Id, TestContext.Current.CancellationToken);
         gone3.ShouldBeNull();
 
         // But still present via MaybeDeleted
         var all = await query.Query<SoftDeletedDoc>()
             .MaybeDeleted()
             .Where(x => x.Id == doc2.Id || x.Id == doc3.Id)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
         all.Count.ShouldBe(2);
     }
 
@@ -184,22 +184,22 @@ public class soft_delete_operations : IntegrationContext
         var doc2 = new SoftDeletedDoc { Id = Guid.NewGuid(), Name = "hdw-remove", Number = 40 };
 
         theSession.Store(doc1, doc2);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         session2.HardDeleteWhere<SoftDeletedDoc>(x => x.Number == 40);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // doc1 still present
         await using var query = theStore.QuerySession();
-        var kept = await query.LoadAsync<SoftDeletedDoc>(doc1.Id);
+        var kept = await query.LoadAsync<SoftDeletedDoc>(doc1.Id, TestContext.Current.CancellationToken);
         kept.ShouldNotBeNull();
 
         // doc2 physically gone — not even MaybeDeleted can find it
         var all = await query.Query<SoftDeletedDoc>()
             .MaybeDeleted()
             .Where(x => x.Id == doc2.Id)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
         all.Count.ShouldBe(0);
     }
 
@@ -211,17 +211,17 @@ public class soft_delete_operations : IntegrationContext
         var user2 = new User { Id = Guid.NewGuid(), FirstName = "Delete", LastName = "Me", Age = 99 };
 
         theSession.Store(user1, user2);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         session2.DeleteWhere<User>(x => x.Age == 99);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var kept = await query.LoadAsync<User>(user1.Id);
+        var kept = await query.LoadAsync<User>(user1.Id, TestContext.Current.CancellationToken);
         kept.ShouldNotBeNull();
 
-        var gone = await query.LoadAsync<User>(user2.Id);
+        var gone = await query.LoadAsync<User>(user2.Id, TestContext.Current.CancellationToken);
         gone.ShouldBeNull();
     }
 }

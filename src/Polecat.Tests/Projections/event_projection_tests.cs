@@ -59,7 +59,7 @@ public class event_projection_tests : IntegrationContext
         await using var session = theStore.LightweightSession();
         session.Events.StartStream(streamId,
             new QuestStarted("Destroy the Ring"));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // The QuestLog should have been created with a new Guid
         // We can verify it exists by loading all QuestLogs
@@ -67,7 +67,7 @@ public class event_projection_tests : IntegrationContext
         await using var conn = await OpenConnectionAsync();
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = $"SELECT COUNT(*) FROM {theStore.Options.DatabaseSchemaName}.pc_doc_questlog;";
-        var count = (int)(await cmd.ExecuteScalarAsync())!;
+        var count = (int)(await cmd.ExecuteScalarAsync(TestContext.Current.CancellationToken))!;
         count.ShouldBeGreaterThan(0);
     }
 
@@ -88,20 +88,20 @@ public class event_projection_tests : IntegrationContext
             ELSE
                 SELECT 0
             """;
-        var before = (int)(await cmdPre.ExecuteScalarAsync())!;
+        var before = (int)(await cmdPre.ExecuteScalarAsync(TestContext.Current.CancellationToken))!;
 
         var streamId = Guid.NewGuid();
         await using var session = theStore.LightweightSession();
         session.Events.StartStream(streamId,
             new QuestStarted("Multi Quest"),
             new MembersJoined(1, "Rivendell", ["Aragorn", "Legolas"]));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Should have 2 more QuestLog entries — one from QuestStarted, one from MembersJoined
         await using var conn = await OpenConnectionAsync();
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = $"SELECT COUNT(*) FROM {theStore.Options.DatabaseSchemaName}.pc_doc_questlog;";
-        var count = (int)(await cmd.ExecuteScalarAsync())!;
+        var count = (int)(await cmd.ExecuteScalarAsync(TestContext.Current.CancellationToken))!;
         (count - before).ShouldBe(2);
     }
 
@@ -118,7 +118,7 @@ public class event_projection_tests : IntegrationContext
         await using var session = theStore.LightweightSession();
         session.Events.StartStream(streamId,
             new QuestStarted("Async Quest"));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await theStore.WaitForProjectionAsync();
 
@@ -126,7 +126,7 @@ public class event_projection_tests : IntegrationContext
         await using var conn = await OpenConnectionAsync();
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = $"SELECT COUNT(*) FROM {theStore.Options.DatabaseSchemaName}.pc_doc_questlog;";
-        var count = (int)(await cmd.ExecuteScalarAsync())!;
+        var count = (int)(await cmd.ExecuteScalarAsync(TestContext.Current.CancellationToken))!;
         count.ShouldBeGreaterThan(0);
     }
 }

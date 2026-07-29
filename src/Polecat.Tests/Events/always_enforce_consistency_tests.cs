@@ -32,18 +32,18 @@ public class always_enforce_consistency_tests : IntegrationContext
         theSession.Events.StartStream(streamId,
             new QuestStarted("Ring Quest"),
             new MembersJoined(1, "Shire", ["Frodo", "Sam"]));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
-        var stream = await session2.Events.FetchForWriting<QuestAggregate>(streamId);
+        var stream = await session2.Events.FetchForWriting<QuestAggregate>(streamId, TestContext.Current.CancellationToken);
 
         // Modify the stream in another session
         await using var session3 = theStore.LightweightSession();
         session3.Events.Append(streamId, new MonsterSlain("Balrog", 100));
-        await session3.SaveChangesAsync();
+        await session3.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // No events appended, no flag set — should NOT throw even though version changed
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
     }
 
     [Fact]
@@ -53,20 +53,20 @@ public class always_enforce_consistency_tests : IntegrationContext
         theSession.Events.StartStream(streamId,
             new QuestStarted("Ring Quest"),
             new MembersJoined(1, "Shire", ["Frodo", "Sam"]));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
-        var stream = await session2.Events.FetchForWriting<QuestAggregate>(streamId);
+        var stream = await session2.Events.FetchForWriting<QuestAggregate>(streamId, TestContext.Current.CancellationToken);
         stream.AlwaysEnforceConsistency = true;
 
         // Modify the stream in another session
         await using var session3 = theStore.LightweightSession();
         session3.Events.Append(streamId, new MonsterSlain("Balrog", 100));
-        await session3.SaveChangesAsync();
+        await session3.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // No events appended but flag is set — should throw ConcurrencyException
         var ex = await Should.ThrowAsync<EventStreamUnexpectedMaxEventIdException>(
-            session2.SaveChangesAsync());
+            session2.SaveChangesAsync(TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -76,14 +76,14 @@ public class always_enforce_consistency_tests : IntegrationContext
         theSession.Events.StartStream(streamId,
             new QuestStarted("Ring Quest"),
             new MembersJoined(1, "Shire", ["Frodo", "Sam"]));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
-        var stream = await session2.Events.FetchForWriting<QuestAggregate>(streamId);
+        var stream = await session2.Events.FetchForWriting<QuestAggregate>(streamId, TestContext.Current.CancellationToken);
         stream.AlwaysEnforceConsistency = true;
 
         // No other modifications — should succeed
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
     }
 
     [Fact]
@@ -92,21 +92,21 @@ public class always_enforce_consistency_tests : IntegrationContext
         var streamId = Guid.NewGuid();
         theSession.Events.StartStream(streamId,
             new QuestStarted("Ring Quest"));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
-        var stream = await session2.Events.FetchForWriting<QuestAggregate>(streamId);
+        var stream = await session2.Events.FetchForWriting<QuestAggregate>(streamId, TestContext.Current.CancellationToken);
         stream.AlwaysEnforceConsistency = true;
 
         // Modify the stream in another session
         await using var session3 = theStore.LightweightSession();
         session3.Events.Append(streamId, new MonsterSlain("Troll", 50));
-        await session3.SaveChangesAsync();
+        await session3.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Append events AND flag is set — should still throw because version changed
         stream.AppendOne(new MembersJoined(2, "Rivendell", ["Aragorn"]));
         await Should.ThrowAsync<EventStreamUnexpectedMaxEventIdException>(
-            session2.SaveChangesAsync());
+            session2.SaveChangesAsync(TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -123,20 +123,20 @@ public class always_enforce_consistency_tests : IntegrationContext
         await using var session1 = theStore.LightweightSession();
         session1.Events.StartStream(key,
             new QuestStarted("Ring Quest"));
-        await session1.SaveChangesAsync();
+        await session1.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
-        var stream = await session2.Events.FetchForWriting<StringQuestAggregate>(key);
+        var stream = await session2.Events.FetchForWriting<StringQuestAggregate>(key, TestContext.Current.CancellationToken);
         stream.AlwaysEnforceConsistency = true;
 
         // Modify the stream in another session
         await using var session3 = theStore.LightweightSession();
         session3.Events.Append(key, new MonsterSlain("Shelob", 75));
-        await session3.SaveChangesAsync();
+        await session3.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Should throw
         await Should.ThrowAsync<EventStreamUnexpectedMaxEventIdException>(
-            session2.SaveChangesAsync());
+            session2.SaveChangesAsync(TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -146,12 +146,12 @@ public class always_enforce_consistency_tests : IntegrationContext
 
         // Create a fake stream action with an expected version but the stream doesn't exist
         await using var session = theStore.LightweightSession();
-        var stream = await session.Events.FetchForWriting<QuestAggregate>(streamId);
+        var stream = await session.Events.FetchForWriting<QuestAggregate>(streamId, TestContext.Current.CancellationToken);
         stream.AlwaysEnforceConsistency = true;
 
         // Stream doesn't exist in DB, expected version is 0 (from FetchForWriting on non-existent)
         // Since ExpectedVersionOnServer is 0 and the stream has no rows, version check should
         // still work — 0 == 0 means no conflict
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
     }
 }

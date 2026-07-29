@@ -17,13 +17,13 @@ public class non_stale_data_tests : IntegrationContext
         var target = new Target { Id = Guid.NewGuid(), Color = uniqueColor, Number = 42 };
 
         theSession.Store(target);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
         var results = await query.Query<Target>()
             .QueryForNonStaleData()
             .Where(t => t.Color == uniqueColor)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(1);
         results[0].Number.ShouldBe(42);
@@ -36,13 +36,13 @@ public class non_stale_data_tests : IntegrationContext
         var target = new Target { Id = Guid.NewGuid(), Color = uniqueColor, Number = 99 };
 
         theSession.Store(target);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
         var results = await query.Query<Target>()
             .QueryForNonStaleData(TimeSpan.FromSeconds(10))
             .Where(t => t.Color == uniqueColor)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(1);
         results[0].Number.ShouldBe(99);
@@ -55,13 +55,13 @@ public class non_stale_data_tests : IntegrationContext
 
         theSession.Store(new Target { Id = Guid.NewGuid(), Color = uniqueColor });
         theSession.Store(new Target { Id = Guid.NewGuid(), Color = uniqueColor });
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
         var count = await query.Query<Target>()
             .QueryForNonStaleData()
             .Where(t => t.Color == uniqueColor)
-            .CountAsync();
+            .CountAsync(TestContext.Current.CancellationToken);
 
         count.ShouldBe(2);
     }
@@ -73,13 +73,13 @@ public class non_stale_data_tests : IntegrationContext
         var target = new Target { Id = Guid.NewGuid(), Color = uniqueColor, Number = 77 };
 
         theSession.Store(target);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
         var result = await query.Query<Target>()
             .QueryForNonStaleData()
             .Where(t => t.Color == uniqueColor)
-            .FirstOrDefaultAsync();
+            .FirstOrDefaultAsync(TestContext.Current.CancellationToken);
 
         result.ShouldNotBeNull();
         result.Number.ShouldBe(77);

@@ -25,7 +25,7 @@ public class shard_failure_progression_columns_tests : OneOffConfigurationsConte
         await SeedProgressionRowAsync();
 
         await ((IEventDatabase)theDatabase).WriteExtendedProgressionAsync(
-            Paused(ShardFailureCategory.EventSerialization, 4815, "quest_started", "tenant-a"));
+            Paused(ShardFailureCategory.EventSerialization, 4815, "quest_started", "tenant-a"), TestContext.Current.CancellationToken);
 
         var row = await ReadFailureAsync();
 
@@ -43,13 +43,13 @@ public class shard_failure_progression_columns_tests : OneOffConfigurationsConte
         await SeedProgressionRowAsync();
 
         await ((IEventDatabase)theDatabase).WriteExtendedProgressionAsync(
-            Paused(ShardFailureCategory.ApplyEvent, 99, "quest_started"));
+            Paused(ShardFailureCategory.ApplyEvent, 99, "quest_started"), TestContext.Current.CancellationToken);
         (await ReadFailureAsync()).Category.ShouldNotBeNull();
 
         // A restart supersedes whatever paused the agent last. Without this, every supervisor built on
         // these columns alerts forever on a failure the operator already fixed.
         await ((IEventDatabase)theDatabase).WriteExtendedProgressionAsync(
-            WithoutFailure(ShardAction.Started, "Running"));
+            WithoutFailure(ShardAction.Started, "Running"), TestContext.Current.CancellationToken);
 
         var row = await ReadFailureAsync();
         row.Category.ShouldBeNull();
@@ -64,15 +64,15 @@ public class shard_failure_progression_columns_tests : OneOffConfigurationsConte
         await SeedProgressionRowAsync();
 
         await ((IEventDatabase)theDatabase).WriteExtendedProgressionAsync(
-            Paused(ShardFailureCategory.EventSerialization, 4815, "quest_started"));
+            Paused(ShardFailureCategory.EventSerialization, 4815, "quest_started"), TestContext.Current.CancellationToken);
 
         // The load-bearing case: SubscriptionAgent publishes a plain Stopped state (no Failure) right
         // behind the Paused one, and a heartbeat can arrive with no failure at all. An unconditional
         // write would erase the reason microseconds after recording it.
         await ((IEventDatabase)theDatabase).WriteExtendedProgressionAsync(
-            WithoutFailure(ShardAction.Stopped, "Stopped"));
+            WithoutFailure(ShardAction.Stopped, "Stopped"), TestContext.Current.CancellationToken);
         await ((IEventDatabase)theDatabase).WriteExtendedProgressionAsync(
-            WithoutFailure(ShardAction.Updated, "Running"));
+            WithoutFailure(ShardAction.Updated, "Running"), TestContext.Current.CancellationToken);
 
         var row = await ReadFailureAsync();
         row.Category.ShouldBe(nameof(ShardFailureCategory.EventSerialization));
@@ -85,10 +85,10 @@ public class shard_failure_progression_columns_tests : OneOffConfigurationsConte
         await SeedProgressionRowAsync();
 
         await ((IEventDatabase)theDatabase).WriteExtendedProgressionAsync(
-            Paused(ShardFailureCategory.UnknownEventType, 1623, "trip_started", "tenant-b"));
+            Paused(ShardFailureCategory.UnknownEventType, 1623, "trip_started", "tenant-b"), TestContext.Current.CancellationToken);
 
         // A poller must get the same shape as a live ShardState observer, not just "it's Paused".
-        var states = await theDatabase.AllProjectionProgress();
+        var states = await theDatabase.AllProjectionProgress(TestContext.Current.CancellationToken);
         var state = states.Single(x => x.ShardName == TheShard);
 
         state.Failure.ShouldNotBeNull();
@@ -109,9 +109,9 @@ public class shard_failure_progression_columns_tests : OneOffConfigurationsConte
         await SeedProgressionRowAsync();
 
         await ((IEventDatabase)theDatabase).WriteExtendedProgressionAsync(
-            WithoutFailure(ShardAction.Started, "Running"));
+            WithoutFailure(ShardAction.Started, "Running"), TestContext.Current.CancellationToken);
 
-        var states = await theDatabase.AllProjectionProgress();
+        var states = await theDatabase.AllProjectionProgress(TestContext.Current.CancellationToken);
         states.Single(x => x.ShardName == TheShard).Failure.ShouldBeNull();
     }
 
@@ -129,19 +129,19 @@ public class shard_failure_progression_columns_tests : OneOffConfigurationsConte
             {
                 Action = ShardAction.Paused, AgentStatus = "Paused", LastHeartbeat = DateTimeOffset.UtcNow
             }
-        ]);
+        ], TestContext.Current.CancellationToken);
 
         await using var conn = await OpenConnectionAsync();
 
         var count = conn.CreateCommand();
         count.CommandText = $"SELECT COUNT(*) FROM {theDatabase.Events.ProgressionTableName};";
-        Convert.ToInt64(await count.ExecuteScalarAsync()).ShouldBe(1);
+        Convert.ToInt64(await count.ExecuteScalarAsync(TestContext.Current.CancellationToken)).ShouldBe(1);
 
         var seq = conn.CreateCommand();
         seq.CommandText =
             $"SELECT last_seq_id FROM {theDatabase.Events.ProgressionTableName} WHERE name = @name;";
         seq.Parameters.AddWithValue("@name", TheShard);
-        Convert.ToInt64(await seq.ExecuteScalarAsync()).ShouldBe(10); // committed progress untouched
+        Convert.ToInt64(await seq.ExecuteScalarAsync(TestContext.Current.CancellationToken)).ShouldBe(10); // committed progress untouched
     }
 
     private async Task SeedProgressionRowAsync()

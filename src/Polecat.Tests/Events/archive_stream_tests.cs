@@ -18,14 +18,14 @@ public class archive_stream_tests : IntegrationContext
         theSession.Events.StartStream(streamId,
             new QuestStarted("Doomed Quest"),
             new MembersJoined(1, "Town", ["A"]));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         session2.Events.ArchiveStream(streamId);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var state = await query.Events.FetchStreamStateAsync(streamId);
+        var state = await query.Events.FetchStreamStateAsync(streamId, TestContext.Current.CancellationToken);
 
         state.ShouldNotBeNull();
         state!.IsArchived.ShouldBeTrue();
@@ -38,15 +38,15 @@ public class archive_stream_tests : IntegrationContext
         theSession.Events.StartStream(streamId,
             new QuestStarted("Archive Events Quest"),
             new MembersJoined(1, "Start", ["X", "Y"]));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         session2.Events.ArchiveStream(streamId);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Archived events should NOT be returned by FetchStreamAsync
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
         events.Count.ShouldBe(0);
     }
 
@@ -56,21 +56,21 @@ public class archive_stream_tests : IntegrationContext
         var streamId = Guid.NewGuid();
         theSession.Events.StartStream(streamId,
             new QuestStarted("State Check"));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Verify not archived initially
         await using var query1 = theStore.QuerySession();
-        var stateBefore = await query1.Events.FetchStreamStateAsync(streamId);
+        var stateBefore = await query1.Events.FetchStreamStateAsync(streamId, TestContext.Current.CancellationToken);
         stateBefore!.IsArchived.ShouldBeFalse();
 
         // Archive
         await using var session2 = theStore.LightweightSession();
         session2.Events.ArchiveStream(streamId);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Verify archived after
         await using var query2 = theStore.QuerySession();
-        var stateAfter = await query2.Events.FetchStreamStateAsync(streamId);
+        var stateAfter = await query2.Events.FetchStreamStateAsync(streamId, TestContext.Current.CancellationToken);
         stateAfter!.IsArchived.ShouldBeTrue();
     }
 
@@ -79,11 +79,11 @@ public class archive_stream_tests : IntegrationContext
     {
         var streamId = Guid.NewGuid();
         theSession.Events.StartStream(streamId, new QuestStarted("No Append Quest"));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var archiveSession = theStore.LightweightSession();
         archiveSession.Events.ArchiveStream(streamId);
-        await archiveSession.SaveChangesAsync();
+        await archiveSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Try to append to the archived stream
         await using var session2 = theStore.LightweightSession();
@@ -104,26 +104,26 @@ public class archive_stream_tests : IntegrationContext
         theSession.Events.StartStream(streamId,
             new QuestStarted("Unarchive Quest"),
             new MembersJoined(1, "Village", ["Frodo", "Sam"]));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Archive
         await using var archiveSession = theStore.LightweightSession();
         archiveSession.Events.ArchiveStream(streamId);
-        await archiveSession.SaveChangesAsync();
+        await archiveSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Verify archived
         await using var querySession1 = theStore.QuerySession();
-        var events1 = await querySession1.Events.FetchStreamAsync(streamId);
+        var events1 = await querySession1.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
         events1.Count.ShouldBe(0);
 
         // UnArchive
         await using var unarchiveSession = theStore.LightweightSession();
         unarchiveSession.Events.UnArchiveStream(streamId);
-        await unarchiveSession.SaveChangesAsync();
+        await unarchiveSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Events should be visible again
         await using var querySession2 = theStore.QuerySession();
-        var events2 = await querySession2.Events.FetchStreamAsync(streamId);
+        var events2 = await querySession2.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
         events2.Count.ShouldBe(2);
     }
 
@@ -132,25 +132,25 @@ public class archive_stream_tests : IntegrationContext
     {
         var streamId = Guid.NewGuid();
         theSession.Events.StartStream(streamId, new QuestStarted("Resume Quest"));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Archive
         await using var archiveSession = theStore.LightweightSession();
         archiveSession.Events.ArchiveStream(streamId);
-        await archiveSession.SaveChangesAsync();
+        await archiveSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // UnArchive
         await using var unarchiveSession = theStore.LightweightSession();
         unarchiveSession.Events.UnArchiveStream(streamId);
-        await unarchiveSession.SaveChangesAsync();
+        await unarchiveSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Append after unarchive
         await using var appendSession = theStore.LightweightSession();
         appendSession.Events.Append(streamId, new MembersJoined(3, "Mountain", ["Legolas"]));
-        await appendSession.SaveChangesAsync();
+        await appendSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var querySession = theStore.QuerySession();
-        var events = await querySession.Events.FetchStreamAsync(streamId);
+        var events = await querySession.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
         events.Count.ShouldBe(2);
     }
 
@@ -159,18 +159,18 @@ public class archive_stream_tests : IntegrationContext
     {
         var streamId = Guid.NewGuid();
         theSession.Events.StartStream(streamId, new QuestStarted("State Quest"));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var archiveSession = theStore.LightweightSession();
         archiveSession.Events.ArchiveStream(streamId);
-        await archiveSession.SaveChangesAsync();
+        await archiveSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var unarchiveSession = theStore.LightweightSession();
         unarchiveSession.Events.UnArchiveStream(streamId);
-        await unarchiveSession.SaveChangesAsync();
+        await unarchiveSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var querySession = theStore.QuerySession();
-        var state = await querySession.Events.FetchStreamStateAsync(streamId);
+        var state = await querySession.Events.FetchStreamStateAsync(streamId, TestContext.Current.CancellationToken);
         state.ShouldNotBeNull();
         state.IsArchived.ShouldBeFalse();
     }

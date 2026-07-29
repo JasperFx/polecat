@@ -16,10 +16,10 @@ public class fetch_latest_tests : IntegrationContext
         theSession.Events.StartStream(streamId,
             new QuestStarted("Latest Quest"),
             new MembersJoined(1, "Town", ["Alpha", "Beta"]));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var aggregate = await query.Events.FetchLatest<QuestAggregate>(streamId);
+        var aggregate = await query.Events.FetchLatest<QuestAggregate>(streamId, TestContext.Current.CancellationToken);
 
         aggregate.ShouldNotBeNull();
         aggregate!.Name.ShouldBe("Latest Quest");
@@ -32,7 +32,7 @@ public class fetch_latest_tests : IntegrationContext
         var streamId = Guid.NewGuid();
 
         await using var query = theStore.QuerySession();
-        var aggregate = await query.Events.FetchLatest<QuestAggregate>(streamId);
+        var aggregate = await query.Events.FetchLatest<QuestAggregate>(streamId, TestContext.Current.CancellationToken);
 
         aggregate.ShouldBeNull();
     }
@@ -45,11 +45,11 @@ public class fetch_latest_tests : IntegrationContext
             new QuestStarted("Consistency"),
             new MembersJoined(1, "Start", ["X"]),
             new MonsterSlain("Rat", 5));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var fromLatest = await query.Events.FetchLatest<QuestAggregate>(streamId);
-        var fromAggregate = await query.Events.AggregateStreamAsync<QuestAggregate>(streamId);
+        var fromLatest = await query.Events.FetchLatest<QuestAggregate>(streamId, TestContext.Current.CancellationToken);
+        var fromAggregate = await query.Events.AggregateStreamAsync<QuestAggregate>(streamId, token: TestContext.Current.CancellationToken);
 
         fromLatest.ShouldNotBeNull();
         fromAggregate.ShouldNotBeNull();

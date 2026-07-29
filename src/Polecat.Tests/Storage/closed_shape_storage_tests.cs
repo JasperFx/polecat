@@ -58,7 +58,7 @@ public class closed_shape_storage_tests : OneOffConfigurationsContext
 
         // Bespoke pipeline agrees
         await using var check = theStore.QuerySession();
-        (await check.LoadAsync<Target>(doc.Id)).ShouldNotBeNull();
+        (await check.LoadAsync<Target>(doc.Id, TestContext.Current.CancellationToken)).ShouldNotBeNull();
     }
 
     [Fact]
@@ -167,7 +167,7 @@ public class closed_shape_storage_tests : OneOffConfigurationsContext
 
         (await softStorage.LoadAsync(soft.Id, session, CancellationToken.None)).ShouldBeNull();
         await using var check = theStore.QuerySession();
-        (await check.LoadAsync<SoftDeletedDoc>(soft.Id)).ShouldBeNull(); // bespoke agrees
+        (await check.LoadAsync<SoftDeletedDoc>(soft.Id, TestContext.Current.CancellationToken)).ShouldBeNull(); // bespoke agrees
 
         // Hard delete punches through the soft-delete style
         await executeAsync(session, softStorage.HardDeleteForId(soft.Id, session.TenantId));

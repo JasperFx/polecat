@@ -37,15 +37,15 @@ public class aggregate_stream_to_last_known_tests : IntegrationContext
             new ItemCreated("Widget"),
             new ItemUpdated("Super Widget"),
             new ItemDeleted());
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Normal aggregate should return null (deleted)
         await using var query = theStore.QuerySession();
-        var normal = await query.Events.AggregateStreamAsync<DeletableAggregate>(streamId);
+        var normal = await query.Events.AggregateStreamAsync<DeletableAggregate>(streamId, token: TestContext.Current.CancellationToken);
         normal.ShouldBeNull();
 
         // ToLastKnown should return the state before deletion
-        var lastKnown = await query.Events.AggregateStreamToLastKnownAsync<DeletableAggregate>(streamId);
+        var lastKnown = await query.Events.AggregateStreamToLastKnownAsync<DeletableAggregate>(streamId, token: TestContext.Current.CancellationToken);
         lastKnown.ShouldNotBeNull();
         lastKnown!.Name.ShouldBe("Super Widget");
     }
@@ -56,7 +56,7 @@ public class aggregate_stream_to_last_known_tests : IntegrationContext
         var streamId = Guid.NewGuid();
 
         await using var query = theStore.QuerySession();
-        var result = await query.Events.AggregateStreamToLastKnownAsync<DeletableAggregate>(streamId);
+        var result = await query.Events.AggregateStreamToLastKnownAsync<DeletableAggregate>(streamId, token: TestContext.Current.CancellationToken);
         result.ShouldBeNull();
     }
 
@@ -67,10 +67,10 @@ public class aggregate_stream_to_last_known_tests : IntegrationContext
         theSession.Events.StartStream(streamId,
             new ItemCreated("Gadget"),
             new ItemUpdated("Mega Gadget"));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var result = await query.Events.AggregateStreamToLastKnownAsync<DeletableAggregate>(streamId);
+        var result = await query.Events.AggregateStreamToLastKnownAsync<DeletableAggregate>(streamId, token: TestContext.Current.CancellationToken);
         result.ShouldNotBeNull();
         result!.Name.ShouldBe("Mega Gadget");
     }

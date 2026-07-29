@@ -19,7 +19,7 @@ public class tracked_operations : IntegrationContext
 
         var doc = new TrackedDoc { Id = Guid.NewGuid(), Name = "Tracked" };
         theSession.Store(doc);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // In-memory properties should be set
         doc.CorrelationId.ShouldBe("corr-123");
@@ -28,7 +28,7 @@ public class tracked_operations : IntegrationContext
 
         // Reload from DB and verify
         await using var query = theStore.QuerySession();
-        var loaded = await query.LoadAsync<TrackedDoc>(doc.Id);
+        var loaded = await query.LoadAsync<TrackedDoc>(doc.Id, TestContext.Current.CancellationToken);
 
         loaded.ShouldNotBeNull();
         loaded.CorrelationId.ShouldBe("corr-123");
@@ -44,13 +44,13 @@ public class tracked_operations : IntegrationContext
 
         var doc = new TrackedDoc { Id = Guid.NewGuid(), Name = "Inserted" };
         theSession.Insert(doc);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         doc.CorrelationId.ShouldBe("insert-corr");
         doc.LastModifiedBy.ShouldBe("insert-user");
 
         await using var query = theStore.QuerySession();
-        var loaded = await query.LoadAsync<TrackedDoc>(doc.Id);
+        var loaded = await query.LoadAsync<TrackedDoc>(doc.Id, TestContext.Current.CancellationToken);
         loaded.ShouldNotBeNull();
         loaded.CorrelationId.ShouldBe("insert-corr");
     }
@@ -63,7 +63,7 @@ public class tracked_operations : IntegrationContext
 
         var doc = new TrackedDoc { Id = Guid.NewGuid(), Name = "Original" };
         theSession.Store(doc);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Update with different session metadata
         await using var session2 = theStore.LightweightSession();
@@ -72,13 +72,13 @@ public class tracked_operations : IntegrationContext
 
         doc.Name = "Updated";
         session2.Store(doc);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         doc.CorrelationId.ShouldBe("v2");
         doc.LastModifiedBy.ShouldBe("user-b");
 
         await using var query = theStore.QuerySession();
-        var loaded = await query.LoadAsync<TrackedDoc>(doc.Id);
+        var loaded = await query.LoadAsync<TrackedDoc>(doc.Id, TestContext.Current.CancellationToken);
         loaded!.CorrelationId.ShouldBe("v2");
         loaded.LastModifiedBy.ShouldBe("user-b");
     }
@@ -89,7 +89,7 @@ public class tracked_operations : IntegrationContext
         // Don't set any session metadata
         var doc = new TrackedDoc { Id = Guid.NewGuid(), Name = "NoMetadata" };
         theSession.Store(doc);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         doc.CorrelationId.ShouldBeNull();
         doc.CausationId.ShouldBeNull();
@@ -101,7 +101,7 @@ public class tracked_operations : IntegrationContext
     {
         var doc = new TenantedDoc { Id = Guid.NewGuid(), Name = "TenantAware" };
         theSession.Store(doc);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         doc.TenantId.ShouldBe(theSession.TenantId);
     }
@@ -111,10 +111,10 @@ public class tracked_operations : IntegrationContext
     {
         var doc = new TenantedDoc { Id = Guid.NewGuid(), Name = "TenantLoad" };
         theSession.Store(doc);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var loaded = await query.LoadAsync<TenantedDoc>(doc.Id);
+        var loaded = await query.LoadAsync<TenantedDoc>(doc.Id, TestContext.Current.CancellationToken);
 
         loaded.ShouldNotBeNull();
         loaded.TenantId.ShouldBe(query.TenantId);
@@ -131,13 +131,13 @@ public class tracked_operations : IntegrationContext
             Name = "Both"
         };
         theSession.Store(doc);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         doc.CorrelationId.ShouldBe("combo-corr");
         doc.TenantId.ShouldBe(theSession.TenantId);
 
         await using var query = theStore.QuerySession();
-        var loaded = await query.LoadAsync<FullMetadataDoc>(doc.Id);
+        var loaded = await query.LoadAsync<FullMetadataDoc>(doc.Id, TestContext.Current.CancellationToken);
         loaded.ShouldNotBeNull();
         loaded.CorrelationId.ShouldBe("combo-corr");
         loaded.TenantId.ShouldBe(query.TenantId);

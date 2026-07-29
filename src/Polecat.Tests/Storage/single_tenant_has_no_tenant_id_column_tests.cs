@@ -29,7 +29,7 @@ public class single_tenant_has_no_tenant_id_column_tests : IntegrationContext
         await using (var session = theStore.LightweightSession())
         {
             session.Store(new Widget { Id = Guid.NewGuid(), Name = "A" });
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         var columns = await SchemaInspector.GetColumnInfoAsync("pc_doc_widget", "no_tenant_col");
@@ -57,7 +57,7 @@ public class single_tenant_has_no_tenant_id_column_tests : IntegrationContext
         await using (var session = theStore.LightweightSession())
         {
             session.Store(new Widget { Id = Guid.NewGuid(), Name = "A" });
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         var columns = await SchemaInspector.GetColumnInfoAsync("pc_doc_widget", "with_tenant_col");
@@ -75,13 +75,13 @@ public class single_tenant_has_no_tenant_id_column_tests : IntegrationContext
         await using (var session = theStore.LightweightSession())
         {
             session.Store(new Widget { Id = id, Name = "Original" });
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         // Lightweight database read (writeable selector).
         await using (var lightweight = theStore.LightweightSession())
         {
-            var loaded = await lightweight.LoadAsync<Widget>(id);
+            var loaded = await lightweight.LoadAsync<Widget>(id, TestContext.Current.CancellationToken);
             loaded.ShouldNotBeNull();
             loaded!.Name.ShouldBe("Original");
         }
@@ -89,10 +89,10 @@ public class single_tenant_has_no_tenant_id_column_tests : IntegrationContext
         // QueryOnly + LINQ (no implicit tenant filter).
         await using (var query = theStore.QuerySession())
         {
-            var byLinq = await query.Query<Widget>().Where(w => w.Name == "Original").ToListAsync();
+            var byLinq = await query.Query<Widget>().Where(w => w.Name == "Original").ToListAsync(TestContext.Current.CancellationToken);
             byLinq.Count.ShouldBe(1);
 
-            var meta = await query.MetadataForAsync(new Widget { Id = id });
+            var meta = await query.MetadataForAsync(new Widget { Id = id }, TestContext.Current.CancellationToken);
             meta.ShouldNotBeNull();
             meta!.TenantId.ShouldBe(StorageConstants.DefaultTenantId);
         }
@@ -101,12 +101,12 @@ public class single_tenant_has_no_tenant_id_column_tests : IntegrationContext
         await using (var session = theStore.LightweightSession())
         {
             session.Delete<Widget>(id);
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using (var query = theStore.QuerySession())
         {
-            (await query.LoadAsync<Widget>(id)).ShouldBeNull();
+            (await query.LoadAsync<Widget>(id, TestContext.Current.CancellationToken)).ShouldBeNull();
         }
     }
 }

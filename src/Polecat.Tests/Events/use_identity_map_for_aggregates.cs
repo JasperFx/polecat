@@ -25,18 +25,18 @@ public class use_identity_map_for_aggregates : IntegrationContext
         theSession.Events.StartStream(streamId,
             new QuestStarted("Identity Map Quest"),
             new MembersJoined(1, "Town", ["Alpha", "Beta"]));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Use a new session to test identity map behavior
         await using var session = theStore.LightweightSession();
 
         // Fetch for writing — this should cache the aggregate
-        var stream = await session.Events.FetchForWriting<QuestAggregate>(streamId);
+        var stream = await session.Events.FetchForWriting<QuestAggregate>(streamId, TestContext.Current.CancellationToken);
         stream.Aggregate.ShouldNotBeNull();
         stream.Aggregate!.Name.ShouldBe("Identity Map Quest");
 
         // FetchLatest should return the cached instance without hitting the database
-        var cached = await session.Events.FetchLatest<QuestAggregate>(streamId);
+        var cached = await session.Events.FetchLatest<QuestAggregate>(streamId, TestContext.Current.CancellationToken);
         cached.ShouldNotBeNull();
         cached!.Name.ShouldBe("Identity Map Quest");
 
@@ -57,21 +57,21 @@ public class use_identity_map_for_aggregates : IntegrationContext
         };
 
         await using var store = new DocumentStore(options);
-        await store.Database.ApplyAllConfiguredChangesToDatabaseAsync();
+        await store.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         await using var session1 = store.LightweightSession();
         var streamId = Guid.NewGuid();
         session1.Events.StartStream(streamId,
             new QuestStarted("No Cache Quest"),
             new MembersJoined(1, "Town", ["Gamma"]));
-        await session1.SaveChangesAsync();
+        await session1.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = store.LightweightSession();
 
-        var stream = await session2.Events.FetchForWriting<QuestAggregate>(streamId);
+        var stream = await session2.Events.FetchForWriting<QuestAggregate>(streamId, TestContext.Current.CancellationToken);
         stream.Aggregate.ShouldNotBeNull();
 
-        var latest = await session2.Events.FetchLatest<QuestAggregate>(streamId);
+        var latest = await session2.Events.FetchLatest<QuestAggregate>(streamId, TestContext.Current.CancellationToken);
         latest.ShouldNotBeNull();
 
         // Without the optimization, these should be different instances

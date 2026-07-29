@@ -79,7 +79,7 @@ public class separate_database_tenancy_tests : IAsyncLifetime
         // Ensure schema exists on both tenant databases
         foreach (var db in store.Options.Tenancy!.AllDatabases())
         {
-            await db.ApplyAllConfiguredChangesToDatabaseAsync();
+            await db.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
         }
 
         var docId = Guid.NewGuid();
@@ -88,13 +88,13 @@ public class separate_database_tenancy_tests : IAsyncLifetime
         await using (var session = store.LightweightSession(new SessionOptions { TenantId = TenantA }))
         {
             session.Store(new TestDoc { Id = docId, Name = "Tenant A Doc" });
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         // Tenant A can load it
         await using (var query = store.QuerySession(new SessionOptions { TenantId = TenantA }))
         {
-            var doc = await query.LoadAsync<TestDoc>(docId);
+            var doc = await query.LoadAsync<TestDoc>(docId, TestContext.Current.CancellationToken);
             doc.ShouldNotBeNull();
             doc.Name.ShouldBe("Tenant A Doc");
         }
@@ -102,7 +102,7 @@ public class separate_database_tenancy_tests : IAsyncLifetime
         // Tenant B cannot see it (separate database)
         await using (var query = store.QuerySession(new SessionOptions { TenantId = TenantB }))
         {
-            var doc = await query.LoadAsync<TestDoc>(docId);
+            var doc = await query.LoadAsync<TestDoc>(docId, TestContext.Current.CancellationToken);
             doc.ShouldBeNull();
         }
     }
@@ -114,7 +114,7 @@ public class separate_database_tenancy_tests : IAsyncLifetime
 
         foreach (var db in store.Options.Tenancy!.AllDatabases())
         {
-            await db.ApplyAllConfiguredChangesToDatabaseAsync();
+            await db.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
         }
 
         var streamId = Guid.NewGuid();
@@ -123,20 +123,20 @@ public class separate_database_tenancy_tests : IAsyncLifetime
         await using (var session = store.LightweightSession(new SessionOptions { TenantId = TenantA }))
         {
             session.Events.StartStream(streamId, new QuestStarted("Quest in A"));
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         // Tenant A can fetch the stream
         await using (var query = store.QuerySession(new SessionOptions { TenantId = TenantA }))
         {
-            var state = await query.Events.FetchStreamStateAsync(streamId);
+            var state = await query.Events.FetchStreamStateAsync(streamId, TestContext.Current.CancellationToken);
             state.ShouldNotBeNull();
         }
 
         // Tenant B cannot see the stream
         await using (var query = store.QuerySession(new SessionOptions { TenantId = TenantB }))
         {
-            var state = await query.Events.FetchStreamStateAsync(streamId);
+            var state = await query.Events.FetchStreamStateAsync(streamId, TestContext.Current.CancellationToken);
             state.ShouldBeNull();
         }
     }
@@ -148,7 +148,7 @@ public class separate_database_tenancy_tests : IAsyncLifetime
 
         foreach (var db in store.Options.Tenancy!.AllDatabases())
         {
-            await db.ApplyAllConfiguredChangesToDatabaseAsync();
+            await db.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
         }
 
         var docIdA = Guid.NewGuid();
@@ -158,25 +158,25 @@ public class separate_database_tenancy_tests : IAsyncLifetime
         await using (var session = store.LightweightSession(new SessionOptions { TenantId = TenantA }))
         {
             session.Store(new TestDoc { Id = docIdA, Name = "A" });
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         // Store in tenant B
         await using (var session = store.LightweightSession(new SessionOptions { TenantId = TenantB }))
         {
             session.Store(new TestDoc { Id = docIdB, Name = "B" });
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         // Verify cross-tenant isolation
         await using (var qa = store.QuerySession(new SessionOptions { TenantId = TenantA }))
         await using (var qb = store.QuerySession(new SessionOptions { TenantId = TenantB }))
         {
-            (await qa.LoadAsync<TestDoc>(docIdA)).ShouldNotBeNull();
-            (await qa.LoadAsync<TestDoc>(docIdB)).ShouldBeNull();
+            (await qa.LoadAsync<TestDoc>(docIdA, TestContext.Current.CancellationToken)).ShouldNotBeNull();
+            (await qa.LoadAsync<TestDoc>(docIdB, TestContext.Current.CancellationToken)).ShouldBeNull();
 
-            (await qb.LoadAsync<TestDoc>(docIdB)).ShouldNotBeNull();
-            (await qb.LoadAsync<TestDoc>(docIdA)).ShouldBeNull();
+            (await qb.LoadAsync<TestDoc>(docIdB, TestContext.Current.CancellationToken)).ShouldNotBeNull();
+            (await qb.LoadAsync<TestDoc>(docIdA, TestContext.Current.CancellationToken)).ShouldBeNull();
         }
     }
 

@@ -40,10 +40,10 @@ public class closed_shape_event_append_tests : IntegrationContext
             new QuestStarted("Destroy the Ring"),
             new MembersJoined(1, "Hobbiton", ["Frodo", "Sam"]),
             new ArrivedAtLocation("Bree", 2));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
 
         events.Count.ShouldBe(3);
         events[0].Data.ShouldBeOfType<QuestStarted>();
@@ -66,7 +66,7 @@ public class closed_shape_event_append_tests : IntegrationContext
         var streamId = Guid.NewGuid();
 
         var action = theSession.Events.StartStream(streamId, new QuestStarted("A"), new MembersJoined(1, "B", ["C"]));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         action.Events[0].Sequence.ShouldBeGreaterThan(0);
         action.Events[1].Sequence.ShouldBe(action.Events[0].Sequence + 1);
@@ -81,13 +81,13 @@ public class closed_shape_event_append_tests : IntegrationContext
         var streamId = Guid.NewGuid();
 
         theSession.Events.StartStream(streamId, new QuestStarted("Start"));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         theSession.Events.Append(streamId, new MembersJoined(1, "Town", ["X"]), new ArrivedAtLocation("Cave", 3));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
 
         events.Count.ShouldBe(3);
         events[0].Version.ShouldBe(1);
@@ -102,7 +102,7 @@ public class closed_shape_event_append_tests : IntegrationContext
         var streamId = Guid.NewGuid();
 
         theSession.Events.StartStream(streamId, new QuestStarted("First"));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var second = theStore.LightweightSession();
         second.Events.StartStream(streamId, new QuestStarted("Second"));
@@ -118,7 +118,7 @@ public class closed_shape_event_append_tests : IntegrationContext
         var streamId = Guid.NewGuid();
 
         theSession.Events.StartStream(streamId, new QuestStarted("Start"), new MembersJoined(1, "T", ["A"]));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Stream is at version 2; asserting an append that expects version 5 should fail.
         await using var session = theStore.LightweightSession();
@@ -135,14 +135,14 @@ public class closed_shape_event_append_tests : IntegrationContext
         var streamId = Guid.NewGuid();
 
         theSession.Events.StartStream(streamId, new QuestStarted("Start"), new MembersJoined(1, "T", ["A"]));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session = theStore.LightweightSession();
         session.Events.Append(streamId, 3, new ArrivedAtLocation("X", 1));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
         events.Count.ShouldBe(3);
         events[2].Version.ShouldBe(3);
     }
@@ -154,10 +154,10 @@ public class closed_shape_event_append_tests : IntegrationContext
         var key = "quest/" + Guid.NewGuid().ToString("N")[..8];
 
         theSession.Events.StartStream(key, new QuestStarted("Start"), new MembersJoined(1, "T", ["A"]));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(key);
+        var events = await query.Events.FetchStreamAsync(key, token: TestContext.Current.CancellationToken);
         events.Count.ShouldBe(2);
         events[1].Version.ShouldBe(2);
     }
@@ -170,13 +170,13 @@ public class closed_shape_event_append_tests : IntegrationContext
 
         await using var red = theStore.LightweightSession(new SessionOptions { TenantId = "Red" });
         red.Events.StartStream(streamId, new QuestStarted("Red"), new MembersJoined(1, "R", ["a"]));
-        await red.SaveChangesAsync();
+        await red.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var blueQuery = theStore.QuerySession(new SessionOptions { TenantId = "Blue" });
-        (await blueQuery.Events.FetchStreamAsync(streamId)).Count.ShouldBe(0);
+        (await blueQuery.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken)).Count.ShouldBe(0);
 
         await using var redQuery = theStore.QuerySession(new SessionOptions { TenantId = "Red" });
-        (await redQuery.Events.FetchStreamAsync(streamId)).Count.ShouldBe(2);
+        (await redQuery.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken)).Count.ShouldBe(2);
     }
 
     [Fact]
@@ -188,10 +188,10 @@ public class closed_shape_event_append_tests : IntegrationContext
         // FetchForWriting on a non-existent stream yields ExpectedVersionOnServer == 0; with
         // AlwaysEnforceConsistency and no events, 0 == 0 (missing) must NOT throw.
         await using var session = theStore.LightweightSession();
-        var stream = await session.Events.FetchForWriting<QuestAggregate>(streamId);
+        var stream = await session.Events.FetchForWriting<QuestAggregate>(streamId, TestContext.Current.CancellationToken);
         stream.AlwaysEnforceConsistency = true;
 
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
     }
 
     [Fact]
@@ -201,17 +201,17 @@ public class closed_shape_event_append_tests : IntegrationContext
         var streamId = Guid.NewGuid();
 
         theSession.Events.StartStream(streamId, new QuestStarted("Ring Quest"), new MembersJoined(1, "Shire", ["Frodo"]));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
-        var stream = await session2.Events.FetchForWriting<QuestAggregate>(streamId);
+        var stream = await session2.Events.FetchForWriting<QuestAggregate>(streamId, TestContext.Current.CancellationToken);
         stream.AlwaysEnforceConsistency = true;
 
         await using var session3 = theStore.LightweightSession();
         session3.Events.Append(streamId, new MonsterSlain("Balrog", 100));
-        await session3.SaveChangesAsync();
+        await session3.SaveChangesAsync(TestContext.Current.CancellationToken);
 
-        await Should.ThrowAsync<EventStreamUnexpectedMaxEventIdException>(session2.SaveChangesAsync());
+        await Should.ThrowAsync<EventStreamUnexpectedMaxEventIdException>(session2.SaveChangesAsync(TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -221,13 +221,13 @@ public class closed_shape_event_append_tests : IntegrationContext
         var streamId = Guid.NewGuid();
 
         theSession.Events.StartStream(streamId, new QuestStarted("Ring Quest"), new MembersJoined(1, "Shire", ["Frodo"]));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
-        var stream = await session2.Events.FetchForWriting<QuestAggregate>(streamId);
+        var stream = await session2.Events.FetchForWriting<QuestAggregate>(streamId, TestContext.Current.CancellationToken);
         stream.AlwaysEnforceConsistency = true;
 
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
     }
 
     // ---- broader parity coverage (increment 3) ----
@@ -239,18 +239,18 @@ public class closed_shape_event_append_tests : IntegrationContext
         var streamId = Guid.NewGuid();
 
         theSession.Events.StartStream(streamId, new QuestStarted("Start"));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var s2 = theStore.LightweightSession();
         s2.Events.Append(streamId, new MembersJoined(1, "T", ["A"]));
-        await s2.SaveChangesAsync();
+        await s2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var s3 = theStore.LightweightSession();
         s3.Events.Append(streamId, new MonsterSlain("Orc", 1), new MonsterSlain("Goblin", 2));
-        await s3.SaveChangesAsync();
+        await s3.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
         events.Count.ShouldBe(4);
         events.Select(e => e.Version).ShouldBe([1, 2, 3, 4]);
         for (var i = 1; i < events.Count; i++)
@@ -267,10 +267,10 @@ public class closed_shape_event_append_tests : IntegrationContext
             new QuestStarted("Ring Quest"),
             new MembersJoined(1, "Shire", ["Frodo", "Sam"]),
             new MonsterSlain("Balrog", 100));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var quest = await query.Events.AggregateStreamAsync<QuestAggregate>(streamId);
+        var quest = await query.Events.AggregateStreamAsync<QuestAggregate>(streamId, token: TestContext.Current.CancellationToken);
 
         quest.ShouldNotBeNull();
         quest!.Name.ShouldBe("Ring Quest");
@@ -288,10 +288,10 @@ public class closed_shape_event_append_tests : IntegrationContext
         theSession.Events.StartStream(streamId,
             new QuestStarted("Ring Quest"),
             new MembersJoined(1, "Shire", ["Frodo", "Sam"]));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var snapshot = await query.LoadAsync<QuestAggregate>(streamId);
+        var snapshot = await query.LoadAsync<QuestAggregate>(streamId, TestContext.Current.CancellationToken);
         snapshot.ShouldNotBeNull();
         snapshot!.Name.ShouldBe("Ring Quest");
         snapshot.Members.ShouldBe(["Frodo", "Sam"]);
@@ -304,11 +304,11 @@ public class closed_shape_event_append_tests : IntegrationContext
         var streamId = Guid.NewGuid();
 
         theSession.Events.StartStream(streamId, new QuestStarted("Start"));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var archiveSession = theStore.LightweightSession();
         archiveSession.Events.ArchiveStream(streamId);
-        await archiveSession.SaveChangesAsync();
+        await archiveSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var appendSession = theStore.LightweightSession();
         appendSession.Events.Append(streamId, new MembersJoined(2, "Cave", ["Bilbo"]));
@@ -325,12 +325,12 @@ public class closed_shape_event_append_tests : IntegrationContext
         var streamId = Guid.NewGuid();
 
         theSession.Events.StartStream(streamId, new QuestStarted("Start"));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // First writer appends and commits, advancing the version.
         await using var winner = theStore.LightweightSession();
         await winner.Events.AppendOptimistic(streamId, new MembersJoined(1, "T", ["A"]));
-        await winner.SaveChangesAsync();
+        await winner.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Second writer read the stale version and must conflict.
         await using var loser = theStore.LightweightSession();
@@ -348,16 +348,16 @@ public class closed_shape_event_append_tests : IntegrationContext
         theSession.Events.StartStream(streamId,
             new QuestStarted("Ring Quest"),
             new MembersJoined(1, "Shire", ["Frodo"]));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var writer = theStore.LightweightSession();
-        var stream = await writer.Events.FetchForWriting<QuestAggregate>(streamId);
+        var stream = await writer.Events.FetchForWriting<QuestAggregate>(streamId, TestContext.Current.CancellationToken);
         stream.Aggregate!.Name.ShouldBe("Ring Quest");
         stream.AppendOne(new MembersJoined(2, "Rivendell", ["Aragorn"]));
-        await writer.SaveChangesAsync();
+        await writer.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
         events.Count.ShouldBe(3);
         events[2].Version.ShouldBe(3);
     }
@@ -380,14 +380,14 @@ public class closed_shape_event_append_tests : IntegrationContext
         var enrolled = theSession.Events.BuildEvent(new StudentEnrolled("Alice", "Math"));
         enrolled.WithTag(studentId, courseId);
         theSession.Events.Append(streamId, enrolled);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
-        var byStudent = await session2.Events.QueryByTagsAsync(new EventTagQuery().Or<StudentId>(studentId));
+        var byStudent = await session2.Events.QueryByTagsAsync(new EventTagQuery().Or<StudentId>(studentId), TestContext.Current.CancellationToken);
         byStudent.Count.ShouldBe(1);
         byStudent[0].Data.ShouldBeOfType<StudentEnrolled>().StudentName.ShouldBe("Alice");
 
-        var byCourse = await session2.Events.QueryByTagsAsync(new EventTagQuery().Or<CourseId>(courseId));
+        var byCourse = await session2.Events.QueryByTagsAsync(new EventTagQuery().Or<CourseId>(courseId), TestContext.Current.CancellationToken);
         byCourse.Count.ShouldBe(1);
     }
 
@@ -412,13 +412,13 @@ public class closed_shape_event_append_tests : IntegrationContext
         e2.WithTag(student2, course);
         theSession.Events.Append(Guid.NewGuid(), e2);
 
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
-        var byCourse = await session2.Events.QueryByTagsAsync(new EventTagQuery().Or<CourseId>(course));
+        var byCourse = await session2.Events.QueryByTagsAsync(new EventTagQuery().Or<CourseId>(course), TestContext.Current.CancellationToken);
         byCourse.Count.ShouldBe(2);
 
-        var byStudent1 = await session2.Events.QueryByTagsAsync(new EventTagQuery().Or<StudentId>(student1));
+        var byStudent1 = await session2.Events.QueryByTagsAsync(new EventTagQuery().Or<StudentId>(student1), TestContext.Current.CancellationToken);
         byStudent1.Count.ShouldBe(1);
         byStudent1[0].Data.ShouldBeOfType<StudentEnrolled>().StudentName.ShouldBe("Alice");
     }
@@ -438,13 +438,13 @@ public class closed_shape_event_append_tests : IntegrationContext
         var redEvent = red.Events.BuildEvent(new StudentEnrolled("Alice", "Math"));
         redEvent.WithTag(studentId);
         red.Events.Append(Guid.NewGuid(), redEvent);
-        await red.SaveChangesAsync();
+        await red.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var redQuery = theStore.LightweightSession(new SessionOptions { TenantId = "Red" });
-        (await redQuery.Events.QueryByTagsAsync(new EventTagQuery().Or<StudentId>(studentId))).Count.ShouldBe(1);
+        (await redQuery.Events.QueryByTagsAsync(new EventTagQuery().Or<StudentId>(studentId), TestContext.Current.CancellationToken)).Count.ShouldBe(1);
 
         await using var blueQuery = theStore.LightweightSession(new SessionOptions { TenantId = "Blue" });
-        (await blueQuery.Events.QueryByTagsAsync(new EventTagQuery().Or<StudentId>(studentId))).Count.ShouldBe(0);
+        (await blueQuery.Events.QueryByTagsAsync(new EventTagQuery().Or<StudentId>(studentId), TestContext.Current.CancellationToken)).Count.ShouldBe(0);
     }
 
     [Fact]
@@ -463,10 +463,10 @@ public class closed_shape_event_append_tests : IntegrationContext
         session.CausationId = "cause-1";
         session.SetHeader("color", "red");
         session.Events.StartStream(streamId, new QuestStarted("Start"));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
         events.Count.ShouldBe(1);
         events[0].CorrelationId.ShouldBe("corr-1");
         events[0].CausationId.ShouldBe("cause-1");

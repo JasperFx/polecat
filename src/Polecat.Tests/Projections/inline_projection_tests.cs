@@ -79,10 +79,10 @@ public class inline_projection_tests : IntegrationContext
         await using var session = store.LightweightSession();
         session.Events.StartStream(streamId,
             new QuestStarted("Destroy the Ring"));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = store.QuerySession();
-        var party = await query.LoadAsync<QuestParty>(streamId);
+        var party = await query.LoadAsync<QuestParty>(streamId, TestContext.Current.CancellationToken);
 
         party.ShouldNotBeNull();
         party.Id.ShouldBe(streamId);
@@ -99,10 +99,10 @@ public class inline_projection_tests : IntegrationContext
         session.Events.StartStream(streamId,
             new QuestStarted("Fellowship"),
             new MembersJoined(1, "Rivendell", ["Aragorn", "Legolas", "Gimli"]));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = store.QuerySession();
-        var party = await query.LoadAsync<QuestParty>(streamId);
+        var party = await query.LoadAsync<QuestParty>(streamId, TestContext.Current.CancellationToken);
 
         party.ShouldNotBeNull();
         party.Name.ShouldBe("Fellowship");
@@ -120,16 +120,16 @@ public class inline_projection_tests : IntegrationContext
         session.Events.StartStream(streamId,
             new QuestStarted("Adventure"),
             new MembersJoined(1, "Start", ["Hero"]));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = store.LightweightSession();
         session2.Events.Append(streamId,
             new ArrivedAtLocation("Dungeon", 2),
             new MonsterSlain("Goblin", 50));
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = store.QuerySession();
-        var party = await query.LoadAsync<QuestParty>(streamId);
+        var party = await query.LoadAsync<QuestParty>(streamId, TestContext.Current.CancellationToken);
 
         party.ShouldNotBeNull();
         party.Location.ShouldBe("Dungeon");
@@ -146,15 +146,15 @@ public class inline_projection_tests : IntegrationContext
         session.Events.StartStream(streamId,
             new QuestStarted("Departure Test"),
             new MembersJoined(1, "Town", ["A", "B", "C"]));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = store.LightweightSession();
         session2.Events.Append(streamId,
             new MembersDeparted(2, "Town", ["B"]));
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = store.QuerySession();
-        var party = await query.LoadAsync<QuestParty>(streamId);
+        var party = await query.LoadAsync<QuestParty>(streamId, TestContext.Current.CancellationToken);
 
         party.ShouldNotBeNull();
         party.Members.ShouldBe(["A", "C"]);
@@ -170,15 +170,15 @@ public class inline_projection_tests : IntegrationContext
         session.Events.StartStream(streamId,
             new QuestStarted("Doomed Quest"),
             new MembersJoined(1, "Start", ["Hero"]));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = store.LightweightSession();
         session2.Events.Append(streamId,
             new QuestEnded("Doomed Quest"));
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = store.QuerySession();
-        var party = await query.LoadAsync<QuestParty>(streamId);
+        var party = await query.LoadAsync<QuestParty>(streamId, TestContext.Current.CancellationToken);
         party.ShouldBeNull();
     }
 
@@ -197,11 +197,11 @@ public class inline_projection_tests : IntegrationContext
         session.Events.StartStream(stream2,
             new QuestStarted("Quest 2"),
             new MembersJoined(1, "Town B", ["Beta", "Gamma"]));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = store.QuerySession();
-        var party1 = await query.LoadAsync<QuestParty>(stream1);
-        var party2 = await query.LoadAsync<QuestParty>(stream2);
+        var party1 = await query.LoadAsync<QuestParty>(stream1, TestContext.Current.CancellationToken);
+        var party2 = await query.LoadAsync<QuestParty>(stream2, TestContext.Current.CancellationToken);
 
         party1.ShouldNotBeNull();
         party1.Name.ShouldBe("Quest 1");
@@ -221,14 +221,14 @@ public class inline_projection_tests : IntegrationContext
         await using var session = store.LightweightSession();
         session.Events.StartStream(streamId,
             new QuestStarted("Atomic Quest"));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Verify both events and projected document exist
         await using var query = store.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
         events.Count.ShouldBe(1);
 
-        var party = await query.LoadAsync<QuestParty>(streamId);
+        var party = await query.LoadAsync<QuestParty>(streamId, TestContext.Current.CancellationToken);
         party.ShouldNotBeNull();
         party.Name.ShouldBe("Atomic Quest");
     }
@@ -244,10 +244,10 @@ public class inline_projection_tests : IntegrationContext
             new QuestStarted("Version Quest"),
             new MembersJoined(1, "Start", ["A"]),
             new ArrivedAtLocation("Mid", 2));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = store.QuerySession();
-        var party = await query.LoadAsync<QuestParty>(streamId);
+        var party = await query.LoadAsync<QuestParty>(streamId, TestContext.Current.CancellationToken);
 
         party.ShouldNotBeNull();
         // Version should be set to the last event's version (3)
@@ -266,11 +266,11 @@ public class inline_projection_tests : IntegrationContext
         session.Events.StartStream(streamId,
             new QuestStarted("Mixed Quest"));
         session.Store(user);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = store.QuerySession();
-        var party = await query.LoadAsync<QuestParty>(streamId);
-        var loaded = await query.LoadAsync<User>(user.Id);
+        var party = await query.LoadAsync<QuestParty>(streamId, TestContext.Current.CancellationToken);
+        var loaded = await query.LoadAsync<User>(user.Id, TestContext.Current.CancellationToken);
 
         party.ShouldNotBeNull();
         party.Name.ShouldBe("Mixed Quest");

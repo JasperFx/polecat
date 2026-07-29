@@ -36,11 +36,11 @@ public class advanced_sql_query : IntegrationContext
     public async Task can_query_scalar()
     {
         await StoreOptions(opts => opts.DatabaseSchemaName = "advsql_scalar");
-        await theStore.Advanced.CleanAllDocumentsAsync();
+        await theStore.Advanced.CleanAllDocumentsAsync(TestContext.Current.CancellationToken);
 
         var doc = new AdvSqlDoc { Id = Guid.NewGuid(), Name = "Max" };
         theSession.Store(doc);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
         var name = (await query.AdvancedSql.QueryAsync<string>(
@@ -97,13 +97,13 @@ public class advanced_sql_query : IntegrationContext
     public async Task can_query_documents()
     {
         await StoreOptions(opts => opts.DatabaseSchemaName = "advsql_docs");
-        await theStore.Advanced.CleanAllDocumentsAsync();
+        await theStore.Advanced.CleanAllDocumentsAsync(TestContext.Current.CancellationToken);
 
         var doc1 = new AdvSqlDoc { Id = Guid.NewGuid(), Name = "Anne" };
         var doc2 = new AdvSqlDoc { Id = Guid.NewGuid(), Name = "Max" };
         theSession.Store(doc1);
         theSession.Store(doc2);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
         var docs = await query.AdvancedSql.QueryAsync<AdvSqlDoc>(
@@ -119,11 +119,11 @@ public class advanced_sql_query : IntegrationContext
     public async Task can_query_with_parameters()
     {
         await StoreOptions(opts => opts.DatabaseSchemaName = "advsql_params");
-        await theStore.Advanced.CleanAllDocumentsAsync();
+        await theStore.Advanced.CleanAllDocumentsAsync(TestContext.Current.CancellationToken);
 
         var doc = new AdvSqlDoc { Id = Guid.NewGuid(), Name = "Max" };
         theSession.Store(doc);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
 
@@ -149,7 +149,7 @@ public class advanced_sql_query : IntegrationContext
     public async Task can_stream_results()
     {
         await StoreOptions(opts => opts.DatabaseSchemaName = "advsql_stream");
-        await theStore.Advanced.CleanAllDocumentsAsync();
+        await theStore.Advanced.CleanAllDocumentsAsync(TestContext.Current.CancellationToken);
 
         var doc1 = new AdvSqlDoc { Id = Guid.NewGuid(), Name = "Alpha" };
         var doc2 = new AdvSqlDoc { Id = Guid.NewGuid(), Name = "Beta" };
@@ -157,7 +157,7 @@ public class advanced_sql_query : IntegrationContext
         theSession.Store(doc1);
         theSession.Store(doc2);
         theSession.Store(doc3);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
         var names = new List<string>();
@@ -198,13 +198,13 @@ public class advanced_sql_query : IntegrationContext
     public async Task can_query_document_and_scalar()
     {
         await StoreOptions(opts => opts.DatabaseSchemaName = "advsql_doc_scalar");
-        await theStore.Advanced.CleanAllDocumentsAsync();
+        await theStore.Advanced.CleanAllDocumentsAsync(TestContext.Current.CancellationToken);
 
         var doc1 = new AdvSqlDoc { Id = Guid.NewGuid(), Name = "Anne" };
         var doc2 = new AdvSqlDoc { Id = Guid.NewGuid(), Name = "Max" };
         theSession.Store(doc1);
         theSession.Store(doc2);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
         var results = await query.AdvancedSql.QueryAsync<AdvSqlDoc, long>(

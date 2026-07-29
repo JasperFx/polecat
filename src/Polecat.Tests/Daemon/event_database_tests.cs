@@ -39,7 +39,7 @@ public class event_database_tests : IntegrationContext
         {
             var streamId = Guid.NewGuid();
             theSession.Events.StartStream(streamId, new QuestStarted($"Quest {i + 1}"));
-            await theSession.SaveChangesAsync();
+            await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         var highest = await theStore.Database.FetchHighestEventSequenceNumber(CancellationToken.None);
@@ -49,7 +49,7 @@ public class event_database_tests : IntegrationContext
         await using var conn = await OpenConnectionAsync();
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = "SELECT COUNT(*) FROM [dbo].[pc_events];";
-        var count = (int)(await cmd.ExecuteScalarAsync())!;
+        var count = (int)(await cmd.ExecuteScalarAsync(TestContext.Current.CancellationToken))!;
         count.ShouldBe(5);
     }
 
@@ -61,7 +61,7 @@ public class event_database_tests : IntegrationContext
         {
             var streamId = Guid.NewGuid();
             theSession.Events.StartStream(streamId, new QuestStarted($"Quest {i + 1}"));
-            await theSession.SaveChangesAsync();
+            await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         // The floor is the EARLIEST event at-or-after the target (Marten semantics, polecat#205).
@@ -71,11 +71,11 @@ public class event_database_tests : IntegrationContext
         await using var conn = await OpenConnectionAsync();
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = "SELECT MAX(timestamp) FROM [dbo].[pc_events];";
-        var maxTimestamp = (DateTimeOffset)(await cmd.ExecuteScalarAsync())!;
+        var maxTimestamp = (DateTimeOffset)(await cmd.ExecuteScalarAsync(TestContext.Current.CancellationToken))!;
 
         cmd.CommandText = "SELECT MIN(seq_id) FROM [dbo].[pc_events] WHERE timestamp >= @ts;";
         cmd.Parameters.AddWithValue("@ts", maxTimestamp);
-        var expectedFloor = (long)(await cmd.ExecuteScalarAsync())!;
+        var expectedFloor = (long)(await cmd.ExecuteScalarAsync(TestContext.Current.CancellationToken))!;
 
         var floor = await theStore.Database.FindEventStoreFloorAtTimeAsync(
             maxTimestamp, CancellationToken.None);
@@ -95,14 +95,14 @@ public class event_database_tests : IntegrationContext
         {
             var streamId = Guid.NewGuid();
             theSession.Events.StartStream(streamId, new QuestStarted($"Quest {i + 1}"));
-            await theSession.SaveChangesAsync();
+            await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using (var conn = await OpenConnectionAsync())
         await using (var cmd = conn.CreateCommand())
         {
             cmd.CommandText = "SELECT MIN(seq_id) FROM [dbo].[pc_events];";
-            firstSeq = (long)(await cmd.ExecuteScalarAsync())!;
+            firstSeq = (long)(await cmd.ExecuteScalarAsync(TestContext.Current.CancellationToken))!;
         }
 
         var floor = await theStore.Database.FindEventStoreFloorAtTimeAsync(

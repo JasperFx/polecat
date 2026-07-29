@@ -15,20 +15,20 @@ public class archive_edge_case_tests : IntegrationContext
     {
         var streamId = Guid.NewGuid();
         theSession.Events.StartStream(streamId, new QuestStarted("Double Archive"));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Archive once
         await using var session2 = theStore.LightweightSession();
         session2.Events.ArchiveStream(streamId);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Archive again — should not throw
         await using var session3 = theStore.LightweightSession();
         session3.Events.ArchiveStream(streamId);
-        await session3.SaveChangesAsync();
+        await session3.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var state = await query.Events.FetchStreamStateAsync(streamId);
+        var state = await query.Events.FetchStreamStateAsync(streamId, TestContext.Current.CancellationToken);
         state.ShouldNotBeNull();
         state!.IsArchived.ShouldBeTrue();
     }
@@ -38,25 +38,25 @@ public class archive_edge_case_tests : IntegrationContext
     {
         var streamId = Guid.NewGuid();
         theSession.Events.StartStream(streamId, new QuestStarted("Double Unarchive"));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Archive
         await using var session2 = theStore.LightweightSession();
         session2.Events.ArchiveStream(streamId);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Unarchive once
         await using var session3 = theStore.LightweightSession();
         session3.Events.UnArchiveStream(streamId);
-        await session3.SaveChangesAsync();
+        await session3.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Unarchive again — should not throw
         await using var session4 = theStore.LightweightSession();
         session4.Events.UnArchiveStream(streamId);
-        await session4.SaveChangesAsync();
+        await session4.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var state = await query.Events.FetchStreamStateAsync(streamId);
+        var state = await query.Events.FetchStreamStateAsync(streamId, TestContext.Current.CancellationToken);
         state.ShouldNotBeNull();
         state!.IsArchived.ShouldBeFalse();
     }
@@ -69,11 +69,11 @@ public class archive_edge_case_tests : IntegrationContext
         // Archive a stream that doesn't exist — should not throw
         await using var session = theStore.LightweightSession();
         session.Events.ArchiveStream(streamId);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Verify stream doesn't exist
         await using var query = theStore.QuerySession();
-        var state = await query.Events.FetchStreamStateAsync(streamId);
+        var state = await query.Events.FetchStreamStateAsync(streamId, TestContext.Current.CancellationToken);
         state.ShouldBeNull();
     }
 
@@ -84,15 +84,15 @@ public class archive_edge_case_tests : IntegrationContext
         theSession.Events.StartStream(streamId,
             new QuestStarted("Archived Writing"),
             new MembersJoined(1, "Town", ["A", "B"]));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var archiveSession = theStore.LightweightSession();
         archiveSession.Events.ArchiveStream(streamId);
-        await archiveSession.SaveChangesAsync();
+        await archiveSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // FetchForWriting on archived stream — events are filtered out
         await using var session2 = theStore.LightweightSession();
-        var stream = await session2.Events.FetchForWriting<QuestAggregate>(streamId);
+        var stream = await session2.Events.FetchForWriting<QuestAggregate>(streamId, TestContext.Current.CancellationToken);
 
         // Aggregate should be null since archived events are excluded
         stream.Aggregate.ShouldBeNull();

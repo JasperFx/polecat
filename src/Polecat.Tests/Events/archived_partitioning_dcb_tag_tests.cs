@@ -99,7 +99,7 @@ public class archived_partitioning_dcb_tag_tests : IntegrationContext
         });
 
         // Idempotent re-apply
-        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync();
+        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
     }
 
     [Fact]
@@ -120,7 +120,7 @@ public class archived_partitioning_dcb_tag_tests : IntegrationContext
         var enrolled = theSession.Events.BuildEvent(new ArchStudentEnrolled("Alice", "Math"));
         enrolled.WithTag(studentId, courseId);
         theSession.Events.StartStream(streamId, enrolled);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
     }
 
     [Fact]
@@ -141,11 +141,11 @@ public class archived_partitioning_dcb_tag_tests : IntegrationContext
         var enrolled = theSession.Events.BuildEvent(new ArchStudentEnrolled("Bob", "Science"));
         enrolled.WithTag(studentId, courseId);
         theSession.Events.StartStream(streamId, enrolled);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var reader = theStore.LightweightSession();
         var exists = await reader.Events.EventsExistAsync(
-            new EventTagQuery().Or<ArchStudentId>(studentId));
+            new EventTagQuery().Or<ArchStudentId>(studentId), TestContext.Current.CancellationToken);
         exists.ShouldBeTrue();
     }
 }

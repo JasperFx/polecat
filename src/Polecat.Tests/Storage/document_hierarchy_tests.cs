@@ -37,10 +37,10 @@ public class document_hierarchy_tests : IntegrationContext
 
         var admin = new AdminUser { Id = Guid.NewGuid(), UserName = "sanity", Region = "US" };
         theSession.Store(admin);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var loaded = await query.LoadAsync<AdminUser>(admin.Id);
+        var loaded = await query.LoadAsync<AdminUser>(admin.Id, TestContext.Current.CancellationToken);
         loaded.ShouldNotBeNull();
         loaded.UserName.ShouldBe("sanity");
     }
@@ -58,10 +58,10 @@ public class document_hierarchy_tests : IntegrationContext
 
         var admin = new AdminUser { Id = Guid.NewGuid(), UserName = "admin1", Region = "US" };
         theSession.Store(admin);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var loaded = await query.LoadAsync<User>(admin.Id);
+        var loaded = await query.LoadAsync<User>(admin.Id, TestContext.Current.CancellationToken);
 
         loaded.ShouldNotBeNull();
         loaded.ShouldBeOfType<AdminUser>();
@@ -81,10 +81,10 @@ public class document_hierarchy_tests : IntegrationContext
 
         var super = new SuperUser { Id = Guid.NewGuid(), UserName = "super1", Role = "Lead" };
         theSession.Store(super);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var loaded = await query.LoadAsync<User>(super.Id);
+        var loaded = await query.LoadAsync<User>(super.Id, TestContext.Current.CancellationToken);
 
         loaded.ShouldNotBeNull();
         loaded.ShouldBeOfType<SuperUser>();
@@ -106,10 +106,10 @@ public class document_hierarchy_tests : IntegrationContext
         var super = new SuperUser { Id = Guid.NewGuid(), UserName = "super2", Role = "Admin" };
         theSession.Store(admin);
         theSession.Store(super);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var loaded = await query.LoadManyAsync<User>(new[] { admin.Id, super.Id });
+        var loaded = await query.LoadManyAsync<User>(new[] { admin.Id, super.Id }, TestContext.Current.CancellationToken);
 
         loaded.Count.ShouldBe(2);
         loaded.ShouldContain(u => u is AdminUser);
@@ -132,17 +132,17 @@ public class document_hierarchy_tests : IntegrationContext
         {
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = "IF OBJECT_ID('[hierarchy_query_all].[pc_doc_user]', 'U') IS NOT NULL DELETE FROM [hierarchy_query_all].[pc_doc_user]";
-            await cmd.ExecuteNonQueryAsync();
+            await cmd.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
         }
 
         var admin = new AdminUser { Id = Guid.NewGuid(), UserName = "admin3", Region = "APAC" };
         var super1 = new SuperUser { Id = Guid.NewGuid(), UserName = "super3", Role = "Dev" };
         theSession.Store(admin);
         theSession.Store(super1);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var all = await query.Query<User>().ToListAsync();
+        var all = await query.Query<User>().ToListAsync(TestContext.Current.CancellationToken);
 
         all.Count.ShouldBe(2);
         all.ShouldContain(u => u is AdminUser);
@@ -165,17 +165,17 @@ public class document_hierarchy_tests : IntegrationContext
         {
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = "IF OBJECT_ID('[hierarchy_query_sub].[pc_doc_user]', 'U') IS NOT NULL DELETE FROM [hierarchy_query_sub].[pc_doc_user]";
-            await cmd.ExecuteNonQueryAsync();
+            await cmd.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
         }
 
         var admin = new AdminUser { Id = Guid.NewGuid(), UserName = "admin4", Region = "SA" };
         var super = new SuperUser { Id = Guid.NewGuid(), UserName = "super4", Role = "QA" };
         theSession.Store(admin);
         theSession.Store(super);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var admins = await query.Query<AdminUser>().ToListAsync();
+        var admins = await query.Query<AdminUser>().ToListAsync(TestContext.Current.CancellationToken);
 
         admins.Count.ShouldBe(1);
         admins[0].UserName.ShouldBe("admin4");
@@ -195,16 +195,16 @@ public class document_hierarchy_tests : IntegrationContext
 
         var admin = new AdminUser { Id = Guid.NewGuid(), UserName = "admin5", Region = "NA" };
         theSession.Store(admin);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Update via upsert
         await using var session2 = theStore.LightweightSession();
         admin.Region = "EMEA";
         session2.Store(admin);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var loaded = await query.LoadAsync<User>(admin.Id);
+        var loaded = await query.LoadAsync<User>(admin.Id, TestContext.Current.CancellationToken);
 
         loaded.ShouldBeOfType<AdminUser>();
         ((AdminUser)loaded).Region.ShouldBe("EMEA");
@@ -223,10 +223,10 @@ public class document_hierarchy_tests : IntegrationContext
 
         var admin = new AdminUser { Id = Guid.NewGuid(), UserName = "admin6", Region = "UK" };
         theSession.Store(admin);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var loaded = await query.LoadAsync<User>(admin.Id);
+        var loaded = await query.LoadAsync<User>(admin.Id, TestContext.Current.CancellationToken);
 
         loaded.ShouldNotBeNull();
         loaded.ShouldBeOfType<AdminUser>();
@@ -247,17 +247,17 @@ public class document_hierarchy_tests : IntegrationContext
         {
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = "IF OBJECT_ID('[hierarchy_auto].[pc_doc_user]', 'U') IS NOT NULL DELETE FROM [hierarchy_auto].[pc_doc_user]";
-            await cmd.ExecuteNonQueryAsync();
+            await cmd.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
         }
 
         var admin = new AdminUser { Id = Guid.NewGuid(), UserName = "admin7", Region = "DE" };
         var super = new SuperUser { Id = Guid.NewGuid(), UserName = "super7", Role = "Mgr" };
         theSession.Store(admin);
         theSession.Store(super);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var all = await query.Query<User>().ToListAsync();
+        var all = await query.Query<User>().ToListAsync(TestContext.Current.CancellationToken);
 
         all.Count.ShouldBe(2);
         all.ShouldContain(u => u is AdminUser);
@@ -279,12 +279,12 @@ public class document_hierarchy_tests : IntegrationContext
         var super = new SuperUser { Id = Guid.NewGuid(), UserName = "other", Role = "PM" };
         theSession.Store(admin);
         theSession.Store(super);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
         var result = await query.Query<User>()
             .Where(x => x.UserName == "findme")
-            .FirstOrDefaultAsync();
+            .FirstOrDefaultAsync(TestContext.Current.CancellationToken);
 
         result.ShouldNotBeNull();
         result.ShouldBeOfType<AdminUser>();
@@ -303,19 +303,19 @@ public class document_hierarchy_tests : IntegrationContext
 
         var admin = new AdminUser { Id = Guid.NewGuid(), UserName = "deleteme", Region = "JP" };
         theSession.Store(admin);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Verify the row exists before deleting
         await using var midQuery = theStore.QuerySession();
-        var mid = await midQuery.LoadAsync<User>(admin.Id);
+        var mid = await midQuery.LoadAsync<User>(admin.Id, TestContext.Current.CancellationToken);
         mid.ShouldNotBeNull("Document should exist after Store");
 
         await using var session2 = theStore.LightweightSession();
         session2.Delete<User>(admin.Id);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var loaded = await query.LoadAsync<User>(admin.Id);
+        var loaded = await query.LoadAsync<User>(admin.Id, TestContext.Current.CancellationToken);
         loaded.ShouldBeNull();
     }
 }

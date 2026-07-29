@@ -31,7 +31,7 @@ public class initial_data_tests : IntegrationContext
         await activator.StartAsync(CancellationToken.None);
 
         await using var query = theStore.QuerySession();
-        var user = await query.LoadAsync<User>(AliceId);
+        var user = await query.LoadAsync<User>(AliceId, TestContext.Current.CancellationToken);
         user.ShouldNotBeNull();
         user.FirstName.ShouldBe("Alice");
     }
@@ -51,10 +51,10 @@ public class initial_data_tests : IntegrationContext
         await activator.StartAsync(CancellationToken.None);
 
         await using var query = theStore.QuerySession();
-        var user = await query.LoadAsync<User>(AliceId);
+        var user = await query.LoadAsync<User>(AliceId, TestContext.Current.CancellationToken);
         user.ShouldNotBeNull();
 
-        var target = await query.LoadAsync<Target>(TargetId);
+        var target = await query.LoadAsync<Target>(TargetId, TestContext.Current.CancellationToken);
         target.ShouldNotBeNull();
         target.Color.ShouldBe("Seeded");
     }
@@ -78,7 +78,7 @@ public class initial_data_tests : IntegrationContext
         await activator.StartAsync(CancellationToken.None);
 
         await using var query = theStore.QuerySession();
-        var user = await query.LoadAsync<User>(LambdaId);
+        var user = await query.LoadAsync<User>(LambdaId, TestContext.Current.CancellationToken);
         user.ShouldNotBeNull();
         user.FirstName.ShouldBe("Lambda");
     }
@@ -94,13 +94,13 @@ public class initial_data_tests : IntegrationContext
         });
 
         // Manually ensure schema exists
-        await theStore.Database.ApplyAllConfiguredChangesToDatabaseAsync();
+        await theStore.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         var activator = new PolecatActivator(theStore);
         await activator.StartAsync(CancellationToken.None);
 
         await using var query = theStore.QuerySession();
-        var user = await query.LoadAsync<User>(AliceId);
+        var user = await query.LoadAsync<User>(AliceId, TestContext.Current.CancellationToken);
         user.ShouldNotBeNull();
     }
 

@@ -66,7 +66,7 @@ public partial class bluegreen_side_effect_gate_tests : IAsyncLifetime
         var v2Outbox = new GateOutbox();
         using (var v2 = CreateStore(version: 2, v2Outbox, gate: false))
         {
-            await v2.Database.ApplyAllConfiguredChangesToDatabaseAsync();
+            await v2.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
             var priorLabels = await AppendStreamsAsync(v2, "prior", 3);
 
             await v2.WaitForProjectionAsync();
@@ -94,7 +94,7 @@ public partial class bluegreen_side_effect_gate_tests : IAsyncLifetime
 
             // And V3's projected state is correct over the FULL history (all 5 aggregates exist).
             await using var query = v3.QuerySession();
-            var all = await query.Query<GateSnap>().ToListAsync();
+            var all = await query.Query<GateSnap>().ToListAsync(TestContext.Current.CancellationToken);
             all.Count.ShouldBe(5);
         }
     }

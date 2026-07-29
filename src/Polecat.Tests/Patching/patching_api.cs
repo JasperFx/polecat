@@ -25,13 +25,13 @@ public class patching_api : IntegrationContext
         target.Number = 5;
 
         theSession.Store(target);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         theSession.Patch<Target>(target.Id).Set(x => x.Number, 10);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        (await query.LoadAsync<Target>(target.Id))!.Number.ShouldBe(10);
+        (await query.LoadAsync<Target>(target.Id, TestContext.Current.CancellationToken))!.Number.ShouldBe(10);
     }
 
     [Fact]
@@ -41,13 +41,13 @@ public class patching_api : IntegrationContext
         target.Inner!.Number = 5;
 
         theSession.Store(target);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         theSession.Patch<Target>(target.Id).Set(x => x.Inner!.Number, 10);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        (await query.LoadAsync<Target>(target.Id))!.Inner!.Number.ShouldBe(10);
+        (await query.LoadAsync<Target>(target.Id, TestContext.Current.CancellationToken))!.Inner!.Number.ShouldBe(10);
     }
 
     [Fact]
@@ -61,22 +61,22 @@ public class patching_api : IntegrationContext
         var target6 = new Target { Id = Guid.NewGuid(), Color = "Red", Number = 1 };
 
         theSession.Store(target1, target2, target3, target4, target5, target6);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Change every Target document where the Color is Blue
         theSession.Patch<Target>(x => x.Color == "Blue").Set(x => x.Number, 2);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
         // These should have been updated
-        (await query.LoadAsync<Target>(target1.Id))!.Number.ShouldBe(2);
-        (await query.LoadAsync<Target>(target2.Id))!.Number.ShouldBe(2);
-        (await query.LoadAsync<Target>(target3.Id))!.Number.ShouldBe(2);
+        (await query.LoadAsync<Target>(target1.Id, TestContext.Current.CancellationToken))!.Number.ShouldBe(2);
+        (await query.LoadAsync<Target>(target2.Id, TestContext.Current.CancellationToken))!.Number.ShouldBe(2);
+        (await query.LoadAsync<Target>(target3.Id, TestContext.Current.CancellationToken))!.Number.ShouldBe(2);
 
         // These should not because they didn't match the where clause
-        (await query.LoadAsync<Target>(target4.Id))!.Number.ShouldBe(1);
-        (await query.LoadAsync<Target>(target5.Id))!.Number.ShouldBe(1);
-        (await query.LoadAsync<Target>(target6.Id))!.Number.ShouldBe(1);
+        (await query.LoadAsync<Target>(target4.Id, TestContext.Current.CancellationToken))!.Number.ShouldBe(1);
+        (await query.LoadAsync<Target>(target5.Id, TestContext.Current.CancellationToken))!.Number.ShouldBe(1);
+        (await query.LoadAsync<Target>(target6.Id, TestContext.Current.CancellationToken))!.Number.ShouldBe(1);
     }
 
     [Fact]
@@ -84,13 +84,13 @@ public class patching_api : IntegrationContext
     {
         var target = Target.Random();
         theSession.Store(target);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         theSession.Patch<Target>(target.Id).Set("String", "updated");
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        (await query.LoadAsync<Target>(target.Id))!.String.ShouldBe("updated");
+        (await query.LoadAsync<Target>(target.Id, TestContext.Current.CancellationToken))!.String.ShouldBe("updated");
     }
 
     [Fact]
@@ -98,13 +98,13 @@ public class patching_api : IntegrationContext
     {
         var target = Target.Random(true);
         theSession.Store(target);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         theSession.Patch<Target>(target.Id).Set<Target?, string>("String", x => x.Inner, "nested_val");
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        (await query.LoadAsync<Target>(target.Id))!.Inner!.String.ShouldBe("nested_val");
+        (await query.LoadAsync<Target>(target.Id, TestContext.Current.CancellationToken))!.Inner!.String.ShouldBe("nested_val");
     }
 
     // ---- Duplicate operations ----
@@ -115,13 +115,13 @@ public class patching_api : IntegrationContext
         var target = Target.Random();
         target.AnotherString = null;
         theSession.Store(target);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         theSession.Patch<Target>(target.Id).Duplicate(t => t.String, t => t.AnotherString);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var result = await query.LoadAsync<Target>(target.Id);
+        var result = await query.LoadAsync<Target>(target.Id, TestContext.Current.CancellationToken);
         result!.String.ShouldBe(target.String);
         result.AnotherString.ShouldBe(target.String);
     }
@@ -132,14 +132,14 @@ public class patching_api : IntegrationContext
         var target = Target.Random();
         target.StringField = null; // AnotherString is not null, so we can verify both are updated
         theSession.Store(target);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         theSession.Patch<Target>(target.Id)
             .Duplicate(t => t.String, t => t.StringField, t => t.AnotherString);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var result = await query.LoadAsync<Target>(target.Id);
+        var result = await query.LoadAsync<Target>(target.Id, TestContext.Current.CancellationToken);
         result!.String.ShouldBe(target.String);
         result.StringField.ShouldBe(target.String);
         result.AnotherString.ShouldBe(target.String);
@@ -151,14 +151,14 @@ public class patching_api : IntegrationContext
         var target = Target.Random(withChildren: true);
         target.Inner2 = null; // Inner3 is not null, so we can verify both are updated
         theSession.Store(target);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         theSession.Patch<Target>(target.Id)
             .Duplicate(t => t.Inner, t => t.Inner2, t => t.Inner3);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var result = await query.LoadAsync<Target>(target.Id);
+        var result = await query.LoadAsync<Target>(target.Id, TestContext.Current.CancellationToken);
         result!.Inner.ShouldBeEquivalentTo(target.Inner);
         result.Inner2.ShouldBeEquivalentTo(target.Inner);
         result.Inner3.ShouldBeEquivalentTo(target.Inner);
@@ -173,13 +173,13 @@ public class patching_api : IntegrationContext
         target.Number = 6;
 
         theSession.Store(target);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         theSession.Patch<Target>(target.Id).Increment(x => x.Number);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        (await query.LoadAsync<Target>(target.Id))!.Number.ShouldBe(7);
+        (await query.LoadAsync<Target>(target.Id, TestContext.Current.CancellationToken))!.Number.ShouldBe(7);
     }
 
     [Fact]
@@ -189,13 +189,13 @@ public class patching_api : IntegrationContext
         target.Number = 6;
 
         theSession.Store(target);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         theSession.Patch<Target>(target.Id).Increment(x => x.Number, 3);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        (await query.LoadAsync<Target>(target.Id))!.Number.ShouldBe(9);
+        (await query.LoadAsync<Target>(target.Id, TestContext.Current.CancellationToken))!.Number.ShouldBe(9);
     }
 
     [Fact]
@@ -205,13 +205,13 @@ public class patching_api : IntegrationContext
         target.Long = 13;
 
         theSession.Store(target);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         theSession.Patch<Target>(target.Id).Increment(x => x.Long);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        (await query.LoadAsync<Target>(target.Id))!.Long.ShouldBe(14);
+        (await query.LoadAsync<Target>(target.Id, TestContext.Current.CancellationToken))!.Long.ShouldBe(14);
     }
 
     [Fact]
@@ -221,13 +221,13 @@ public class patching_api : IntegrationContext
         target.Double = 11.2;
 
         theSession.Store(target);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         theSession.Patch<Target>(target.Id).Increment(x => x.Double, 2.4);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var result = (await query.LoadAsync<Target>(target.Id))!.Double;
+        var result = (await query.LoadAsync<Target>(target.Id, TestContext.Current.CancellationToken))!.Double;
         result.ShouldBe(13.6, 0.01);
     }
 
@@ -238,13 +238,13 @@ public class patching_api : IntegrationContext
         target.Float = 11.2F;
 
         theSession.Store(target);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         theSession.Patch<Target>(target.Id).Increment(x => x.Float, 2.4F);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var result = (await query.LoadAsync<Target>(target.Id))!.Float;
+        var result = (await query.LoadAsync<Target>(target.Id, TestContext.Current.CancellationToken))!.Float;
         result.ShouldBe(13.6F, 0.1F);
     }
 
@@ -255,13 +255,13 @@ public class patching_api : IntegrationContext
         target.Decimal = 11.2m;
 
         theSession.Store(target);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         theSession.Patch<Target>(target.Id).Increment(x => x.Decimal, 2.4m);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var result = (await query.LoadAsync<Target>(target.Id))!.Decimal;
+        var result = (await query.LoadAsync<Target>(target.Id, TestContext.Current.CancellationToken))!.Decimal;
         Math.Round(result, 1).ShouldBe(13.6m);
     }
 
@@ -272,13 +272,13 @@ public class patching_api : IntegrationContext
         target.NumberByKey["whatever"] = 6;
 
         theSession.Store(target);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         theSession.Patch<Target>(target.Id).Increment(x => x.NumberByKey["whatever"]);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        (await query.LoadAsync<Target>(target.Id))!.NumberByKey["whatever"].ShouldBe(7);
+        (await query.LoadAsync<Target>(target.Id, TestContext.Current.CancellationToken))!.NumberByKey["whatever"].ShouldBe(7);
     }
 
     [Fact]
@@ -288,13 +288,13 @@ public class patching_api : IntegrationContext
         target.NumberByKey["whatever"] = 6;
 
         theSession.Store(target);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         theSession.Patch<Target>(target.Id).Increment(x => x.NumberByKey["whatever"], 3);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        (await query.LoadAsync<Target>(target.Id))!.NumberByKey["whatever"].ShouldBe(9);
+        (await query.LoadAsync<Target>(target.Id, TestContext.Current.CancellationToken))!.NumberByKey["whatever"].ShouldBe(9);
     }
 
     [Fact]
@@ -304,13 +304,13 @@ public class patching_api : IntegrationContext
         target.LongByKey["whatever"] = 13;
 
         theSession.Store(target);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         theSession.Patch<Target>(target.Id).Increment(x => x.LongByKey["whatever"]);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        (await query.LoadAsync<Target>(target.Id))!.LongByKey["whatever"].ShouldBe(14);
+        (await query.LoadAsync<Target>(target.Id, TestContext.Current.CancellationToken))!.LongByKey["whatever"].ShouldBe(14);
     }
 
     [Fact]
@@ -320,13 +320,13 @@ public class patching_api : IntegrationContext
         target.DoubleByKey["whatever"] = 11.2;
 
         theSession.Store(target);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         theSession.Patch<Target>(target.Id).Increment(x => x.DoubleByKey["whatever"], 2.4);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var result = (await query.LoadAsync<Target>(target.Id))!.DoubleByKey["whatever"];
+        var result = (await query.LoadAsync<Target>(target.Id, TestContext.Current.CancellationToken))!.DoubleByKey["whatever"];
         result.ShouldBe(13.6, 0.01);
     }
 
@@ -337,13 +337,13 @@ public class patching_api : IntegrationContext
         target.FloatByKey["whatever"] = 11.2F;
 
         theSession.Store(target);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         theSession.Patch<Target>(target.Id).Increment(x => x.FloatByKey["whatever"], 2.4F);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var result = (await query.LoadAsync<Target>(target.Id))!.FloatByKey["whatever"];
+        var result = (await query.LoadAsync<Target>(target.Id, TestContext.Current.CancellationToken))!.FloatByKey["whatever"];
         result.ShouldBe(13.6F, 0.1F);
     }
 
@@ -354,13 +354,13 @@ public class patching_api : IntegrationContext
         target.DecimalByKey["whatever"] = 11.2m;
 
         theSession.Store(target);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         theSession.Patch<Target>(target.Id).Increment(x => x.DecimalByKey["whatever"], 2.4m);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var result = (await query.LoadAsync<Target>(target.Id))!.DecimalByKey["whatever"];
+        var result = (await query.LoadAsync<Target>(target.Id, TestContext.Current.CancellationToken))!.DecimalByKey["whatever"];
         Math.Round(result, 1).ShouldBe(13.6m);
     }
 
@@ -373,13 +373,13 @@ public class patching_api : IntegrationContext
         target.NumberArray = [1, 2, 3];
 
         theSession.Store(target);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         theSession.Patch<Target>(target.Id).Append(x => x.NumberArray, 4);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        (await query.LoadAsync<Target>(target.Id))!.NumberArray.ShouldBe([1, 2, 3, 4]);
+        (await query.LoadAsync<Target>(target.Id, TestContext.Current.CancellationToken))!.NumberArray.ShouldBe([1, 2, 3, 4]);
     }
 
     [Fact]
@@ -389,22 +389,22 @@ public class patching_api : IntegrationContext
         target.NumberArray = [1, 2, 3];
 
         theSession.Store(target);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Should not add 3 since it already exists
         theSession.Patch<Target>(target.Id).AppendIfNotExists(x => x.NumberArray, 3);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        (await query.LoadAsync<Target>(target.Id))!.NumberArray.ShouldBe([1, 2, 3]);
+        (await query.LoadAsync<Target>(target.Id, TestContext.Current.CancellationToken))!.NumberArray.ShouldBe([1, 2, 3]);
 
         // Should add 4 since it does not exist
         await using var session2 = theStore.LightweightSession();
         session2.Patch<Target>(target.Id).AppendIfNotExists(x => x.NumberArray, 4);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query2 = theStore.QuerySession();
-        (await query2.LoadAsync<Target>(target.Id))!.NumberArray.ShouldBe([1, 2, 3, 4]);
+        (await query2.LoadAsync<Target>(target.Id, TestContext.Current.CancellationToken))!.NumberArray.ShouldBe([1, 2, 3, 4]);
     }
 
     [Fact]
@@ -416,13 +416,13 @@ public class patching_api : IntegrationContext
         var child = Target.Random();
 
         theSession.Store(target);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         theSession.Patch<Target>(target.Id).Append(x => x.Children, child);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var target2 = await query.LoadAsync<Target>(target.Id);
+        var target2 = await query.LoadAsync<Target>(target.Id, TestContext.Current.CancellationToken);
         target2!.Children.Length.ShouldBe(initialCount + 1);
         target2.Children.Last().Id.ShouldBe(child.Id);
     }
@@ -437,13 +437,13 @@ public class patching_api : IntegrationContext
         var child = Target.Random();
 
         theSession.Store(target);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         theSession.Patch<Target>(target.Id).Append(x => x.ChildrenDictionary, key, child);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var target2 = await query.LoadAsync<Target>(target.Id);
+        var target2 = await query.LoadAsync<Target>(target.Id, TestContext.Current.CancellationToken);
         target2!.ChildrenDictionary.Count.ShouldBe(initialCount + 1);
         target2.ChildrenDictionary.ShouldContainKey(key);
         target2.ChildrenDictionary[key].Id.ShouldBe(child.Id);
@@ -459,29 +459,29 @@ public class patching_api : IntegrationContext
         var child2 = Target.Random();
 
         theSession.Store(target);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Append child first
         theSession.Patch<Target>(target.Id).Append(x => x.Children, child);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Append same child again with AppendIfNotExists - should not add
         await using var session2 = theStore.LightweightSession();
         session2.Patch<Target>(target.Id).AppendIfNotExists(x => x.Children, child);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var target2 = await query.LoadAsync<Target>(target.Id);
+        var target2 = await query.LoadAsync<Target>(target.Id, TestContext.Current.CancellationToken);
         target2!.Children.Length.ShouldBe(initialCount + 1);
         target2.Children.Last().Id.ShouldBe(child.Id);
 
         // Append different child - should add
         await using var session3 = theStore.LightweightSession();
         session3.Patch<Target>(target.Id).AppendIfNotExists(x => x.Children, child2);
-        await session3.SaveChangesAsync();
+        await session3.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query2 = theStore.QuerySession();
-        var target3 = await query2.LoadAsync<Target>(target.Id);
+        var target3 = await query2.LoadAsync<Target>(target.Id, TestContext.Current.CancellationToken);
         target3!.Children.Length.ShouldBe(initialCount + 2);
         target3.Children.Last().Id.ShouldBe(child2.Id);
     }
@@ -496,28 +496,28 @@ public class patching_api : IntegrationContext
         var child2 = Target.Random();
 
         theSession.Store(target);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         theSession.Patch<Target>(target.Id).Append(x => x.ChildrenDictionary, "value1", child);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Should not re-add "value1"
         await using var session2 = theStore.LightweightSession();
         session2.Patch<Target>(target.Id).AppendIfNotExists(x => x.ChildrenDictionary, "value1", child);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var target2 = await query.LoadAsync<Target>(target.Id);
+        var target2 = await query.LoadAsync<Target>(target.Id, TestContext.Current.CancellationToken);
         target2!.ChildrenDictionary.Count.ShouldBe(initialCount + 1);
         target2.ChildrenDictionary.ShouldContainKey("value1");
 
         // Should add "value2"
         await using var session3 = theStore.LightweightSession();
         session3.Patch<Target>(target.Id).AppendIfNotExists(x => x.ChildrenDictionary, "value2", child2);
-        await session3.SaveChangesAsync();
+        await session3.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query2 = theStore.QuerySession();
-        var target3 = await query2.LoadAsync<Target>(target.Id);
+        var target3 = await query2.LoadAsync<Target>(target.Id, TestContext.Current.CancellationToken);
         target3!.ChildrenDictionary.Count.ShouldBe(initialCount + 2);
         target3.ChildrenDictionary["value2"].Id.ShouldBe(child2.Id);
     }
@@ -531,13 +531,13 @@ public class patching_api : IntegrationContext
         target.NumberArray = [1, 2, 3];
 
         theSession.Store(target);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         theSession.Patch<Target>(target.Id).Insert(x => x.NumberArray, 4);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        (await query.LoadAsync<Target>(target.Id))!.NumberArray.ShouldBe([1, 2, 3, 4]);
+        (await query.LoadAsync<Target>(target.Id, TestContext.Current.CancellationToken))!.NumberArray.ShouldBe([1, 2, 3, 4]);
     }
 
     [Fact]
@@ -547,13 +547,13 @@ public class patching_api : IntegrationContext
         target.NumberArray = [1, 2, 3];
 
         theSession.Store(target);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         theSession.Patch<Target>(target.Id).Insert(x => x.NumberArray, 4, 2);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        (await query.LoadAsync<Target>(target.Id))!.NumberArray.ShouldBe([1, 2, 4, 3]);
+        (await query.LoadAsync<Target>(target.Id, TestContext.Current.CancellationToken))!.NumberArray.ShouldBe([1, 2, 4, 3]);
     }
 
     [Fact]
@@ -563,22 +563,22 @@ public class patching_api : IntegrationContext
         target.NumberArray = [1, 2, 3];
 
         theSession.Store(target);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Should not add 1 since it exists
         theSession.Patch<Target>(target.Id).InsertIfNotExists(x => x.NumberArray, 1);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        (await query.LoadAsync<Target>(target.Id))!.NumberArray.ShouldBe([1, 2, 3]);
+        (await query.LoadAsync<Target>(target.Id, TestContext.Current.CancellationToken))!.NumberArray.ShouldBe([1, 2, 3]);
 
         // Should add 4 since it doesn't exist
         await using var session2 = theStore.LightweightSession();
         session2.Patch<Target>(target.Id).InsertIfNotExists(x => x.NumberArray, 4);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query2 = theStore.QuerySession();
-        (await query2.LoadAsync<Target>(target.Id))!.NumberArray.ShouldBe([1, 2, 3, 4]);
+        (await query2.LoadAsync<Target>(target.Id, TestContext.Current.CancellationToken))!.NumberArray.ShouldBe([1, 2, 3, 4]);
     }
 
     [Fact]
@@ -588,22 +588,22 @@ public class patching_api : IntegrationContext
         target.NumberArray = [1, 2, 3];
 
         theSession.Store(target);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Should not add 3 since it already exists
         theSession.Patch<Target>(target.Id).InsertIfNotExists(x => x.NumberArray, 3, 2);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        (await query.LoadAsync<Target>(target.Id))!.NumberArray.ShouldBe([1, 2, 3]);
+        (await query.LoadAsync<Target>(target.Id, TestContext.Current.CancellationToken))!.NumberArray.ShouldBe([1, 2, 3]);
 
         // Should add 4 at position 2
         await using var session2 = theStore.LightweightSession();
         session2.Patch<Target>(target.Id).InsertIfNotExists(x => x.NumberArray, 4, 2);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query2 = theStore.QuerySession();
-        (await query2.LoadAsync<Target>(target.Id))!.NumberArray.ShouldBe([1, 2, 4, 3]);
+        (await query2.LoadAsync<Target>(target.Id, TestContext.Current.CancellationToken))!.NumberArray.ShouldBe([1, 2, 4, 3]);
     }
 
     [Fact]
@@ -615,13 +615,13 @@ public class patching_api : IntegrationContext
         var child = Target.Random();
 
         theSession.Store(target);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         theSession.Patch<Target>(target.Id).Insert(x => x.Children, child);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var target2 = await query.LoadAsync<Target>(target.Id);
+        var target2 = await query.LoadAsync<Target>(target.Id, TestContext.Current.CancellationToken);
         target2!.Children.Length.ShouldBe(initialCount + 1);
         target2.Children.Last().Id.ShouldBe(child.Id);
     }
@@ -635,33 +635,33 @@ public class patching_api : IntegrationContext
         var child = Target.Random();
         var child2 = Target.Random();
         theSession.Store(target);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Insert child
         theSession.Patch<Target>(target.Id).Insert(x => x.Children, child);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var target2 = await query.LoadAsync<Target>(target.Id);
+        var target2 = await query.LoadAsync<Target>(target.Id, TestContext.Current.CancellationToken);
         target2!.Children.Length.ShouldBe(initialCount + 1);
         target2.Children.Last().Id.ShouldBe(child.Id);
 
         // InsertIfNotExists with same child - should not add
         await using var session2 = theStore.LightweightSession();
         session2.Patch<Target>(target.Id).InsertIfNotExists(x => x.Children, child);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query2 = theStore.QuerySession();
-        var target3 = await query2.LoadAsync<Target>(target.Id);
+        var target3 = await query2.LoadAsync<Target>(target.Id, TestContext.Current.CancellationToken);
         target3!.Children.Length.ShouldBe(initialCount + 1);
 
         // InsertIfNotExists with different child - should add
         await using var session3 = theStore.LightweightSession();
         session3.Patch<Target>(target.Id).InsertIfNotExists(x => x.Children, child2);
-        await session3.SaveChangesAsync();
+        await session3.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query3 = theStore.QuerySession();
-        var target4 = await query3.LoadAsync<Target>(target.Id);
+        var target4 = await query3.LoadAsync<Target>(target.Id, TestContext.Current.CancellationToken);
         target4!.Children.Length.ShouldBe(initialCount + 2);
         target4.Children.Last().Id.ShouldBe(child2.Id);
     }
@@ -676,13 +676,13 @@ public class patching_api : IntegrationContext
         target.AnotherString = "Bar";
 
         theSession.Store(target);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         theSession.Patch<Target>(target.Id).Rename("String", x => x.AnotherString!);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var target2 = await query.LoadAsync<Target>(target.Id);
+        var target2 = await query.LoadAsync<Target>(target.Id, TestContext.Current.CancellationToken);
         target2!.AnotherString.ShouldBe("Foo");
         target2.String.ShouldBeNull();
     }
@@ -695,13 +695,13 @@ public class patching_api : IntegrationContext
         target.Inner.AnotherString = "Bar";
 
         theSession.Store(target);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         theSession.Patch<Target>(target.Id).Rename("String", x => x.Inner!.AnotherString!);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var target2 = await query.LoadAsync<Target>(target.Id);
+        var target2 = await query.LoadAsync<Target>(target.Id, TestContext.Current.CancellationToken);
         target2!.Inner!.AnotherString.ShouldBe("Foo");
         target2.Inner.String.ShouldBeNull();
     }
@@ -715,13 +715,13 @@ public class patching_api : IntegrationContext
         target.NumberArray = [1, 2, 3];
 
         theSession.Store(target);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         theSession.Patch<Target>(target.Id).Remove(x => x.NumberArray, 2);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var target2 = await query.LoadAsync<Target>(target.Id);
+        var target2 = await query.LoadAsync<Target>(target.Id, TestContext.Current.CancellationToken);
         target2!.NumberArray.Length.ShouldBe(2);
         target2.NumberArray.ShouldBe([1, 3]);
     }
@@ -733,13 +733,13 @@ public class patching_api : IntegrationContext
         target.NumberArray = [1, 2, 3, 2];
 
         theSession.Store(target);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         theSession.Patch<Target>(target.Id).Remove(x => x.NumberArray, 2, RemoveAction.RemoveAll);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var target2 = await query.LoadAsync<Target>(target.Id);
+        var target2 = await query.LoadAsync<Target>(target.Id, TestContext.Current.CancellationToken);
         target2!.NumberArray.Length.ShouldBe(2);
         target2.NumberArray.ShouldBe([1, 3]);
     }
@@ -752,13 +752,13 @@ public class patching_api : IntegrationContext
         var child = target.Children[0];
 
         theSession.Store(target);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         theSession.Patch<Target>(target.Id).Remove(x => x.Children, child);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var target2 = await query.LoadAsync<Target>(target.Id);
+        var target2 = await query.LoadAsync<Target>(target.Id, TestContext.Current.CancellationToken);
         target2!.Children.Length.ShouldBe(initialCount - 1);
         target2.Children.ShouldNotContain(t => t.Id == child.Id);
     }
@@ -773,13 +773,13 @@ public class patching_api : IntegrationContext
         var initialCount = target.ChildrenDictionary.Count;
 
         theSession.Store(target);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         theSession.Patch<Target>(target.Id).Remove(x => x.ChildrenDictionary, removedKey);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var target2 = await query.LoadAsync<Target>(target.Id);
+        var target2 = await query.LoadAsync<Target>(target.Id, TestContext.Current.CancellationToken);
         target2!.ChildrenDictionary.Count.ShouldBe(initialCount - 1);
         target2.ChildrenDictionary.ShouldNotContainKey(removedKey);
     }
@@ -791,13 +791,13 @@ public class patching_api : IntegrationContext
     {
         var target = Target.Random();
         theSession.Store(target);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         theSession.Patch<Target>(target.Id).Delete("String");
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var result = await query.LoadAsync<Target>(target.Id);
+        var result = await query.LoadAsync<Target>(target.Id, TestContext.Current.CancellationToken);
         result!.String.ShouldBeNull();
     }
 
@@ -806,13 +806,13 @@ public class patching_api : IntegrationContext
     {
         var target = Target.Random(true);
         theSession.Store(target);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         theSession.Patch<Target>(target.Id).Delete("String", t => t.Inner!);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var result = await query.LoadAsync<Target>(target.Id);
+        var result = await query.LoadAsync<Target>(target.Id, TestContext.Current.CancellationToken);
         result!.Inner!.String.ShouldBeNull();
     }
 
@@ -821,13 +821,13 @@ public class patching_api : IntegrationContext
     {
         var target = Target.Random(true);
         theSession.Store(target);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         theSession.Patch<Target>(target.Id).Delete(t => t.Inner);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var result = await query.LoadAsync<Target>(target.Id);
+        var result = await query.LoadAsync<Target>(target.Id, TestContext.Current.CancellationToken);
         result!.Inner.ShouldBeNull();
     }
 
@@ -840,15 +840,15 @@ public class patching_api : IntegrationContext
         target.Number = 5;
 
         theSession.Store(target);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         theSession.Patch<Target>(target.Id)
             .Set(x => x.Number, 10)
             .Increment(x => x.Number, 10);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        (await query.LoadAsync<Target>(target.Id))!.Number.ShouldBe(20);
+        (await query.LoadAsync<Target>(target.Id, TestContext.Current.CancellationToken))!.Number.ShouldBe(20);
     }
 
     // ---- Patch and Load ----
@@ -860,13 +860,13 @@ public class patching_api : IntegrationContext
         target.Number = 5;
 
         theSession.Store(target);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         theSession.Patch<Target>(target.Id).Set(x => x.Number, 10);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var loaded = await query.LoadAsync<Target>(target.Id);
+        var loaded = await query.LoadAsync<Target>(target.Id, TestContext.Current.CancellationToken);
         loaded.ShouldNotBeNull();
         loaded.Number.ShouldBe(10);
     }

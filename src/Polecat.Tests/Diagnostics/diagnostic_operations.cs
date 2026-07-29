@@ -16,21 +16,21 @@ public class diagnostic_operations : IntegrationContext
         // Store some documents
         theSession.Store(new Target { Id = Guid.NewGuid(), Color = "CleanMe" });
         theSession.Store(new Target { Id = Guid.NewGuid(), Color = "CleanMe" });
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Verify they exist
         await using var queryBefore = theStore.QuerySession();
         var before = await queryBefore.Query<Target>()
             .Where(t => t.Color == "CleanMe")
-            .CountAsync();
+            .CountAsync(TestContext.Current.CancellationToken);
         before.ShouldBeGreaterThanOrEqualTo(2);
 
         // Clean all Targets
-        await theStore.Advanced.CleanAsync<Target>();
+        await theStore.Advanced.CleanAsync<Target>(TestContext.Current.CancellationToken);
 
         // Verify they're gone
         await using var queryAfter = theStore.QuerySession();
-        var after = await queryAfter.Query<Target>().CountAsync();
+        var after = await queryAfter.Query<Target>().CountAsync(TestContext.Current.CancellationToken);
         after.ShouldBe(0);
     }
 
@@ -39,13 +39,13 @@ public class diagnostic_operations : IntegrationContext
     {
         theSession.Store(new User { Id = Guid.NewGuid(), FirstName = "CleanAll" });
         theSession.Store(new Target { Id = Guid.NewGuid(), Color = "CleanAll" });
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
-        await theStore.Advanced.CleanAllDocumentsAsync();
+        await theStore.Advanced.CleanAllDocumentsAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var users = await query.Query<User>().CountAsync();
-        var targets = await query.Query<Target>().CountAsync();
+        var users = await query.Query<User>().CountAsync(TestContext.Current.CancellationToken);
+        var targets = await query.Query<Target>().CountAsync(TestContext.Current.CancellationToken);
 
         users.ShouldBe(0);
         targets.ShouldBe(0);
@@ -55,12 +55,12 @@ public class diagnostic_operations : IntegrationContext
     public async Task can_clean_all_event_data()
     {
         theSession.Events.StartStream(Guid.NewGuid(), new QuestStarted { Name = "Clean" });
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
-        await theStore.Advanced.CleanAllEventDataAsync();
+        await theStore.Advanced.CleanAllEventDataAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var stream = await query.Events.FetchStreamAsync(Guid.NewGuid());
+        var stream = await query.Events.FetchStreamAsync(Guid.NewGuid(), token: TestContext.Current.CancellationToken);
         stream.ShouldBeEmpty();
     }
 
@@ -76,11 +76,11 @@ public class diagnostic_operations : IntegrationContext
         // Create an empty schema but do NOT migrate any tables into it.
         await using (var conn = new Microsoft.Data.SqlClient.SqlConnection(ConnectionSource.ConnectionString))
         {
-            await conn.OpenAsync();
+            await conn.OpenAsync(TestContext.Current.CancellationToken);
             await using var cmd = conn.CreateCommand();
             cmd.CommandText =
                 $"IF SCHEMA_ID('{schema}') IS NULL EXEC('CREATE SCHEMA [{schema}]');";
-            await cmd.ExecuteNonQueryAsync();
+            await cmd.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
         }
 
         var options = new StoreOptions

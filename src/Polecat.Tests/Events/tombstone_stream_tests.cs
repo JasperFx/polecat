@@ -18,15 +18,15 @@ public class tombstone_stream_tests : IntegrationContext
         theSession.Events.StartStream(streamId,
             new QuestStarted("Doomed Quest"),
             new MembersJoined(1, "Town", ["A", "B"]));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         session2.Events.TombstoneStream(streamId);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Stream should be completely gone
         await using var query = theStore.QuerySession();
-        var state = await query.Events.FetchStreamStateAsync(streamId);
+        var state = await query.Events.FetchStreamStateAsync(streamId, TestContext.Current.CancellationToken);
         state.ShouldBeNull();
     }
 
@@ -38,14 +38,14 @@ public class tombstone_stream_tests : IntegrationContext
             new QuestStarted("Gone Quest"),
             new MembersJoined(1, "Cave", ["X"]),
             new MembersDeparted(2, "Cave", ["X"]));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         session2.Events.TombstoneStream(streamId);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
         events.Count.ShouldBe(0);
     }
 
@@ -64,14 +64,14 @@ public class tombstone_stream_tests : IntegrationContext
         session1.Events.StartStream(streamKey,
             new QuestStarted("Key Quest"),
             new MembersJoined(1, "Start", ["Hero"]));
-        await session1.SaveChangesAsync();
+        await session1.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         session2.Events.TombstoneStream(streamKey);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var state = await query.Events.FetchStreamStateAsync(streamKey);
+        var state = await query.Events.FetchStreamStateAsync(streamKey, TestContext.Current.CancellationToken);
         state.ShouldBeNull();
     }
 
@@ -83,15 +83,15 @@ public class tombstone_stream_tests : IntegrationContext
 
         theSession.Events.StartStream(stream1, new QuestStarted("Quest 1"));
         theSession.Events.StartStream(stream2, new QuestStarted("Quest 2"));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         session2.Events.TombstoneStream(stream1);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var state1 = await query.Events.FetchStreamStateAsync(stream1);
-        var state2 = await query.Events.FetchStreamStateAsync(stream2);
+        var state1 = await query.Events.FetchStreamStateAsync(stream1, TestContext.Current.CancellationToken);
+        var state2 = await query.Events.FetchStreamStateAsync(stream2, TestContext.Current.CancellationToken);
 
         state1.ShouldBeNull();
         state2.ShouldNotBeNull();
@@ -102,19 +102,19 @@ public class tombstone_stream_tests : IntegrationContext
     {
         var streamId = Guid.NewGuid();
         theSession.Events.StartStream(streamId, new QuestStarted("Original"));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         session2.Events.TombstoneStream(streamId);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Should be able to reuse the same stream ID
         await using var session3 = theStore.LightweightSession();
         session3.Events.StartStream(streamId, new QuestStarted("Reborn"));
-        await session3.SaveChangesAsync();
+        await session3.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
         events.Count.ShouldBe(1);
         events[0].Data.ShouldBeOfType<QuestStarted>().Name.ShouldBe("Reborn");
     }

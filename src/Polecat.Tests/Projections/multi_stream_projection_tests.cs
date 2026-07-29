@@ -72,10 +72,10 @@ public class multi_stream_projection_tests : OneOffConfigurationsContext
         await using var session = store.LightweightSession();
         session.Events.StartStream(Guid.NewGuid(),
             new CustomerCreated(customerId, "Alice"));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = store.QuerySession();
-        var summary = await query.LoadAsync<CustomerSummary>(customerId);
+        var summary = await query.LoadAsync<CustomerSummary>(customerId, TestContext.Current.CancellationToken);
 
         summary.ShouldNotBeNull();
         summary.Id.ShouldBe(customerId);
@@ -92,22 +92,22 @@ public class multi_stream_projection_tests : OneOffConfigurationsContext
         await using var session1 = store.LightweightSession();
         session1.Events.StartStream(Guid.NewGuid(),
             new CustomerCreated(customerId, "Bob"));
-        await session1.SaveChangesAsync();
+        await session1.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Place order in another stream
         await using var session2 = store.LightweightSession();
         session2.Events.StartStream(Guid.NewGuid(),
             new OrderPlaced(customerId, 99.99m));
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Make payment in yet another stream
         await using var session3 = store.LightweightSession();
         session3.Events.StartStream(Guid.NewGuid(),
             new PaymentReceived(customerId, 50.00m));
-        await session3.SaveChangesAsync();
+        await session3.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = store.QuerySession();
-        var summary = await query.LoadAsync<CustomerSummary>(customerId);
+        var summary = await query.LoadAsync<CustomerSummary>(customerId, TestContext.Current.CancellationToken);
 
         summary.ShouldNotBeNull();
         summary.Name.ShouldBe("Bob");
@@ -131,11 +131,11 @@ public class multi_stream_projection_tests : OneOffConfigurationsContext
             new CustomerCreated(customer2, "Bob"),
             new OrderPlaced(customer2, 200m),
             new OrderPlaced(customer2, 150m));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = store.QuerySession();
-        var s1 = await query.LoadAsync<CustomerSummary>(customer1);
-        var s2 = await query.LoadAsync<CustomerSummary>(customer2);
+        var s1 = await query.LoadAsync<CustomerSummary>(customer1, TestContext.Current.CancellationToken);
+        var s2 = await query.LoadAsync<CustomerSummary>(customer2, TestContext.Current.CancellationToken);
 
         s1.ShouldNotBeNull();
         s1.Name.ShouldBe("Alice");
@@ -160,13 +160,13 @@ public class multi_stream_projection_tests : OneOffConfigurationsContext
             new CustomerCreated(customerId, "Async Alice"));
         session.Events.StartStream(Guid.NewGuid(),
             new OrderPlaced(customerId, 75.00m));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await store.WaitForProjectionAsync();
 
         // Verify
         await using var query = store.QuerySession();
-        var summary = await query.LoadAsync<CustomerSummary>(customerId);
+        var summary = await query.LoadAsync<CustomerSummary>(customerId, TestContext.Current.CancellationToken);
 
         summary.ShouldNotBeNull();
         summary.Name.ShouldBe("Async Alice");

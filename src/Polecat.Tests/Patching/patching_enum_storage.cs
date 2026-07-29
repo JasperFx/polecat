@@ -33,13 +33,13 @@ public class patching_enum_storage : OneOffConfigurationsContext
         await using (var session = theStore.LightweightSession())
         {
             session.Store(target);
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using (var session = theStore.LightweightSession())
         {
             session.Patch<Target>(target.Id).Set(x => x.Status, ActiveStatus.Active);
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         // The bug emitted "status":0; with AsString + CamelCase naming it must be the string name.
@@ -47,7 +47,7 @@ public class patching_enum_storage : OneOffConfigurationsContext
         json.ShouldContain("\"status\":\"active\"");
 
         await using var query = theStore.QuerySession();
-        (await query.LoadAsync<Target>(target.Id))!.Status.ShouldBe(ActiveStatus.Active);
+        (await query.LoadAsync<Target>(target.Id, TestContext.Current.CancellationToken))!.Status.ShouldBe(ActiveStatus.Active);
     }
 
     [Fact]
@@ -59,19 +59,19 @@ public class patching_enum_storage : OneOffConfigurationsContext
         await using (var session = theStore.LightweightSession())
         {
             session.Store(target);
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using (var session = theStore.LightweightSession())
         {
             session.Patch<Target>(target.Id).Set(x => x.Status, ActiveStatus.Inactive);
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         var json = await RawJsonAsync(target.Id);
         json.ShouldContain("\"status\":1");
 
         await using var query = theStore.QuerySession();
-        (await query.LoadAsync<Target>(target.Id))!.Status.ShouldBe(ActiveStatus.Inactive);
+        (await query.LoadAsync<Target>(target.Id, TestContext.Current.CancellationToken))!.Status.ShouldBe(ActiveStatus.Inactive);
     }
 }

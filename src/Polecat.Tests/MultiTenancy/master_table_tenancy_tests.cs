@@ -93,8 +93,8 @@ public class master_table_tenancy_tests : IAsyncLifetime
         var (store, tenancy) = CreateStore();
         using (store)
         {
-            await tenancy.AddDatabaseRecordAsync(TenantA, Db(DbA));
-            await tenancy.AddDatabaseRecordAsync(TenantB, Db(DbB));
+            await tenancy.AddDatabaseRecordAsync(TenantA, Db(DbA), TestContext.Current.CancellationToken);
+            await tenancy.AddDatabaseRecordAsync(TenantB, Db(DbB), TestContext.Current.CancellationToken);
             await ApplySchemaAsync(tenancy);
 
             var docId = Guid.NewGuid();
@@ -102,18 +102,18 @@ public class master_table_tenancy_tests : IAsyncLifetime
             await using (var session = store.LightweightSession(new SessionOptions { TenantId = TenantA }))
             {
                 session.Store(new TestDoc { Id = docId, Name = "Tenant A Doc" });
-                await session.SaveChangesAsync();
+                await session.SaveChangesAsync(TestContext.Current.CancellationToken);
             }
 
             await using (var query = store.QuerySession(new SessionOptions { TenantId = TenantA }))
             {
-                (await query.LoadAsync<TestDoc>(docId))!.Name.ShouldBe("Tenant A Doc");
+                (await query.LoadAsync<TestDoc>(docId, TestContext.Current.CancellationToken))!.Name.ShouldBe("Tenant A Doc");
             }
 
             // Separate database — tenant B cannot see tenant A's document.
             await using (var query = store.QuerySession(new SessionOptions { TenantId = TenantB }))
             {
-                (await query.LoadAsync<TestDoc>(docId)).ShouldBeNull();
+                (await query.LoadAsync<TestDoc>(docId, TestContext.Current.CancellationToken)).ShouldBeNull();
             }
         }
     }
@@ -138,18 +138,18 @@ public class master_table_tenancy_tests : IAsyncLifetime
         var (store, tenancy) = CreateStore();
         using (store)
         {
-            await tenancy.AddDatabaseRecordAsync(TenantA, Db(DbA));
-            await tenancy.AddDatabaseRecordAsync(TenantB, Db(DbB));
+            await tenancy.AddDatabaseRecordAsync(TenantA, Db(DbA), TestContext.Current.CancellationToken);
+            await tenancy.AddDatabaseRecordAsync(TenantB, Db(DbB), TestContext.Current.CancellationToken);
 
-            (await tenancy.BuildDatabasesAsync()).Count.ShouldBe(2);
+            (await tenancy.BuildDatabasesAsync(TestContext.Current.CancellationToken)).Count.ShouldBe(2);
 
-            await tenancy.DisableTenantAsync(TenantB);
+            await tenancy.DisableTenantAsync(TenantB, TestContext.Current.CancellationToken);
 
             // A fresh tenancy reads purely from the master table — no stale cache.
             var (store2, tenancy2) = CreateStore();
             using (store2)
             {
-                (await tenancy2.BuildDatabasesAsync()).Count.ShouldBe(1);
+                (await tenancy2.BuildDatabasesAsync(TestContext.Current.CancellationToken)).Count.ShouldBe(1);
             }
         }
     }
@@ -160,7 +160,7 @@ public class master_table_tenancy_tests : IAsyncLifetime
         var (store, tenancy) = CreateStore();
         using (store)
         {
-            await tenancy.AddDatabaseRecordAsync(TenantA, Db(DbA));
+            await tenancy.AddDatabaseRecordAsync(TenantA, Db(DbA), TestContext.Current.CancellationToken);
             await ApplySchemaAsync(tenancy);
 
             // Routable while enabled.
@@ -168,17 +168,17 @@ public class master_table_tenancy_tests : IAsyncLifetime
             {
             }
 
-            await tenancy.DisableTenantAsync(TenantA);
+            await tenancy.DisableTenantAsync(TenantA, TestContext.Current.CancellationToken);
 
-            (await tenancy.AllDisabledAsync()).ShouldContain(TenantA);
+            (await tenancy.AllDisabledAsync(TestContext.Current.CancellationToken)).ShouldContain(TenantA);
             await Should.ThrowAsync<UnknownTenantIdException>(async () =>
             {
                 await using var _ = store.LightweightSession(new SessionOptions { TenantId = TenantA });
             });
 
-            await tenancy.EnableTenantAsync(TenantA);
+            await tenancy.EnableTenantAsync(TenantA, TestContext.Current.CancellationToken);
 
-            (await tenancy.AllDisabledAsync()).ShouldNotContain(TenantA);
+            (await tenancy.AllDisabledAsync(TestContext.Current.CancellationToken)).ShouldNotContain(TenantA);
             // Routable again.
             await using (var _ = store.LightweightSession(new SessionOptions { TenantId = TenantA }))
             {
@@ -192,12 +192,12 @@ public class master_table_tenancy_tests : IAsyncLifetime
         var (store, tenancy) = CreateStore();
         using (store)
         {
-            await tenancy.AddDatabaseRecordAsync(TenantA, Db(DbA));
-            (await tenancy.BuildDatabasesAsync()).Count.ShouldBe(1);
+            await tenancy.AddDatabaseRecordAsync(TenantA, Db(DbA), TestContext.Current.CancellationToken);
+            (await tenancy.BuildDatabasesAsync(TestContext.Current.CancellationToken)).Count.ShouldBe(1);
 
-            await tenancy.DeleteDatabaseRecordAsync(TenantA);
+            await tenancy.DeleteDatabaseRecordAsync(TenantA, TestContext.Current.CancellationToken);
 
-            (await tenancy.BuildDatabasesAsync()).Count.ShouldBe(0);
+            (await tenancy.BuildDatabasesAsync(TestContext.Current.CancellationToken)).Count.ShouldBe(0);
             await Should.ThrowAsync<UnknownTenantIdException>(async () =>
             {
                 await using var _ = store.LightweightSession(new SessionOptions { TenantId = TenantA });
@@ -211,15 +211,15 @@ public class master_table_tenancy_tests : IAsyncLifetime
         var (store, tenancy) = CreateStore();
         using (store)
         {
-            await tenancy.AddDatabaseRecordAsync(TenantA, Db(DbA));
-            await tenancy.DisableTenantAsync(TenantA);
-            (await tenancy.AllDisabledAsync()).ShouldContain(TenantA);
+            await tenancy.AddDatabaseRecordAsync(TenantA, Db(DbA), TestContext.Current.CancellationToken);
+            await tenancy.DisableTenantAsync(TenantA, TestContext.Current.CancellationToken);
+            (await tenancy.AllDisabledAsync(TestContext.Current.CancellationToken)).ShouldContain(TenantA);
 
             // Re-adding the same tenant is an upsert that clears the disabled flag.
-            await tenancy.AddDatabaseRecordAsync(TenantA, Db(DbA));
+            await tenancy.AddDatabaseRecordAsync(TenantA, Db(DbA), TestContext.Current.CancellationToken);
 
-            (await tenancy.AllDisabledAsync()).ShouldNotContain(TenantA);
-            (await tenancy.BuildDatabasesAsync()).Count.ShouldBe(1);
+            (await tenancy.AllDisabledAsync(TestContext.Current.CancellationToken)).ShouldNotContain(TenantA);
+            (await tenancy.BuildDatabasesAsync(TestContext.Current.CancellationToken)).Count.ShouldBe(1);
         }
     }
 

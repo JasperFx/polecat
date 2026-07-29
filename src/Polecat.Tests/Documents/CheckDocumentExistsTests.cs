@@ -14,10 +14,10 @@ public class CheckDocumentExistsTests : IntegrationContext
     {
         var user = new User { Id = Guid.NewGuid(), FirstName = "Exists", LastName = "Test" };
         theSession.Store(user);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var exists = await query.CheckExistsAsync<User>(user.Id);
+        var exists = await query.CheckExistsAsync<User>(user.Id, TestContext.Current.CancellationToken);
         exists.ShouldBeTrue();
     }
 
@@ -25,7 +25,7 @@ public class CheckDocumentExistsTests : IntegrationContext
     public async Task check_exists_by_guid_id_miss()
     {
         await using var query = theStore.QuerySession();
-        var exists = await query.CheckExistsAsync<User>(Guid.NewGuid());
+        var exists = await query.CheckExistsAsync<User>(Guid.NewGuid(), TestContext.Current.CancellationToken);
         exists.ShouldBeFalse();
     }
 
@@ -34,10 +34,10 @@ public class CheckDocumentExistsTests : IntegrationContext
     {
         var doc = new StringDoc { Id = "exists-test-" + Guid.NewGuid(), Name = "Test" };
         theSession.Store(doc);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var exists = await query.CheckExistsAsync<StringDoc>(doc.Id);
+        var exists = await query.CheckExistsAsync<StringDoc>(doc.Id, TestContext.Current.CancellationToken);
         exists.ShouldBeTrue();
     }
 
@@ -45,7 +45,7 @@ public class CheckDocumentExistsTests : IntegrationContext
     public async Task check_exists_by_string_id_miss()
     {
         await using var query = theStore.QuerySession();
-        var exists = await query.CheckExistsAsync<StringDoc>("nonexistent-" + Guid.NewGuid());
+        var exists = await query.CheckExistsAsync<StringDoc>("nonexistent-" + Guid.NewGuid(), TestContext.Current.CancellationToken);
         exists.ShouldBeFalse();
     }
 
@@ -54,10 +54,10 @@ public class CheckDocumentExistsTests : IntegrationContext
     {
         var doc = new IntDoc { Name = "Exists" };
         theSession.Store(doc);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var exists = await query.CheckExistsAsync<IntDoc>(doc.Id);
+        var exists = await query.CheckExistsAsync<IntDoc>(doc.Id, TestContext.Current.CancellationToken);
         exists.ShouldBeTrue();
     }
 
@@ -65,7 +65,7 @@ public class CheckDocumentExistsTests : IntegrationContext
     public async Task check_exists_by_int_id_miss()
     {
         await using var query = theStore.QuerySession();
-        var exists = await query.CheckExistsAsync<IntDoc>(999999);
+        var exists = await query.CheckExistsAsync<IntDoc>(999999, TestContext.Current.CancellationToken);
         exists.ShouldBeFalse();
     }
 
@@ -74,10 +74,10 @@ public class CheckDocumentExistsTests : IntegrationContext
     {
         var doc = new LongDoc { Name = "Exists" };
         theSession.Store(doc);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var exists = await query.CheckExistsAsync<LongDoc>(doc.Id);
+        var exists = await query.CheckExistsAsync<LongDoc>(doc.Id, TestContext.Current.CancellationToken);
         exists.ShouldBeTrue();
     }
 
@@ -85,7 +85,7 @@ public class CheckDocumentExistsTests : IntegrationContext
     public async Task check_exists_by_long_id_miss()
     {
         await using var query = theStore.QuerySession();
-        var exists = await query.CheckExistsAsync<LongDoc>(999999L);
+        var exists = await query.CheckExistsAsync<LongDoc>(999999L, TestContext.Current.CancellationToken);
         exists.ShouldBeFalse();
     }
 }
@@ -102,13 +102,13 @@ public class CheckDocumentExistsInBatchTests : IntegrationContext
     {
         var user = new User { Id = Guid.NewGuid(), FirstName = "Batch", LastName = "Test" };
         theSession.Store(user);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
         var batch = query.CreateBatchQuery();
         var existsHit = batch.CheckExists<User>(user.Id);
         var existsMiss = batch.CheckExists<User>(Guid.NewGuid());
-        await batch.Execute();
+        await batch.Execute(TestContext.Current.CancellationToken);
 
         (await existsHit).ShouldBeTrue();
         (await existsMiss).ShouldBeFalse();
@@ -119,13 +119,13 @@ public class CheckDocumentExistsInBatchTests : IntegrationContext
     {
         var doc = new StringDoc { Id = "batch-exists-" + Guid.NewGuid(), Name = "Test" };
         theSession.Store(doc);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
         var batch = query.CreateBatchQuery();
         var existsHit = batch.CheckExists<StringDoc>(doc.Id);
         var existsMiss = batch.CheckExists<StringDoc>("nope-" + Guid.NewGuid());
-        await batch.Execute();
+        await batch.Execute(TestContext.Current.CancellationToken);
 
         (await existsHit).ShouldBeTrue();
         (await existsMiss).ShouldBeFalse();
@@ -136,13 +136,13 @@ public class CheckDocumentExistsInBatchTests : IntegrationContext
     {
         var doc = new IntDoc { Name = "Batch" };
         theSession.Store(doc);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
         var batch = query.CreateBatchQuery();
         var existsHit = batch.CheckExists<IntDoc>(doc.Id);
         var existsMiss = batch.CheckExists<IntDoc>(888888);
-        await batch.Execute();
+        await batch.Execute(TestContext.Current.CancellationToken);
 
         (await existsHit).ShouldBeTrue();
         (await existsMiss).ShouldBeFalse();
@@ -153,13 +153,13 @@ public class CheckDocumentExistsInBatchTests : IntegrationContext
     {
         var doc = new LongDoc { Name = "Batch" };
         theSession.Store(doc);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
         var batch = query.CreateBatchQuery();
         var existsHit = batch.CheckExists<LongDoc>(doc.Id);
         var existsMiss = batch.CheckExists<LongDoc>(777777L);
-        await batch.Execute();
+        await batch.Execute(TestContext.Current.CancellationToken);
 
         (await existsHit).ShouldBeTrue();
         (await existsMiss).ShouldBeFalse();

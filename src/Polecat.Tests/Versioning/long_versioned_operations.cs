@@ -29,7 +29,7 @@ public class long_versioned_operations : IntegrationContext
         doc.Version.ShouldBe(0L);
 
         theSession.Insert(doc);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         doc.Version.ShouldBe(1L);
     }
@@ -40,17 +40,17 @@ public class long_versioned_operations : IntegrationContext
         var doc = new LongVersionedDoc { Id = Guid.NewGuid(), Name = "v1" };
 
         theSession.Store(doc);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
         doc.Version.ShouldBe(1L);
 
         await using var session2 = theStore.LightweightSession();
-        var loaded = await session2.LoadAsync<LongVersionedDoc>(doc.Id);
+        var loaded = await session2.LoadAsync<LongVersionedDoc>(doc.Id, TestContext.Current.CancellationToken);
         loaded.ShouldNotBeNull();
         loaded.Version.ShouldBe(1L);
 
         loaded.Name = "v2";
         session2.Store(loaded);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
         loaded.Version.ShouldBe(2L);
     }
 
@@ -60,16 +60,16 @@ public class long_versioned_operations : IntegrationContext
         var doc = new LongVersionedDoc { Id = Guid.NewGuid(), Name = "load-test" };
 
         theSession.Store(doc);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var loaded = await query.LoadAsync<LongVersionedDoc>(doc.Id);
+        var loaded = await query.LoadAsync<LongVersionedDoc>(doc.Id, TestContext.Current.CancellationToken);
         loaded.ShouldNotBeNull();
         loaded.Version.ShouldBe(1L);
 
         var results = await query.Query<LongVersionedDoc>()
             .Where(x => x.Id == doc.Id)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
         results.Count.ShouldBe(1);
         results[0].Version.ShouldBe(1L);
     }
@@ -80,19 +80,19 @@ public class long_versioned_operations : IntegrationContext
         var doc = new LongVersionedDoc { Id = Guid.NewGuid(), Name = "concurrent" };
 
         theSession.Store(doc);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session1 = theStore.LightweightSession();
-        var loaded1 = await session1.LoadAsync<LongVersionedDoc>(doc.Id);
+        var loaded1 = await session1.LoadAsync<LongVersionedDoc>(doc.Id, TestContext.Current.CancellationToken);
         loaded1.ShouldNotBeNull();
 
         await using var session2 = theStore.LightweightSession();
-        var loaded2 = await session2.LoadAsync<LongVersionedDoc>(doc.Id);
+        var loaded2 = await session2.LoadAsync<LongVersionedDoc>(doc.Id, TestContext.Current.CancellationToken);
         loaded2.ShouldNotBeNull();
 
         loaded1.Name = "updated-by-session1";
         session1.Store(loaded1);
-        await session1.SaveChangesAsync();
+        await session1.SaveChangesAsync(TestContext.Current.CancellationToken);
         loaded1.Version.ShouldBe(2L);
 
         loaded2.Name = "updated-by-session2";
@@ -110,14 +110,14 @@ public class long_versioned_operations : IntegrationContext
         var doc = new LongVersionedDoc { Id = Guid.NewGuid(), Name = "explicit-rev" };
 
         theSession.Insert(doc);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
-        var loaded = await session2.LoadAsync<LongVersionedDoc>(doc.Id);
+        var loaded = await session2.LoadAsync<LongVersionedDoc>(doc.Id, TestContext.Current.CancellationToken);
         loaded.ShouldNotBeNull();
         loaded.Name = "updated";
         session2.UpdateRevision(loaded, 1L); // explicitly set expected revision via the long overload
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
         loaded.Version.ShouldBe(2L);
     }
 
@@ -126,7 +126,7 @@ public class long_versioned_operations : IntegrationContext
     {
         var doc = new LongVersionedDoc { Id = Guid.NewGuid(), Name = "big" };
         theSession.Store(doc);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
         doc.Version.ShouldBe(1L);
 
         // A value comfortably past Int32.MaxValue (2,147,483,647) — the kind of global event
@@ -140,32 +140,32 @@ public class long_versioned_operations : IntegrationContext
             cmd.CommandText = $"UPDATE {QualifiedTable} SET version = @v WHERE id = @id";
             cmd.Parameters.AddWithValue("@v", bigVersion);
             cmd.Parameters.AddWithValue("@id", doc.Id);
-            (await cmd.ExecuteNonQueryAsync()).ShouldBe(1);
+            (await cmd.ExecuteNonQueryAsync(TestContext.Current.CancellationToken)).ShouldBe(1);
         }
 
         // The normal load path must surface the full 64-bit value (a GetInt32 read would throw here).
         await using var session2 = theStore.LightweightSession();
-        var loaded = await session2.LoadAsync<LongVersionedDoc>(doc.Id);
+        var loaded = await session2.LoadAsync<LongVersionedDoc>(doc.Id, TestContext.Current.CancellationToken);
         loaded.ShouldNotBeNull();
         loaded.Version.ShouldBe(bigVersion);
 
         // Storing with the big expected revision succeeds and increments past the Int32 range.
         loaded.Name = "big-updated";
         session2.Store(loaded);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
         loaded.Version.ShouldBe(bigVersion + 1);
 
         // A stale big revision must still trip the concurrency check.
         await using var s1 = theStore.LightweightSession();
-        var l1 = await s1.LoadAsync<LongVersionedDoc>(doc.Id);
+        var l1 = await s1.LoadAsync<LongVersionedDoc>(doc.Id, TestContext.Current.CancellationToken);
         l1.ShouldNotBeNull();
         await using var s2 = theStore.LightweightSession();
-        var l2 = await s2.LoadAsync<LongVersionedDoc>(doc.Id);
+        var l2 = await s2.LoadAsync<LongVersionedDoc>(doc.Id, TestContext.Current.CancellationToken);
         l2.ShouldNotBeNull();
 
         l1.Name = "s1";
         s1.Store(l1);
-        await s1.SaveChangesAsync();
+        await s1.SaveChangesAsync(TestContext.Current.CancellationToken);
         l1.Version.ShouldBe(bigVersion + 2);
 
         l2.Name = "s2";

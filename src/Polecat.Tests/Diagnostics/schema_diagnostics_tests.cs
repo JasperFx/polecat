@@ -39,10 +39,10 @@ public class schema_diagnostics_tests : IntegrationContext
 
         try
         {
-            await theStore.Advanced.WriteCreationScriptToFileAsync(path);
+            await theStore.Advanced.WriteCreationScriptToFileAsync(path, TestContext.Current.CancellationToken);
 
             File.Exists(path).ShouldBeTrue();
-            var content = await File.ReadAllTextAsync(path);
+            var content = await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken);
             content.ShouldContain("pc_streams");
             content.ShouldContain("pc_events");
         }

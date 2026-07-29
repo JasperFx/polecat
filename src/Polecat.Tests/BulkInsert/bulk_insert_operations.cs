@@ -29,12 +29,12 @@ public class bulk_insert_operations : IntegrationContext
             Age = 20 + i
         }).ToList();
 
-        await theStore.Advanced.BulkInsertAsync(users);
+        await theStore.Advanced.BulkInsertAsync(users, TestContext.Current.CancellationToken);
 
         await using var session = theStore.QuerySession();
         foreach (var user in users)
         {
-            var loaded = await session.LoadAsync<User>(user.Id);
+            var loaded = await session.LoadAsync<User>(user.Id, TestContext.Current.CancellationToken);
             loaded.ShouldNotBeNull();
             loaded.FirstName.ShouldBe(user.FirstName);
         }
@@ -50,12 +50,12 @@ public class bulk_insert_operations : IntegrationContext
             Name = $"Doc {i}"
         }).ToList();
 
-        await theStore.Advanced.BulkInsertAsync(docs);
+        await theStore.Advanced.BulkInsertAsync(docs, TestContext.Current.CancellationToken);
 
         await using var session = theStore.QuerySession();
         foreach (var doc in docs)
         {
-            var loaded = await session.LoadAsync<StringDoc>(doc.Id);
+            var loaded = await session.LoadAsync<StringDoc>(doc.Id, TestContext.Current.CancellationToken);
             loaded.ShouldNotBeNull();
             loaded.Name.ShouldBe(doc.Name);
         }
@@ -69,7 +69,7 @@ public class bulk_insert_operations : IntegrationContext
             Name = $"IntDoc-{Guid.NewGuid().ToString()[..8]}"
         }).ToList();
 
-        await theStore.Advanced.BulkInsertAsync(docs);
+        await theStore.Advanced.BulkInsertAsync(docs, TestContext.Current.CancellationToken);
 
         // HiLo should have assigned IDs
         foreach (var doc in docs)
@@ -80,7 +80,7 @@ public class bulk_insert_operations : IntegrationContext
         await using var session = theStore.QuerySession();
         foreach (var doc in docs)
         {
-            var loaded = await session.LoadAsync<IntDoc>(doc.Id);
+            var loaded = await session.LoadAsync<IntDoc>(doc.Id, TestContext.Current.CancellationToken);
             loaded.ShouldNotBeNull();
             loaded.Name.ShouldBe(doc.Name);
         }
@@ -91,7 +91,7 @@ public class bulk_insert_operations : IntegrationContext
     {
         var user = new User { Id = Guid.NewGuid(), FirstName = "Dup", LastName = "Test", Age = 30 };
 
-        await theStore.Advanced.BulkInsertAsync(new[] { user });
+        await theStore.Advanced.BulkInsertAsync(new[] { user }, TestContext.Current.CancellationToken);
 
         // Inserting again should throw. #273 doc-side convergence: bulk insert now shares the
         // closed-shape insert operation, so a duplicate surfaces as DocumentAlreadyExistsException
@@ -107,14 +107,14 @@ public class bulk_insert_operations : IntegrationContext
     {
         var id = Guid.NewGuid();
         var original = new User { Id = id, FirstName = "Original", LastName = "User", Age = 25 };
-        await theStore.Advanced.BulkInsertAsync(new[] { original });
+        await theStore.Advanced.BulkInsertAsync(new[] { original }, TestContext.Current.CancellationToken);
 
         var duplicate = new User { Id = id, FirstName = "Updated", LastName = "User", Age = 99 };
-        await theStore.Advanced.BulkInsertAsync(new[] { duplicate }, BulkInsertMode.IgnoreDuplicates);
+        await theStore.Advanced.BulkInsertAsync(new[] { duplicate }, BulkInsertMode.IgnoreDuplicates, token: TestContext.Current.CancellationToken);
 
         // Should still have original data
         await using var session = theStore.QuerySession();
-        var loaded = await session.LoadAsync<User>(id);
+        var loaded = await session.LoadAsync<User>(id, TestContext.Current.CancellationToken);
         loaded!.FirstName.ShouldBe("Original");
         loaded.Age.ShouldBe(25);
     }
@@ -124,13 +124,13 @@ public class bulk_insert_operations : IntegrationContext
     {
         var id = Guid.NewGuid();
         var original = new User { Id = id, FirstName = "Original", LastName = "User", Age = 25 };
-        await theStore.Advanced.BulkInsertAsync(new[] { original });
+        await theStore.Advanced.BulkInsertAsync(new[] { original }, TestContext.Current.CancellationToken);
 
         var updated = new User { Id = id, FirstName = "Updated", LastName = "User", Age = 99 };
-        await theStore.Advanced.BulkInsertAsync(new[] { updated }, BulkInsertMode.OverwriteExisting);
+        await theStore.Advanced.BulkInsertAsync(new[] { updated }, BulkInsertMode.OverwriteExisting, token: TestContext.Current.CancellationToken);
 
         await using var session = theStore.QuerySession();
-        var loaded = await session.LoadAsync<User>(id);
+        var loaded = await session.LoadAsync<User>(id, TestContext.Current.CancellationToken);
         loaded!.FirstName.ShouldBe("Updated");
         loaded.Age.ShouldBe(99);
     }
@@ -148,12 +148,12 @@ public class bulk_insert_operations : IntegrationContext
         }).ToList();
 
         // Small batch size to force multiple batches
-        await theStore.Advanced.BulkInsertAsync(users, BulkInsertMode.InsertsOnly, batchSize: 5);
+        await theStore.Advanced.BulkInsertAsync(users, BulkInsertMode.InsertsOnly, batchSize: 5, token: TestContext.Current.CancellationToken);
 
         await using var session = theStore.QuerySession();
         foreach (var user in users)
         {
-            var loaded = await session.LoadAsync<User>(user.Id);
+            var loaded = await session.LoadAsync<User>(user.Id, TestContext.Current.CancellationToken);
             loaded.ShouldNotBeNull();
         }
     }
@@ -162,7 +162,7 @@ public class bulk_insert_operations : IntegrationContext
     public async Task bulk_insert_with_empty_collection_does_nothing()
     {
         // Should not throw
-        await theStore.Advanced.BulkInsertAsync(Array.Empty<User>());
+        await theStore.Advanced.BulkInsertAsync(Array.Empty<User>(), TestContext.Current.CancellationToken);
     }
 
     [Fact]
@@ -174,7 +174,7 @@ public class bulk_insert_operations : IntegrationContext
             new TenantedBulkDoc { Id = Guid.NewGuid(), Name = "T2" }
         };
 
-        await theStore.Advanced.BulkInsertAsync(docs);
+        await theStore.Advanced.BulkInsertAsync(docs, TestContext.Current.CancellationToken);
 
         // ITenanted.TenantId should have been set to the default tenant
         foreach (var doc in docs)
@@ -187,7 +187,7 @@ public class bulk_insert_operations : IntegrationContext
     public async Task overwrite_existing_inserts_new_rows_too()
     {
         var existing = new User { Id = Guid.NewGuid(), FirstName = "Existing", LastName = "One", Age = 40 };
-        await theStore.Advanced.BulkInsertAsync(new[] { existing });
+        await theStore.Advanced.BulkInsertAsync(new[] { existing }, TestContext.Current.CancellationToken);
 
         var newDoc = new User { Id = Guid.NewGuid(), FirstName = "New", LastName = "Doc", Age = 22 };
         var updatedExisting = new User
@@ -196,13 +196,13 @@ public class bulk_insert_operations : IntegrationContext
         };
 
         await theStore.Advanced.BulkInsertAsync(new[] { updatedExisting, newDoc },
-            BulkInsertMode.OverwriteExisting);
+            BulkInsertMode.OverwriteExisting, token: TestContext.Current.CancellationToken);
 
         await using var session = theStore.QuerySession();
-        var loadedExisting = await session.LoadAsync<User>(existing.Id);
+        var loadedExisting = await session.LoadAsync<User>(existing.Id, TestContext.Current.CancellationToken);
         loadedExisting!.FirstName.ShouldBe("Changed");
 
-        var loadedNew = await session.LoadAsync<User>(newDoc.Id);
+        var loadedNew = await session.LoadAsync<User>(newDoc.Id, TestContext.Current.CancellationToken);
         loadedNew.ShouldNotBeNull();
         loadedNew.FirstName.ShouldBe("New");
     }

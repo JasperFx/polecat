@@ -24,7 +24,7 @@ public class batch_event_fetching : IntegrationContext
         await using var query = theStore.QuerySession();
         var batch = query.CreateBatchQuery();
         var fetcher = batch.Events.FetchStreamState(streamId);
-        await batch.Execute();
+        await batch.Execute(TestContext.Current.CancellationToken);
 
         var state = await fetcher;
         state.ShouldNotBeNull();
@@ -49,16 +49,16 @@ public class batch_event_fetching : IntegrationContext
         await using (var session = theStore.LightweightSession())
         {
             session.Events.StartStream<BatchTaggedAggregate>(streamId, new QuestStarted("Tagged"));
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using var query = theStore.QuerySession();
 
-        (await query.Events.FetchStreamStateAsync(streamId))!.AggregateType.ShouldBe(typeof(BatchTaggedAggregate));
+        (await query.Events.FetchStreamStateAsync(streamId, TestContext.Current.CancellationToken))!.AggregateType.ShouldBe(typeof(BatchTaggedAggregate));
 
         var batch = query.CreateBatchQuery();
         var fetcher = batch.Events.FetchStreamState(streamId);
-        await batch.Execute();
+        await batch.Execute(TestContext.Current.CancellationToken);
         (await fetcher)!.AggregateType.ShouldBe(typeof(BatchTaggedAggregate));
     }
 
@@ -74,7 +74,7 @@ public class batch_event_fetching : IntegrationContext
         await using var query = theStore.QuerySession();
         var batch = query.CreateBatchQuery();
         var fetcher = batch.Events.FetchStreamState(streamId);
-        await batch.Execute();
+        await batch.Execute(TestContext.Current.CancellationToken);
 
         (await fetcher)!.AggregateType.ShouldBeNull();
     }
@@ -85,7 +85,7 @@ public class batch_event_fetching : IntegrationContext
         await using var query = theStore.QuerySession();
         var batch = query.CreateBatchQuery();
         var fetcher = batch.Events.FetchStreamState(Guid.NewGuid());
-        await batch.Execute();
+        await batch.Execute(TestContext.Current.CancellationToken);
 
         (await fetcher).ShouldBeNull();
     }
@@ -96,11 +96,11 @@ public class batch_event_fetching : IntegrationContext
         var streamId = await StartQuestStreamAsync();
 
         await using var query = theStore.QuerySession();
-        var expected = await query.Events.FetchStreamAsync(streamId);
+        var expected = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
 
         var batch = query.CreateBatchQuery();
         var fetcher = batch.Events.FetchStream(streamId);
-        await batch.Execute();
+        await batch.Execute(TestContext.Current.CancellationToken);
 
         var actual = await fetcher;
         actual.Count.ShouldBe(expected.Count);
@@ -121,7 +121,7 @@ public class batch_event_fetching : IntegrationContext
         var capped = batch.Events.FetchStream(streamId, version: 2);
         var from = batch.Events.FetchStream(streamId, fromVersion: 2);
         var window = batch.Events.FetchStream(streamId, version: 2, fromVersion: 2);
-        await batch.Execute();
+        await batch.Execute(TestContext.Current.CancellationToken);
 
         (await capped).Select(x => x.Version).ShouldBe([1, 2]);
         (await from).Select(x => x.Version).ShouldBe([2, 3]);
@@ -139,13 +139,13 @@ public class batch_event_fetching : IntegrationContext
         var streamId = await StartQuestStreamAsync();
 
         await using var query = theStore.QuerySession();
-        var all = await query.Events.FetchStreamAsync(streamId);
+        var all = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
         var cutoff = all[^1].Timestamp;
 
         var batch = query.CreateBatchQuery();
         var upToCutoff = batch.Events.FetchStream(streamId, timestamp: cutoff);
         var beforeEverything = batch.Events.FetchStream(streamId, timestamp: all[0].Timestamp.AddMinutes(-5));
-        await batch.Execute();
+        await batch.Execute(TestContext.Current.CancellationToken);
 
         (await upToCutoff).Count.ShouldBe(3);
         (await beforeEverything).ShouldBeEmpty();
@@ -157,7 +157,7 @@ public class batch_event_fetching : IntegrationContext
         await using var query = theStore.QuerySession();
         var batch = query.CreateBatchQuery();
         var fetcher = batch.Events.FetchStream(Guid.NewGuid());
-        await batch.Execute();
+        await batch.Execute(TestContext.Current.CancellationToken);
 
         (await fetcher).ShouldBeEmpty();
     }
@@ -172,7 +172,7 @@ public class batch_event_fetching : IntegrationContext
         await using (var session = theStore.LightweightSession())
         {
             session.Store(target);
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using var query = theStore.QuerySession();
@@ -185,7 +185,7 @@ public class batch_event_fetching : IntegrationContext
         var secondEvents = batch.Events.FetchStream(second);
         var secondState = batch.Events.FetchStreamState(second);
         var firstEvents = batch.Events.FetchStream(first);
-        await batch.Execute();
+        await batch.Execute(TestContext.Current.CancellationToken);
 
         (await firstState)!.Id.ShouldBe(first);
         (await secondState)!.Id.ShouldBe(second);

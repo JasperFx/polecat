@@ -26,7 +26,7 @@ public class string_querying : OneOffConfigurationsContext
         await using var query = theStore.QuerySession();
         var results = await query.Query<LinqTarget>()
             .Where(x => x.Name!.Contains("Smith"))
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(1);
         results[0].Name.ShouldBe("Alice Smith");
@@ -40,7 +40,7 @@ public class string_querying : OneOffConfigurationsContext
         await using var query = theStore.QuerySession();
         var results = await query.Query<LinqTarget>()
             .Where(x => x.Name!.StartsWith("Ali"))
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         // SQL Server default collation is case-insensitive, so "ALICE Jones" may match too
         results.ShouldContain(r => r.Name == "Alice Smith");
@@ -54,7 +54,7 @@ public class string_querying : OneOffConfigurationsContext
         await using var query = theStore.QuerySession();
         var results = await query.Query<LinqTarget>()
             .Where(x => x.Name!.EndsWith("Johnson"))
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(1);
         results[0].Name.ShouldBe("Bob Johnson");
@@ -68,7 +68,7 @@ public class string_querying : OneOffConfigurationsContext
         await using var query = theStore.QuerySession();
         var results = await query.Query<LinqTarget>()
             .Where(x => string.IsNullOrEmpty(x.Name))
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(2); // empty string and null
     }
@@ -81,7 +81,7 @@ public class string_querying : OneOffConfigurationsContext
         await using var query = theStore.QuerySession();
         var results = await query.Query<LinqTarget>()
             .Where(x => x.Name!.Equals("alice smith", StringComparison.OrdinalIgnoreCase))
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(1);
         results[0].Name.ShouldBe("Alice Smith");

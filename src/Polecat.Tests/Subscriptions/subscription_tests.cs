@@ -33,7 +33,7 @@ public class subscription_tests : IntegrationContext
         session.Events.StartStream(streamId,
             new QuestStarted("Subscription Quest"),
             new MembersJoined(1, "Town", ["Hero"]));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await store.WaitForProjectionAsync();
 
@@ -52,7 +52,7 @@ public class subscription_tests : IntegrationContext
         session.Events.StartStream(streamId,
             new QuestStarted("Progress Quest"),
             new MembersJoined(1, "Village", ["Scout"]));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await store.WaitForProjectionAsync();
 
@@ -77,7 +77,7 @@ public class subscription_tests : IntegrationContext
             session.Events.StartStream(Guid.NewGuid(),
                 new QuestStarted($"Quest {i}"),
                 new MembersJoined(1, $"Location {i}", [$"Hero {i}"]));
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await store.WaitForProjectionAsync();
@@ -110,7 +110,7 @@ public class subscription_tests : IntegrationContext
         var streamId = Guid.NewGuid();
         await using var session = theStore.LightweightSession();
         session.Events.StartStream(streamId, new QuestStarted("Raw Quest"));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await theStore.WaitForProjectionAsync();
 

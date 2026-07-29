@@ -75,7 +75,7 @@ public class system_part_resource_tests
             })
             .Build();
 
-        await host.StartAsync();
+        await host.StartAsync(TestContext.Current.CancellationToken);
         try
         {
             var tables = await SchemaInspector.GetTableNamesAsync(schema);
@@ -85,7 +85,7 @@ public class system_part_resource_tests
         }
         finally
         {
-            await host.StopAsync();
+            await host.StopAsync(TestContext.Current.CancellationToken);
         }
     }
 

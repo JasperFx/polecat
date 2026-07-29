@@ -88,20 +88,20 @@ public class archived_stream_partitioning : IntegrationContext
         theSession.Events.StartStream(streamId,
             new QuestStarted("Partitioned Quest"),
             new MembersJoined(1, "Town", ["Alpha"]));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Verify partition function exists
         var conn = await OpenConnectionAsync();
 
         await using var pfCmd = new SqlCommand(
             "SELECT COUNT(*) FROM sys.partition_functions WHERE name = 'pf_pc_events_is_archived'", conn);
-        var pfCount = (int)(await pfCmd.ExecuteScalarAsync())!;
+        var pfCount = (int)(await pfCmd.ExecuteScalarAsync(TestContext.Current.CancellationToken))!;
         pfCount.ShouldBeGreaterThan(0);
 
         // Verify partition scheme exists
         await using var psCmd = new SqlCommand(
             "SELECT COUNT(*) FROM sys.partition_schemes WHERE name = 'ps_pc_events_is_archived'", conn);
-        var psCount = (int)(await psCmd.ExecuteScalarAsync())!;
+        var psCount = (int)(await psCmd.ExecuteScalarAsync(TestContext.Current.CancellationToken))!;
         psCount.ShouldBeGreaterThan(0);
 
         // Verify the table in our schema has 2 partitions
@@ -112,7 +112,7 @@ public class archived_stream_partitioning : IntegrationContext
             JOIN sys.schemas s ON o.schema_id = s.schema_id
             WHERE s.name = 'archived_part' AND o.name = 'pc_events' AND p.index_id <= 1
             """, conn);
-        var partitionCount = (int)(await partCmd.ExecuteScalarAsync())!;
+        var partitionCount = (int)(await partCmd.ExecuteScalarAsync(TestContext.Current.CancellationToken))!;
         // With 1 boundary value (is_archived=1), we get 2 partitions:
         // Partition 1: is_archived < 1 (active), Partition 2: is_archived >= 1 (archived)
         partitionCount.ShouldBe(2);
@@ -125,10 +125,10 @@ public class archived_stream_partitioning : IntegrationContext
         theSession.Events.StartStream(streamId,
             new QuestStarted("Readable Quest"),
             new MembersJoined(1, "Town", ["Beta", "Gamma"]));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
 
         events.Count.ShouldBe(2);
         events[0].Data.ShouldBeOfType<QuestStarted>();
@@ -142,19 +142,19 @@ public class archived_stream_partitioning : IntegrationContext
         theSession.Events.StartStream(streamId,
             new QuestStarted("Archive Quest"),
             new MembersJoined(1, "Town", ["Delta"]));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Archive the stream
         theSession.Events.ArchiveStream(streamId);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // FetchStream should return empty for archived streams (default filters archived)
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
         events.Count.ShouldBe(0);
 
         // Aggregate should return null for archived stream
-        var aggregate = await query.Events.FetchLatest<QuestAggregate>(streamId);
+        var aggregate = await query.Events.FetchLatest<QuestAggregate>(streamId, TestContext.Current.CancellationToken);
         aggregate.ShouldBeNull();
     }
 }

@@ -13,7 +13,7 @@ public class fetch_stream_tests : IntegrationContext
     public async Task fetch_nonexistent_stream_returns_empty()
     {
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(Guid.NewGuid());
+        var events = await query.Events.FetchStreamAsync(Guid.NewGuid(), token: TestContext.Current.CancellationToken);
         events.Count.ShouldBe(0);
     }
 
@@ -21,7 +21,7 @@ public class fetch_stream_tests : IntegrationContext
     public async Task fetch_stream_state_returns_null_for_nonexistent()
     {
         await using var query = theStore.QuerySession();
-        var state = await query.Events.FetchStreamStateAsync(Guid.NewGuid());
+        var state = await query.Events.FetchStreamStateAsync(Guid.NewGuid(), TestContext.Current.CancellationToken);
         state.ShouldBeNull();
     }
 
@@ -32,10 +32,10 @@ public class fetch_stream_tests : IntegrationContext
         theSession.Events.StartStream(streamId,
             new QuestStarted("Fellowship"),
             new MembersJoined(1, "Rivendell", ["Aragorn", "Legolas", "Gimli"]));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
 
         var quest = events[0].Data.ShouldBeOfType<QuestStarted>();
         quest.Name.ShouldBe("Fellowship");
@@ -55,10 +55,10 @@ public class fetch_stream_tests : IntegrationContext
             new MembersJoined(1, "Start", ["A"]),
             new ArrivedAtLocation("Mid", 2),
             new MonsterSlain("Goblin", 50));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId, version: 2);
+        var events = await query.Events.FetchStreamAsync(streamId, version: 2, token: TestContext.Current.CancellationToken);
 
         events.Count.ShouldBe(2);
         events[0].Version.ShouldBe(1);
@@ -74,10 +74,10 @@ public class fetch_stream_tests : IntegrationContext
             new MembersJoined(1, "Start", ["A"]),
             new ArrivedAtLocation("Mid", 2),
             new MonsterSlain("Goblin", 50));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId, fromVersion: 3);
+        var events = await query.Events.FetchStreamAsync(streamId, fromVersion: 3, token: TestContext.Current.CancellationToken);
 
         events.Count.ShouldBe(2);
         events[0].Version.ShouldBe(3);
@@ -90,10 +90,10 @@ public class fetch_stream_tests : IntegrationContext
         var streamId = Guid.NewGuid();
         theSession.Events.StartStream(streamId,
             new QuestStarted("Timestamp Quest"));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
 
         events[0].Timestamp.ShouldNotBe(default);
     }
@@ -104,10 +104,10 @@ public class fetch_stream_tests : IntegrationContext
         var streamId = Guid.NewGuid();
         theSession.Events.StartStream(streamId,
             new QuestStarted("Tenant Quest"));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
 
         events[0].TenantId.ShouldBe(JasperFx.StorageConstants.DefaultTenantId);
     }
@@ -119,10 +119,10 @@ public class fetch_stream_tests : IntegrationContext
         theSession.Events.StartStream(streamId,
             new QuestStarted("Unique IDs"),
             new MembersJoined(1, "Start", ["A"]));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
 
         events[0].Id.ShouldNotBe(Guid.Empty);
         events[1].Id.ShouldNotBe(Guid.Empty);
@@ -135,10 +135,10 @@ public class fetch_stream_tests : IntegrationContext
         var streamId = Guid.NewGuid();
         theSession.Events.StartStream(streamId,
             new QuestStarted("State Timestamps"));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var state = await query.Events.FetchStreamStateAsync(streamId);
+        var state = await query.Events.FetchStreamStateAsync(streamId, TestContext.Current.CancellationToken);
 
         state.ShouldNotBeNull();
         state.LastTimestamp.ShouldNotBe(default);
@@ -154,11 +154,11 @@ public class fetch_stream_tests : IntegrationContext
         theSession.Events.StartStream(streamId,
             new QuestStarted("Mixed Save"));
         theSession.Store(user);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId);
-        var loaded = await query.LoadAsync<User>(user.Id);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
+        var loaded = await query.LoadAsync<User>(user.Id, TestContext.Current.CancellationToken);
 
         events.Count.ShouldBe(1);
         loaded.ShouldNotBeNull();

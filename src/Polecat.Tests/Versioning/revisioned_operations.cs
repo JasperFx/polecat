@@ -26,7 +26,7 @@ public class revisioned_operations : IntegrationContext
         doc.Version.ShouldBe(0);
 
         theSession.Insert(doc);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         doc.Version.ShouldBe(1);
     }
@@ -37,7 +37,7 @@ public class revisioned_operations : IntegrationContext
         var doc = new RevisionedDoc { Id = Guid.NewGuid(), Name = "stored" };
 
         theSession.Store(doc);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         doc.Version.ShouldBe(1);
     }
@@ -48,17 +48,17 @@ public class revisioned_operations : IntegrationContext
         var doc = new RevisionedDoc { Id = Guid.NewGuid(), Name = "v1" };
 
         theSession.Store(doc);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
         doc.Version.ShouldBe(1);
 
         await using var session2 = theStore.LightweightSession();
-        var loaded = await session2.LoadAsync<RevisionedDoc>(doc.Id);
+        var loaded = await session2.LoadAsync<RevisionedDoc>(doc.Id, TestContext.Current.CancellationToken);
         loaded.ShouldNotBeNull();
         loaded.Version.ShouldBe(1);
 
         loaded.Name = "v2";
         session2.Store(loaded);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
         loaded.Version.ShouldBe(2);
     }
 
@@ -68,10 +68,10 @@ public class revisioned_operations : IntegrationContext
         var doc = new RevisionedDoc { Id = Guid.NewGuid(), Name = "load-test" };
 
         theSession.Store(doc);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var loaded = await query.LoadAsync<RevisionedDoc>(doc.Id);
+        var loaded = await query.LoadAsync<RevisionedDoc>(doc.Id, TestContext.Current.CancellationToken);
         loaded.ShouldNotBeNull();
         loaded.Version.ShouldBe(1);
     }
@@ -83,10 +83,10 @@ public class revisioned_operations : IntegrationContext
         var doc2 = new RevisionedDoc { Id = Guid.NewGuid(), Name = "many-2" };
 
         theSession.Store(doc1, doc2);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var loaded = await query.LoadManyAsync<RevisionedDoc>(new[] { doc1.Id, doc2.Id });
+        var loaded = await query.LoadManyAsync<RevisionedDoc>(new[] { doc1.Id, doc2.Id }, TestContext.Current.CancellationToken);
         loaded.Count.ShouldBe(2);
         loaded.ShouldAllBe(d => d.Version == 1);
     }
@@ -97,22 +97,22 @@ public class revisioned_operations : IntegrationContext
         var doc = new RevisionedDoc { Id = Guid.NewGuid(), Name = "concurrent" };
 
         theSession.Store(doc);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
         doc.Version.ShouldBe(1);
 
         // Simulate a concurrent update: load in two sessions
         await using var session1 = theStore.LightweightSession();
-        var loaded1 = await session1.LoadAsync<RevisionedDoc>(doc.Id);
+        var loaded1 = await session1.LoadAsync<RevisionedDoc>(doc.Id, TestContext.Current.CancellationToken);
         loaded1.ShouldNotBeNull();
 
         await using var session2 = theStore.LightweightSession();
-        var loaded2 = await session2.LoadAsync<RevisionedDoc>(doc.Id);
+        var loaded2 = await session2.LoadAsync<RevisionedDoc>(doc.Id, TestContext.Current.CancellationToken);
         loaded2.ShouldNotBeNull();
 
         // First session saves successfully
         loaded1.Name = "updated-by-session1";
         session1.Store(loaded1);
-        await session1.SaveChangesAsync();
+        await session1.SaveChangesAsync(TestContext.Current.CancellationToken);
         loaded1.Version.ShouldBe(2);
 
         // Second session tries to save with stale version (1) — should fail
@@ -131,16 +131,16 @@ public class revisioned_operations : IntegrationContext
         var doc = new RevisionedDoc { Id = Guid.NewGuid(), Name = "update-test" };
 
         theSession.Insert(doc);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
-        var loaded = await session2.LoadAsync<RevisionedDoc>(doc.Id);
+        var loaded = await session2.LoadAsync<RevisionedDoc>(doc.Id, TestContext.Current.CancellationToken);
         loaded.ShouldNotBeNull();
         loaded.Version.ShouldBe(1);
 
         loaded.Name = "updated";
         session2.Update(loaded);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
         loaded.Version.ShouldBe(2);
     }
 
@@ -150,21 +150,21 @@ public class revisioned_operations : IntegrationContext
         var doc = new RevisionedDoc { Id = Guid.NewGuid(), Name = "stale-update" };
 
         theSession.Insert(doc);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Load in two sessions
         await using var s1 = theStore.LightweightSession();
-        var l1 = await s1.LoadAsync<RevisionedDoc>(doc.Id);
+        var l1 = await s1.LoadAsync<RevisionedDoc>(doc.Id, TestContext.Current.CancellationToken);
         l1.ShouldNotBeNull();
 
         await using var s2 = theStore.LightweightSession();
-        var l2 = await s2.LoadAsync<RevisionedDoc>(doc.Id);
+        var l2 = await s2.LoadAsync<RevisionedDoc>(doc.Id, TestContext.Current.CancellationToken);
         l2.ShouldNotBeNull();
 
         // First update succeeds
         l1.Name = "s1-update";
         s1.Update(l1);
-        await s1.SaveChangesAsync();
+        await s1.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Second update fails with stale version
         l2.Name = "s2-update";
@@ -182,14 +182,14 @@ public class revisioned_operations : IntegrationContext
         var doc = new RevisionedDoc { Id = Guid.NewGuid(), Name = "explicit-rev" };
 
         theSession.Insert(doc);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
-        var loaded = await session2.LoadAsync<RevisionedDoc>(doc.Id);
+        var loaded = await session2.LoadAsync<RevisionedDoc>(doc.Id, TestContext.Current.CancellationToken);
         loaded.ShouldNotBeNull();
         loaded.Name = "updated";
         session2.UpdateRevision(loaded, 1); // explicitly set expected revision
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
         loaded.Version.ShouldBe(2);
     }
 
@@ -199,20 +199,20 @@ public class revisioned_operations : IntegrationContext
         var doc = new RevisionedDoc { Id = Guid.NewGuid(), Name = "linq-version" };
 
         theSession.Store(doc);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Second store to get version 2
         await using var session2 = theStore.LightweightSession();
-        var loaded = await session2.LoadAsync<RevisionedDoc>(doc.Id);
+        var loaded = await session2.LoadAsync<RevisionedDoc>(doc.Id, TestContext.Current.CancellationToken);
         loaded.ShouldNotBeNull();
         loaded.Name = "updated";
         session2.Store(loaded);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
         var results = await query.Query<RevisionedDoc>()
             .Where(x => x.Id == doc.Id)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
         results.Count.ShouldBe(1);
         results[0].Version.ShouldBe(2);
     }

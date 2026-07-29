@@ -21,7 +21,7 @@ public class write_projection_progress_extended_tests : OneOffConfigurationsCont
     public async Task writes_extended_telemetry_including_running_on_node()
     {
         ConfigureStore(opts => opts.Events.EnableExtendedProgressionTracking = true);
-        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync();
+        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         var shardName = new ShardName("ExtendedWrite");
         // Establish the progression row + last_seq_id (owned by the batch-commit path).
@@ -37,7 +37,7 @@ public class write_projection_progress_extended_tests : OneOffConfigurationsCont
 
         await theDatabase.WriteExtendedProgressionAsync(state, CancellationToken.None);
 
-        var progress = await theDatabase.AllProjectionProgress();
+        var progress = await theDatabase.AllProjectionProgress(TestContext.Current.CancellationToken);
         var row = progress.Single(x => x.ShardName == shardName.Identity);
 
         row.AgentStatus.ShouldBe("Running");
@@ -52,7 +52,7 @@ public class write_projection_progress_extended_tests : OneOffConfigurationsCont
     public async Task is_a_no_op_when_no_progression_row_exists_yet()
     {
         ConfigureStore(opts => opts.Events.EnableExtendedProgressionTracking = true);
-        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync();
+        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         var shardName = new ShardName("NeverCommitted");
         var state = new ShardState(shardName.Identity, 7) { AgentStatus = "Running", RunningOnNode = 3 };
@@ -60,7 +60,7 @@ public class write_projection_progress_extended_tests : OneOffConfigurationsCont
         // No row exists yet — the zero-row UPDATE must not throw and must not create a row.
         await theDatabase.WriteExtendedProgressionAsync(state, CancellationToken.None);
 
-        var progress = await theDatabase.AllProjectionProgress();
+        var progress = await theDatabase.AllProjectionProgress(TestContext.Current.CancellationToken);
         progress.ShouldNotContain(x => x.ShardName == shardName.Identity);
     }
 

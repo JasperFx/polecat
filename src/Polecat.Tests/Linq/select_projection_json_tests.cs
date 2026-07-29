@@ -58,7 +58,7 @@ public class select_projection_json_tests : IntegrationContext
         var json = await query.Query<LinqTarget>()
             .Where(x => x.Name == name)
             .Select(x => new { x.Name, x.Age })
-            .ToJsonArrayAsync();
+            .ToJsonArrayAsync(TestContext.Current.CancellationToken);
 
         var array = JsonDocument.Parse(json).RootElement;
         array.GetArrayLength().ShouldBe(3);
@@ -85,7 +85,7 @@ public class select_projection_json_tests : IntegrationContext
             .Where(x => x.Name == name)
             .OrderBy(x => x.Age)
             .Select(x => new { x.Age, City = x.Address!.City })
-            .ToJsonArrayAsync();
+            .ToJsonArrayAsync(TestContext.Current.CancellationToken);
 
         var array = JsonDocument.Parse(json).RootElement;
         array[0].GetProperty("city").GetString().ShouldBe("City0");
@@ -104,7 +104,7 @@ public class select_projection_json_tests : IntegrationContext
         var json = await query.Query<LinqTarget>()
             .Where(x => x.Name == name)
             .Select(x => new NameYears { PersonName = x.Name, Years = x.Age, City = x.Address!.City })
-            .ToJsonArrayAsync();
+            .ToJsonArrayAsync(TestContext.Current.CancellationToken);
 
         var obj = JsonDocument.Parse(json).RootElement[0];
         obj.GetProperty("personName").GetString().ShouldBe(name);   // naming policy (camelCase)
@@ -124,7 +124,7 @@ public class select_projection_json_tests : IntegrationContext
             .Where(x => x.Name == name)
             .OrderBy(x => x.Age)
             .Select(x => new { Big = (long)x.Age })
-            .ToJsonArrayAsync();
+            .ToJsonArrayAsync(TestContext.Current.CancellationToken);
 
         var array = JsonDocument.Parse(json).RootElement;
         array[0].GetProperty("big").GetInt64().ShouldBe(0L);
@@ -183,7 +183,7 @@ public class select_projection_json_tests : IntegrationContext
         var results = await query.Query<LinqTarget>()
             .Where(x => x.Name == name)
             .Select(x => new { Upper = x.Name!.ToUpper() })
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(1);
         results[0].Upper.ShouldBe(name.ToUpper());

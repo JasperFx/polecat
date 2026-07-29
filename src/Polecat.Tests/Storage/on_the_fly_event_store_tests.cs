@@ -22,11 +22,11 @@ public class on_the_fly_event_store_tests : OneOffConfigurationsContext
         await using (var session = theStore.LightweightSession())
         {
             session.Events.StartStream(streamId, new ThingHappened("first"));
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
         events.Count.ShouldBe(1);
     }
 
@@ -37,7 +37,7 @@ public class on_the_fly_event_store_tests : OneOffConfigurationsContext
 
         // No append yet — a query on a fresh DB must still not blow up on missing tables.
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(Guid.NewGuid());
+        var events = await query.Events.FetchStreamAsync(Guid.NewGuid(), token: TestContext.Current.CancellationToken);
         events.Count.ShouldBe(0);
     }
 
@@ -51,6 +51,6 @@ public class on_the_fly_event_store_tests : OneOffConfigurationsContext
         session.Events.StartStream(Guid.NewGuid(), new ThingHappened("x"));
 
         // The append should fail because the tables were never created and we did not auto-create.
-        await Should.ThrowAsync<Exception>(session.SaveChangesAsync());
+        await Should.ThrowAsync<Exception>(session.SaveChangesAsync(TestContext.Current.CancellationToken));
     }
 }

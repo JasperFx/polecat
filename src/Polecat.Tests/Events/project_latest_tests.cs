@@ -60,14 +60,14 @@ public class project_latest_tests : IntegrationContext
         );
 
         // ProjectLatest includes the pending events above
-        var report = await session.Events.ProjectLatest<Report>(streamId);
+        var report = await session.Events.ProjectLatest<Report>(streamId, TestContext.Current.CancellationToken);
 
         report.ShouldNotBeNull();
         report.Title.ShouldBe("Q1 Report");
         report.SectionCount.ShouldBe(2);
 
         // SaveChangesAsync can happen later
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
     }
 
     #endregion
@@ -86,7 +86,7 @@ public class project_latest_tests : IntegrationContext
                 new ReportCreated("Q1 Report"),
                 new SectionAdded("Revenue")
             );
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         // In a new session, append more events without committing
@@ -99,7 +99,7 @@ public class project_latest_tests : IntegrationContext
             );
 
             // ProjectLatest merges the committed state with pending events
-            var report = await session.Events.ProjectLatest<Report>(streamId);
+            var report = await session.Events.ProjectLatest<Report>(streamId, TestContext.Current.CancellationToken);
 
             report.ShouldNotBeNull();
             report.Title.ShouldBe("Q1 Report");
@@ -121,13 +121,13 @@ public class project_latest_tests : IntegrationContext
                 new ReportCreated("Q1 Report"),
                 new SectionAdded("Revenue")
             );
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using (var session = theStore.LightweightSession())
         {
-            var fromProjectLatest = await session.Events.ProjectLatest<Report>(streamId);
-            var fromFetchLatest = await session.Events.FetchLatest<Report>(streamId);
+            var fromProjectLatest = await session.Events.ProjectLatest<Report>(streamId, TestContext.Current.CancellationToken);
+            var fromFetchLatest = await session.Events.FetchLatest<Report>(streamId, TestContext.Current.CancellationToken);
 
             fromProjectLatest.ShouldNotBeNull();
             fromFetchLatest.ShouldNotBeNull();
@@ -140,7 +140,7 @@ public class project_latest_tests : IntegrationContext
     public async Task returns_null_for_nonexistent_stream()
     {
         await using var session = theStore.LightweightSession();
-        var report = await session.Events.ProjectLatest<Report>(Guid.NewGuid());
+        var report = await session.Events.ProjectLatest<Report>(Guid.NewGuid(), TestContext.Current.CancellationToken);
         report.ShouldBeNull();
     }
 
@@ -164,7 +164,7 @@ public class project_latest_tests : IntegrationContext
             new ReportPublished()
         );
 
-        var report = await session.Events.ProjectLatest<StringReport>(key);
+        var report = await session.Events.ProjectLatest<StringReport>(key, TestContext.Current.CancellationToken);
 
         report.ShouldNotBeNull();
         report.Title.ShouldBe("Quarterly Report");
@@ -190,7 +190,7 @@ public class project_latest_tests : IntegrationContext
                 new ReportCreated("Annual Report"),
                 new SectionAdded("Overview")
             );
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         // Append more events without committing, then project
@@ -201,7 +201,7 @@ public class project_latest_tests : IntegrationContext
                 new ReportPublished()
             );
 
-            var report = await session.Events.ProjectLatest<StringReport>(key);
+            var report = await session.Events.ProjectLatest<StringReport>(key, TestContext.Current.CancellationToken);
 
             report.ShouldNotBeNull();
             report.Title.ShouldBe("Annual Report");

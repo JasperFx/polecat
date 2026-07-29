@@ -23,7 +23,7 @@ public class event_store_api_completeness_tests : IntegrationContext
     {
         var streamId = Guid.NewGuid();
         theSession.Events.StartStream(streamId, new QuestStarted("Enumerable Quest"));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         IEnumerable<object> incoming =
         [
@@ -33,10 +33,10 @@ public class event_store_api_completeness_tests : IntegrationContext
 
         await using var session2 = theStore.LightweightSession();
         session2.Events.Append(streamId, incoming);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        (await query.Events.FetchStreamAsync(streamId)).Count.ShouldBe(3);
+        (await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken)).Count.ShouldBe(3);
     }
 
     [Fact]
@@ -44,13 +44,13 @@ public class event_store_api_completeness_tests : IntegrationContext
     {
         var streamId = Guid.NewGuid();
         theSession.Events.StartStream(streamId, new QuestStarted("Versioned"));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         IEnumerable<object> more = [new MembersJoined(1, "Town", ["A"])];
 
         await using var session2 = theStore.LightweightSession();
         session2.Events.Append(streamId, 2L, more);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
     }
 
     [Fact]
@@ -64,10 +64,10 @@ public class event_store_api_completeness_tests : IntegrationContext
         ];
 
         theSession.Events.StartStream(streamId, events);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        (await query.Events.FetchStreamAsync(streamId)).Count.ShouldBe(2);
+        (await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken)).Count.ShouldBe(2);
     }
 
     [Fact]
@@ -76,7 +76,7 @@ public class event_store_api_completeness_tests : IntegrationContext
         var streamId = Guid.NewGuid();
 
         var action = theSession.Events.StartStream(typeof(QuestParty), streamId, new QuestStarted("RuntimeType"));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Client-side state on the StreamAction carries the aggregate type;
         // existing Polecat.FetchStreamStateAsync doesn't hydrate AggregateType
@@ -84,7 +84,7 @@ public class event_store_api_completeness_tests : IntegrationContext
         action.AggregateType.ShouldBe(typeof(QuestParty));
 
         await using var query = theStore.QuerySession();
-        (await query.Events.FetchStreamStateAsync(streamId))!.Version.ShouldBe(1);
+        (await query.Events.FetchStreamStateAsync(streamId, TestContext.Current.CancellationToken))!.Version.ShouldBe(1);
     }
 
     [Fact]
@@ -94,11 +94,11 @@ public class event_store_api_completeness_tests : IntegrationContext
         IEnumerable<object> events = [new QuestStarted("GenericIEnumerable")];
 
         var action = theSession.Events.StartStream<QuestParty>(streamId, events);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         action.AggregateType.ShouldBe(typeof(QuestParty));
         await using var query = theStore.QuerySession();
-        (await query.Events.FetchStreamStateAsync(streamId))!.Version.ShouldBe(1);
+        (await query.Events.FetchStreamStateAsync(streamId, TestContext.Current.CancellationToken))!.Version.ShouldBe(1);
     }
 
     // -- Issue #89: LoadAsync single-event lookup --------------------------
@@ -108,12 +108,12 @@ public class event_store_api_completeness_tests : IntegrationContext
     {
         var streamId = Guid.NewGuid();
         var action = theSession.Events.StartStream(streamId, new QuestStarted("Loaded"));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var eventId = action.Events[0].Id;
 
         await using var query = theStore.QuerySession();
-        var loaded = await query.Events.LoadAsync<QuestStarted>(eventId);
+        var loaded = await query.Events.LoadAsync<QuestStarted>(eventId, TestContext.Current.CancellationToken);
 
         loaded.ShouldNotBeNull();
         loaded.Id.ShouldBe(eventId);
@@ -126,12 +126,12 @@ public class event_store_api_completeness_tests : IntegrationContext
     {
         var streamId = Guid.NewGuid();
         var action = theSession.Events.StartStream(streamId, new QuestStarted("Mismatched"));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var eventId = action.Events[0].Id;
 
         await using var query = theStore.QuerySession();
-        var wrongCast = await query.Events.LoadAsync<MembersJoined>(eventId);
+        var wrongCast = await query.Events.LoadAsync<MembersJoined>(eventId, TestContext.Current.CancellationToken);
 
         wrongCast.ShouldBeNull();
     }
@@ -140,7 +140,7 @@ public class event_store_api_completeness_tests : IntegrationContext
     public async Task load_async_typed_returns_null_when_event_id_not_found()
     {
         await using var query = theStore.QuerySession();
-        var notThere = await query.Events.LoadAsync<QuestStarted>(Guid.NewGuid());
+        var notThere = await query.Events.LoadAsync<QuestStarted>(Guid.NewGuid(), TestContext.Current.CancellationToken);
         notThere.ShouldBeNull();
     }
 
@@ -149,12 +149,12 @@ public class event_store_api_completeness_tests : IntegrationContext
     {
         var streamId = Guid.NewGuid();
         var action = theSession.Events.StartStream(streamId, new QuestStarted("Untyped"));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var eventId = action.Events[0].Id;
 
         await using var query = theStore.QuerySession();
-        var loaded = await query.Events.LoadAsync(eventId);
+        var loaded = await query.Events.LoadAsync(eventId, TestContext.Current.CancellationToken);
 
         loaded.ShouldNotBeNull();
         loaded.Id.ShouldBe(eventId);
@@ -166,7 +166,7 @@ public class event_store_api_completeness_tests : IntegrationContext
     public async Task load_async_untyped_returns_null_when_event_id_not_found()
     {
         await using var query = theStore.QuerySession();
-        var notThere = await query.Events.LoadAsync(Guid.NewGuid());
+        var notThere = await query.Events.LoadAsync(Guid.NewGuid(), TestContext.Current.CancellationToken);
         notThere.ShouldBeNull();
     }
 
@@ -177,7 +177,7 @@ public class event_store_api_completeness_tests : IntegrationContext
     {
         var streamId = Guid.NewGuid();
         var action = theSession.Events.StartStream(streamId, new QuestStarted("Original"));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var sequence = action.Events[0].Sequence;
         var originalId = action.Events[0].Id;
@@ -185,14 +185,14 @@ public class event_store_api_completeness_tests : IntegrationContext
         // Replace with a Compacted-style snapshot event at the same sequence.
         await using var session2 = theStore.LightweightSession();
         var newId = session2.Events.CompletelyReplaceEvent(sequence, new QuestStarted("Compacted"));
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         newId.ShouldNotBe(originalId);
         newId.ShouldNotBe(Guid.Empty);
 
         // The id at that sequence is now the replacement id; data is the new payload.
         await using var query = theStore.QuerySession();
-        var loaded = await query.Events.LoadAsync<QuestStarted>(newId);
+        var loaded = await query.Events.LoadAsync<QuestStarted>(newId, TestContext.Current.CancellationToken);
         loaded.ShouldNotBeNull();
         loaded.Data.Name.ShouldBe("Compacted");
     }

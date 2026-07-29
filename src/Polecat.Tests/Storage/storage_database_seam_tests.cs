@@ -28,7 +28,7 @@ public class storage_database_seam_tests : OneOffConfigurationsContext
         conn.ShouldBeOfType<SqlConnection>();
         conn.State.ShouldBe(System.Data.ConnectionState.Closed);
 
-        await conn.OpenAsync();
+        await conn.OpenAsync(TestContext.Current.CancellationToken);
         conn.State.ShouldBe(System.Data.ConnectionState.Open);
     }
 
@@ -37,19 +37,19 @@ public class storage_database_seam_tests : OneOffConfigurationsContext
     {
         var tableName = $"dbo.pc_seam_smoke_{Guid.NewGuid():N}";
 
-        await theSeam.RunSqlAsync($"CREATE TABLE {tableName} (id INT NOT NULL)");
+        await theSeam.RunSqlAsync($"CREATE TABLE {tableName} (id INT NOT NULL)", TestContext.Current.CancellationToken);
 
         try
         {
             await using var conn = await OpenConnectionAsync();
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = $"SELECT OBJECT_ID('{tableName}')";
-            var objectId = await cmd.ExecuteScalarAsync();
+            var objectId = await cmd.ExecuteScalarAsync(TestContext.Current.CancellationToken);
             objectId.ShouldNotBe(DBNull.Value);
         }
         finally
         {
-            await theSeam.RunSqlAsync($"DROP TABLE IF EXISTS {tableName}");
+            await theSeam.RunSqlAsync($"DROP TABLE IF EXISTS {tableName}", TestContext.Current.CancellationToken);
         }
     }
 
@@ -57,7 +57,7 @@ public class storage_database_seam_tests : OneOffConfigurationsContext
     public async Task sequence_for_resolves_the_hilo_sequence_for_a_numeric_id_document()
     {
         // Force provider + schema creation so the Hi-Lo table exists
-        await theStore.Advanced.Clean.CompletelyRemoveAllAsync();
+        await theStore.Advanced.Clean.CompletelyRemoveAllAsync(TestContext.Current.CancellationToken);
 
         var sequence = theSeam.SequenceFor(typeof(IntDoc));
 

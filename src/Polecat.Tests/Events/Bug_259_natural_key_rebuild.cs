@@ -48,14 +48,14 @@ public class Bug_259_natural_key_rebuild : IAsyncLifetime
         await using (var session = store.LightweightSession())
         {
             session.Events.StartStream(streamId, new NkOrderCreated(orderNumber, "Alice"));
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         // Inline append populated the lookup table + the natural-key fetch works.
         (await CountRowsAsync()).ShouldBe(1);
         await using (var query = store.LightweightSession())
         {
-            (await query.Events.FetchForWriting<OrderAggregate, OrderNumber>(orderNumber)).Aggregate.ShouldNotBeNull();
+            (await query.Events.FetchForWriting<OrderAggregate, OrderNumber>(orderNumber, TestContext.Current.CancellationToken)).Aggregate.ShouldNotBeNull();
         }
 
         // Simulate corruption / pre-rebuild state.
@@ -71,7 +71,7 @@ public class Bug_259_natural_key_rebuild : IAsyncLifetime
         (await CountRowsAsync()).ShouldBe(1);
         await using (var query = store.LightweightSession())
         {
-            var stream = await query.Events.FetchForWriting<OrderAggregate, OrderNumber>(orderNumber);
+            var stream = await query.Events.FetchForWriting<OrderAggregate, OrderNumber>(orderNumber, TestContext.Current.CancellationToken);
             stream.Aggregate.ShouldNotBeNull();
             stream.Aggregate!.OrderNum.ShouldBe(orderNumber);
         }
@@ -93,7 +93,7 @@ public class Bug_259_natural_key_rebuild : IAsyncLifetime
                 session.Events.StartStream(oid, new NkOrderCreated(num, "Customer"));
             }
 
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         (await CountRowsAsync()).ShouldBe(5);
@@ -109,7 +109,7 @@ public class Bug_259_natural_key_rebuild : IAsyncLifetime
         await using var query = store.LightweightSession();
         foreach (var (_, num) in orders)
         {
-            (await query.Events.FetchForWriting<OrderAggregate, OrderNumber>(num)).Aggregate.ShouldNotBeNull();
+            (await query.Events.FetchForWriting<OrderAggregate, OrderNumber>(num, TestContext.Current.CancellationToken)).Aggregate.ShouldNotBeNull();
         }
     }
 
@@ -131,7 +131,7 @@ public class Bug_259_natural_key_rebuild : IAsyncLifetime
         {
             session.Events.StartStream(activeId, new NkOrderCreated(activeNumber, "Alice"));
             session.Events.StartStream(archivedId, new NkOrderCreated(new OrderNumber("ORD-archived"), "Bob"));
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         (await CountRowsAsync()).ShouldBe(2); // both rows present after inline append
@@ -139,7 +139,7 @@ public class Bug_259_natural_key_rebuild : IAsyncLifetime
         await using (var session = store.LightweightSession())
         {
             session.Events.ArchiveStream(archivedId);
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         using var daemon = (IProjectionDaemon)await store.BuildProjectionDaemonAsync();
@@ -150,7 +150,7 @@ public class Bug_259_natural_key_rebuild : IAsyncLifetime
         // non-archived stream's events.
         (await CountRowsAsync()).ShouldBe(1);
         await using var query = store.LightweightSession();
-        (await query.Events.FetchForWriting<OrderAggregate, OrderNumber>(activeNumber)).Aggregate.ShouldNotBeNull();
+        (await query.Events.FetchForWriting<OrderAggregate, OrderNumber>(activeNumber, TestContext.Current.CancellationToken)).Aggregate.ShouldNotBeNull();
     }
 
     private Task<int> CountRowsAsync() => ScalarAsync($"SELECT COUNT(*) FROM [{Schema}].[{Table}];");

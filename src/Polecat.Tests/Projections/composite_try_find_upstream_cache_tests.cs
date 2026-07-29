@@ -154,12 +154,12 @@ public class composite_try_find_upstream_cache_tests : IntegrationContext
         session.Events.StartStream<CompositeOrder>(orderId,
             new CompositeOrderPlaced(customerId, 99.95m),
             new CompositeOrderShipped("UPS"));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await theStore.WaitForProjectionAsync();
 
         await using var query = theStore.QuerySession();
-        var notification = await query.LoadAsync<OrderShippingNotification>(orderId);
+        var notification = await query.LoadAsync<OrderShippingNotification>(orderId, TestContext.Current.CancellationToken);
 
         notification.ShouldNotBeNull();
         notification!.CustomerId.ShouldBe(customerId);
@@ -207,7 +207,7 @@ public class composite_try_find_upstream_cache_tests : IntegrationContext
                     new CompositeOrderPlaced(customerId, 10m),
                     new CompositeOrderShipped("DHL"));
             }
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await theStore.WaitForProjectionAsync();
@@ -219,7 +219,7 @@ public class composite_try_find_upstream_cache_tests : IntegrationContext
         await using var query = theStore.QuerySession();
         foreach (var id in orderIds)
         {
-            var notification = await query.LoadAsync<OrderShippingNotification>(id);
+            var notification = await query.LoadAsync<OrderShippingNotification>(id, TestContext.Current.CancellationToken);
             notification.ShouldNotBeNull($"Missing notification for order {id}");
             notification!.Carrier.ShouldBe("DHL");
             notification.OrderTotal.ShouldBe(10m);

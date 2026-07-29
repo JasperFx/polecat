@@ -119,10 +119,10 @@ public class document_range_partitioning_tests : IntegrationContext
         var marDoc = new MetricsSample { Id = Guid.NewGuid(), BucketEnd = Mar.AddDays(14), Metric = "cpu", Value = 3 };
 
         theSession.Store(janDoc, febDoc, marDoc);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Documents round-trip through the JSON body unaffected by the duplicated column.
-        var loaded = await theSession.LoadAsync<MetricsSample>(febDoc.Id);
+        var loaded = await theSession.LoadAsync<MetricsSample>(febDoc.Id, TestContext.Current.CancellationToken);
         loaded.ShouldNotBeNull();
         loaded!.BucketEnd.ShouldBe(febDoc.BucketEnd);
         loaded.Value.ShouldBe(2);
@@ -135,7 +135,7 @@ public class document_range_partitioning_tests : IntegrationContext
         p.ParameterName = "@id";
         p.Value = febDoc.Id;
         cmd.Parameters.Add(p);
-        var storedBucket = (DateTimeOffset)(await cmd.ExecuteScalarAsync())!;
+        var storedBucket = (DateTimeOffset)(await cmd.ExecuteScalarAsync(TestContext.Current.CancellationToken))!;
         storedBucket.ShouldBe(febDoc.BucketEnd);
 
         // The three documents land in three different physical partitions.
@@ -158,7 +158,7 @@ public class document_range_partitioning_tests : IntegrationContext
 
         var doc = new RolledMetricsSample { Id = Guid.NewGuid(), BucketEnd = Jan.AddDays(10), Value = 7 };
         theSession.Store(doc);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         (await PartitionCountAsync("pc_doc_rolledmetricssample")).ShouldBe(3); // 2 boundaries -> 3 partitions
 
@@ -172,7 +172,7 @@ public class document_range_partitioning_tests : IntegrationContext
         (await PartitionCountAsync("pc_doc_rolledmetricssample")).ShouldBe(4); // SPLIT RANGE added one partition
 
         // Pre-existing data survived the in-place split (no rebuild).
-        var reloaded = await theSession.LoadAsync<RolledMetricsSample>(doc.Id);
+        var reloaded = await theSession.LoadAsync<RolledMetricsSample>(doc.Id, TestContext.Current.CancellationToken);
         reloaded.ShouldNotBeNull();
         reloaded!.Value.ShouldBe(7);
     }
@@ -210,7 +210,7 @@ public class document_range_partitioning_tests : IntegrationContext
         {
             Id = Guid.NewGuid(), BucketEnd = Jan.AddDays(5), Metric = "cpu", Value = 1
         });
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         (await PartitionCountAsync("pc_doc_metricssample")).ShouldBe(4); // 3 boundaries -> 4 partitions
     }
@@ -233,7 +233,7 @@ public class document_range_partitioning_tests : IntegrationContext
         });
 
         theSession.Store(new ExternalMetricsSample { Id = Guid.NewGuid(), BucketEnd = Jan.AddDays(3), Value = 1 });
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         (await PartitionCountAsync(table)).ShouldBe(3);
 
@@ -243,12 +243,12 @@ public class document_range_partitioning_tests : IntegrationContext
 
         // A bulk schema apply must NOT reconcile the externally-managed table back to its declared
         // [Jan, Feb] boundaries — the app-managed March partition must survive.
-        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync();
+        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
         (await PartitionCountAsync(table)).ShouldBe(4);
 
         // And the data is intact + still queryable.
         await using var query = theStore.QuerySession();
-        (await query.Query<ExternalMetricsSample>().CountAsync()).ShouldBe(1);
+        (await query.Query<ExternalMetricsSample>().CountAsync(TestContext.Current.CancellationToken)).ShouldBe(1);
     }
 
     private async Task SplitRangeAsync(string table, string boundaryLiteral)

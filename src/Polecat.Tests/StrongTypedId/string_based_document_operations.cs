@@ -30,10 +30,10 @@ public class string_based_document_operations : IntegrationContext
         var team = new Team { Id = new TeamId("team-" + Guid.NewGuid()), Name = "Smoke" };
         await using var session = theStore.LightweightSession();
         session.Store(team);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        (await query.Query<Team>().AnyAsync()).ShouldBeTrue();
+        (await query.Query<Team>().AnyAsync(TestContext.Current.CancellationToken)).ShouldBeTrue();
     }
 
     [Fact]
@@ -42,10 +42,10 @@ public class string_based_document_operations : IntegrationContext
         var team = new Team { Id = new TeamId("team-insert-" + Guid.NewGuid()), Name = "Inserted" };
         await using var session = theStore.LightweightSession();
         session.Insert(team);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var loaded = await query.LoadAsync<Team>(team.Id.Value);
+        var loaded = await query.LoadAsync<Team>(team.Id.Value, TestContext.Current.CancellationToken);
         loaded.ShouldNotBeNull();
         loaded!.Name.ShouldBe("Inserted");
     }
@@ -56,15 +56,15 @@ public class string_based_document_operations : IntegrationContext
         var team = new Team { Id = new TeamId("team-update-" + Guid.NewGuid()), Name = "Original" };
         await using var session = theStore.LightweightSession();
         session.Insert(team);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         team.Name = "Updated";
         await using var session2 = theStore.LightweightSession();
         session2.Update(team);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var loaded = await query.LoadAsync<Team>(team.Id.Value);
+        var loaded = await query.LoadAsync<Team>(team.Id.Value, TestContext.Current.CancellationToken);
         loaded.ShouldNotBeNull();
         loaded!.Name.ShouldBe("Updated");
     }
@@ -75,10 +75,10 @@ public class string_based_document_operations : IntegrationContext
         var team = new Team { Id = new TeamId("team-load-" + Guid.NewGuid()), Name = "Load Me" };
         await using var session = theStore.LightweightSession();
         session.Store(team);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var loaded = await query.LoadAsync<Team>(team.Id.Value);
+        var loaded = await query.LoadAsync<Team>(team.Id.Value, TestContext.Current.CancellationToken);
         loaded.ShouldNotBeNull();
         loaded!.Id.ShouldBe(team.Id);
         loaded.Name.ShouldBe("Load Me");
@@ -90,10 +90,10 @@ public class string_based_document_operations : IntegrationContext
         var team = new Team { Id = new TeamId("team-idmap-" + Guid.NewGuid()), Name = "Identity" };
         await using var session = theStore.IdentitySession();
         session.Store(team);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
-        var first = await session.LoadAsync<Team>(team.Id.Value);
-        var second = await session.LoadAsync<Team>(team.Id.Value);
+        var first = await session.LoadAsync<Team>(team.Id.Value, TestContext.Current.CancellationToken);
+        var second = await session.LoadAsync<Team>(team.Id.Value, TestContext.Current.CancellationToken);
 
         first.ShouldNotBeNull();
         ReferenceEquals(first, second).ShouldBeTrue();
@@ -105,14 +105,14 @@ public class string_based_document_operations : IntegrationContext
         var team = new Team { Id = new TeamId("team-del-" + Guid.NewGuid()), Name = "Delete" };
         await using var session = theStore.LightweightSession();
         session.Store(team);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         session2.Delete<Team>(team.Id.Value);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var loaded = await query.LoadAsync<Team>(team.Id.Value);
+        var loaded = await query.LoadAsync<Team>(team.Id.Value, TestContext.Current.CancellationToken);
         loaded.ShouldBeNull();
     }
 
@@ -122,14 +122,14 @@ public class string_based_document_operations : IntegrationContext
         var team = new Team { Id = new TeamId("team-deldoc-" + Guid.NewGuid()), Name = "Delete Doc" };
         await using var session = theStore.LightweightSession();
         session.Store(team);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         session2.Delete(team);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var loaded = await query.LoadAsync<Team>(team.Id.Value);
+        var loaded = await query.LoadAsync<Team>(team.Id.Value, TestContext.Current.CancellationToken);
         loaded.ShouldBeNull();
     }
 
@@ -139,12 +139,12 @@ public class string_based_document_operations : IntegrationContext
         var team = new Team { Id = new TeamId("team-linq-" + Guid.NewGuid()), Name = "LINQ Where" };
         await using var session = theStore.LightweightSession();
         session.Store(team);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
         var result = await query.Query<Team>()
             .Where(x => x.Id == team.Id)
-            .FirstOrDefaultAsync();
+            .FirstOrDefaultAsync(TestContext.Current.CancellationToken);
 
         result.ShouldNotBeNull();
         result!.Name.ShouldBe("LINQ Where");
@@ -156,12 +156,12 @@ public class string_based_document_operations : IntegrationContext
         await using var session = theStore.LightweightSession();
         session.Store(new Team { Id = new TeamId("team-a-" + Guid.NewGuid()), Name = "A" });
         session.Store(new Team { Id = new TeamId("team-b-" + Guid.NewGuid()), Name = "B" });
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
         var results = await query.Query<Team>()
             .OrderBy(x => x.Id)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBeGreaterThanOrEqualTo(2);
     }
@@ -177,12 +177,12 @@ public class string_based_document_operations : IntegrationContext
         session.Store(t1);
         session.Store(t2);
         session.Store(t3);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
         var results = await query.Query<Team>()
             .Where(x => x.Id.IsOneOf(t1.Id, t2.Id, t3.Id))
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(3);
     }
@@ -194,12 +194,12 @@ public class string_based_document_operations : IntegrationContext
             .Select(i => new Team { Id = new TeamId($"team-bulk-{i}-{Guid.NewGuid()}"), Name = $"Bulk {i}" })
             .ToList();
 
-        await theStore.Advanced.BulkInsertAsync(teams);
+        await theStore.Advanced.BulkInsertAsync(teams, TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
         foreach (var team in teams)
         {
-            var loaded = await query.LoadAsync<Team>(team.Id.Value);
+            var loaded = await query.LoadAsync<Team>(team.Id.Value, TestContext.Current.CancellationToken);
             loaded.ShouldNotBeNull();
         }
     }
@@ -210,10 +210,10 @@ public class string_based_document_operations : IntegrationContext
         var team = new Team { Id = new TeamId("team-exists-" + Guid.NewGuid()), Name = "Exists" };
         await using var session = theStore.LightweightSession();
         session.Store(team);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        (await query.CheckExistsAsync<Team>(team.Id.Value)).ShouldBeTrue();
-        (await query.CheckExistsAsync<Team>("nonexistent-" + Guid.NewGuid())).ShouldBeFalse();
+        (await query.CheckExistsAsync<Team>(team.Id.Value, TestContext.Current.CancellationToken)).ShouldBeTrue();
+        (await query.CheckExistsAsync<Team>("nonexistent-" + Guid.NewGuid(), TestContext.Current.CancellationToken)).ShouldBeFalse();
     }
 }

@@ -83,13 +83,13 @@ public class tenant_partitioned_documents_tests : IAsyncLifetime
         {
             red.Store(new PartitionedTenantDoc { Id = Guid.NewGuid(), Name = "red-1" });
             red.Store(new PartitionedTenantDoc { Id = Guid.NewGuid(), Name = "red-2" });
-            await red.SaveChangesAsync();
+            await red.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using (var blue = store.LightweightSession(new SessionOptions { TenantId = "Blue" }))
         {
             blue.Store(new PartitionedTenantDoc { Id = Guid.NewGuid(), Name = "blue-1" });
-            await blue.SaveChangesAsync();
+            await blue.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         // The table carries tenant_ordinal, and every row's ordinal matches its tenant's
@@ -130,34 +130,34 @@ public class tenant_partitioned_documents_tests : IAsyncLifetime
         await using (var red = store.LightweightSession(new SessionOptions { TenantId = "Red" }))
         {
             red.Store(new PartitionedTenantDoc { Id = redId, Name = "red" });
-            await red.SaveChangesAsync();
+            await red.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using (var blue = store.LightweightSession(new SessionOptions { TenantId = "Blue" }))
         {
             blue.Store(new PartitionedTenantDoc { Id = blueId, Name = "blue" });
-            await blue.SaveChangesAsync();
+            await blue.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         // Cross-tenant isolation on loads.
         await using (var redQuery = store.QuerySession(new SessionOptions { TenantId = "Red" }))
         {
-            (await redQuery.LoadAsync<PartitionedTenantDoc>(redId))!.Name.ShouldBe("red");
-            (await redQuery.LoadAsync<PartitionedTenantDoc>(blueId)).ShouldBeNull();
+            (await redQuery.LoadAsync<PartitionedTenantDoc>(redId, TestContext.Current.CancellationToken))!.Name.ShouldBe("red");
+            (await redQuery.LoadAsync<PartitionedTenantDoc>(blueId, TestContext.Current.CancellationToken)).ShouldBeNull();
         }
 
         // Update through the MERGE matched branch (partition-eliminated by tenant_ordinal).
         await using (var red = store.LightweightSession(new SessionOptions { TenantId = "Red" }))
         {
             red.Store(new PartitionedTenantDoc { Id = redId, Name = "red-updated" });
-            await red.SaveChangesAsync();
+            await red.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         // session.Update (the update-only SQL path).
         await using (var red = store.LightweightSession(new SessionOptions { TenantId = "Red" }))
         {
             red.Update(new PartitionedTenantDoc { Id = redId, Name = "red-updated-again" });
-            await red.SaveChangesAsync();
+            await red.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         // session.Insert (the insert-only MERGE path).
@@ -165,30 +165,30 @@ public class tenant_partitioned_documents_tests : IAsyncLifetime
         await using (var red = store.LightweightSession(new SessionOptions { TenantId = "Red" }))
         {
             red.Insert(new PartitionedTenantDoc { Id = redSecondId, Name = "red-inserted" });
-            await red.SaveChangesAsync();
+            await red.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using (var redQuery = store.QuerySession(new SessionOptions { TenantId = "Red" }))
         {
-            (await redQuery.LoadAsync<PartitionedTenantDoc>(redId))!.Name.ShouldBe("red-updated-again");
-            (await redQuery.LoadAsync<PartitionedTenantDoc>(redSecondId))!.Name.ShouldBe("red-inserted");
+            (await redQuery.LoadAsync<PartitionedTenantDoc>(redId, TestContext.Current.CancellationToken))!.Name.ShouldBe("red-updated-again");
+            (await redQuery.LoadAsync<PartitionedTenantDoc>(redSecondId, TestContext.Current.CancellationToken))!.Name.ShouldBe("red-inserted");
         }
 
         // Delete only touches the owning tenant.
         await using (var red = store.LightweightSession(new SessionOptions { TenantId = "Red" }))
         {
             red.Delete<PartitionedTenantDoc>(redId);
-            await red.SaveChangesAsync();
+            await red.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using (var redQuery = store.QuerySession(new SessionOptions { TenantId = "Red" }))
         {
-            (await redQuery.LoadAsync<PartitionedTenantDoc>(redId)).ShouldBeNull();
+            (await redQuery.LoadAsync<PartitionedTenantDoc>(redId, TestContext.Current.CancellationToken)).ShouldBeNull();
         }
 
         await using (var blueQuery = store.QuerySession(new SessionOptions { TenantId = "Blue" }))
         {
-            (await blueQuery.LoadAsync<PartitionedTenantDoc>(blueId))!.Name.ShouldBe("blue");
+            (await blueQuery.LoadAsync<PartitionedTenantDoc>(blueId, TestContext.Current.CancellationToken))!.Name.ShouldBe("blue");
         }
     }
 
@@ -203,7 +203,7 @@ public class tenant_partitioned_documents_tests : IAsyncLifetime
         await using (var session = store.LightweightSession(new SessionOptions { TenantId = "Red" }))
         {
             session.ForTenant("Green").Store(new PartitionedTenantDoc { Id = greenId, Name = "green" });
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         var rows = await TestSchema.QueryAsync($"""
@@ -216,7 +216,7 @@ public class tenant_partitioned_documents_tests : IAsyncLifetime
         ((int)rows[0][0]).ShouldBe((int)rows[0][1]);
 
         await using var query = store.QuerySession(new SessionOptions { TenantId = "Green" });
-        (await query.LoadAsync<PartitionedTenantDoc>(greenId))!.Name.ShouldBe("green");
+        (await query.LoadAsync<PartitionedTenantDoc>(greenId, TestContext.Current.CancellationToken))!.Name.ShouldBe("green");
     }
 
     [Fact]
@@ -227,7 +227,7 @@ public class tenant_partitioned_documents_tests : IAsyncLifetime
         var docs = Enumerable.Range(1, 5)
             .Select(i => new PartitionedTenantDoc { Id = Guid.NewGuid(), Name = $"bulk-{i}" })
             .ToArray();
-        await store.Advanced.BulkInsertAsync(docs, BulkInsertMode.InsertsOnly, 2, "Bulky");
+        await store.Advanced.BulkInsertAsync(docs, BulkInsertMode.InsertsOnly, 2, "Bulky", TestContext.Current.CancellationToken);
 
         var rows = await TestSchema.QueryAsync($"""
             SELECT COUNT(*)
@@ -247,7 +247,7 @@ public class tenant_partitioned_documents_tests : IAsyncLifetime
         await using (var session = store.LightweightSession(new SessionOptions { TenantId = "Red" }))
         {
             session.Store(new OptedOutTenantDoc { Id = Guid.NewGuid(), Name = "plain" });
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         (await TestSchema.ColumnExistsAsync(Schema, "pc_doc_optedouttenantdoc", "tenant_ordinal"))
@@ -270,7 +270,7 @@ public class tenant_partitioned_documents_tests : IAsyncLifetime
         using var store = CreateStore(opts => opts.Schema.For<PartitionedTenantDoc>());
 
         // Materialize the registered document table (plus the shared registry) up front.
-        await store.Database.ApplyAllConfiguredChangesToDatabaseAsync();
+        await store.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         var statuses = await store.Advanced.AddPolecatManagedTenantsAsync(
             CancellationToken.None, "t1", "t2");
@@ -291,7 +291,7 @@ public class tenant_partitioned_documents_tests : IAsyncLifetime
         // Writes for an onboarded tenant flow straight through (cached or registry-resolved).
         await using var session = store.LightweightSession(new SessionOptions { TenantId = "t1" });
         session.Store(new PartitionedTenantDoc { Id = Guid.NewGuid(), Name = "onboarded" });
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
     }
 
     [Fact]
@@ -303,17 +303,17 @@ public class tenant_partitioned_documents_tests : IAsyncLifetime
         {
             session.Store(new PartitionedTenantDoc { Id = Guid.NewGuid(), Name = "doomed-1" });
             session.Store(new PartitionedTenantDoc { Id = Guid.NewGuid(), Name = "doomed-2" });
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using (var session = store.LightweightSession(new SessionOptions { TenantId = "Kept" }))
         {
             session.Store(new PartitionedTenantDoc { Id = Guid.NewGuid(), Name = "kept" });
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await store.Advanced.RemovePolecatManagedTenantsAsync(
-            ["Doomed"], TenantDropBehavior.DeleteData);
+            ["Doomed"], TenantDropBehavior.DeleteData, TestContext.Current.CancellationToken);
 
         // Doomed's rows are physically gone, Kept's remain; the registry row is dropped.
         var rows = await TestSchema.QueryAsync(
@@ -331,11 +331,11 @@ public class tenant_partitioned_documents_tests : IAsyncLifetime
         await using (var session = store.LightweightSession(new SessionOptions { TenantId = "Doomed" }))
         {
             session.Store(new PartitionedTenantDoc { Id = Guid.NewGuid(), Name = "reborn" });
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using var query = store.QuerySession(new SessionOptions { TenantId = "Doomed" });
-        var reborn = await query.Query<PartitionedTenantDoc>().ToListAsync();
+        var reborn = await query.Query<PartitionedTenantDoc>().ToListAsync(TestContext.Current.CancellationToken);
         reborn.Count.ShouldBe(1);
         reborn[0].Name.ShouldBe("reborn");
     }
@@ -348,10 +348,10 @@ public class tenant_partitioned_documents_tests : IAsyncLifetime
         await using (var session = store.LightweightSession(new SessionOptions { TenantId = "Merged" }))
         {
             session.Store(new PartitionedTenantDoc { Id = Guid.NewGuid(), Name = "merged" });
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
-        await store.Advanced.RemovePolecatManagedTenantsAsync(["Merged"]);
+        await store.Advanced.RemovePolecatManagedTenantsAsync(["Merged"], TestContext.Current.CancellationToken);
 
         // Historical merge-only semantics: the boundary is gone but the rows survive.
         var rows = await TestSchema.QueryAsync(
@@ -376,7 +376,7 @@ public class tenant_partitioned_documents_tests : IAsyncLifetime
         {
             session.Events.StartStream(Guid.NewGuid(), new QuestStarted("Shared Quest"));
             session.Store(new PartitionedTenantDoc { Id = Guid.NewGuid(), Name = "shared" });
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         // One registry row; pc_events, pc_streams, and the document table all stamp the SAME ordinal.

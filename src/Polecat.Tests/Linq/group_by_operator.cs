@@ -30,7 +30,7 @@ public class group_by_operator : OneOffConfigurationsContext
         var results = await query.Query<LinqTarget>()
             .GroupBy(x => x.Color)
             .Select(g => new { Color = g.Key, Count = g.Count() })
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(3);
         results.Single(x => x.Color == TargetColor.Blue).Count.ShouldBe(2);
@@ -49,7 +49,7 @@ public class group_by_operator : OneOffConfigurationsContext
         var results = await query.Query<LinqTarget>()
             .GroupBy(x => x.Color)
             .Select(g => new { Color = g.Key, Total = g.Sum(x => x.Age) })
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(3);
         results.Single(x => x.Color == TargetColor.Blue).Total.ShouldBe(30);
@@ -73,7 +73,7 @@ public class group_by_operator : OneOffConfigurationsContext
                 Min = g.Min(x => x.Age),
                 Max = g.Max(x => x.Age)
             })
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(3);
 
@@ -99,7 +99,7 @@ public class group_by_operator : OneOffConfigurationsContext
         var results = await query.Query<LinqTarget>()
             .GroupBy(x => x.Name)
             .Select(g => new { Key = g.Key, Count = g.Count() })
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(3);
         results.Single(x => x.Key == "Alpha").Count.ShouldBe(2);
@@ -117,7 +117,7 @@ public class group_by_operator : OneOffConfigurationsContext
             .Where(x => x.Age > 20)
             .GroupBy(x => x.Color)
             .Select(g => new { Color = g.Key, Count = g.Count() })
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         // Blue has 10, 20 -> both filtered out
         // Green has 30, 40, 50 -> 3 pass
@@ -137,7 +137,7 @@ public class group_by_operator : OneOffConfigurationsContext
             .GroupBy(x => x.Color)
             .Where(g => g.Count() > 1)
             .Select(g => new { Color = g.Key, Count = g.Count() })
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         // Blue=2, Green=3, Red=1 -> Red filtered by HAVING
         results.Count.ShouldBe(2);
@@ -153,7 +153,7 @@ public class group_by_operator : OneOffConfigurationsContext
         var results = await query.Query<LinqTarget>()
             .GroupBy(x => new { x.Color, x.Name })
             .Select(g => new { Color = g.Key.Color, Text = g.Key.Name, Count = g.Count() })
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         // Blue+Alpha=2, Green+Beta=2, Green+Gamma=1, Red+Gamma=1
         results.Count.ShouldBe(4);
@@ -172,7 +172,7 @@ public class group_by_operator : OneOffConfigurationsContext
         var results = await query.Query<LinqTarget>()
             .GroupBy(x => x.Color)
             .Select(g => new { Color = g.Key, Avg = g.Average(x => x.Score) })
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(3);
         results.Single(x => x.Color == TargetColor.Blue).Avg.ShouldBe(2.0, tolerance: 0.01);
@@ -189,7 +189,7 @@ public class group_by_operator : OneOffConfigurationsContext
         var results = await query.Query<LinqTarget>()
             .GroupBy(x => x.Color)
             .Select(g => g.Key)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(3);
         results.ShouldContain(TargetColor.Blue);
@@ -206,7 +206,7 @@ public class group_by_operator : OneOffConfigurationsContext
         var results = await query.Query<LinqTarget>()
             .GroupBy(x => x.Color)
             .Select(g => new { Color = g.Key, Count = g.LongCount() })
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(3);
         results.Single(x => x.Color == TargetColor.Blue).Count.ShouldBe(2L);

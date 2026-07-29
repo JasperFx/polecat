@@ -121,8 +121,8 @@ public class computed_column_index_usability_tests : OneOffConfigurationsContext
             FROM sys.computed_columns cc
             WHERE cc.object_id = OBJECT_ID('[{_schema()}].[{Table}]') AND cc.name = 'cc_bucketend';
             """;
-        await using var reader = await cmd.ExecuteReaderAsync();
-        (await reader.ReadAsync()).ShouldBeTrue();
+        await using var reader = await cmd.ExecuteReaderAsync(TestContext.Current.CancellationToken);
+        (await reader.ReadAsync(TestContext.Current.CancellationToken)).ShouldBeTrue();
         reader.GetBoolean(0).ShouldBeTrue();       // PERSISTED
         reader.GetString(1).ShouldBe("datetimeoffset");
     }
@@ -140,7 +140,7 @@ public class computed_column_index_usability_tests : OneOffConfigurationsContext
             {
                 Id = Guid.NewGuid(), ServiceName = "svc", BucketEnd = DateTimeOffset.UtcNow, Count = 7
             });
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using var conn = await OpenConnectionAsync();
@@ -150,8 +150,8 @@ public class computed_column_index_usability_tests : OneOffConfigurationsContext
             FROM sys.computed_columns cc
             WHERE cc.object_id = OBJECT_ID('[{_schema()}].[{Table}]') AND cc.name = 'cc_count';
             """;
-        await using var reader = await cmd.ExecuteReaderAsync();
-        (await reader.ReadAsync()).ShouldBeTrue();
+        await using var reader = await cmd.ExecuteReaderAsync(TestContext.Current.CancellationToken);
+        (await reader.ReadAsync(TestContext.Current.CancellationToken)).ShouldBeTrue();
         reader.GetBoolean(0).ShouldBeTrue(); // PERSISTED
         var definition = reader.GetString(1);
         if (ConnectionSource.SupportsNativeJson)
@@ -170,7 +170,7 @@ public class computed_column_index_usability_tests : OneOffConfigurationsContext
     public async Task string_equality_predicate_targets_the_computed_column()
     {
         ConfigureStore(opts => opts.Schema.For<IndexedMetric>().Index(x => x.ServiceName));
-        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync();
+        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         await using var session = theStore.QuerySession();
         var query = session.Query<IndexedMetric>().Where(x => x.ServiceName == "svc-A");
@@ -187,7 +187,7 @@ public class computed_column_index_usability_tests : OneOffConfigurationsContext
     public async Task datetimeoffset_range_predicate_targets_the_computed_column()
     {
         ConfigureStore(opts => opts.Schema.For<IndexedMetric>().Index(x => x.BucketEnd));
-        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync();
+        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         var cutoff = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
         await using var session = theStore.QuerySession();
@@ -204,7 +204,7 @@ public class computed_column_index_usability_tests : OneOffConfigurationsContext
         // keeps its normal typed locator. On native json storage (#217) that locator is the
         // RETURNING form; the point of this test is that it is NOT a computed-column (cc_) reference.
         ConfigureStore(opts => opts.Schema.For<IndexedMetric>().Index(x => x.ServiceName));
-        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync();
+        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         await using var session = theStore.QuerySession();
         var query = session.Query<IndexedMetric>().Where(x => x.Count == 5);
@@ -231,7 +231,7 @@ public class computed_column_index_usability_tests : OneOffConfigurationsContext
             {
                 Id = Guid.NewGuid(), ServiceName = "svc", BucketEnd = DateTimeOffset.UtcNow, Count = 1
             });
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using var conn = await OpenConnectionAsync();
@@ -243,9 +243,9 @@ public class computed_column_index_usability_tests : OneOffConfigurationsContext
             ORDER BY cc.name;
             """;
         var types = new Dictionary<string, string>();
-        await using (var reader = await cmd.ExecuteReaderAsync())
+        await using (var reader = await cmd.ExecuteReaderAsync(TestContext.Current.CancellationToken))
         {
-            while (await reader.ReadAsync()) types[reader.GetString(0)] = reader.GetString(1);
+            while (await reader.ReadAsync(TestContext.Current.CancellationToken)) types[reader.GetString(0)] = reader.GetString(1);
         }
 
         types["cc_servicename"].ShouldBe("varchar");
@@ -267,7 +267,7 @@ public class computed_column_index_usability_tests : OneOffConfigurationsContext
             session.Store(new IndexedMetric { Id = Guid.NewGuid(), ServiceName = "svc-A", BucketEnd = t0.AddHours(2), Count = 2 });
             session.Store(new IndexedMetric { Id = Guid.NewGuid(), ServiceName = "svc-A", BucketEnd = t0.AddHours(5), Count = 3 });
             session.Store(new IndexedMetric { Id = Guid.NewGuid(), ServiceName = "svc-B", BucketEnd = t0.AddHours(5), Count = 9 });
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         var cutoff = t0.AddHours(1);
@@ -276,7 +276,7 @@ public class computed_column_index_usability_tests : OneOffConfigurationsContext
             // WHERE ServiceName = 'svc-A' AND BucketEnd >= cutoff
             var rows = await session.Query<IndexedMetric>()
                 .Where(x => x.ServiceName == "svc-A" && x.BucketEnd >= cutoff)
-                .ToListAsync();
+                .ToListAsync(TestContext.Current.CancellationToken);
             rows.Count.ShouldBe(2);
             rows.ShouldAllBe(x => x.ServiceName == "svc-A" && x.BucketEnd >= cutoff);
         }
@@ -285,12 +285,12 @@ public class computed_column_index_usability_tests : OneOffConfigurationsContext
         await using (var session = theStore.LightweightSession())
         {
             session.DeleteWhere<IndexedMetric>(x => x.BucketEnd < cutoff);
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using (var session = theStore.QuerySession())
         {
-            var remaining = await session.Query<IndexedMetric>().ToListAsync();
+            var remaining = await session.Query<IndexedMetric>().ToListAsync(TestContext.Current.CancellationToken);
             remaining.Count.ShouldBe(3); // the single BucketEnd == t0 row was pruned
             remaining.ShouldAllBe(x => x.BucketEnd >= cutoff);
         }

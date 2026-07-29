@@ -18,23 +18,23 @@ public class modified_since_and_before_queries : IntegrationContext
         var doc1 = new LinqTarget { Id = Guid.NewGuid(), Name = "old-doc" };
 
         theSession.Store(doc1);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Small delay so second doc has a later last_modified
-        await Task.Delay(50);
+        await Task.Delay(50, TestContext.Current.CancellationToken);
         var cutoff = DateTimeOffset.UtcNow;
-        await Task.Delay(50);
+        await Task.Delay(50, TestContext.Current.CancellationToken);
 
         var doc2 = new LinqTarget { Id = Guid.NewGuid(), Name = "new-doc" };
         await using var session2 = theStore.LightweightSession();
         session2.Store(doc2);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
         var results = await query.Query<LinqTarget>()
             .ModifiedSince(cutoff)
             .Where(x => x.Id == doc1.Id || x.Id == doc2.Id)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(1);
         results[0].Id.ShouldBe(doc2.Id);
@@ -46,23 +46,23 @@ public class modified_since_and_before_queries : IntegrationContext
         var doc1 = new LinqTarget { Id = Guid.NewGuid(), Name = "early-doc" };
 
         theSession.Store(doc1);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Small delay so second doc has a later last_modified
-        await Task.Delay(50);
+        await Task.Delay(50, TestContext.Current.CancellationToken);
         var cutoff = DateTimeOffset.UtcNow;
-        await Task.Delay(50);
+        await Task.Delay(50, TestContext.Current.CancellationToken);
 
         var doc2 = new LinqTarget { Id = Guid.NewGuid(), Name = "late-doc" };
         await using var session2 = theStore.LightweightSession();
         session2.Store(doc2);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
         var results = await query.Query<LinqTarget>()
             .ModifiedBefore(cutoff)
             .Where(x => x.Id == doc1.Id || x.Id == doc2.Id)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(1);
         results[0].Id.ShouldBe(doc1.Id);
@@ -73,32 +73,32 @@ public class modified_since_and_before_queries : IntegrationContext
     {
         var doc1 = new LinqTarget { Id = Guid.NewGuid(), Name = "before-window" };
         theSession.Store(doc1);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
-        await Task.Delay(50);
+        await Task.Delay(50, TestContext.Current.CancellationToken);
         var start = DateTimeOffset.UtcNow;
-        await Task.Delay(50);
+        await Task.Delay(50, TestContext.Current.CancellationToken);
 
         var doc2 = new LinqTarget { Id = Guid.NewGuid(), Name = "in-window" };
         await using var session2 = theStore.LightweightSession();
         session2.Store(doc2);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
-        await Task.Delay(50);
+        await Task.Delay(50, TestContext.Current.CancellationToken);
         var end = DateTimeOffset.UtcNow;
-        await Task.Delay(50);
+        await Task.Delay(50, TestContext.Current.CancellationToken);
 
         var doc3 = new LinqTarget { Id = Guid.NewGuid(), Name = "after-window" };
         await using var session3 = theStore.LightweightSession();
         session3.Store(doc3);
-        await session3.SaveChangesAsync();
+        await session3.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
         var results = await query.Query<LinqTarget>()
             .ModifiedSince(start)
             .ModifiedBefore(end)
             .Where(x => x.Id == doc1.Id || x.Id == doc2.Id || x.Id == doc3.Id)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(1);
         results[0].Id.ShouldBe(doc2.Id);
@@ -109,23 +109,23 @@ public class modified_since_and_before_queries : IntegrationContext
     {
         var doc1 = new LinqTarget { Id = Guid.NewGuid(), Name = "old-count" };
         theSession.Store(doc1);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
-        await Task.Delay(50);
+        await Task.Delay(50, TestContext.Current.CancellationToken);
         var cutoff = DateTimeOffset.UtcNow;
-        await Task.Delay(50);
+        await Task.Delay(50, TestContext.Current.CancellationToken);
 
         var doc2 = new LinqTarget { Id = Guid.NewGuid(), Name = "new-count-a" };
         var doc3 = new LinqTarget { Id = Guid.NewGuid(), Name = "new-count-b" };
         await using var session2 = theStore.LightweightSession();
         session2.Store(doc2, doc3);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
         var count = await query.Query<LinqTarget>()
             .ModifiedSince(cutoff)
             .Where(x => x.Id == doc1.Id || x.Id == doc2.Id || x.Id == doc3.Id)
-            .CountAsync();
+            .CountAsync(TestContext.Current.CancellationToken);
 
         count.ShouldBe(2);
     }

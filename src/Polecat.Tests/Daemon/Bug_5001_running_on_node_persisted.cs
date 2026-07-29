@@ -22,7 +22,7 @@ public class Bug_5001_running_on_node_persisted : OneOffConfigurationsContext
     public async Task write_extended_progression_persists_running_on_node_and_telemetry()
     {
         ConfigureStore(opts => opts.Events.EnableExtendedProgressionTracking = true);
-        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync();
+        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         var table = theDatabase.Events.ProgressionTableName;
         const string shard = "Bug5001:All";
@@ -34,7 +34,7 @@ public class Bug_5001_running_on_node_persisted : OneOffConfigurationsContext
             var insert = seed.CreateCommand();
             insert.CommandText = $"INSERT INTO {table} (name, last_seq_id) VALUES (@name, 42);";
             insert.Parameters.AddWithValue("@name", shard);
-            await insert.ExecuteNonQueryAsync();
+            await insert.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
         }
 
         // #5001: the daemon publishes a ShardState carrying the running node + telemetry and drives this.
@@ -43,7 +43,7 @@ public class Bug_5001_running_on_node_persisted : OneOffConfigurationsContext
             AgentStatus = "Running",
             LastHeartbeat = DateTimeOffset.UtcNow,
             RunningOnNode = 7
-        });
+        }, TestContext.Current.CancellationToken);
 
         await using var read = await OpenConnectionAsync();
         var cmd = read.CreateCommand();
@@ -51,8 +51,8 @@ public class Bug_5001_running_on_node_persisted : OneOffConfigurationsContext
             $"SELECT running_on_node, agent_status, heartbeat, last_seq_id FROM {table} WHERE name = @name;";
         cmd.Parameters.AddWithValue("@name", shard);
 
-        await using var reader = await cmd.ExecuteReaderAsync();
-        (await reader.ReadAsync()).ShouldBeTrue();
+        await using var reader = await cmd.ExecuteReaderAsync(TestContext.Current.CancellationToken);
+        (await reader.ReadAsync(TestContext.Current.CancellationToken)).ShouldBeTrue();
 
         reader.IsDBNull(0).ShouldBeFalse("running_on_node must be persisted by WriteExtendedProgressionAsync");
         reader.GetInt32(0).ShouldBe(7);

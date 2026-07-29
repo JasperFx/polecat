@@ -29,12 +29,12 @@ public class bulk_insert_edge_cases : IntegrationContext
             Name = $"Versioned {i}"
         }).ToList();
 
-        await theStore.Advanced.BulkInsertAsync(docs);
+        await theStore.Advanced.BulkInsertAsync(docs, TestContext.Current.CancellationToken);
 
         await using var session = theStore.QuerySession();
         foreach (var doc in docs)
         {
-            var loaded = await session.LoadAsync<VersionedDoc>(doc.Id);
+            var loaded = await session.LoadAsync<VersionedDoc>(doc.Id, TestContext.Current.CancellationToken);
             loaded.ShouldNotBeNull();
             loaded.Name.ShouldBe(doc.Name);
         }
@@ -49,12 +49,12 @@ public class bulk_insert_edge_cases : IntegrationContext
             Name = $"Revisioned {i}"
         }).ToList();
 
-        await theStore.Advanced.BulkInsertAsync(docs);
+        await theStore.Advanced.BulkInsertAsync(docs, TestContext.Current.CancellationToken);
 
         await using var session = theStore.QuerySession();
         foreach (var doc in docs)
         {
-            var loaded = await session.LoadAsync<RevisionedDoc>(doc.Id);
+            var loaded = await session.LoadAsync<RevisionedDoc>(doc.Id, TestContext.Current.CancellationToken);
             loaded.ShouldNotBeNull();
             loaded.Name.ShouldBe(doc.Name);
         }
@@ -71,12 +71,12 @@ public class bulk_insert_edge_cases : IntegrationContext
             new SoftDeletedDoc { Id = Guid.NewGuid(), Name = "SD2", Number = 2 }
         };
 
-        await theStore.Advanced.BulkInsertAsync(docs);
+        await theStore.Advanced.BulkInsertAsync(docs, TestContext.Current.CancellationToken);
 
         await using var session = theStore.QuerySession();
         foreach (var doc in docs)
         {
-            var loaded = await session.LoadAsync<SoftDeletedDoc>(doc.Id);
+            var loaded = await session.LoadAsync<SoftDeletedDoc>(doc.Id, TestContext.Current.CancellationToken);
             loaded.ShouldNotBeNull();
             loaded.Name.ShouldBe(doc.Name);
         }
@@ -96,12 +96,12 @@ public class bulk_insert_edge_cases : IntegrationContext
         }).ToList();
 
         // Force 25 batches of 2
-        await theStore.Advanced.BulkInsertAsync(docs, BulkInsertMode.InsertsOnly, batchSize: 2);
+        await theStore.Advanced.BulkInsertAsync(docs, BulkInsertMode.InsertsOnly, batchSize: 2, token: TestContext.Current.CancellationToken);
 
         await using var session = theStore.QuerySession();
         foreach (var doc in docs)
         {
-            var loaded = await session.LoadAsync<User>(doc.Id);
+            var loaded = await session.LoadAsync<User>(doc.Id, TestContext.Current.CancellationToken);
             loaded.ShouldNotBeNull();
             loaded.FirstName.ShouldBe(doc.FirstName);
         }
@@ -116,7 +116,7 @@ public class bulk_insert_edge_cases : IntegrationContext
         var shared2 = new User { Id = Guid.NewGuid(), FirstName = "Shared2", LastName = "Orig", Age = 20 };
 
         // Insert first two
-        await theStore.Advanced.BulkInsertAsync(new[] { shared1, shared2 });
+        await theStore.Advanced.BulkInsertAsync(new[] { shared1, shared2 }, TestContext.Current.CancellationToken);
 
         // Now insert a mix of existing + new
         var newDoc = new User { Id = Guid.NewGuid(), FirstName = "Brand New", LastName = "Doc", Age = 30 };
@@ -124,17 +124,17 @@ public class bulk_insert_edge_cases : IntegrationContext
 
         await theStore.Advanced.BulkInsertAsync(
             new[] { updatedShared1, newDoc },
-            BulkInsertMode.IgnoreDuplicates);
+            BulkInsertMode.IgnoreDuplicates, token: TestContext.Current.CancellationToken);
 
         await using var session = theStore.QuerySession();
 
         // shared1 should still have original data (duplicate ignored)
-        var loaded1 = await session.LoadAsync<User>(shared1.Id);
+        var loaded1 = await session.LoadAsync<User>(shared1.Id, TestContext.Current.CancellationToken);
         loaded1!.FirstName.ShouldBe("Shared1");
         loaded1.Age.ShouldBe(10);
 
         // new doc should exist
-        var loadedNew = await session.LoadAsync<User>(newDoc.Id);
+        var loadedNew = await session.LoadAsync<User>(newDoc.Id, TestContext.Current.CancellationToken);
         loadedNew.ShouldNotBeNull();
         loadedNew.FirstName.ShouldBe("Brand New");
     }
@@ -146,17 +146,17 @@ public class bulk_insert_edge_cases : IntegrationContext
     {
         var id = Guid.NewGuid();
         var original = new User { Id = id, FirstName = "V1", LastName = "Test", Age = 1 };
-        await theStore.Advanced.BulkInsertAsync(new[] { original });
+        await theStore.Advanced.BulkInsertAsync(new[] { original }, TestContext.Current.CancellationToken);
 
         // Overwrite twice
         var v2 = new User { Id = id, FirstName = "V2", LastName = "Test", Age = 2 };
-        await theStore.Advanced.BulkInsertAsync(new[] { v2 }, BulkInsertMode.OverwriteExisting);
+        await theStore.Advanced.BulkInsertAsync(new[] { v2 }, BulkInsertMode.OverwriteExisting, token: TestContext.Current.CancellationToken);
 
         var v3 = new User { Id = id, FirstName = "V3", LastName = "Test", Age = 3 };
-        await theStore.Advanced.BulkInsertAsync(new[] { v3 }, BulkInsertMode.OverwriteExisting);
+        await theStore.Advanced.BulkInsertAsync(new[] { v3 }, BulkInsertMode.OverwriteExisting, token: TestContext.Current.CancellationToken);
 
         await using var session = theStore.QuerySession();
-        var loaded = await session.LoadAsync<User>(id);
+        var loaded = await session.LoadAsync<User>(id, TestContext.Current.CancellationToken);
         loaded!.FirstName.ShouldBe("V3");
     }
 
@@ -166,10 +166,10 @@ public class bulk_insert_edge_cases : IntegrationContext
     public async Task bulk_insert_single_item()
     {
         var user = new User { Id = Guid.NewGuid(), FirstName = "Solo", LastName = "Insert", Age = 42 };
-        await theStore.Advanced.BulkInsertAsync(new[] { user });
+        await theStore.Advanced.BulkInsertAsync(new[] { user }, TestContext.Current.CancellationToken);
 
         await using var session = theStore.QuerySession();
-        var loaded = await session.LoadAsync<User>(user.Id);
+        var loaded = await session.LoadAsync<User>(user.Id, TestContext.Current.CancellationToken);
         loaded.ShouldNotBeNull();
         loaded.FirstName.ShouldBe("Solo");
     }
@@ -187,8 +187,8 @@ public class bulk_insert_edge_cases : IntegrationContext
         var set2 = ids.Skip(5).Select(id => new User { Id = id, FirstName = "Set2", LastName = "B", Age = 2 }).ToList();
 
         // Both use IgnoreDuplicates so no errors on overlap
-        var task1 = theStore.Advanced.BulkInsertAsync(set1, BulkInsertMode.IgnoreDuplicates);
-        var task2 = theStore.Advanced.BulkInsertAsync(set2, BulkInsertMode.IgnoreDuplicates);
+        var task1 = theStore.Advanced.BulkInsertAsync(set1, BulkInsertMode.IgnoreDuplicates, token: TestContext.Current.CancellationToken);
+        var task2 = theStore.Advanced.BulkInsertAsync(set2, BulkInsertMode.IgnoreDuplicates, token: TestContext.Current.CancellationToken);
 
         await Task.WhenAll(task1, task2);
 
@@ -196,7 +196,7 @@ public class bulk_insert_edge_cases : IntegrationContext
         await using var session = theStore.QuerySession();
         foreach (var id in ids)
         {
-            var loaded = await session.LoadAsync<User>(id);
+            var loaded = await session.LoadAsync<User>(id, TestContext.Current.CancellationToken);
             loaded.ShouldNotBeNull();
         }
     }
@@ -211,7 +211,7 @@ public class bulk_insert_edge_cases : IntegrationContext
             Name = $"LongDoc-{Guid.NewGuid().ToString()[..8]}"
         }).ToList();
 
-        await theStore.Advanced.BulkInsertAsync(docs);
+        await theStore.Advanced.BulkInsertAsync(docs, TestContext.Current.CancellationToken);
 
         // HiLo should have assigned positive IDs
         foreach (var doc in docs)
@@ -225,7 +225,7 @@ public class bulk_insert_edge_cases : IntegrationContext
         await using var session = theStore.QuerySession();
         foreach (var doc in docs)
         {
-            var loaded = await session.LoadAsync<LongDoc>(doc.Id);
+            var loaded = await session.LoadAsync<LongDoc>(doc.Id, TestContext.Current.CancellationToken);
             loaded.ShouldNotBeNull();
             loaded.Name.ShouldBe(doc.Name);
         }

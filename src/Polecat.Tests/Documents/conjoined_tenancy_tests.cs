@@ -28,10 +28,10 @@ public class conjoined_tenancy_tests : IntegrationContext
 
         await using var redSession = store.LightweightSession(new SessionOptions { TenantId = "Red" });
         redSession.Store(new User { Id = id, FirstName = "Red", LastName = "User", Age = 30 });
-        await redSession.SaveChangesAsync();
+        await redSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var blueQuery = store.QuerySession(new SessionOptions { TenantId = "Blue" });
-        var loaded = await blueQuery.LoadAsync<User>(id);
+        var loaded = await blueQuery.LoadAsync<User>(id, TestContext.Current.CancellationToken);
         loaded.ShouldBeNull();
     }
 
@@ -43,19 +43,19 @@ public class conjoined_tenancy_tests : IntegrationContext
 
         await using var redSession = store.LightweightSession(new SessionOptions { TenantId = "Red" });
         redSession.Store(new User { Id = id, FirstName = "RedFirst", LastName = "RedLast", Age = 10 });
-        await redSession.SaveChangesAsync();
+        await redSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var blueSession = store.LightweightSession(new SessionOptions { TenantId = "Blue" });
         blueSession.Store(new User { Id = id, FirstName = "BlueFirst", LastName = "BlueLast", Age = 20 });
-        await blueSession.SaveChangesAsync();
+        await blueSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var redQuery = store.QuerySession(new SessionOptions { TenantId = "Red" });
-        var redUser = await redQuery.LoadAsync<User>(id);
+        var redUser = await redQuery.LoadAsync<User>(id, TestContext.Current.CancellationToken);
         redUser.ShouldNotBeNull();
         redUser.FirstName.ShouldBe("RedFirst");
 
         await using var blueQuery = store.QuerySession(new SessionOptions { TenantId = "Blue" });
-        var blueUser = await blueQuery.LoadAsync<User>(id);
+        var blueUser = await blueQuery.LoadAsync<User>(id, TestContext.Current.CancellationToken);
         blueUser.ShouldNotBeNull();
         blueUser.FirstName.ShouldBe("BlueFirst");
     }
@@ -69,26 +69,26 @@ public class conjoined_tenancy_tests : IntegrationContext
         // Store same doc in both tenants
         await using var redSession = store.LightweightSession(new SessionOptions { TenantId = "Red" });
         redSession.Store(new User { Id = id, FirstName = "Red", LastName = "User", Age = 1 });
-        await redSession.SaveChangesAsync();
+        await redSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var blueSession = store.LightweightSession(new SessionOptions { TenantId = "Blue" });
         blueSession.Store(new User { Id = id, FirstName = "Blue", LastName = "User", Age = 2 });
-        await blueSession.SaveChangesAsync();
+        await blueSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Delete as Red
         await using var redDelete = store.LightweightSession(new SessionOptions { TenantId = "Red" });
         redDelete.Delete<User>(id);
-        await redDelete.SaveChangesAsync();
+        await redDelete.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Blue's doc should still exist
         await using var blueQuery = store.QuerySession(new SessionOptions { TenantId = "Blue" });
-        var blueUser = await blueQuery.LoadAsync<User>(id);
+        var blueUser = await blueQuery.LoadAsync<User>(id, TestContext.Current.CancellationToken);
         blueUser.ShouldNotBeNull();
         blueUser.FirstName.ShouldBe("Blue");
 
         // Red's doc should be gone
         await using var redQuery = store.QuerySession(new SessionOptions { TenantId = "Red" });
-        var redUser = await redQuery.LoadAsync<User>(id);
+        var redUser = await redQuery.LoadAsync<User>(id, TestContext.Current.CancellationToken);
         redUser.ShouldBeNull();
     }
 
@@ -100,20 +100,20 @@ public class conjoined_tenancy_tests : IntegrationContext
 
         await using var redSession = store.LightweightSession(new SessionOptions { TenantId = "Red" });
         redSession.Insert(new User { Id = id, FirstName = "Red", LastName = "Insert", Age = 1 });
-        await redSession.SaveChangesAsync();
+        await redSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Same ID in different tenant should not conflict
         await using var blueSession = store.LightweightSession(new SessionOptions { TenantId = "Blue" });
         blueSession.Insert(new User { Id = id, FirstName = "Blue", LastName = "Insert", Age = 2 });
-        await blueSession.SaveChangesAsync();
+        await blueSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var redQuery = store.QuerySession(new SessionOptions { TenantId = "Red" });
-        var red = await redQuery.LoadAsync<User>(id);
+        var red = await redQuery.LoadAsync<User>(id, TestContext.Current.CancellationToken);
         red.ShouldNotBeNull();
         red.FirstName.ShouldBe("Red");
 
         await using var blueQuery = store.QuerySession(new SessionOptions { TenantId = "Blue" });
-        var blue = await blueQuery.LoadAsync<User>(id);
+        var blue = await blueQuery.LoadAsync<User>(id, TestContext.Current.CancellationToken);
         blue.ShouldNotBeNull();
         blue.FirstName.ShouldBe("Blue");
     }
@@ -127,27 +127,27 @@ public class conjoined_tenancy_tests : IntegrationContext
         // Insert in both tenants
         await using var redSession = store.LightweightSession(new SessionOptions { TenantId = "Red" });
         redSession.Insert(new User { Id = id, FirstName = "Original", LastName = "Red", Age = 1 });
-        await redSession.SaveChangesAsync();
+        await redSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var blueSession = store.LightweightSession(new SessionOptions { TenantId = "Blue" });
         blueSession.Insert(new User { Id = id, FirstName = "Original", LastName = "Blue", Age = 2 });
-        await blueSession.SaveChangesAsync();
+        await blueSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Update only Red
         await using var redUpdate = store.LightweightSession(new SessionOptions { TenantId = "Red" });
         redUpdate.Update(new User { Id = id, FirstName = "Updated", LastName = "Red", Age = 99 });
-        await redUpdate.SaveChangesAsync();
+        await redUpdate.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Blue should be unchanged
         await using var blueQuery = store.QuerySession(new SessionOptions { TenantId = "Blue" });
-        var blue = await blueQuery.LoadAsync<User>(id);
+        var blue = await blueQuery.LoadAsync<User>(id, TestContext.Current.CancellationToken);
         blue.ShouldNotBeNull();
         blue.FirstName.ShouldBe("Original");
         blue.LastName.ShouldBe("Blue");
 
         // Red should be updated
         await using var redQuery = store.QuerySession(new SessionOptions { TenantId = "Red" });
-        var red = await redQuery.LoadAsync<User>(id);
+        var red = await redQuery.LoadAsync<User>(id, TestContext.Current.CancellationToken);
         red.ShouldNotBeNull();
         red.FirstName.ShouldBe("Updated");
     }
@@ -162,20 +162,20 @@ public class conjoined_tenancy_tests : IntegrationContext
         await using var redSession = store.LightweightSession(new SessionOptions { TenantId = "Red" });
         redSession.Store(new User { Id = id1, FirstName = "Red1", LastName = "User", Age = 1 });
         redSession.Store(new User { Id = id2, FirstName = "Red2", LastName = "User", Age = 2 });
-        await redSession.SaveChangesAsync();
+        await redSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var blueSession = store.LightweightSession(new SessionOptions { TenantId = "Blue" });
         blueSession.Store(new User { Id = id1, FirstName = "Blue1", LastName = "User", Age = 3 });
-        await blueSession.SaveChangesAsync();
+        await blueSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Red should see both
         await using var redQuery = store.QuerySession(new SessionOptions { TenantId = "Red" });
-        var redDocs = await redQuery.LoadManyAsync<User>(new[] { id1, id2 });
+        var redDocs = await redQuery.LoadManyAsync<User>(new[] { id1, id2 }, TestContext.Current.CancellationToken);
         redDocs.Count.ShouldBe(2);
 
         // Blue should only see one
         await using var blueQuery = store.QuerySession(new SessionOptions { TenantId = "Blue" });
-        var blueDocs = await blueQuery.LoadManyAsync<User>(new[] { id1, id2 });
+        var blueDocs = await blueQuery.LoadManyAsync<User>(new[] { id1, id2 }, TestContext.Current.CancellationToken);
         blueDocs.Count.ShouldBe(1);
         blueDocs[0].FirstName.ShouldBe("Blue1");
     }

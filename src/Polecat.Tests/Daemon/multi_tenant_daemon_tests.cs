@@ -24,10 +24,10 @@ public class multi_tenant_daemon_tests : IntegrationContext
         theSession.Events.StartStream(streamId,
             new QuestStarted("Default Tenant Quest"),
             new MembersJoined(1, "Town", ["Alice"]));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
         events.Count.ShouldBe(2);
         events[0].TenantId.ShouldBe("*DEFAULT*");
     }
@@ -49,13 +49,13 @@ public class multi_tenant_daemon_tests : IntegrationContext
             new MembersJoined(1, "City", ["Bob"]),
             new MonsterSlain("Dragon", 100));
 
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events1 = await query.Events.FetchStreamAsync(stream1);
+        var events1 = await query.Events.FetchStreamAsync(stream1, token: TestContext.Current.CancellationToken);
         events1.Count.ShouldBe(2);
 
-        var events2 = await query.Events.FetchStreamAsync(stream2);
+        var events2 = await query.Events.FetchStreamAsync(stream2, token: TestContext.Current.CancellationToken);
         events2.Count.ShouldBe(3);
     }
 
@@ -66,16 +66,16 @@ public class multi_tenant_daemon_tests : IntegrationContext
     {
         var stream1 = Guid.NewGuid();
         theSession.Events.StartStream(stream1, new QuestStarted("Seq 1"));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         var stream2 = Guid.NewGuid();
         session2.Events.StartStream(stream2, new QuestStarted("Seq 2"));
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events1 = await query.Events.FetchStreamAsync(stream1);
-        var events2 = await query.Events.FetchStreamAsync(stream2);
+        var events1 = await query.Events.FetchStreamAsync(stream1, token: TestContext.Current.CancellationToken);
+        var events2 = await query.Events.FetchStreamAsync(stream2, token: TestContext.Current.CancellationToken);
 
         events1[0].Sequence.ShouldBeGreaterThan(0);
         events2[0].Sequence.ShouldBeGreaterThan(events1[0].Sequence);
@@ -92,12 +92,12 @@ public class multi_tenant_daemon_tests : IntegrationContext
         theSession.Store(new User { Id = userId, FirstName = "Atomic", LastName = "Save", Age = 30 });
         theSession.Events.StartStream(streamId, new QuestStarted("Atomic Quest"));
 
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Both should exist
         await using var query = theStore.QuerySession();
-        (await query.LoadAsync<User>(userId)).ShouldNotBeNull();
-        (await query.Events.FetchStreamAsync(streamId)).Count.ShouldBe(1);
+        (await query.LoadAsync<User>(userId, TestContext.Current.CancellationToken)).ShouldNotBeNull();
+        (await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken)).Count.ShouldBe(1);
     }
 
     // ===== High water mark advances =====
@@ -108,7 +108,7 @@ public class multi_tenant_daemon_tests : IntegrationContext
         var hwBefore = await theStore.Database.FetchHighestEventSequenceNumber(CancellationToken.None);
 
         theSession.Events.StartStream(Guid.NewGuid(), new QuestStarted("HWM Test"));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var hwAfter = await theStore.Database.FetchHighestEventSequenceNumber(CancellationToken.None);
         hwAfter.ShouldBeGreaterThan(hwBefore);
@@ -123,22 +123,22 @@ public class multi_tenant_daemon_tests : IntegrationContext
 
         // Session 1: start stream
         theSession.Events.StartStream(streamId, new QuestStarted("Version Test"));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Session 2: append
         await using var session2 = theStore.LightweightSession();
         session2.Events.Append(streamId, new MembersJoined(1, "Town", ["A"]));
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Session 3: append more
         await using var session3 = theStore.LightweightSession();
         session3.Events.Append(streamId,
             new MembersJoined(2, "City", ["B"]),
             new MonsterSlain("Goblin", 10));
-        await session3.SaveChangesAsync();
+        await session3.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
         events.Count.ShouldBe(4);
 
         // Verify version sequence is continuous

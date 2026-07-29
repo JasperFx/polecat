@@ -70,7 +70,7 @@ public class initial_data_host_startup_tests
         // Seeding ran — and the document table was created on the fly by the seeder.
         var store = provider.GetRequiredService<IDocumentStore>();
         await using var query = store.QuerySession();
-        var doc = await query.LoadAsync<SeededDoc>(SeededId);
+        var doc = await query.LoadAsync<SeededDoc>(SeededId, TestContext.Current.CancellationToken);
         doc.ShouldNotBeNull();
         doc!.Name.ShouldBe("seeded");
     }

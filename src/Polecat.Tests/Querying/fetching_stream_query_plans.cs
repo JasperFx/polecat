@@ -25,7 +25,7 @@ public class fetching_stream_query_plans : IntegrationContext
         var streamId = await StartQuestStreamAsync();
 
         await using var query = theStore.QuerySession();
-        var state = await query.QueryByPlanAsync(new FetchStreamStatePlan(streamId));
+        var state = await query.QueryByPlanAsync(new FetchStreamStatePlan(streamId), TestContext.Current.CancellationToken);
 
         state.ShouldNotBeNull();
         state.Id.ShouldBe(streamId);
@@ -41,7 +41,7 @@ public class fetching_stream_query_plans : IntegrationContext
         await using var query = theStore.QuerySession();
         var batch = query.CreateBatchQuery();
         var fetcher = batch.QueryByPlan(new FetchStreamStatePlan(streamId));
-        await batch.Execute();
+        await batch.Execute(TestContext.Current.CancellationToken);
 
         var state = await fetcher;
         state.ShouldNotBeNull();
@@ -54,11 +54,11 @@ public class fetching_stream_query_plans : IntegrationContext
     {
         await using var query = theStore.QuerySession();
 
-        (await query.QueryByPlanAsync(new FetchStreamStatePlan(Guid.NewGuid()))).ShouldBeNull();
+        (await query.QueryByPlanAsync(new FetchStreamStatePlan(Guid.NewGuid()), TestContext.Current.CancellationToken)).ShouldBeNull();
 
         var batch = query.CreateBatchQuery();
         var fetcher = batch.QueryByPlan(new FetchStreamStatePlan(Guid.NewGuid()));
-        await batch.Execute();
+        await batch.Execute(TestContext.Current.CancellationToken);
         (await fetcher).ShouldBeNull();
     }
 
@@ -68,7 +68,7 @@ public class fetching_stream_query_plans : IntegrationContext
         var streamId = await StartQuestStreamAsync();
 
         await using var query = theStore.QuerySession();
-        var events = await query.QueryByPlanAsync(new FetchStreamPlan(streamId));
+        var events = await query.QueryByPlanAsync(new FetchStreamPlan(streamId), TestContext.Current.CancellationToken);
 
         events.Count.ShouldBe(3);
         events.Select(x => x.Version).ShouldBe([1, 2, 3]);
@@ -83,7 +83,7 @@ public class fetching_stream_query_plans : IntegrationContext
         await using var query = theStore.QuerySession();
         var batch = query.CreateBatchQuery();
         var fetcher = batch.QueryByPlan(new FetchStreamPlan(streamId));
-        await batch.Execute();
+        await batch.Execute(TestContext.Current.CancellationToken);
 
         var events = await fetcher;
         events.Count.ShouldBe(3);
@@ -100,12 +100,12 @@ public class fetching_stream_query_plans : IntegrationContext
 
         // Standalone and batched must apply the filter identically — the batched item composes its own
         // SQL, so the cap is the thing most likely to drift between the two paths.
-        var standalone = await query.QueryByPlanAsync(new FetchStreamPlan(streamId, version: 2));
+        var standalone = await query.QueryByPlanAsync(new FetchStreamPlan(streamId, version: 2), TestContext.Current.CancellationToken);
         standalone.Count.ShouldBe(2);
 
         var batch = query.CreateBatchQuery();
         var fetcher = batch.QueryByPlan(new FetchStreamPlan(streamId, version: 2));
-        await batch.Execute();
+        await batch.Execute(TestContext.Current.CancellationToken);
         (await fetcher).Count.ShouldBe(2);
     }
 
@@ -117,7 +117,7 @@ public class fetching_stream_query_plans : IntegrationContext
         await using var query = theStore.QuerySession();
         var batch = query.CreateBatchQuery();
         var fetcher = batch.QueryByPlan(new FetchStreamPlan(streamId, fromVersion: 3));
-        await batch.Execute();
+        await batch.Execute(TestContext.Current.CancellationToken);
 
         var events = await fetcher;
         events.Count.ShouldBe(1);
@@ -129,11 +129,11 @@ public class fetching_stream_query_plans : IntegrationContext
     {
         await using var query = theStore.QuerySession();
 
-        (await query.QueryByPlanAsync(new FetchStreamPlan(Guid.NewGuid()))).ShouldBeEmpty();
+        (await query.QueryByPlanAsync(new FetchStreamPlan(Guid.NewGuid()), TestContext.Current.CancellationToken)).ShouldBeEmpty();
 
         var batch = query.CreateBatchQuery();
         var fetcher = batch.QueryByPlan(new FetchStreamPlan(Guid.NewGuid()));
-        await batch.Execute();
+        await batch.Execute(TestContext.Current.CancellationToken);
         (await fetcher).ShouldBeEmpty();
     }
 
@@ -146,7 +146,7 @@ public class fetching_stream_query_plans : IntegrationContext
         await using (var session = theStore.LightweightSession())
         {
             session.Store(target);
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using var query = theStore.QuerySession();
@@ -154,7 +154,7 @@ public class fetching_stream_query_plans : IntegrationContext
         var stateFetcher = batch.QueryByPlan(new FetchStreamStatePlan(streamId));
         var eventsFetcher = batch.QueryByPlan(new FetchStreamPlan(streamId));
         var docFetcher = batch.Load<Target>(target.Id);
-        await batch.Execute();
+        await batch.Execute(TestContext.Current.CancellationToken);
 
         (await stateFetcher)!.Version.ShouldBe(3);
         (await eventsFetcher).Count.ShouldBe(3);
@@ -209,12 +209,12 @@ public class fetching_stream_query_plans_by_string_key : IAsyncLifetime
         await using (var session = _store.LightweightSession())
         {
             session.Events.StartStream(streamKey, new QuestStarted("A"), new QuestStarted("B"));
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using var query = _store.QuerySession();
 
-        var state = await query.QueryByPlanAsync(new FetchStreamStatePlan(streamKey));
+        var state = await query.QueryByPlanAsync(new FetchStreamStatePlan(streamKey), TestContext.Current.CancellationToken);
         state.ShouldNotBeNull();
         state.Key.ShouldBe(streamKey);
         state.Version.ShouldBe(2);
@@ -222,7 +222,7 @@ public class fetching_stream_query_plans_by_string_key : IAsyncLifetime
         var batch = query.CreateBatchQuery();
         var stateFetcher = batch.QueryByPlan(new FetchStreamStatePlan(streamKey));
         var eventsFetcher = batch.QueryByPlan(new FetchStreamPlan(streamKey));
-        await batch.Execute();
+        await batch.Execute(TestContext.Current.CancellationToken);
 
         (await stateFetcher)!.Key.ShouldBe(streamKey);
         var events = await eventsFetcher;

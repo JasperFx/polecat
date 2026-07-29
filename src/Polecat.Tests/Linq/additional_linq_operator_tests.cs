@@ -59,7 +59,7 @@ public class additional_linq_operator_tests : OneOffConfigurationsContext
         await using var query = theStore.QuerySession();
         var results = await query.Query<LinqTarget>()
             .Where(x => !(x.Name == "Alice" && x.Age == 25))
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         // All except Alice
         results.Count.ShouldBe(4);
@@ -74,7 +74,7 @@ public class additional_linq_operator_tests : OneOffConfigurationsContext
         await using var query = theStore.QuerySession();
         var results = await query.Query<LinqTarget>()
             .Where(x => !(x.Name == "Alice" || x.Name == "Bob"))
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         // Charlie, Diana, Eve
         results.Count.ShouldBe(3);
@@ -93,7 +93,7 @@ public class additional_linq_operator_tests : OneOffConfigurationsContext
         // Even BigNumbers (2, 4) that are also < 5
         var results = await query.Query<LinqTarget>()
             .Where(x => x.BigNumber % 2 == 0 && x.BigNumber < 5)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(2);
         results.Select(r => r.BigNumber).OrderBy(x => x).ShouldBe([2, 4]);
@@ -108,7 +108,7 @@ public class additional_linq_operator_tests : OneOffConfigurationsContext
         // Reversed form: 0 == x.BigNumber % 2
         var results = await query.Query<LinqTarget>()
             .Where(x => 0 == x.BigNumber % 2)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(2);
         results.Select(r => r.BigNumber).OrderBy(x => x).ShouldBe([2, 4]);
@@ -124,7 +124,7 @@ public class additional_linq_operator_tests : OneOffConfigurationsContext
         await using var query = theStore.QuerySession();
         var result = await query.Query<LinqTarget>()
             .OrderBy(x => x.Age)
-            .LastAsync();
+            .LastAsync(TestContext.Current.CancellationToken);
 
         // Last by ascending Age = Eve (45)
         result.Name.ShouldBe("Eve");
@@ -139,7 +139,7 @@ public class additional_linq_operator_tests : OneOffConfigurationsContext
         var result = await query.Query<LinqTarget>()
             .OrderBy(x => x.Age)
             .Where(x => x.Name == "Nobody")
-            .LastOrDefaultAsync();
+            .LastOrDefaultAsync(TestContext.Current.CancellationToken);
 
         result.ShouldBeNull();
     }
@@ -152,7 +152,7 @@ public class additional_linq_operator_tests : OneOffConfigurationsContext
         await using var query = theStore.QuerySession();
         var result = await query.Query<LinqTarget>()
             .OrderBy(x => x.Age)
-            .LastAsync(x => x.IsActive);
+            .LastAsync(x => x.IsActive, TestContext.Current.CancellationToken);
 
         // Active people ordered by Age: Alice(25), Charlie(35), Diana(40)
         // Last active = Diana
@@ -167,7 +167,7 @@ public class additional_linq_operator_tests : OneOffConfigurationsContext
         await using var query = theStore.QuerySession();
         var result = await query.Query<LinqTarget>()
             .OrderByDescending(x => x.Price)
-            .LastOrDefaultAsync();
+            .LastOrDefaultAsync(TestContext.Current.CancellationToken);
 
         // Descending by Price: Eve(500), Diana(400), Charlie(300), Bob(200), Alice(100)
         // Last = Alice (lowest price)
@@ -185,7 +185,7 @@ public class additional_linq_operator_tests : OneOffConfigurationsContext
         await using var query = theStore.QuerySession();
         var results = await query.Query<LinqTarget>()
             .Where(x => x.Age.Equals(30))
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(1);
         results[0].Name.ShouldBe("Bob");
@@ -200,12 +200,12 @@ public class additional_linq_operator_tests : OneOffConfigurationsContext
         await using var session = theStore.LightweightSession();
         session.Store(new LinqTarget { Id = targetId, Name = "Target", Age = 1 });
         session.Store(new LinqTarget { Id = Guid.NewGuid(), Name = "Other", Age = 2 });
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
         var results = await query.Query<LinqTarget>()
             .Where(x => x.Id.Equals(targetId))
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(1);
         results[0].Name.ShouldBe("Target");
@@ -219,7 +219,7 @@ public class additional_linq_operator_tests : OneOffConfigurationsContext
         await using var query = theStore.QuerySession();
         var results = await query.Query<LinqTarget>()
             .Where(x => x.Age.Equals(25) && x.IsActive.Equals(true))
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(1);
         results[0].Name.ShouldBe("Alice");
@@ -235,7 +235,7 @@ public class additional_linq_operator_tests : OneOffConfigurationsContext
         await using var query = theStore.QuerySession();
         var results = await query.Query<LinqTarget>()
             .Where(x => x.NullableNumber > 15)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         // Bob (20) and Diana (30)
         results.Count.ShouldBe(2);
@@ -249,7 +249,7 @@ public class additional_linq_operator_tests : OneOffConfigurationsContext
         await using var query = theStore.QuerySession();
         var results = await query.Query<LinqTarget>()
             .Where(x => x.NullableNumber == null)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         // Charlie and Eve
         results.Count.ShouldBe(2);
@@ -263,7 +263,7 @@ public class additional_linq_operator_tests : OneOffConfigurationsContext
         await using var query = theStore.QuerySession();
         var results = await query.Query<LinqTarget>()
             .Where(x => !x.NullableNumber.HasValue)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         // Charlie and Eve
         results.Count.ShouldBe(2);
@@ -277,7 +277,7 @@ public class additional_linq_operator_tests : OneOffConfigurationsContext
         await using var query = theStore.QuerySession();
         var results = await query.Query<LinqTarget>()
             .Where(x => x.NullableNumber.HasValue)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         // Alice (10), Bob (20), Diana (30)
         results.Count.ShouldBe(3);
@@ -291,7 +291,7 @@ public class additional_linq_operator_tests : OneOffConfigurationsContext
         await using var query = theStore.QuerySession();
         var results = await query.Query<LinqTarget>()
             .Where(x => !x.NullableBoolean.HasValue)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         // Charlie and Eve
         results.Count.ShouldBe(2);
@@ -305,7 +305,7 @@ public class additional_linq_operator_tests : OneOffConfigurationsContext
         await using var query = theStore.QuerySession();
         var results = await query.Query<LinqTarget>()
             .Where(x => x.NullableBoolean != true)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         // Bob (false), Charlie (null), Eve (null) — depends on SQL NULL comparison behavior
         // In SQL, NULL != true evaluates to UNKNOWN (excluded from results)
@@ -322,7 +322,7 @@ public class additional_linq_operator_tests : OneOffConfigurationsContext
         await using var query = theStore.QuerySession();
         var results = await query.Query<LinqTarget>()
             .Where(x => !x.NullableDateTime.HasValue || x.NullableDateTime > new DateTime(2025, 1, 1))
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         // No value: Charlie, Eve. After 2025: Diana (2030-12-31) = 3
         results.Count.ShouldBe(3);
@@ -336,7 +336,7 @@ public class additional_linq_operator_tests : OneOffConfigurationsContext
         await using var query = theStore.QuerySession();
         var count = await query.Query<LinqTarget>()
             .Where(x => !x.NullableBoolean.HasValue)
-            .CountAsync();
+            .CountAsync(TestContext.Current.CancellationToken);
 
         count.ShouldBe(2);
     }

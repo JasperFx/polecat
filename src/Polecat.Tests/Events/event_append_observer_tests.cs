@@ -28,7 +28,7 @@ public class event_append_observer_tests : IntegrationContext
 
         var streamId = Guid.NewGuid();
         theSession.Events.StartStream(streamId, new QuestStarted("Observed"));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // First commit notified once, carrying that commit's event with self-describing metadata.
         observed.Count.ShouldBe(1);
@@ -40,7 +40,7 @@ public class event_append_observer_tests : IntegrationContext
 
         // A second commit notifies again with only that commit's events.
         theSession.Events.Append(streamId, new MonsterSlain("Dragon", 10));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         observed.Count.ShouldBe(2);
         observed[1].Count.ShouldBe(1);
@@ -61,7 +61,7 @@ public class event_append_observer_tests : IntegrationContext
 
         // A document-only unit of work still commits, but appends no events.
         theSession.Store(new ObserverDoc { Id = Guid.NewGuid(), Name = "no events" });
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         calls.ShouldBe(0);
     }
@@ -83,7 +83,7 @@ public class event_append_observer_tests : IntegrationContext
         await Should.NotThrowAsync(async () => await theSession.SaveChangesAsync());
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
         events.Count.ShouldBe(1);
     }
 }

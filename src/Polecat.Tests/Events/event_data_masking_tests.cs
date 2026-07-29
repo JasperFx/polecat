@@ -26,15 +26,15 @@ public class event_data_masking_tests : IntegrationContext
         theSession.Events.StartStream(streamId,
             new PersonCreated("Alice", "alice@example.com", "123-45-6789"),
             new PersonUpdated("alice-new@example.com"));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await theStore.Advanced.ApplyEventDataMasking(masking =>
         {
             masking.IncludeStream(streamId);
-        });
+        }, TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
         events.Count.ShouldBe(2);
 
         var created = events[0].Data.ShouldBeOfType<PersonCreated>();
@@ -58,15 +58,15 @@ public class event_data_masking_tests : IntegrationContext
         theSession.Events.StartStream(streamId,
             new PersonCreated("Charlie", "charlie@test.com", "111-22-3333"),
             new PersonCreated("Diana", "diana@test.com", "444-55-6666"));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await theStore.Advanced.ApplyEventDataMasking(masking =>
         {
             masking.IncludeStream(streamId, e => e.Version == 1);
-        });
+        }, TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
 
         var first = events[0].Data.ShouldBeOfType<PersonCreated>();
         first.Email.ShouldBe("***");
@@ -87,15 +87,15 @@ public class event_data_masking_tests : IntegrationContext
         theSession.Events.StartStream(streamId,
             new PersonCreated("Eve", "eve@test.com", "000-00-0000"),
             new PersonUpdated("eve-new@test.com"));
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await theStore.Advanced.ApplyEventDataMasking(masking =>
         {
             masking.IncludeStream(streamId);
-        });
+        }, TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId);
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
 
         var created = events[0].Data.ShouldBeOfType<PersonCreated>();
         created.Email.ShouldBe("eve@test.com");

@@ -89,7 +89,7 @@ public class document_index_tests : IntegrationContext
 
         var product = new IndexedProduct { Id = Guid.NewGuid(), Sku = "SKU-001", Category = "Tools" };
         theSession.Store(product);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Verify index exists
         await using var conn = await OpenConnectionAsync();
@@ -99,7 +99,7 @@ public class document_index_tests : IntegrationContext
             WHERE name = 'ix_pc_doc_indexedproduct_sku'
               AND object_id = OBJECT_ID('[idx_single].[pc_doc_indexedproduct]')
             """;
-        var count = (int)(await cmd.ExecuteScalarAsync())!;
+        var count = (int)(await cmd.ExecuteScalarAsync(TestContext.Current.CancellationToken))!;
         count.ShouldBe(1);
     }
 
@@ -117,7 +117,7 @@ public class document_index_tests : IntegrationContext
 
         var p1 = new IndexedProduct { Id = Guid.NewGuid(), Sku = "A", Email = $"test-{Guid.NewGuid()}@example.com" };
         theSession.Store(p1);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Verify unique index exists
         await using var conn = await OpenConnectionAsync();
@@ -127,7 +127,7 @@ public class document_index_tests : IntegrationContext
             WHERE name = 'ux_pc_doc_indexedproduct_email'
               AND object_id = OBJECT_ID('[idx_unique].[pc_doc_indexedproduct]')
             """;
-        var isUnique = await cmd.ExecuteScalarAsync();
+        var isUnique = await cmd.ExecuteScalarAsync(TestContext.Current.CancellationToken);
         isUnique.ShouldNotBeNull();
         ((bool)isUnique).ShouldBeTrue();
     }
@@ -147,7 +147,7 @@ public class document_index_tests : IntegrationContext
         var uniqueEmail = $"dupe-{Guid.NewGuid()}@example.com";
         var p1 = new IndexedProduct { Id = Guid.NewGuid(), Sku = "A", Email = uniqueEmail };
         theSession.Store(p1);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Second insert with same email should fail
         await using var session2 = theStore.LightweightSession();
@@ -172,7 +172,7 @@ public class document_index_tests : IntegrationContext
 
         var product = new IndexedProduct { Id = Guid.NewGuid(), Sku = "SKU-002", Category = "Hardware" };
         theSession.Store(product);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var conn = await OpenConnectionAsync();
         await using var cmd = conn.CreateCommand();
@@ -181,7 +181,7 @@ public class document_index_tests : IntegrationContext
             WHERE name = 'ix_pc_doc_indexedproduct_category_sku'
               AND object_id = OBJECT_ID('[idx_composite].[pc_doc_indexedproduct]')
             """;
-        var count = (int)(await cmd.ExecuteScalarAsync())!;
+        var count = (int)(await cmd.ExecuteScalarAsync(TestContext.Current.CancellationToken))!;
         count.ShouldBe(1);
     }
 
@@ -197,7 +197,7 @@ public class document_index_tests : IntegrationContext
 
         var product = new IndexedProduct { Id = Guid.NewGuid(), Sku = "SKU-003", Category = "Plumbing" };
         theSession.Store(product);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var conn = await OpenConnectionAsync();
         await using var cmd = conn.CreateCommand();
@@ -206,7 +206,7 @@ public class document_index_tests : IntegrationContext
             WHERE name = 'my_custom_index'
               AND object_id = OBJECT_ID('[idx_custom_name].[pc_doc_indexedproduct]')
             """;
-        var count = (int)(await cmd.ExecuteScalarAsync())!;
+        var count = (int)(await cmd.ExecuteScalarAsync(TestContext.Current.CancellationToken))!;
         count.ShouldBe(1);
     }
 
@@ -229,7 +229,7 @@ public class document_index_tests : IntegrationContext
 
         var product = new IndexedProduct { Id = Guid.NewGuid(), Sku = "SKU-004", Category = "Electronics" };
         theSession.Store(product);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var conn = await OpenConnectionAsync();
         await using var cmd = conn.CreateCommand();
@@ -238,7 +238,7 @@ public class document_index_tests : IntegrationContext
             WHERE name = 'ix_pc_doc_indexedproduct_sku'
               AND object_id = OBJECT_ID('[idx_filtered3].[pc_doc_indexedproduct]')
             """;
-        var hasFilter = await cmd.ExecuteScalarAsync();
+        var hasFilter = await cmd.ExecuteScalarAsync(TestContext.Current.CancellationToken);
         hasFilter.ShouldNotBeNull();
         ((bool)hasFilter).ShouldBeTrue();
     }
@@ -255,7 +255,7 @@ public class document_index_tests : IntegrationContext
 
         var product = new IndexedProduct { Id = Guid.NewGuid(), Sku = "SKU-005", Price = 99 };
         theSession.Store(product);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var conn = await OpenConnectionAsync();
         await using var cmd = conn.CreateCommand();
@@ -264,7 +264,7 @@ public class document_index_tests : IntegrationContext
             WHERE name = 'ix_pc_doc_indexedproduct_price'
               AND object_id = OBJECT_ID('[idx_numeric].[pc_doc_indexedproduct]')
             """;
-        var count = (int)(await cmd.ExecuteScalarAsync())!;
+        var count = (int)(await cmd.ExecuteScalarAsync(TestContext.Current.CancellationToken))!;
         count.ShouldBe(1);
     }
 
@@ -280,7 +280,7 @@ public class document_index_tests : IntegrationContext
 
         var p1 = new IndexedProduct { Id = Guid.NewGuid(), Sku = "SKU-A" };
         theSession.Store(p1);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Create a second store with same config — should not fail
         var opts2 = new StoreOptions
@@ -295,7 +295,7 @@ public class document_index_tests : IntegrationContext
         await using var session2 = store2.LightweightSession();
         var p2 = new IndexedProduct { Id = Guid.NewGuid(), Sku = "SKU-B" };
         session2.Store(p2);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
     }
 
     [Fact]
@@ -313,7 +313,7 @@ public class document_index_tests : IntegrationContext
 
         var product = new IndexedProduct { Id = Guid.NewGuid(), Sku = "T1", Email = $"tenant-{Guid.NewGuid()}@example.com" };
         theSession.Store(product);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var conn = await OpenConnectionAsync();
         await using var cmd = conn.CreateCommand();
@@ -324,7 +324,7 @@ public class document_index_tests : IntegrationContext
               AND i.object_id = OBJECT_ID('[idx_tenant2].[pc_doc_indexedproduct]')
               AND ic.is_included_column = 0
             """;
-        var colCount = (int)(await cmd.ExecuteScalarAsync())!;
+        var colCount = (int)(await cmd.ExecuteScalarAsync(TestContext.Current.CancellationToken))!;
         colCount.ShouldBeGreaterThanOrEqualTo(2);
     }
 
@@ -347,7 +347,7 @@ public class document_index_tests : IntegrationContext
             Id = Guid.NewGuid(), Sku = "SKU-M", Category = "Multi", Email = $"multi-{Guid.NewGuid()}@test.com"
         };
         theSession.Store(product);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var conn = await OpenConnectionAsync();
         await using var cmd = conn.CreateCommand();
@@ -356,7 +356,7 @@ public class document_index_tests : IntegrationContext
             WHERE object_id = OBJECT_ID('[idx_multi2].[pc_doc_indexedproduct]')
               AND name IN ('ix_pc_doc_indexedproduct_sku', 'ix_pc_doc_indexedproduct_category', 'ux_pc_doc_indexedproduct_email')
             """;
-        var count = (int)(await cmd.ExecuteScalarAsync())!;
+        var count = (int)(await cmd.ExecuteScalarAsync(TestContext.Current.CancellationToken))!;
         count.ShouldBe(3);
     }
 
@@ -374,7 +374,7 @@ public class document_index_tests : IntegrationContext
 
         var product = new IndexedProduct { Id = Guid.NewGuid(), Sku = "SKU-UPPER-001" };
         theSession.Store(product);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Verify index with casing suffix exists
         await using var conn = await OpenConnectionAsync();
@@ -384,7 +384,7 @@ public class document_index_tests : IntegrationContext
             WHERE name = 'ix_pc_doc_indexedproduct_sku_lower'
               AND object_id = OBJECT_ID('[idx_lower].[pc_doc_indexedproduct]')
             """;
-        var count = (int)(await cmd.ExecuteScalarAsync())!;
+        var count = (int)(await cmd.ExecuteScalarAsync(TestContext.Current.CancellationToken))!;
         count.ShouldBe(1);
 
         // Verify the computed column stores lower-cased value
@@ -394,7 +394,7 @@ public class document_index_tests : IntegrationContext
             WHERE id = @id
             """;
         cmd2.Parameters.AddWithValue("@id", product.Id);
-        var storedValue = (string?)(await cmd2.ExecuteScalarAsync());
+        var storedValue = (string?)(await cmd2.ExecuteScalarAsync(TestContext.Current.CancellationToken));
         storedValue.ShouldBe("sku-upper-001");
     }
 
@@ -410,7 +410,7 @@ public class document_index_tests : IntegrationContext
 
         var product = new IndexedProduct { Id = Guid.NewGuid(), Sku = "sku-lower-001" };
         theSession.Store(product);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Verify index with casing suffix exists
         await using var conn = await OpenConnectionAsync();
@@ -420,7 +420,7 @@ public class document_index_tests : IntegrationContext
             WHERE name = 'ix_pc_doc_indexedproduct_sku_upper'
               AND object_id = OBJECT_ID('[idx_upper].[pc_doc_indexedproduct]')
             """;
-        var count = (int)(await cmd.ExecuteScalarAsync())!;
+        var count = (int)(await cmd.ExecuteScalarAsync(TestContext.Current.CancellationToken))!;
         count.ShouldBe(1);
 
         // Verify the computed column stores upper-cased value
@@ -430,7 +430,7 @@ public class document_index_tests : IntegrationContext
             WHERE id = @id
             """;
         cmd2.Parameters.AddWithValue("@id", product.Id);
-        var storedValue = (string?)(await cmd2.ExecuteScalarAsync());
+        var storedValue = (string?)(await cmd2.ExecuteScalarAsync(TestContext.Current.CancellationToken));
         storedValue.ShouldBe("SKU-LOWER-001");
     }
 
@@ -446,7 +446,7 @@ public class document_index_tests : IntegrationContext
 
         var product = new IndexedProduct { Id = Guid.NewGuid(), Sku = "mixed-Sku", Category = "mixed-Cat" };
         theSession.Store(product);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var conn = await OpenConnectionAsync();
         await using var cmd = conn.CreateCommand();
@@ -455,7 +455,7 @@ public class document_index_tests : IntegrationContext
             WHERE name = 'ix_pc_doc_indexedproduct_category_sku_upper'
               AND object_id = OBJECT_ID('[idx_comp_case].[pc_doc_indexedproduct]')
             """;
-        var count = (int)(await cmd.ExecuteScalarAsync())!;
+        var count = (int)(await cmd.ExecuteScalarAsync(TestContext.Current.CancellationToken))!;
         count.ShouldBe(1);
     }
 
@@ -473,11 +473,11 @@ public class document_index_tests : IntegrationContext
         await using var cleanConn = await OpenConnectionAsync();
         await using var cleanCmd = cleanConn.CreateCommand();
         cleanCmd.CommandText = "IF OBJECT_ID('[idx_uniq_lower].[pc_doc_indexedproduct]', 'U') IS NOT NULL DELETE FROM [idx_uniq_lower].[pc_doc_indexedproduct]";
-        await cleanCmd.ExecuteNonQueryAsync();
+        await cleanCmd.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
 
         var p1 = new IndexedProduct { Id = Guid.NewGuid(), Sku = "A", Email = "Test@Example.COM" };
         theSession.Store(p1);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Second insert with different casing should fail because index is lowered
         await using var session2 = theStore.LightweightSession();
@@ -504,7 +504,7 @@ public class document_index_tests : IntegrationContext
 
         var doc = new AttributeIndexedDoc { Id = Guid.NewGuid(), Name = "Test", Code = $"CODE-{Guid.NewGuid()}" };
         theSession.Store(doc);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Verify the [Index] attribute created an index on Name
         await using var conn = await OpenConnectionAsync();
@@ -514,7 +514,7 @@ public class document_index_tests : IntegrationContext
             WHERE name = 'ix_pc_doc_attributeindexeddoc_name'
               AND object_id = OBJECT_ID('[idx_attr_basic].[pc_doc_attributeindexeddoc]')
             """;
-        var count = (int)(await cmd.ExecuteScalarAsync())!;
+        var count = (int)(await cmd.ExecuteScalarAsync(TestContext.Current.CancellationToken))!;
         count.ShouldBe(1);
     }
 
@@ -530,11 +530,11 @@ public class document_index_tests : IntegrationContext
         await using var cleanConn = await OpenConnectionAsync();
         await using var cleanCmd = cleanConn.CreateCommand();
         cleanCmd.CommandText = "IF OBJECT_ID('[idx_attr_unique].[pc_doc_attributeindexeddoc]', 'U') IS NOT NULL DELETE FROM [idx_attr_unique].[pc_doc_attributeindexeddoc]";
-        await cleanCmd.ExecuteNonQueryAsync();
+        await cleanCmd.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
 
         var doc = new AttributeIndexedDoc { Id = Guid.NewGuid(), Name = "Test", Code = $"UNIQUE-{Guid.NewGuid()}" };
         theSession.Store(doc);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Verify the [UniqueIndex] attribute created a unique index on Code
         await using var conn = await OpenConnectionAsync();
@@ -544,7 +544,7 @@ public class document_index_tests : IntegrationContext
             WHERE name = 'ux_pc_doc_attributeindexeddoc_code'
               AND object_id = OBJECT_ID('[idx_attr_unique].[pc_doc_attributeindexeddoc]')
             """;
-        var isUnique = await cmd.ExecuteScalarAsync();
+        var isUnique = await cmd.ExecuteScalarAsync(TestContext.Current.CancellationToken);
         isUnique.ShouldNotBeNull();
         ((bool)isUnique).ShouldBeTrue();
     }
@@ -561,12 +561,12 @@ public class document_index_tests : IntegrationContext
         await using var cleanConn = await OpenConnectionAsync();
         await using var cleanCmd = cleanConn.CreateCommand();
         cleanCmd.CommandText = "IF OBJECT_ID('[idx_attr_dup].[pc_doc_attributeindexeddoc]', 'U') IS NOT NULL DELETE FROM [idx_attr_dup].[pc_doc_attributeindexeddoc]";
-        await cleanCmd.ExecuteNonQueryAsync();
+        await cleanCmd.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
 
         var code = $"DUP-{Guid.NewGuid()}";
         var doc1 = new AttributeIndexedDoc { Id = Guid.NewGuid(), Name = "First", Code = code };
         theSession.Store(doc1);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         var doc2 = new AttributeIndexedDoc { Id = Guid.NewGuid(), Name = "Second", Code = code };
@@ -590,11 +590,11 @@ public class document_index_tests : IntegrationContext
         await using var cleanConn = await OpenConnectionAsync();
         await using var cleanCmd = cleanConn.CreateCommand();
         cleanCmd.CommandText = "IF OBJECT_ID('[idx_attr_comp].[pc_doc_compositeuniquedoc]', 'U') IS NOT NULL DELETE FROM [idx_attr_comp].[pc_doc_compositeuniquedoc]";
-        await cleanCmd.ExecuteNonQueryAsync();
+        await cleanCmd.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
 
         var doc = new CompositeUniqueDoc { Id = Guid.NewGuid(), FirstName = "John", LastName = "Doe" };
         theSession.Store(doc);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Verify the composite unique index exists with explicit name
         await using var conn = await OpenConnectionAsync();
@@ -604,7 +604,7 @@ public class document_index_tests : IntegrationContext
             WHERE name = 'ux_fullname'
               AND object_id = OBJECT_ID('[idx_attr_comp].[pc_doc_compositeuniquedoc]')
             """;
-        var isUnique = await cmd.ExecuteScalarAsync();
+        var isUnique = await cmd.ExecuteScalarAsync(TestContext.Current.CancellationToken);
         isUnique.ShouldNotBeNull();
         ((bool)isUnique).ShouldBeTrue();
 
@@ -634,7 +634,7 @@ public class document_index_tests : IntegrationContext
             Email = $"Test-{Guid.NewGuid()}@Example.COM"
         };
         theSession.Store(doc);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var conn = await OpenConnectionAsync();
 
@@ -645,7 +645,7 @@ public class document_index_tests : IntegrationContext
             WHERE name = 'ix_pc_doc_casingattributedoc_username_lower'
               AND object_id = OBJECT_ID('[idx_attr_case].[pc_doc_casingattributedoc]')
             """;
-        var count1 = (int)(await cmd1.ExecuteScalarAsync())!;
+        var count1 = (int)(await cmd1.ExecuteScalarAsync(TestContext.Current.CancellationToken))!;
         count1.ShouldBe(1);
 
         // Verify upper-cased unique index on Email
@@ -655,7 +655,7 @@ public class document_index_tests : IntegrationContext
             WHERE name = 'ux_pc_doc_casingattributedoc_email_upper'
               AND object_id = OBJECT_ID('[idx_attr_case].[pc_doc_casingattributedoc]')
             """;
-        var isUnique = await cmd2.ExecuteScalarAsync();
+        var isUnique = await cmd2.ExecuteScalarAsync(TestContext.Current.CancellationToken);
         isUnique.ShouldNotBeNull();
         ((bool)isUnique).ShouldBeTrue();
 
@@ -666,7 +666,7 @@ public class document_index_tests : IntegrationContext
             WHERE id = @id
             """;
         cmd3.Parameters.AddWithValue("@id", doc.Id);
-        var storedValue = (string?)(await cmd3.ExecuteScalarAsync());
+        var storedValue = (string?)(await cmd3.ExecuteScalarAsync(TestContext.Current.CancellationToken));
         storedValue.ShouldBe("johndoe");
     }
 
@@ -685,7 +685,7 @@ public class document_index_tests : IntegrationContext
             LongDescription = "A long description value"
         };
         theSession.Store(doc);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var conn = await OpenConnectionAsync();
         await using var cmd = conn.CreateCommand();
@@ -694,7 +694,7 @@ public class document_index_tests : IntegrationContext
             WHERE object_id = OBJECT_ID('[idx_attr_sqltype].[pc_doc_customsqltypeattributedoc]')
               AND name IN ('ix_pc_doc_customsqltypeattributedoc_score', 'ix_pc_doc_customsqltypeattributedoc_longdescription')
             """;
-        var count = (int)(await cmd.ExecuteScalarAsync())!;
+        var count = (int)(await cmd.ExecuteScalarAsync(TestContext.Current.CancellationToken))!;
         count.ShouldBe(2);
     }
 

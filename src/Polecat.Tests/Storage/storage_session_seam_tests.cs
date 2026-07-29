@@ -58,9 +58,9 @@ public class storage_session_seam_tests : OneOffConfigurationsContext
         var seam = (IStorageSession)session;
 
         var command = new SqlCommand("SELECT 42");
-        await using var reader = await seam.ExecuteReaderAsync(command);
+        await using var reader = await seam.ExecuteReaderAsync(command, TestContext.Current.CancellationToken);
 
-        (await reader.ReadAsync()).ShouldBeTrue();
+        (await reader.ReadAsync(TestContext.Current.CancellationToken)).ShouldBeTrue();
         reader.GetInt32(0).ShouldBe(42);
     }
 
@@ -120,14 +120,14 @@ public class storage_session_seam_tests : OneOffConfigurationsContext
     [Fact]
     public async Task identity_map_session_routes_mark_as_loaded_into_the_identity_map()
     {
-        await theStore.Advanced.Clean.CompletelyRemoveAllAsync();
+        await theStore.Advanced.Clean.CompletelyRemoveAllAsync(TestContext.Current.CancellationToken);
 
         var target = new Target { Number = 7 };
 
         await using (var setup = theStore.LightweightSession())
         {
             setup.Store(target);
-            await setup.SaveChangesAsync();
+            await setup.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using var session = theStore.IdentitySession();
@@ -137,7 +137,7 @@ public class storage_session_seam_tests : OneOffConfigurationsContext
         seam.MarkAsDocumentLoaded(replacement.Id, replacement);
 
         // The identity map should now return the marked instance instead of loading from the db
-        var loaded = await session.LoadAsync<Target>(target.Id);
+        var loaded = await session.LoadAsync<Target>(target.Id, TestContext.Current.CancellationToken);
         loaded.ShouldBeSameAs(replacement);
     }
 

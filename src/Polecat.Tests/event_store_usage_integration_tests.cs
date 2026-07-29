@@ -43,7 +43,7 @@ public class event_store_usage_integration_tests : IntegrationContext
         {
             var streamId = Guid.NewGuid();
             theSession.Events.StartStream(streamId, new QuestStarted($"Quest {i + 1}"));
-            await theSession.SaveChangesAsync();
+            await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         long expected;
@@ -51,7 +51,7 @@ public class event_store_usage_integration_tests : IntegrationContext
         await using (var cmd = conn.CreateCommand())
         {
             cmd.CommandText = "SELECT MAX(seq_id) FROM [dbo].[pc_events];";
-            expected = (long)(await cmd.ExecuteScalarAsync())!;
+            expected = (long)(await cmd.ExecuteScalarAsync(TestContext.Current.CancellationToken))!;
         }
 
         var usage = await ((IEventStore)theStore).TryCreateUsage(CancellationToken.None);

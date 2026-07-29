@@ -19,10 +19,10 @@ public class hilo_sequence_tests : IntegrationContext
         theSession.Store(doc);
         doc.Id.ShouldBeGreaterThan(0);
 
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var loaded = await query.LoadAsync<IntDoc>(doc.Id);
+        var loaded = await query.LoadAsync<IntDoc>(doc.Id, TestContext.Current.CancellationToken);
 
         loaded.ShouldNotBeNull();
         loaded.Name.ShouldBe("Test Int");
@@ -38,10 +38,10 @@ public class hilo_sequence_tests : IntegrationContext
         theSession.Store(doc);
         doc.Id.ShouldBeGreaterThan(0L);
 
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var loaded = await query.LoadAsync<LongDoc>(doc.Id);
+        var loaded = await query.LoadAsync<LongDoc>(doc.Id, TestContext.Current.CancellationToken);
 
         loaded.ShouldNotBeNull();
         loaded.Name.ShouldBe("Test Long");
@@ -63,7 +63,7 @@ public class hilo_sequence_tests : IntegrationContext
         doc2.Id.ShouldBe(doc1.Id + 1);
         doc3.Id.ShouldBe(doc2.Id + 1);
 
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
     }
 
     [Fact]
@@ -75,10 +75,10 @@ public class hilo_sequence_tests : IntegrationContext
         theSession.Store(doc);
         doc.Id.ShouldBeGreaterThanOrEqualTo(2500);
 
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var loaded = await query.LoadAsync<IntDoc>(doc.Id);
+        var loaded = await query.LoadAsync<IntDoc>(doc.Id, TestContext.Current.CancellationToken);
         loaded.ShouldNotBeNull();
         loaded.Name.ShouldBe("After floor");
     }
@@ -114,7 +114,7 @@ public class hilo_sequence_tests : IntegrationContext
         theSession.Store(doc);
         doc.Id.ShouldBeGreaterThan(0);
 
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // The OverriddenHiloDoc has [HiloSequence(MaxLo = 66, SequenceName = "Entity")]
         // so it should use those settings, not the global MaxLo = 200
@@ -129,7 +129,7 @@ public class hilo_sequence_tests : IntegrationContext
 
         theSession.Store(doc);
         doc.Id.ShouldBeGreaterThan(0);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var savedId = doc.Id;
 
@@ -137,10 +137,10 @@ public class hilo_sequence_tests : IntegrationContext
         doc.Name = "Updated";
         await using var session2 = theStore.LightweightSession();
         session2.Update(doc);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var loaded = await query.LoadAsync<IntDoc>(savedId);
+        var loaded = await query.LoadAsync<IntDoc>(savedId, TestContext.Current.CancellationToken);
         loaded.ShouldNotBeNull();
         loaded.Name.ShouldBe("Updated");
         loaded.Id.ShouldBe(savedId);
@@ -151,16 +151,16 @@ public class hilo_sequence_tests : IntegrationContext
     {
         var doc = new IntDoc { Name = "To Delete" };
         theSession.Store(doc);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var savedId = doc.Id;
 
         await using var session2 = theStore.LightweightSession();
         session2.Delete<IntDoc>(savedId);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var loaded = await query.LoadAsync<IntDoc>(savedId);
+        var loaded = await query.LoadAsync<IntDoc>(savedId, TestContext.Current.CancellationToken);
         loaded.ShouldBeNull();
     }
 }

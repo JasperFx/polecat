@@ -203,9 +203,9 @@ public class serialization_integration_tests : IntegrationContext
         var doc = new ColorDocument { Id = id, Preference = ColorPreference.Blue };
 
         theSession.Store(doc);
-        await theSession.SaveChangesAsync();
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
-        var loaded = await theSession.LoadAsync<ColorDocument>(id);
+        var loaded = await theSession.LoadAsync<ColorDocument>(id, TestContext.Current.CancellationToken);
         loaded.ShouldNotBeNull();
         loaded.Preference.ShouldBe(ColorPreference.Blue);
     }

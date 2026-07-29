@@ -32,7 +32,7 @@ public class long_based_document_operations : IntegrationContext
 
         await using var session = theStore.LightweightSession();
         session.Store(issue);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         issue.Id.Value.ShouldBeGreaterThan(0L);
     }
@@ -43,10 +43,10 @@ public class long_based_document_operations : IntegrationContext
         await using var session = theStore.LightweightSession();
         var issue = new Issue { Name = "Smoke" };
         session.Store(issue);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        (await query.Query<Issue>().AnyAsync()).ShouldBeTrue();
+        (await query.Query<Issue>().AnyAsync(TestContext.Current.CancellationToken)).ShouldBeTrue();
     }
 
     [Fact]
@@ -55,10 +55,10 @@ public class long_based_document_operations : IntegrationContext
         await using var session = theStore.LightweightSession();
         var issue = new Issue { Name = "Inserted" };
         session.Store(issue);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var loaded = await query.LoadAsync<Issue>(issue.Id.Value);
+        var loaded = await query.LoadAsync<Issue>(issue.Id.Value, TestContext.Current.CancellationToken);
         loaded.ShouldNotBeNull();
         loaded!.Name.ShouldBe("Inserted");
     }
@@ -69,15 +69,15 @@ public class long_based_document_operations : IntegrationContext
         await using var session = theStore.LightweightSession();
         var issue = new Issue { Name = "Original" };
         session.Store(issue);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         issue.Name = "Updated";
         await using var session2 = theStore.LightweightSession();
         session2.Update(issue);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var loaded = await query.LoadAsync<Issue>(issue.Id.Value);
+        var loaded = await query.LoadAsync<Issue>(issue.Id.Value, TestContext.Current.CancellationToken);
         loaded.ShouldNotBeNull();
         loaded!.Name.ShouldBe("Updated");
     }
@@ -88,10 +88,10 @@ public class long_based_document_operations : IntegrationContext
         await using var session = theStore.LightweightSession();
         var issue = new Issue { Name = "Load Me" };
         session.Store(issue);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var loaded = await query.LoadAsync<Issue>(issue.Id.Value);
+        var loaded = await query.LoadAsync<Issue>(issue.Id.Value, TestContext.Current.CancellationToken);
         loaded.ShouldNotBeNull();
         loaded!.Id.ShouldBe(issue.Id);
         loaded.Name.ShouldBe("Load Me");
@@ -109,7 +109,7 @@ public class long_based_document_operations : IntegrationContext
             issues.Add(issue);
         }
 
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         foreach (var issue in issues)
         {
@@ -125,10 +125,10 @@ public class long_based_document_operations : IntegrationContext
         await using var session = theStore.IdentitySession();
         var issue = new Issue { Name = "Identity" };
         session.Store(issue);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
-        var first = await session.LoadAsync<Issue>(issue.Id.Value);
-        var second = await session.LoadAsync<Issue>(issue.Id.Value);
+        var first = await session.LoadAsync<Issue>(issue.Id.Value, TestContext.Current.CancellationToken);
+        var second = await session.LoadAsync<Issue>(issue.Id.Value, TestContext.Current.CancellationToken);
 
         first.ShouldNotBeNull();
         ReferenceEquals(first, second).ShouldBeTrue();
@@ -140,14 +140,14 @@ public class long_based_document_operations : IntegrationContext
         await using var session = theStore.LightweightSession();
         var issue = new Issue { Name = "Delete" };
         session.Store(issue);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         session2.Delete<Issue>(issue.Id.Value);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var loaded = await query.LoadAsync<Issue>(issue.Id.Value);
+        var loaded = await query.LoadAsync<Issue>(issue.Id.Value, TestContext.Current.CancellationToken);
         loaded.ShouldBeNull();
     }
 
@@ -157,14 +157,14 @@ public class long_based_document_operations : IntegrationContext
         await using var session = theStore.LightweightSession();
         var issue = new Issue { Name = "Delete Doc" };
         session.Store(issue);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var session2 = theStore.LightweightSession();
         session2.Delete(issue);
-        await session2.SaveChangesAsync();
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        var loaded = await query.LoadAsync<Issue>(issue.Id.Value);
+        var loaded = await query.LoadAsync<Issue>(issue.Id.Value, TestContext.Current.CancellationToken);
         loaded.ShouldBeNull();
     }
 
@@ -174,12 +174,12 @@ public class long_based_document_operations : IntegrationContext
         await using var session = theStore.LightweightSession();
         var issue = new Issue { Name = "LINQ Where" };
         session.Store(issue);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
         var result = await query.Query<Issue>()
             .Where(x => x.Id == issue.Id)
-            .FirstOrDefaultAsync();
+            .FirstOrDefaultAsync(TestContext.Current.CancellationToken);
 
         result.ShouldNotBeNull();
         result!.Name.ShouldBe("LINQ Where");
@@ -191,12 +191,12 @@ public class long_based_document_operations : IntegrationContext
         await using var session = theStore.LightweightSession();
         session.Store(new Issue { Name = "A" });
         session.Store(new Issue { Name = "B" });
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
         var results = await query.Query<Issue>()
             .OrderBy(x => x.Id)
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBeGreaterThanOrEqualTo(2);
     }
@@ -211,12 +211,12 @@ public class long_based_document_operations : IntegrationContext
         session.Store(i1);
         session.Store(i2);
         session.Store(i3);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
         var results = await query.Query<Issue>()
             .Where(x => x.Id.IsOneOf(i1.Id, i2.Id, i3.Id))
-            .ToListAsync();
+            .ToListAsync(TestContext.Current.CancellationToken);
 
         results.Count.ShouldBe(3);
     }
@@ -228,12 +228,12 @@ public class long_based_document_operations : IntegrationContext
             .Select(i => new Issue { Name = $"Bulk {i}" })
             .ToList();
 
-        await theStore.Advanced.BulkInsertAsync(issues);
+        await theStore.Advanced.BulkInsertAsync(issues, TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
         foreach (var issue in issues)
         {
-            var loaded = await query.LoadAsync<Issue>(issue.Id.Value);
+            var loaded = await query.LoadAsync<Issue>(issue.Id.Value, TestContext.Current.CancellationToken);
             loaded.ShouldNotBeNull();
         }
     }
@@ -244,10 +244,10 @@ public class long_based_document_operations : IntegrationContext
         await using var session = theStore.LightweightSession();
         var issue = new Issue { Name = "Exists" };
         session.Store(issue);
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         await using var query = theStore.QuerySession();
-        (await query.CheckExistsAsync<Issue>(issue.Id.Value)).ShouldBeTrue();
-        (await query.CheckExistsAsync<Issue>(999999L)).ShouldBeFalse();
+        (await query.CheckExistsAsync<Issue>(issue.Id.Value, TestContext.Current.CancellationToken)).ShouldBeTrue();
+        (await query.CheckExistsAsync<Issue>(999999L, TestContext.Current.CancellationToken)).ShouldBeFalse();
     }
 }

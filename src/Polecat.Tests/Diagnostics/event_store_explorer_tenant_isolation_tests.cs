@@ -32,7 +32,7 @@ public class event_store_explorer_tenant_isolation_tests
     public async Task read_stream_is_isolated_per_tenant_on_conjoined_store()
     {
         using var store = CreateStore();
-        await store.Database.ApplyAllConfiguredChangesToDatabaseAsync();
+        await store.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         // Same stream id under two tenants — the exact cross-tenant ambiguity #782 closes.
         var streamId = Guid.NewGuid();
@@ -40,13 +40,13 @@ public class event_store_explorer_tenant_isolation_tests
         await using (var a = store.LightweightSession(new SessionOptions { TenantId = "tenant-a" }))
         {
             a.Events.StartStream(streamId, new QuestStarted("Alice-1"), new QuestStarted("Alice-2"));
-            await a.SaveChangesAsync();
+            await a.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using (var b = store.LightweightSession(new SessionOptions { TenantId = "tenant-b" }))
         {
             b.Events.StartStream(streamId, new QuestStarted("Bob-1"));
-            await b.SaveChangesAsync();
+            await b.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         IEventStore explorer = store;
@@ -74,7 +74,7 @@ public class event_store_explorer_tenant_isolation_tests
     public async Task recent_streams_is_isolated_per_tenant_on_conjoined_store()
     {
         using var store = CreateStore();
-        await store.Database.ApplyAllConfiguredChangesToDatabaseAsync();
+        await store.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         var streamA = Guid.NewGuid();
         var streamB = Guid.NewGuid();
@@ -82,13 +82,13 @@ public class event_store_explorer_tenant_isolation_tests
         await using (var a = store.LightweightSession(new SessionOptions { TenantId = "tenant-a" }))
         {
             a.Events.StartStream(streamA, new QuestStarted("Alice"));
-            await a.SaveChangesAsync();
+            await a.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using (var b = store.LightweightSession(new SessionOptions { TenantId = "tenant-b" }))
         {
             b.Events.StartStream(streamB, new QuestStarted("Bob"));
-            await b.SaveChangesAsync();
+            await b.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         IEventStore explorer = store;

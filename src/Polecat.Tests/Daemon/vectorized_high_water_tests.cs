@@ -48,7 +48,7 @@ public class vectorized_high_water_tests : IAsyncLifetime
     public async Task vector_has_one_independent_reading_per_tenant()
     {
         using var store = CreateStore(partitioned: true);
-        await store.Database.ApplyAllConfiguredChangesToDatabaseAsync();
+        await store.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         // Red: 2 events, Blue: 3 events, Green: never appends (flat tenant).
         await AppendAsync(store, "Red", 2);
@@ -80,7 +80,7 @@ public class vectorized_high_water_tests : IAsyncLifetime
     public async Task flag_off_collapses_to_store_global()
     {
         using var store = CreateStore(partitioned: false);
-        await store.Database.ApplyAllConfiguredChangesToDatabaseAsync();
+        await store.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         var detector = DetectorFor(store);
         detector.SupportsTenantPartitioning.ShouldBeFalse();

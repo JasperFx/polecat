@@ -110,13 +110,13 @@ public class aggregate_to_many_tests : OneOffConfigurationsContext
         // acctA deposited across two streams; acctB in one — the fan-out keys on AccountId, not stream.
         session.Events.Append(stream1, new MoneyDeposited(acctA, 100), new MoneyDeposited(acctB, 50));
         session.Events.Append(stream2, new MoneyDeposited(acctA, 25));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         #region sample_aggregate_to_many
 
         var aggregates = await session.Events.QueryAllRawEvents()
             .Where(e => e.StreamId == stream1 || e.StreamId == stream2)
-            .AggregateToManyAsync<Balance>();
+            .AggregateToManyAsync<Balance>(TestContext.Current.CancellationToken);
 
         #endregion
 
@@ -142,11 +142,11 @@ public class aggregate_to_many_tests : OneOffConfigurationsContext
             new MoneyDeposited(acctA, 100),
             new MoneyDeposited(acctB, 200),
             new AccountFrozen(acctB));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var aggregates = await session.Events.QueryAllRawEvents()
             .Where(e => e.StreamId == stream)
-            .AggregateToManyAsync<Balance>();
+            .AggregateToManyAsync<Balance>(TestContext.Current.CancellationToken);
 
         // acctB is frozen (ShouldDelete) and so is absent; only acctA survives.
         aggregates.Count.ShouldBe(1);
@@ -171,18 +171,18 @@ public class aggregate_to_many_tests : OneOffConfigurationsContext
         session.Store(new CardOwner { Id = cardA, MemberId = memberX });
         session.Store(new CardOwner { Id = cardB, MemberId = memberX });
         session.Store(new CardOwner { Id = cardC, MemberId = memberY });
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var stream = Guid.NewGuid();
         session.Events.Append(stream,
             new LoyaltyEarned(cardA, 10),
             new LoyaltyEarned(cardB, 5),
             new LoyaltyEarned(cardC, 20));
-        await session.SaveChangesAsync();
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var aggregates = await session.Events.QueryAllRawEvents()
             .Where(e => e.StreamId == stream)
-            .AggregateToManyAsync<MemberLoyalty>();
+            .AggregateToManyAsync<MemberLoyalty>(TestContext.Current.CancellationToken);
 
         // Member-keyed, not card-keyed — only possible because the grouper read CardOwner from the session.
         aggregates.Count.ShouldBe(2);
@@ -199,7 +199,7 @@ public class aggregate_to_many_tests : OneOffConfigurationsContext
 
         var aggregates = await session.Events.QueryAllRawEvents()
             .Where(e => e.StreamId == Guid.NewGuid()) // matches nothing
-            .AggregateToManyAsync<Balance>();
+            .AggregateToManyAsync<Balance>(TestContext.Current.CancellationToken);
 
         aggregates.ShouldBeEmpty();
     }

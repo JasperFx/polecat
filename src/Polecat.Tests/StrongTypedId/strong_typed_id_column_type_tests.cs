@@ -29,7 +29,7 @@ public class strong_typed_id_column_type_tests : IntegrationContext
         await using (var session = theStore.LightweightSession())
         {
             session.Store(new Invoice { Name = "Schema" });
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         var columns = await SchemaInspector.GetColumnInfoAsync("pc_doc_invoice", "strong_id_column");
@@ -43,7 +43,7 @@ public class strong_typed_id_column_type_tests : IntegrationContext
         await using (var session = theStore.LightweightSession())
         {
             session.Store(new OrderItem { Name = "Schema" });
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         var columns = await SchemaInspector.GetColumnInfoAsync("pc_doc_orderitem", "strong_id_column");
@@ -56,7 +56,7 @@ public class strong_typed_id_column_type_tests : IntegrationContext
         await using (var session = theStore.LightweightSession())
         {
             session.Store(new Issue { Name = "Schema" });
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         var columns = await SchemaInspector.GetColumnInfoAsync("pc_doc_issue", "strong_id_column");
@@ -69,7 +69,7 @@ public class strong_typed_id_column_type_tests : IntegrationContext
         await using (var session = theStore.LightweightSession())
         {
             session.Store(new Team { Id = new TeamId("t-1"), Name = "Schema" });
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         var columns = await SchemaInspector.GetColumnInfoAsync("pc_doc_team", "strong_id_column");
@@ -86,11 +86,11 @@ public class strong_typed_id_column_type_tests : IntegrationContext
         await using (var session = theStore.LightweightSession())
         {
             session.Store(invoice);
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using var fresh = theStore.LightweightSession();
-        var loaded = await fresh.LoadAsync<Invoice>(invoice.Id.Value);
+        var loaded = await fresh.LoadAsync<Invoice>(invoice.Id.Value, TestContext.Current.CancellationToken);
         loaded.ShouldNotBeNull();
         loaded!.Name.ShouldBe("Loaded");
     }
@@ -102,11 +102,11 @@ public class strong_typed_id_column_type_tests : IntegrationContext
         await using (var session = theStore.LightweightSession())
         {
             session.Store(item);
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using var fresh = theStore.LightweightSession();
-        var loaded = await fresh.LoadAsync<OrderItem>(item.Id.Value);
+        var loaded = await fresh.LoadAsync<OrderItem>(item.Id.Value, TestContext.Current.CancellationToken);
         loaded.ShouldNotBeNull();
         loaded!.Name.ShouldBe("Loaded");
     }
@@ -118,11 +118,11 @@ public class strong_typed_id_column_type_tests : IntegrationContext
         await using (var session = theStore.LightweightSession())
         {
             session.Store(issue);
-            await session.SaveChangesAsync();
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         await using var fresh = theStore.LightweightSession();
-        var loaded = await fresh.LoadAsync<Issue>(issue.Id.Value);
+        var loaded = await fresh.LoadAsync<Issue>(issue.Id.Value, TestContext.Current.CancellationToken);
         loaded.ShouldNotBeNull();
         loaded!.Name.ShouldBe("Loaded");
     }
@@ -141,7 +141,7 @@ public class strong_typed_id_column_type_tests : IntegrationContext
 
         await using (var conn = new SqlConnection(ConnectionSource.ConnectionString))
         {
-            await conn.OpenAsync();
+            await conn.OpenAsync(TestContext.Current.CancellationToken);
             await ExecuteAsync(conn, $"IF SCHEMA_ID('{schema}') IS NULL EXEC('CREATE SCHEMA {schema}')");
             await ExecuteAsync(conn, $"DROP TABLE IF EXISTS {schema}.pc_doc_invoice");
             // Legacy shape: id is varchar(250) as pre-#296 tables were created. The data column type
@@ -169,7 +169,7 @@ public class strong_typed_id_column_type_tests : IntegrationContext
         // First document access triggers the lazy ensure, which converts the id column in place,
         // then loads the pre-existing row through the Lightweight writeable selector.
         await using var session = theStore.LightweightSession();
-        var loaded = await session.LoadAsync<Invoice>(legacyId);
+        var loaded = await session.LoadAsync<Invoice>(legacyId, TestContext.Current.CancellationToken);
         loaded.ShouldNotBeNull();
         loaded!.Name.ShouldBe("Legacy");
 
