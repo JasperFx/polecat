@@ -15,7 +15,7 @@ public class etag_streaming_tests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        _host = await AlbaHost.For<Program>();
+        _host = await AlbaHost.For(TestApp.CreateBuilder(), TestApp.Configure);
 
         var store = (DocumentStore)_host.Services.GetRequiredService<IDocumentStore>();
         await store.Database.ApplyAllConfiguredChangesToDatabaseAsync();

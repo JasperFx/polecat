@@ -11,7 +11,7 @@ public class mcp_endpoint_tests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        _host = await AlbaHost.For<Program>();
+        _host = await AlbaHost.For(TestApp.CreateBuilder(), TestApp.Configure);
     }
 
     public async Task DisposeAsync()
