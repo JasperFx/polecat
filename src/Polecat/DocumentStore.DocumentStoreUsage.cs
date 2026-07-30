@@ -161,7 +161,7 @@ public partial class DocumentStore : IDocumentStoreUsageSource
             UseNumericRevisions = mapping.UseNumericRevisions,
             SubClassCount = mapping.SubClasses.Count,
             SubClasses = mapping.SubClasses.Select(x => TypeDescriptor.For(x.DocumentType)).ToArray(),
-            PartitioningStrategy = mapping.Partitioning == null ? null : "Range",
+            PartitioningStrategy = PartitioningStrategyName(mapping.Partitioning),
             Partitioning = BuildPartitioning(mapping.Partitioning),
             Ddl = ddl,
         };
@@ -179,12 +179,26 @@ public partial class DocumentStore : IDocumentStoreUsageSource
             return null;
         }
 
-        var names = partitioning.Boundaries
-            .Select(b => Convert.ToString(b, CultureInfo.InvariantCulture) ?? string.Empty)
-            .ToArray();
+        var strategy = PartitioningStrategyName(partitioning)!;
 
-        return new PartitioningDescriptor { Strategy = "Range", PartitionNames = names };
+        // #386: a rolling window has no declared boundary list — the window is a function of the policy
+        // and the clock, so report the boundaries it expects to exist right now.
+        var names = partitioning.RollingWindow is { } rollingWindow
+            ? rollingWindow.Boundaries()
+            : partitioning.Boundaries
+                .Select(b => Convert.ToString(b, CultureInfo.InvariantCulture) ?? string.Empty)
+                .ToArray();
+
+        return new PartitioningDescriptor { Strategy = strategy, PartitionNames = names };
     }
+
+    private static string? PartitioningStrategyName(Storage.DocumentPartitioning? partitioning) =>
+        partitioning switch
+        {
+            null => null,
+            { RollingWindow: not null } => "RollingRange",
+            _ => "Range"
+        };
 
     private static string WriteSchemaCreationDdl(
         Storage.DocumentMapping mapping,

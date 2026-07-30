@@ -34,6 +34,16 @@ internal class PolecatActivator : IHostedService
         {
             var documentStore = (DocumentStore)_store;
             await documentStore.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: cancellationToken);
+
+            // #386: roll every configured rolling-window RANGE partition forward and retire the aged
+            // ones. The migration above already provisions the leading edge — with a rolling-window
+            // manager attached the delta is additive, a SPLIT rather than a rebuild — but migration
+            // never removes data, so the retention half has to be driven separately. Gated on the same
+            // opt-in as the migration itself: applying changes on startup is how a host says "Polecat
+            // owns this schema", and retiring a partition is emphatically a schema change.
+            var databases = _store.Options.Tenancy?.AllDatabases() ?? [documentStore.Database];
+            await Storage.RollingPartitions.ApplyAsync(databases, _logger, rollForward: true, dropAged: true,
+                cancellationToken);
         }
 
         // Run initial data seeders after schema migration

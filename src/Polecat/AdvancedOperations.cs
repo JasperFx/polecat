@@ -786,6 +786,53 @@ public class AdvancedOperations
         }
     }
 
+    // ---- rolling time-window range partitions (#386) ----
+
+    /// <summary>
+    ///     Roll every document table configured with
+    ///     <c>PartitionOn(x =&gt; x.Timestamp).ByRollingRange(...)</c> forward to its current window and
+    ///     retire the periods that have aged past the policy's retention floor. Idempotent, and safe to
+    ///     run on every startup.
+    ///     <para>
+    ///     Polecat already runs this at startup when the host opted into
+    ///     <c>ApplyAllDatabaseChangesOnStartup()</c>. Call it yourself on whatever cadence the period
+    ///     size demands (an hourly window needs a far tighter cadence than a monthly one) if the process
+    ///     is long-lived enough to outrun the number of periods provisioned ahead.
+    ///     </para>
+    ///     <para>
+    ///     Retiring a period destroys the rows in it. That is the point: it is what makes time-based
+    ///     retention a partition <c>TRUNCATE</c> — an O(1) page deallocation — instead of a mass
+    ///     <c>DELETE</c>. Use <see cref="RollPartitionsForwardAsync" /> for the purely additive half.
+    ///     </para>
+    /// </summary>
+    /// <returns>Per-table statuses for every table wired to a rolling-window strategy.</returns>
+    /// <seealso href="https://github.com/JasperFx/polecat/issues/386" />
+    public Task<TablePartitionStatus[]> ApplyRollingPartitionsAsync(CancellationToken token = default)
+        => RollingPartitions.ApplyAsync(RollingPartitionDatabases(), NullLogger.Instance,
+            rollForward: true, dropAged: true, token);
+
+    /// <summary>
+    ///     The purely additive half of <see cref="ApplyRollingPartitionsAsync" />: SPLIT in the boundaries
+    ///     of the current window that the partition function does not carry yet. Nothing is truncated or
+    ///     merged, so this is safe to run without making a retention decision.
+    /// </summary>
+    public Task<TablePartitionStatus[]> RollPartitionsForwardAsync(CancellationToken token = default)
+        => RollingPartitions.ApplyAsync(RollingPartitionDatabases(), NullLogger.Instance,
+            rollForward: true, dropAged: false, token);
+
+    /// <summary>
+    ///     The retention half of <see cref="ApplyRollingPartitionsAsync" />: truncate and then
+    ///     <c>MERGE RANGE</c> away every rolling-window period older than its policy's retention floor.
+    ///     Only boundaries the policy itself would have produced are considered, so a hand-added boundary
+    ///     — or one left over from a different period size — is left strictly alone.
+    /// </summary>
+    public Task<TablePartitionStatus[]> DropAgedRollingPartitionsAsync(CancellationToken token = default)
+        => RollingPartitions.ApplyAsync(RollingPartitionDatabases(), NullLogger.Instance,
+            rollForward: false, dropAged: true, token);
+
+    private IEnumerable<PolecatDatabase> RollingPartitionDatabases() =>
+        _store.Options.Tenancy?.AllDatabases() ?? [_store.Database];
+
     private Events.EventGraph AssertManagedTenantPartitioning()
     {
         var events = _store.Events;

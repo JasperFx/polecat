@@ -1,5 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
+using Weasel.Core.Partitioning;
+using Weasel.SqlServer.Tables.Partitioning;
 
 namespace Polecat.Storage;
 
@@ -184,11 +186,17 @@ public class DocumentMappingExpression<T>
 
     /// <summary>
     ///     #255: begin a fluent declaration of RANGE partitioning on a member, mirroring Marten's
-    ///     <c>PartitionOn(x =&gt; x.Member)</c>. Follow with <see cref="PartitioningExpression{T,TValue}.ByRange" />
-    ///     (Polecat manages + rolls the boundaries) or
-    ///     <see cref="PartitioningExpression{T,TValue}.ByExternallyManagedRange" /> (Polecat provisions the
-    ///     partitioned table once, then leaves the partitions to be managed externally — the
-    ///     time-series-retention pattern).
+    ///     <c>PartitionOn(x =&gt; x.Member)</c>. Follow with:
+    ///     <list type="bullet">
+    ///         <item><see cref="PartitioningExpression{T,TValue}.ByRange" /> — a fixed set of boundaries
+    ///         Polecat owns and rolls forward in place as you add to the list;</item>
+    ///         <item><see cref="PartitioningExpression{T,TValue}.ByRollingRange(PartitionPeriod,int,int,TimeProvider)" />
+    ///         — a rolling time window Polecat provisions ahead of and retires behind the clock, which is
+    ///         the supported way to run a time-series table (#386);</item>
+    ///         <item><see cref="PartitioningExpression{T,TValue}.ByExternallyManagedRange" /> — Polecat
+    ///         provisions the partitioned table once and never touches the partitions again, for when
+    ///         something genuinely outside Polecat owns them.</item>
+    ///     </list>
     /// </summary>
     public PartitioningExpression<T, TValue> PartitionOn<TValue>(Expression<Func<T, TValue>> member)
     {
@@ -199,9 +207,23 @@ public class DocumentMappingExpression<T>
     internal void SetPartitioning<TValue>(Expression<Func<T, TValue>> member, TValue[] boundaries,
         bool externallyManaged)
     {
-        var idMemberName = DocumentMapping.FindIdProperty(typeof(T))?.Name ?? "Id";
-        Partitioning = DocumentPartitioning.For(member, boundaries, idMemberName, externallyManaged);
+        Partitioning = DocumentPartitioning.For(member, boundaries, IdMemberName(), externallyManaged);
     }
+
+    /// <summary>
+    ///     #386: internal hook used by <see cref="PartitioningExpression{T,TValue}" /> to set a
+    ///     rolling-time-window descriptor. Returns the manager that owns the window.
+    /// </summary>
+    internal ManagedRangePartitions SetRollingWindow<TValue>(Expression<Func<T, TValue>> member,
+        RollingWindowPolicy policy, TimeProvider? timeProvider, ManagedRangePartitions? prebuilt)
+    {
+        Partitioning = DocumentPartitioning.ForRollingWindow(member, IdMemberName(), policy, timeProvider,
+            prebuilt);
+
+        return Partitioning.RollingWindow!;
+    }
+
+    private static string IdMemberName() => DocumentMapping.FindIdProperty(typeof(T))?.Name ?? "Id";
 }
 
 /// <summary>
@@ -230,10 +252,77 @@ public class PartitioningExpression<T, TValue>
     }
 
     /// <summary>
-    ///     #255: externally-managed RANGE partitioning. Polecat creates the partition function/scheme
+    ///     #386: RANGE-partition the table over a <em>rolling time window</em> that Polecat itself owns —
+    ///     it provisions the periods at the leading edge and retires the aged ones at the trailing edge
+    ///     on the same schedule it applies every other schema change. This is the supported way to run a
+    ///     time-series document table: retention becomes a partition <c>TRUNCATE</c> + <c>MERGE RANGE</c>
+    ///     (an O(1) page deallocation, not a mass <c>DELETE</c>) without giving up Weasel's schema
+    ///     ordering and dependency management the way <see cref="ByExternallyManagedRange" /> does.
+    ///     <para>
+    ///         The partitioned member must be a <c>DateTime</c> or <c>DateTimeOffset</c>, and the whole
+    ///         window is computed in UTC. Polecat promotes the member into a real column and adds it to
+    ///         the primary key, as SQL Server requires of a partitioned table's unique index.
+    ///     </para>
+    /// </summary>
+    /// <param name="period">The size of a single partition — hour, day, week, month or year.</param>
+    /// <param name="periodsAhead">
+    ///     How many periods beyond the current one to provision. At least one is strongly recommended so
+    ///     rows written at the very end of a period always have a partition waiting for them.
+    /// </param>
+    /// <param name="periodsBehind">
+    ///     How many completed periods to retain. Periods older than this are retired by the retention
+    ///     pass, which destroys their rows by design.
+    /// </param>
+    /// <param name="timeProvider">
+    ///     Clock used to resolve "now". Defaults to <see cref="TimeProvider.System" />; supply a fake to
+    ///     roll the window forward deterministically in tests.
+    /// </param>
+    /// <returns>
+    ///     The manager that owns the window, so <c>Filegroup</c> can be set or the same instance shared
+    ///     with another document type.
+    /// </returns>
+    /// <seealso href="https://github.com/JasperFx/polecat/issues/386" />
+    public ManagedRangePartitions ByRollingRange(PartitionPeriod period, int periodsAhead, int periodsBehind,
+        TimeProvider? timeProvider = null)
+        => ByRollingRange(new RollingWindowPolicy(period, periodsAhead, periodsBehind), timeProvider);
+
+    /// <summary>
+    ///     #386: RANGE-partition the table over the rolling time window described by
+    ///     <paramref name="policy" />. See
+    ///     <see cref="ByRollingRange(PartitionPeriod,int,int,TimeProvider)" />.
+    /// </summary>
+    public ManagedRangePartitions ByRollingRange(RollingWindowPolicy policy, TimeProvider? timeProvider = null)
+    {
+        ArgumentNullException.ThrowIfNull(policy);
+
+        return _parent.SetRollingWindow(_member, policy, timeProvider, prebuilt: null);
+    }
+
+    /// <summary>
+    ///     #386: RANGE-partition the table over a rolling time window owned by a pre-built
+    ///     <see cref="ManagedRangePartitions" />. Pass the <em>same</em> manager instance to several
+    ///     document types to roll every one of their tables forward in a single pass. The manager's
+    ///     column and SQL data type must match what the partition member resolves to.
+    /// </summary>
+    public ManagedRangePartitions ByRollingRange(ManagedRangePartitions partitions)
+    {
+        ArgumentNullException.ThrowIfNull(partitions);
+
+        return _parent.SetRollingWindow(_member, partitions.Policy, timeProvider: null, partitions);
+    }
+
+    /// <summary>
+    ///     #255: externally-managed RANGE partitioning: Polecat creates the partition function/scheme
     ///     and table once (with the supplied <paramref name="initialBoundaries" />) and then never
-    ///     reconciles the partitioning, so the app/DBA can SPLIT new partitions and SWITCH/DROP old
-    ///     ones at runtime for time-series retention without a later schema apply clobbering them.
+    ///     reconciles the partitioning, so whatever owns the partitions can SPLIT new ones and
+    ///     SWITCH/DROP old ones at runtime without a later schema apply clobbering them.
+    ///     <para>
+    ///         Reach for this only when something genuinely outside Polecat owns the partitions. For an
+    ///         ordinary time-series retention table prefer
+    ///         <see cref="ByRollingRange(PartitionPeriod,int,int,TimeProvider)" />, which keeps the whole
+    ///         lifecycle inside Weasel's schema model instead of leaving the application to hand-write
+    ///         <c>NEXT USED</c>/<c>SPLIT</c>/<c>MERGE</c> DDL on a schedule forever.
+    ///     </para>
     /// </summary>
     public DocumentMappingExpression<T> ByExternallyManagedRange(params TValue[] initialBoundaries)
     {
