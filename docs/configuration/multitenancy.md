@@ -149,6 +149,91 @@ Notes:
 This is the Polecat (SQL Server) equivalent of Marten's `MultiTenantedDatabasesViaMasterTable` /
 `MasterTableTenancy`.
 
+### Store-Agnostic Runtime Tenant Management <Badge type="tip" text="5.8" />
+
+The `MasterTableTenancy` methods above are Polecat-specific. `MasterTableTenancy` also implements
+`JasperFx.MultiTenancy.IDynamicTenantSource<string>` — the same store-agnostic abstraction Marten's
+`MasterTableTenancy` and `ShardedTenancy` implement — so tooling can drive the runtime tenant
+lifecycle without taking a dependency on Polecat's concrete tenancy types:
+
+```cs
+var source = (IDynamicTenantSource<string>)store.Options.Tenancy!;
+
+// Always DatabaseCardinality.DynamicMultiple -- the tenant list is read from the
+// master table and free to change while the store is running
+var cardinality = source.Cardinality;
+
+// Add a tenant with a caller-supplied connection string
+await source.AddTenantAsync("tenant-a", "Server=localhost;Database=tenant_a;...");
+
+// Resolve a tenant's connection string; throws UnknownTenantIdException for an
+// unknown *or* disabled tenant
+var connectionString = await source.FindAsync("tenant-a");
+
+// Soft delete / restore
+await source.DisableTenantAsync("tenant-a");
+IReadOnlyList<string> disabled = await source.AllDisabledAsync();
+await source.EnableTenantAsync("tenant-a");
+
+// Re-read the master table, dropping cached entries for tenants that have since
+// been removed or disabled elsewhere
+await source.RefreshAsync();
+
+// The currently active tenants. AllActive() returns the tenant *database
+// identifiers* rather than raw connection strings, so credentials never reach an
+// admin dashboard
+IReadOnlyList<string> databases = source.AllActive();
+IReadOnlyList<Assignment<string>> byTenant = source.AllActiveByTenant();
+
+// Remove the registry record entirely. The tenant database itself is untouched
+await source.RemoveTenantAsync("tenant-a");
+```
+
+When the store is configured with `MultiTenantedMasterTable()`, `AddPolecat()` also registers the
+tenancy in the container as `IDynamicTenantSource<string>`:
+
+```cs
+builder.Services.AddPolecat(opts =>
+{
+    opts.Connection(connectionString);
+    opts.MultiTenantedMasterTable(controlPlaneConnectionString);
+});
+
+// ...elsewhere
+var source = provider.GetServices<IDynamicTenantSource<string>>().Single();
+```
+
+This is what makes a Polecat-backed service's **Tenants** tab editable in CritterWatch — add,
+disable, enable, and remove all round-trip against SQL Server with no CritterWatch release required.
+Consumers resolve the source with `GetServices<IDynamicTenantSource<string>>()` and degrade to a
+read-only tenant list when the collection is empty.
+
+::: tip
+The registration is deliberately **conditional**: it happens only when the configured tenancy is a
+dynamic source. Single-database stores and static `MultiTenantedDatabases()` stores leave
+`GetServices<IDynamicTenantSource<string>>()` empty, which is the signal consumers use to fall back
+to a read-only tenant list.
+:::
+
+Two caveats:
+
+- The auto-assign overload, `Task<string> AddTenantAsync(string tenantId, CancellationToken)`, throws
+  `NotSupportedException`. Database-per-tenant has no pool for Polecat to assign from, so the caller
+  must supply a connection string via `AddTenantAsync(tenantId, connectionValue)`. CritterWatch treats
+  an empty connection string as "auto-assign" and skips sources that throw.
+- The `AddPolecat(Func<IServiceProvider, StoreOptions>)` overload cannot inspect the tenancy while the
+  container is still being assembled, so it does not auto-register the source. Configure the store with
+  one of the other `AddPolecat` overloads, or register it yourself:
+
+  ```cs
+  services.AddSingleton<IDynamicTenantSource<string>>(sp =>
+      (IDynamicTenantSource<string>)((DocumentStore)sp.GetRequiredService<IDocumentStore>()).Options.Tenancy!);
+  ```
+
+Hard-deleting the physical tenant database is out of scope for this abstraction — SQL Server needs
+`ALTER DATABASE ... SET SINGLE_USER WITH ROLLBACK IMMEDIATE` before `DROP DATABASE`, and that is the
+consumer's job. Add, disable, enable, and remove all work without it.
+
 ## Setting the Tenant ID
 
 The tenant ID is set when opening a session:

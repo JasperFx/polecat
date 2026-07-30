@@ -16,7 +16,13 @@ namespace Polecat.Storage;
 ///     Marten's <c>MasterTableTenancy</c> and the surface CritterWatch uses for dynamic tenant
 ///     management.
 /// </summary>
-public class MasterTableTenancy : ITenancy
+/// <remarks>
+///     #377: this type also declares <see cref="IDynamicTenantSource{T}" /> so store-agnostic admin
+///     tooling (CritterWatch) can drive the add / disable / enable / remove lifecycle without taking a
+///     reference to Polecat's concrete tenancy types. Mirrors Marten's
+///     <c>MasterTableTenancy: ITenancy, ITenancyWithMasterDatabase, IDynamicTenantSource&lt;string&gt;</c>.
+/// </remarks>
+public class MasterTableTenancy : ITenancy, IDynamicTenantSource<string>
 {
     /// <summary>
     ///     The master tenant-registry table name (unqualified).
@@ -48,7 +54,13 @@ public class MasterTableTenancy : ITenancy
     /// </summary>
     public string QualifiedTableName => $"[{_schemaName}].[{TableName}]";
 
-    DatabaseCardinality ITenancy.Cardinality => DatabaseCardinality.DynamicMultiple;
+    /// <summary>
+    ///     Always <see cref="DatabaseCardinality.DynamicMultiple" /> — the tenant database set is read
+    ///     from the master table and can change while the store is running. Declared publicly so it
+    ///     satisfies both <see cref="ITenancy" /> and <see cref="ITenantedSource{T}" />.
+    /// </summary>
+    public DatabaseCardinality Cardinality => DatabaseCardinality.DynamicMultiple;
+
     string ITenancy.DefaultTenantId => StorageConstants.DefaultTenantId;
 
     ConnectionFactory ITenancy.GetConnectionFactory(string tenantId)
@@ -244,6 +256,86 @@ public class MasterTableTenancy : ITenancy
             return (IReadOnlyList<string>)list;
         }, (_masterConnectionString, QualifiedTableName), token).ConfigureAwait(false);
     }
+
+    #region IDynamicTenantSource<string>
+
+    // #377: the store-agnostic dynamic-tenancy surface. Every one of these is a thin adapter over the
+    // Polecat-native methods above, which carry an optional CancellationToken and therefore cannot
+    // implement the token-less interface signatures implicitly. Implemented explicitly so the concrete
+    // MasterTableTenancy API stays the (cancellable) one, with no overload ambiguity for callers.
+
+    /// <summary>
+    ///     Resolve the connection string for a tenant. Throws <see cref="UnknownTenantIdException" />
+    ///     for an unknown or disabled tenant, matching the behavior of opening a session for it.
+    /// </summary>
+    async ValueTask<string> ITenantedSource<string>.FindAsync(string tenantId)
+    {
+        var connectionString = await LookupConnectionStringAsync(tenantId).ConfigureAwait(false);
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            throw new UnknownTenantIdException(tenantId);
+        }
+
+        return connectionString;
+    }
+
+    /// <summary>
+    ///     Re-read the master table, discarding cached entries for tenants that have since been
+    ///     removed or disabled.
+    /// </summary>
+    async Task ITenantedSource<string>.RefreshAsync()
+    {
+        _cache.Clear();
+        await BuildDatabasesAsync().ConfigureAwait(false);
+    }
+
+    /// <summary>
+    ///     The identifiers of the tenant databases currently known to this tenancy. Deliberately the
+    ///     database identifiers rather than the raw connection strings so credentials never reach an
+    ///     admin dashboard; mirrors Marten, which returns <c>MartenDatabase.Identifier</c> here.
+    /// </summary>
+    IReadOnlyList<string> ITenantedSource<string>.AllActive()
+    {
+        return _cache.Values.Select(x => x.Database.Identifier).Distinct().ToList();
+    }
+
+    IReadOnlyList<Assignment<string>> ITenantedSource<string>.AllActiveByTenant()
+    {
+        return _cache.Keys.Select(tenantId => new Assignment<string>(tenantId, tenantId)).ToList();
+    }
+
+    Task IDynamicTenantSource<string>.AddTenantAsync(string tenantId, string connectionValue)
+    {
+        return AddDatabaseRecordAsync(tenantId, connectionValue);
+    }
+
+    // NOTE: the auto-assign overload -- Task<string> AddTenantAsync(string, CancellationToken) -- is
+    // deliberately left on its default interface implementation, which throws NotSupportedException.
+    // That is the correct answer for database-per-tenant: there is no pool for Polecat to assign from,
+    // so the caller must supply a connection string. CritterWatch treats an empty connection value as
+    // "auto-assign" and skips sources that throw.
+
+    Task IDynamicTenantSource<string>.DisableTenantAsync(string tenantId)
+    {
+        return DisableTenantAsync(tenantId, CancellationToken.None);
+    }
+
+    Task IDynamicTenantSource<string>.EnableTenantAsync(string tenantId)
+    {
+        return EnableTenantAsync(tenantId, CancellationToken.None);
+    }
+
+    Task IDynamicTenantSource<string>.RemoveTenantAsync(string tenantId)
+    {
+        return DeleteDatabaseRecordAsync(tenantId, CancellationToken.None);
+    }
+
+    Task<IReadOnlyList<string>> IDynamicTenantSource<string>.AllDisabledAsync()
+    {
+        return AllDisabledAsync(CancellationToken.None);
+    }
+
+    #endregion
 
     private async Task<string?> LookupConnectionStringAsync(string tenantId, CancellationToken token = default)
     {
