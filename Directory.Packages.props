@@ -50,9 +50,11 @@
                  Func<IEvent, object?> — SOURCE BREAKING, which is why the bump and the call-site change
                  land together — plus reachable NaturalKeyBuilder / NaturalKeyFor() and loud failure on an
                  unbindable [NaturalKeySource] (polecat#369).
-             Also carries jasperfx#568/#572 daemon race fixes, picked up for free. -->
-        <PackageVersion Include="JasperFx" Version="2.36.2" />
-        <PackageVersion Include="JasperFx.Events" Version="2.36.2" />
+             Also carries jasperfx#568/#572 daemon race fixes, picked up for free.
+             JasperFx 2.36.3: the floor Weasel 9.21.0 depends on — bumped in lockstep with the
+             Weasel bump below so the matrix stays coherent rather than resolving transitively. -->
+        <PackageVersion Include="JasperFx" Version="2.36.3" />
+        <PackageVersion Include="JasperFx.Events" Version="2.36.3" />
         <!-- Pin the sibling JasperFx packages for parity with Marten 9's matrix
              even though Polecat doesn't currently reference them directly —
              keeps the lockstep matrix coherent when transitive resolution
@@ -60,7 +62,7 @@
              RuntimeCompiler 5.x line is the active continuation of the 4.x
              lineage; do not pin against the parallel stale 2.0.x series. -->
         <PackageVersion Include="JasperFx.RuntimeCompiler" Version="5.0.0" />
-        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.36.2" />
+        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.36.3" />
         <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
@@ -124,16 +126,25 @@
              AllowOrdinalSharing + explicit-ordinal add overloads (tenant bucketing),
              MigrateAllTablesAsync new-table back-fill, and TenantPartitionAddResult /
              TablePartitionStatus batch status reporting. Consumed by Polecat #335
-             (per-tenant partitioning parity for documents + streams). -->
-        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.18.0" />
-        <PackageVersion Include="Weasel.SqlServer" Version="9.18.0" />
-        <PackageVersion Include="Weasel.Storage" Version="9.18.0" />
+             (per-tenant partitioning parity for documents + streams).
+             Weasel 9.21.0: weasel#401 — Weasel.SqlServer.Tables.Partitioning.ManagedRangePartitions
+             plus Weasel.Core.Partitioning's RollingWindowPolicy / PartitionPeriod: rolling
+             time-window RANGE partitions whose CreateDelta is purely additive (a window that has
+             rolled forward is never mistaken for drift) with NEXT USED + SPLIT RANGE roll-forward
+             and partition TRUNCATE + MERGE RANGE retention. Consumed by Polecat #386
+             (PartitionOn(...).ByRollingRange(...)). Also rides along from the intervening line:
+             weasel#391 (managed tenant bucketing actually shares one partition — #335's ordinal
+             sharing) and weasel#399 (TableColumn.MatchesForDelta compares through the virtual
+             Equals, so a subclassed column no longer churns the delta). -->
+        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.21.0" />
+        <PackageVersion Include="Weasel.SqlServer" Version="9.21.0" />
+        <PackageVersion Include="Weasel.Storage" Version="9.21.0" />
 
         <!-- Strongly typed IDs -->
         <PackageVersion Include="StronglyTypedId" Version="1.0.0-beta08" />
 
         <!-- Source generators (matched to JasperFx.Events above) -->
-        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.36.2" />
+        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.36.3" />
 
         <!-- Build automation -->
         <PackageVersion Include="Nuke.Common" Version="9.0.4" />

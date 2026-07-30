@@ -125,10 +125,21 @@ internal class DocumentTable : Table
                 AddColumn(partitioning.ColumnName, partitioning.SqlDataType).AsPrimaryKey().NotNull();
             }
 
-            var range = PartitionByRange(partitioning.ColumnName, partitioning.SqlDataType);
-            foreach (var boundary in partitioning.Boundaries)
+            // #386: a rolling time window derives its boundaries from the policy and the clock, so the
+            // manager IS the partitioning strategy — the same instance every DocumentTable rebuild hands
+            // to Weasel, which is how ManagedRangePartitions.ResolveManagedTables (reference identity)
+            // finds the tables it owns during the roll-forward/retention pass.
+            if (partitioning.RollingWindow is { } rollingWindow)
             {
-                range.AddBoundary(boundary);
+                this.PartitionByRollingWindow(rollingWindow);
+            }
+            else
+            {
+                var range = PartitionByRange(partitioning.ColumnName, partitioning.SqlDataType);
+                foreach (var boundary in partitioning.Boundaries)
+                {
+                    range.AddBoundary(boundary);
+                }
             }
         }
     }
