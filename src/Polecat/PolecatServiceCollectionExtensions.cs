@@ -1,5 +1,6 @@
 using JasperFx.CommandLine.Descriptions;
 using JasperFx.Events;
+using JasperFx.MultiTenancy;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Polecat.Internal;
@@ -17,12 +18,15 @@ public static class PolecatServiceCollectionExtensions
     public static PolecatConfigurationExpression AddPolecat(
         this IServiceCollection services, Action<StoreOptions> configure)
     {
-        return services.AddPolecat(sp =>
-        {
-            var options = new StoreOptions();
-            configure(options);
-            return options;
-        });
+        // The StoreOptions is built here rather than inside the resolution factory so that
+        // AddPolecat(StoreOptions) below can inspect the configured tenancy while the container is
+        // still being assembled (#377). Mirrors Marten's AddMarten(Action<StoreOptions>), which does
+        // the same eager build and then delegates to AddMarten(StoreOptions). The IConfigurePolecat
+        // chain still runs later, on first IDocumentStore resolution.
+        var options = new StoreOptions();
+        configure(options);
+
+        return services.AddPolecat(options);
     }
 
     /// <summary>
@@ -40,12 +44,42 @@ public static class PolecatServiceCollectionExtensions
     public static PolecatConfigurationExpression AddPolecat(
         this IServiceCollection services, StoreOptions options)
     {
-        return services.AddPolecat(_ => options);
+        var expression = services.AddPolecat(_ => options);
+
+        // #377 / jasperfx#413: when the configured tenancy is a dynamic source (today only
+        // MasterTableTenancy), also register it as IDynamicTenantSource<string> so store-agnostic
+        // admin tooling (CritterWatch) can resolve it through GetServices without referencing
+        // Polecat's concrete tenancy types. Conditional on purpose: non-dynamic stores
+        // (DefaultTenancy / SeparateDatabaseTenancy) must keep GetServices empty, which is the
+        // signal consumers use to fall back to a read-only tenant list.
+        //
+        // The factory resolves IDocumentStore first so the IConfigurePolecat chain has run and
+        // Options.Tenancy is final before it is handed out.
+        if (options.Tenancy is IDynamicTenantSource<string>)
+        {
+            services.AddSingleton<IDynamicTenantSource<string>>(sp =>
+            {
+                var store = (DocumentStore)sp.GetRequiredService<IDocumentStore>();
+                return (IDynamicTenantSource<string>)store.Options.Tenancy!;
+            });
+        }
+
+        return expression;
     }
 
     /// <summary>
     ///     Add Polecat with a factory function that receives the IServiceProvider.
     /// </summary>
+    /// <remarks>
+    ///     The StoreOptions is not available until the container is built, so this overload cannot
+    ///     auto-register <c>IDynamicTenantSource&lt;string&gt;</c> for a dynamic tenancy the way the
+    ///     other overloads do (#377). If you configure <c>MultiTenantedMasterTable()</c> from here and
+    ///     want CritterWatch's runtime tenant management, register it yourself:
+    ///     <code>
+    ///     services.AddSingleton&lt;IDynamicTenantSource&lt;string&gt;&gt;(sp =&gt;
+    ///         (IDynamicTenantSource&lt;string&gt;)((DocumentStore)sp.GetRequiredService&lt;IDocumentStore&gt;()).Options.Tenancy!);
+    ///     </code>
+    /// </remarks>
     public static PolecatConfigurationExpression AddPolecat(
         this IServiceCollection services, Func<IServiceProvider, StoreOptions> optionSource)
     {
