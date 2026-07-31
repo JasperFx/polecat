@@ -125,6 +125,50 @@ Critical path for MVP: Stages 1–5, 7–8, 10–11
   xunit.v3 is built against Microsoft.Testing.Platform 1.x; anything 2.x makes every test run die at
   startup with a `TypeLoadException`. See the comment in `Directory.Packages.props`.
 
+### Writing tests that survive being run in parallel processes
+
+The suite is a candidate for being run across several worker processes at once (Bobcat's supervisor
+drives the MTP executable directly; measured **15.9 min → 5.7 min at four workers**). Each worker is
+pointed at its own catalog through `POLECAT_TESTING_DATABASE`. Two rules follow, and both were
+learned by watching tests break:
+
+**Never rewrite a connection string by text.** This was in three files and was silently wrong:
+
+```csharp
+// WRONG — only rewrites while the catalog happens to be "master"
+ConnectionSource.ConnectionString.Replace("Initial Catalog=master", $"Database={name}")
+```
+
+Point `POLECAT_TESTING_DATABASE` at anything else and the literal is absent, so the replace matches
+nothing, the "other" database quietly resolves to the *current* one, and the test asserts against
+itself — passing or failing for reasons unrelated to what it is testing. Use the helpers on
+`ConnectionSource` instead:
+
+```csharp
+ConnectionSource.ConnectionStringFor(name)   // another database on the same server
+ConnectionSource.MasterConnectionString      // master, for DDL
+ConnectionSource.DatabaseName                // the catalog this process is using
+```
+
+**Name every database a test creates with `ConnectionSource.Scoped(...)`.** A database a test
+creates is a *sibling* of the process's own database, not a child of it — so giving each worker its
+own catalog does **not** isolate them. A hardcoded `"polecat_tenant_a"` is one database shared by
+every worker on the box, and they will race to create and drop it:
+
+```csharp
+// WRONG — every worker fights over the same database
+private const string DbA = "polecat_tenant_a";
+
+// RIGHT — "master_tenant_a" locally, "polecat_w3_tenant_a" under a parallel runner
+private static readonly string DbA = ConnectionSource.Scoped("tenant_a");
+```
+
+The same rule applies to anything else that lives at server scope rather than inside the catalog:
+logins, linked servers, Agent jobs.
+
+Schema names do **not** need scoping — they live inside the catalog, so per-worker databases already
+separate them. That is why `SchemaName = "doc_usage"` appearing in nine files is fine.
+
 ## Engineering Principles
 
 - Mirror Marten's public API surface where possible for user familiarity

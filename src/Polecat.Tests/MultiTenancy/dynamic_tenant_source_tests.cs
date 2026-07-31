@@ -17,15 +17,14 @@ public class dynamic_tenant_source_tests : IAsyncLifetime
 {
     private const string TenantA = "tenant_a";
     private const string TenantB = "tenant_b";
-    private const string ControlDb = "polecat_dts_control";
-    private const string DbA = "polecat_dts_tenant_a";
-    private const string DbB = "polecat_dts_tenant_b";
+    private static readonly string ControlDb = ConnectionSource.Scoped("dts_control");
+    private static readonly string DbA = ConnectionSource.Scoped("dts_tenant_a");
+    private static readonly string DbB = ConnectionSource.Scoped("dts_tenant_b");
 
-    private static readonly string MasterConnectionString =
-        ConnectionSource.ConnectionString.Replace("Initial Catalog=master", "Database=master");
+    private static readonly string MasterConnectionString = ConnectionSource.MasterConnectionString;
 
     private static string Db(string name) =>
-        ConnectionSource.ConnectionString.Replace("Initial Catalog=master", $"Database={name}");
+        ConnectionSource.ConnectionStringFor(name);
 
     public async ValueTask InitializeAsync()
     {
