@@ -52,9 +52,18 @@
                  unbindable [NaturalKeySource] (polecat#369).
              Also carries jasperfx#568/#572 daemon race fixes, picked up for free.
              JasperFx 2.36.3: the floor Weasel 9.21.0 depends on — bumped in lockstep with the
-             Weasel bump below so the matrix stays coherent rather than resolving transitively. -->
-        <PackageVersion Include="JasperFx" Version="2.36.3" />
-        <PackageVersion Include="JasperFx.Events" Version="2.36.3" />
+             Weasel bump below so the matrix stays coherent rather than resolving transitively.
+             JasperFx 2.37.0: jasperfx#590 — OptionsDescription no longer loses an entire diagnostic
+             description to one throwing property getter; set-only properties and indexers are
+             skipped, and a getter that throws is recorded as OptionsValue.Unreadable (exception
+             TYPE only, never the message, since descriptions ship to monitoring consoles). Polecat
+             is described this way by CritterWatch, so this is the store-side half of that fix.
+             Also carries the jasperfx#594 patch half (a timed-out blue/green side-effect gate
+             re-reads progression and succeeds when the replay had already reached the mark, plus a
+             configurable DaemonSettings.SideEffectGateTimeout), jasperfx#595 (BatchingChannel could
+             deliver its trailing batch twice on shutdown) and #597. Same lockstep rule as above. -->
+        <PackageVersion Include="JasperFx" Version="2.37.0" />
+        <PackageVersion Include="JasperFx.Events" Version="2.37.0" />
         <!-- Pin the sibling JasperFx packages for parity with Marten 9's matrix
              even though Polecat doesn't currently reference them directly —
              keeps the lockstep matrix coherent when transitive resolution
@@ -62,7 +71,7 @@
              RuntimeCompiler 5.x line is the active continuation of the 4.x
              lineage; do not pin against the parallel stale 2.0.x series. -->
         <PackageVersion Include="JasperFx.RuntimeCompiler" Version="5.0.0" />
-        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.36.3" />
+        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.37.0" />
         <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
@@ -135,16 +144,22 @@
              (PartitionOn(...).ByRollingRange(...)). Also rides along from the intervening line:
              weasel#391 (managed tenant bucketing actually shares one partition — #335's ordinal
              sharing) and weasel#399 (TableColumn.MatchesForDelta compares through the virtual
-             Equals, so a subclassed column no longer churns the delta). -->
-        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.21.0" />
-        <PackageVersion Include="Weasel.SqlServer" Version="9.21.0" />
-        <PackageVersion Include="Weasel.Storage" Version="9.21.0" />
+             Equals, so a subclassed column no longer churns the delta).
+             Weasel 9.21.1 (weasel#416): partition bound VALUES are escaped — FormatSqlValue doubles
+             an embedded single quote and no longer returns an already-quote-wrapped string verbatim.
+             Weasel 9.22.0 (weasel#417): carries the JasperFx 2.37.0 floor.
+             Weasel 9.23.0: weasel#415 — EnsureDatabaseExistsAsync is safe under concurrent callers,
+             which is the SQL Server path Polecat provisions on; plus weasel#416, where
+             AssertValidIdentifier now rejects a quote or semicolon outright. -->
+        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.23.0" />
+        <PackageVersion Include="Weasel.SqlServer" Version="9.23.0" />
+        <PackageVersion Include="Weasel.Storage" Version="9.23.0" />
 
         <!-- Strongly typed IDs -->
         <PackageVersion Include="StronglyTypedId" Version="1.0.0-beta08" />
 
         <!-- Source generators (matched to JasperFx.Events above) -->
-        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.36.3" />
+        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.37.0" />
 
         <!-- Build automation -->
         <PackageVersion Include="Nuke.Common" Version="9.0.4" />
