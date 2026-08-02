@@ -44,6 +44,17 @@ internal class EventsTable : Table
         // Event data — SQL Server 2025 native JSON type by default
         AddColumn("data", events.JsonColumnType).NotNull();
 
+        // #388: binary event payload, the SQL Server counterpart of Marten's bytea `bdata`
+        // (marten#4515). Nullable and unconditional on purpose: `bdata IS NULL` is the per-ROW
+        // discriminator between a JSON event and a binary one, so JSON and binary events coexist in
+        // this table per event type. That is what makes the feature switchable on an existing store
+        // with no migration of existing event data — rows written before the column existed simply
+        // have bdata = NULL and keep reading through the JSON path — and just as safely switchable
+        // back off. Adding it always (rather than only when a serializer is configured) keeps the
+        // read projection one fixed shape; Weasel's additive delta adds the column on the next
+        // schema apply.
+        AddColumn("bdata", "varbinary(max)").AllowNulls();
+
         // Event type name for deserialization
         AddColumn("type", "varchar(500)").NotNull();
 

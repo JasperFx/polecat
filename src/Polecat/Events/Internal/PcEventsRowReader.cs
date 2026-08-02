@@ -61,10 +61,16 @@ namespace Polecat.Events.Internal;
 internal static class PcEventsRowReader
 {
     /// <summary>
-    ///     Mandatory columns, always projected. Ordinals 0–9.
+    ///     Mandatory columns, always projected. Ordinals 0–10.
     /// </summary>
+    /// <remarks>
+    ///     #388 pins <c>bdata</c> at ordinal 10, after the previously-locked 0–9 block and before the
+    ///     optional metadata columns, so the per-row JSON-vs-binary dispatch reads a stable ordinal
+    ///     without disturbing any of the existing ones. The optional metadata slots shift from 10 to 11
+    ///     — see <see cref="MetadataSlots.Compute" />.
+    /// </remarks>
     internal const string CoreSelectColumns =
-        "seq_id, id, stream_id, version, data, type, timestamp, tenant_id, dotnet_type, is_archived";
+        "seq_id, id, stream_id, version, data, type, timestamp, tenant_id, dotnet_type, is_archived, bdata";
 
     /// <summary>
     ///     Compose <see cref="CoreSelectColumns"/> plus any optional metadata
@@ -93,7 +99,7 @@ internal static class PcEventsRowReader
     internal static string ComposeSelectColumnsWithAlias(EventStoreOptions options, string alias)
     {
         var sb = new StringBuilder(
-            $"{alias}.seq_id, {alias}.id, {alias}.stream_id, {alias}.version, {alias}.data, {alias}.type, {alias}.timestamp, {alias}.tenant_id, {alias}.dotnet_type, {alias}.is_archived");
+            $"{alias}.seq_id, {alias}.id, {alias}.stream_id, {alias}.version, {alias}.data, {alias}.type, {alias}.timestamp, {alias}.tenant_id, {alias}.dotnet_type, {alias}.is_archived, {alias}.bdata");
         if (options.EnableCorrelationId) sb.Append($", {alias}.correlation_id");
         if (options.EnableCausationId) sb.Append($", {alias}.causation_id");
         if (options.EnableHeaders) sb.Append($", {alias}.headers");
@@ -162,6 +168,10 @@ internal static class PcEventsRowReader
         var tenantId = reader.IsDBNull(7) ? ctx.DefaultTenantId : reader.GetString(7);
         var dotNetTypeName = reader.IsDBNull(8) ? null : reader.GetString(8);
         var isArchived = reader.GetBoolean(9);
+        // #388: non-null bdata is the per-row discriminator. Reading it here (rather than inside the
+        // optional-metadata slot loop) keeps the dispatch on a fixed ordinal and off the JSON path's
+        // hot loop — a store with no binary events pays one IsDBNull per row.
+        var bdata = reader.IsDBNull(10) ? null : reader.GetFieldValue<byte[]>(10);
 
         var resolvedType = ctx.EventGraph.ResolveEventType(dotNetTypeName);
         if (resolvedType == null) return null;
@@ -171,7 +181,7 @@ internal static class PcEventsRowReader
         // this collapses N dictionary lookups into 1 per distinct type.
         var mapping = cache.LookupOrAdd(ctx.EventGraph, resolvedType);
 
-        var data = ctx.Serializer.FromJson(resolvedType, json);
+        var data = ctx.EventGraph.DeserializeEventData(resolvedType, json, bdata, ctx.Serializer);
         var @event = mapping.Wrap(data);
 
         @event.Id = eventId;
@@ -253,6 +263,10 @@ internal static class PcEventsRowReader
             metadata = headerDoc.RootElement.Clone();
         }
 
+        // #388: a binary event's `data` column holds only the '{}' placeholder, so the explorer's
+        // JsonElement view of a binary row is that empty object. The explorer is a diagnostic surface
+        // that deliberately does not deserialize (no ISerializer, no IEventBinarySerializer), so it
+        // reports what is in the JSON column rather than pretending to decode the bytes.
         using var doc = JsonDocument.Parse(rawData);
         var data = doc.RootElement.Clone();
 
@@ -294,7 +308,8 @@ internal readonly record struct MetadataSlots(int CorrelationIdx, int CausationI
 
     public static MetadataSlots Compute(EventStoreOptions options)
     {
-        var ordinal = 10;
+        // #388: ordinal 10 is bdata; the optional metadata block starts at 11.
+        var ordinal = 11;
         var correlation = options.EnableCorrelationId ? ordinal++ : Disabled;
         var causation = options.EnableCausationId ? ordinal++ : Disabled;
         var headers = options.EnableHeaders ? ordinal++ : Disabled;

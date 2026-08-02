@@ -491,6 +491,32 @@ public class EventStoreOptions : IEventStoreInstrumentation
     }
 
     /// <summary>
+    ///     #388: store-wide fallback <see cref="Polecat.Events.IEventBinarySerializer" /> for event types
+    ///     marked with <see cref="Polecat.Events.BinaryEventAttribute" /> that have no explicit per-type
+    ///     registration via <see cref="UseBinarySerializer{TEvent}" />. Null by default — every event type
+    ///     stays on the JSON path. Mirrors Marten's <c>opts.Events.DefaultBinarySerializer</c>.
+    /// </summary>
+    public Polecat.Events.IEventBinarySerializer? DefaultBinarySerializer
+    {
+        get => EventGraph!.DefaultBinarySerializer;
+        set => EventGraph!.DefaultBinarySerializer = value;
+    }
+
+    /// <summary>
+    ///     #388: opt <typeparamref name="TEvent" /> into binary serialization — its payload is written to
+    ///     the <c>pc_events.bdata</c> column instead of <c>data</c>, and read back through the same
+    ///     serializer. Per event type rather than store-wide, so JSON and binary rows coexist in one
+    ///     table and the feature can be switched on (or back off) for an existing store with no data
+    ///     migration. Mirrors Marten's <c>opts.Events.UseBinarySerializer&lt;TEvent&gt;(serializer)</c>.
+    /// </summary>
+    public EventStoreOptions UseBinarySerializer<TEvent>(Polecat.Events.IEventBinarySerializer serializer)
+        where TEvent : notnull
+    {
+        EventGraph!.UseBinarySerializer<TEvent>(serializer);
+        return this;
+    }
+
+    /// <summary>
     ///     Register a tag type for Dynamic Consistency Boundary (DCB) support.
     ///     Creates a tag table with an auto-generated suffix.
     /// </summary>
