@@ -108,4 +108,51 @@ public class StoreOptionsTests
         options.Events.EnableCausationId.ShouldBeTrue();
         options.Events.EnableHeaders.ShouldBeTrue();
     }
+
+    [Fact]
+    public void add_event_type_generic_registers_the_event_type()
+    {
+        var options = new StoreOptions();
+        options.Events.AddEventType<StoreOptionsEventTypeA>();
+
+        options.EventGraph.AllKnownEventTypes()
+            .ShouldContain(x => x.EventType == typeof(StoreOptionsEventTypeA));
+    }
+
+    [Fact]
+    public void add_event_type_by_type_registers_the_event_type()
+    {
+        var options = new StoreOptions();
+        options.Events.AddEventType(typeof(StoreOptionsEventTypeB));
+
+        options.EventGraph.AllKnownEventTypes()
+            .ShouldContain(x => x.EventType == typeof(StoreOptionsEventTypeB));
+    }
+
+    [Fact]
+    public void add_event_types_registers_all_of_them()
+    {
+        var options = new StoreOptions();
+        options.Events.AddEventTypes([typeof(StoreOptionsEventTypeA), typeof(StoreOptionsEventTypeB)]);
+
+        var known = options.EventGraph.AllKnownEventTypes();
+        known.ShouldContain(x => x.EventType == typeof(StoreOptionsEventTypeA));
+        known.ShouldContain(x => x.EventType == typeof(StoreOptionsEventTypeB));
+    }
+
+    [Fact]
+    public void add_event_type_is_idempotent()
+    {
+        var options = new StoreOptions();
+        options.Events.AddEventType<StoreOptionsEventTypeA>();
+        options.Events.AddEventType<StoreOptionsEventTypeA>();
+
+        options.EventGraph.AllKnownEventTypes()
+            .Count(x => x.EventType == typeof(StoreOptionsEventTypeA))
+            .ShouldBe(1);
+    }
 }
+
+public record StoreOptionsEventTypeA(string Name);
+
+public record StoreOptionsEventTypeB(int Count);
