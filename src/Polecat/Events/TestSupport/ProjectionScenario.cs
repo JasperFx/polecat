@@ -135,7 +135,8 @@ public partial class ProjectionScenario
         await using var conn = new Microsoft.Data.SqlClient.SqlConnection(_store.Options.ConnectionString);
         await conn.OpenAsync(ct);
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"IF OBJECT_ID('{tableName}', 'U') IS NOT NULL DELETE FROM {tableName};";
+        cmd.CommandText =
+            $"IF OBJECT_ID({Polecat.Internal.SqlEscaping.Literal(tableName)}, 'U') IS NOT NULL DELETE FROM {tableName};";
         await cmd.ExecuteNonQueryAsync(ct);
     }
 }

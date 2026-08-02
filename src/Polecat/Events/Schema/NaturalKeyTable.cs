@@ -12,7 +12,7 @@ internal class NaturalKeyTable : Table
 {
     public NaturalKeyTable(EventGraph events, NaturalKeyDefinition naturalKey)
         : base(new SqlServerObjectName(events.DatabaseSchemaName,
-            $"pc_natural_key_{naturalKey.AggregateType.Name.ToLowerInvariant()}"))
+            EventGraph.NaturalKeyTableNameFor(naturalKey.AggregateType)))
     {
         var columnType = naturalKey.InnerType == typeof(int) ? "int"
             : naturalKey.InnerType == typeof(long) ? "bigint"

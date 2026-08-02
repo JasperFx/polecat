@@ -198,7 +198,7 @@ internal class DocumentTableEnsurer
         // forbids function calls inside EXEC(...), hence the SET-then-EXEC pattern).
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = $"""
-            DECLARE @oid int = OBJECT_ID('{qualifiedTableName}');
+            DECLARE @oid int = OBJECT_ID({SqlEscaping.Literal(qualifiedTableName)});
             IF @oid IS NOT NULL
             BEGIN
                 DECLARE @df sysname, @sql nvarchar(max);
@@ -207,7 +207,7 @@ internal class DocumentTableEnsurer
                     WHERE dc.parent_object_id = @oid AND col.name = 'version';
                 IF @df IS NOT NULL
                 BEGIN
-                    SET @sql = 'ALTER TABLE {qualifiedTableName} DROP CONSTRAINT ' + QUOTENAME(@df);
+                    SET @sql = '{SqlEscaping.LiteralBody($"ALTER TABLE {qualifiedTableName} DROP CONSTRAINT ")}' + QUOTENAME(@df);
                     EXEC(@sql);
                 END
                 IF EXISTS (
@@ -248,7 +248,7 @@ internal class DocumentTableEnsurer
         }
 
         var qualifiedTableName = mapping.QualifiedTableName;
-        var pkColumnList = string.Join(", ", table.PrimaryKeyColumns.Select(c => $"[{c}]"));
+        var pkColumnList = string.Join(", ", table.PrimaryKeyColumns.Select(SqlEscaping.QuoteIdentifier));
 
         // The table/PK names are derived from the document type (not user input) and inlined; only
         // the discovered PK-constraint name needs dynamic SQL (SQL Server forbids function calls
@@ -256,7 +256,7 @@ internal class DocumentTableEnsurer
         // key first, so the whole convert runs as one guarded batch.
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = $"""
-            DECLARE @oid int = OBJECT_ID('{qualifiedTableName}');
+            DECLARE @oid int = OBJECT_ID({SqlEscaping.Literal(qualifiedTableName)});
             IF @oid IS NOT NULL AND EXISTS (
                 SELECT 1 FROM sys.columns c
                 WHERE c.object_id = @oid AND c.name = 'id'
@@ -267,7 +267,7 @@ internal class DocumentTableEnsurer
                     WHERE kc.parent_object_id = @oid AND kc.type = 'PK';
                 IF @pk IS NOT NULL
                 BEGIN
-                    SET @sql = 'ALTER TABLE {qualifiedTableName} DROP CONSTRAINT ' + QUOTENAME(@pk);
+                    SET @sql = '{SqlEscaping.LiteralBody($"ALTER TABLE {qualifiedTableName} DROP CONSTRAINT ")}' + QUOTENAME(@pk);
                     EXEC(@sql);
                 END
                 ALTER TABLE {qualifiedTableName} ALTER COLUMN [id] {targetType} NOT NULL;

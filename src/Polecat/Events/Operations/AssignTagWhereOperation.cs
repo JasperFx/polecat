@@ -44,8 +44,9 @@ internal class AssignTagWhereOperation : Polecat.Internal.IStorageOperation
 
     public void ConfigureCommand(ICommandBuilder builder)
     {
-        var tagTable = $"[{_schemaName}].[pc_event_tag_{_registration.TableSuffix}]";
-        var eventsTable = $"[{_schemaName}].[pc_events]";
+        var tagTable = Polecat.Internal.SqlEscaping.QualifiedName(
+            _schemaName, EventGraph.TagTableNameFor(_registration));
+        var eventsTable = Polecat.Internal.SqlEscaping.QualifiedName(_schemaName, "pc_events");
 
         // When pc_events is partitioned by is_archived the tag table also carries
         // is_archived (PK + FK columns) — see EventTagTable. Carry the source row's

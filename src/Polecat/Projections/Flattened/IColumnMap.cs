@@ -1,3 +1,5 @@
+using Polecat.Internal;
+
 namespace Polecat.Projections.Flattened;
 
 /// <summary>
@@ -127,8 +129,12 @@ internal class SetStringValueMap : IColumnMap
     public string ColumnName { get; }
     public bool RequiresInput => false;
 
-    public string UpdateExpression(string paramName) => $"[{ColumnName}] = '{_value}'";
-    public string InsertExpression(string paramName) => $"'{_value}'";
+    // #390: the configured value lands in a T-SQL string literal, so an embedded quote has to be
+    // doubled — otherwise it terminates the literal and the rest of the value is parsed as SQL.
+    public string UpdateExpression(string paramName) =>
+        $"{SqlEscaping.QuoteIdentifier(ColumnName)} = {SqlEscaping.Literal(_value)}";
+
+    public string InsertExpression(string paramName) => SqlEscaping.Literal(_value);
 }
 
 /// <summary>

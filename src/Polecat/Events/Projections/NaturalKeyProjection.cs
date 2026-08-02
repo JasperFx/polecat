@@ -23,7 +23,7 @@ internal class NaturalKeyProjection : IInlineProjection<IDocumentSession>
     {
         _definition = definition;
         _events = events;
-        _qualifiedTableName = $"[{events.DatabaseSchemaName}].[pc_natural_key_{definition.AggregateType.Name.ToLowerInvariant()}]";
+        _qualifiedTableName = events.NaturalKeyTableName(definition.AggregateType);
         _isGuidStream = events.StreamIdentity == StreamIdentity.AsGuid;
         _isConjoined = events.TenancyStyle == TenancyStyle.Conjoined;
     }

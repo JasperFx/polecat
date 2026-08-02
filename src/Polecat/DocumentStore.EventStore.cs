@@ -546,9 +546,12 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
                     // rebuild it may not exist yet — guard the tenant-scoped delete accordingly.
                     // #234: single-tenant projection tables have no tenant_id column, so the delete
                     // is unscoped there (only the default tenant's rows exist).
+                    // #390: the same name occupies a string-literal position (OBJECT_ID) and a bare
+                    // identifier position, which take different escaping.
+                    var exists = $"IF OBJECT_ID({SqlEscaping.Literal(tableName)}, 'U') IS NOT NULL";
                     delDocs.CommandText = isConjoined
-                        ? $"IF OBJECT_ID('{tableName}', 'U') IS NOT NULL DELETE FROM {tableName} WHERE tenant_id = @tenant;"
-                        : $"IF OBJECT_ID('{tableName}', 'U') IS NOT NULL DELETE FROM {tableName};";
+                        ? $"{exists} DELETE FROM {tableName} WHERE tenant_id = @tenant;"
+                        : $"{exists} DELETE FROM {tableName};";
                     if (isConjoined) delDocs.Parameters.AddVarChar("@tenant", tenant);
                     await delDocs.ExecuteNonQueryAsync(ct);
                 }
@@ -611,8 +614,7 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
             // same as for the doc tables, so it rides the same loop below.
             if (source is JasperFx.Events.Aggregation.IAggregateProjection { NaturalKeyDefinition: not null } natural)
             {
-                var aggregateName = natural.NaturalKeyDefinition.AggregateType.Name.ToLowerInvariant();
-                tables.Add($"[{Events.DatabaseSchemaName}].[pc_natural_key_{aggregateName}]");
+                tables.Add(Events.NaturalKeyTableName(natural.NaturalKeyDefinition.AggregateType));
             }
 
             publishedTableNames = tables.ToArray();

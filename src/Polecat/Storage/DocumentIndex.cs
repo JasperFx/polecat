@@ -1,5 +1,6 @@
 using System.Linq.Expressions;
 using System.Reflection;
+using Polecat.Internal;
 
 namespace Polecat.Storage;
 
@@ -170,7 +171,7 @@ public class DocumentIndex
     {
         var schema = mapping.DatabaseSchemaName;
         var table = mapping.TableName;
-        var qualifiedTable = $"[{schema}].[{table}]";
+        var qualifiedTable = SqlEscaping.QualifiedName(schema, table);
         var name = GetIndexName(table);
         var unique = IsUnique ? "UNIQUE " : "";
 
@@ -183,9 +184,11 @@ public class DocumentIndex
             var sqlType = ResolveSqlType(path, mapping.ResolveClrMemberType(path));
             var castedExpr = ComputedColumnExpression(path, sqlType, Casing, UsesNativeJson(mapping));
 
+            // #390: COL_LENGTH takes the object name as a *string*, so the same qualified name that
+            // appears bare in ALTER TABLE has to be escaped a second time for the literal position.
             statements.Add($"""
-                IF COL_LENGTH('{schema}.{table}', '{colName}') IS NULL
-                    ALTER TABLE {qualifiedTable} ADD [{colName}] AS {castedExpr} PERSISTED;
+                IF COL_LENGTH({SqlEscaping.Literal(qualifiedTable)}, {SqlEscaping.Literal(colName)}) IS NULL
+                    ALTER TABLE {qualifiedTable} ADD {SqlEscaping.QuoteIdentifier(colName)} AS {castedExpr} PERSISTED;
                 """);
         }
 
@@ -197,8 +200,8 @@ public class DocumentIndex
             var castedExpr = ComputedColumnExpression(path, sqlType, IndexCasing.Default, UsesNativeJson(mapping));
 
             statements.Add($"""
-                IF COL_LENGTH('{schema}.{table}', '{colName}') IS NULL
-                    ALTER TABLE {qualifiedTable} ADD [{colName}] AS {castedExpr} PERSISTED;
+                IF COL_LENGTH({SqlEscaping.Literal(qualifiedTable)}, {SqlEscaping.Literal(colName)}) IS NULL
+                    ALTER TABLE {qualifiedTable} ADD {SqlEscaping.QuoteIdentifier(colName)} AS {castedExpr} PERSISTED;
                 """);
         }
 
@@ -213,20 +216,23 @@ public class DocumentIndex
         {
             var colName = ColumnNameForPath(path, Casing);
             var sortDir = SortOrder == SortOrder.Descending ? " DESC" : "";
-            indexColumns.Add($"[{colName}]{sortDir}");
+            indexColumns.Add($"{SqlEscaping.QuoteIdentifier(colName)}{sortDir}");
         }
 
         var columnList = string.Join(", ", indexColumns);
         var include = IncludeColumns.Length > 0
             ? " INCLUDE (" + string.Join(", ",
-                IncludeColumns.Select(p => $"[{ColumnNameForPath(p, IndexCasing.Default)}]")) + ")"
+                IncludeColumns.Select(p => SqlEscaping.QuoteIdentifier(ColumnNameForPath(p, IndexCasing.Default)))) + ")"
             : "";
         var where = !string.IsNullOrEmpty(Predicate) ? $" WHERE {Predicate}" : "";
 
+        // #390: IndexName is a public-API argument (Index(..., indexName)) that lands in a string
+        // literal here and a bracketed identifier one line later — both positions need escaping, and
+        // they take different escapes.
         statements.Add($"""
-            IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = '{name}'
-                           AND object_id = OBJECT_ID('{qualifiedTable}'))
-                CREATE {unique}NONCLUSTERED INDEX [{name}] ON {qualifiedTable} ({columnList}){include}{where};
+            IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = {SqlEscaping.Literal(name)}
+                           AND object_id = OBJECT_ID({SqlEscaping.Literal(qualifiedTable)}))
+                CREATE {unique}NONCLUSTERED INDEX {SqlEscaping.QuoteIdentifier(name)} ON {qualifiedTable} ({columnList}){include}{where};
             """);
 
         return statements.ToArray();

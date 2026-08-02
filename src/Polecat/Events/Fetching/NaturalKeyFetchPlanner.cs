@@ -24,8 +24,7 @@ internal static class NaturalKeyFetchPlanner
         CancellationToken cancellation) where T : class where TId : notnull
     {
         var isGuidStream = events.StreamIdentity == StreamIdentity.AsGuid;
-        var schema = events.DatabaseSchemaName;
-        var tableName = $"pc_natural_key_{naturalKey.AggregateType.Name.ToLowerInvariant()}";
+        var qualifiedTableName = events.NaturalKeyTableName(naturalKey.AggregateType);
         var streamColumn = isGuidStream ? "stream_id" : "stream_key";
 
         // Unwrap strong-typed id to primitive
@@ -43,7 +42,7 @@ internal static class NaturalKeyFetchPlanner
 
         cmd.CommandText = $"""
             SELECT s.version, s.id
-            FROM [{schema}].[{tableName}] nk WITH (NOLOCK)
+            FROM {qualifiedTableName} nk WITH (NOLOCK)
             INNER JOIN {events.StreamsTableName} s WITH (UPDLOCK, HOLDLOCK) ON s.id = nk.{streamColumn}
             WHERE nk.natural_key_value = @naturalKey AND nk.is_archived = 0{tenantFilter}
             AND s.tenant_id = @tenantId;

@@ -42,5 +42,5 @@ internal sealed class PolecatDocumentSchemaResolver : IDocumentSchemaResolver
     public string ForEventProgression(bool qualified = true) => Format("pc_event_progression", qualified);
 
     private string Format(string table, bool qualified)
-        => qualified ? $"[{_options.DatabaseSchemaName}].[{table}]" : table;
+        => qualified ? SqlEscaping.QualifiedName(_options.DatabaseSchemaName, table) : table;
 }
