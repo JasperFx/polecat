@@ -164,7 +164,9 @@ public class strong_typed_id_column_type_tests : IntegrationContext
                 $"INSERT INTO {schema}.pc_doc_invoice (id, data, version) VALUES ('{legacyId}', '{json}', 1);");
         }
 
-        await StoreOptions(opts => { opts.DatabaseSchemaName = schema; });
+        // cleanAll: false — the legacy row seeded above IS the fixture for this test; the whole
+        // point is that the in-place id conversion preserves it.
+        await StoreOptions(opts => { opts.DatabaseSchemaName = schema; }, cleanAll: false);
 
         // First document access triggers the lazy ensure, which converts the id column in place,
         // then loads the pre-existing row through the Lightweight writeable selector.
