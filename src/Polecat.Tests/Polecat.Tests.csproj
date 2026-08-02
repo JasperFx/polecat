@@ -28,6 +28,9 @@
         <ProjectReference Include="..\Polecat.TestUtils\Polecat.TestUtils.csproj" />
         <ProjectReference Include="..\Polecat\Polecat.csproj" />
         <PackageReference Include="JasperFx.Events.SourceGenerator" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+        <!-- Source-only: the compliance suites compile into this assembly so the aggregate source
+             generator above binds Polecat's session types. See Compliance/ for the enrollments. -->
+        <PackageReference Include="JasperFx.Events.ComplianceTests" />
     </ItemGroup>
 
     <ItemGroup>

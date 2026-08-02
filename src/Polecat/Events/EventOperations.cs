@@ -941,7 +941,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
         {
             var seqId = reader.GetInt64(0);
             var eventId = reader.GetGuid(1);
-            // stream_id at index 2
+            var rawStreamId = reader.GetValue(2);
             var eventVersion = reader.GetInt64(3);
             var json = reader.GetString(4);
             var typeName = reader.GetString(5);
@@ -965,6 +965,18 @@ internal class EventOperations : QueryEventStore, IEventOperations
             @event.EventTypeName = typeName;
             @event.DotNetTypeName = dotNetTypeName!;
             @event.IsArchived = isArchived;
+
+            // The stream_id column was selected but never mapped onto the envelope, so every event
+            // a DCB tag query returned carried StreamId == Guid.Empty. Hydrated the same way the
+            // daemon's event loader does.
+            if (_events.StreamIdentity == StreamIdentity.AsGuid && rawStreamId is Guid streamGuid)
+            {
+                @event.StreamId = streamGuid;
+            }
+            else
+            {
+                @event.StreamKey = rawStreamId.ToString();
+            }
 
             var metaIndex = 10;
             if (eventOptions.EnableCorrelationId)
