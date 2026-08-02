@@ -136,7 +136,7 @@ public class StatementMap<TEvent> : IFlatTableEventHandler
 
         // Build MERGE SQL
         var updateClauses = new List<string>();
-        var insertColumns = new List<string> { $"[{pkColumn}]" };
+        var insertColumns = new List<string> { SqlEscaping.QuoteIdentifier(pkColumn) };
         var insertValues = new List<string> { "@p0" };
 
         for (var i = 0; i < _columnMaps.Count; i++)
@@ -156,7 +156,7 @@ public class StatementMap<TEvent> : IFlatTableEventHandler
             }
 
             updateClauses.Add(map.UpdateExpression(paramName));
-            insertColumns.Add($"[{map.ColumnName}]");
+            insertColumns.Add(SqlEscaping.QuoteIdentifier(map.ColumnName));
             insertValues.Add(map.InsertExpression(paramName));
         }
 
@@ -166,8 +166,8 @@ public class StatementMap<TEvent> : IFlatTableEventHandler
         var insertVals = string.Join(", ", insertValues);
 
         _compiledSql = $"""
-            MERGE [{table.Identifier.Schema}].[{table.Identifier.Name}] AS target
-            USING (SELECT @p0 AS [{pkColumn}]) AS source ON target.[{pkColumn}] = source.[{pkColumn}]
+            MERGE {SqlEscaping.QualifiedName(table.Identifier.Schema, table.Identifier.Name)} AS target
+            USING (SELECT @p0 AS {SqlEscaping.QuoteIdentifier(pkColumn)}) AS source ON target.{SqlEscaping.QuoteIdentifier(pkColumn)} = source.{SqlEscaping.QuoteIdentifier(pkColumn)}
             WHEN MATCHED THEN UPDATE SET {updateSet}
             WHEN NOT MATCHED THEN INSERT ({insertCols}) VALUES ({insertVals});
             """;

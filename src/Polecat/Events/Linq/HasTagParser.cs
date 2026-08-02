@@ -40,8 +40,7 @@ internal class HasTagParser : IMethodCallParser
                                $"Tag type '{tagType.Name}' is not registered. Call RegisterTagType<{tagType.Name}>() first.");
 
         var extracted = registration.ExtractValue(value);
-        var schema = _events.DatabaseSchemaName;
-        var suffix = registration.TableSuffix;
+        var tagTable = _events.TagTableName(registration);
 
         // Under conjoined tenancy a tag value is only unique per tenant, so the correlated subquery must
         // also match the outer event row's tenant_id (the outer query is already tenant-scoped).
@@ -50,7 +49,7 @@ internal class HasTagParser : IMethodCallParser
             : string.Empty;
 
         return new HasTagFilter(
-            $"seq_id IN (SELECT pt.seq_id FROM [{schema}].[pc_event_tag_{suffix}] pt WHERE pt.value = ",
+            $"seq_id IN (SELECT pt.seq_id FROM {tagTable} pt WHERE pt.value = ",
             extracted,
             $"{correlation})");
     }

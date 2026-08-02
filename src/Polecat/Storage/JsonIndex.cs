@@ -1,4 +1,5 @@
 using System.Linq.Expressions;
+using Polecat.Internal;
 
 namespace Polecat.Storage;
 
@@ -68,13 +69,11 @@ public class JsonIndex
                 "Set UseNativeJsonType = true (SQL Server 2025+), or use a computed-column Index(...) instead.");
         }
 
-        var schema = mapping.DatabaseSchemaName;
-        var table = mapping.TableName;
-        var qualifiedTable = $"[{schema}].[{table}]";
-        var name = GetIndexName(table);
+        var qualifiedTable = SqlEscaping.QualifiedName(mapping.DatabaseSchemaName, mapping.TableName);
+        var name = GetIndexName(mapping.TableName);
 
         var forClause = JsonPaths.Length > 0
-            ? " FOR (" + string.Join(", ", JsonPaths.Select(p => $"'{p}'")) + ")"
+            ? " FOR (" + string.Join(", ", JsonPaths.Select(p => SqlEscaping.Literal(p))) + ")"
             : "";
 
         var withOptions = new List<string>();
@@ -89,8 +88,8 @@ public class JsonIndex
         [
             $"""
              SET QUOTED_IDENTIFIER ON;
-             IF NOT EXISTS (SELECT 1 FROM sys.json_indexes WHERE object_id = OBJECT_ID('{qualifiedTable}'))
-                 CREATE JSON INDEX [{name}] ON {qualifiedTable} (data){forClause}{withClause};
+             IF NOT EXISTS (SELECT 1 FROM sys.json_indexes WHERE object_id = OBJECT_ID({SqlEscaping.Literal(qualifiedTable)}))
+                 CREATE JSON INDEX {SqlEscaping.QuoteIdentifier(name)} ON {qualifiedTable} (data){forClause}{withClause};
              """
         ];
     }

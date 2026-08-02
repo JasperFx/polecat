@@ -12,7 +12,7 @@ namespace Polecat.Events.Schema;
 internal class EventTagTable : Table
 {
     public EventTagTable(EventGraph events, ITagTypeRegistration registration)
-        : base(new SqlServerObjectName(events.DatabaseSchemaName, $"pc_event_tag_{registration.TableSuffix}"))
+        : base(new SqlServerObjectName(events.DatabaseSchemaName, EventGraph.TagTableNameFor(registration)))
     {
         var sqlType = SqlServerTypeFor(registration.SimpleType);
         var isConjoined = events.TenancyStyle == TenancyStyle.Conjoined;

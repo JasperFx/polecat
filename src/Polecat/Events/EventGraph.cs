@@ -127,10 +127,51 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
     // and Marten's StoreOptions.Events.EnableSideEffectsOnInlineProjections.
     public bool EnableSideEffectsOnInlineProjections => _options.Events.EnableSideEffectsOnInlineProjections;
 
-    internal string StreamsTableName => $"[{DatabaseSchemaName}].[pc_streams]";
-    internal string EventsTableName => $"[{DatabaseSchemaName}].[pc_events]";
-    internal string ProgressionTableName => $"[{DatabaseSchemaName}].[pc_event_progression]";
-    internal string TenantPartitionsTableName => $"[{DatabaseSchemaName}].[pc_tenant_partitions]";
+    internal string StreamsTableName => Polecat.Internal.SqlEscaping.QualifiedName(DatabaseSchemaName, "pc_streams");
+    internal string EventsTableName => Polecat.Internal.SqlEscaping.QualifiedName(DatabaseSchemaName, "pc_events");
+
+    internal string ProgressionTableName =>
+        Polecat.Internal.SqlEscaping.QualifiedName(DatabaseSchemaName, "pc_event_progression");
+
+    internal string TenantPartitionsTableName =>
+        Polecat.Internal.SqlEscaping.QualifiedName(DatabaseSchemaName, "pc_tenant_partitions");
+
+    /// <summary>
+    ///     The unqualified DCB tag table name for a registered tag type.
+    /// </summary>
+    /// <remarks>
+    ///     #390: <c>TableSuffix</c> is a public-API argument
+    ///     (<see cref="RegisterTagType{TTag}(string)" />), and a dozen call sites used to compose this
+    ///     name by hand. Two paths building the same object name by different means is both an
+    ///     injection risk and a correctness divergence — they agree right up until quoting is needed.
+    ///     Every caller now goes through this pair, and <see cref="TagTableName" /> applies the
+    ///     identifier escaping.
+    /// </remarks>
+    internal static string TagTableNameFor(ITagTypeRegistration registration)
+        => "pc_event_tag_" + registration.TableSuffix;
+
+    /// <summary>
+    ///     The schema-qualified, bracket-escaped DCB tag table name for a registered tag type.
+    /// </summary>
+    internal string TagTableName(ITagTypeRegistration registration)
+        => Polecat.Internal.SqlEscaping.QualifiedName(DatabaseSchemaName, TagTableNameFor(registration));
+
+    /// <summary>
+    ///     The unqualified <c>pc_natural_key_*</c> lookup table name for a <c>[NaturalKey]</c> aggregate.
+    /// </summary>
+    /// <remarks>
+    ///     Type-derived rather than caller-supplied, so not itself an injection risk — but #390's
+    ///     one-builder-per-object-name rule applies regardless: five sites composed this name
+    ///     independently, which is how two paths quietly stop agreeing.
+    /// </remarks>
+    internal static string NaturalKeyTableNameFor(Type aggregateType)
+        => "pc_natural_key_" + aggregateType.Name.ToLowerInvariant();
+
+    /// <summary>
+    ///     The schema-qualified, bracket-escaped <c>pc_natural_key_*</c> table name for an aggregate.
+    /// </summary>
+    internal string NaturalKeyTableName(Type aggregateType)
+        => Polecat.Internal.SqlEscaping.QualifiedName(DatabaseSchemaName, NaturalKeyTableNameFor(aggregateType));
 
     private ManagedTenantPartitions? _tenantPartitions;
 

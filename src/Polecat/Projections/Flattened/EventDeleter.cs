@@ -44,7 +44,8 @@ internal class EventDeleter<TEvent> : IFlatTableEventHandler
                            $"Table {table.Identifier} must have a primary key column.");
 
         _compiledSql =
-            $"DELETE FROM [{table.Identifier.Schema}].[{table.Identifier.Name}] WHERE [{pkColumn}] = @p0;";
+            $"DELETE FROM {SqlEscaping.QualifiedName(table.Identifier.Schema, table.Identifier.Name)} "
+            + $"WHERE {SqlEscaping.QuoteIdentifier(pkColumn)} = @p0;";
     }
 
     public FlatTableSqlOperation CreateOperation(IEvent e)

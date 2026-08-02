@@ -682,7 +682,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
 
         var isGuidStream = _events.StreamIdentity == StreamIdentity.AsGuid;
         var schema = _events.DatabaseSchemaName;
-        var tableName = $"pc_natural_key_{naturalKey.AggregateType.Name.ToLowerInvariant()}";
+        var qualifiedTableName = _events.NaturalKeyTableName(naturalKey.AggregateType);
         var streamColumn = isGuidStream ? "stream_id" : "stream_key";
 
         // Look up stream id from natural key table (read-only, no locking)
@@ -694,7 +694,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
 
         cmd.CommandText = $"""
             SELECT nk.{streamColumn}
-            FROM [{schema}].[{tableName}] nk
+            FROM {qualifiedTableName} nk
             WHERE nk.natural_key_value = @naturalKey AND nk.is_archived = 0{tenantFilter};
             """;
         cmd.Parameters.AddWithValue("@naturalKey", unwrapped); // natural_key_value is nvarchar(200)
@@ -795,12 +795,12 @@ internal class EventOperations : QueryEventStore, IEventOperations
             var alias = $"t{i}";
             if (first)
             {
-                sb.Append($"[{schema}].[pc_event_tag_{registration.TableSuffix}] {alias}");
+                sb.Append($"{_events.TagTableName(registration)} {alias}");
                 first = false;
             }
             else
             {
-                sb.Append($" INNER JOIN [{schema}].[pc_event_tag_{registration.TableSuffix}] {alias} ON t0.seq_id = {alias}.seq_id");
+                sb.Append($" INNER JOIN {_events.TagTableName(registration)} {alias} ON t0.seq_id = {alias}.seq_id");
             }
         }
 
@@ -888,7 +888,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
                                ?? throw new InvalidOperationException(
                                    $"Tag type '{tagType.Name}' is not registered.");
 
-            sb.Append($" LEFT JOIN [{schema}].[pc_event_tag_{registration.TableSuffix}] t{i} ON e.seq_id = t{i}.seq_id");
+            sb.Append($" LEFT JOIN {_events.TagTableName(registration)} t{i} ON e.seq_id = t{i}.seq_id");
         }
 
         // WHERE clause
@@ -1093,7 +1093,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
                                ?? throw new InvalidOperationException(
                                    $"Tag type '{tagType.Name}' is not registered.");
 
-            builder.Append($" LEFT JOIN [{schema}].[pc_event_tag_{registration.TableSuffix}] t{i} ON e.seq_id = t{i}.seq_id");
+            builder.Append($" LEFT JOIN {eventGraph.TagTableName(registration)} t{i} ON e.seq_id = t{i}.seq_id");
         }
 
         builder.Append(" WHERE (");

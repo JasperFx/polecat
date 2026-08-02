@@ -28,7 +28,6 @@ internal class EventsExistBatchItem : IBatchQueryItem
             throw new ArgumentException("EventTagQuery must have at least one condition.");
 
         var distinctTagTypes = conditions.Select(c => c.TagType).Distinct().ToList();
-        var schema = _eventGraph.DatabaseSchemaName;
 
         builder.Append("SELECT CASE WHEN EXISTS (SELECT 1 FROM ");
 
@@ -43,19 +42,19 @@ internal class EventsExistBatchItem : IBatchQueryItem
             var alias = $"t{i}";
             if (first)
             {
-                builder.Append($"[{schema}].[pc_event_tag_{registration.TableSuffix}] {alias}");
+                builder.Append($"{_eventGraph.TagTableName(registration)} {alias}");
                 first = false;
             }
             else
             {
-                builder.Append($" INNER JOIN [{schema}].[pc_event_tag_{registration.TableSuffix}] {alias} ON t0.seq_id = {alias}.seq_id");
+                builder.Append($" INNER JOIN {_eventGraph.TagTableName(registration)} {alias} ON t0.seq_id = {alias}.seq_id");
             }
         }
 
         var hasEventTypeFilter = conditions.Any(c => c.EventType != null);
         if (hasEventTypeFilter)
         {
-            builder.Append($" INNER JOIN [{schema}].[pc_events] e ON t0.seq_id = e.seq_id");
+            builder.Append($" INNER JOIN {_eventGraph.EventsTableName} e ON t0.seq_id = e.seq_id");
         }
 
         builder.Append(" WHERE (");

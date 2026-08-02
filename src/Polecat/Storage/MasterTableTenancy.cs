@@ -52,7 +52,7 @@ public class MasterTableTenancy : ITenancy, IDynamicTenantSource<string>
     /// <summary>
     ///     The fully-qualified master table name, e.g. <c>[dbo].[pc_tenants]</c>.
     /// </summary>
-    public string QualifiedTableName => $"[{_schemaName}].[{TableName}]";
+    public string QualifiedTableName => Internal.SqlEscaping.QualifiedName(_schemaName, TableName);
 
     /// <summary>
     ///     Always <see cref="DatabaseCardinality.DynamicMultiple" /> — the tenant database set is read

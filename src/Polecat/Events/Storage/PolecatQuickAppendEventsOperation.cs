@@ -243,7 +243,7 @@ internal sealed class PolecatQuickAppendEventsOperation
             if (registration == null) continue;
 
             var value = registration.ExtractValue(tag.Value);
-            var table = $"[{_graph.DatabaseSchemaName}].[pc_event_tag_{registration.TableSuffix}]";
+            var table = _graph.TagTableName(registration);
 
             builder.Append("if not exists (select 1 from ");
             builder.Append(table);

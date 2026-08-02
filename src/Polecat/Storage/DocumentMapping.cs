@@ -94,7 +94,7 @@ internal class DocumentMapping
         }
 
         var tableName = $"pc_doc_{documentType.Name.ToLowerInvariant()}";
-        QualifiedTableName = $"[{options.DatabaseSchemaName}].[{tableName}]";
+        QualifiedTableName = Internal.SqlEscaping.QualifiedName(options.DatabaseSchemaName, tableName);
         TableName = tableName;
         DatabaseSchemaName = options.DatabaseSchemaName;
         DotNetTypeName = $"{documentType.FullName}, {documentType.Assembly.GetName().Name}";

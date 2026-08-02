@@ -379,7 +379,10 @@ public class AdvancedOperations
             foreach (var table in tables)
             {
                 await using var deleteCmd = conn.CreateCommand();
-                deleteCmd.CommandText = $"DELETE FROM [{schemaName}].[{table}];";
+                // #390: `table` is read back out of INFORMATION_SCHEMA rather than derived from
+                // configuration, so it is escaped as a bracketed identifier — an embedded `]` in a
+                // table name would otherwise close the bracket early (stored/second-order).
+                deleteCmd.CommandText = $"DELETE FROM {SqlEscaping.QualifiedName(schemaName, table)};";
                 await deleteCmd.ExecuteNonQueryAsync(ct);
             }
 
@@ -443,7 +446,8 @@ public class AdvancedOperations
             foreach (var table in tables)
             {
                 await using var dropCmd = conn.CreateCommand();
-                dropCmd.CommandText = $"DROP TABLE IF EXISTS [{schemaName}].[{table}];";
+                // #390: `table` comes back out of INFORMATION_SCHEMA — escape it as an identifier.
+                dropCmd.CommandText = $"DROP TABLE IF EXISTS {SqlEscaping.QualifiedName(schemaName, table)};";
                 await dropCmd.ExecuteNonQueryAsync(ct);
             }
 
@@ -451,7 +455,8 @@ public class AdvancedOperations
             foreach (var qualified in flatTableNames)
             {
                 await using var dropCmd = conn.CreateCommand();
-                dropCmd.CommandText = $"IF OBJECT_ID('{qualified}', 'U') IS NOT NULL DROP TABLE {qualified};";
+                dropCmd.CommandText =
+                    $"IF OBJECT_ID({SqlEscaping.Literal(qualified)}, 'U') IS NOT NULL DROP TABLE {qualified};";
                 await dropCmd.ExecuteNonQueryAsync(ct);
             }
         }, (connStr, schema, flatTables), token);
@@ -475,8 +480,11 @@ public class AdvancedOperations
         foreach (var qualified in qualifiedNames)
         {
             await using var cmd = conn.CreateCommand();
-            // Guard against the table not existing yet (the projection ensures it lazily).
-            cmd.CommandText = $"IF OBJECT_ID('{qualified}', 'U') IS NOT NULL DELETE FROM {qualified};";
+            // Guard against the table not existing yet (the projection ensures it lazily). #390: the
+            // same name lands in a string-literal position and a bare identifier position, which need
+            // different escaping — only the literal one gets it.
+            cmd.CommandText =
+                $"IF OBJECT_ID({SqlEscaping.Literal(qualified)}, 'U') IS NOT NULL DELETE FROM {qualified};";
             await cmd.ExecuteNonQueryAsync(ct);
         }
     }
@@ -496,7 +504,8 @@ public class AdvancedOperations
             await conn.OpenAsync(ct);
 
             await using var cmd = conn.CreateCommand();
-            cmd.CommandText = $"IF OBJECT_ID('{qualifiedTableName}', 'U') IS NOT NULL DELETE FROM {qualifiedTableName};";
+            cmd.CommandText =
+                $"IF OBJECT_ID({SqlEscaping.Literal(qualifiedTableName)}, 'U') IS NOT NULL DELETE FROM {qualifiedTableName};";
             await cmd.ExecuteNonQueryAsync(ct);
         }, (connStr, tableName), token);
     }
@@ -633,7 +642,8 @@ public class AdvancedOperations
                 foreach (var table in nkTables)
                 {
                     await using var deleteCmd = conn.CreateCommand();
-                    deleteCmd.CommandText = $"DELETE FROM [{schemaName}].[{table}];";
+                    // #390: natural-key table names are read out of INFORMATION_SCHEMA — escape.
+                    deleteCmd.CommandText = $"DELETE FROM {SqlEscaping.QualifiedName(schemaName, table)};";
                     await deleteCmd.ExecuteNonQueryAsync(ct);
                 }
             }
@@ -643,19 +653,22 @@ public class AdvancedOperations
             // store schema has been created (e.g. during bootstrap of a fresh database).
             await using (var cmd = conn.CreateCommand())
             {
-                cmd.CommandText = $"IF OBJECT_ID('{evtTable}', 'U') IS NOT NULL DELETE FROM {evtTable};";
+                cmd.CommandText =
+                    $"IF OBJECT_ID({SqlEscaping.Literal(evtTable)}, 'U') IS NOT NULL DELETE FROM {evtTable};";
                 await cmd.ExecuteNonQueryAsync(ct);
             }
 
             await using (var cmd = conn.CreateCommand())
             {
-                cmd.CommandText = $"IF OBJECT_ID('{strmTable}', 'U') IS NOT NULL DELETE FROM {strmTable};";
+                cmd.CommandText =
+                    $"IF OBJECT_ID({SqlEscaping.Literal(strmTable)}, 'U') IS NOT NULL DELETE FROM {strmTable};";
                 await cmd.ExecuteNonQueryAsync(ct);
             }
 
             await using (var cmd = conn.CreateCommand())
             {
-                cmd.CommandText = $"IF OBJECT_ID('{progTable}', 'U') IS NOT NULL DELETE FROM {progTable};";
+                cmd.CommandText =
+                    $"IF OBJECT_ID({SqlEscaping.Literal(progTable)}, 'U') IS NOT NULL DELETE FROM {progTable};";
                 await cmd.ExecuteNonQueryAsync(ct);
             }
         }, (connStr, schema, eventsTable, streamsTable, progressionTable, flatTables), token);

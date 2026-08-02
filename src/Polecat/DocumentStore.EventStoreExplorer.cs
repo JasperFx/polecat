@@ -210,7 +210,6 @@ public partial class DocumentStore
         ArgumentNullException.ThrowIfNull(tags);
         if (tags.Count == 0) yield break;
 
-        var schema = Events.DatabaseSchemaName;
         var options = Events.EventOptions;
         var registered = Events.TagTypes;
 
@@ -243,7 +242,7 @@ public partial class DocumentStore
             // value arrives as a string from the explorer, so it's compared case-insensitively via nvarchar —
             // matching whatever native type (uniqueidentifier, etc.) the tag's value column stores.
             sb.Append(
-                $"e.seq_id IN (SELECT seq_id FROM [{schema}].[pc_event_tag_{registration.TableSuffix}] WHERE LOWER(CONVERT(nvarchar(4000), value)) = LOWER(@tag_value_{idx}))");
+                $"e.seq_id IN (SELECT seq_id FROM {Events.TagTableName(registration)} WHERE LOWER(CONVERT(nvarchar(4000), value)) = LOWER(@tag_value_{idx}))");
             cmd.Parameters.AddWithValue($"@tag_value_{idx}", tagValue);
             idx++;
         }
