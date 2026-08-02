@@ -1,4 +1,5 @@
 using JasperFx;
+using JasperFx.Events.ComplianceTests;
 using JasperFx.Events.Projections;
 using Polecat.Projections;
 using Polecat.Tests.Events;
@@ -59,7 +60,7 @@ public class projection_sg_dispatch_audit_tests
         Row("StringQuestAggregate (string)",
             opts => opts.Projections.Add<SingleStreamProjection<StringQuestAggregate, string>>(ProjectionLifecycle.Inline)),
         Row("StudentCourseEnrollment (Guid)",
-            opts => opts.Projections.Add<SingleStreamProjection<StudentCourseEnrollment, Guid>>(ProjectionLifecycle.Inline)),
+            opts => opts.Projections.Add<SingleStreamProjection<Polecat.Tests.Events.StudentCourseEnrollment, Guid>>(ProjectionLifecycle.Inline)),
         Row("QuestAggregate (Guid)",
             opts => opts.Projections.Add<SingleStreamProjection<QuestAggregate, Guid>>(ProjectionLifecycle.Inline)),
         Row("OrderAggregate (Guid, has natural key)",

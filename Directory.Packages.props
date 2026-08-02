@@ -64,6 +64,12 @@
              deliver its trailing batch twice on shutdown) and #597. Same lockstep rule as above. -->
         <PackageVersion Include="JasperFx" Version="2.37.0" />
         <PackageVersion Include="JasperFx.Events" Version="2.37.0" />
+        <!--
+             The shared cross-store event sourcing compliance suites. Source-only package: the
+             suites compile inside Polecat.Tests so JasperFx's aggregate source generator binds
+             Polecat's own session types.
+        -->
+        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="2.37.0-compliance.3" />
         <!-- Pin the sibling JasperFx packages for parity with Marten 9's matrix
              even though Polecat doesn't currently reference them directly —
              keeps the lockstep matrix coherent when transitive resolution

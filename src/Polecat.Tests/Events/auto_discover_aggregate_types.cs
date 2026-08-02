@@ -1,3 +1,4 @@
+using JasperFx.Events.ComplianceTests;
 using Polecat.Tests.Harness;
 
 namespace Polecat.Tests.Events;
@@ -30,7 +31,7 @@ public class auto_discover_aggregate_types : IntegrationContext
     {
         // No explicit Snapshot<T>() registration — relies on auto-discovery
         var streamId = Guid.NewGuid();
-        theSession.Events.StartStream(streamId, new AEvent(), new BEvent(), new CEvent());
+        theSession.Events.StartStream(streamId, new EvolveAEvent(), new EvolveBEvent(), new EvolveCEvent());
         await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var aggregate = await theSession.Events.AggregateStreamAsync<MutableIEventEvolveAggregate>(streamId, token: TestContext.Current.CancellationToken);
