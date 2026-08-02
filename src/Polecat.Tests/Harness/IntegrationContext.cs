@@ -54,7 +54,17 @@ public abstract class IntegrationContext : IAsyncLifetime
     ///     Creates a custom DocumentStore for this test with unique configuration.
     ///     The schema name defaults to the test class name for isolation.
     /// </summary>
-    protected async Task<string> StoreOptions(Action<StoreOptions> configure)
+    /// <param name="configure">Applies the test's configuration to the new store's options.</param>
+    /// <param name="cleanAll">
+    ///     When true (the default), every document table in the configured schema is emptied after the
+    ///     schema is applied, so the test starts from a known-empty store. The suite isolates by
+    ///     <see cref="Polecat.StoreOptions.DatabaseSchemaName" /> inside one shared <c>master</c> database
+    ///     rather than by database, so without this a test's rows survive into the next local run and any
+    ///     assertion on an absolute count drifts upward. CI never sees that because it provisions a fresh
+    ///     server per run. Pass <c>false</c> only when a test deliberately reconfigures the store mid-test
+    ///     and needs the data written by the previous configuration to survive.
+    /// </param>
+    protected async Task<string> StoreOptions(Action<StoreOptions> configure, bool cleanAll = true)
     {
         var options = new StoreOptions
         {
@@ -68,6 +78,11 @@ public abstract class IntegrationContext : IAsyncLifetime
         _customStore = new DocumentStore(options);
         _database = _customStore.Database;
         await _database.ApplyAllConfiguredChangesToDatabaseAsync();
+
+        if (cleanAll)
+        {
+            await _customStore.Advanced.Clean.DeleteAllDocumentsAsync();
+        }
 
         // Reset session so subsequent access uses the new store
         _session = null;

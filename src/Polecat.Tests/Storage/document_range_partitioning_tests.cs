@@ -162,12 +162,13 @@ public class document_range_partitioning_tests : IntegrationContext
 
         (await PartitionCountAsync("pc_doc_rolledmetricssample")).ShouldBe(3); // 2 boundaries -> 3 partitions
 
-        // Roll March forward by re-applying the schema with an extra boundary.
+        // Roll March forward by re-applying the schema with an extra boundary. cleanAll: false because
+        // the whole point of this test is that the row written under the previous configuration survives.
         await StoreOptions(opts =>
         {
             opts.DatabaseSchemaName = Schema;
             opts.Schema.For<RolledMetricsSample>().PartitionByRange(x => x.BucketEnd, Jan, Feb, Mar);
-        });
+        }, cleanAll: false);
 
         (await PartitionCountAsync("pc_doc_rolledmetricssample")).ShouldBe(4); // SPLIT RANGE added one partition
 
