@@ -11,16 +11,18 @@ internal class ReplaceEventOperation : Polecat.Internal.IStorageOperation
     private readonly EventGraph _events;
     private readonly long _sequence;
     private readonly string _serializedData;
+    private readonly byte[]? _serializedBdata;
     private readonly string _eventTypeName;
     private readonly string _dotNetTypeName;
     private readonly Guid _newId;
 
     public ReplaceEventOperation(EventGraph events, long sequence, string serializedData,
-        string eventTypeName, string dotNetTypeName)
+        byte[]? serializedBdata, string eventTypeName, string dotNetTypeName)
     {
         _events = events;
         _sequence = sequence;
         _serializedData = serializedData;
+        _serializedBdata = serializedBdata;
         _eventTypeName = eventTypeName;
         _dotNetTypeName = dotNetTypeName;
         _newId = Guid.NewGuid();
@@ -34,6 +36,20 @@ internal class ReplaceEventOperation : Polecat.Internal.IStorageOperation
     {
         builder.Append($"UPDATE {_events.EventsTableName} SET data = ");
         builder.AppendParameter(_serializedData);
+
+        // #388: the replacement body's own event type decides the row's format, so bdata is set (or
+        // cleared) in the same statement — a replacement that switched a row from binary to JSON
+        // without clearing bdata would keep reading the OLD payload.
+        builder.Append(", bdata = ");
+        if (_serializedBdata is null)
+        {
+            builder.Append("NULL");
+        }
+        else
+        {
+            builder.AppendParameter(_serializedBdata);
+        }
+
         builder.Append(", timestamp = SYSDATETIMEOFFSET(), type = ");
         builder.AppendParameter(_eventTypeName);
         builder.Append(", dotnet_type = ");

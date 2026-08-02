@@ -512,11 +512,17 @@ internal class EventOperations : QueryEventStore, IEventOperations
 
     public void OverwriteEvent(IEvent @event)
     {
-        var serializedData = _sessionBase.Serializer.ToJson(@event.Data);
+        // #388: same data/bdata split as the append path — a binary event's masked payload has to go
+        // back through its IEventBinarySerializer, not into the JSON column.
+        var serializedBdata = _events.SerializeEventBdata(@event);
+        var serializedData = serializedBdata is null
+            ? _sessionBase.Serializer.ToJson(@event.Data)
+            : EventGraph.JsonPlaceholderForBinaryEvent;
         var serializedHeaders = @event.Headers != null
             ? _sessionBase.Serializer.ToJson(@event.Headers)
             : null;
-        _workTracker.Add(new Protected.OverwriteEventOperation(_events, @event, serializedData, serializedHeaders));
+        _workTracker.Add(new Protected.OverwriteEventOperation(
+            _events, @event, serializedData, serializedBdata, serializedHeaders));
     }
 
     public Guid CompletelyReplaceEvent<T>(long sequence, T eventBody) where T : class
@@ -527,9 +533,14 @@ internal class EventOperations : QueryEventStore, IEventOperations
         _events.AddEventType(typeof(T));
         var mapping = _events.EventMappingFor(typeof(T));
 
-        var serializedData = _sessionBase.Serializer.ToJson(eventBody);
+        // #388: the REPLACEMENT body's type decides the row's format, not the replaced row's.
+        var binary = _events.ResolveBinarySerializerFor(typeof(T));
+        var serializedBdata = binary?.Serialize(typeof(T), eventBody);
+        var serializedData = serializedBdata is null
+            ? _sessionBase.Serializer.ToJson(eventBody)
+            : EventGraph.JsonPlaceholderForBinaryEvent;
         var op = new Protected.ReplaceEventOperation(
-            _events, sequence, serializedData, mapping.EventTypeName, mapping.DotNetTypeName);
+            _events, sequence, serializedData, serializedBdata, mapping.EventTypeName, mapping.DotNetTypeName);
 
         _workTracker.Add(op);
         return op.Id;
@@ -868,10 +879,10 @@ internal class EventOperations : QueryEventStore, IEventOperations
         var eventOptions = _events.EventOptions;
 
         // Build SELECT columns matching the event reader format
-        var selectColumns = "e.seq_id, e.id, e.stream_id, e.version, e.data, e.type, e.timestamp, e.tenant_id, e.dotnet_type, e.is_archived";
-        if (eventOptions.EnableCorrelationId) selectColumns += ", e.correlation_id";
-        if (eventOptions.EnableCausationId) selectColumns += ", e.causation_id";
-        if (eventOptions.EnableHeaders) selectColumns += ", e.headers";
+        // #388: composed by PcEventsRowReader rather than spelled out here — this projection has to
+        // stay in lockstep with the canonical one (which now carries bdata at ordinal 10), and two
+        // hand-written copies of the same column list is exactly how that stops being true.
+        var selectColumns = Internal.PcEventsRowReader.ComposeSelectColumnsWithAlias(eventOptions, "e");
 
         var sb = new StringBuilder();
         sb.Append($"SELECT {selectColumns} FROM [{schema}].[pc_events] e");
@@ -949,11 +960,12 @@ internal class EventOperations : QueryEventStore, IEventOperations
             var tenantId = reader.GetString(7);
             var dotNetTypeName = reader.IsDBNull(8) ? null : reader.GetString(8);
             var isArchived = reader.GetBoolean(9);
+            var bdata = reader.IsDBNull(10) ? null : reader.GetFieldValue<byte[]>(10); // #388
 
             var resolvedType = _events.ResolveEventType(dotNetTypeName);
             if (resolvedType == null) continue;
 
-            var data = _sessionBase.Serializer.FromJson(resolvedType, json);
+            var data = _events.DeserializeEventData(resolvedType, json, bdata, _sessionBase.Serializer);
             var mapping = _events.EventMappingFor(resolvedType);
             var @event = mapping.Wrap(data);
 
@@ -978,7 +990,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
                 @event.StreamKey = rawStreamId.ToString();
             }
 
-            var metaIndex = 10;
+            var metaIndex = 11; // #388: ordinal 10 is bdata
             if (eventOptions.EnableCorrelationId)
             {
                 @event.CorrelationId = reader.IsDBNull(metaIndex) ? null : reader.GetString(metaIndex);
@@ -1075,10 +1087,10 @@ internal class EventOperations : QueryEventStore, IEventOperations
         var schema = eventGraph.DatabaseSchemaName;
         var eventOptions = eventGraph.EventOptions;
 
-        var selectColumns = "e.seq_id, e.id, e.stream_id, e.version, e.data, e.type, e.timestamp, e.tenant_id, e.dotnet_type, e.is_archived";
-        if (eventOptions.EnableCorrelationId) selectColumns += ", e.correlation_id";
-        if (eventOptions.EnableCausationId) selectColumns += ", e.causation_id";
-        if (eventOptions.EnableHeaders) selectColumns += ", e.headers";
+        // #388: composed by PcEventsRowReader rather than spelled out here — this projection has to
+        // stay in lockstep with the canonical one (which now carries bdata at ordinal 10), and two
+        // hand-written copies of the same column list is exactly how that stops being true.
+        var selectColumns = Internal.PcEventsRowReader.ComposeSelectColumnsWithAlias(eventOptions, "e");
 
         builder.Append($"SELECT {selectColumns} FROM [{schema}].[pc_events] e");
 
@@ -1148,11 +1160,12 @@ internal class EventOperations : QueryEventStore, IEventOperations
         var tenantId = reader.GetString(7);
         var dotNetTypeName = reader.IsDBNull(8) ? null : reader.GetString(8);
         var isArchived = reader.GetBoolean(9);
+        var bdata = reader.IsDBNull(10) ? null : reader.GetFieldValue<byte[]>(10); // #388
 
         var resolvedType = eventGraph.ResolveEventType(dotNetTypeName);
         if (resolvedType == null) return null;
 
-        var data = serializer.FromJson(resolvedType, json);
+        var data = eventGraph.DeserializeEventData(resolvedType, json, bdata, serializer);
         var mapping = eventGraph.EventMappingFor(resolvedType);
         var @event = mapping.Wrap(data);
 
@@ -1165,7 +1178,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
         @event.DotNetTypeName = dotNetTypeName!;
         @event.IsArchived = isArchived;
 
-        var metaIndex = 10;
+        var metaIndex = 11; // #388: ordinal 10 is bdata
         if (eventOptions.EnableCorrelationId)
         {
             @event.CorrelationId = reader.IsDBNull(metaIndex) ? null : reader.GetString(metaIndex);

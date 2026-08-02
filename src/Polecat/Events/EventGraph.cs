@@ -440,6 +440,118 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
 
     public IReadOnlyList<ITagTypeRegistration> TagTypes => _tagTypes;
 
+    // ---- #388: pluggable binary event serialization ------------------------------------------
+    //
+    // Explicit per-type registrations from UseBinarySerializer<TEvent>(...). Types marked with
+    // [BinaryEvent] but not registered explicitly fall back to DefaultBinarySerializer; that
+    // resolution is cached in _binarySerializerResolution so the attribute probe (and the throw for a
+    // misconfigured type) happens once per event type rather than once per row.
+    private readonly ConcurrentDictionary<Type, IEventBinarySerializer> _binarySerializerByType = new();
+    private readonly ConcurrentDictionary<Type, IEventBinarySerializer?> _binarySerializerResolution = new();
+
+    /// <summary>
+    ///     Store-wide fallback <see cref="IEventBinarySerializer" /> used for event types marked with
+    ///     <see cref="BinaryEventAttribute" /> that have no explicit per-type registration. Null by
+    ///     default, which leaves every event type on the JSON path.
+    /// </summary>
+    public IEventBinarySerializer? DefaultBinarySerializer
+    {
+        get => _defaultBinarySerializer;
+        set
+        {
+            _defaultBinarySerializer = value;
+            _binarySerializerResolution.Clear();
+        }
+    }
+
+    private IEventBinarySerializer? _defaultBinarySerializer;
+
+    /// <summary>
+    ///     Opt <typeparamref name="TEvent" /> into binary serialization (#388): its payload is written
+    ///     to the <c>bdata</c> column instead of <c>data</c>, and read back through the same
+    ///     serializer. Wins over <see cref="BinaryEventAttribute" /> + <see cref="DefaultBinarySerializer" />.
+    /// </summary>
+    public EventGraph UseBinarySerializer<TEvent>(IEventBinarySerializer serializer) where TEvent : notnull
+    {
+        ArgumentNullException.ThrowIfNull(serializer);
+        _binarySerializerByType[typeof(TEvent)] = serializer;
+        _binarySerializerResolution.Clear();
+        return this;
+    }
+
+    /// <summary>
+    ///     The <see cref="IEventBinarySerializer" /> governing <paramref name="eventType" />, or null
+    ///     when that type stays on the JSON path. Explicit registration beats
+    ///     <see cref="BinaryEventAttribute" /> + <see cref="DefaultBinarySerializer" />.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">
+    ///     The type carries <see cref="BinaryEventAttribute" /> but no serializer is configured for it.
+    ///     Deliberately a throw rather than a silent fall back to JSON: a store that quietly ignored
+    ///     the attribute would have write-amplification characteristics that do not match its
+    ///     configuration, which is the whole reason the feature exists.
+    /// </exception>
+    internal IEventBinarySerializer? ResolveBinarySerializerFor(Type eventType)
+        => _binarySerializerResolution.GetOrAdd(eventType, static (type, graph) =>
+        {
+            if (graph._binarySerializerByType.TryGetValue(type, out var explicitSerializer))
+            {
+                return explicitSerializer;
+            }
+
+            if (!type.IsDefined(typeof(BinaryEventAttribute), inherit: false))
+            {
+                return null;
+            }
+
+            return graph._defaultBinarySerializer ?? throw new InvalidOperationException(
+                $"Event type '{type.FullName}' is marked with [BinaryEvent] but no IEventBinarySerializer "
+                + $"is registered. Either call opts.Events.UseBinarySerializer<{type.Name}>(...) explicitly, "
+                + "or set opts.Events.DefaultBinarySerializer to a store-wide fallback.");
+        }, this);
+
+    /// <summary>
+    ///     The <c>bdata</c> bytes for an event on the write path, or null when the event's type stays
+    ///     on the JSON path. The two are mutually exclusive per row — see
+    ///     <see cref="JsonPlaceholderForBinaryEvent" />.
+    /// </summary>
+    internal byte[]? SerializeEventBdata(IEvent @event)
+    {
+        // Deliberately NOT short-circuited on UsesBinaryEventSerialization: a type marked
+        // [BinaryEvent] in a store with no serializer configured has to throw here, and skipping the
+        // resolve for "performance" would turn that into a silent write of JSON. The resolve is a
+        // ConcurrentDictionary hit cached per event type, so a JSON-only store pays one lookup per
+        // appended event and nothing more.
+        var eventType = @event.EventType ?? @event.Data.GetType();
+        var serializer = ResolveBinarySerializerFor(eventType);
+        return serializer?.Serialize(eventType, @event.Data);
+    }
+
+    /// <summary>
+    ///     What goes in the <c>data</c> column of a binary event's row. An empty JSON object rather
+    ///     than NULL, because <c>data</c> is NOT NULL and typed <c>json</c> on SQL Server 2025 — a
+    ///     row still has to hold something the engine will parse.
+    /// </summary>
+    internal const string JsonPlaceholderForBinaryEvent = "{}";
+
+    /// <summary>
+    ///     The per-row read counterpart of <see cref="SerializeEventBdata" />: <paramref name="bdata" />
+    ///     being non-null is the on-row discriminator, so JSON rows written before the feature was
+    ///     switched on keep deserializing through <paramref name="serializer" /> unchanged.
+    /// </summary>
+    internal object DeserializeEventData(Type resolvedType, string json, byte[]? bdata, ISerializer serializer)
+    {
+        if (bdata is null) return serializer.FromJson(resolvedType, json);
+
+        var binary = ResolveBinarySerializerFor(resolvedType)
+                     ?? throw new InvalidOperationException(
+                         $"A pc_events row for '{resolvedType.FullName}' has a non-null bdata column but no "
+                         + "IEventBinarySerializer is registered for that type. Configure it with "
+                         + $"opts.Events.UseBinarySerializer<{resolvedType.Name}>(...) or set "
+                         + "opts.Events.DefaultBinarySerializer — the event cannot be read without it.");
+
+        return binary.Deserialize(resolvedType, bdata);
+    }
+
     /// <summary>
     ///     All currently registered event types.
     /// </summary>

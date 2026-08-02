@@ -95,6 +95,8 @@ internal sealed class SqlServerStorageDialect<TId> : IStorageDialect
             // Polecat binds JSON as string values throughout; SQL Server 2025's native JSON
             // column type (and nvarchar-backed JSON) accepts nvarchar input.
             StorageColumnType.Json => SqlDbType.NVarChar,
+            // #388: the binary event payload column (pc_events.bdata) is varbinary(max).
+            StorageColumnType.Binary => SqlDbType.VarBinary,
             _ => throw new ArgumentOutOfRangeException(nameof(type))
         };
 

@@ -50,11 +50,14 @@ internal sealed class SqlServerEventStoreDialect : IEventStoreSqlDialect
             quickAppendEventsSql: $"insert into {graph.EventsTableName} ",
             insertStreamSql: $"insert into {graph.StreamsTableName} (...) values (...)",
             updateStreamVersionSql: $"update {graph.StreamsTableName} set version = ... where ...",
-            // Polecat is STJ/JSON-only — no binary event serialization. Data is always JSON; bdata is
-            // always null. Serialize through the session serializer at write time (see the append op);
-            // the descriptor closure below covers any shared-op path that reaches for it.
-            serializeEventData: e => serializer.ToJson(e.Data),
-            serializeEventBdata: _ => null)
+            // #388: event data is JSON unless the event's type is opted into binary serialization, in
+            // which case `data` carries the '{}' placeholder and the payload goes to `bdata`. Exactly
+            // one of the two closures produces a payload for any given event. These cover any shared-op
+            // path that reaches for them; the SQL Server append operation binds both directly.
+            serializeEventData: e => graph.SerializeEventBdata(e) is null
+                ? serializer.ToJson(e.Data)
+                : EventGraph.JsonPlaceholderForBinaryEvent,
+            serializeEventBdata: graph.SerializeEventBdata)
         {
             IsGuidStreamIdentity = isGuid,
             Dialect = dialect,

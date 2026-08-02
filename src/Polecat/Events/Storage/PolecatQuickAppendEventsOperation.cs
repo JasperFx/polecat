@@ -135,7 +135,7 @@ internal sealed class PolecatQuickAppendEventsOperation
                 builder.Append(", ");
             }
 
-            builder.Append("id, stream_id, version, data, type, timestamp, tenant_id, dotnet_type");
+            builder.Append("id, stream_id, version, data, bdata, type, timestamp, tenant_id, dotnet_type");
             if (options.EnableCorrelationId) builder.Append(", correlation_id");
             if (options.EnableCausationId) builder.Append(", causation_id");
             if (options.EnableHeaders) builder.Append(", headers");
@@ -164,8 +164,18 @@ internal sealed class PolecatQuickAppendEventsOperation
             builder.Append(", ");
             Bind(builder, @event.Version, StorageColumnType.Long);
 
+            // #388: a binary event writes the '{}' placeholder to `data` and its payload to `bdata`;
+            // a JSON event writes the payload to `data` and NULL to `bdata`. Exactly one of the two
+            // is populated per row, and `bdata IS NULL` is what the read path dispatches on.
+            var bdata = _graph.SerializeEventBdata(@event);
+
             builder.Append(", ");
-            Bind(builder, session.Serializer.ToJson(@event.Data), StorageColumnType.Json);
+            Bind(builder,
+                bdata is null ? session.Serializer.ToJson(@event.Data) : EventGraph.JsonPlaceholderForBinaryEvent,
+                StorageColumnType.Json);
+
+            builder.Append(", ");
+            Bind(builder, (object?)bdata ?? DBNull.Value, StorageColumnType.Binary);
 
             builder.Append(", ");
             Bind(builder, @event.EventTypeName, StorageColumnType.String);

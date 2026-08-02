@@ -70,11 +70,21 @@ internal static class StreamCompactingExecution
         var compacted = new Compacted<T>(aggregate!,
             request.StreamId ?? Guid.Empty, request.StreamKey ?? string.Empty);
 
-        var serializedData = session.Serializer.ToJson(compacted);
-        var mapping = session.Options.EventGraph.EventMappingFor(typeof(Compacted<T>));
+        var graph = session.Options.EventGraph;
+
+        // #388: the Compacted<T> snapshot follows the same data/bdata rule as any other event —
+        // binary if Compacted<T> itself is opted in, JSON otherwise. The event being REPLACED may
+        // have been the other format; ReplaceEventOperation writes both columns so the row ends up
+        // consistent either way.
+        var binary = graph.ResolveBinarySerializerFor(typeof(Compacted<T>));
+        var serializedBdata = binary?.Serialize(typeof(Compacted<T>), compacted);
+        var serializedData = serializedBdata is null
+            ? session.Serializer.ToJson(compacted)
+            : EventGraph.JsonPlaceholderForBinaryEvent;
+        var mapping = graph.EventMappingFor(typeof(Compacted<T>));
 
         var replaceOp = new ReplaceEventOperation(
-            session.Options.EventGraph, request.Sequence, serializedData,
+            graph, request.Sequence, serializedData, serializedBdata,
             mapping.EventTypeName, mapping.DotNetTypeName);
 
         session.WorkTracker.Add(replaceOp);

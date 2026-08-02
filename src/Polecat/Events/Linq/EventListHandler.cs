@@ -8,7 +8,8 @@ namespace Polecat.Events.Linq;
 
 /// <summary>
 ///     Reads IEvent objects from a multi-column result set on pc_events.
-///     Column layout: seq_id, id, stream_id, version, data, type, timestamp, tenant_id, dotnet_type, is_archived
+///     Column layout: seq_id, id, stream_id, version, data, type, timestamp, tenant_id, dotnet_type,
+///     is_archived, bdata (#388), then the optional metadata columns.
 /// </summary>
 [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
     Justification = "Class-level: hydrates IEvent via EventGraph.Wrap (which routes through ISerializer.FromJson). Event types are preserved by EventGraph registration on the caller side per the AOT publishing guide.")]
@@ -42,11 +43,13 @@ internal class EventListHandler
             var tenantId = sqlReader.GetString(7);
             var dotNetTypeName = sqlReader.IsDBNull(8) ? null : sqlReader.GetString(8);
             var isArchived = sqlReader.GetBoolean(9);
+            // #388: non-null bdata means the payload is binary, not in the JSON `data` column.
+            var bdata = sqlReader.IsDBNull(10) ? null : sqlReader.GetFieldValue<byte[]>(10);
 
             var resolvedType = _events.ResolveEventType(dotNetTypeName);
             if (resolvedType == null) continue;
 
-            var data = _serializer.FromJson(resolvedType, json);
+            var data = _events.DeserializeEventData(resolvedType, json, bdata, _serializer);
             var mapping = _events.EventMappingFor(resolvedType);
             var @event = mapping.Wrap(data);
 
@@ -71,7 +74,7 @@ internal class EventListHandler
             // #256: read the opt-in metadata columns appended to the full-event SELECT (when enabled),
             // in the same enable order the query provider emitted them.
             var options = _events.EventOptions;
-            var ordinal = 10;
+            var ordinal = 11; // #388: ordinal 10 is bdata
             if (options.EnableCorrelationId)
             {
                 @event.CorrelationId = sqlReader.IsDBNull(ordinal) ? null : sqlReader.GetString(ordinal);

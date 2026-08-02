@@ -80,7 +80,7 @@ internal class PolecatEventLoader : IEventLoader
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = $"""
             SELECT TOP(@batchSize) seq_id, id, stream_id, version, data, type, timestamp,
-                tenant_id, dotnet_type, is_archived
+                tenant_id, dotnet_type, is_archived, bdata
             FROM {_events.EventsTableName}
             WHERE seq_id > @floor AND seq_id <= @ceiling AND is_archived = 0{tenantPredicate}
             ORDER BY seq_id;
@@ -106,6 +106,8 @@ internal class PolecatEventLoader : IEventLoader
             var tenantId = reader.GetString(7);
             var dotNetTypeName = reader.IsDBNull(8) ? null : reader.GetString(8);
             var isArchived = reader.GetBoolean(9);
+            // #388: non-null bdata means this row's payload is binary, not JSON.
+            var bdata = reader.IsDBNull(10) ? null : reader.GetFieldValue<byte[]>(10);
 
             // Apply event type allow-list filter (skip events not in the subscription's filter)
             if (_allowedDotNetTypes != null && dotNetTypeName != null &&
@@ -133,7 +135,7 @@ internal class PolecatEventLoader : IEventLoader
             object data;
             try
             {
-                data = _options.Serializer.FromJson(resolvedType, json);
+                data = _events.DeserializeEventData(resolvedType, json, bdata, _options.Serializer);
             }
             catch (Exception ex)
             {
