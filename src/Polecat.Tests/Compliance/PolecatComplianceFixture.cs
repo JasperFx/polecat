@@ -118,9 +118,7 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
             _options = options;
         }
 
-        // Straight to the registry: unlike Marten, Polecat's public EventStoreOptions facade has no
-        // AddEventType, so the shared IEventRegistry member on StoreOptions.EventGraph is the seam.
-        public void AddEventType(Type eventType) => _options.EventGraph.AddEventType(eventType);
+        public void AddEventType(Type eventType) => _options.Events.AddEventType(eventType);
 
         public ITagTypeRegistration RegisterTagType<TTag>(string tableSuffix) where TTag : notnull
             => _options.Events.RegisterTagType<TTag>(tableSuffix);

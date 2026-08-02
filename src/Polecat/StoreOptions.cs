@@ -461,6 +461,36 @@ public class EventStoreOptions : IEventStoreInstrumentation
         = Polecat.Events.Aggregation.NulloMessageOutbox.Instance;
 
     /// <summary>
+    ///     Pre-register an event type with the event store. Mirrors Marten's
+    ///     <c>StoreOptions.Events.AddEventType&lt;TEvent&gt;()</c>. Not strictly necessary — event types are
+    ///     registered on the fly as they are appended — but pre-registration can help with asynchronous
+    ///     projections where the daemon process hasn't yet encountered the event type, and lets the
+    ///     event type name alias be resolved before the first append.
+    /// </summary>
+    public void AddEventType<TEvent>() where TEvent : notnull
+    {
+        EventGraph!.AddEventType(typeof(TEvent));
+    }
+
+    /// <summary>
+    ///     Pre-register an event type with the event store. Mirrors Marten's
+    ///     <c>StoreOptions.Events.AddEventType(Type)</c>.
+    /// </summary>
+    public void AddEventType(Type eventType)
+    {
+        EventGraph!.AddEventType(eventType);
+    }
+
+    /// <summary>
+    ///     Pre-register several event types with the event store in one call. Mirrors Marten's
+    ///     <c>StoreOptions.Events.AddEventTypes(IEnumerable&lt;Type&gt;)</c>.
+    /// </summary>
+    public void AddEventTypes(IEnumerable<Type> eventTypes)
+    {
+        foreach (var eventType in eventTypes) EventGraph!.AddEventType(eventType);
+    }
+
+    /// <summary>
     ///     Register a tag type for Dynamic Consistency Boundary (DCB) support.
     ///     Creates a tag table with an auto-generated suffix.
     /// </summary>

@@ -54,6 +54,26 @@ Polecat converts .NET event type names to snake_case for storage:
 - `MembersJoined` → `members_joined`
 - `InvoiceLineItemAdded` → `invoice_line_item_added`
 
+## Pre-registering Event Types
+
+Event types are registered with the store on the fly the first time they are appended, so registering
+them up front is optional. It is worth doing when the *reading* side may meet an event type before the
+writing side does -- most commonly the async daemon in a separate process, which has to map an
+`event_type_name` back to a .NET type it has not yet seen appended:
+
+```cs
+var store = DocumentStore.For(opts =>
+{
+    opts.Connection(connectionString);
+
+    opts.Events.AddEventType<QuestStarted>();
+    opts.Events.AddEventType(typeof(MembersJoined));
+    opts.Events.AddEventTypes([typeof(MembersDeparted), typeof(QuestEnded)]);
+});
+```
+
+This mirrors Marten's `StoreOptions.Events.AddEventType<T>()` / `AddEventTypes(...)`.
+
 ## Sequence IDs
 
 Events are assigned a global, monotonically increasing sequence ID via SQL Server's `IDENTITY(1,1)`. This provides a total ordering of all events across all streams, which is critical for the async daemon's event processing.
