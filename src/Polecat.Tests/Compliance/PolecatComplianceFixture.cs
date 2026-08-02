@@ -26,11 +26,16 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
 
         var options = new StoreOptions
         {
-            ConnectionString = ConnectionSource.ConnectionString,
+            ConnectionString = connectionStringFor(config),
             AutoCreateSchemaObjects = AutoCreate.All,
             DatabaseSchemaName = schemaName,
             UseNativeJsonType = ConnectionSource.SupportsNativeJson
         };
+
+        if (config.MaxConcurrentRebuildsPerDatabase.HasValue)
+        {
+            options.DaemonSettings.MaxConcurrentRebuildsPerDatabase = config.MaxConcurrentRebuildsPerDatabase;
+        }
 
         config.ApplyTo(new PolecatComplianceRegistrar(options));
 
@@ -40,6 +45,19 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
         // Polecat applies schema changes explicitly rather than lazily -- one of the eight
         // divergences the compliance seam exists to absorb.
         await _store.Database.ApplyAllConfiguredChangesToDatabaseAsync().ConfigureAwait(false);
+    }
+
+    private static string connectionStringFor(ComplianceStoreConfig config)
+    {
+        if (!config.MaxPoolSize.HasValue)
+        {
+            return ConnectionSource.ConnectionString;
+        }
+
+        return new SqlConnectionStringBuilder(ConnectionSource.ConnectionString)
+        {
+            MaxPoolSize = config.MaxPoolSize.Value
+        }.ConnectionString;
     }
 
     public override IDocumentSession OpenSession() => _store.LightweightSession();
@@ -59,7 +77,13 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
                 $"Polecat cannot load documents by an identity of type {id.GetType().FullName}")
         };
 
+    public override void StoreDocument<T>(IDocumentSession session, T document) => session.Store(document);
+
     public override IEventStoreOperations EventsFor(IDocumentSession session) => session.Events;
+
+    public override IEventStore EventStore => _store;
+
+    public override IEnumerable<Type> AllAggregateTypes() => _store.Options.Projections.AllAggregateTypes();
 
     public override IComplianceBatch CreateBatch(IQuerySession session)
         => new PolecatComplianceBatch(session.CreateBatchQuery());
@@ -130,6 +154,9 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
         public void LiveAggregation<TDoc>() where TDoc : notnull
         {
         }
+
+        public void AddProjection(ProjectionBase projection, ProjectionLifecycle lifecycle)
+            => _options.Projections.Add((IProjectionSource<IDocumentSession, IQuerySession>)projection, lifecycle);
     }
 
     internal class PolecatComplianceBatch : IComplianceBatch
