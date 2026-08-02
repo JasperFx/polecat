@@ -485,6 +485,16 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
                     }
                 }
 
+                // #394: a session with a single DCB boundary — overwhelmingly the common case —
+                // throws its DcbConcurrencyException directly, matching Marten, so the documented
+                // `catch (DcbConcurrencyException)` retry pattern ports between the two stores.
+                // Only a session with several boundaries failing at once still needs the
+                // AggregateException to carry all of them.
+                if (dcbExceptions.Count == 1)
+                {
+                    throw dcbExceptions[0];
+                }
+
                 if (dcbExceptions.Count > 0)
                 {
                     throw new AggregateException(dcbExceptions);

@@ -218,16 +218,9 @@ public class conjoined_tenancy_dcb_and_natural_key_tests : OneOffConfigurationsC
         conflictEvent.WithTag(studentId, courseId);
         boundary.AppendOne(conflictEvent);
 
-        var ex = await Should.ThrowAsync<Exception>(() => session1.SaveChangesAsync());
-        // The DcbConcurrencyException may be wrapped in an AggregateException
-        if (ex is AggregateException agg)
-        {
-            agg.InnerExceptions.ShouldContain(e => e is DcbConcurrencyException);
-        }
-        else
-        {
-            ex.ShouldBeOfType<DcbConcurrencyException>();
-        }
+        // #394: one boundary in the session, so the DcbConcurrencyException comes through unwrapped
+        await Should.ThrowAsync<DcbConcurrencyException>(
+            () => session1.SaveChangesAsync(TestContext.Current.CancellationToken));
     }
 
     [Fact]

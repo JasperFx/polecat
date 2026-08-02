@@ -264,20 +264,29 @@ public class dcb_documentation_samples : IntegrationContext
         assignment.WithTag(studentId, courseId);
         boundary.AppendOne(assignment);
 
-        #region sample_polecat_dcb_handling_concurrency
+        // A session with a single DCB boundary throws the DcbConcurrencyException directly (#394),
+        // so the Marten-documented retry pattern below ports unchanged.
+        var violation = await Should.ThrowAsync<DcbConcurrencyException>(
+            () => session1.SaveChangesAsync(TestContext.Current.CancellationToken));
+        violation.Query.ShouldNotBeNull();
+    }
+
+    #region sample_polecat_dcb_handling_concurrency
+    public static async Task handling_a_concurrency_violation(IDocumentSession session)
+    {
         try
         {
-            await session1.SaveChangesAsync(TestContext.Current.CancellationToken);
+            await session.SaveChangesAsync();
         }
-        catch (AggregateException ex) when (ex.InnerExceptions.OfType<DcbConcurrencyException>().Any())
+        catch (DcbConcurrencyException violation)
         {
-            // Reload and retry -- the boundary's tag query had new matching events
-            var violation = ex.InnerExceptions.OfType<DcbConcurrencyException>().First();
-            // violation.Query -- the original tag query
-            // violation.LastSeenSequence -- the sequence at time of read
+            // Reload and retry -- the boundary's tag query had new matching events since the read.
+            // violation.Query is the original tag query, violation.LastSeenSequence the sequence
+            // the boundary was read at.
+            Console.WriteLine($"DCB violation on {violation.Query} at {violation.LastSeenSequence}");
         }
-        #endregion
     }
+    #endregion
 
     #region sample_polecat_dcb_events_exist_async
     [Fact]
