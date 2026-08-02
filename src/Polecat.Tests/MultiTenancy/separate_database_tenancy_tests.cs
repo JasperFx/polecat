@@ -12,14 +12,13 @@ public class separate_database_tenancy_tests : IAsyncLifetime
 {
     private const string TenantA = "tenant_a";
     private const string TenantB = "tenant_b";
-    private const string DbA = "polecat_tenant_a";
-    private const string DbB = "polecat_tenant_b";
+    private static readonly string DbA = ConnectionSource.Scoped("tenant_a");
+    private static readonly string DbB = ConnectionSource.Scoped("tenant_b");
 
-    private static readonly string MasterConnectionString =
-        ConnectionSource.ConnectionString.Replace("Initial Catalog=master", "Database=master");
+    private static readonly string MasterConnectionString = ConnectionSource.MasterConnectionString;
 
     private static string TenantConnectionString(string dbName) =>
-        ConnectionSource.ConnectionString.Replace("Initial Catalog=master", $"Database={dbName}");
+        ConnectionSource.ConnectionStringFor(dbName);
 
     public async ValueTask InitializeAsync()
     {

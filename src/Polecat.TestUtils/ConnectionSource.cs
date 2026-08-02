@@ -13,6 +13,42 @@ public static class ConnectionSource
         Environment.GetEnvironmentVariable("POLECAT_TESTING_DATABASE")
         ?? "Server=localhost,11433;User Id=sa;Password=P@55w0rd;Timeout=5;MultipleActiveResultSets=True;Initial Catalog=master;Encrypt=False";
 
+    /// <summary>
+    ///     The catalog this test process is pointed at — "master" by default, or whatever
+    ///     POLECAT_TESTING_DATABASE names.
+    /// </summary>
+    public static string DatabaseName { get; } =
+        new SqlConnectionStringBuilder(ConnectionString).InitialCatalog;
+
+    /// <summary>
+    ///     A connection string for a different database on the same server.
+    /// </summary>
+    /// <remarks>
+    ///     Use this rather than <c>ConnectionString.Replace("Initial Catalog=master", ...)</c>.
+    ///     String replacement only works while the catalog happens to be "master": point
+    ///     POLECAT_TESTING_DATABASE at anything else and the replace silently matches nothing,
+    ///     so the "other" database quietly resolves to the current one and the test asserts
+    ///     against itself.
+    /// </remarks>
+    public static string ConnectionStringFor(string databaseName) =>
+        new SqlConnectionStringBuilder(ConnectionString) { InitialCatalog = databaseName }.ConnectionString;
+
+    /// <summary>Connection string for the server's own <c>master</c> catalog, for DDL.</summary>
+    public static string MasterConnectionString { get; } = ConnectionStringFor("master");
+
+    /// <summary>
+    ///     A database name unique to this test process, so several processes can run the same
+    ///     test class at once without fighting over one database.
+    /// </summary>
+    /// <remarks>
+    ///     Databases created by a test are siblings of the process's own database, not children
+    ///     of it — so pointing each process at its own catalog does NOT isolate them. Anything a
+    ///     test creates on the server has to carry the process's scope in its name, which is what
+    ///     this does: <c>Scoped("tenant_a")</c> gives "master_tenant_a" locally and
+    ///     "polecat_w3_tenant_a" under a parallel runner.
+    /// </remarks>
+    public static string Scoped(string name) => $"{DatabaseName}_{name}";
+
     private static bool? _supportsNativeJson;
 
     /// <summary>

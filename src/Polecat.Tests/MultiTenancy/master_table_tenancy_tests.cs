@@ -11,15 +11,14 @@ public class master_table_tenancy_tests : IAsyncLifetime
 {
     private const string TenantA = "tenant_a";
     private const string TenantB = "tenant_b";
-    private const string ControlDb = "polecat_mt_control";
-    private const string DbA = "polecat_mt_tenant_a";
-    private const string DbB = "polecat_mt_tenant_b";
+    private static readonly string ControlDb = ConnectionSource.Scoped("mt_control");
+    private static readonly string DbA = ConnectionSource.Scoped("mt_tenant_a");
+    private static readonly string DbB = ConnectionSource.Scoped("mt_tenant_b");
 
-    private static readonly string MasterConnectionString =
-        ConnectionSource.ConnectionString.Replace("Initial Catalog=master", "Database=master");
+    private static readonly string MasterConnectionString = ConnectionSource.MasterConnectionString;
 
     private static string Db(string name) =>
-        ConnectionSource.ConnectionString.Replace("Initial Catalog=master", $"Database={name}");
+        ConnectionSource.ConnectionStringFor(name);
 
     public async ValueTask InitializeAsync()
     {
