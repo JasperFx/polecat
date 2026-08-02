@@ -107,6 +107,13 @@ Critical path for MVP: Stages 1–5, 7–8, 10–11
   no longer referenced, along with `xunit.runner.visualstudio` and `coverlet.collector`.
 - **Pattern**: Mirror Marten's IntegrationContext base class
 - **Database**: Dockerized SQL Server 2025 on localhost:11433
+- **Never run two test runs at once.** Tests share one SQL Server instance and isolate by
+  `DatabaseSchemaName` inside `master`, not by database, so concurrent runs — a second `dotnet test`,
+  a run started before an earlier one finished, or a run left alive after you killed its parent shell
+  — step on each other's schemas and produce large, scattered, misleading failure sets across
+  unrelated areas (query plans, flat tables, partitioning, subscriptions). Let a run finish, and
+  confirm with `pgrep -f Polecat.Tests` before starting another. A killed run in particular can leave
+  its test host alive and its schemas half-torn-down; drop the leftovers before re-running.
 - **Test naming**: snake_case file names (e.g., `start_stream_tests.cs`)
 - **Assertions**: Shouldly (or similar fluent assertions)
 - **Lifecycle**: `IAsyncLifetime` is ValueTask-based and inherits `IAsyncDisposable`. If a class

@@ -21,3 +21,15 @@ public class assign_tag_where_compliance
 
 public class async_daemon_compliance
     : AsyncDaemonCompliance<PolecatComplianceFixture, IDocumentSession, IQuerySession>;
+
+public class auto_discovered_aggregate_compliance
+    : AutoDiscoveredAggregateCompliance<PolecatComplianceFixture, IDocumentSession, IQuerySession>;
+
+public class event_projection_registration_compliance
+    : EventProjectionRegistrationCompliance<PolecatComplianceFixture, IDocumentSession, IQuerySession>;
+
+public class event_projection_enrichment_compliance
+    : EventProjectionEnrichmentCompliance<PolecatComplianceFixture, IDocumentSession, IQuerySession>;
+
+public class rebuild_concurrency_cap_compliance
+    : RebuildConcurrencyCapCompliance<PolecatComplianceFixture, IDocumentSession, IQuerySession>;
