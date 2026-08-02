@@ -160,6 +160,14 @@ for SingleStreamProjection<CourseEnrollmentSummary, string>
 The consistency check only detects events that match the **same tag query**. Events appended to unrelated tags or streams will not cause a violation.
 :::
 
+::: warning
+A session can establish more than one consistency boundary. If **several** of them are violated in the
+same `SaveChangesAsync()`, Polecat throws an `AggregateException` carrying one
+`DcbConcurrencyException` per violated boundary rather than a single exception. A session with one
+boundary -- the common case, and what the sample above shows -- always throws the
+`DcbConcurrencyException` directly.
+:::
+
 ## Checking Event Existence
 
 If you only need to know whether any events matching a tag query exist -- without loading or deserializing them -- use `EventsExistAsync`. This is a lightweight existence check that avoids the overhead of fetching and materializing event data:
