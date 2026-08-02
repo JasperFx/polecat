@@ -156,10 +156,14 @@
              Weasel 9.22.0 (weasel#417): carries the JasperFx 2.37.0 floor.
              Weasel 9.23.0: weasel#415 — EnsureDatabaseExistsAsync is safe under concurrent callers,
              which is the SQL Server path Polecat provisions on; plus weasel#416, where
-             AssertValidIdentifier now rejects a quote or semicolon outright. -->
-        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.23.0" />
-        <PackageVersion Include="Weasel.SqlServer" Version="9.23.0" />
-        <PackageVersion Include="Weasel.Storage" Version="9.23.0" />
+             AssertValidIdentifier now rejects a quote or semicolon outright.
+             Weasel 9.23.1 (weasel#420): the weasel#416 identifier validation finally reaches the SQL
+             Server migrator, which validated NOTHING before this — the directly relevant half for
+             Polecat. Companion providers (Oracle, MySQL, Sqlite) fixed in the same pass, and
+             PostgreSQL's copy folded onto the shared Weasel.Core helper (weasel#422). -->
+        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.23.1" />
+        <PackageVersion Include="Weasel.SqlServer" Version="9.23.1" />
+        <PackageVersion Include="Weasel.Storage" Version="9.23.1" />
 
         <!-- Strongly typed IDs -->
         <PackageVersion Include="StronglyTypedId" Version="1.0.0-beta08" />
