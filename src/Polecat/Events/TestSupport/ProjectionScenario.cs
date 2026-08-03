@@ -1,14 +1,23 @@
+using JasperFx.Core;
+using JasperFx.Events;
 using JasperFx.Events.Daemon;
 
 namespace Polecat.Events.TestSupport;
 
 /// <summary>
-///     Test harness for verifying projection behavior. Allows you to append events
-///     and assert against the projected documents in a structured, step-by-step fashion.
+///     Polecat's implementation of the JasperFx.Events projection scenario test harness, closing the
+///     generic session pair over <see cref="IDocumentSession" /> / <see cref="IQuerySession" />. All
+///     scripting and execution behavior lives on the
+///     <see cref="JasperFx.Events.TestSupport.ProjectionScenario{TOperations,TQuerySession}" /> base
+///     type; this class only supplies the store-specific seam.
 /// </summary>
-public partial class ProjectionScenario
+/// <remarks>
+///     Replaced a seven-file copy of Marten's pre-lift harness (#404, jasperfx#616). The seam below
+///     is deliberately the same shape as <c>EventStoreComplianceFixture</c>'s, including the
+///     <c>object</c>-id load dispatch, so both are implemented the same way against the same store.
+/// </remarks>
+public class ProjectionScenario: JasperFx.Events.TestSupport.ProjectionScenario<IDocumentSession, IQuerySession>
 {
-    private readonly Queue<ScenarioStep> _steps = new();
     private readonly DocumentStore _store;
 
     public ProjectionScenario(DocumentStore store)
@@ -16,127 +25,57 @@ public partial class ProjectionScenario
         _store = store;
     }
 
-    internal IProjectionDaemon? Daemon { get; private set; }
-
-    internal ScenarioStep? NextStep => _steps.Count != 0 ? _steps.Peek() : null;
-
-    internal IDocumentSession Session { get; private set; } = null!;
+    protected override bool HasAnyAsyncProjections => _store.Options.Projections.HasAnyAsyncProjections();
 
     /// <summary>
-    ///     Disable the scenario from cleaning out any existing
-    ///     event and projected document data before running the scenario.
+    ///     Wipe the event store, then exactly the document types the registered projections own —
+    ///     not every table in the schema, which would take out documents a scenario deliberately
+    ///     seeded beforehand.
     /// </summary>
-    public bool DoNotDeleteExistingData { get; set; }
-
-    /// <summary>
-    ///     Opt into applying this scenario to a specific tenant id in the
-    ///     case of using multi-tenancy of any kind.
-    /// </summary>
-    public string? TenantId { get; set; }
-
-    internal Task WaitForNonStaleData()
+    protected override async Task DeleteExistingDataAsync(CancellationToken ct)
     {
-        if (Daemon == null)
-        {
-            return Task.CompletedTask;
-        }
+        await _store.Advanced.CleanAllEventDataAsync(ct).ConfigureAwait(false);
 
-        return Daemon.WaitForNonStaleData(TimeSpan.FromSeconds(30));
+        foreach (var storageType in _store.Options.Projections.All.SelectMany(x => x.Options.StorageTypes))
+        {
+            await _store.Advanced.CleanAsync(storageType, ct).ConfigureAwait(false);
+        }
     }
 
-    private ScenarioStep Action(Action<IEventOperations> action)
+    protected override async ValueTask<IProjectionDaemon> BuildDaemonAsync(string? tenantId)
     {
-        var step = new ScenarioAction(action);
-        _steps.Enqueue(step);
-        return step;
+        return await _store.BuildProjectionDaemonAsync(tenantId).ConfigureAwait(false);
     }
 
-    private ScenarioStep Assertion(Func<IQuerySession, CancellationToken, Task> check)
+    protected override IDocumentSession OpenSession(string? tenantId)
     {
-        var step = new ScenarioAssertion(check);
-        _steps.Enqueue(step);
-        return step;
-    }
-
-    internal async Task Execute(CancellationToken ct = default)
-    {
-        if (!DoNotDeleteExistingData)
-        {
-            await _store.Advanced.CleanAllEventDataAsync(ct);
-            // Clean projected document types
-            foreach (var source in _store.Options.Projections.All)
-            {
-                foreach (var storageType in source.Options.StorageTypes)
-                {
-                    await CleanDocumentsByTypeAsync(storageType, ct);
-                }
-            }
-        }
-
-        if (_store.Options.Projections.HasAnyAsyncProjections())
-        {
-            Daemon = await _store.BuildProjectionDaemonAsync();
-            await Daemon.StartAllAsync();
-        }
-
-        Session = !string.IsNullOrEmpty(TenantId)
-            ? _store.LightweightSession(new SessionOptions { TenantId = TenantId })
+        return tenantId.IsNotEmpty()
+            ? _store.LightweightSession(new SessionOptions { TenantId = tenantId })
             : _store.LightweightSession();
-
-        try
-        {
-            var exceptions = new List<Exception>();
-            var number = 0;
-            var descriptions = new List<string>();
-
-            while (_steps.Count > 0)
-            {
-                number++;
-                var step = _steps.Dequeue();
-
-                try
-                {
-                    await step.Execute(this, ct);
-                    descriptions.Add($"{number.ToString().PadLeft(3)}. {step.Description}");
-                }
-                catch (Exception e)
-                {
-                    descriptions.Add($"FAILED: {number.ToString().PadLeft(3)}. {step.Description}");
-                    descriptions.Add(e.ToString());
-                    exceptions.Add(e);
-                }
-            }
-
-            if (exceptions.Count > 0)
-            {
-                throw new ProjectionScenarioException(descriptions, exceptions);
-            }
-        }
-        finally
-        {
-            if (Daemon != null)
-            {
-                await Daemon.StopAllAsync();
-                if (Daemon is IAsyncDisposable disposable)
-                {
-                    await disposable.DisposeAsync();
-                }
-            }
-
-            await Session.DisposeAsync();
-        }
     }
 
-    private async Task CleanDocumentsByTypeAsync(Type type, CancellationToken ct)
+    // No shared JasperFx interface declares SaveChangesAsync.
+    protected override Task SaveChangesAsync(IDocumentSession session, CancellationToken ct)
     {
-        var provider = _store.GetProvider(type);
-        var tableName = provider.Mapping.QualifiedTableName;
+        return session.SaveChangesAsync(ct);
+    }
 
-        await using var conn = new Microsoft.Data.SqlClient.SqlConnection(_store.Options.ConnectionString);
-        await conn.OpenAsync(ct);
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText =
-            $"IF OBJECT_ID({Polecat.Internal.SqlEscaping.Literal(tableName)}, 'U') IS NOT NULL DELETE FROM {tableName};";
-        await cmd.ExecuteNonQueryAsync(ct);
+    protected override IEventOperations EventsFor(IDocumentSession session)
+    {
+        return session.Events;
+    }
+
+    protected override Task<T?> LoadDocumentAsync<T>(IQuerySession session, object id, CancellationToken ct)
+        where T : class
+    {
+        return id switch
+        {
+            Guid guidId => session.LoadAsync<T>(guidId, ct),
+            int intId => session.LoadAsync<T>(intId, ct),
+            long longId => session.LoadAsync<T>(longId, ct),
+            string stringId => session.LoadAsync<T>(stringId, ct),
+            _ => throw new ArgumentOutOfRangeException(nameof(id),
+                $"Polecat cannot load documents by an identity of type {id.GetType().FullName}")
+        };
     }
 }
