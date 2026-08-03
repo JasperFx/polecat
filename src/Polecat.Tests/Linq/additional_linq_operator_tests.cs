@@ -4,9 +4,24 @@ using Polecat.Tests.Harness;
 namespace Polecat.Tests.Linq;
 
 /// <summary>
-///     Tests for LINQ operators ported from Marten: negation, modulo, Last/LastOrDefault,
-///     .Equals(), nullable types, and HasValue.
+///     ported: Marten — LINQ operators duplicated from Marten's suite: negation, modulo,
+///     Last/LastOrDefault, <c>.Equals()</c>, nullable types, and HasValue.
 /// </summary>
+/// <remarks>
+///     The last remaining duplication of a Marten test after compliance wave 3 (#399), and the one
+///     the shared library cannot absorb: LINQ is document-database behavior, and
+///     <c>JasperFx.Events.ComplianceTests</c> spans only the event sourcing surface. Polecat still
+///     re-declares <c>IDocumentStore</c>/<c>IDocumentSession</c>/<c>IQuerySession</c> in its own
+///     namespace, so there is nothing for a document-db compliance suite to be generic over yet;
+///     Weasel.Storage is the intended convergence layer. Tracked in marten#5118.
+///
+///     <para>
+///         Marker convention: <c>ported:</c> means this file duplicates a test that also exists in
+///         another store and should eventually move into a shared suite. A bare <c>marten#NNNN</c>
+///         citation elsewhere in this suite means the opposite — Polecat implemented the same
+///         feature and the issue number is provenance worth keeping.
+///     </para>
+/// </remarks>
 public class additional_linq_operator_tests : OneOffConfigurationsContext
 {
     private async Task StoreSeedDataAsync()
