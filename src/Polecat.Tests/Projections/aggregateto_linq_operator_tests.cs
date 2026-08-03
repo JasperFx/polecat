@@ -8,8 +8,27 @@ namespace Polecat.Tests.Projections;
 // #364 follow-up (Marten parity): AggregateToAsync<T>() folds every event matched by an event query
 // into a single aggregate, regardless of stream, optionally starting from supplied state. The
 // aggregate's identity is stamped from the last queried event's stream. Reuses the self-aggregating
-// QuestParty (inline_projection_tests.cs) and SelfAggregatingStringQuest
-// (single_stream_projection_with_string_identity_tests.cs) declared in this namespace.
+// QuestParty (inline_projection_tests.cs) declared in this namespace.
+
+/// <summary>
+///     String-keyed self-aggregating type for the key-identity case below.
+/// </summary>
+/// <remarks>
+///     Lived in single_stream_projection_with_string_identity_tests.cs until that file was retired
+///     into JasperFx.Events.ComplianceTests (#399). The shared library's equivalent folds the
+///     compliance suite's own events, so this test keeps a local type that folds Polecat's.
+/// </remarks>
+public partial class AggregateToStringQuest
+{
+    public string Id { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public List<string> Members { get; set; } = new();
+
+    public static AggregateToStringQuest Create(QuestStarted e) => new() { Name = e.Name };
+
+    public void Apply(MembersJoined e) => Members.AddRange(e.Members);
+}
+
 public class aggregateto_linq_operator_tests : OneOffConfigurationsContext
 {
     private readonly MembersJoined _joined1 = new(1, "Emond's Field", ["Rand", "Matrim", "Perrin", "Thom"]);
@@ -115,7 +134,7 @@ public class aggregateto_linq_operator_tests : OneOffConfigurationsContext
 
         var quest = await session.Events.QueryAllRawEvents()
             .Where(x => x.StreamKey == key)
-            .AggregateToAsync<SelfAggregatingStringQuest>(token: TestContext.Current.CancellationToken);
+            .AggregateToAsync<AggregateToStringQuest>(token: TestContext.Current.CancellationToken);
 
         quest.ShouldNotBeNull();
         quest.Id.ShouldBe(key);

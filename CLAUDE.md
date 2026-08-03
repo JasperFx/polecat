@@ -132,6 +132,30 @@ Critical path for MVP: Stages 1–5, 7–8, 10–11
   xunit.v3 is built against Microsoft.Testing.Platform 1.x; anything 2.x makes every test run die at
   startup with a `TypeLoadException`. See the comment in `Directory.Packages.props`.
 
+### Cross-store compliance suites
+
+Event sourcing behavior that Polecat and Marten both have belongs in
+`JasperFx.Events.ComplianceTests` (source-only package; the suites compile into `Polecat.Tests` so
+JasperFx's aggregate source generator binds Polecat's session types). Enroll a suite with an empty
+subclass in `Compliance/polecat_event_store_compliance.cs`, implement whatever seam it needs on
+`PolecatComplianceFixture`, and delete the Polecat-local copy. Ten suites are enrolled across three
+waves (#393, #400, #399).
+
+To iterate on a suite before the JasperFx release, build against a working copy instead of the
+package:
+
+```
+dotnet build src/Polecat.Tests/Polecat.Tests.csproj \
+  -p:ComplianceSourceDir=$HOME/code/jasperfx/src/JasperFx.Events.ComplianceTests
+```
+
+**Two markers, opposite meanings.** `ported:` on a test file means it *duplicates* a test that also
+exists in another store and should eventually move into a shared suite — one file carries it today,
+`Linq/additional_linq_operator_tests.cs`, blocked because there is no document-db compliance library.
+A bare `marten#NNNN` citation means the opposite: Polecat implemented the same feature and the issue
+number is provenance. Do not treat a `marten#NNNN` count as a porting backlog; it grows with every
+parity feature and never converges.
+
 ### Writing tests that survive being run in parallel processes
 
 The suite is a candidate for being run across several worker processes at once (Bobcat's supervisor
