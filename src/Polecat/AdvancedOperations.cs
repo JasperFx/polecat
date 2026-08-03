@@ -492,9 +492,20 @@ public class AdvancedOperations
     /// <summary>
     ///     Delete all rows from the document table for type T.
     /// </summary>
-    public async Task CleanAsync<T>(CancellationToken token = default)
+    public Task CleanAsync<T>(CancellationToken token = default) => CleanAsync(typeof(T), token);
+
+    /// <summary>
+    ///     Delete all rows from the document table for <paramref name="documentType" />.
+    /// </summary>
+    /// <remarks>
+    ///     The non-generic twin of <see cref="CleanAsync{T}" />, for callers holding a
+    ///     <see cref="Type" /> rather than a generic parameter — a projection's
+    ///     <c>Options.StorageTypes</c>, for one, which is how <see cref="ProjectionScenario" />
+    ///     resets exactly the documents its projections own instead of every table in the schema.
+    /// </remarks>
+    public async Task CleanAsync(Type documentType, CancellationToken token = default)
     {
-        var provider = _store.GetProvider(typeof(T));
+        var provider = _store.GetProvider(documentType);
         var tableName = provider.Mapping.QualifiedTableName;
         var connStr = _store.Options.ConnectionString;
         await _resilience.ExecuteAsync(static async (state, ct) =>
@@ -683,7 +694,7 @@ public class AdvancedOperations
     {
         var scenario = new ProjectionScenario(_store);
         configuration(scenario);
-        return scenario.Execute(ct);
+        return scenario.ExecuteAsync(ct);
     }
 
     // ---- runtime tenant onboarding under managed per-tenant partitioning (#335) ----
