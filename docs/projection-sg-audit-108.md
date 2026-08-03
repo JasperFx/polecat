@@ -17,6 +17,12 @@
 
 ## How to read this report
 
+- Types marked *(shared: SomethingCompliance)* are declared in
+  `JasperFx.Events.ComplianceTests` rather than in a Polecat test file. That
+  package is source-only, so they compile inside `Polecat.Tests` and the source
+  generator treats them exactly like local types. They moved there in compliance
+  waves 1–3 (#393, #400, #399); everything else cites the file it lives in.
+
 - **✅ Generated**: SG emits a `[GeneratedEvolver]` partial / standalone
   evolver / `EventProjection` partial override; runtime registration finds
   the dispatcher; the post-#276 fail-fast does not fire.
@@ -59,16 +65,16 @@ methods and emits a standalone `TEvolver` class.
 | 9 | `Report` *(Events/project_latest_tests.cs)* | `Guid` | Apply + Create | ✓ | `..._Report_System_GuidEvolver.g.cs` | ✅ |
 | 10 | `StringReport` *(Events/project_latest_tests.cs)* | `string` | Apply + Create | ✓ | `..._StringReport_stringEvolver.g.cs` | ✅ |
 | 11 | `ScenarioQuestParty` *(Events/projection_scenario_tests.cs)* | `Guid` | Apply + Create | ✓ | `..._ScenarioQuestParty_System_GuidEvolver.g.cs` | ✅ |
-| 12 | `MutableIEventEvolveAggregate` *(Events/self_aggregating_evolve_method.cs)* | `Guid` | `Evolve(snapshot, IEvent)` | ✗ | `..._MutableIEventEvolveAggregate_System_GuidEvolveEvolver.g.cs` | ✅ |
-| 13 | `MutableObjectEvolveAggregate` *(Events/self_aggregating_evolve_method.cs)* | `Guid` | `Evolve(snapshot, TEvent)` | ✗ | `..._MutableObjectEvolveAggregate_System_GuidEvolveEvolver.g.cs` | ✅ |
-| 14 | `ImmutableIEventEvolveAggregate` *(record; Events/self_aggregating_evolve_method.cs)* | `Guid` | `Evolve(snapshot, IEvent)` returning new record | ✗ | `..._ImmutableIEventEvolveAggregate_System_GuidEvolveEvolver.g.cs` | ✅ |
+| 12 | `MutableIEventEvolveAggregate` *(shared: SelfAggregatingEvolveCompliance)* | `Guid` | `Evolve(snapshot, IEvent)` | ✗ | `..._MutableIEventEvolveAggregate_System_GuidEvolveEvolver.g.cs` | ✅ |
+| 13 | `MutableObjectEvolveAggregate` *(shared: SelfAggregatingEvolveCompliance)* | `Guid` | `Evolve(snapshot, TEvent)` | ✗ | `..._MutableObjectEvolveAggregate_System_GuidEvolveEvolver.g.cs` | ✅ |
+| 14 | `ImmutableIEventEvolveAggregate` *(record; shared: SelfAggregatingEvolveCompliance)* | `Guid` | `Evolve(snapshot, IEvent)` returning new record | ✗ | `..._ImmutableIEventEvolveAggregate_System_GuidEvolveEvolver.g.cs` | ✅ |
 | 15 | `ImmutableObjectEvolveAggregate` *(record; same file)* | `Guid` | `Evolve(snapshot, TEvent)` returning new record | ✗ | `..._ImmutableObjectEvolveAggregate_System_GuidEvolveEvolver.g.cs` | ✅ |
-| 16 | `AsyncEvolveAggregate` *(Events/self_aggregating_evolve_method.cs)* | `Guid` | `EvolveAsync` | ✗ | `..._AsyncEvolveAggregate_System_GuidEvolveEvolver.g.cs` | ✅ |
+| 16 | `AsyncEvolveAggregate` *(shared: SelfAggregatingEvolveCompliance)* | `Guid` | `EvolveAsync` | ✗ | `..._AsyncEvolveAggregate_System_GuidEvolveEvolver.g.cs` | ✅ |
 | 17 | `ImmutableAsyncEvolveAggregate` *(record; same file)* | `Guid` | `EvolveAsync` returning new record | ✗ | `..._ImmutableAsyncEvolveAggregate_System_GuidEvolveEvolver.g.cs` | ✅ |
 | 18 | `CompositeQuestParty` *(Projections/composite_projection_tests.cs)* | `Guid` | Apply + Create | ✓ | `..._CompositeQuestParty_System_GuidEvolver.g.cs` | ✅ |
 | 19 | `QuestStats` *(Projections/composite_projection_tests.cs)* | `Guid` | Apply + Create | ✓ | `..._QuestStats_System_GuidEvolver.g.cs` | ✅ |
 | 20 | `QuestParty` *(Projections/inline_projection_tests.cs)* | `Guid` | Apply + Create + ShouldDelete | ✓ | `..._QuestParty_System_GuidEvolver.g.cs` | ✅ |
-| 21 | `SelfAggregatingStringQuest` *(Projections/single_stream_projection_with_string_identity_tests.cs)* | `string` | Apply + Create | ✓ | `..._SelfAggregatingStringQuest_stringEvolver.g.cs` | ✅ |
+| 21 | `SelfAggregatingStringQuest` *(shared: StringIdentitySingleStreamCompliance)* | `string` | Apply + Create | ✓ | `..._SelfAggregatingStringQuest_stringEvolver.g.cs` | ✅ |
 | 22 | `SnapshotParty` *(Projections/snapshot_registration_tests.cs)* | `Guid` | Apply + Create | ✓ | `..._SnapshotParty_System_GuidEvolver.g.cs` | ✅ |
 | 23 | `SnapshotPartyByString` *(Projections/snapshot_registration_tests.cs)* | `string` | Apply + Create | ✓ | `..._SnapshotPartyByString_stringEvolver.g.cs` | ✅ |
 | 24 | `Payment` *(Projections/using_guid_based_strong_typed_id_for_aggregate_identity.cs)* | `PaymentId` *(wraps Guid)* | Apply + Create | ✓ | `..._Payment_Polecat_Tests_Projections_PaymentIdEvolver.g.cs` | ✅ |
@@ -90,13 +96,13 @@ override) — **`partial` required on the class** for these shapes.
 |---|---|---|---|---|---|---|
 | 1 | `QuestLogProjection` *(Projections/event_projection_tests.cs)* | `EventProjection` | conventional `Project(TEvent, IDocumentSession)` | ✓ | `..._QuestLogProjection.EventProjection.g.cs` | ✅ |
 | 2 | `MultiEventQuestLogProjection` *(Projections/event_projection_tests.cs)* | `EventProjection` | conventional `Project(TEvent, IDocumentSession)` × 2 | ✓ | `..._MultiEventQuestLogProjection.EventProjection.g.cs` | ✅ |
-| 3 | `SimpleEnrichmentProjection` *(Projections/event_projection_enrichment_tests.cs)* | `EventProjection` | `Project` + `EnrichEventsAsync` override | ✓ | `..._SimpleEnrichmentProjection.EventProjection.g.cs` | ✅ (EnrichEventsAsync is a side-channel; dispatch still through SG-emitted `Project`) |
-| 4 | `EnrichmentCallOrderProjection` *(Projections/event_projection_enrichment_tests.cs)* | `EventProjection` | `Project` + `EnrichEventsAsync` override | ✓ | `..._EnrichmentCallOrderProjection.EventProjection.g.cs` | ✅ |
-| 5 | `DbLookupEnrichmentProjection` *(Projections/event_projection_enrichment_tests.cs)* | `EventProjection` | `Project` + `EnrichEventsAsync` override | ✓ | `..._DbLookupEnrichmentProjection.EventProjection.g.cs` | ✅ |
-| 6 | `AuditRecordProjection` *(Projections/event_projection_should_register_document_types.cs)* | `EventProjection` | overrides `ApplyAsync` directly | ✓ | `..._AuditRecordProjection.TypeRegistration.g.cs` *(TypeRegistration-only)* | ✅ — dispatch via `ApplyAsync` override; SG emits only the `RegisterPublishedType<AuditRecord>` constructor so `Schema.For<AuditRecord>` is discoverable (per [marten#4166](https://github.com/JasperFx/marten/issues/4166)) |
-| 7 | `AuditRecordCreatorProjection` *(Projections/event_projection_should_register_document_types.cs)* | `EventProjection` | conventional `Create(AuditableEvent)` returning the doc type | ✓ | `..._AuditRecordCreatorProjection.EventProjection.g.cs` | ✅ |
+| 3 | `SimpleEnrichmentProjection` *(shared: EventProjectionEnrichmentCompliance)* | `EventProjection` | `Project` + `EnrichEventsAsync` override | ✓ | `..._SimpleEnrichmentProjection.EventProjection.g.cs` | ✅ (EnrichEventsAsync is a side-channel; dispatch still through SG-emitted `Project`) |
+| 4 | `EnrichmentCallOrderProjection` *(shared: EventProjectionEnrichmentCompliance)* | `EventProjection` | `Project` + `EnrichEventsAsync` override | ✓ | `..._EnrichmentCallOrderProjection.EventProjection.g.cs` | ✅ |
+| 5 | `DbLookupEnrichmentProjection` *(shared: EventProjectionEnrichmentCompliance)* | `EventProjection` | `Project` + `EnrichEventsAsync` override | ✓ | `..._DbLookupEnrichmentProjection.EventProjection.g.cs` | ✅ |
+| 6 | `AuditRecordProjection` *(shared: EventProjectionRegistrationCompliance)* | `EventProjection` | overrides `ApplyAsync` directly | ✓ | `..._AuditRecordProjection.TypeRegistration.g.cs` *(TypeRegistration-only)* | ✅ — dispatch via `ApplyAsync` override; SG emits only the `RegisterPublishedType<AuditRecord>` constructor so `Schema.For<AuditRecord>` is discoverable (per [marten#4166](https://github.com/JasperFx/marten/issues/4166)) |
+| 7 | `AuditRecordCreatorProjection` *(shared: EventProjectionRegistrationCompliance)* | `EventProjection` | conventional `Create(AuditableEvent)` returning the doc type | ✓ | `..._AuditRecordCreatorProjection.EventProjection.g.cs` | ✅ |
 | 8 | `ImportSqlProjection` *(Projections/using_event_projection_for_flat_tables.cs)* | `EventProjection` | conventional `Project(TEvent, IDocumentSession)` × 2 | ✓ | `..._ImportSqlProjection.EventProjection.g.cs` | ✅ |
-| 9 | `StringQuestPartyProjection` *(Projections/single_stream_projection_with_string_identity_tests.cs)* | `SingleStreamProjection<StringQuestParty, string>` | conventional Apply/Create + ShouldDelete on the **projection** (delegating to doc would be the alternative) | ✓ | `..._StringQuestPartyProjection.Evolver.g.cs` *(PartialProjection)* | ✅ |
+| 9 | `StringQuestPartyProjection` *(shared: StringIdentitySingleStreamCompliance)* | `SingleStreamProjection<StringQuestParty, string>` | conventional Apply/Create + ShouldDelete on the **projection** (delegating to doc would be the alternative) | ✓ | `..._StringQuestPartyProjection.Evolver.g.cs` *(PartialProjection)* | ✅ |
 | 10 | `CustomerSummaryProjection` *(Projections/multi_stream_projection_tests.cs)* | `MultiStreamProjection<CustomerSummary, Guid>` | conventional Apply on the projection | ✓ | `..._CustomerSummaryProjection.Evolver.g.cs` | ✅ |
 | 11 | `MonthlyAccountActivityProjection` *(Projections/time_based_multi_stream_projection_tests.cs)* | `MultiStreamProjection<MonthlyAccountActivity, string>` | conventional Apply on the projection | ✓ | `..._MonthlyAccountActivityProjection.Evolver.g.cs` | ✅ |
 | 12 | `CompositeOrderProjection` *(Projections/composite_try_find_upstream_cache_tests.cs)* | `SingleStreamProjection<CompositeOrder, Guid>` | **overrides `Evolve` directly** | ✓ | — | ⚠ Deliberate bypass — override wins per #276 doctrine. Composite-projection test exercises upstream-cache lookup, not dispatch correctness. |
@@ -151,15 +157,15 @@ through the projection and asserts state evolves correctly:
 |---|---|
 | Self-aggregating sync Apply + Create | `fetch_for_writing_tests`, `Bug_4197_fetch_for_writing_natural_key` |
 | Self-aggregating Apply + Create + **ShouldDelete** | `aggregate_stream_to_last_known_tests` (DeletableAggregate), `inline_projection_tests` (QuestParty) |
-| Self-aggregating sync `Evolve(snapshot, IEvent)` (mutable + immutable record) | `self_aggregating_evolve_method` (×4 variants) |
-| Self-aggregating `EvolveAsync` | `self_aggregating_evolve_method` (×2 variants) |
-| String identity | `single_stream_projection_with_string_identity_tests`, `project_latest_tests` (StringReport), `always_enforce_consistency_with_string_stream_id` |
+| Self-aggregating sync `Evolve(snapshot, IEvent)` (mutable + immutable record) | `SelfAggregatingEvolveCompliance` (×4 variants) |
+| Self-aggregating `EvolveAsync` | `SelfAggregatingEvolveCompliance` (×2 variants) |
+| String identity | `StringIdentitySingleStreamCompliance`, `project_latest_tests` (StringReport), `always_enforce_consistency_with_string_stream_id` |
 | Strong-typed-id identity (wrapper struct) | `using_guid_based_strong_typed_id_for_aggregate_identity`, `using_string_based_strong_typed_id_for_aggregate_identity` |
 | `EventProjection` with conventional `Project(TEvent, IDocumentSession)` | `event_projection_tests` |
-| `EventProjection` with `Create(TEvent)` returning a doc | `event_projection_should_register_document_types` (AuditRecordCreatorProjection) |
-| `EventProjection` with `ApplyAsync` override | `event_projection_should_register_document_types` (AuditRecordProjection) |
-| `EventProjection` with `EnrichEventsAsync` override | `event_projection_enrichment_tests` (×3 variants) |
-| `SingleStreamProjection<TDoc, TId>` subclass with Apply on the projection | `single_stream_projection_with_string_identity_tests` (StringQuestPartyProjection) |
+| `EventProjection` with `Create(TEvent)` returning a doc | `EventProjectionRegistrationCompliance` (AuditRecordCreatorProjection) |
+| `EventProjection` with `ApplyAsync` override | `EventProjectionRegistrationCompliance` (AuditRecordProjection) |
+| `EventProjection` with `EnrichEventsAsync` override | `EventProjectionEnrichmentCompliance` (×3 variants) |
+| `SingleStreamProjection<TDoc, TId>` subclass with Apply on the projection | `StringIdentitySingleStreamCompliance` (StringQuestPartyProjection) |
 | `MultiStreamProjection<TDoc, TId>` subclass with Apply on the projection | `multi_stream_projection_tests`, `time_based_multi_stream_projection_tests` |
 | `PolecatCompositeProjection` with `Snapshot<T>` | `composite_projection_tests` |
 | `PolecatCompositeProjection` with `TryFindUpstreamCache` between stages | `composite_try_find_upstream_cache_tests` |

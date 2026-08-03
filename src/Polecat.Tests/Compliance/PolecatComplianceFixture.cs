@@ -37,6 +37,17 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
             options.DaemonSettings.MaxConcurrentRebuildsPerDatabase = config.MaxConcurrentRebuildsPerDatabase;
         }
 
+        if (config.StreamIdentity.HasValue)
+        {
+            options.Events.StreamIdentity = config.StreamIdentity.Value;
+        }
+
+        if (config.EnableCorrelationTracking)
+        {
+            options.Events.EnableCorrelationId = true;
+            options.Events.EnableCausationId = true;
+        }
+
         config.ApplyTo(new PolecatComplianceRegistrar(options));
 
         _store = new DocumentStore(options);
@@ -80,6 +91,13 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
     public override void StoreDocument<T>(IDocumentSession session, T document) => session.Store(document);
 
     public override IEventStoreOperations EventsFor(IDocumentSession session) => session.Events;
+
+    public override string? CorrelationIdFor(IDocumentSession session) => session.CorrelationId;
+
+    public override string? CausationIdFor(IDocumentSession session) => session.CausationId;
+
+    public override void SetCorrelationId(IDocumentSession session, string? correlationId)
+        => session.CorrelationId = correlationId;
 
     public override IEventStore EventStore => _store;
 

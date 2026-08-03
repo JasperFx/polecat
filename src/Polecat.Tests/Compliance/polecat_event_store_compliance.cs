@@ -33,3 +33,9 @@ public class event_projection_enrichment_compliance
 
 public class rebuild_concurrency_cap_compliance
     : RebuildConcurrencyCapCompliance<PolecatComplianceFixture, IDocumentSession, IQuerySession>;
+
+public class activity_correlation_compliance
+    : ActivityCorrelationCompliance<PolecatComplianceFixture, IDocumentSession, IQuerySession>;
+
+public class string_identity_single_stream_compliance
+    : StringIdentitySingleStreamCompliance<PolecatComplianceFixture, IDocumentSession, IQuerySession>;

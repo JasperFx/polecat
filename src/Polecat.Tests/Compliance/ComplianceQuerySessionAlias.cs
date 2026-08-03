@@ -8,3 +8,9 @@ global using ComplianceQuerySession = Polecat.IQuerySession;
 // they cannot reach the <TOperations, TQuerySession> pair their suite class is generic over.
 global using ComplianceOperations = Polecat.IDocumentSession;
 global using ComplianceEventProjection = Polecat.Projections.EventProjection;
+
+// The string-identity suite's custom projection needs Polecat's own SingleStreamProjection base, and
+// that one is generic over the identity type as well as the document, so this alias names a closed
+// generic rather than an open one.
+global using ComplianceStringPartyProjectionBase =
+    Polecat.Projections.SingleStreamProjection<JasperFx.Events.ComplianceTests.StringQuestParty, string>;
