@@ -315,8 +315,18 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
 
         // Event-type registry — populates the explorer's "known event types"
         // panel without forcing operators to crack open assembly metadata.
+        //
+        // #411: BOTH collections have to be filled. EventStoreUsage carries the event registry
+        // twice — Events (List<EventDescriptor>) and RegisteredEventTypes
+        // (List<EventTypeDescriptor>) — and Marten populates both. Filling only
+        // RegisteredEventTypes left usage.Events empty, which reads to a consumer as "this store
+        // has no event types configured" rather than "this store describes them elsewhere".
         foreach (var registered in Options.EventGraph.AllKnownEventTypes())
         {
+            usage.Events.Add(new EventDescriptor(
+                registered.EventTypeName,
+                TypeDescriptor.For(registered.EventType)));
+
             usage.RegisteredEventTypes.Add(new EventTypeDescriptor(
                 EventType: TypeDescriptor.For(registered.EventType),
                 Alias: registered.EventTypeName,

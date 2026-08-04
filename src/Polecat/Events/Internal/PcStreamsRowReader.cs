@@ -111,6 +111,14 @@ internal static class PcStreamsRowReader
     ///     column is used as the fallback, mirroring the pre-consolidation
     ///     behavior in <c>DocumentStore.GetStreamMetadataAsync</c>.
     /// </summary>
+    /// <summary>
+    ///     Shared empty tag set for <see cref="StreamMetadata.Tags"/>. Polecat does not persist
+    ///     DCB stream tags yet, so every row reports the same immutable empty dictionary rather
+    ///     than allocating one per stream.
+    /// </summary>
+    private static readonly IReadOnlyDictionary<string, string> EmptyTags =
+        new Dictionary<string, string>();
+
     internal static StreamMetadata ReadStreamMetadata(
         DbDataReader reader,
         string defaultTenantId,
@@ -134,7 +142,12 @@ internal static class PcStreamsRowReader
             LastSnapshotVersion: null,
             IsArchived: isArchived,
             TenantId: tenantId,
-            Tags: null!);
+            // #412: an empty dictionary, never null. StreamMetadata.Tags is declared as a
+            // non-nullable IReadOnlyDictionary, so "this stream has no tags" is spelled with an
+            // empty collection -- a null forces every consumer that trusts the declaration into a
+            // NullReferenceException instead of an empty loop. The `null!` that used to be here
+            // silenced the compiler's warning rather than answering it.
+            Tags: EmptyTags);
     }
 
     private static string StreamIdToString(object value) => value switch
