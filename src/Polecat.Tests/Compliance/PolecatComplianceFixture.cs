@@ -48,6 +48,11 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
             options.Events.EnableCausationId = true;
         }
 
+        if (config.EnableHeaders)
+        {
+            options.Events.EnableHeaders = true;
+        }
+
         config.ApplyTo(new PolecatComplianceRegistrar(options));
 
         _store = new DocumentStore(options);
