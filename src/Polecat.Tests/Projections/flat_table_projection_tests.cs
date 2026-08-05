@@ -274,6 +274,46 @@ public class flat_table_projection_tests : IntegrationContext
         memberCount.ShouldBe(2);
     }
 
+    // A rebuild has to start the flat table from empty. A flat table projection publishes no
+    // document type, so PublishedTypes() -- which is what the rebuild teardown used to consult
+    // exclusively -- reported nothing to wipe, and every row whose events the replay could no longer
+    // see survived the rebuild. The projection now registers its table through JasperFx's shared
+    // AsyncOptions.DeleteDataInTableOnTeardown, and the teardown honours Options.CleanUps.
+    [Fact]
+    public async Task rebuild_empties_the_flat_table_before_replaying_it()
+    {
+        var store = await CreateStoreWithFlatTable(ProjectionLifecycle.Async);
+
+        // One stream that will be archived out from under its row, and one that survives.
+        var archived = Guid.NewGuid();
+        var replayed = Guid.NewGuid();
+
+        await using (var session = store.LightweightSession())
+        {
+            session.Events.StartStream(archived, new QuestStarted("Forgotten Quest"));
+            session.Events.StartStream(replayed, new QuestStarted("Remembered Quest"));
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        await store.WaitForProjectionAsync();
+
+        (await ReadMetric<string>("quest_name", archived)).ShouldBe("Forgotten Quest");
+
+        await using (var session = store.LightweightSession())
+        {
+            session.Events.ArchiveStream(archived);
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        var daemon = await store.BuildProjectionDaemonAsync();
+        await daemon.RebuildProjectionAsync<QuestMetricsProjection>(TestContext.Current.CancellationToken);
+
+        // Nothing can recreate the archived stream's row, so a rebuild that did not empty the table
+        // first would leave it behind.
+        (await ReadMetric<string>("quest_name", archived)).ShouldBeNull();
+        (await ReadMetric<string>("quest_name", replayed)).ShouldBe("Remembered Quest");
+    }
+
     // polecat#181 — flat-table projection data must be erasable via the Clean* admin helpers.
     [Fact]
     public async Task clean_all_documents_erases_flat_table_projection_data()
