@@ -3,6 +3,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using System.Reflection;
 using System.Text;
+using JasperFx.Core.Reflection;
 using JasperFx.Events;
 using JasperFx.Events.Aggregation;
 using JasperFx.Events.Protected;
@@ -667,9 +668,48 @@ internal class EventOperations : QueryEventStore, IEventOperations
         }
     }
 
+    /// <summary>
+    ///     Unwrap a strong-typed identifier that wraps the stream identity, so the generic
+    ///     &lt;T, TId&gt; overloads can address a stream rather than assuming a natural key.
+    /// </summary>
+    /// <remarks>
+    ///     polecat#417 / marten#5144. A strong-typed id such as <c>PaymentId(Guid)</c> IS the stream
+    ///     identity, just wrapped -- it is not a natural key, which is a domain value resolved
+    ///     through a lookup table. These overloads previously assumed natural key unconditionally,
+    ///     so a wrapper produced a confusing "no natural key definition found" error.
+    ///     A registered natural key always wins, so existing behavior is untouched.
+    /// </remarks>
+    private object? tryUnwrapStreamIdentity<T, TId>(TId id) where T : class where TId : notnull
+    {
+        if (typeof(TId) == typeof(Guid) || typeof(TId) == typeof(string)) return null;
+
+        if (_sessionBase.Options.Projections.FindNaturalKeyDefinition(typeof(T)) != null) return null;
+
+        ValueTypeInfo info;
+        try
+        {
+            info = ValueTypeInfo.ForType(typeof(TId));
+        }
+        catch (InvalidValueTypeException)
+        {
+            return null;
+        }
+
+        if (info.SimpleType == typeof(Guid)) return info.UnWrapper<TId, Guid>()(id);
+        if (info.SimpleType == typeof(string)) return info.UnWrapper<TId, string>()(id);
+
+        return null;
+    }
+
     public async Task<IEventStream<T>> FetchForWriting<T, TId>(TId id, CancellationToken cancellation = default)
         where T : class where TId : notnull
     {
+        switch (tryUnwrapStreamIdentity<T, TId>(id))
+        {
+            case Guid streamId: return await FetchForWriting<T>(streamId, cancellation);
+            case string streamKey: return await FetchForWriting<T>(streamKey, cancellation);
+        }
+
         var naturalKey = FindNaturalKeyDefinition<T>();
         return await NaturalKeyFetchPlanner.FetchForWritingByNaturalKey<T, TId>(
             _sessionBase, _events, _workTracker, naturalKey, id, _tenantId, cancellation);
@@ -678,6 +718,12 @@ internal class EventOperations : QueryEventStore, IEventOperations
     public async Task<IEventStream<T>> FetchForExclusiveWriting<T, TId>(TId id, CancellationToken cancellation = default)
         where T : class where TId : notnull
     {
+        switch (tryUnwrapStreamIdentity<T, TId>(id))
+        {
+            case Guid streamId: return await FetchForExclusiveWriting<T>(streamId, cancellation);
+            case string streamKey: return await FetchForExclusiveWriting<T>(streamKey, cancellation);
+        }
+
         // FetchForWritingByNaturalKey already uses UPDLOCK, HOLDLOCK for exclusive locking
         var naturalKey = FindNaturalKeyDefinition<T>();
         return await NaturalKeyFetchPlanner.FetchForWritingByNaturalKey<T, TId>(
@@ -687,6 +733,12 @@ internal class EventOperations : QueryEventStore, IEventOperations
     public async ValueTask<T?> FetchLatest<T, TId>(TId id, CancellationToken cancellation = default)
         where T : class where TId : notnull
     {
+        switch (tryUnwrapStreamIdentity<T, TId>(id))
+        {
+            case Guid streamId: return await FetchLatest<T>(streamId, cancellation);
+            case string streamKey: return await FetchLatest<T>(streamKey, cancellation);
+        }
+
         var naturalKey = FindNaturalKeyDefinition<T>();
         var unwrapped = naturalKey.Unwrap(id);
         if (unwrapped == null) return default;
