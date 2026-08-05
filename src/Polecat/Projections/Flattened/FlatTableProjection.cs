@@ -55,6 +55,11 @@ public abstract class FlatTableProjection : ProjectionBase,
         var schema = schemaName ?? "dbo";
         Table = new Table(new SqlServerObjectName(schema, tableName));
         Name = GetType().FullName ?? GetType().Name;
+
+        // A flat table projection publishes no document type, so nothing else tells the rebuild path
+        // which storage belongs to it. Registering the table here is what makes a rebuild start from
+        // an empty table instead of replaying onto whatever rows survived.
+        Options.DeleteDataInTableOnTeardown(Table.Identifier.QualifiedName);
     }
 
     public Table Table { get; }

@@ -627,7 +627,32 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
                 tables.Add(Events.NaturalKeyTableName(natural.NaturalKeyDefinition.AggregateType));
             }
 
-            publishedTableNames = tables.ToArray();
+            // A projection can also declare teardown targets explicitly through JasperFx's shared
+            // AsyncOptions surface -- DeleteDataInTableOnTeardown / DeleteViewTypeOnTeardown, which
+            // land in Options.CleanUps. PublishedTypes() alone does not cover those: a flat table
+            // projection publishes no document type at all, so before this its table was never wiped
+            // and a rebuild left behind every row whose events the replay could no longer see.
+            if (source.Options.TeardownDataOnRebuild)
+            {
+                foreach (var cleanUp in source.Options.CleanUps)
+                {
+                    switch (cleanUp)
+                    {
+                        case DeleteTableData tableData:
+                            tables.Add(tableData.TableIdentifier);
+                            break;
+
+                        // Normally already covered by PublishedTypes(), but a projection is free to
+                        // register a view type it does not publish. DELETE FROM twice is harmless,
+                        // and the distinct below keeps it to once anyway.
+                        case DeleteDocuments documents:
+                            tables.Add(GetProvider(documents.DocumentType).QualifiedTableName);
+                            break;
+                    }
+                }
+            }
+
+            publishedTableNames = tables.Distinct().ToArray();
         }
 
         await Options.ResiliencePipeline.ExecuteAsync(static async (state, ct) =>
