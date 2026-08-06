@@ -58,9 +58,22 @@ internal static class StreamCompactingExecution
 
         // 4. Optional archiving. The lifted IEventsArchiver marker is non-generic
         //    so the data class doesn't have to flow a TOperations parameter; the
-        //    product downcasts to the closed-generic at execution time. Polecat's
-        //    callbacks close on IDocumentOperations.
-        if (request.Archiver is IEventsArchiver<IDocumentOperations> archiver)
+        //    product downcasts to the closed-generic at execution time.
+        //
+        //    BOTH closures are accepted, and that is not belt-and-braces (#423).
+        //    IEventsArchiver<T> is invariant, so IEventsArchiver<IDocumentSession> is NOT an
+        //    IEventsArchiver<IDocumentOperations> even though IDocumentSession derives from
+        //    IDocumentOperations. Polecat closes IEventStore<,> over IDocumentSession, so that is
+        //    the type any JasperFx-generic caller -- the compliance suites included -- will hand
+        //    us, while hand-written Polecat archivers have historically used IDocumentOperations.
+        //    Matching only one of the two made the other silently skip archiving and then delete
+        //    the events anyway, which is the exact opposite of what this hook is for.
+        if (request.Archiver is IEventsArchiver<IDocumentSession> sessionArchiver)
+        {
+            await sessionArchiver.MaybeArchiveAsync(session, request, events, request.CancellationToken)
+                .ConfigureAwait(false);
+        }
+        else if (request.Archiver is IEventsArchiver<IDocumentOperations> archiver)
         {
             await archiver.MaybeArchiveAsync(session, request, events, request.CancellationToken)
                 .ConfigureAwait(false);

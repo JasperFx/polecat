@@ -1,4 +1,5 @@
 using JasperFx.Events;
+using JasperFx.Events.Protected;
 using Polecat.Tests.Harness;
 using Polecat.Tests.Projections;
 
@@ -106,5 +107,90 @@ public class stream_compacting_tests : IntegrationContext
         await using var session = theStore.LightweightSession();
         await session.Events.CompactStreamAsync<QuestParty>(streamId);
         await session.SaveChangesAsync(TestContext.Current.CancellationToken);
+    }
+
+    /// <summary>
+    ///     Regression for #423, and the first coverage this hook has ever had here. The compactor
+    ///     gated the archiving callback on IEventsArchiver&lt;IDocumentOperations&gt; alone.
+    ///     IEventsArchiver&lt;T&gt; is INVARIANT, so an archiver closed over IDocumentSession -- the
+    ///     operations type Polecat closes IEventStore&lt;,&gt; over, and therefore the one every
+    ///     JasperFx-generic caller supplies -- never matched. The callback was skipped silently and
+    ///     compaction went on to permanently delete the very events the archiver existed to copy
+    ///     into cold storage first.
+    /// </summary>
+    [Fact]
+    public async Task the_archiver_runs_before_the_events_are_deleted()
+    {
+        await StoreOptions(opts => opts.DatabaseSchemaName = "compact_archiver");
+
+        var streamId = Guid.NewGuid();
+        theSession.Events.StartStream(streamId,
+            new QuestStarted("Archived Quest"),
+            new MembersJoined(1, "Town", ["Alice"]),
+            new MonsterSlain("Goblin", 10));
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        var archiver = new RecordingArchiver();
+
+        await using var session2 = theStore.LightweightSession();
+        await session2.Events.CompactStreamAsync<QuestParty>(streamId, x => x.Archiver = archiver);
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        archiver.Calls.ShouldBe(1);
+        archiver.Events.Count.ShouldBe(3);
+        archiver.Events.Select(x => x.Version).ShouldBe(new long[] { 1, 2, 3 });
+    }
+
+    /// <summary>
+    ///     The historical closure keeps working, so the #423 fix is not a breaking change for
+    ///     anyone who hand-wrote an archiver against IDocumentOperations.
+    /// </summary>
+    [Fact]
+    public async Task an_archiver_closed_over_the_operations_type_still_runs()
+    {
+        await StoreOptions(opts => opts.DatabaseSchemaName = "compact_archiver_ops");
+
+        var streamId = Guid.NewGuid();
+        theSession.Events.StartStream(streamId,
+            new QuestStarted("Archived Quest"),
+            new MembersJoined(1, "Town", ["Alice"]));
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        var archiver = new RecordingOperationsArchiver();
+
+        await using var session2 = theStore.LightweightSession();
+        await session2.Events.CompactStreamAsync<QuestParty>(streamId, x => x.Archiver = archiver);
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        archiver.Calls.ShouldBe(1);
+        archiver.Events.Count.ShouldBe(2);
+    }
+
+    private sealed class RecordingArchiver: IEventsArchiver<IDocumentSession>
+    {
+        public int Calls { get; private set; }
+        public IReadOnlyList<IEvent> Events { get; private set; } = [];
+
+        public Task MaybeArchiveAsync<T>(IDocumentSession operations, StreamCompactingRequest<T> request,
+            IReadOnlyList<IEvent> events, CancellationToken cancellation) where T : class
+        {
+            Calls++;
+            Events = events;
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class RecordingOperationsArchiver: IEventsArchiver<IDocumentOperations>
+    {
+        public int Calls { get; private set; }
+        public IReadOnlyList<IEvent> Events { get; private set; } = [];
+
+        public Task MaybeArchiveAsync<T>(IDocumentOperations operations, StreamCompactingRequest<T> request,
+            IReadOnlyList<IEvent> events, CancellationToken cancellation) where T : class
+        {
+            Calls++;
+            Events = events;
+            return Task.CompletedTask;
+        }
     }
 }
