@@ -73,15 +73,40 @@
              namespaces do not collide. (c) jasperfx#611 (EventProjection published types discovered
              semantically rather than syntactically), jasperfx#615 (the blue/green side-effect gate
              warm-up moved off the agent start path, #598/#610) and jasperfx#617 (container-scoped
-             projections usable by live aggregation, marten#5095). Same lockstep rule as above. -->
-        <PackageVersion Include="JasperFx" Version="2.39.4" />
-        <PackageVersion Include="JasperFx.Events" Version="2.39.4" />
+             projections usable by live aggregation, marten#5095). Same lockstep rule as above.
+             JasperFx 2.42.2 (from 2.39.4, catching up four releases at once):
+             2.40.0 (jasperfx#634) — compliance wave 5 part 2: FlatTableProjectionCompliance,
+             StringStreamIdentityCompliance, MultiStreamProjectionCompliance and
+             SnapshotLifecycleCompliance, plus the ComplianceStoreConfig/fixture seam they need
+             (QueryTableAsync). This is the half of the catch-up that costs Polecat work.
+             2.41.0 (jasperfx#635) — TWO LIFTS, and the first one is SOURCE-BREAKING HERE.
+             CompactStreamAsync<T> moves onto JasperFx.Events.IEventStoreOperations as
+             default-implemented members that throw, so a store without compacting stays
+             source-compatible. Polecat.Events.IEventOperations already declares the same two
+             signatures *and* Polecat's operations surface already inherits
+             JasperFx.Events.IEventStoreOperations, so on this bump the signature is reachable
+             through two paths and every CALL SITE goes ambiguous (CS0121) — the library itself
+             still compiles. Adopting means deleting the local declarations, which is the point of
+             the lift. IEventDataMasking moves into JasperFx.Events.Protected beside
+             StreamCompactingRequest<T>; the two products' copies were member-for-member identical,
+             so this is a straight swap and EventDataMasking still implements it unchanged.
+             2.42.0 (jasperfx#636) — StrongTypedIdentityCompliance (11 tests) plus the
+             ComplianceStoreConfig.RegisterValueType<T>() seam member, which no-ops here because
+             Polecat derives the same information from ValueTypeInfo when building the document
+             mapping. Pairs with the polecat#418 fetch fix already on main.
+             2.42.1 (jasperfx#637, marten#5192) — the source generator registers an
+             EventProjection's published types via a PublishedTypes() override rather than a
+             primary-constructor argument, fixing CS8862 on primary-ctor projections.
+             2.42.2 (jasperfx#638, marten#5195) — EventProjectionScenario wakes the high-water
+             agent in process instead of polling. Same lockstep rule as above. -->
+        <PackageVersion Include="JasperFx" Version="2.42.2" />
+        <PackageVersion Include="JasperFx.Events" Version="2.42.2" />
         <!--
              The shared cross-store event sourcing compliance suites. Source-only package: the
              suites compile inside Polecat.Tests so JasperFx's aggregate source generator binds
              Polecat's own session types.
         -->
-        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="2.39.4" />
+        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="2.42.2" />
         <!-- Pin the sibling JasperFx packages for parity with Marten 9's matrix
              even though Polecat doesn't currently reference them directly —
              keeps the lockstep matrix coherent when transitive resolution
@@ -89,7 +114,7 @@
              RuntimeCompiler 5.x line is the active continuation of the 4.x
              lineage; do not pin against the parallel stale 2.0.x series. -->
         <PackageVersion Include="JasperFx.RuntimeCompiler" Version="5.0.0" />
-        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.39.4" />
+        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.42.2" />
         <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
@@ -185,7 +210,7 @@
         <PackageVersion Include="StronglyTypedId" Version="1.0.0-beta08" />
 
         <!-- Source generators (matched to JasperFx.Events above) -->
-        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.39.4" />
+        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.42.2" />
 
         <!-- Build automation -->
         <PackageVersion Include="Nuke.Common" Version="9.0.4" />
