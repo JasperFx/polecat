@@ -136,6 +136,13 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
     // schema comes from the store rather than the caller so the compliance suite never has to spell
     // a qualified name, and the reader is deliberately untyped: the suite asserts values, not the
     // SqlClient types they arrive as.
+    // IEventDataMasking is shared (lifted in jasperfx#635), but the entry point that hands one out
+    // is not: Polecat spells it on its own Advanced surface, Marten on IDocumentStore.Advanced, and
+    // the two share no interface. This member is the whole of that gap.
+    public override Task ApplyEventDataMaskingAsync(
+        Action<JasperFx.Events.Protected.IEventDataMasking> configure, CancellationToken token)
+        => _store.Advanced.ApplyEventDataMasking(configure, token);
+
     public override async Task<IReadOnlyList<IReadOnlyDictionary<string, object?>>> QueryTableAsync(
         string tableName, CancellationToken token)
     {
@@ -218,6 +225,16 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
         public void RegisterValueType<TValue>() where TValue : notnull
         {
         }
+
+        // Through StoreOptions.EventGraph rather than StoreOptions.Events: masking rules live on the
+        // EventGraph and EventStoreOptions does not re-expose them, so the configuration-time
+        // surface has no way to register one. Same class of gap as #395 (AddEventType) -- filed
+        // as #424; revert to _options.Events once that lands.
+        public void AddMaskingRule<TEvent>(Action<TEvent> rule) where TEvent : notnull
+            => _options.EventGraph.AddMaskingRuleForProtectedInformation(rule);
+
+        public void AddMaskingRule<TEvent>(Func<TEvent, TEvent> rule) where TEvent : notnull
+            => _options.EventGraph.AddMaskingRuleForProtectedInformation(rule);
 
         public void AddProjection(ProjectionBase projection, ProjectionLifecycle lifecycle)
             => _options.Projections.Add((IProjectionSource<IDocumentSession, IQuerySession>)projection, lifecycle);
