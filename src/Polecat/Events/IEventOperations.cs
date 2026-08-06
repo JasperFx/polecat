@@ -19,11 +19,12 @@ namespace Polecat.Events;
 /// <list type="bullet">
 ///   <item><c>UnArchiveStream</c> + <c>TombstoneStream</c> — Polecat-specific
 ///   archive-lifecycle operations not yet present in the canonical surface.</item>
-///   <item><c>CompactStreamAsync&lt;T&gt;</c> — execution depends on Polecat's
-///   product-specific <see cref="StreamCompactingExecution.ExecuteAsync{T}"/>
-///   extension over the lifted <see cref="StreamCompactingRequest{T}"/> data
-///   shape from <c>JasperFx.Events.Protected</c>.</item>
 /// </list>
+/// <c>CompactStreamAsync&lt;T&gt;</c> was one of those extras until jasperfx#635 (2.41.0) lifted
+/// it onto <see cref="JasperFx.Events.IEventStoreOperations"/> alongside the
+/// <see cref="StreamCompactingRequest{T}"/> data shape it already shared. Execution still depends
+/// on Polecat's product-specific <see cref="StreamCompactingExecution.ExecuteAsync{T}"/> extension;
+/// only the declaration is now canonical.
 /// Note: <c>FetchForWritingByTags&lt;T&gt;(EventTagQuery)</c> is now inherited
 /// from <see cref="JasperFx.Events.IEventStoreOperations"/> per the dedupe
 /// pillar (lifted in JasperFx/jasperfx#270 once Polecat reached DCB parity via
@@ -55,15 +56,12 @@ public interface IEventOperations : JasperFx.Events.IEventStoreOperations, IQuer
     /// </summary>
     void TombstoneStream(string streamKey);
 
-    /// <summary>
-    ///     Compact a stream by replacing its events with a single Compacted&lt;T&gt; snapshot event.
-    /// </summary>
-    Task CompactStreamAsync<T>(Guid streamId, Action<StreamCompactingRequest<T>>? configure = null) where T : class;
-
-    /// <summary>
-    ///     Compact a stream by replacing its events with a single Compacted&lt;T&gt; snapshot event.
-    /// </summary>
-    Task CompactStreamAsync<T>(string streamKey, Action<StreamCompactingRequest<T>>? configure = null) where T : class;
+    // CompactStreamAsync<T> used to be declared here. It was lifted onto
+    // JasperFx.Events.IEventStoreOperations in jasperfx#635 (2.41.0) as default-implemented members
+    // that throw, so a store without compacting stays source-compatible. This interface already
+    // inherits that one, so keeping the local copy would make the signature reachable through two
+    // paths and every CALL SITE ambiguous (CS0121) -- the same break Marten took in marten#5194.
+    // EventOperations still implements the overloads; only the declaration moved.
 
     // FetchLatest is declared on two parent interfaces — JasperFx.Events.IEventStoreOperations
     // (where Marten put it canonically) and Polecat.Events.IQueryEventStore (kept on the

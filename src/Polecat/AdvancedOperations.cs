@@ -600,7 +600,8 @@ public class AdvancedOperations
     ///     Configure and execute a batch masking of protected data for a subset of the events
     ///     in the event store. Used for GDPR right-to-erasure compliance.
     /// </summary>
-    public Task ApplyEventDataMasking(Action<Events.Protected.IEventDataMasking> configure, CancellationToken token = default)
+    public Task ApplyEventDataMasking(Action<JasperFx.Events.Protected.IEventDataMasking> configure,
+        CancellationToken token = default)
     {
         var masking = new Events.Protected.EventDataMasking(_store);
         configure(masking);

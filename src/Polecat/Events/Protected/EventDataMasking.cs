@@ -1,51 +1,22 @@
 using System.Linq.Expressions;
 using JasperFx.Events;
+using JasperFx.Events.Protected;
 using Polecat.Linq;
 
 namespace Polecat.Events.Protected;
 
-/// <summary>
-///     Fluent interface for configuring and executing GDPR data masking operations
-///     on events in the event store.
-/// </summary>
-public interface IEventDataMasking
-{
-    /// <summary>
-    ///     Isolate the event masking to a specific tenant if using multi-tenancy.
-    /// </summary>
-    IEventDataMasking ForTenant(string tenantId);
-
-    /// <summary>
-    ///     Apply data protection masking to all events in this stream.
-    /// </summary>
-    IEventDataMasking IncludeStream(Guid streamId);
-
-    /// <summary>
-    ///     Apply data protection masking to all events in this stream.
-    /// </summary>
-    IEventDataMasking IncludeStream(string streamKey);
-
-    /// <summary>
-    ///     Apply data protection masking to events in this stream that match the filter.
-    /// </summary>
-    IEventDataMasking IncludeStream(Guid streamId, Func<IEvent, bool> filter);
-
-    /// <summary>
-    ///     Apply data protection masking to events in this stream that match the filter.
-    /// </summary>
-    IEventDataMasking IncludeStream(string streamKey, Func<IEvent, bool> filter);
-
-    /// <summary>
-    ///     Apply data protection masking to events matching this LINQ criteria.
-    /// </summary>
-    IEventDataMasking IncludeEvents(Expression<Func<IEvent, bool>> filter);
-
-    /// <summary>
-    ///     Add a new header value to the metadata for any event that is masked
-    ///     as part of this batch operation.
-    /// </summary>
-    IEventDataMasking AddHeader(string key, object value);
-}
+/*
+ * IEventDataMasking used to be declared here. It was lifted into JasperFx.Events.Protected in
+ * jasperfx#635 (2.41.0), beside the StreamCompactingRequest<T> it belongs with: a fluent
+ * description of a masking intent is database-agnostic, while executing it is unavoidably
+ * store-specific. Marten's copy and this one were member-for-member identical -- ForTenant, four
+ * IncludeStream overloads, IncludeEvents, AddHeader, same order and same signatures -- which is
+ * what made the lift a straight swap.
+ *
+ * This DOES move the interface's namespace, so user code that names Polecat.Events.Protected.
+ * IEventDataMasking explicitly has to update its using. The common fluent usage,
+ * Advanced.ApplyEventDataMasking(x => x.IncludeStream(...)), never names the type.
+ */
 
 /// <summary>
 ///     Implementation of IEventDataMasking that fetches events, applies masking rules,
