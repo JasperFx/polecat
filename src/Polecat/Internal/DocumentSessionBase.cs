@@ -772,6 +772,52 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         await ExecuteClosedShapeEventOperationsAsync(ops, token);
     }
 
+    /// <summary>
+    ///     #420: build the append operation for a <see cref="StreamAction" /> a projection raised,
+    ///     so the async daemon batch can write it inside its own transaction rather than dropping
+    ///     it. Same path as the inline append — resolve the tenant partition, read the stream row
+    ///     under <c>UPDLOCK, HOLDLOCK</c>, assign versions client-side from what that read
+    ///     returned, then build the closed-shape quick-append op.
+    ///     <para>
+    ///     The one deliberate difference is the concurrency expectation. JasperFx's
+    ///     <c>EventSlice.BuildOperations</c> pre-assigns versions on the single-stream-start path
+    ///     from the slice's own event count, which is the stream's real version only when the
+    ///     projection has seen every event on that stream — so that guess is discarded and the
+    ///     version this session just read under lock is used instead, both to number the events
+    ///     and as the guard on the stream-row update.
+    ///     </para>
+    /// </summary>
+    internal async Task<Weasel.Storage.IStorageOperation> BuildRaisedEventAppendAsync(
+        StreamAction stream, CancellationToken token)
+    {
+        var storage = _eventGraph.ClosedShapeEventStorage;
+        var isGuid = _eventGraph.StreamIdentity == JasperFx.Events.StreamIdentity.AsGuid;
+
+        var (partitionOrdinal, partitionSequenceName) = await ResolvePartitionForClosedShapeAsync(stream, token);
+        var (currentVersion, exists, archived) = await ReadStreamStateForClosedShapeAsync(stream, token);
+
+        var streamId = isGuid ? (object)stream.Id : stream.Key!;
+        if (archived)
+        {
+            throw new Exceptions.InvalidStreamException(streamId, "Cannot append to an archived stream.");
+        }
+
+        AssignEventMetadataForClosedShape(stream, currentVersion);
+        stream.Version = currentVersion + stream.Events.Count;
+
+        // Replace (not ??=) JasperFx's client-side guess with the locked read, so the guarded
+        // stream-row update asserts something true rather than failing the shard on a stream the
+        // projection has only partially seen. A stream row that does not exist yet is inserted.
+        stream.ExpectedVersionOnServer = exists ? currentVersion : null;
+
+        var mode = exists
+            ? Polecat.Events.Storage.StreamWriteMode.Update
+            : Polecat.Events.Storage.StreamWriteMode.Insert;
+
+        return QuickAppendEventsClosedShape(storage, isGuid, stream, mode,
+            partitionOrdinal, partitionSequenceName);
+    }
+
     private async Task<(int? ordinal, string? sequenceName)> ResolvePartitionForClosedShapeAsync(
         StreamAction stream, CancellationToken token)
     {
