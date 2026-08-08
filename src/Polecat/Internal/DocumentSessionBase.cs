@@ -288,14 +288,19 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         // #273 doc-side convergence: the DELETE / soft-delete-UPDATE prefix and tenancy come from
         // the shared closed-shape storage. DeleteFragment is already soft-or-hard per the type.
         var storage = ClosedShapeDeletionStorageFor<T>();
+        // #419: when DeleteFragment is the soft-delete UPDATE, exclude rows that are already
+        // deleted so the operation cannot re-stamp their deleted_at.
         _workTracker.Add(new DeleteWhereOperation(
-            storage.DeleteFragment, storage.IsConjoined, TenantId, fragment, typeof(T)));
+            storage.DeleteFragment, storage.IsConjoined, TenantId, fragment, typeof(T),
+            excludeAlreadyDeleted: storage.IsSoftDeleted));
     }
 
     public void HardDeleteWhere<T>(Expression<Func<T, bool>> predicate) where T : class
     {
         var fragment = ParseDeleteWhere(predicate);
         var storage = ClosedShapeDeletionStorageFor<T>();
+        // #419: deliberately no is_deleted guard -- a hard delete of an already-soft-deleted row
+        // is a real delete and must proceed.
         _workTracker.Add(new DeleteWhereOperation(
             storage.HardDeleteFragment, storage.IsConjoined, TenantId, fragment, typeof(T)));
     }

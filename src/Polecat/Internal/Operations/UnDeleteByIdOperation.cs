@@ -45,6 +45,12 @@ internal class UnDeleteByIdOperation : IStorageOperation
             builder.AppendParameter(_tenantId, System.Data.SqlDbType.VarChar);
         }
 
+        // #419 (symmetry): UndoDeleteWhereOperation scopes to currently-deleted rows and this did
+        // not. Harmless either way -- undeleting a live row writes is_deleted = 0, deleted_at = NULL
+        // onto a row that already holds exactly those values -- but the two undelete paths should
+        // not disagree about what they target.
+        builder.Append(" AND is_deleted = 1");
+
         builder.Append(";");
     }
 

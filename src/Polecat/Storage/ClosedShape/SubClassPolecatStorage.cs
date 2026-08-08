@@ -71,6 +71,7 @@ internal sealed class SubClassPolecatStorage<T, TRoot, TId>
     public IOperationFragment HardDeleteFragment => _parent.HardDeleteFragment;
     public IOperationFragment UndeleteFragment => ((IPolecatDeletionStorage)_parent).UndeleteFragment;
     public bool IsConjoined => ((IPolecatDeletionStorage)_parent).IsConjoined;
+    public bool IsSoftDeleted => ((IPolecatDeletionStorage)_parent).IsSoftDeleted;
     public IReadOnlyList<IDuplicatedField> DuplicatedFields => _parent.DuplicatedFields;
 
     // ---- select clause ----
