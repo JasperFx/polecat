@@ -491,6 +491,30 @@ public class EventStoreOptions : IEventStoreInstrumentation
     }
 
     /// <summary>
+    ///     #424: register a policy for how to remove or mask protected information for an event type
+    ///     <typeparamref name="T" /> or any event type assignable to it, mutating the event data in
+    ///     place. Rules are applied by <c>IDocumentStore.Advanced.ApplyEventDataMasking(...)</c>.
+    ///     Mirrors Marten's <c>opts.Events.AddMaskingRuleForProtectedInformation&lt;T&gt;(...)</c> —
+    ///     the rule was previously only reachable through the <c>StoreOptions.EventGraph</c> escape
+    ///     hatch, which is not how the rest of the store is configured.
+    /// </summary>
+    public void AddMaskingRuleForProtectedInformation<T>(Action<T> action) where T : notnull
+    {
+        EventGraph!.AddMaskingRuleForProtectedInformation(action);
+    }
+
+    /// <summary>
+    ///     #424: register a policy for how to remove or mask protected information for an event type
+    ///     <typeparamref name="T" /> or any event type assignable to it, replacing the event data
+    ///     with a new instance — the overload records and other immutable event types need. Mirrors
+    ///     Marten's <c>opts.Events.AddMaskingRuleForProtectedInformation&lt;T&gt;(...)</c>.
+    /// </summary>
+    public void AddMaskingRuleForProtectedInformation<T>(Func<T, T> func) where T : notnull
+    {
+        EventGraph!.AddMaskingRuleForProtectedInformation(func);
+    }
+
+    /// <summary>
     ///     #388: store-wide fallback <see cref="Polecat.Events.IEventBinarySerializer" /> for event types
     ///     marked with <see cref="Polecat.Events.BinaryEventAttribute" /> that have no explicit per-type
     ///     registration via <see cref="UseBinarySerializer{TEvent}" />. Null by default — every event type

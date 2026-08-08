@@ -226,15 +226,13 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
         {
         }
 
-        // Through StoreOptions.EventGraph rather than StoreOptions.Events: masking rules live on the
-        // EventGraph and EventStoreOptions does not re-expose them, so the configuration-time
-        // surface has no way to register one. Same class of gap as #395 (AddEventType) -- filed
-        // as #424; revert to _options.Events once that lands.
+        // #424 landed the re-exposure on EventStoreOptions, so this goes through the ordinary
+        // configuration surface rather than reaching past it to StoreOptions.EventGraph.
         public void AddMaskingRule<TEvent>(Action<TEvent> rule) where TEvent : notnull
-            => _options.EventGraph.AddMaskingRuleForProtectedInformation(rule);
+            => _options.Events.AddMaskingRuleForProtectedInformation(rule);
 
         public void AddMaskingRule<TEvent>(Func<TEvent, TEvent> rule) where TEvent : notnull
-            => _options.EventGraph.AddMaskingRuleForProtectedInformation(rule);
+            => _options.Events.AddMaskingRuleForProtectedInformation(rule);
 
         public void AddProjection(ProjectionBase projection, ProjectionLifecycle lifecycle)
             => _options.Projections.Add((IProjectionSource<IDocumentSession, IQuerySession>)projection, lifecycle);
