@@ -53,6 +53,15 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
             options.Events.EnableHeaders = true;
         }
 
+        // Wave 8: conjoined event tenancy. TenancyStyle is already the shared
+        // JasperFx.MultiTenancy.TenancyStyle (see GlobalUsings), so this is the whole mapping --
+        // opening a tenant-scoped session needs nothing, because OpenSession(IEventDatabase,
+        // tenantId) is already on the shared IEventStore<,>.
+        if (config.ConjoinedEventTenancy)
+        {
+            options.Events.TenancyStyle = TenancyStyle.Conjoined;
+        }
+
         config.ApplyTo(new PolecatComplianceRegistrar(options));
 
         _store = new DocumentStore(options);
@@ -236,6 +245,12 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
 
         public void AddProjection(ProjectionBase projection, ProjectionLifecycle lifecycle)
             => _options.Projections.Add((IProjectionSource<IDocumentSession, IQuerySession>)projection, lifecycle);
+
+        // Wave 8: the name is pinned to ComplianceSubscription.SubscriptionName rather than left to
+        // default, because the products disagree on whether an unnamed subscription takes its short
+        // or full type name and daemon progression is keyed on it.
+        public void Subscribe(ComplianceSubscription subscription)
+            => _options.Projections.Subscribe(subscription, x => x.Name = ComplianceSubscription.SubscriptionName);
     }
 
     internal class PolecatComplianceBatch : IComplianceBatch
