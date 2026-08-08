@@ -105,16 +105,23 @@
              (EventStoreComplianceFixture.ApplyEventDataMaskingAsync and the two
              ComplianceStoreConfig.AddMaskingRule overloads). Compliance sources only — nothing
              outside JasperFx.Events.ComplianceTests changed, so this bump is behaviourally inert
-             for the shipping libraries and only affects Polecat.Tests. Same lockstep rule as
-             above. -->
-        <PackageVersion Include="JasperFx" Version="2.43.0" />
-        <PackageVersion Include="JasperFx.Events" Version="2.43.0" />
+             for the shipping libraries and only affects Polecat.Tests.
+             JasperFx 2.44.0 (jasperfx#641, marten#5149/#5150) — compliance wave 7, the last two
+             event sourcing suites in the backlog. RebuildAndCatchUpCompliance and
+             DeadLetterCompliance take the library to 26 suites / 216 tests. Neither needed a seam
+             addition: IProjectionDaemon already declared the whole rebuild surface, and the error
+             policy (IEventStore<,>.ContinuousErrors) plus dead-letter reads
+             (IEventStore.AllDatabases() -> IEventDatabase.QueryDeadLetterEventsAsync) were already
+             shared and already overridden here. Compliance sources only, so again behaviourally
+             inert for the shipping libraries. Same lockstep rule as above. -->
+        <PackageVersion Include="JasperFx" Version="2.44.0" />
+        <PackageVersion Include="JasperFx.Events" Version="2.44.0" />
         <!--
              The shared cross-store event sourcing compliance suites. Source-only package: the
              suites compile inside Polecat.Tests so JasperFx's aggregate source generator binds
              Polecat's own session types.
         -->
-        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="2.43.0" />
+        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="2.44.0" />
         <!-- Pin the sibling JasperFx packages for parity with Marten 9's matrix
              even though Polecat doesn't currently reference them directly —
              keeps the lockstep matrix coherent when transitive resolution
@@ -122,7 +129,7 @@
              RuntimeCompiler 5.x line is the active continuation of the 4.x
              lineage; do not pin against the parallel stale 2.0.x series. -->
         <PackageVersion Include="JasperFx.RuntimeCompiler" Version="5.0.0" />
-        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.43.0" />
+        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.44.0" />
         <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
@@ -218,7 +225,7 @@
         <PackageVersion Include="StronglyTypedId" Version="1.0.0-beta08" />
 
         <!-- Source generators (matched to JasperFx.Events above) -->
-        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.43.0" />
+        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.44.0" />
 
         <!-- Build automation -->
         <PackageVersion Include="Nuke.Common" Version="9.0.4" />
