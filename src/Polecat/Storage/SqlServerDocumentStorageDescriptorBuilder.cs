@@ -162,9 +162,18 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
                 readBinders.Add(isDeleted);
             }
 
-            // Polecat has no member-mapping config for deleted_at (only is_deleted);
-            // write-only with the column's fixed name.
-            writeBinders.Add(new DocumentSoftDeletedAtBinder<TDoc>("deleted_at", dialect, member: null));
+            // #421: deleted_at carries a mapped member just like is_deleted, so an ISoftDeleted
+            // document (or one using [SoftDeletedAtMetadata] / the fluent DSL) gets DeletedAt
+            // populated on load instead of left at default. Read slot only with a mapped member --
+            // the SELECT column list is built from this same binder array, so adding one here keeps
+            // the read ordinals aligned by construction.
+            var deletedAt = new DocumentSoftDeletedAtBinder<TDoc>(
+                mapping.Metadata.SoftDeletedAt.Name, dialect, mapping.Metadata.SoftDeletedAt.Member);
+            writeBinders.Add(deletedAt);
+            if (mapping.Metadata.SoftDeletedAt.Member is not null)
+            {
+                readBinders.Add(deletedAt);
+            }
         }
 
         // Range-partitioned documents (#211): the duplicated partition column is written on

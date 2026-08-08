@@ -115,6 +115,19 @@ internal class DocumentMapping
             DeleteStyle = DeleteStyle.SoftDelete;
         }
 
+        // #421: ISoftDeleted declares both `Deleted` and `DeletedAt`, so implementing it maps both
+        // columns onto their members and they are populated on load. Previously deleted_at had no
+        // member-mapping config at all and its binder was write-only, so a type implementing the
+        // interface loaded back with DeletedAt at default -- null where the column holds a real
+        // timestamp -- while Deleted looked right, which is what made it read as populated.
+        // Mirrors Marten's SoftDeletedPolicy. ??= so an explicit [IsSoftDeletedMetadata] /
+        // [SoftDeletedAtMetadata] attribute (discovered just above) or the fluent DSL wins.
+        if (typeof(ISoftDeleted).IsAssignableFrom(documentType))
+        {
+            Metadata.IsSoftDeleted.Member ??= documentType.GetProperty(nameof(ISoftDeleted.Deleted));
+            Metadata.SoftDeletedAt.Member ??= documentType.GetProperty(nameof(ISoftDeleted.DeletedAt));
+        }
+
         // Detect optimistic concurrency: IVersioned (Guid), IRevisioned (int), or ILongVersioned (long)
         if (typeof(IVersioned).IsAssignableFrom(documentType))
         {

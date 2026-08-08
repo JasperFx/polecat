@@ -61,6 +61,7 @@ public class MetadataConfig<T>
     public MetadataColumnExpression<T> Version => new(_config.Version);
     public MetadataColumnExpression<T> TenantId => new(_config.TenantId);
     public MetadataColumnExpression<T> IsSoftDeleted => new(_config.IsSoftDeleted);
+    public MetadataColumnExpression<T> SoftDeletedAt => new(_config.SoftDeletedAt);
     public MetadataColumnExpression<T> DotNetType => new(_config.DotNetType);
 }
 

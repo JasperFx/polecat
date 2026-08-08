@@ -78,6 +78,12 @@ public sealed class IsSoftDeletedMetadataAttribute : MetadataAttribute
     internal override void Apply(DocumentMetadataConfig config, MemberInfo member) => Map(config.IsSoftDeleted, member);
 }
 
+/// <summary>#421: maps the <c>deleted_at</c> soft-delete timestamp onto this member.</summary>
+public sealed class SoftDeletedAtMetadataAttribute : MetadataAttribute
+{
+    internal override void Apply(DocumentMetadataConfig config, MemberInfo member) => Map(config.SoftDeletedAt, member);
+}
+
 /// <summary>Maps the <c>dotnet_type</c> discriminator onto this member.</summary>
 public sealed class DotNetTypeMetadataAttribute : MetadataAttribute
 {
