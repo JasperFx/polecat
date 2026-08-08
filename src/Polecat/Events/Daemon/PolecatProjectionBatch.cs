@@ -30,6 +30,11 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
     private readonly ConcurrentBag<IDocumentSession> _sessions = new();
     private readonly ConcurrentQueue<Weasel.Storage.IStorageOperation> _progressOps = new();
 
+    // #420: StreamActions a projection raised events onto, captured by the three IProjectionBatch
+    // append members and turned into append operations during ExecuteAsync.
+    private readonly List<StreamAction> _raisedEventActions = new();
+    private readonly object _raisedEventsLock = new();
+
     // The change set committed by this batch, populated during ExecuteAsync. Exposed so the
     // subscription runner can hand it to the IChangeListener returned by ProcessEventsAsync.
     public IChangeSet? Commit { get; private set; }
@@ -88,6 +93,11 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
         var tableEnsurer = new DocumentTableEnsurer(
             new ConnectionFactory(_connectionString), _store.Options);
 
+        // #420: built before the session sweep below so any tenant session this creates is picked
+        // up by it (and disposed with the rest). The appends themselves are added after the
+        // document operations, ahead of the progression row.
+        var raisedEventOps = await BuildRaisedEventOperationsAsync(token);
+
         foreach (var session in _sessions)
         {
             if (session is DocumentSessionBase sessionBase)
@@ -120,6 +130,9 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
                 await _store.Events.TenantOrdinals.ResolveAsync(adapter.SessionTenantId, token);
             }
         }
+
+        // #420: raised-event appends ride the same transaction as the documents above.
+        allOps.AddRange(raisedEventOps);
 
         // Add progress operations
         while (_progressOps.TryDequeue(out var progressOp))
@@ -283,19 +296,72 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
         }
     }
 
-    public void QuickAppendEventWithVersion(StreamAction action, IEvent @event)
+    // #420: the three members JasperFx drives event-raising through. EventSlice.BuildOperations
+    // calls them whenever a projection raises an event; all three were empty, so an async
+    // projection that appends events lost them silently -- no exception, no shard failure, no dead
+    // letter, no log line. The documents committed, the progression row advanced, and the raised
+    // events simply never existed.
+    //
+    // All three funnel into one list because the StreamAction JasperFx hands over already carries
+    // every raised event, and the single-stream-start path passes the SAME instance to each call
+    // (once per event to QuickAppendEventWithVersion, then once to UpdateStreamVersion), so
+    // reference identity dedupes them into one append per stream. The actual operation is built in
+    // ExecuteAsync, because numbering the events correctly needs an async locking read of the
+    // stream row that these synchronous members cannot do.
+
+    public void QuickAppendEventWithVersion(StreamAction action, IEvent @event) => CaptureRaisedEvents(action);
+
+    public void UpdateStreamVersion(StreamAction action) => CaptureRaisedEvents(action);
+
+    public void QuickAppendEvents(StreamAction action) => CaptureRaisedEvents(action);
+
+    private void CaptureRaisedEvents(StreamAction action)
     {
-        // Event appending from projections is not used in Polecat's current scope
+        lock (_raisedEventsLock)
+        {
+            // Reference identity, not stream id: two distinct actions for the same stream in one
+            // batch are two real appends, while the same instance arriving three times is one.
+            foreach (var captured in _raisedEventActions)
+            {
+                if (ReferenceEquals(captured, action)) return;
+            }
+
+            _raisedEventActions.Add(action);
+        }
     }
 
-    public void UpdateStreamVersion(StreamAction action)
+    /// <summary>
+    ///     #420: turn the captured <see cref="StreamAction" />s into append operations that join
+    ///     this batch's transaction, so raised events commit atomically with the projection
+    ///     documents and the progression row they were produced alongside.
+    /// </summary>
+    private async Task<List<Weasel.Storage.IStorageOperation>> BuildRaisedEventOperationsAsync(
+        CancellationToken token)
     {
-        // Stream version updates from projections are not used in Polecat's current scope
-    }
+        List<StreamAction> actions;
+        lock (_raisedEventsLock)
+        {
+            actions = _raisedEventActions.ToList();
+        }
 
-    public void QuickAppendEvents(StreamAction action)
-    {
-        // Event appending from projections is not used in Polecat's current scope
+        var ops = new List<Weasel.Storage.IStorageOperation>();
+        if (actions.Count == 0) return ops;
+
+        // One session per tenant: the stream-state read is scoped by the session's tenant id.
+        foreach (var group in actions.Where(a => a.Events.Any())
+                     .GroupBy(a => a.TenantId ?? JasperFx.StorageConstants.DefaultTenantId))
+        {
+            var session = (DocumentSessionBase)SessionForTenant(group.Key);
+            foreach (var action in group)
+            {
+                var op = await session.BuildRaisedEventAppendAsync(action, token).ConfigureAwait(false);
+                // The batch configures commands with a null session, so the append has to arrive
+                // already bound to the one that will write it.
+                ops.Add(new SessionBoundOperationAdapter(op, (Weasel.Storage.IStorageSession)session));
+            }
+        }
+
+        return ops;
     }
 
     public async Task PublishMessageAsync(object message, string tenantId)
