@@ -35,6 +35,14 @@ public class DocumentMetadataConfig
     /// <summary>The <c>is_deleted</c> soft-delete flag; <see cref="MetadataColumn.Member" /> maps it onto a document member.</summary>
     public MetadataColumn IsSoftDeleted { get; } = new("is_deleted");
 
+    /// <summary>
+    ///     #421: the <c>deleted_at</c> soft-delete timestamp; <see cref="MetadataColumn.Member" />
+    ///     maps it onto a document member so the value reaches
+    ///     <see cref="JasperFx.Metadata.ISoftDeleted.DeletedAt" /> on load. Mirrors Marten's
+    ///     <c>DocumentMetadataCollection.SoftDeletedAt</c>.
+    /// </summary>
+    public MetadataColumn SoftDeletedAt { get; } = new("deleted_at");
+
     /// <summary>The always-present <c>dotnet_type</c> column; <see cref="MetadataColumn.Member" /> maps it onto a document member.</summary>
     public MetadataColumn DotNetType { get; } = new("dotnet_type") { Enabled = true };
 
@@ -52,6 +60,7 @@ public class DocumentMetadataConfig
         yield return Version;
         yield return TenantId;
         yield return IsSoftDeleted;
+        yield return SoftDeletedAt;
         yield return DotNetType;
     }
 
