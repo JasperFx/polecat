@@ -160,6 +160,70 @@ public class event_data_masking_tests : IntegrationContext
     }
 
     /// <summary>
+    ///     #424. Every other test here registers its rules on <c>theStore.Events</c> — the *built*
+    ///     store's <see cref="EventGraph" /> — so none of them goes through
+    ///     <see cref="EventStoreOptions" />, which is what <c>StoreOptions.Events</c> hands you at
+    ///     configuration time and is how the rest of the store (and Marten's docs) spell this. The
+    ///     method was declared only on <c>EventGraph</c>, so the ordinary spelling did not compile
+    ///     and callers had to reach past to <c>opts.EventGraph</c>.
+    /// </summary>
+    [Fact]
+    public async Task register_func_masking_rule_at_configuration_time()
+    {
+        await StoreOptions(opts =>
+        {
+            opts.DatabaseSchemaName = "mask_opts_func";
+            opts.Events.AddMaskingRuleForProtectedInformation<PersonCreated>(e =>
+                e with { Email = "***masked***", SocialSecurityNumber = "***masked***" });
+        });
+
+        var streamId = Guid.NewGuid();
+        theSession.Events.StartStream(streamId,
+            new PersonCreated("Alice", "alice@example.com", "123-45-6789"));
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        await theStore.Advanced.ApplyEventDataMasking(masking => masking.IncludeStream(streamId),
+            TestContext.Current.CancellationToken);
+
+        await using var query = theStore.QuerySession();
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
+
+        var created = events[0].Data.ShouldBeOfType<PersonCreated>();
+        created.Email.ShouldBe("***masked***");
+        created.SocialSecurityNumber.ShouldBe("***masked***");
+        created.Name.ShouldBe("Alice");
+    }
+
+    /// <summary>
+    ///     #424, the <c>Action&lt;T&gt;</c> overload — both are declared on <see cref="EventGraph" />
+    ///     and both have to be reachable from the options surface.
+    /// </summary>
+    [Fact]
+    public async Task register_action_masking_rule_at_configuration_time()
+    {
+        await StoreOptions(opts =>
+        {
+            opts.DatabaseSchemaName = "mask_opts_action";
+            opts.Events.AddMaskingRuleForProtectedInformation<PersonRecorded>(e => e.Email = "***masked***");
+        });
+
+        var streamId = Guid.NewGuid();
+        theSession.Events.StartStream(streamId,
+            new PersonRecorded { Subject = "Alice", Email = "alice@example.com" });
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        await theStore.Advanced.ApplyEventDataMasking(masking => masking.IncludeStream(streamId),
+            TestContext.Current.CancellationToken);
+
+        await using var query = theStore.QuerySession();
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
+
+        var recorded = events[0].Data.ShouldBeOfType<PersonRecorded>();
+        recorded.Email.ShouldBe("***masked***");
+        recorded.Subject.ShouldBe("Alice");
+    }
+
+    /// <summary>
     ///     ... and in the other registration order, so the test cannot pass by accident of which
     ///     rule happens to be registered first.
     /// </summary>
