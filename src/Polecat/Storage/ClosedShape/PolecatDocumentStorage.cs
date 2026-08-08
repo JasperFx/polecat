@@ -127,6 +127,13 @@ internal interface IPolecatDeletionStorage
 
     /// <summary>#234: conjoined tables carry a <c>tenant_id</c> column to scope the WHERE by.</summary>
     bool IsConjoined { get; }
+
+    /// <summary>
+    ///     #419: true when <see cref="DeleteFragment" /> is the soft-delete <c>UPDATE</c> rather than
+    ///     a hard <c>DELETE</c>. Criteria-based soft deletes have to exclude rows that are already
+    ///     deleted, or they re-stamp <c>deleted_at</c> and destroy the real deletion instant.
+    /// </summary>
+    bool IsSoftDeleted { get; }
 }
 
 internal abstract class PolecatDocumentStorage<TDoc, TId>
@@ -257,6 +264,7 @@ internal abstract class PolecatDocumentStorage<TDoc, TId>
     public IOperationFragment HardDeleteFragment => _hardDeleteFragment;
     public IOperationFragment UndeleteFragment => _undeleteFragment;
     public bool IsConjoined => _mapping.TenancyStyle == TenancyStyle.Conjoined;
+    public bool IsSoftDeleted => _mapping.DeleteStyle == DeleteStyle.SoftDelete;
     public IReadOnlyList<IDuplicatedField> DuplicatedFields => Array.Empty<IDuplicatedField>();
 
     // ---- select clause (E1-minimal; full LINQ retarget is E2) ----
