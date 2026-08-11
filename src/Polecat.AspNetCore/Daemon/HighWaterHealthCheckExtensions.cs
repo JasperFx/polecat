@@ -5,9 +5,11 @@ using System.Threading;
 using System.Threading.Tasks;
 using JasperFx.Events;
 using JasperFx.Events.Daemon;
+using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Polecat.Storage;
 
 namespace Polecat.Events.Daemon;
 
@@ -18,42 +20,56 @@ namespace Polecat.Events.Daemon;
 ///     detects that the high-water agent has stopped and, optionally, restarts it.
 ///     <para>
 ///         This is the Polecat parity implementation of Marten's <c>AddMartenHighWaterHealthCheck</c>
-///         (marten#4982 / polecat#339, Phase 2 marten#4986 / polecat#341). Two staleness signals,
-///         best first:
-///         <list type="number">
-///             <item>
-///                 <b>Heartbeat age (primary).</b> When ExtendedProgression is enabled, the
-///                 high-water agent stamps a liveness heartbeat on the <c>HighWaterMark</c>
-///                 progression row on every completed poll cycle (JasperFx/jasperfx#539). Its age
-///                 is a direct signal that the loop is <em>cycling</em>, independent of whether the
-///                 mark <em>advances</em> — so a quiet store with no new events never trips it.
-///             </item>
-///             <item>
-///                 <b>Sequence gap (fallback).</b> When ExtendedProgression is off, no heartbeat is
-///                 persisted, so the check falls back to the original heuristic: the mark sitting
-///                 unchanged while later events pile up past it.
-///             </item>
-///         </list>
+///         (marten#4982 / polecat#339, revised by marten#5181 / polecat#434).
+///     </para>
+///     <para>
+///         <b>The signal is the sequence gap: the mark sitting unchanged while later events pile up
+///         past it.</b> That is the only honest persisted signal Polecat has, and the check no longer
+///         pretends otherwise.
+///     </para>
+///     <para>
+///         It used to treat the ExtendedProgression <c>heartbeat</c> column on the
+///         <c>HighWaterMark</c> row as its <em>primary</em> signal, falling back to the gap heuristic
+///         only when no heartbeat was present. Nothing ever wrote that column for that row:
+///         <c>JasperFx.Events.Daemon.ExtendedProgressionWriter.OnNext</c> returns early for
+///         <c>ShardState.HighWaterMark</c> states outright, and Polecat's own high-water persist
+///         (<c>PolecatHighWaterDetector.MarkHighWaterAsync</c>) writes only <c>last_seq_id</c> and
+///         <c>last_updated</c>. So the primary branch was unreachable in every real deployment and the
+///         check silently degraded to the gap heuristic — while its own tests passed against a state no
+///         daemon ever produces, because they seeded <c>heartbeat</c> with raw SQL. A check that
+///         silently degrades is worse than an honest heuristic, which is the whole point of
+///         marten#4961.
+///     </para>
+///     <para>
+///         Marten's replacement reads the <c>last_updated</c> age of the per-tenant
+///         <c>HighWaterMark:{tenant}</c> rows, which its vectorized poll re-stamps on every cycle
+///         whether or not the mark advances. <b>Polecat has no equivalent</b>: it never overrides
+///         <c>IHighWaterDetector.MarkHighWaterForTenantAsync</c>, so no per-tenant high-water row is
+///         ever written here, and on the store-global row <c>last_updated</c> moves only when the mark
+///         actually advances (<c>Detect</c> calls <c>MarkHighWaterAsync</c> only under
+///         <c>stats.HasChanged</c>) — so its age says nothing about liveness on a quiet store.
+///         Rather than add a second unreachable branch, the gap heuristic stands alone. For a
+///         liveness signal that does not depend on the mark advancing, use the in-process surface the
+///         daemon already exposes: <c>IProjectionDaemon.HighWaterLastPolledAt</c> and
+///         <c>IsHighWaterStale</c> (jasperfx#539).
 ///     </para>
 /// </summary>
 public static class HighWaterHealthCheckExtensions
 {
     /// <summary>
     ///     Adds a health check that reports <see cref="HealthCheckResult.Unhealthy" /> when the
-    ///     high-water agent has stopped for at least <paramref name="staleThreshold" /> — via its
-    ///     liveness heartbeat where available, otherwise via the sequence-gap heuristic
-    ///     (marten#4961 / polecat#341).
+    ///     store-global high-water mark has sat unchanged, with later events piling up past it, for at
+    ///     least <paramref name="staleThreshold" /> (marten#4961 / polecat#341, revised by
+    ///     polecat#434).
     /// </summary>
     /// <param name="builder"><see cref="IHealthChecksBuilder" /></param>
     /// <param name="staleThreshold">
-    ///     How long the high-water agent may go without a heartbeat (or, on the fallback path, how
-    ///     long the mark may sit unchanged while behind the latest event sequence) before the store
+    ///     How long the mark may sit unchanged while behind the latest event sequence before the store
     ///     is considered unhealthy. Defaults to 30 seconds.
     /// </param>
     /// <param name="minimumGap">
-    ///     Fallback path only: the gap (highest event sequence minus high-water mark) that is
-    ///     treated as "caught up" and never trips the check, absorbing the normal safe-harbor lag.
-    ///     Defaults to 1.
+    ///     The gap (highest event sequence minus high-water mark) that is treated as "caught up" and
+    ///     never trips the check, absorbing the normal safe-harbor lag. Defaults to 1.
     /// </param>
     /// <param name="autoRestart">
     ///     When <c>true</c>, an Unhealthy result also asks the local projection coordinator to
@@ -87,7 +103,7 @@ public static class HighWaterHealthCheckExtensions
     public record HighWaterHealthCheckSettings(TimeSpan StaleThreshold, long MinimumGap, bool AutoRestart = false);
 
     /// <summary>
-    ///     Tracks, per database, the fallback gap heuristic's "first observed a stuck mark" reading
+    ///     Tracks, per database, the gap heuristic's "first observed a stuck mark" reading
     ///     and (when <c>autoRestart</c> is on) the last auto-restart moment, so a <em>sustained</em>
     ///     non-advance can be distinguished from a transient safe-harbor gap and restarts can be
     ///     capped to once per staleness window across health check invocations.
@@ -179,8 +195,10 @@ public static class HighWaterHealthCheckExtensions
 
         private async Task<HealthCheckResult> checkDatabaseAsync(IEventDatabase database, CancellationToken token)
         {
-            var allProgress = await database.AllProjectionProgress(token).ConfigureAwait(false);
-            var highWater = allProgress.FirstOrDefault(x => string.Equals(HighWaterMarkShard, x.ShardName));
+            // polecat#434: read the ONE row this check is about rather than pulling every projection x
+            // tenant row on every probe through AllProjectionProgress, which is what the old
+            // heartbeat-first shape needed and which grows with the fleet.
+            var highWater = await readHighWaterRowAsync(database, token).ConfigureAwait(false);
 
             // No HighWaterMark progression row yet -> the daemon has not started here. Nothing to assert.
             if (highWater is null)
@@ -191,30 +209,12 @@ public static class HighWaterHealthCheckExtensions
 
             var now = _timeProvider.GetUtcNow();
 
-            // Phase 2 (polecat#341) primary signal: the liveness heartbeat (jasperfx#539). Present only
-            // when ExtendedProgression is enabled. Heartbeat age proves the poll loop is *cycling*
-            // independent of whether the mark *advances*, so a quiet store never trips it — a strictly
-            // better signal than the gap heuristic. Use it whenever it is available.
-            if (highWater.LastHeartbeat is { } lastHeartbeat)
-            {
-                // The gap tracker is only for the fallback path; keep it clear while on the heartbeat path.
-                _tracker.Readings.TryRemove(database.Identifier, out _);
-
-                var age = now - lastHeartbeat;
-                if (age < _staleThreshold)
-                {
-                    _tracker.Restarts.TryRemove(database.Identifier, out _);
-                    return HealthCheckResult.Healthy("Healthy");
-                }
-
-                var restartNote = await tryAutoRestartAsync(database.Identifier, now, token).ConfigureAwait(false);
-                return HealthCheckResult.Unhealthy(
-                    $"Unhealthy: the high-water agent for database '{database.Identifier}' last reported a liveness heartbeat {age.TotalSeconds:F0}s ago (at {lastHeartbeat:O}), exceeding the {_staleThreshold} staleness threshold. Its poll loop has stopped cycling (see JasperFx/jasperfx#539 / marten#4961).{restartNote}");
-            }
-
-            // Fallback (ExtendedProgression off): the sequence-gap heuristic. A non-zero gap is normal
-            // transiently (the detector holds the mark inside a "safe harbor" behind in-flight/gapped
-            // sequences), so this trips only on a sustained non-advance while events pile up past the mark.
+            // The sequence-gap heuristic, and deliberately the only signal — see the class remarks for
+            // why the ExtendedProgression `heartbeat` column is not consulted (nothing writes it for
+            // this row) and why `last_updated` is not either (it moves only when the mark advances, so
+            // its age says nothing on a quiet store). A non-zero gap is normal transiently: the detector
+            // holds the mark inside a "safe harbor" behind in-flight/gapped sequences, so this trips
+            // only on a sustained non-advance while events pile up past the mark.
             var highest = await database.FetchHighestEventSequenceNumber(token).ConfigureAwait(false);
             var gap = highest - highWater.Sequence;
 
@@ -245,6 +245,42 @@ public static class HighWaterHealthCheckExtensions
 
             return HealthCheckResult.Healthy("Healthy");
         }
+
+        /// <summary>
+        ///     polecat#434: read just the store-global <c>HighWaterMark</c> progression row. This used to
+        ///     go through <see cref="IEventDatabase.AllProjectionProgress(CancellationToken)" /> and filter
+        ///     in memory, which pulled every projection x tenant row on every probe to keep one of them —
+        ///     on a thousand-tenant fleet that is thousands of rows per health probe. Mirrors marten#5181.
+        /// </summary>
+        private async Task<HighWaterRow?> readHighWaterRowAsync(IEventDatabase database, CancellationToken token)
+        {
+            await database.EnsureStorageExistsAsync(typeof(IEvent), token).ConfigureAwait(false);
+
+            var connectionString = database is PolecatDatabase polecat
+                ? polecat.ConnectionString
+                : _store.Options.ConnectionString;
+
+            await using var conn = new SqlConnection(connectionString);
+            await conn.OpenAsync(token).ConfigureAwait(false);
+
+            await using var cmd = conn.CreateCommand();
+            // HighWaterMarkShard is a compile-time constant, so no pattern grammar reaches this from
+            // user input; it is still bound rather than interpolated.
+            cmd.CommandText =
+                $"SELECT last_seq_id FROM {_store.Options.EventGraph.ProgressionTableName} WHERE name = @name;";
+            var parameter = cmd.Parameters.Add("@name", System.Data.SqlDbType.VarChar, 200);
+            parameter.Value = HighWaterMarkShard;
+
+            await using var reader = await cmd.ExecuteReaderAsync(token).ConfigureAwait(false);
+            if (!await reader.ReadAsync(token).ConfigureAwait(false))
+            {
+                return null;
+            }
+
+            return new HighWaterRow(await reader.GetFieldValueAsync<long>(0, token).ConfigureAwait(false));
+        }
+
+        private sealed record HighWaterRow(long Sequence);
 
         private void clearTracking(string databaseIdentifier)
         {
