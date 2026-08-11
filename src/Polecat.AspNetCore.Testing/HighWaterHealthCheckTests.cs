@@ -294,14 +294,69 @@ public class HighWaterHealthCheckTests: IAsyncLifetime
         result.Status.ShouldBe(HealthStatus.Healthy);
     }
 
-    // ---- heartbeat primary signal (polecat#341) ------------------------------------------
+    // ---- the dead branch, proven with a RUNNING daemon (polecat#434 / marten#5181) --------
+
+    /// <summary>
+    ///     The verification the issue asked for, and the only kind that could have caught this: boot
+    ///     the daemon for real and read what the health check would read. No raw-SQL seeding — that is
+    ///     exactly how the Marten suite fooled itself into believing the heartbeat branch worked.
+    /// </summary>
+    [Fact]
+    public async Task running_daemon_never_stamps_the_high_water_heartbeat()
+    {
+        configure(opts =>
+        {
+            opts.Projections.Add<HwFakeProjection>(ProjectionLifecycle.Async);
+            opts.DaemonSettings.AsyncMode = DaemonMode.Solo;
+            // The strongest form of the claim: even with extended progression tracking ON -- the
+            // condition the old check named as the one under which the heartbeat is "available" --
+            // nothing writes it for this row.
+            opts.Events.EnableExtendedProgressionTracking = true;
+        });
+        await _store!.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
+        await appendEventsAsync(20);
+
+        using (var daemon = (IProjectionDaemon)await _store.BuildProjectionDaemonAsync())
+        {
+            await daemon.StartAllAsync();
+            await daemon.WaitForNonStaleData(TimeSpan.FromSeconds(30));
+            await daemon.StopAllAsync();
+        }
+
+        // The row exists and the mark advanced, so the agent genuinely ran...
+        var sequence = await scalarAsync(
+            $"SELECT last_seq_id FROM [{_schemaName}].[pc_event_progression] WHERE name = 'HighWaterMark';");
+        sequence.ShouldNotBeNull();
+        Convert.ToInt64(sequence).ShouldBeGreaterThan(0);
+
+        // ...and its heartbeat is still NULL. ExtendedProgressionWriter.OnNext returns early for
+        // ShardState.HighWaterMark, and MarkHighWaterAsync writes only last_seq_id / last_updated.
+        var heartbeat = await scalarAsync(
+            $"SELECT heartbeat FROM [{_schemaName}].[pc_event_progression] WHERE name = 'HighWaterMark';");
+        heartbeat.ShouldBeNull(
+            "something now stamps the high-water heartbeat -- revisit polecat#434, the check could use it again");
+    }
+
+    private static async Task<object?> scalarAsync(string sql)
+    {
+        await using var conn = new SqlConnection(ConnectionString);
+        await conn.OpenAsync();
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = sql;
+        var raw = await cmd.ExecuteScalarAsync();
+        return raw is DBNull ? null : raw;
+    }
+
+    // ---- the heartbeat column is NOT a signal (polecat#434 / marten#5181) ----------------
+    //
+    // These two replace the pair that used to assert the opposite. They passed because they seeded
+    // `heartbeat` with raw SQL -- a state no running daemon ever produces, which is exactly how the
+    // Marten suite fooled itself. running_daemon_never_stamps_the_high_water_heartbeat below proves
+    // that, and these two now pin that the column is ignored either way.
 
     [Fact]
-    public async Task healthy_when_heartbeat_is_fresh_even_though_mark_is_behind()
+    public async Task a_fresh_heartbeat_does_not_rescue_a_stuck_mark()
     {
-        // ExtendedProgression on -> the heartbeat is the primary signal. A fresh heartbeat means the
-        // agent is cycling, so a mark sitting behind the latest event is NOT unhealthy (unlike the gap
-        // heuristic, which would trip here).
         configure(opts =>
         {
             opts.Projections.Add<HwFakeProjection>(ProjectionLifecycle.Async);
@@ -312,16 +367,22 @@ public class HighWaterHealthCheckTests: IAsyncLifetime
         await appendEventsAsync(20);
         await seedHighWaterHeartbeatAsync(1, _now.AddSeconds(-5)); // mark stuck at 1, heartbeat only 5s old
 
-        var result = await buildCheck(TimeSpan.FromSeconds(30)).CheckHealthAsync(new HealthCheckContext(), TestContext.Current.CancellationToken);
+        var check = buildCheck(TimeSpan.FromSeconds(30));
 
-        result.Status.ShouldBe(HealthStatus.Healthy);
+        // First probe starts the clock on the stuck mark...
+        (await check.CheckHealthAsync(new HealthCheckContext(), TestContext.Current.CancellationToken))
+            .Status.ShouldBe(HealthStatus.Healthy);
+
+        // ...and past the threshold the gap heuristic trips, heartbeat or no heartbeat.
+        _timeProvider.Now = _now.AddSeconds(60);
+
+        var result = await check.CheckHealthAsync(new HealthCheckContext(), TestContext.Current.CancellationToken);
+        result.Status.ShouldBe(HealthStatus.Unhealthy);
     }
 
     [Fact]
-    public async Task unhealthy_when_heartbeat_is_stale_even_though_mark_is_caught_up()
+    public async Task a_stale_heartbeat_does_not_trip_a_caught_up_mark()
     {
-        // A stale heartbeat means the loop stopped cycling. This trips even when the mark is fully caught
-        // up (gap == 0) — the case the gap heuristic is blind to.
         configure(opts =>
         {
             opts.Projections.Add<HwFakeProjection>(ProjectionLifecycle.Async);
@@ -335,7 +396,9 @@ public class HighWaterHealthCheckTests: IAsyncLifetime
 
         var result = await buildCheck(TimeSpan.FromSeconds(30)).CheckHealthAsync(new HealthCheckContext(), TestContext.Current.CancellationToken);
 
-        result.Status.ShouldBe(HealthStatus.Unhealthy);
+        // A caught-up mark is healthy. The old check reported Unhealthy here off a column nothing
+        // writes, which is a false alarm in every real deployment.
+        result.Status.ShouldBe(HealthStatus.Healthy);
     }
 
     // ---- autoRestart remediation (polecat#341) -------------------------------------------
@@ -351,13 +414,21 @@ public class HighWaterHealthCheckTests: IAsyncLifetime
         });
         await _store!.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
         await appendEventsAsync(20);
-        var highest = await _store.Database.FetchHighestEventSequenceNumber(CancellationToken.None);
-        await seedHighWaterHeartbeatAsync(highest, _now.AddSeconds(-90));
+
+        // #434: staleness is reached through the gap heuristic now, not a seeded heartbeat. The mark
+        // sits at 1 with twenty later events behind it, and the clock is moved past the threshold.
+        await seedHighWaterMarkAsync(1);
 
         var daemon = Substitute.For<IProjectionDaemon>();
         var coordinator = new FakeCoordinator(daemon);
 
         var check = buildCheck(TimeSpan.FromSeconds(30), autoRestart: true, coordinator: coordinator);
+
+        // The first probe only records the stuck mark; nothing is stale yet, so nothing is restarted.
+        (await check.CheckHealthAsync(new HealthCheckContext(), TestContext.Current.CancellationToken)).Status.ShouldBe(HealthStatus.Healthy);
+        await daemon.DidNotReceive().RestartHighWaterAgentAsync(Arg.Any<CancellationToken>());
+
+        _timeProvider.Now = _now.AddSeconds(60);
 
         // First stale cycle: restart the loop, still report Unhealthy so an alert fires.
         (await check.CheckHealthAsync(new HealthCheckContext(), TestContext.Current.CancellationToken)).Status.ShouldBe(HealthStatus.Unhealthy);
@@ -379,14 +450,16 @@ public class HighWaterHealthCheckTests: IAsyncLifetime
         });
         await _store!.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
         await appendEventsAsync(20);
-        var highest = await _store.Database.FetchHighestEventSequenceNumber(CancellationToken.None);
-        await seedHighWaterHeartbeatAsync(highest, _now.AddSeconds(-90));
+        await seedHighWaterMarkAsync(1);
 
         var daemon = Substitute.For<IProjectionDaemon>();
         var coordinator = new FakeCoordinator(daemon);
 
-        var result = await buildCheck(TimeSpan.FromSeconds(30), coordinator: coordinator)
-            .CheckHealthAsync(new HealthCheckContext(), TestContext.Current.CancellationToken);
+        var check = buildCheck(TimeSpan.FromSeconds(30), coordinator: coordinator);
+        await check.CheckHealthAsync(new HealthCheckContext(), TestContext.Current.CancellationToken);
+        _timeProvider.Now = _now.AddSeconds(60);
+
+        var result = await check.CheckHealthAsync(new HealthCheckContext(), TestContext.Current.CancellationToken);
 
         result.Status.ShouldBe(HealthStatus.Unhealthy);
         await daemon.DidNotReceive().RestartHighWaterAgentAsync(Arg.Any<CancellationToken>());
