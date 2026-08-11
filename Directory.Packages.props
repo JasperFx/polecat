@@ -124,15 +124,31 @@
              partial the library half-owns; Polecat completes it in Polecat.Tests, which — unlike
              Marten, where two assemblies compile the source-only package — is the only assembly
              here that does. Compliance sources only, so again behaviourally inert for the
-             shipping libraries. Same lockstep rule as above. -->
-        <PackageVersion Include="JasperFx" Version="2.45.0" />
-        <PackageVersion Include="JasperFx.Events" Version="2.45.0" />
+             shipping libraries. Same lockstep rule as above.
+             JasperFx 2.46.0 — no compliance suites in this wave, so nothing to enroll; both
+             payload items are runtime fixes Polecat inherits without a code change:
+             (a) jasperfx#644 — the per-tenant high-water path is bounded at thousands of tenants.
+             A 512-database / 2,173-tenant deployment OOM'd the host: routing was
+             O(tenants x agents) per poll, every cycle re-persisted every tenant whether or not
+             its mark advanced, and nothing bounded concurrent cycles (the OnNext fast path fired
+             an unguarded full cycle per global-mark advance while the jasperfx#539 watchdog
+             cleared the in-flight guard out from under a still-running one). Now: agents grouped
+             by tenant once per cycle, last-routed/last-persisted bookkeeping so only advanced
+             tenants are touched, and a single-flight ticket-owned coalesced runner with epoch
+             supersession. Polecat drives TenantedHighWaterCoordinator through the shared
+             JasperFxAsyncDaemon, so this lands here for free — and it is the CritterWatch #969
+             scale profile.
+             (b) jasperfx#640 — RecentlyUsedCache no longer calls ImHashMap.Remove, which corrupts
+             the tree on a remove-after-remove (ImTools 4.0.0 is the latest stable, so the fix had
+             to be usage-side); both maps are rebuilt from the survivors instead. -->
+        <PackageVersion Include="JasperFx" Version="2.46.0" />
+        <PackageVersion Include="JasperFx.Events" Version="2.46.0" />
         <!--
              The shared cross-store event sourcing compliance suites. Source-only package: the
              suites compile inside Polecat.Tests so JasperFx's aggregate source generator binds
              Polecat's own session types.
         -->
-        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="2.45.0" />
+        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="2.46.0" />
         <!-- Pin the sibling JasperFx packages for parity with Marten 9's matrix
              even though Polecat doesn't currently reference them directly —
              keeps the lockstep matrix coherent when transitive resolution
@@ -140,7 +156,7 @@
              RuntimeCompiler 5.x line is the active continuation of the 4.x
              lineage; do not pin against the parallel stale 2.0.x series. -->
         <PackageVersion Include="JasperFx.RuntimeCompiler" Version="5.0.0" />
-        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.45.0" />
+        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.46.0" />
         <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
@@ -227,16 +243,29 @@
              Weasel 9.23.2: weasel#425 — carries the JasperFx 2.38.0 floor, which is the reason to
              take it; Polecat pins the family in lockstep rather than letting it resolve
              transitively. Also weasel#423, where Sqlite and MySql finally implement the non-generic
-             Weasel.Core.ICommandBuilder — no SQL Server surface touched. -->
-        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.23.2" />
-        <PackageVersion Include="Weasel.SqlServer" Version="9.23.2" />
-        <PackageVersion Include="Weasel.Storage" Version="9.23.2" />
+             Weasel.Core.ICommandBuilder — no SQL Server surface touched.
+             Weasel 9.24.0: three items, one of them directly on a path Polecat drives.
+             (a) weasel#415 — the SQL Server CREATE DATABASE is judged by its POSTCONDITION rather
+             than by whether the statement threw. Two hosts provisioning the same tenant database
+             at once both issue the CREATE; the loser used to surface its race failure as an
+             exception even though the database it wanted now exists. This is the tenant-database
+             provisioning path (Advanced/tenant-database multi-tenancy), so it is the reason to
+             take this release.
+             (b) weasel#439 — key schema fingerprint stamps are keyed BY FINGERPRINT instead of
+             sharing one row, so two differently-shaped migrations no longer overwrite each other's
+             stamp.
+             (c) weasel#431 — bounded-parallel db-apply / db-assert across physical databases, plus
+             the per-database redirectable migration logger it needed. Polecat's multi-database
+             tenancy inherits this through the shared CLI commands. -->
+        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.24.0" />
+        <PackageVersion Include="Weasel.SqlServer" Version="9.24.0" />
+        <PackageVersion Include="Weasel.Storage" Version="9.24.0" />
 
         <!-- Strongly typed IDs -->
         <PackageVersion Include="StronglyTypedId" Version="1.0.0-beta08" />
 
         <!-- Source generators (matched to JasperFx.Events above) -->
-        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.45.0" />
+        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.46.0" />
 
         <!-- Build automation -->
         <PackageVersion Include="Nuke.Common" Version="9.0.4" />
