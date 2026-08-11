@@ -140,15 +140,28 @@
              scale profile.
              (b) jasperfx#640 — RecentlyUsedCache no longer calls ImHashMap.Remove, which corrupts
              the tree on a remove-after-remove (ImTools 4.0.0 is the latest stable, so the fix had
-             to be usage-side); both maps are rebuilt from the survivors instead. -->
-        <PackageVersion Include="JasperFx" Version="2.46.0" />
-        <PackageVersion Include="JasperFx.Events" Version="2.46.0" />
+             to be usage-side); both maps are rebuilt from the survivors instead.
+             JasperFx 2.47.0 — jasperfx#647, the DOCUMENT slice JasperFx.Events did not cover, and
+             the half of polecat#443 / wolverine#3907 that Polecat implements. Additive only: every
+             type is new and nothing existing changed. Three tiers rather than two, mirroring
+             IQueryEventStore -> IEventOperations -> IEventStoreOperations:
+             IDocumentReadOperations (LoadAsync, Query<T>), IDocumentWriteOperations (Store, Delete,
+             DeleteWhere) and IDocumentSessionOperations (SaveChangesAsync). The split is
+             load-bearing — a projection writes through the middle tier and must NEVER commit, so
+             SaveChangesAsync cannot live below the top one. IDocumentSessionFactory opens sessions;
+             the async terminators are extension methods over IQueryable<T> dispatching through
+             IDocumentQueryExecutor on the store's query provider, because every System.Linq operator
+             returns a plain IQueryable<T> and member terminators would be unreachable after a single
+             Where. The package also gains four document compliance suites (41 tests) over a
+             three-member fixture that is deliberately NOT generic over a session pair. -->
+        <PackageVersion Include="JasperFx" Version="2.47.0" />
+        <PackageVersion Include="JasperFx.Events" Version="2.47.0" />
         <!--
              The shared cross-store event sourcing compliance suites. Source-only package: the
              suites compile inside Polecat.Tests so JasperFx's aggregate source generator binds
              Polecat's own session types.
         -->
-        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="2.46.0" />
+        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="2.47.0" />
         <!-- Pin the sibling JasperFx packages for parity with Marten 9's matrix
              even though Polecat doesn't currently reference them directly —
              keeps the lockstep matrix coherent when transitive resolution
@@ -156,7 +169,7 @@
              RuntimeCompiler 5.x line is the active continuation of the 4.x
              lineage; do not pin against the parallel stale 2.0.x series. -->
         <PackageVersion Include="JasperFx.RuntimeCompiler" Version="5.0.0" />
-        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.46.0" />
+        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.47.0" />
         <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
@@ -265,7 +278,7 @@
         <PackageVersion Include="StronglyTypedId" Version="1.0.0-beta08" />
 
         <!-- Source generators (matched to JasperFx.Events above) -->
-        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.46.0" />
+        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.47.0" />
 
         <!-- Build automation -->
         <PackageVersion Include="Nuke.Common" Version="9.0.4" />

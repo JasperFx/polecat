@@ -223,12 +223,12 @@ internal partial class QuerySession : IQuerySession
 
     // ── Load operations ─────────────────────────────────────────────────
 
-    public async Task<T?> LoadAsync<T>(Guid id, CancellationToken token = default) where T : class
+    public async Task<T?> LoadAsync<T>(Guid id, CancellationToken token = default) where T : notnull
     {
         return await LoadInternalAsync<T>(id, token);
     }
 
-    public async Task<T?> LoadAsync<T>(string id, CancellationToken token = default) where T : class
+    public async Task<T?> LoadAsync<T>(string id, CancellationToken token = default) where T : notnull
     {
         return await LoadInternalAsync<T>(id, token);
     }
@@ -243,7 +243,7 @@ internal partial class QuerySession : IQuerySession
         return await LoadInternalAsync<T>(id, token);
     }
 
-    protected virtual async Task<T?> LoadInternalAsync<T>(object id, CancellationToken token) where T : class
+    protected virtual async Task<T?> LoadInternalAsync<T>(object id, CancellationToken token) where T : notnull
     {
         var provider = _providers.GetProvider<T>();
         await _tableEnsurer.EnsureTableAsync(provider, token);
@@ -282,7 +282,7 @@ internal partial class QuerySession : IQuerySession
         return await storage.LoadManyByObjectIdsAsync(ids, this, token);
     }
 
-    public IPolecatQueryable<T> Query<T>() where T : class
+    public IPolecatQueryable<T> Query<T>() where T : notnull
     {
         var provider = new PolecatLinqQueryProvider(this, _providers, _tableEnsurer);
         return new PolecatLinqQueryable<T>(provider);

@@ -70,10 +70,10 @@ internal class NestedTenantSession : ITenantOperations
     public Task<bool> CheckExistsAsync<T>(long id, CancellationToken token = default) where T : class
         => _parent.CheckExistsAsync<T>(id, token);
 
-    public Task<T?> LoadAsync<T>(Guid id, CancellationToken token = default) where T : class
+    public Task<T?> LoadAsync<T>(Guid id, CancellationToken token = default) where T : notnull
         => _parent.LoadAsync<T>(id, token);
 
-    public Task<T?> LoadAsync<T>(string id, CancellationToken token = default) where T : class
+    public Task<T?> LoadAsync<T>(string id, CancellationToken token = default) where T : notnull
         => _parent.LoadAsync<T>(id, token);
 
     public Task<T?> LoadAsync<T>(int id, CancellationToken token = default) where T : class
@@ -88,7 +88,7 @@ internal class NestedTenantSession : ITenantOperations
     public Task<IReadOnlyList<T>> LoadManyAsync<T>(IEnumerable<string> ids, CancellationToken token = default) where T : class
         => _parent.LoadManyAsync<T>(ids, token);
 
-    public IPolecatQueryable<T> Query<T>() where T : class
+    public IPolecatQueryable<T> Query<T>() where T : notnull
         => _parent.Query<T>();
 
     public IBatchedQuery CreateBatchQuery()
@@ -172,15 +172,15 @@ internal class NestedTenantSession : ITenantOperations
         }
     }
 
-    public void Delete<T>(Guid id) where T : class => DeleteByObjectId<T>(id);
+    public void Delete<T>(Guid id) where T : notnull => DeleteByObjectId<T>(id);
 
-    public void Delete<T>(string id) where T : class => DeleteByObjectId<T>(id);
+    public void Delete<T>(string id) where T : notnull => DeleteByObjectId<T>(id);
 
     public void Delete<T>(int id) where T : class => DeleteByObjectId<T>(id);
 
     public void Delete<T>(long id) where T : class => DeleteByObjectId<T>(id);
 
-    private void DeleteByObjectId<T>(object id) where T : class
+    private void DeleteByObjectId<T>(object id) where T : notnull
     {
         var session = (Weasel.Storage.IStorageSession)_parent;
         var storage = (Polecat.Storage.ClosedShape.IPolecatObjectStorage<T>)session.StorageFor<T>();
@@ -197,15 +197,15 @@ internal class NestedTenantSession : ITenantOperations
             _parent.Providers.GetProvider<T>().Mapping.GetId(document)));
     }
 
-    public void HardDelete<T>(Guid id) where T : class => HardDeleteByObjectId<T>(id);
+    public void HardDelete<T>(Guid id) where T : notnull => HardDeleteByObjectId<T>(id);
 
-    public void HardDelete<T>(string id) where T : class => HardDeleteByObjectId<T>(id);
+    public void HardDelete<T>(string id) where T : notnull => HardDeleteByObjectId<T>(id);
 
     public void HardDelete<T>(int id) where T : class => HardDeleteByObjectId<T>(id);
 
     public void HardDelete<T>(long id) where T : class => HardDeleteByObjectId<T>(id);
 
-    private void HardDeleteByObjectId<T>(object id) where T : class
+    private void HardDeleteByObjectId<T>(object id) where T : notnull
     {
         var session = (Weasel.Storage.IStorageSession)_parent;
         var storage = (Polecat.Storage.ClosedShape.IPolecatObjectStorage<T>)session.StorageFor<T>();
@@ -213,13 +213,13 @@ internal class NestedTenantSession : ITenantOperations
             storage.HardDeletionForObjectId(id, _tenantId), session, id, id));
     }
 
-    public void DeleteWhere<T>(Expression<Func<T, bool>> predicate) where T : class
+    public void DeleteWhere<T>(Expression<Func<T, bool>> predicate) where T : notnull
         => _parent.DeleteWhere(predicate);
 
-    public void HardDeleteWhere<T>(Expression<Func<T, bool>> predicate) where T : class
+    public void HardDeleteWhere<T>(Expression<Func<T, bool>> predicate) where T : notnull
         => _parent.HardDeleteWhere(predicate);
 
-    public void UndoDeleteWhere<T>(Expression<Func<T, bool>> predicate) where T : class
+    public void UndoDeleteWhere<T>(Expression<Func<T, bool>> predicate) where T : notnull
         => _parent.UndoDeleteWhere(predicate);
 
     public ITenantOperations ForTenant(string tenantId)

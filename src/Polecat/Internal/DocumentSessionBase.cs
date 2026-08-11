@@ -227,12 +227,12 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         }
     }
 
-    public void Delete<T>(Guid id) where T : class
+    public void Delete<T>(Guid id) where T : notnull
     {
         DeleteByObjectId<T>(id);
     }
 
-    public void Delete<T>(string id) where T : class
+    public void Delete<T>(string id) where T : notnull
     {
         DeleteByObjectId<T>(id);
     }
@@ -248,7 +248,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     }
 
     // #273 E2c/E2e: all by-id deletions route through the closed-shape storage layer.
-    private void DeleteByObjectId<T>(object id) where T : class
+    private void DeleteByObjectId<T>(object id) where T : notnull
     {
         var session = (Weasel.Storage.IStorageSession)this;
         var storage = (Polecat.Storage.ClosedShape.IPolecatObjectStorage<T>)session.StorageFor<T>();
@@ -266,15 +266,15 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             _providers.GetProvider<T>().Mapping.GetId(document)));
     }
 
-    public void HardDelete<T>(Guid id) where T : class => HardDeleteByObjectId<T>(id);
+    public void HardDelete<T>(Guid id) where T : notnull => HardDeleteByObjectId<T>(id);
 
-    public void HardDelete<T>(string id) where T : class => HardDeleteByObjectId<T>(id);
+    public void HardDelete<T>(string id) where T : notnull => HardDeleteByObjectId<T>(id);
 
     public void HardDelete<T>(int id) where T : class => HardDeleteByObjectId<T>(id);
 
     public void HardDelete<T>(long id) where T : class => HardDeleteByObjectId<T>(id);
 
-    private void HardDeleteByObjectId<T>(object id) where T : class
+    private void HardDeleteByObjectId<T>(object id) where T : notnull
     {
         var session = (Weasel.Storage.IStorageSession)this;
         var storage = (Polecat.Storage.ClosedShape.IPolecatObjectStorage<T>)session.StorageFor<T>();
@@ -282,7 +282,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             storage.HardDeletionForObjectId(id, TenantId), session, id, id));
     }
 
-    public void DeleteWhere<T>(Expression<Func<T, bool>> predicate) where T : class
+    public void DeleteWhere<T>(Expression<Func<T, bool>> predicate) where T : notnull
     {
         var fragment = ParseDeleteWhere(predicate);
         // #273 doc-side convergence: the DELETE / soft-delete-UPDATE prefix and tenancy come from
@@ -295,7 +295,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             excludeAlreadyDeleted: storage.IsSoftDeleted));
     }
 
-    public void HardDeleteWhere<T>(Expression<Func<T, bool>> predicate) where T : class
+    public void HardDeleteWhere<T>(Expression<Func<T, bool>> predicate) where T : notnull
     {
         var fragment = ParseDeleteWhere(predicate);
         var storage = ClosedShapeDeletionStorageFor<T>();
@@ -305,7 +305,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             storage.HardDeleteFragment, storage.IsConjoined, TenantId, fragment, typeof(T)));
     }
 
-    public void UndoDeleteWhere<T>(Expression<Func<T, bool>> predicate) where T : class
+    public void UndoDeleteWhere<T>(Expression<Func<T, bool>> predicate) where T : notnull
     {
         var fragment = ParseDeleteWhere(predicate);
         var storage = ClosedShapeDeletionStorageFor<T>();
@@ -313,14 +313,14 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             storage.UndeleteFragment, storage.IsConjoined, TenantId, fragment, typeof(T)));
     }
 
-    private Linq.SqlGeneration.ISqlFragment ParseDeleteWhere<T>(Expression<Func<T, bool>> predicate) where T : class
+    private Linq.SqlGeneration.ISqlFragment ParseDeleteWhere<T>(Expression<Func<T, bool>> predicate) where T : notnull
     {
         var provider = _providers.GetProvider<T>();
         var memberFactory = new MemberFactory(Options, provider.Mapping);
         return new WhereClauseParser(memberFactory).Parse(predicate.Body);
     }
 
-    private Storage.ClosedShape.IPolecatDeletionStorage ClosedShapeDeletionStorageFor<T>() where T : class
+    private Storage.ClosedShape.IPolecatDeletionStorage ClosedShapeDeletionStorageFor<T>() where T : notnull
         => (Storage.ClosedShape.IPolecatDeletionStorage)_providers.ClosedShapeGraph.StorageFor<T>().QueryOnly;
 
     private Dictionary<string, NestedTenantSession>? _byTenant;

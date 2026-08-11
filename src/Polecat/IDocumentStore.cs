@@ -1,4 +1,5 @@
 using JasperFx.Events;
+using JasperFx.Events.Documents;
 
 namespace Polecat;
 
@@ -6,7 +7,14 @@ namespace Polecat;
 ///     The main entry point for Polecat. Creates sessions for document and event operations.
 ///     Typically registered as a singleton in DI.
 /// </summary>
-public interface IDocumentStore : IDisposable, IAsyncDisposable, IDocumentStoreUsageSource
+/// <remarks>
+///     #443 / jasperfx#647: also Polecat's implementation of
+///     <see cref="IDocumentSessionFactory{TOperations,TQuerySession}" />. The generic form layers over
+///     the non-generic one exactly as <c>IEventStore&lt;,&gt;</c> layers over <c>IEventStore</c>, and it
+///     is the non-generic form that lets a consumer open sessions without referencing Polecat at all.
+/// </remarks>
+public interface IDocumentStore : IDisposable, IAsyncDisposable, IDocumentStoreUsageSource,
+    IDocumentSessionFactory<IDocumentSession, IQuerySession>
 {
     /// <summary>
     ///     The configuration options for this store.
@@ -42,6 +50,16 @@ public interface IDocumentStore : IDisposable, IAsyncDisposable, IDocumentStoreU
     ///     Open a read-only query session.
     /// </summary>
     IQuerySession QuerySession();
+
+    /// <summary>
+    ///     #443: the non-generic tier of <see cref="IDocumentSessionFactory" /> returns the shared
+    ///     contract types. C# does not allow a covariant return to implement an interface member
+    ///     implicitly, so the two are bridged explicitly here — once, rather than in every store type.
+    /// </summary>
+    IDocumentSessionOperations IDocumentSessionFactory.LightweightSession() => LightweightSession();
+
+    /// <inheritdoc cref="IDocumentSessionFactory.LightweightSession()" />
+    IDocumentReadOperations IDocumentSessionFactory.QuerySession() => QuerySession();
 
     /// <summary>
     ///     Open a read-only query session with custom options.

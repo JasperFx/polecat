@@ -1,4 +1,5 @@
 using System.Linq.Expressions;
+using JasperFx.Events.Documents;
 
 namespace Polecat;
 
@@ -6,7 +7,13 @@ namespace Polecat;
 ///     Extends IQuerySession with document mutation operations.
 ///     Operations are queued and not executed until SaveChangesAsync is called.
 /// </summary>
-public interface IDocumentOperations : IQuerySession
+/// <remarks>
+///     #443 / jasperfx#647: also Polecat's implementation of <see cref="IDocumentWriteOperations" />,
+///     the write half of the shared document contract. The split matters — a projection writes through
+///     this type and must never commit, which is why <c>SaveChangesAsync</c> lives one tier up on
+///     <see cref="IDocumentSession" /> / <see cref="IDocumentSessionOperations" /> rather than here.
+/// </remarks>
+public interface IDocumentOperations : IQuerySession, IDocumentWriteOperations
 {
     /// <summary>
     ///     Store (insert or update) a document.
@@ -43,12 +50,12 @@ public interface IDocumentOperations : IQuerySession
     /// <summary>
     ///     Delete a document by its Guid id. For soft-deleted types, marks as deleted.
     /// </summary>
-    void Delete<T>(Guid id) where T : class;
+    void Delete<T>(Guid id) where T : notnull;
 
     /// <summary>
     ///     Delete a document by its string id. For soft-deleted types, marks as deleted.
     /// </summary>
-    void Delete<T>(string id) where T : class;
+    void Delete<T>(string id) where T : notnull;
 
     /// <summary>
     ///     Delete a document by its int id. For soft-deleted types, marks as deleted.
@@ -68,12 +75,12 @@ public interface IDocumentOperations : IQuerySession
     /// <summary>
     ///     Permanently remove a document by its Guid id, regardless of soft-delete configuration.
     /// </summary>
-    void HardDelete<T>(Guid id) where T : class;
+    void HardDelete<T>(Guid id) where T : notnull;
 
     /// <summary>
     ///     Permanently remove a document by its string id, regardless of soft-delete configuration.
     /// </summary>
-    void HardDelete<T>(string id) where T : class;
+    void HardDelete<T>(string id) where T : notnull;
 
     /// <summary>
     ///     Permanently remove a document by its int id, regardless of soft-delete configuration.
@@ -88,18 +95,18 @@ public interface IDocumentOperations : IQuerySession
     /// <summary>
     ///     Delete all documents matching the predicate. For soft-deleted types, marks as deleted.
     /// </summary>
-    void DeleteWhere<T>(Expression<Func<T, bool>> predicate) where T : class;
+    void DeleteWhere<T>(Expression<Func<T, bool>> predicate) where T : notnull;
 
     /// <summary>
     ///     Permanently remove all documents matching the predicate, regardless of soft-delete configuration.
     /// </summary>
-    void HardDeleteWhere<T>(Expression<Func<T, bool>> predicate) where T : class;
+    void HardDeleteWhere<T>(Expression<Func<T, bool>> predicate) where T : notnull;
 
     /// <summary>
     ///     Reverse a soft delete for documents matching the given predicate.
     ///     Sets is_deleted = 0 and deleted_at = NULL.
     /// </summary>
-    void UndoDeleteWhere<T>(Expression<Func<T, bool>> predicate) where T : class;
+    void UndoDeleteWhere<T>(Expression<Func<T, bool>> predicate) where T : notnull;
 
     /// <summary>
     ///     Access data from another tenant and apply document or event updates to this

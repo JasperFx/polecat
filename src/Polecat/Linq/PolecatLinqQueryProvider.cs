@@ -28,7 +28,8 @@ namespace Polecat.Linq;
 ///     either avoid LINQ entirely (use the raw <c>session.QueryAsync</c> path with
 ///     SQL strings) or use source-generated compiled queries.
 /// </remarks>
-internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider
+internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
+    JasperFx.Events.Documents.IDocumentQueryExecutor
 {
     private readonly QuerySession _session;
     private readonly DocumentProviderRegistry _providers;
@@ -1527,4 +1528,35 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider
         throw new TimeoutException(
             $"Timed out after {timeout} waiting for projection data to become non-stale.");
     }
+
+    // ── #443 / jasperfx#647: IDocumentQueryExecutor ────────────────────────────────────────────────
+    //
+    // The shared document contract's async terminators (ToListAsync / FirstOrDefaultAsync /
+    // CountAsync / AnyAsync in JasperFx.Events.Documents) are EXTENSION methods over IQueryable<T>
+    // that dispatch through this interface on the query provider. They have to be extensions rather
+    // than interface members because real consumer code composes a query across statements and every
+    // System.Linq operator returns a plain IQueryable<T> -- member terminators would be unreachable
+    // after a single Where.
+    //
+    // Each of the four delegates straight to Polecat's own terminator, so the shared surface and
+    // PolecatQueryableExtensions are the same execution path rather than two that can drift. Note the
+    // deliberate absence of predicate overloads: the shared extensions compose Queryable.Where
+    // themselves and hand the narrowed queryable back down, so a store implements four primitives and
+    // nothing more.
+
+    Task<IReadOnlyList<T>> JasperFx.Events.Documents.IDocumentQueryExecutor.ExecuteToListAsync<T>(
+        IQueryable<T> queryable, CancellationToken token)
+        => queryable.ToListAsync(token);
+
+    Task<T?> JasperFx.Events.Documents.IDocumentQueryExecutor.ExecuteFirstOrDefaultAsync<T>(
+        IQueryable<T> queryable, CancellationToken token) where T : default
+        => queryable.FirstOrDefaultAsync(token);
+
+    Task<int> JasperFx.Events.Documents.IDocumentQueryExecutor.ExecuteCountAsync<T>(
+        IQueryable<T> queryable, CancellationToken token)
+        => queryable.CountAsync(token);
+
+    Task<bool> JasperFx.Events.Documents.IDocumentQueryExecutor.ExecuteAnyAsync<T>(
+        IQueryable<T> queryable, CancellationToken token)
+        => queryable.AnyAsync(token);
 }

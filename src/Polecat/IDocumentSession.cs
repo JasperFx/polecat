@@ -1,4 +1,5 @@
 using JasperFx.Events;
+using JasperFx.Events.Documents;
 using Polecat.Events;
 
 namespace Polecat;
@@ -7,7 +8,13 @@ namespace Polecat;
 ///     Full document session with mutation operations and SaveChanges.
 ///     This is the primary unit of work for Polecat.
 /// </summary>
-public interface IDocumentSession : IDocumentOperations, IStorageOperations, ITransactionParticipantRegistrar
+/// <remarks>
+///     #443 / jasperfx#647: also Polecat's implementation of <see cref="IDocumentSessionOperations" />
+///     — the committable tier of the shared document contract, which is the one a consumer holding a
+///     unit of work wants and a projection must not be handed.
+/// </remarks>
+public interface IDocumentSession : IDocumentOperations, IStorageOperations, ITransactionParticipantRegistrar,
+    IDocumentSessionOperations
 {
     /// <summary>
     ///     Read-only view of pending operations.
