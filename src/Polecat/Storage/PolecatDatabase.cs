@@ -194,11 +194,50 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
     // SubscriptionAgent publishes a plain Stopped right behind a Paused, and an unconditional write would
     // erase the reason microseconds after recording it. The CASE expressions keep that conditional in the
     // one statement rather than branching the SQL.
-    public async Task WriteExtendedProgressionAsync(ShardState state, CancellationToken token = default)
+    public Task WriteExtendedProgressionAsync(ShardState state, CancellationToken token = default)
+        => WriteExtendedProgressionAsync([state], token);
+
+    // #437 (marten 334283ee7 + marten#5167 / ef2c117db): the batch overload. JasperFx's
+    // ExtendedProgressionWriter coalesces a database's shard states and hands the whole flush over
+    // here; the default interface member just looped the single-state overload, and Polecat never
+    // overrode it — so a flush of N states rented N connections. Under per-tenant agent fan-out
+    // (agents = projections x tenants) that drove a sharded deployment straight into its server's
+    // connection ceiling (jasperfx#553).
+    //
+    // What this is NOT is one statement or one transaction, and both halves are deliberate:
+    //
+    //   * NOT one multi-row statement. Marten's first cut (334283ee7) was exactly that, and it built
+    //     a lock convoy (marten#5167): a multi-row UPDATE takes a row lock on EVERY row it matches
+    //     and holds all of them to commit, so one slow projection batch sitting on one progression
+    //     row stalled the telemetry write of every OTHER shard on the database, and transitively
+    //     whatever those shards had queued behind it. SQL Server is at least as exposed as
+    //     PostgreSQL here — arguably more, given lock escalation on a small hot table. Blast radius
+    //     has to be "the shard this write is about", not "every shard on this database".
+    //   * NOT one transaction. Each ExecuteNonQueryAsync below is its own implicit transaction, so
+    //     the loop never holds more than a single row lock at a time. The saving that jasperfx#553
+    //     asked for is the CONNECTION, and N statements on one connection cost one rent.
+    //
+    // Writes go in shard-name order so two writers racing over the same rows cannot take their locks
+    // in opposite orders and deadlock. The NOT EXISTS(... INTERSECT ...) guard makes replaying
+    // unchanged telemetry a zero-row UPDATE rather than a fresh row version — the SET list is
+    // unconditional, so without it every flush rewrote every matched row whether anything had changed
+    // or not, and each avoided rewrite is also an avoided row lock. INTERSECT is used rather than
+    // `IS DISTINCT FROM` because it treats NULLs as equal on every supported server version.
+    public async Task WriteExtendedProgressionAsync(IReadOnlyList<ShardState> states,
+        CancellationToken token = default)
     {
+        if (states.Count == 0)
+        {
+            return;
+        }
+
+        // The writer already hands these over sorted, but a direct caller need not, and the ordering
+        // is what keeps two racing writers from deadlocking against each other.
+        var ordered = states.OrderBy(x => x.ShardName, StringComparer.Ordinal).ToArray();
+
         await _resilience.ExecuteAsync(static async (s, ct) =>
         {
-            var (connectionString, progressionTable, shardState) = s;
+            var (connectionString, progressionTable, shardStates) = s;
             await using var conn = new SqlConnection(connectionString);
             await conn.OpenAsync(ct);
 
@@ -213,26 +252,58 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
                     failure_event_sequence = CASE WHEN @touchFailure = 1 THEN @failureSequence ELSE failure_event_sequence END,
                     failure_event_type = CASE WHEN @touchFailure = 1 THEN @failureEventType ELSE failure_event_type END,
                     failure_event_tenant_id = CASE WHEN @touchFailure = 1 THEN @failureTenantId ELSE failure_event_tenant_id END
-                WHERE name = @name;
+                WHERE name = @name
+                  AND NOT EXISTS (
+                      SELECT heartbeat, agent_status, pause_reason, running_on_node,
+                             failure_category, failure_event_sequence, failure_event_type, failure_event_tenant_id
+                      INTERSECT
+                      SELECT @heartbeat, @status, @reason, @node,
+                             CASE WHEN @touchFailure = 1 THEN @failureCategory ELSE failure_category END,
+                             CASE WHEN @touchFailure = 1 THEN @failureSequence ELSE failure_event_sequence END,
+                             CASE WHEN @touchFailure = 1 THEN @failureEventType ELSE failure_event_type END,
+                             CASE WHEN @touchFailure = 1 THEN @failureTenantId ELSE failure_event_tenant_id END
+                  );
                 """;
-            cmd.Parameters.AddVarChar("@name", shardState.ShardName);
-            cmd.Parameters.AddWithValue("@heartbeat", (object?)shardState.LastHeartbeat ?? DBNull.Value);
-            cmd.Parameters.AddWithValue("@status", (object?)shardState.AgentStatus ?? DBNull.Value);
-            cmd.Parameters.AddWithValue("@reason", (object?)shardState.PauseReason ?? DBNull.Value);
-            cmd.Parameters.AddWithValue("@node", (object?)shardState.RunningOnNode ?? DBNull.Value);
 
-            var failure = shardState.Failure;
-            var touchFailure = failure != null || shardState.Action == ShardAction.Started;
-            cmd.Parameters.AddWithValue("@touchFailure", touchFailure ? 1 : 0);
-            // The enum NAME, never the ordinal — reordering ShardFailureCategory must not silently
-            // re-label rows written by an older deployment.
-            cmd.Parameters.AddVarChar("@failureCategory", failure?.Category.ToString());
-            cmd.Parameters.AddWithValue("@failureSequence", (object?)failure?.Event?.Sequence ?? DBNull.Value);
-            cmd.Parameters.AddVarChar("@failureEventType", failure?.Event?.EventTypeName);
-            cmd.Parameters.AddVarChar("@failureTenantId", failure?.Event?.TenantId);
+            var name = cmd.Parameters.AddVarChar("@name", null);
+            var heartbeat = cmd.Parameters.AddWithValue("@heartbeat", DBNull.Value);
+            var status = cmd.Parameters.AddWithValue("@status", DBNull.Value);
+            var reason = cmd.Parameters.AddWithValue("@reason", DBNull.Value);
+            var node = cmd.Parameters.AddWithValue("@node", DBNull.Value);
+            var touchFailure = cmd.Parameters.AddWithValue("@touchFailure", 0);
+            var failureCategory = cmd.Parameters.AddVarChar("@failureCategory", null);
+            var failureSequence = cmd.Parameters.AddWithValue("@failureSequence", DBNull.Value);
+            var failureEventType = cmd.Parameters.AddVarChar("@failureEventType", null);
+            var failureTenantId = cmd.Parameters.AddVarChar("@failureTenantId", null);
 
-            await cmd.ExecuteNonQueryAsync(ct);
-        }, (_connectionString, _events.ProgressionTableName, state), token);
+            foreach (var shardState in shardStates)
+            {
+                var failure = shardState.Failure;
+
+                name.Value = shardState.ShardName;
+                heartbeat.Value = (object?)shardState.LastHeartbeat ?? DBNull.Value;
+                status.Value = (object?)shardState.AgentStatus ?? DBNull.Value;
+                reason.Value = (object?)shardState.PauseReason ?? DBNull.Value;
+                node.Value = (object?)shardState.RunningOnNode ?? DBNull.Value;
+
+                // #368 / jasperfx#565: the failure_* columns are written when the state carries a
+                // ShardFailure, CLEARED when a ShardAction.Started arrives without one, and otherwise
+                // LEFT ALONE — SubscriptionAgent publishes a plain Stopped right behind a Paused, and
+                // an unconditional write would erase the reason microseconds after recording it.
+                touchFailure.Value = failure != null || shardState.Action == ShardAction.Started ? 1 : 0;
+
+                // The enum NAME, never the ordinal — reordering ShardFailureCategory must not silently
+                // re-label rows written by an older deployment.
+                failureCategory.Value = (object?)failure?.Category.ToString() ?? DBNull.Value;
+                failureSequence.Value = (object?)failure?.Event?.Sequence ?? DBNull.Value;
+                failureEventType.Value = (object?)failure?.Event?.EventTypeName ?? DBNull.Value;
+                failureTenantId.Value = (object?)failure?.Event?.TenantId ?? DBNull.Value;
+
+                // One ExecuteNonQueryAsync per shard, deliberately: each is its own implicit
+                // transaction, so this loop never holds more than a single row lock at a time.
+                await cmd.ExecuteNonQueryAsync(ct);
+            }
+        }, (_connectionString, _events.ProgressionTableName, ordered), token);
     }
 
     public async Task<IReadOnlyList<ShardState>> AllProjectionProgress(CancellationToken token = default)
