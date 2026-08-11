@@ -410,21 +410,86 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
         return database is PolecatDatabase pdb ? pdb.ConnectionString : options.ConnectionString;
     }
 
+    /// <summary>
+    ///     The <see cref="ShardName" />s whose progression rows belong to <paramref name="subscriptionName" />
+    ///     — the registered shards of a projection or subscription, matched either by its name or by an
+    ///     exact shard identity. Empty when nothing is registered under that name.
+    /// </summary>
+    /// <remarks>
+    ///     polecat#436: this is the enumeration the three progression-delete paths lacked, and the reason
+    ///     they fell back on a prefix <c>LIKE</c>. It mirrors Marten's
+    ///     <c>DocumentStore.EventStore.RewindSubscriptionProgressAsync</c>/<c>DeleteProjectionProgressAsync</c>,
+    ///     which delete <c>agent.Name.Identity</c> per registered shard. Identities are only ever read off
+    ///     <see cref="ShardName.Identity" /> — the grammar has versioned and per-tenant forms
+    ///     (<c>Name:V2:All:tenant</c>) that string surgery gets wrong.
+    /// </remarks>
+    private ShardName[] ProgressionShardsFor(string subscriptionName)
+    {
+        // AllShards() spans async projections AND subscriptions, so this covers both callers of
+        // RewindSubscriptionProgressAsync. Matching on Identity as well as Name lets a caller name a
+        // single shard without dragging in its siblings.
+        var shards = Options.Projections.AllShards()
+            .Where(x => string.Equals(x.Name.Name, subscriptionName, StringComparison.OrdinalIgnoreCase)
+                        || x.Name.Identity == subscriptionName)
+            .Select(x => x.Name)
+            .ToArray();
+
+        if (shards.Length > 0)
+        {
+            return shards;
+        }
+
+        // Inline and Live projections are absent from AllShards() (it is async-only), but Polecat still
+        // tears their progression down around a rebuild — ask the source itself for its shards.
+        if (Options.Projections.TryFindProjection(subscriptionName, out var source))
+        {
+            return source.Shards().Select(x => x.Name).ToArray();
+        }
+
+        return [];
+    }
+
+    /// <summary>
+    ///     The <c>WHERE</c> predicate + parameters selecting exactly the progression rows owned by
+    ///     <paramref name="subscriptionName" />. See <see cref="ProgressionNameFilter" /> for why a bare
+    ///     prefix <c>LIKE</c> is never one of the options (polecat#436, twin of marten#5179).
+    /// </summary>
+    private (string Where, IReadOnlyList<KeyValuePair<string, string>> Parameters) ProgressionFilterFor(
+        string subscriptionName)
+    {
+        var shards = ProgressionShardsFor(subscriptionName);
+
+        // Registered → exact identities (plus each one's per-tenant rows, which are not enumerable).
+        // Unregistered → the name itself, where only the ':'-anchored, escaped pattern can match; an
+        // unknown name has to stay a no-op rather than an error, because teardown/rewind are also run
+        // against projections that were removed from the configuration since they last wrote progress.
+        var roots = shards.Length > 0
+            ? shards.Select(x => x.Identity).Distinct().ToArray()
+            : [subscriptionName];
+
+        return ProgressionNameFilter.For(roots);
+    }
+
     async Task IEventStore<IDocumentSession, IQuerySession>.RewindSubscriptionProgressAsync(
         IEventDatabase database, string subscriptionName, CancellationToken token, long? sequenceFloor)
     {
         var connStr = ResolveConnectionString(database, Options);
+        var filter = ProgressionFilterFor(subscriptionName);
         await Options.ResiliencePipeline.ExecuteAsync(static async (state, ct) =>
         {
-            var (connString, progressionTable, name, seqFloor) = state;
+            var (connString, progressionTable, name, seqFloor, where, filterParameters) = state;
             await using var conn = new SqlConnection(connString);
             await conn.OpenAsync(ct);
 
             if (seqFloor is null or 0)
             {
                 await using var cmd = conn.CreateCommand();
-                cmd.CommandText = $"DELETE FROM {progressionTable} WHERE name LIKE @name;";
-                cmd.Parameters.AddVarChar("@name", name + "%");
+                cmd.CommandText = $"DELETE FROM {progressionTable} WHERE {where};";
+                foreach (var parameter in filterParameters)
+                {
+                    cmd.Parameters.AddVarChar(parameter.Key, parameter.Value);
+                }
+
                 await cmd.ExecuteNonQueryAsync(ct);
             }
             else
@@ -441,7 +506,8 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
                 cmd.Parameters.AddWithValue("@seq", seqFloor.Value);
                 await cmd.ExecuteNonQueryAsync(ct);
             }
-        }, (connStr, Events.ProgressionTableName, subscriptionName, sequenceFloor), token);
+        }, (connStr, Events.ProgressionTableName, subscriptionName, sequenceFloor, filter.Where,
+            filter.Parameters), token);
     }
 
     async Task IEventStore<IDocumentSession, IQuerySession>.RewindAgentProgressAsync(
@@ -482,17 +548,22 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
         IEventDatabase database, string subscriptionName, CancellationToken token)
     {
         var connStr = ResolveConnectionString(database, Options);
+        var filter = ProgressionFilterFor(subscriptionName);
         await Options.ResiliencePipeline.ExecuteAsync(static async (state, ct) =>
         {
-            var (connString, progressionTable, name) = state;
+            var (connString, progressionTable, where, filterParameters) = state;
             await using var conn = new SqlConnection(connString);
             await conn.OpenAsync(ct);
 
             await using var cmd = conn.CreateCommand();
-            cmd.CommandText = $"DELETE FROM {progressionTable} WHERE name LIKE @name;";
-            cmd.Parameters.AddVarChar("@name", name + "%");
+            cmd.CommandText = $"DELETE FROM {progressionTable} WHERE {where};";
+            foreach (var parameter in filterParameters)
+            {
+                cmd.Parameters.AddVarChar(parameter.Key, parameter.Value);
+            }
+
             await cmd.ExecuteNonQueryAsync(ct);
-        }, (connStr, Events.ProgressionTableName, subscriptionName), token);
+        }, (connStr, Events.ProgressionTableName, filter.Where, filter.Parameters), token);
     }
 
     // #163 Phase 2 — per-tenant rebuild teardown (jasperfx#407 Phase 2b). A non-null tenantId scopes the
@@ -655,15 +726,21 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
             publishedTableNames = tables.Distinct().ToArray();
         }
 
+        var filter = ProgressionFilterFor(subscriptionName);
+
         await Options.ResiliencePipeline.ExecuteAsync(static async (state, ct) =>
         {
-            var (connString, progressionTable, name, tableNames) = state;
+            var (connString, progressionTable, where, filterParameters, tableNames) = state;
             await using var conn = new SqlConnection(connString);
             await conn.OpenAsync(ct);
 
             await using var cmd = conn.CreateCommand();
-            cmd.CommandText = $"DELETE FROM {progressionTable} WHERE name LIKE @name;";
-            cmd.Parameters.AddVarChar("@name", name + "%");
+            cmd.CommandText = $"DELETE FROM {progressionTable} WHERE {where};";
+            foreach (var parameter in filterParameters)
+            {
+                cmd.Parameters.AddVarChar(parameter.Key, parameter.Value);
+            }
+
             await cmd.ExecuteNonQueryAsync(ct);
 
             foreach (var tableName in tableNames)
@@ -672,6 +749,7 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
                 truncCmd.CommandText = $"DELETE FROM {tableName};";
                 await truncCmd.ExecuteNonQueryAsync(ct);
             }
-        }, (connStr, Events.ProgressionTableName, subscriptionName, publishedTableNames), token);
+        }, (connStr, Events.ProgressionTableName, filter.Where, filter.Parameters, publishedTableNames),
+            token);
     }
 }
