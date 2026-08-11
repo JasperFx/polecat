@@ -515,9 +515,9 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
         var shardIdentities = Array.Empty<string>();
         if (Options.Projections.TryFindProjection(subscriptionName, out var source))
         {
-            publishedTableNames = source.PublishedTypes()
-                .Select(t => GetProvider(t).QualifiedTableName)
-                .ToArray();
+            // #439: same collection as the store-global twin, so a composite's members and the
+            // composite's own declared clean-ups are both honoured here too.
+            publishedTableNames = TeardownTargetsFor(source);
 
             // The exact per-tenant progression rows to delete: each shard's identity composed for
             // this tenant (carries the trailing :tenantId).
@@ -604,6 +604,95 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
         }
     }
 
+    /// <summary>
+    ///     Every table a rebuild of <paramref name="source" /> must empty first: the document tables of
+    ///     the types it publishes, the <c>pc_natural_key_X</c> lookup of a <c>[NaturalKey]</c> aggregate,
+    ///     and whatever it declared through <c>AsyncOptions.CleanUps</c>.
+    /// </summary>
+    /// <remarks>
+    ///     #439 / marten#5175: a composite is torn down by walking its MEMBERS as well as itself. The
+    ///     parent's <c>PublishedTypes()</c> already fans out to the members, but each member carries its
+    ///     own <c>AsyncOptions</c>, and those are where a flat-table or view-type member declares the
+    ///     table it writes — a composite whose member declared
+    ///     <c>DeleteDataInTableOnTeardown</c> had that table left untouched while its progression row was
+    ///     deleted anyway, so the rebuild restarted at sequence zero and replayed onto the previous
+    ///     run's rows. The parent goes through the same collection rather than only having its
+    ///     progression dropped, so <c>composite.Options.DeleteViewTypeOnTeardown&lt;T&gt;()</c> and
+    ///     <c>TeardownDataOnRebuild = false</c> stop being silent no-ops on it.
+    /// </remarks>
+    private string[] TeardownTargetsFor(IProjectionSource<IDocumentSession, IQuerySession> source)
+    {
+        var tables = new List<string>();
+
+        foreach (var member in WithCompositeMembers(source))
+        {
+            CollectTeardownTargets(member, tables);
+        }
+
+        return tables.Distinct().ToArray();
+    }
+
+    /// <summary>
+    ///     <paramref name="source" /> followed by every projection registered inside it when it is a
+    ///     composite. Not recursive: a composite cannot contain a composite.
+    /// </summary>
+    private static IEnumerable<IProjectionSource<IDocumentSession, IQuerySession>> WithCompositeMembers(
+        IProjectionSource<IDocumentSession, IQuerySession> source)
+    {
+        yield return source;
+
+        if (source is JasperFx.Events.Projections.Composite.CompositeProjection<IDocumentSession, IQuerySession> composite)
+        {
+            foreach (var member in composite.AllProjections())
+            {
+                yield return member;
+            }
+        }
+    }
+
+    private void CollectTeardownTargets(IProjectionSource<IDocumentSession, IQuerySession> source,
+        List<string> tables)
+    {
+        tables.AddRange(source.PublishedTypes().Select(t => GetProvider(t).QualifiedTableName));
+
+        // #259: a [NaturalKey] aggregate maintains its pc_natural_key_X lookup table via the
+        // auto-registered NaturalKeyProjection on the inline-append path. Teardown of the parent
+        // projection must also wipe that table so the rebuild repopulates it from scratch
+        // (the rebuild re-emits the upserts via StartProjectionBatchAsync). DELETE FROM works the
+        // same as for the doc tables, so it rides the same loop as everything else.
+        if (source is JasperFx.Events.Aggregation.IAggregateProjection { NaturalKeyDefinition: not null } natural)
+        {
+            tables.Add(Events.NaturalKeyTableName(natural.NaturalKeyDefinition.AggregateType));
+        }
+
+        // A projection can also declare teardown targets explicitly through JasperFx's shared
+        // AsyncOptions surface -- DeleteDataInTableOnTeardown / DeleteViewTypeOnTeardown, which
+        // land in Options.CleanUps. PublishedTypes() alone does not cover those: a flat table
+        // projection publishes no document type at all, so before this its table was never wiped
+        // and a rebuild left behind every row whose events the replay could no longer see.
+        if (!source.Options.TeardownDataOnRebuild)
+        {
+            return;
+        }
+
+        foreach (var cleanUp in source.Options.CleanUps)
+        {
+            switch (cleanUp)
+            {
+                case DeleteTableData tableData:
+                    tables.Add(tableData.TableIdentifier);
+                    break;
+
+                // Normally already covered by PublishedTypes(), but a projection is free to
+                // register a view type it does not publish. DELETE FROM twice is harmless,
+                // and the Distinct() in the caller keeps it to once anyway.
+                case DeleteDocuments documents:
+                    tables.Add(GetProvider(documents.DocumentType).QualifiedTableName);
+                    break;
+            }
+        }
+    }
+
     private async Task TeardownProjectionStateAsync(IEventDatabase database, string subscriptionName,
         CancellationToken token)
     {
@@ -613,46 +702,7 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
         var publishedTableNames = Array.Empty<string>();
         if (Options.Projections.TryFindProjection(subscriptionName, out var source))
         {
-            var tables = source.PublishedTypes()
-                .Select(t => GetProvider(t).QualifiedTableName)
-                .ToList();
-
-            // #259: a [NaturalKey] aggregate maintains its pc_natural_key_X lookup table via the
-            // auto-registered NaturalKeyProjection on the inline-append path. Teardown of the parent
-            // projection must also wipe that table so the rebuild repopulates it from scratch
-            // (the rebuild re-emits the upserts via StartProjectionBatchAsync). DELETE FROM works the
-            // same as for the doc tables, so it rides the same loop below.
-            if (source is JasperFx.Events.Aggregation.IAggregateProjection { NaturalKeyDefinition: not null } natural)
-            {
-                tables.Add(Events.NaturalKeyTableName(natural.NaturalKeyDefinition.AggregateType));
-            }
-
-            // A projection can also declare teardown targets explicitly through JasperFx's shared
-            // AsyncOptions surface -- DeleteDataInTableOnTeardown / DeleteViewTypeOnTeardown, which
-            // land in Options.CleanUps. PublishedTypes() alone does not cover those: a flat table
-            // projection publishes no document type at all, so before this its table was never wiped
-            // and a rebuild left behind every row whose events the replay could no longer see.
-            if (source.Options.TeardownDataOnRebuild)
-            {
-                foreach (var cleanUp in source.Options.CleanUps)
-                {
-                    switch (cleanUp)
-                    {
-                        case DeleteTableData tableData:
-                            tables.Add(tableData.TableIdentifier);
-                            break;
-
-                        // Normally already covered by PublishedTypes(), but a projection is free to
-                        // register a view type it does not publish. DELETE FROM twice is harmless,
-                        // and the distinct below keeps it to once anyway.
-                        case DeleteDocuments documents:
-                            tables.Add(GetProvider(documents.DocumentType).QualifiedTableName);
-                            break;
-                    }
-                }
-            }
-
-            publishedTableNames = tables.Distinct().ToArray();
+            publishedTableNames = TeardownTargetsFor(source);
         }
 
         await Options.ResiliencePipeline.ExecuteAsync(static async (state, ct) =>
@@ -669,7 +719,15 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
             foreach (var tableName in tableNames)
             {
                 await using var truncCmd = conn.CreateCommand();
-                truncCmd.CommandText = $"DELETE FROM {tableName};";
+                // A projection's table is created lazily on first write, so on a first-ever rebuild it
+                // may not exist yet — the same guard the per-tenant twin has always carried. #439 makes
+                // this reachable far more often: the teardown target set now includes every composite
+                // member's tables and every declared clean-up, and a member that has never written
+                // anything has no table.
+                // #390: the same name occupies a string-literal position (OBJECT_ID) and a bare
+                // identifier position, which take different escaping.
+                truncCmd.CommandText =
+                    $"IF OBJECT_ID({SqlEscaping.Literal(tableName)}, 'U') IS NOT NULL DELETE FROM {tableName};";
                 await truncCmd.ExecuteNonQueryAsync(ct);
             }
         }, (connStr, Events.ProgressionTableName, subscriptionName, publishedTableNames), token);

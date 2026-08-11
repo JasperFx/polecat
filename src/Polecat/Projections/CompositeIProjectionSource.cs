@@ -31,6 +31,29 @@ internal class CompositeIProjectionSource :
         {
             Version = att.Version;
         }
+
+        // #439 / marten#5175: adopt the wrapped projection's options and published types when it has
+        // any. Without this the wrapper keeps the empty AsyncOptions it was constructed with, and a
+        // composite rebuild -- whose teardown reads each member's PublishedTypes() and Options.CleanUps
+        // -- queues NOTHING for this member. The rebuild then restarts from sequence zero (its
+        // progression row IS deleted) and replays onto the previous run's surviving rows, which is a
+        // silent double-count.
+        //
+        // Name and Version are deliberately NOT adopted: they compose this member's
+        // ShardName.Identity, and changing them would orphan every existing progression row.
+        //
+        // A raw IProjection that is not a ProjectionBase declares neither storage nor teardown, so
+        // there is nothing to adopt and nothing this wrapper can invent. Declare it at registration
+        // instead -- see PolecatCompositeProjection.Add(IProjection, Action&lt;AsyncOptions&gt;, int).
+        if (projection is ProjectionBase source)
+        {
+            replaceOptions(source.Options);
+
+            foreach (var publishedType in source.PublishedTypes())
+            {
+                RegisterPublishedType(publishedType);
+            }
+        }
     }
 
     public SubscriptionType Type => SubscriptionType.EventProjection;

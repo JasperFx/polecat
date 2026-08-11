@@ -47,6 +47,30 @@ public class PolecatCompositeProjection : CompositeProjection<IDocumentSession, 
     }
 
     /// <summary>
+    ///     Add a custom <see cref="IProjection" /> implementation to be executed within this composite,
+    ///     declaring what it writes so that a rebuild can tear that data down first.
+    /// </summary>
+    /// <remarks>
+    ///     #439 / marten#5175: a raw <see cref="IProjection" /> describes neither its storage nor its
+    ///     teardown, so a composite rebuild has nothing to delete for it and would replay onto surviving
+    ///     rows. Use this overload — typically
+    ///     <c>options =&gt; options.DeleteViewTypeOnTeardown&lt;MyView&gt;()</c> — for any custom
+    ///     projection that writes documents. A member that derives from <c>ProjectionBase</c> already
+    ///     carries its own options and needs no declaration here.
+    /// </remarks>
+    /// <param name="projection">The custom IProjection implementation.</param>
+    /// <param name="configure">Configures the member's async options, principally its teardown rules.</param>
+    /// <param name="stageNumber">Optionally move the execution to a later stage. The default is 1.</param>
+    public void Add(IProjection projection, Action<AsyncOptions> configure, int stageNumber = 1)
+    {
+        ArgumentNullException.ThrowIfNull(configure);
+
+        var wrapper = new CompositeIProjectionSource(projection);
+        configure(wrapper.Options);
+        StageFor(stageNumber).Add(wrapper);
+    }
+
+    /// <summary>
     ///     Add a projection source by type to be executed within this composite.
     /// </summary>
     public void Add<T>(int stageNumber = 1) where T : IProjectionSource<IDocumentSession, IQuerySession>, new()
