@@ -65,7 +65,22 @@ public sealed class StreamPagedByCursor<T> : IResult, IEndpointMetadataProvider
     {
         ArgumentNullException.ThrowIfNull(httpContext);
 
-        var page = await _queryable.ToJsonPageByCursorAsync(_cursor, _pageSize, httpContext.RequestAborted);
+        Polecat.Linq.CursorPaging.CursorPageResult page;
+        try
+        {
+            page = await _queryable.ToJsonPageByCursorAsync(_cursor, _pageSize, httpContext.RequestAborted);
+        }
+        catch (ArgumentException e)
+        {
+            // #438 / marten#5029: the cursor is CLIENT input, so a malformed, unversioned, or
+            // wrong-arity one is a bad request — not a server fault. Without this the ArgumentException
+            // from CursorPagination.Decode escaped the endpoint as a 500, which tells an API consumer
+            // that the server broke when in fact they sent a value it never issued.
+            httpContext.Response.StatusCode = StatusCodes.Status400BadRequest;
+            httpContext.Response.ContentType = "text/plain";
+            await httpContext.Response.WriteAsync(e.Message, httpContext.RequestAborted);
+            return;
+        }
 
         httpContext.Response.StatusCode = OnFoundStatus;
         httpContext.Response.ContentType = ContentType;
@@ -101,5 +116,9 @@ public sealed class StreamPagedByCursor<T> : IResult, IEndpointMetadataProvider
 
         builder.Metadata.Add(new ProducesResponseTypeMetadata(
             StatusCodes.Status200OK, typeof(object), ["application/json"]));
+
+        // #438 / marten#5029: a malformed cursor is a client error, and OpenAPI should say so.
+        builder.Metadata.Add(new ProducesResponseTypeMetadata(
+            StatusCodes.Status400BadRequest, typeof(void), ["text/plain"]));
     }
 }
