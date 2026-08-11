@@ -1,3 +1,4 @@
+using JasperFx.Events.Documents;
 using Polecat.Batching;
 using Polecat.Events;
 using Polecat.Linq;
@@ -9,7 +10,14 @@ namespace Polecat;
 /// <summary>
 ///     Read-only session for loading documents by id.
 /// </summary>
-public interface IQuerySession : IAsyncDisposable
+/// <remarks>
+///     #443 / jasperfx#647: this is also Polecat's implementation of
+///     <see cref="IDocumentReadOperations" />, the store-agnostic read half of the small document
+///     surface a consumer (Wolverine, CritterWatch) needs alongside the event store. Polecat's own
+///     members satisfy it directly rather than through an adapter, so a caller holding an
+///     <see cref="IQuerySession" /> already has the shared contract and nothing has to be wrapped.
+/// </remarks>
+public interface IQuerySession : IAsyncDisposable, IDocumentReadOperations
 {
     /// <summary>
     ///     The tenant id for this session.
@@ -128,12 +136,12 @@ public interface IQuerySession : IAsyncDisposable
     /// <summary>
     ///     Load a document by its id. Returns null if not found.
     /// </summary>
-    Task<T?> LoadAsync<T>(Guid id, CancellationToken token = default) where T : class;
+    Task<T?> LoadAsync<T>(Guid id, CancellationToken token = default) where T : notnull;
 
     /// <summary>
     ///     Load a document by its string id. Returns null if not found.
     /// </summary>
-    Task<T?> LoadAsync<T>(string id, CancellationToken token = default) where T : class;
+    Task<T?> LoadAsync<T>(string id, CancellationToken token = default) where T : notnull;
 
     /// <summary>
     ///     Load multiple documents by their ids.
@@ -158,7 +166,15 @@ public interface IQuerySession : IAsyncDisposable
     /// <summary>
     ///     Start a LINQ query against documents of type T.
     /// </summary>
-    IPolecatQueryable<T> Query<T>() where T : class;
+    IPolecatQueryable<T> Query<T>() where T : notnull;
+
+    /// <summary>
+    ///     #443: the shared contract's <c>Query&lt;T&gt;()</c> returns <see cref="IQueryable{T}" />, and
+    ///     C# does not allow a covariant return type to implement an interface member implicitly — so the
+    ///     narrower <see cref="IPolecatQueryable{T}" /> above cannot satisfy it directly. One explicit
+    ///     implementation here covers every session type rather than repeating it in each.
+    /// </summary>
+    IQueryable<T> IDocumentReadOperations.Query<T>() => Query<T>();
 
     /// <summary>
     ///     Create a batch query to execute multiple Load/Query operations in a single roundtrip.

@@ -31,7 +31,7 @@ internal class IdentityMapDocumentSession : DocumentSessionBase
         typeMap[id] = document;
     }
 
-    protected override async Task<T?> LoadInternalAsync<T>(object id, CancellationToken token) where T : class
+    protected override async Task<T?> LoadInternalAsync<T>(object id, CancellationToken token) where T : default
     {
         // Check identity map first
         if (_identityMap.TryGetValue(typeof(T), out var typeMap) && typeMap.TryGetValue(id, out var cached))

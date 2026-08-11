@@ -39,3 +39,23 @@ public class activity_correlation_compliance
 
 public class string_identity_single_stream_compliance
     : StringIdentitySingleStreamCompliance<PolecatComplianceFixture, IDocumentSession, IQuerySession>;
+
+/*
+ * #443 / jasperfx#647 -- the DOCUMENT compliance suites, the slice JasperFx.Events did not cover
+ * before. Same model as the event sourcing enrollment above: the behavior lives once in
+ * JasperFx.Events.ComplianceTests and runs here against Polecat through the shared
+ * JasperFx.Events.Documents contracts, which Polecat's own session types implement directly rather
+ * than through an adapter.
+ */
+
+public class polecat_document_session_compliance
+    : DocumentSessionCompliance<PolecatDocumentComplianceFixture>;
+
+public class polecat_document_load_and_store_compliance
+    : DocumentLoadAndStoreCompliance<PolecatDocumentComplianceFixture>;
+
+public class polecat_document_delete_compliance
+    : DocumentDeleteCompliance<PolecatDocumentComplianceFixture>;
+
+public class polecat_document_query_compliance
+    : DocumentQueryCompliance<PolecatDocumentComplianceFixture>;
