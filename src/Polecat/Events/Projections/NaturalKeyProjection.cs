@@ -105,6 +105,15 @@ internal class NaturalKeyProjection : IInlineProjection<IDocumentSession>
         var unwrapped = _definition.Unwrap(naturalKeyValue);
         if (unwrapped == null) return;
 
+        // #435 / marten#5041: retire any OTHER key this stream still owns before writing the current
+        // one. The upsert below only ever MERGEs, so without this a renamed aggregate leaves its
+        // previous value behind — still resolving to the same stream, and permanently occupying that
+        // slot in the primary key. Queued ahead of the upsert; WorkTracker preserves order, so a
+        // create-then-rename inside one SaveChangesAsync still lands on the newest value.
+        sessionBase.WorkTracker.Add(
+            new NaturalKeyRetireOperation(_qualifiedTableName, unwrapped, streamId, _isGuidStream,
+                _isConjoined, tenantId));
+
         sessionBase.WorkTracker.Add(
             new NaturalKeyUpsertOperation(_qualifiedTableName, unwrapped, streamId, _isGuidStream,
                 _isConjoined, tenantId));
