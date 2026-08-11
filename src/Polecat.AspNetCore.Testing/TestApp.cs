@@ -89,6 +89,27 @@ public static class TestApp
                 new StreamPagedByCursor<StreamingIssue>(
                     session.Query<StreamingIssue>().OrderBy(x => x.Number).ThenBy(x => x.Id), cursor, pageSize));
 
+        // #438 regression matrix (marten#5120/#5157/#5158/#5166) --------------------------------
+        //
+        // A REVISIONED document: Polecat's version column is bigint for every document, so the
+        // Guid-only ETag gate that marten#5120 reported cannot exist here -- but the point is to pin
+        // that, not to assume it.
+        app.MapGet("/api/revisioned/{id:guid}", (Guid id, IQuerySession session) =>
+            new StreamOne<RevisionedIssue>(session.Query<RevisionedIssue>().Where(x => x.Id == id)));
+
+        // A Select() PROJECTION through StreamOne (marten#5158): the ETag source column must survive
+        // the projection rather than the query throwing or the alias being lost.
+        app.MapGet("/api/issues-projected/{id:guid}", (Guid id, IQuerySession session) =>
+            new StreamOne<IssueTitle>(session.Query<StreamingIssue>()
+                .Where(x => x.Id == id)
+                .Select(x => new IssueTitle { Title = x.Title })));
+
+        // The same read through a TRACKING (identity map) session (marten#5166): the payload must be
+        // the document body, never its id.
+        app.MapGet("/api/issues-tracked/{id:guid}", (Guid id, IDocumentStore store) =>
+            new StreamOne<StreamingIssue>(
+                store.IdentitySession().Query<StreamingIssue>().Where(x => x.Id == id)));
+
         // #370 StreamEventState endpoint — stream metadata (version/timestamps/archived) or 404
         app.MapGet("/api/streams/{id:guid}/state", (Guid id, IQuerySession session) =>
             new StreamEventState(session, id));
@@ -136,6 +157,21 @@ public partial class StreamingQuestParty
         new() { Name = e.Name, MemberCount = 0 };
 
     public void Apply(StreamingMembersJoined e) => MemberCount += e.Members.Length;
+}
+
+// #438 / marten#5120: a numerically revisioned document. IRevisioned puts the mapping on
+// UseNumericRevisions, which is the shape a projection-target read model has.
+public class RevisionedIssue : JasperFx.IRevisioned
+{
+    public Guid Id { get; set; }
+    public string Title { get; set; } = "";
+    public int Version { get; set; }
+}
+
+// #438 / marten#5158: the target of a Select() projection over StreamingIssue.
+public class IssueTitle
+{
+    public string Title { get; set; } = "";
 }
 
 public record StreamingQuestStarted(string Name);
