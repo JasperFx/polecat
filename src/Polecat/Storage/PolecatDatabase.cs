@@ -306,30 +306,78 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
         }, (_connectionString, _events.ProgressionTableName, ordered), token);
     }
 
-    public async Task<IReadOnlyList<ShardState>> AllProjectionProgress(CancellationToken token = default)
+    public Task<IReadOnlyList<ShardState>> AllProjectionProgress(CancellationToken token = default)
+        => AllProjectionProgress(tenantId: null, token);
+
+    /// <summary>
+    ///     #441: the tenant-filtered progression read. The JasperFx abstraction has carried this overload
+    ///     since jasperfx#407 with a default that <em>throws</em> for a non-null tenant, and Polecat had
+    ///     never overridden it — so every consumer reading progression through the shared contracts
+    ///     (per-tenant progression views, per-tenant rebuild scoping) simply could not scope to a tenant on
+    ///     the SQL Server flavour.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         A null <paramref name="tenantId" /> is store-global and returns every row, which is the
+    ///         tenant-less overload's behaviour unchanged.
+    ///     </para>
+    ///     <para>
+    ///         Rows are matched <b>structurally</b>, by parsing each name back into a
+    ///         <see cref="ShardName" /> and comparing its <c>TenantId</c> — never by testing whether the
+    ///         name ends with the tenant id. That is the marten#5179 lesson: the shard grammar has
+    ///         versioned and tenant-scoped forms (<c>Name:V2:All:tenant</c>), a tenant id may legally
+    ///         contain a <c>:</c> or end with another tenant's id as a suffix, and a string test gets all
+    ///         of those wrong in a way that silently returns another tenant's progress.
+    ///     </para>
+    ///     <para>
+    ///         The SQL <c>LIKE</c> is a narrowing pass only, so a fleet with thousands of tenants does not
+    ///         drag every projection x tenant row across the wire to keep a handful. Its pattern is
+    ///         escaped and anchored on the <c>:</c> separator (see <c>ProgressionNameFilter</c>), and the
+    ///         <c>ShardName.TryParse</c> check above remains the authority on what actually matches.
+    ///     </para>
+    /// </remarks>
+    public async Task<IReadOnlyList<ShardState>> AllProjectionProgress(string? tenantId,
+        CancellationToken token = default)
     {
         return await _resilience.ExecuteAsync(static async (state, ct) =>
         {
-            var (connectionString, events) = state;
+            var (connectionString, events, tenant) = state;
             var list = new List<ShardState>();
 
             await using var conn = new SqlConnection(connectionString);
             await conn.OpenAsync(ct);
 
             await using var cmd = conn.CreateCommand();
-            if (events.EnableExtendedProgressionTracking)
+            var columns = events.EnableExtendedProgressionTracking
+                ? "name, last_seq_id, heartbeat, agent_status, pause_reason, running_on_node, warning_behind_threshold, critical_behind_threshold, failure_category, failure_event_sequence, failure_event_type, failure_event_tenant_id"
+                : "name, last_seq_id";
+
+            if (tenant == null)
             {
-                cmd.CommandText = $"SELECT name, last_seq_id, heartbeat, agent_status, pause_reason, running_on_node, warning_behind_threshold, critical_behind_threshold, failure_category, failure_event_sequence, failure_event_type, failure_event_tenant_id FROM {events.ProgressionTableName};";
+                cmd.CommandText = $"SELECT {columns} FROM {events.ProgressionTableName};";
             }
             else
             {
-                cmd.CommandText = $"SELECT name, last_seq_id FROM {events.ProgressionTableName};";
+                cmd.CommandText =
+                    $"SELECT {columns} FROM {events.ProgressionTableName} WHERE name LIKE @tenantSuffix ESCAPE '{ProgressionNameFilter.LikeEscapeCharacter}';";
+                cmd.Parameters.AddVarChar("@tenantSuffix",
+                    "%:" + ProgressionNameFilter.EscapeLikePattern(tenant));
             }
 
             await using var reader = await cmd.ExecuteReaderAsync(ct);
             while (await reader.ReadAsync(ct))
             {
                 var name = reader.GetString(0);
+
+                // The LIKE above only narrows. Whether a row genuinely belongs to this tenant is decided
+                // structurally, on the parsed ShardName — a tenant id containing a ':' or ending with
+                // another tenant's id would fool any string test (marten#5179).
+                if (tenant != null &&
+                    !(ShardName.TryParse(name, out var parsed) && parsed?.TenantId == tenant))
+                {
+                    continue;
+                }
+
                 var seq = reader.GetInt64(1);
                 var shardState = new ShardState(name, seq);
 
@@ -358,7 +406,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
             }
 
             return (IReadOnlyList<ShardState>)list;
-        }, (_connectionString, _events), token);
+        }, (_connectionString, _events, tenantId), token);
     }
 
     /// <summary>
