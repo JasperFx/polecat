@@ -252,12 +252,16 @@ public class natural_key_inline_guid_tests : OneOffConfigurationsContext
             byNewKey.Id.ShouldBe(streamId);
         }
 
-        // Fetch by old key still works because the old mapping row persists
+        // #435 / marten#5041: the superseded key no longer resolves. This block previously asserted the
+        // opposite — "fetch by old key still works because the old mapping row persists" — which pinned
+        // the defect rather than the intent: a stream has exactly one *current* natural key, and leaving
+        // the old row behind meant the retired alias resolved forever while permanently occupying its
+        // slot in pc_natural_key_X's primary key, so no other stream could ever claim it.
         {
             await using var session4 = theStore.LightweightSession();
-            var byOldKey = await session4.Events.FetchForWriting<OrderAggregate, OrderNumber>(originalKey, TestContext.Current.CancellationToken);
-            byOldKey.Aggregate.ShouldNotBeNull();
-            byOldKey.Id.ShouldBe(streamId);
+            await Should.ThrowAsync<InvalidOperationException>(
+                session4.Events.FetchForWriting<OrderAggregate, OrderNumber>(originalKey,
+                    TestContext.Current.CancellationToken));
         }
     }
 
