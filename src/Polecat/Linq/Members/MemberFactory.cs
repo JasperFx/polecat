@@ -78,7 +78,15 @@ internal class MemberFactory : IMemberResolver
             return new QueryableMember(rawLocator, rawLocator, memberType, isBoolean: true);
         }
 
-        var sqlType = GetSqlType(underlying);
+        // A strong-typed-id wrapper on a member other than Id (the Id member is short-circuited to
+        // IdMember above). Vogen and StronglyTypedId both emit a System.Text.Json converter that
+        // writes the inner value, so the JSON holds a scalar and the member is typed, cast and indexed
+        // exactly like its inner type. Only the CLR value in the predicate differs — it is still the
+        // wrapper, which SqlClient cannot bind, so ValueTypeMember unwraps it.
+        var valueType = ValueTypes.TryResolve(underlying, allowReferenceTypes: true);
+        var storedType = valueType?.SimpleType ?? underlying;
+
+        var sqlType = GetSqlType(storedType);
         var typedLocator = BuildTypedLocator(jsonPath, rawLocator, sqlType);
 
         // #223: if a Default-casing Index(...) covers this member, emit the EXACT computed-column
@@ -86,12 +94,14 @@ internal class MemberFactory : IMemberResolver
         // the predicate to the persisted computed column and can seek the index. Without this the
         // translator's expression (e.g. bare JSON_VALUE for a string, CAST(... AS datetimeoffset)
         // for a date) never lines up with the index column, so the index is dead weight.
-        if (TryGetIndexedLocator(jsonPath, underlying, out var indexedLocator))
+        if (TryGetIndexedLocator(jsonPath, storedType, out var indexedLocator))
         {
             typedLocator = indexedLocator;
         }
 
-        return new QueryableMember(rawLocator, typedLocator, memberType);
+        return valueType != null
+            ? new ValueTypeMember(rawLocator, typedLocator, memberType, valueType)
+            : new QueryableMember(rawLocator, typedLocator, memberType);
     }
 
     private bool TryGetIndexedLocator(string jsonPath, Type underlying, out string locator)
