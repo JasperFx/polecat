@@ -20,14 +20,7 @@ internal class ScalarListHandler<T> : IQueryHandler<IReadOnlyList<T>>
             {
                 var value = reader.GetValue(0);
                 var targetType = Nullable.GetUnderlyingType(typeof(T)) ?? typeof(T);
-                if (targetType.IsEnum)
-                {
-                    list.Add((T)Enum.ToObject(targetType, value));
-                }
-                else
-                {
-                    list.Add((T)Convert.ChangeType(value, targetType));
-                }
+                list.Add((T)ScalarConversion.Convert(value, targetType));
             }
         }
 

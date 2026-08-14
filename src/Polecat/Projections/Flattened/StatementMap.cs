@@ -3,6 +3,7 @@ using System.Linq.Expressions;
 using System.Reflection;
 using JasperFx.Events;
 using Polecat.Internal;
+using Polecat.Storage;
 using Weasel.Core;
 using Weasel.SqlServer.Tables;
 
@@ -257,6 +258,13 @@ public class StatementMap<TEvent> : IFlatTableEventHandler
     private static string MapToSqlType(Type type)
     {
         var underlying = Nullable.GetUnderlyingType(type) ?? type;
+
+        // A strong-typed-id wrapper column is stored as its inner primitive, the same way a document's
+        // wrapper id is. Without this the wrapper falls through to nvarchar(max) and the MERGE then
+        // fails at execution with "No mapping exists from object type ...". See marten#4290.
+        var wrapper = ValueTypes.TryResolve(underlying, allowReferenceTypes: true);
+        if (wrapper != null) underlying = wrapper.SimpleType;
+
         return underlying switch
         {
             _ when underlying == typeof(Guid) => "uniqueidentifier",

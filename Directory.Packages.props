@@ -274,8 +274,12 @@
         <PackageVersion Include="Weasel.SqlServer" Version="9.24.0" />
         <PackageVersion Include="Weasel.Storage" Version="9.24.0" />
 
-        <!-- Strongly typed IDs -->
+        <!-- Strongly typed IDs. Both generators are test-only: they prove Polecat's value-type id
+             support against the two libraries Marten's ValueTypeTests exercise. StronglyTypedId emits
+             a record struct with a public ctor; Vogen emits a struct with a private ctor plus static
+             From/TryFrom factories, which is the "builder" shape of JasperFx's ValueTypeInfo. -->
         <PackageVersion Include="StronglyTypedId" Version="1.0.0-beta08" />
+        <PackageVersion Include="Vogen" Version="7.0.0" />
 
         <!-- Source generators (matched to JasperFx.Events above) -->
         <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.47.0" />

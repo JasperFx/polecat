@@ -42,13 +42,17 @@ Numeric IDs are automatically assigned using the [HiLo algorithm](#hilo-sequence
 
 ## Strongly Typed IDs
 
-Polecat supports [strong typed identifiers](https://en.wikipedia.org/wiki/Strongly_typed_identifier) using immutable `struct` types that wrap one of the supported primitive ID types (`Guid`, `string`, `int`, or `long`).
+Polecat supports [strong typed identifiers](https://en.wikipedia.org/wiki/Strongly_typed_identifier) —
+types that wrap one of the supported primitive ID types (`Guid`, `string`, `int`, or `long`) so that an
+`OrderId` can never be passed where a `CustomerId` was meant.
 
 ### Supported Patterns
 
-Polecat automatically detects wrapper types via JasperFx's `ValueTypeInfo`. Two patterns are supported:
+Polecat detects wrapper types through JasperFx's `ValueTypeInfo`. A type qualifies when it exposes
+exactly one public, readable property wrapping a supported inner type, plus a way to build it from that
+value — either a matching constructor or a public static factory method. Two shapes follow:
 
-**1. Record struct with constructor (recommended):**
+**1. Record struct with constructor:**
 
 ```cs
 public record struct OrderId(Guid Value);
@@ -60,7 +64,7 @@ public class Order
 }
 ```
 
-**2. Struct with static builder method:**
+**2. Struct with a static builder method:**
 
 ```cs
 public readonly struct TaskId
@@ -77,23 +81,67 @@ public class TaskDoc
 }
 ```
 
-These patterns are compatible with libraries like [Vogen](https://github.com/SteveDunn/Vogen) and [StronglyTypedId](https://github.com/andrewlock/StronglyTypedId).
+There is **no naming requirement** — neither the wrapper type nor its inner property has to be called
+anything in particular. `Value` and `From` are simply the conventional names, and the ones both source
+generators below emit.
 
-### Supported Inner Types
+### Using Vogen or StronglyTypedId
 
-| Wrapper Pattern | ID Generation |
+Hand-rolled wrappers work, but a generator gives you equality, comparison, `ToString()`, and — most
+importantly — a `System.Text.Json` converter that writes the *inner* value. That last part is what lets
+Polecat treat the member as a scalar in SQL. Polecat's test suite exercises both libraries directly.
+
+[Vogen](https://github.com/SteveDunn/Vogen) emits a private constructor plus a static `From` factory:
+
+```cs
+[ValueObject<Guid>]
+public readonly partial struct InvoiceId;
+
+public class Invoice
+{
+    // Polecat will use this as the Invoice's identity
+    public InvoiceId? Id { get; set; }
+    public string Name { get; set; } = "";
+}
+```
+
+[StronglyTypedId](https://github.com/andrewlock/StronglyTypedId) emits a public constructor:
+
+```cs
+[StronglyTypedId(Template.Int)]
+public readonly partial struct OrderId;
+
+public class Order
+{
+    public OrderId Id { get; set; }
+    public string Name { get; set; } = "";
+}
+```
+
+::: warning
+**Vogen identities must be declared `Nullable`** — `InvoiceId? Id`, as above. Vogen forbids an
+uninitialized value object, so reading `.Value` off a `default` instance throws. Polecat inspects the
+identity to decide whether one needs assigning, and on a non-nullable Vogen id that inspection throws
+before Polecat can see that the id was unset. StronglyTypedId permits `default` and so can be declared
+either way.
+:::
+
+### Identity Assignment
+
+| Inner type | ID generation |
 | --- | --- |
-| `record struct InvoiceId(Guid Value)` | Auto-assigned sequential Guid |
-| `record struct OrderItemId(int Value)` | HiLo sequence |
-| `record struct IssueId(long Value)` | HiLo sequence |
-| `record struct TeamId(string Value)` | Manual assignment required |
+| `Guid` | Auto-assigned sequential `Guid` |
+| `int` | [HiLo sequence](#hilo-sequences) |
+| `long` | [HiLo sequence](#hilo-sequences) |
+| `string` | You assign it — Polecat never generates string identities |
+
+The identity column is created with the **inner** type (`uniqueidentifier`, `int`, `bigint`,
+`varchar`), not a serialized form of the wrapper.
 
 ### Usage
 
-Strong-typed IDs work transparently with all Polecat operations:
-
 ```cs
-// Store with auto-assigned Guid wrapper
+// Store with an auto-assigned Guid wrapper
 var order = new Order { Name = "Widget" };
 session.Store(order);
 await session.SaveChangesAsync();
@@ -102,14 +150,19 @@ await session.SaveChangesAsync();
 // Load by inner value
 var loaded = await query.LoadAsync<Order>(order.Id.Value);
 
-// LINQ queries work with the wrapper type directly
+// LINQ queries take the wrapper type directly
 var result = await query.Query<Order>()
     .Where(x => x.Id == order.Id)
     .FirstOrDefaultAsync();
 
-// IsOneOf for multiple IDs
+// IsOneOf for multiple ids
 var results = await query.Query<Order>()
     .Where(x => x.Id.IsOneOf(id1, id2, id3))
+    .ToListAsync();
+
+// Select projects the wrapper back out
+var ids = await query.Query<Order>()
+    .Select(x => x.Id)
     .ToListAsync();
 
 // Delete by inner value
@@ -119,20 +172,75 @@ session.Delete<Order>(order.Id.Value);
 var exists = await query.CheckExistsAsync<Order>(order.Id.Value);
 ```
 
-All of the following operations are supported:
+Supported across:
 
-- `Store()` / `Insert()` / `Update()` with automatic ID assignment
-- `LoadAsync()` by inner value
+- `Store()` / `Insert()` / `Update()`, with automatic identity assignment
+- `LoadAsync()` and `LoadManyAsync()` by inner value
 - `Delete()` by inner value or by document
 - `CheckExistsAsync()` by inner value
-- LINQ `Where`, `OrderBy`, `IsOneOf`
+- LINQ `Where`, `OrderBy` / `OrderByDescending`, `IsOneOf`, `Select`, `Count`
+- Paging via `ToPagedListAsync()`
 - Identity map sessions
 - Bulk insert via `BulkInsertAsync()`
-- Batch queries
+- Batched queries — `Load`, `LoadMany`, `CheckExists`, and `Query<T>()`
+- Aggregate identities in event projections
+
+::: warning
+`LoadAsync()`, `Delete()`, and `CheckExistsAsync()` take the **inner** value (`order.Id.Value`), not the
+wrapper. Polecat has no `LoadAsync<T>(object id)` overload; if you pass the wrapper the call will not
+compile.
+:::
+
+### Value Types on Other Members
+
+A wrapper is not limited to the identity. Any document member can be one, and it stays queryable:
+
+```cs
+[ValueObject<Guid>]
+public readonly partial struct TeacherId;
+
+public class ClassRoom
+{
+    public Guid Id { get; set; }
+    public TeacherId Teacher { get; set; }
+    public string Subject { get; set; } = "";
+}
+
+// Filter, order and project by the wrapper
+var rooms = await query.Query<ClassRoom>()
+    .Where(x => x.Teacher == teacherId)
+    .OrderBy(x => x.Teacher)
+    .ToListAsync();
+
+var teacherIds = await query.Query<ClassRoom>()
+    .Select(x => x.Teacher)
+    .ToListAsync();
+```
+
+This works because the generator's JSON converter writes the inner value, so the member lands in the
+document JSON as a bare scalar. Polecat types the SQL from the inner type and unwraps the parameter
+for you. The same unwrapping applies to:
+
+- **Computed indexes** — `Schema.For<ClassRoom>().Index(x => x.Teacher)` creates a
+  `uniqueidentifier` computed column, and the LINQ predicate matches it so the index stays seekable
+- **Flat table projections** — `map.Map(x => x.Account)` creates a column of the inner type
 
 ::: tip
-For strongly typed Guid IDs, Polecat will auto-assign the inner Guid value if it's empty, just like regular Guid IDs.
+A wrapper written by hand, with no JSON converter, serializes as a nested object (`{"value": ...}`) and
+will **not** match a scalar predicate. Use Vogen or StronglyTypedId for any value type you intend to
+query on a non-identity member.
 :::
+
+A type with more than one public property — `record struct Money(decimal Amount, Guid CurrencyId)` —
+is not a strong typed identifier and is left alone as a nested JSON object, so `x.Amount.CurrencyId`
+keeps resolving as a nested path.
+
+### Not Currently Supported
+
+- No `LoadAsync<T>(object id)` overload taking the wrapper itself
+- No `Include()` LINQ operator
+- No compiled queries
+- F# single-case discriminated unions as identities
 
 ## HiLo Sequences
 

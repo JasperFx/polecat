@@ -17,6 +17,7 @@ internal class ScalarHandler<T> : IQueryHandler<T>
         }
 
         var value = reader.GetValue(0);
-        return (T)Convert.ChangeType(value, typeof(T));
+        var targetType = Nullable.GetUnderlyingType(typeof(T)) ?? typeof(T);
+        return (T)ScalarConversion.Convert(value, targetType);
     }
 }

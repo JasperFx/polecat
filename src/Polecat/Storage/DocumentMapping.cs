@@ -23,8 +23,9 @@ namespace Polecat.Storage;
     Justification = "Class-level: the id accessors close JasperFx's LambdaBuilder / ValueTypeInfo generic converters over the runtime document + id types via MakeGenericMethod once per document type at registration — the same FEC accessor helpers and runtime generic-closing Marten's closed-shape storage / ProviderGraph use. AOT consumers supply a source-generator-backed serializer per the AOT publishing guide; the reflective serialize path is already the gating RUC/RDC surface.")]
 internal class DocumentMapping
 {
-    private static readonly HashSet<Type> SupportedIdTypes =
-        [typeof(Guid), typeof(string), typeof(int), typeof(long)];
+    // The same set that bounds what a strong-typed-id wrapper may wrap — an id and a wrapper's inner
+    // value have to be storable in exactly the same column types.
+    private static readonly HashSet<Type> SupportedIdTypes = ValueTypes.SupportedInnerTypes;
 
     private readonly PropertyInfo _idProperty;
     private readonly Type _documentType;
@@ -168,7 +169,12 @@ internal class DocumentMapping
             current = prop.PropertyType;
         }
 
-        return Nullable.GetUnderlyingType(current) ?? current;
+        var resolved = Nullable.GetUnderlyingType(current) ?? current;
+
+        // A strong-typed-id wrapper serializes as its inner value, so the computed column is typed
+        // from that. This has to agree with MemberFactory, which types the predicate the same way —
+        // if the two disagree the predicate stops matching the persisted column and the index dies.
+        return ValueTypes.TryResolve(resolved, allowReferenceTypes: true)?.SimpleType ?? resolved;
     }
 
     /// <summary>
@@ -625,23 +631,5 @@ internal class DocumentMapping
     ///     Attempts to resolve a value type as a strongly typed ID wrapper.
     ///     Returns null if the type isn't a valid wrapper around a supported ID type.
     /// </summary>
-    private static ValueTypeInfo? TryResolveValueTypeId(Type idType)
-    {
-        if (!idType.IsValueType || idType.IsPrimitive || idType.IsEnum) return null;
-
-        try
-        {
-            var info = ValueTypeInfo.ForType(idType);
-            if (SupportedIdTypes.Contains(info.SimpleType))
-            {
-                return info;
-            }
-
-            return null;
-        }
-        catch
-        {
-            return null;
-        }
-    }
+    private static ValueTypeInfo? TryResolveValueTypeId(Type idType) => ValueTypes.TryResolve(idType);
 }

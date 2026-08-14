@@ -16,6 +16,7 @@
         <PackageReference Include="Microsoft.Extensions.Hosting" />
         <PackageReference Include="Microsoft.CodeAnalysis.CSharp" />
         <PackageReference Include="StronglyTypedId" />
+        <PackageReference Include="Vogen" />
     </ItemGroup>
 
     <ItemGroup>
