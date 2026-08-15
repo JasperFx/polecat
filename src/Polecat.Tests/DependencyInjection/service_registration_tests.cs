@@ -183,6 +183,29 @@ public class service_registration_tests
         options.CommandTimeout.ShouldBe(120);
     }
 
+    // #456: the (IServiceProvider, StoreOptions) shape existed only on the generic
+    // ConfigurePolecat<T> for ancillary stores, so code post-configuring the *main*
+    // store from a resolved service had no extension to call.
+    [Fact]
+    public void configure_polecat_with_service_provider_applies_post_configuration()
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton(new SchemaNameSource("from_the_container"));
+        services.AddPolecat(opts =>
+        {
+            opts.ConnectionString = ConnectionSource.ConnectionString;
+        });
+
+        services.ConfigurePolecat((sp, opts) =>
+        {
+            opts.DatabaseSchemaName = sp.GetRequiredService<SchemaNameSource>().Name;
+        });
+
+        using var provider = services.BuildServiceProvider();
+        var options = provider.GetRequiredService<StoreOptions>();
+        options.DatabaseSchemaName.ShouldBe("from_the_container");
+    }
+
     [Fact]
     public void iconfigure_polecat_is_applied()
     {
@@ -228,6 +251,8 @@ public class service_registration_tests
         var hostedServices = provider.GetServices<IHostedService>().ToList();
         hostedServices.OfType<PolecatActivator>().Count().ShouldBe(1);
     }
+
+    private record SchemaNameSource(string Name);
 
     private class TestConfigurePolecat : IConfigurePolecat
     {

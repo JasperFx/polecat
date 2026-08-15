@@ -167,6 +167,18 @@ public static class PolecatServiceConfigurationExtensions
     public static IServiceCollection ConfigurePolecat(
         this IServiceCollection services, Action<StoreOptions> configure)
     {
+        services.AddSingleton<IConfigurePolecat>(new LambdaConfigurePolecat((_, opts) => configure(opts)));
+        return services;
+    }
+
+    /// <summary>
+    ///     Register a post-configuration action for StoreOptions that has access to the
+    ///     service provider. Use this when the configuration depends on other services --
+    ///     options bound from configuration, a logger, or a running host component.
+    /// </summary>
+    public static IServiceCollection ConfigurePolecat(
+        this IServiceCollection services, Action<IServiceProvider, StoreOptions> configure)
+    {
         services.AddSingleton<IConfigurePolecat>(new LambdaConfigurePolecat(configure));
         return services;
     }
@@ -174,15 +186,15 @@ public static class PolecatServiceConfigurationExtensions
 
 internal class LambdaConfigurePolecat : IConfigurePolecat
 {
-    private readonly Action<StoreOptions> _configure;
+    private readonly Action<IServiceProvider, StoreOptions> _configure;
 
-    public LambdaConfigurePolecat(Action<StoreOptions> configure)
+    public LambdaConfigurePolecat(Action<IServiceProvider, StoreOptions> configure)
     {
         _configure = configure;
     }
 
     public void Configure(IServiceProvider serviceProvider, StoreOptions options)
     {
-        _configure(options);
+        _configure(serviceProvider, options);
     }
 }
