@@ -54,6 +54,34 @@ builder.Services.AddPolecat(sp =>
 | `IDocumentSession` | Scoped | Read/write session with unit of work |
 | `IQuerySession` | Scoped | Read-only session for queries |
 
+## ConfigurePolecat
+
+`ConfigurePolecat()` registers a post-configuration action that runs against `StoreOptions` after
+`AddPolecat()` has built them. Use it when a module other than the one that called `AddPolecat()`
+owns part of the store configuration:
+
+```cs
+builder.Services.ConfigurePolecat(options =>
+{
+    options.CommandTimeout = 120;
+});
+```
+
+There is a second overload that also hands you the built `IServiceProvider`, for configuration that
+depends on other registered services:
+
+```cs
+builder.Services.ConfigurePolecat((services, options) =>
+{
+    var settings = services.GetRequiredService<IOptions<RetentionSettings>>().Value;
+    options.Schema.For<MetricsSample>().PartitionOn(x => x.Timestamp)
+        .ByRollingRange(RollingPeriod.Day, ahead: 2, behind: settings.DaysRetained);
+});
+```
+
+Both overloads have a `ConfigurePolecat<T>()` counterpart that targets an ancillary store registered
+with `AddPolecatStore<T>()`.
+
 ## IConfigurePolecat
 
 You can implement `IConfigurePolecat` to modularize your configuration:
