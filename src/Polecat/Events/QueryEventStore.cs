@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Reflection;
 using JasperFx.Events;
+using JasperFx.Events.Projections;
 using Microsoft.Data.SqlClient;
 using Polecat.Events.Internal;
 using Polecat.Events.Linq;
@@ -377,6 +378,13 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
             return cached;
         }
 
+        // #463: an Inline-projected aggregate is READ from its projected document rather than
+        // re-aggregated off the stream. See CanReadInlineDocument.
+        if (CanReadInlineDocument<T>(typeof(Guid)))
+        {
+            return await _session.LoadAsync<T>(id, cancellation);
+        }
+
         return await AggregateStreamAsync<T>(id, token: cancellation);
     }
 
@@ -388,8 +396,60 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
             return cached;
         }
 
+        // #463: see CanReadInlineDocument.
+        if (CanReadInlineDocument<T>(typeof(string)))
+        {
+            return await _session.LoadAsync<T>(key, cancellation);
+        }
+
         return await AggregateStreamAsync<T>(key, token: cancellation);
     }
+
+    /// <summary>
+    ///     #463: is <typeparamref name="T" /> the subject of an <c>Inline</c> projection whose
+    ///     projected document can be loaded by a <paramref name="keyType" />-typed identity?
+    /// </summary>
+    /// <remarks>
+    ///     Polecat used to live-aggregate the stream for <em>every</em> <c>FetchLatest&lt;T&gt;</c>,
+    ///     whatever <c>T</c>'s lifecycle. Marten does not: its fetch planner routes an Inline
+    ///     aggregate to <c>FetchInlinedPlan</c>, which simply loads the projected document. The
+    ///     visible difference is on a stream that exists but holds nothing <c>T</c> owns -- Marten
+    ///     finds no document and returns <c>null</c>, while Polecat aggregated the foreign events
+    ///     and handed back whatever the aggregator constructed.
+    ///     <para>
+    ///     For an aggregate whose handlers are conventional <c>Create</c>/<c>Apply</c> methods the
+    ///     old path came out <c>null</c> anyway, because nothing built an instance. The shape that
+    ///     surfaced this is a single catch-all <c>Evolve(IEvent)</c>, which accepts every event type
+    ///     by construction: the aggregator default-constructed an instance, the switch inside matched
+    ///     nothing, and the default came back as though it were state. Since
+    ///     <c>FetchLatest&lt;T&gt;(key) is null</c> is the idiomatic "does this aggregate exist?"
+    ///     probe that code branching between <c>StartStream</c> and <c>Append</c> depends on, that
+    ///     probe was satisfied by any stream key holding events at all -- so the answer depended on
+    ///     whether some other aggregate happened to share the key space.
+    ///     </para>
+    ///     <para>
+    ///     Reading the document is also what the persistence side already believed: the inline
+    ///     projection screens streams it does not own out of the apply pass, so no row was ever
+    ///     written for them. The two halves now agree.
+    ///     </para>
+    ///     <para>
+    ///     Deliberately Inline only, mirroring <c>InlineFetchPlanner</c>. Marten routes Async
+    ///     aggregates to the document only when the mapping is revisioned, and falls back to live
+    ///     aggregation otherwise; Live aggregates have no document to read.
+    ///     </para>
+    ///     <para>
+    ///     The <paramref name="keyType" /> check matters because the stream identity and the
+    ///     aggregate's document id are not always the same type. A natural key resolves to a stream
+    ///     <em>key</em> (string) for an aggregate whose document id is a Guid, and that key cannot
+    ///     address the document at all -- so those fall back to live aggregation, exactly as before.
+    ///     <c>InnerIdType</c> rather than <c>IdType</c> so a strongly-typed id still matches on the
+    ///     value it wraps; the storage layer re-wraps it on the way through.
+    ///     </para>
+    /// </remarks>
+    private bool CanReadInlineDocument<T>(Type keyType) where T : class
+        => _options.Projections.TryFindAggregate(typeof(T), out var projection)
+           && projection.Lifecycle == ProjectionLifecycle.Inline
+           && _session.Providers.GetProvider<T>().Mapping.InnerIdType == keyType;
 
     internal static void TrySetIdentity<T>(T aggregate, object streamId) where T : class
     {

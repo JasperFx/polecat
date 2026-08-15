@@ -71,6 +71,21 @@ var party = await session.LoadAsync<QuestParty>(streamId);
 var latest = await session.Events.FetchLatest<QuestParty>(streamId);
 ```
 
+For an aggregate registered with an `Inline` lifecycle, `FetchLatest<T>()` reads the projected
+document rather than re-aggregating the stream — the same thing `LoadAsync<T>()` does, and the same
+route Marten takes. It therefore returns `null` for a stream that exists but belongs to some other
+aggregate sharing the key space, because the inline projection never wrote a document for a stream it
+does not own. That makes `FetchLatest<T>(id) is null` a reliable "does this aggregate exist?" probe,
+which is what code branching between `StartStream` and `Append` depends on.
+
+This matters most for an aggregate whose only handler is a catch-all `Evolve(IEvent)`: a catch-all
+accepts every event type at the method level, so live aggregation over a foreign stream would
+otherwise hand back a default-constructed instance — and default property values read as real state,
+not as absence.
+
+Aggregates on the `Live` and `Async` lifecycles still aggregate the stream, since there is no
+committed document to read.
+
 ## Snapshot in a Composite Projection
 
 Composite projections support the same shortcut via `composite.Snapshot<T>()`:
