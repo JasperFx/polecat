@@ -23,7 +23,7 @@ public interface IDocumentOperations : IQuerySession, IDocumentWriteOperations
     /// <summary>
     ///     Store multiple documents.
     /// </summary>
-    void Store<T>(params T[] documents) where T : notnull;
+    new void Store<T>(params T[] documents) where T : notnull;
 
     /// <summary>
     ///     Store a heterogeneous collection of documents by their runtime type.
@@ -45,17 +45,17 @@ public interface IDocumentOperations : IQuerySession, IDocumentWriteOperations
     /// <summary>
     ///     Delete a document by entity. For soft-deleted types, marks as deleted.
     /// </summary>
-    void Delete<T>(T document) where T : notnull;
+    new void Delete<T>(T document) where T : notnull;
 
     /// <summary>
     ///     Delete a document by its Guid id. For soft-deleted types, marks as deleted.
     /// </summary>
-    void Delete<T>(Guid id) where T : notnull;
+    new void Delete<T>(Guid id) where T : notnull;
 
     /// <summary>
     ///     Delete a document by its string id. For soft-deleted types, marks as deleted.
     /// </summary>
-    void Delete<T>(string id) where T : notnull;
+    new void Delete<T>(string id) where T : notnull;
 
     /// <summary>
     ///     Delete a document by its int id. For soft-deleted types, marks as deleted.
@@ -95,7 +95,7 @@ public interface IDocumentOperations : IQuerySession, IDocumentWriteOperations
     /// <summary>
     ///     Delete all documents matching the predicate. For soft-deleted types, marks as deleted.
     /// </summary>
-    void DeleteWhere<T>(Expression<Func<T, bool>> predicate) where T : notnull;
+    new void DeleteWhere<T>(Expression<Func<T, bool>> predicate) where T : notnull;
 
     /// <summary>
     ///     Permanently remove all documents matching the predicate, regardless of soft-delete configuration.

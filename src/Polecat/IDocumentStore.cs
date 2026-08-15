@@ -29,7 +29,7 @@ public interface IDocumentStore : IDisposable, IAsyncDisposable, IDocumentStoreU
     /// <summary>
     ///     Open a lightweight session (no identity map).
     /// </summary>
-    IDocumentSession LightweightSession();
+    new IDocumentSession LightweightSession();
 
     /// <summary>
     ///     Open a lightweight session with custom options.
@@ -49,7 +49,7 @@ public interface IDocumentStore : IDisposable, IAsyncDisposable, IDocumentStoreU
     /// <summary>
     ///     Open a read-only query session.
     /// </summary>
-    IQuerySession QuerySession();
+    new IQuerySession QuerySession();
 
     /// <summary>
     ///     #443: the non-generic tier of <see cref="IDocumentSessionFactory" /> returns the shared

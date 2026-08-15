@@ -136,12 +136,12 @@ public interface IQuerySession : IAsyncDisposable, IDocumentReadOperations
     /// <summary>
     ///     Load a document by its id. Returns null if not found.
     /// </summary>
-    Task<T?> LoadAsync<T>(Guid id, CancellationToken token = default) where T : notnull;
+    new Task<T?> LoadAsync<T>(Guid id, CancellationToken token = default) where T : notnull;
 
     /// <summary>
     ///     Load a document by its string id. Returns null if not found.
     /// </summary>
-    Task<T?> LoadAsync<T>(string id, CancellationToken token = default) where T : notnull;
+    new Task<T?> LoadAsync<T>(string id, CancellationToken token = default) where T : notnull;
 
     /// <summary>
     ///     Load multiple documents by their ids.
@@ -166,7 +166,7 @@ public interface IQuerySession : IAsyncDisposable, IDocumentReadOperations
     /// <summary>
     ///     Start a LINQ query against documents of type T.
     /// </summary>
-    IPolecatQueryable<T> Query<T>() where T : notnull;
+    new IPolecatQueryable<T> Query<T>() where T : notnull;
 
     /// <summary>
     ///     #443: the shared contract's <c>Query&lt;T&gt;()</c> returns <see cref="IQueryable{T}" />, and
