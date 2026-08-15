@@ -235,6 +235,27 @@ A type with more than one public property — `record struct Money(decimal Amoun
 is not a strong typed identifier and is left alone as a nested JSON object, so `x.Amount.CurrencyId`
 keeps resolving as a nested path.
 
+### Registering a Value Type
+
+Polecat discovers value types on its own, so **you never need to register one**. The API exists purely
+so that a single store-configuration file can compile against both Marten and Polecat:
+
+```cs
+// Compiles and means the same thing under either store
+opts.RegisterValueType<AlertId>();
+opts.RegisterValueType(typeof(AlertId));
+```
+
+Both overloads return JasperFx's `ValueTypeInfo`, matching Marten's signature. Registration resolves
+the type eagerly and validates it, so passing something that cannot be a value wrapper throws
+`InvalidValueTypeException` at configuration time rather than failing at the first query.
+
+::: tip
+Marten's docs describe a timing issue where value types used in LINQ have to be registered before the
+first expression is evaluated. Polecat has no such issue — it resolves on demand and caches — so
+registration here is genuinely optional.
+:::
+
 ### Not Currently Supported
 
 - No `LoadAsync<T>(object id)` overload taking the wrapper itself

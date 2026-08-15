@@ -43,6 +43,36 @@ internal static class ValueTypes
     internal static ValueTypeInfo? TryResolve(Type type, bool allowReferenceTypes = false)
         => Cache.GetOrAdd((type, allowReferenceTypes), key => Resolve(key.Item1, key.Item2));
 
+    /// <summary>
+    ///     Resolves <paramref name="type" /> up front and throws if it is not a usable value wrapper.
+    ///     Polecat never needs this — every path here resolves on demand — but Marten's
+    ///     <c>StoreOptions.RegisterValueType</c> exists, so configuration source shared between the two
+    ///     stores needs the call to compile and to mean the same thing. Registration is therefore
+    ///     eager and loud rather than a no-op: a type that cannot be a value wrapper is a configuration
+    ///     error worth hearing about at startup instead of at the first query.
+    /// </summary>
+    /// <exception cref="InvalidValueTypeException">
+    ///     <paramref name="type" /> has no single readable value property over a supported inner type,
+    ///     or no constructor or static factory that takes one.
+    /// </exception>
+    internal static ValueTypeInfo Register(Type type)
+    {
+        // Prime both cache entries so the id path and the member path agree from here on, and so a
+        // later resolution never re-runs the reflective probe for this type.
+        TryResolve(type);
+        var info = TryResolve(type, allowReferenceTypes: true);
+
+        if (info == null)
+        {
+            throw new InvalidValueTypeException(type,
+                "Polecat requires a single public, readable property wrapping one of "
+                + $"{string.Join(", ", SupportedInnerTypes.Select(x => x.Name))}, paired with either a "
+                + "constructor or a public static factory method taking that value.");
+        }
+
+        return info;
+    }
+
     [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
         Justification = "ValueTypeInfo.ForType reflects the candidate's public properties/constructors/static methods. Candidates reach here only as the declared type of a document member, which is preserved at the Schema.For<T>() registration boundary.")]
     [UnconditionalSuppressMessage("Trimming", "IL2067:DynamicallyAccessedMembers",

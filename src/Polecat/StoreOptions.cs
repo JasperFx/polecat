@@ -349,6 +349,35 @@ public class StoreOptions
         Serializer = serializer;
     }
 
+    /// <summary>
+    ///     Register a custom value type — a "strong typed identifier" wrapping a single <see cref="Guid" />,
+    ///     <c>string</c>, <c>int</c> or <c>long</c>.
+    ///     <para>
+    ///     Polecat discovers these on its own, so calling this is never required. It exists because
+    ///     Marten's <c>StoreOptions.RegisterValueType&lt;T&gt;()</c> does, and store-configuration source
+    ///     shared across both — a single file compiled once per store — has to build against either
+    ///     (polecat#459). Calling it here resolves the type eagerly and validates it, so a type that
+    ///     cannot be a value wrapper fails at configuration time rather than at the first query.
+    ///     </para>
+    /// </summary>
+    /// <typeparam name="TValueType">The wrapper type, e.g. <c>record struct OrderId(Guid Value)</c>.</typeparam>
+    /// <returns>The resolved value type metadata, matching Marten's return type.</returns>
+    /// <exception cref="JasperFx.Core.Reflection.InvalidValueTypeException">
+    ///     <typeparamref name="TValueType" /> is not a usable value wrapper.
+    /// </exception>
+    public JasperFx.Core.Reflection.ValueTypeInfo RegisterValueType<TValueType>() where TValueType : notnull
+        => ValueTypes.Register(typeof(TValueType));
+
+    /// <summary>
+    ///     Register a custom value type by <see cref="Type" />. See
+    ///     <see cref="RegisterValueType{TValueType}" /> for why this exists.
+    /// </summary>
+    /// <exception cref="JasperFx.Core.Reflection.InvalidValueTypeException">
+    ///     <paramref name="type" /> is not a usable value wrapper.
+    /// </exception>
+    public JasperFx.Core.Reflection.ValueTypeInfo RegisterValueType(Type type)
+        => ValueTypes.Register(type);
+
     internal ConnectionFactory CreateConnectionFactory()
     {
         if (string.IsNullOrWhiteSpace(_connectionString))
