@@ -29,7 +29,7 @@ public interface IDocumentSession : IDocumentOperations, IStorageOperations, ITr
     /// <summary>
     ///     Flush all pending operations to the database in a single transaction.
     /// </summary>
-    Task SaveChangesAsync(CancellationToken token = default);
+    new Task SaveChangesAsync(CancellationToken token = default);
 
     /// <summary>
     ///     Remove a specific document from the session's pending operations
