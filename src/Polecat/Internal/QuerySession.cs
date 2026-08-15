@@ -140,6 +140,7 @@ internal partial class QuerySession : IQuerySession
 
     internal Task<int> ExecuteAsync(SqlCommand command, CancellationToken token)
     {
+        assertNotDisposed();
         RequestCount++;
         return _resilience.ExecuteAsync(
             static (state, t) => new ValueTask<int>(state.Lifetime.ExecuteAsync(state.Command, t)),
@@ -148,6 +149,7 @@ internal partial class QuerySession : IQuerySession
 
     internal Task<object?> ExecuteScalarAsync(SqlCommand command, CancellationToken token)
     {
+        assertNotDisposed();
         RequestCount++;
         return _resilience.ExecuteAsync(
             static (state, t) => new ValueTask<object?>(state.Lifetime.ExecuteScalarAsync(state.Command, t)),
@@ -156,6 +158,7 @@ internal partial class QuerySession : IQuerySession
 
     internal Task<DbDataReader> ExecuteReaderAsync(SqlCommand command, CancellationToken token)
     {
+        assertNotDisposed();
         RequestCount++;
         return _resilience.ExecuteAsync(
             static (state, t) => new ValueTask<DbDataReader>(state.Lifetime.ExecuteReaderAsync(state.Command, t)),
@@ -164,6 +167,7 @@ internal partial class QuerySession : IQuerySession
 
     internal Task<DbDataReader> ExecuteReaderAsync(SqlBatch batch, CancellationToken token)
     {
+        assertNotDisposed();
         RequestCount++;
         return _resilience.ExecuteAsync(
             static (state, t) => new ValueTask<DbDataReader>(state.Lifetime.ExecuteReaderAsync(state.Batch, t)),
@@ -192,6 +196,7 @@ internal partial class QuerySession : IQuerySession
 
     private async Task<bool> CheckExistsInternalAsync<T>(object id, CancellationToken token) where T : class
     {
+        assertNotDisposed();
         var provider = _providers.GetProvider<T>();
         await _tableEnsurer.EnsureTableAsync(provider, token);
 
@@ -245,6 +250,7 @@ internal partial class QuerySession : IQuerySession
 
     protected virtual async Task<T?> LoadInternalAsync<T>(object id, CancellationToken token) where T : notnull
     {
+        assertNotDisposed();
         var provider = _providers.GetProvider<T>();
         await _tableEnsurer.EnsureTableAsync(provider, token);
 
@@ -271,6 +277,7 @@ internal partial class QuerySession : IQuerySession
     protected virtual async Task<IReadOnlyList<T>> LoadManyInternalAsync<T>(
         List<object> ids, CancellationToken token) where T : class
     {
+        assertNotDisposed();
         if (ids.Count == 0) return [];
 
         var provider = _providers.GetProvider<T>();
@@ -284,12 +291,14 @@ internal partial class QuerySession : IQuerySession
 
     public IPolecatQueryable<T> Query<T>() where T : notnull
     {
+        assertNotDisposed();
         var provider = new PolecatLinqQueryProvider(this, _providers, _tableEnsurer);
         return new PolecatLinqQueryable<T>(provider);
     }
 
     public IBatchedQuery CreateBatchQuery()
     {
+        assertNotDisposed();
         return new BatchedQuery(this, _providers, _tableEnsurer);
     }
 
@@ -312,6 +321,7 @@ internal partial class QuerySession : IQuerySession
 
     private async Task<string?> LoadJsonInternalAsync<T>(object id, CancellationToken token) where T : class
     {
+        assertNotDisposed();
         var provider = _providers.GetProvider<T>();
         await _tableEnsurer.EnsureTableAsync(provider, token);
 
@@ -352,8 +362,31 @@ internal partial class QuerySession : IQuerySession
         return polecatProvider.BuildSql(queryable.Expression, TenantId);
     }
 
+    // ── Disposal ────────────────────────────────────────────────────────
+
+    private bool _disposed;
+
+    /// <summary>
+    ///     #462: guard every session entry point against use-after-dispose. Polecat re-establishes
+    ///     its connection lifetime lazily, so without a flag a disposed session went on accepting
+    ///     writes and <em>committing them successfully</em> -- silently, and past the scope that
+    ///     owned the transaction boundary. Mirrors Marten's
+    ///     <c>QuerySession.Disposal.assertNotDisposed()</c>.
+    /// </summary>
+    protected void assertNotDisposed()
+    {
+        if (_disposed)
+        {
+            throw new ObjectDisposedException(GetType().FullName, "This session has been disposed");
+        }
+    }
+
     public virtual async ValueTask DisposeAsync()
     {
+        // Idempotent: disposing twice is legal and must not re-dispose the lifetime.
+        if (_disposed) return;
+
+        _disposed = true;
         await _lifetime.DisposeAsync();
     }
 }

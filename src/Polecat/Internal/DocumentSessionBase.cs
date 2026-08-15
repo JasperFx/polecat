@@ -54,8 +54,16 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     Polecat.Events.IQueryEventStore IQuerySession.Events => EventOps;
     public new Polecat.Events.IEventOperations Events => EventOps;
 
-    private EventOperations EventOps =>
-        _eventOperations ??= new EventOperations(this, _eventGraph, Options, _workTracker, TenantId);
+    private EventOperations EventOps
+    {
+        get
+        {
+            // #462: every event operation -- Append, StartStream, AppendOptimistic -- reaches the
+            // session through here, so one guard covers the whole event-write surface.
+            assertNotDisposed();
+            return _eventOperations ??= new EventOperations(this, _eventGraph, Options, _workTracker, TenantId);
+        }
+    }
 
     internal WorkTracker WorkTracker => _workTracker;
 
@@ -90,6 +98,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
 
     public void Store<T>(T document) where T : notnull
     {
+        assertNotDisposed();
         SyncMetadata(document);
         var provider = _providers.GetProvider<T>();
         _workTracker.Add(BuildClosedShapeWrite(document, provider, WriteKind.Upsert));
@@ -180,6 +189,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
 
     public void StoreObjects(IEnumerable<object> documents)
     {
+        assertNotDisposed();
         // Per-document runtime-type dispatch through the closed-shape object-write bridge
         // (#273 E2e). Mirrors Store<T> otherwise.
         foreach (var document in documents)
@@ -196,6 +206,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
 
     public void Insert<T>(T document) where T : notnull
     {
+        assertNotDisposed();
         SyncMetadata(document);
         var provider = _providers.GetProvider<T>();
         _workTracker.Add(BuildClosedShapeWrite(document, provider, WriteKind.Insert));
@@ -204,6 +215,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
 
     public void Update<T>(T document) where T : notnull
     {
+        assertNotDisposed();
         SyncMetadata(document);
         var provider = _providers.GetProvider<T>();
         _workTracker.Add(BuildClosedShapeWrite(document, provider, WriteKind.Update));
@@ -212,6 +224,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
 
     public void Delete<T>(T document) where T : notnull
     {
+        assertNotDisposed();
         var provider = _providers.GetProvider<T>();
         var session = (Weasel.Storage.IStorageSession)this;
         var storage = (Weasel.Storage.IDocumentStorage<T>)session.StorageFor<T>();
@@ -250,6 +263,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     // #273 E2c/E2e: all by-id deletions route through the closed-shape storage layer.
     private void DeleteByObjectId<T>(object id) where T : notnull
     {
+        assertNotDisposed();
         var session = (Weasel.Storage.IStorageSession)this;
         var storage = (Polecat.Storage.ClosedShape.IPolecatObjectStorage<T>)session.StorageFor<T>();
         _workTracker.Add(new Operations.ClosedShapeOperationAdapter(
@@ -259,6 +273,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     // #273 E2e: hard deletions route through the closed-shape storage layer.
     public void HardDelete<T>(T document) where T : notnull
     {
+        assertNotDisposed();
         var session = (Weasel.Storage.IStorageSession)this;
         var storage = (Weasel.Storage.IDocumentStorage<T>)session.StorageFor<T>();
         _workTracker.Add(new Operations.ClosedShapeOperationAdapter(
@@ -276,6 +291,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
 
     private void HardDeleteByObjectId<T>(object id) where T : notnull
     {
+        assertNotDisposed();
         var session = (Weasel.Storage.IStorageSession)this;
         var storage = (Polecat.Storage.ClosedShape.IPolecatObjectStorage<T>)session.StorageFor<T>();
         _workTracker.Add(new Operations.ClosedShapeOperationAdapter(
@@ -315,6 +331,8 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
 
     private Linq.SqlGeneration.ISqlFragment ParseDeleteWhere<T>(Expression<Func<T, bool>> predicate) where T : notnull
     {
+        // #462: the single entry every *Where deletion passes through before queueing work.
+        assertNotDisposed();
         var provider = _providers.GetProvider<T>();
         var memberFactory = new MemberFactory(Options, provider.Mapping);
         return new WhereClauseParser(memberFactory).Parse(predicate.Body);
@@ -327,6 +345,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
 
     public ITenantOperations ForTenant(string tenantId)
     {
+        assertNotDisposed();
         _byTenant ??= new Dictionary<string, NestedTenantSession>();
 
         if (_byTenant.TryGetValue(tenantId, out var tenantSession))
@@ -375,12 +394,15 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
 
     public void QueueSqlCommand(string sql, params object[] parameterValues)
     {
+        assertNotDisposed();
         var operation = new Operations.ExecuteSqlStorageOperation(sql, parameterValues);
         _workTracker.Add(operation);
     }
 
     public async Task SaveChangesAsync(CancellationToken token = default)
     {
+        assertNotDisposed();
+
         // _workTracker tracks document operations and event streams - it does NOT include
         // ITransactionParticipants registered via AddTransactionParticipant. Skipping the entire
         // SaveChangesAsync pipeline when _workTracker is empty therefore silently drops queued

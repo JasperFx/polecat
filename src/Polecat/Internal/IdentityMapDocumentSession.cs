@@ -33,6 +33,9 @@ internal class IdentityMapDocumentSession : DocumentSessionBase
 
     protected override async Task<T?> LoadInternalAsync<T>(object id, CancellationToken token) where T : default
     {
+        // #462: guard here too -- an identity-map hit short-circuits before the base class's guard.
+        assertNotDisposed();
+
         // Check identity map first
         if (_identityMap.TryGetValue(typeof(T), out var typeMap) && typeMap.TryGetValue(id, out var cached))
         {
@@ -55,6 +58,9 @@ internal class IdentityMapDocumentSession : DocumentSessionBase
     protected override async Task<IReadOnlyList<T>> LoadManyInternalAsync<T>(
         List<object> ids, CancellationToken token) where T : class
     {
+        // #462: guard here too -- a fully-satisfied identity-map read never reaches the base class.
+        assertNotDisposed();
+
         var results = new List<T>();
         var missingIds = new List<object>();
 
