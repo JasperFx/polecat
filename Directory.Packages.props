@@ -153,15 +153,40 @@
              IDocumentQueryExecutor on the store's query provider, because every System.Linq operator
              returns a plain IQueryable<T> and member terminators would be unreachable after a single
              Where. The package also gains four document compliance suites (41 tests) over a
-             three-member fixture that is deliberately NOT generic over a session pair. -->
-        <PackageVersion Include="JasperFx" Version="2.47.0" />
-        <PackageVersion Include="JasperFx.Events" Version="2.47.0" />
+             three-member fixture that is deliberately NOT generic over a session pair.
+             JasperFx 2.48.0 — no compliance suites in this wave, so nothing to enroll. One runtime
+             fix lands on a path Polecat drives, the rest are source-generator dispatch fixes:
+             (a) jasperfx#663 — StreamAction's string-keyed Append factories now route through
+             AddEvents like the Guid overloads already did, so each envelope gets StreamId/StreamKey/
+             TenantId stamped. They previously appended straight to the backing list and stamped
+             nothing, and PrepareEvents does not close the gap (it sets TenantId/Timestamp/Version/
+             Sequence, never the stream identity). A store handing stream.Events to an inline
+             projection therefore gave it an empty StreamKey, which is how a string-identified
+             projection learns which entity it is projecting. Directly relevant here: Polecat
+             supports StreamIdentity.AsString as a first-class identity.
+             (b) jasperfx#656 — a method that merely HIDES Evolve (declared without `override`,
+             already CS0114) counted as an override, so the generated dispatcher was skipped. That
+             surfaced either as a bogus "can only use the override of 'Evolve' or conventional
+             methods, but not both" conflict, or as NotImplementedException on the first event.
+             (c) jasperfx#653 — an evolver used to build its OWN projection instance (`new T()` or
+             GetUninitializedObject), a shadow of the one the store registered, so injected
+             dependencies were null. It now takes the registered instance.
+             (d) jasperfx#652 — an event type covered by BOTH ShouldDelete and Create/Apply emitted
+             two switch arms, the second unreachable, failing the consumer build with CS8120 inside
+             generated code it cannot edit.
+             (e) the `partial` gate (no issue, branch fix/partial-projection-gate) — `partial` is now
+             required only where the dispatcher is written into the user's class, reported as
+             JFXEVT003 rather than silently emitting nothing and failing at store-build time.
+             (f) jasperfx#654 — a new JFXEVT006 *warning* names published document types that went
+             unregistered instead of skipping in silence. Diagnostic only, no emission change. -->
+        <PackageVersion Include="JasperFx" Version="2.48.0" />
+        <PackageVersion Include="JasperFx.Events" Version="2.48.0" />
         <!--
              The shared cross-store event sourcing compliance suites. Source-only package: the
              suites compile inside Polecat.Tests so JasperFx's aggregate source generator binds
              Polecat's own session types.
         -->
-        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="2.47.0" />
+        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="2.48.0" />
         <!-- Pin the sibling JasperFx packages for parity with Marten 9's matrix
              even though Polecat doesn't currently reference them directly —
              keeps the lockstep matrix coherent when transitive resolution
@@ -169,7 +194,7 @@
              RuntimeCompiler 5.x line is the active continuation of the 4.x
              lineage; do not pin against the parallel stale 2.0.x series. -->
         <PackageVersion Include="JasperFx.RuntimeCompiler" Version="5.0.0" />
-        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.47.0" />
+        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.48.0" />
         <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
@@ -282,7 +307,7 @@
         <PackageVersion Include="Vogen" Version="7.0.0" />
 
         <!-- Source generators (matched to JasperFx.Events above) -->
-        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.47.0" />
+        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.48.0" />
 
         <!-- Build automation -->
         <PackageVersion Include="Nuke.Common" Version="9.0.4" />
