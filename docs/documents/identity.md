@@ -147,8 +147,11 @@ session.Store(order);
 await session.SaveChangesAsync();
 // order.Id is now assigned
 
-// Load by inner value
-var loaded = await query.LoadAsync<Order>(order.Id.Value);
+// Load by the wrapper itself
+var loaded = await query.LoadAsync<Order>(order.Id);
+
+// ...or by the inner value; both resolve the same row
+var alsoLoaded = await query.LoadAsync<Order>(order.Id.Value);
 
 // LINQ queries take the wrapper type directly
 var result = await query.Query<Order>()
@@ -175,7 +178,7 @@ var exists = await query.CheckExistsAsync<Order>(order.Id.Value);
 Supported across:
 
 - `Store()` / `Insert()` / `Update()`, with automatic identity assignment
-- `LoadAsync()` and `LoadManyAsync()` by inner value
+- `LoadAsync()` by the wrapper **or** by the inner value; `LoadManyAsync()` by inner value
 - `Delete()` by inner value or by document
 - `CheckExistsAsync()` by inner value
 - LINQ `Where`, `OrderBy` / `OrderByDescending`, `IsOneOf`, `Select`, `Count`
@@ -186,10 +189,30 @@ Supported across:
 - Aggregate identities in event projections
 
 ::: warning
-`LoadAsync()`, `Delete()`, and `CheckExistsAsync()` take the **inner** value (`order.Id.Value`), not the
-wrapper. Polecat has no `LoadAsync<T>(object id)` overload; if you pass the wrapper the call will not
-compile.
+`Delete()` and `CheckExistsAsync()` take the **inner** value (`order.Id.Value`), not the wrapper. Only
+`LoadAsync()` accepts either — see below.
 :::
+
+#### Loading by the wrapper
+
+`LoadAsync<T>(object id)` is the overload a strong typed identifier binds to, and it accepts either
+spelling: the wrapper (`order.Id`) or the inner value (`order.Id.Value`) resolve the same row, identity
+map included. The `Guid` / `string` / `int` / `long` overloads stay preferred by overload resolution, so
+adding it moved no existing call site — only an argument that fits none of them lands here.
+
+```cs
+var byWrapper = await query.LoadAsync<Order>(order.Id);
+var byInner = await query.LoadAsync<Order>(order.Id.Value);
+```
+
+Passing an identity of any other type throws `ArgumentException` naming the document type and both id
+types, rather than failing later as an id-type mismatch.
+
+This is also the store-agnostic spelling: it satisfies
+`JasperFx.Events.Documents.IDocumentReadOperations.LoadAsync<T>(object, CancellationToken)`, so source
+shared with Marten can do a by-id load of a strong-typed-id document against either store
+([#472](https://github.com/JasperFx/polecat/issues/472),
+[jasperfx#665](https://github.com/JasperFx/jasperfx/issues/665)).
 
 ### Value Types on Other Members
 
@@ -258,7 +281,8 @@ registration here is genuinely optional.
 
 ### Not Currently Supported
 
-- No `LoadAsync<T>(object id)` overload taking the wrapper itself
+- No `LoadManyAsync()`, `Delete()` or `CheckExistsAsync()` overload taking the wrapper itself
+  (`LoadAsync()` does — see [Loading by the wrapper](#loading-by-the-wrapper))
 - No `Include()` LINQ operator
 - No compiled queries
 - F# single-case discriminated unions as identities

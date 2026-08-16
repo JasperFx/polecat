@@ -178,15 +178,32 @@
              required only where the dispatcher is written into the user's class, reported as
              JFXEVT003 rather than silently emitting nothing and failing at store-build time.
              (f) jasperfx#654 — a new JFXEVT006 *warning* names published document types that went
-             unregistered instead of skipping in silence. Diagnostic only, no emission change. -->
-        <PackageVersion Include="JasperFx" Version="2.48.0" />
-        <PackageVersion Include="JasperFx.Events" Version="2.48.0" />
+             unregistered instead of skipping in silence. Diagnostic only, no emission change.
+             JasperFx 2.49.0 — jasperfx#665, and the half of polecat#472 that JasperFx owns.
+             IDocumentReadOperations gains LoadAsync<T>(object id, CancellationToken), the overload a
+             strong-typed identifier needs: before it, store-agnostic source had NO spelling of a
+             by-id load for a document keyed by a wrapper, because the wrapper does not compile
+             against the Guid/string overloads and the wrapped primitive is a runtime id-type fault.
+             NOT a compile break here — the member carries a default implementation that unboxes a
+             Guid or string, forwards to the typed overload, and throws NotSupportedException naming
+             the implementing type for anything else. A store only gains the strong-typed half by
+             OVERRIDING it, which is what polecat#472 does.
+             The compliance half is what costs Polecat work: DocumentComplianceConfig gains
+             ValueTypes / RegisterValueType<T>() and DocumentLoadAndStoreCompliance gains three facts
+             — store_and_load_by_strong_typed_identity, load_returns_null_for_a_missing_strong_typed_identity
+             and the_object_overload_resolves_canonical_identities_too, the last of which pins that a
+             boxed Guid or string arriving through an object-typed local resolves exactly as the typed
+             overload does. The fixture has to replay config.ValueTypes onto
+             StoreOptions.RegisterValueType or the first two fail at runtime with the fixture still
+             compiling cleanly. -->
+        <PackageVersion Include="JasperFx" Version="2.49.0" />
+        <PackageVersion Include="JasperFx.Events" Version="2.49.0" />
         <!--
              The shared cross-store event sourcing compliance suites. Source-only package: the
              suites compile inside Polecat.Tests so JasperFx's aggregate source generator binds
              Polecat's own session types.
         -->
-        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="2.48.0" />
+        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="2.49.0" />
         <!-- Pin the sibling JasperFx packages for parity with Marten 9's matrix
              even though Polecat doesn't currently reference them directly —
              keeps the lockstep matrix coherent when transitive resolution
@@ -194,7 +211,7 @@
              RuntimeCompiler 5.x line is the active continuation of the 4.x
              lineage; do not pin against the parallel stale 2.0.x series. -->
         <PackageVersion Include="JasperFx.RuntimeCompiler" Version="5.0.0" />
-        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.48.0" />
+        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.49.0" />
         <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
@@ -307,7 +324,7 @@
         <PackageVersion Include="Vogen" Version="7.0.0" />
 
         <!-- Source generators (matched to JasperFx.Events above) -->
-        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.48.0" />
+        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.49.0" />
 
         <!-- Build automation -->
         <PackageVersion Include="Nuke.Common" Version="9.0.4" />

@@ -431,6 +431,37 @@ internal class DocumentMapping
     /// </summary>
     internal object WrapId(object rawId) => _idWrapper is not null ? _idWrapper(rawId) : rawId;
 
+    /// <summary>
+    ///     polecat#472: reduces a runtime-typed identity to the inner scalar (Guid/string/int/long)
+    ///     that every load, delete and identity-map path here already carries, accepting either the
+    ///     declared id type — the strong-typed wrapper, when there is one — or that inner scalar.
+    ///     <para>
+    ///     This is what lets <c>IQuerySession.LoadAsync&lt;T&gt;(object)</c> be *literally the same
+    ///     call* as the typed overload rather than a parallel path: the identity map is keyed on the
+    ///     unwrapped value (see <see cref="GetId" />), so a wrapper handed straight down would miss
+    ///     entries the typed overload put there and hand back a second instance of the same document.
+    ///     </para>
+    /// </summary>
+    /// <exception cref="ArgumentException">
+    ///     <paramref name="id" /> is neither the declared id type nor the inner scalar it wraps.
+    /// </exception>
+    internal object UnwrapIdentity(object id, string parameterName)
+    {
+        var declared = Nullable.GetUnderlyingType(IdType) ?? IdType;
+        var supplied = id.GetType();
+
+        if (supplied == declared) return _idUnwrapper is not null ? _idUnwrapper(id) : id;
+        if (supplied == InnerIdType) return id;
+
+        var accepted = IsStrongTypedId
+            ? $"'{declared.FullName}' or the '{InnerIdType.Name}' it wraps"
+            : $"'{declared.Name}'";
+
+        throw new ArgumentException(
+            $"'{supplied.FullName}' is not a valid identity for document type '{_documentType.FullName}', "
+            + $"whose id is {accepted}.", parameterName);
+    }
+
     public void AssignIdIfMissing(object document, ISequenceSource sequences)
         => _identityAssigner?.AssignIfMissing(document, sequences);
 

@@ -248,6 +248,25 @@ internal partial class QuerySession : IQuerySession
         return await LoadInternalAsync<T>(id, token);
     }
 
+    /// <summary>
+    ///     polecat#472 / jasperfx#665: the runtime-typed identity overload, the only spelling of a
+    ///     by-id load available to a document keyed by a strong-typed identifier.
+    /// </summary>
+    /// <remarks>
+    ///     It does not open a second load path — <see cref="DocumentMapping.UnwrapIdentity" /> reduces
+    ///     the boxed value to the same inner scalar the typed overloads pass, so this becomes the
+    ///     identical call, identity map included. A boxed Guid/string/int/long therefore resolves
+    ///     exactly as its own overload would, which the shared compliance suite asserts directly.
+    /// </remarks>
+    public async Task<T?> LoadAsync<T>(object id, CancellationToken token = default) where T : notnull
+    {
+        ArgumentNullException.ThrowIfNull(id);
+        assertNotDisposed();
+
+        var mapping = _providers.GetProvider<T>().Mapping;
+        return await LoadInternalAsync<T>(mapping.UnwrapIdentity(id, nameof(id)), token);
+    }
+
     protected virtual async Task<T?> LoadInternalAsync<T>(object id, CancellationToken token) where T : notnull
     {
         assertNotDisposed();

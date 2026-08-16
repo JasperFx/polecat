@@ -82,6 +82,10 @@ internal class NestedTenantSession : ITenantOperations
     public Task<T?> LoadAsync<T>(long id, CancellationToken token = default) where T : class
         => _parent.LoadAsync<T>(id, token);
 
+    // polecat#472: the runtime-typed identity overload delegates like every other read here.
+    public Task<T?> LoadAsync<T>(object id, CancellationToken token = default) where T : notnull
+        => _parent.LoadAsync<T>(id, token);
+
     public Task<IReadOnlyList<T>> LoadManyAsync<T>(IEnumerable<Guid> ids, CancellationToken token = default) where T : class
         => _parent.LoadManyAsync<T>(ids, token);
 
