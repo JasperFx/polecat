@@ -144,6 +144,30 @@ public interface IQuerySession : IAsyncDisposable, IDocumentReadOperations
     new Task<T?> LoadAsync<T>(string id, CancellationToken token = default) where T : notnull;
 
     /// <summary>
+    ///     Load a document by an identity resolved at runtime — the overload a
+    ///     <i>strong-typed identifier</i> needs. Returns null if not found.
+    ///     <para>
+    ///     Pass the document's own identity value, boxed: for a document keyed by
+    ///     <c>record struct AlertId(string Id)</c> that means an <c>AlertId</c>, not the string it
+    ///     wraps. Polecat also accepts the wrapped inner value here, exactly as the typed overloads
+    ///     already do, so both spellings resolve the same row.
+    ///     </para>
+    ///     <para>
+    ///     The <see cref="Guid" />, <c>string</c>, <c>int</c> and <c>long</c> overloads stay preferred
+    ///     by overload resolution, so no existing call site moves onto this one. It is reached by an
+    ///     argument that fits none of them — a wrapper — or by a caller holding any identity in an
+    ///     <c>object</c>-typed local, which is why a boxed canonical id has to resolve here too
+    ///     (polecat#472, jasperfx#665).
+    ///     </para>
+    /// </summary>
+    /// <exception cref="ArgumentNullException"><paramref name="id" /> is null.</exception>
+    /// <exception cref="ArgumentException">
+    ///     <paramref name="id" /> is neither <typeparamref name="T" />'s declared id type nor the inner
+    ///     scalar a strong-typed id wraps.
+    /// </exception>
+    new Task<T?> LoadAsync<T>(object id, CancellationToken token = default) where T : notnull;
+
+    /// <summary>
     ///     Load multiple documents by their ids.
     /// </summary>
     Task<IReadOnlyList<T>> LoadManyAsync<T>(IEnumerable<Guid> ids, CancellationToken token = default) where T : class;

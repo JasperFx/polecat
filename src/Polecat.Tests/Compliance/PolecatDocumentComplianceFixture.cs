@@ -22,13 +22,29 @@ public class PolecatDocumentComplianceFixture : DocumentStorageComplianceFixture
 
         _store?.Dispose();
 
-        _store = new DocumentStore(new StoreOptions
+        var options = new StoreOptions
         {
             ConnectionString = ConnectionSource.ConnectionString,
             AutoCreateSchemaObjects = AutoCreate.All,
             DatabaseSchemaName = schemaName,
             UseNativeJsonType = ConnectionSource.SupportsNativeJson
-        });
+        };
+
+        // jasperfx#665 / #472: the strong-typed identity facts key a document by a wrapper, and the
+        // suite declares those wrappers separately from the document types because the identity type
+        // is the one thing a document type alone does not tell a store.
+        //
+        // Replayed here for the same reason StoreOptions.RegisterValueType exists at all (#459):
+        // Polecat resolves value types on its own, so this is eager validation rather than a
+        // requirement -- measured, the three new facts pass with this loop removed. It is still the
+        // seam's intent, and it is what a store that does NOT auto-discover would need, so the
+        // fixture honors the declared configuration rather than relying on Polecat's discovery.
+        foreach (var valueType in config.ValueTypes)
+        {
+            options.RegisterValueType(valueType);
+        }
+
+        _store = new DocumentStore(options);
 
         // Polecat applies schema changes explicitly rather than lazily, and the suite's very first
         // act may be a read against a table nothing has written yet.
