@@ -13,6 +13,7 @@ The main event log table:
 | `stream_id` | `uniqueidentifier` or `nvarchar(250)` | Stream identifier |
 | `version` | `int` | Position within the stream |
 | `data` | `json` | Serialized event body |
+| `bdata` | `varbinary(max)` | Binary event body, `NULL` unless the event type opted in — see [Binary Event Serialization](/events/binary-serialization) |
 | `type` | `nvarchar(250)` | Event type name (snake_case) |
 | `timestamp` | `datetimeoffset` | When the event was recorded |
 | `tenant_id` | `nvarchar(250)` | Tenant identifier |

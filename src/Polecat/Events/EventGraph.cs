@@ -481,21 +481,29 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
 
     public IReadOnlyList<ITagTypeRegistration> TagTypes => _tagTypes;
 
-    // ---- #388: pluggable binary event serialization ------------------------------------------
+    // ---- #388 / #475: pluggable binary event serialization ------------------------------------
     //
     // Explicit per-type registrations from UseBinarySerializer<TEvent>(...). Types marked with
     // [BinaryEvent] but not registered explicitly fall back to DefaultBinarySerializer; that
     // resolution is cached in _binarySerializerResolution so the attribute probe (and the throw for a
     // misconfigured type) happens once per event type rather than once per row.
-    private readonly ConcurrentDictionary<Type, IEventBinarySerializer> _binarySerializerByType = new();
-    private readonly ConcurrentDictionary<Type, IEventBinarySerializer?> _binarySerializerResolution = new();
+    //
+    // #475: the contract is JasperFx.Events.IEventBinarySerializer, promoted out of Marten in
+    // JasperFx 2.50.0 so one serializer implementation serves every Critter Stack store rather than
+    // one identical copy per flavour. Polecat's own IEventBinarySerializer / BinaryEventAttribute
+    // from #388 are GONE rather than kept as deriving aliases: a consumer with both JasperFx.Events
+    // and Polecat.Events in scope -- which is every consumer this promotion exists for -- got CS0104
+    // on the bare name, so keeping them broke the shape they were kept for. Proven, not theorized:
+    // Polecat's own binary_event_serialization_tests failed exactly that way.
+    private readonly ConcurrentDictionary<Type, JasperFx.Events.IEventBinarySerializer> _binarySerializerByType = new();
+    private readonly ConcurrentDictionary<Type, JasperFx.Events.IEventBinarySerializer?> _binarySerializerResolution = new();
 
     /// <summary>
-    ///     Store-wide fallback <see cref="IEventBinarySerializer" /> used for event types marked with
-    ///     <see cref="BinaryEventAttribute" /> that have no explicit per-type registration. Null by
-    ///     default, which leaves every event type on the JSON path.
+    ///     Store-wide fallback <see cref="JasperFx.Events.IEventBinarySerializer" /> used for event
+    ///     types marked with <see cref="JasperFx.Events.BinaryEventAttribute" /> that have no explicit
+    ///     per-type registration. Null by default, which leaves every event type on the JSON path.
     /// </summary>
-    public IEventBinarySerializer? DefaultBinarySerializer
+    public JasperFx.Events.IEventBinarySerializer? DefaultBinarySerializer
     {
         get => _defaultBinarySerializer;
         set
@@ -505,14 +513,15 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
         }
     }
 
-    private IEventBinarySerializer? _defaultBinarySerializer;
+    private JasperFx.Events.IEventBinarySerializer? _defaultBinarySerializer;
 
     /// <summary>
     ///     Opt <typeparamref name="TEvent" /> into binary serialization (#388): its payload is written
     ///     to the <c>bdata</c> column instead of <c>data</c>, and read back through the same
-    ///     serializer. Wins over <see cref="BinaryEventAttribute" /> + <see cref="DefaultBinarySerializer" />.
+    ///     serializer. Wins over <c>[BinaryEvent]</c> + <see cref="DefaultBinarySerializer" />.
     /// </summary>
-    public EventGraph UseBinarySerializer<TEvent>(IEventBinarySerializer serializer) where TEvent : notnull
+    public EventGraph UseBinarySerializer<TEvent>(JasperFx.Events.IEventBinarySerializer serializer)
+        where TEvent : notnull
     {
         ArgumentNullException.ThrowIfNull(serializer);
         _binarySerializerByType[typeof(TEvent)] = serializer;
@@ -521,17 +530,17 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
     }
 
     /// <summary>
-    ///     The <see cref="IEventBinarySerializer" /> governing <paramref name="eventType" />, or null
-    ///     when that type stays on the JSON path. Explicit registration beats
-    ///     <see cref="BinaryEventAttribute" /> + <see cref="DefaultBinarySerializer" />.
+    ///     The <see cref="JasperFx.Events.IEventBinarySerializer" /> governing
+    ///     <paramref name="eventType" />, or null when that type stays on the JSON path. Explicit
+    ///     registration beats <c>[BinaryEvent]</c> + <see cref="DefaultBinarySerializer" />.
     /// </summary>
     /// <exception cref="InvalidOperationException">
-    ///     The type carries <see cref="BinaryEventAttribute" /> but no serializer is configured for it.
+    ///     The type carries <c>[BinaryEvent]</c> but no serializer is configured for it.
     ///     Deliberately a throw rather than a silent fall back to JSON: a store that quietly ignored
     ///     the attribute would have write-amplification characteristics that do not match its
     ///     configuration, which is the whole reason the feature exists.
     /// </exception>
-    internal IEventBinarySerializer? ResolveBinarySerializerFor(Type eventType)
+    internal JasperFx.Events.IEventBinarySerializer? ResolveBinarySerializerFor(Type eventType)
         => _binarySerializerResolution.GetOrAdd(eventType, static (type, graph) =>
         {
             if (graph._binarySerializerByType.TryGetValue(type, out var explicitSerializer))
@@ -539,7 +548,7 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
                 return explicitSerializer;
             }
 
-            if (!type.IsDefined(typeof(BinaryEventAttribute), inherit: false))
+            if (!type.IsDefined(typeof(JasperFx.Events.BinaryEventAttribute), inherit: false))
             {
                 return null;
             }

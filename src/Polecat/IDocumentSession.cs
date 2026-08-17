@@ -27,6 +27,20 @@ public interface IDocumentSession : IDocumentOperations, IStorageOperations, ITr
     new Polecat.Events.IEventOperations Events { get; }
 
     /// <summary>
+    ///     #475 / jasperfx#669: the shared contract's write-tier <c>Events</c> accessor — the append
+    ///     half, reachable from a session a consumer opened through
+    ///     <see cref="IDocumentSessionFactory" /> without naming a Polecat type.
+    /// </summary>
+    /// <remarks>
+    ///     The same non-covariance trap as <see cref="IQuerySession" />'s read-tier implementation, and
+    ///     implementing one tier does <em>not</em> implement the other:
+    ///     <see cref="Polecat.Events.IEventOperations" /> derives from
+    ///     <see cref="JasperFx.Events.IEventStoreOperations" /> yet cannot satisfy the contract member
+    ///     implicitly, and the contract's default throws rather than failing to compile.
+    /// </remarks>
+    IEventStoreOperations IDocumentSessionOperations.Events => Events;
+
+    /// <summary>
     ///     Flush all pending operations to the database in a single transaction.
     /// </summary>
     new Task SaveChangesAsync(CancellationToken token = default);

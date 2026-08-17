@@ -219,6 +219,17 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
         public ITagTypeRegistration RegisterTagType<TTag>(string tableSuffix) where TTag : notnull
             => _options.Events.RegisterTagType<TTag>(tableSuffix);
 
+        // #475: binary event serialization. Both members carry throwing defaults on the seam because
+        // the capability is opt-in, so implementing them is the whole of what enrolls Polecat in
+        // BinaryEventSerializationCompliance. The serializer arriving here is the SHARED
+        // JasperFx.Events.IEventBinarySerializer, which is exactly the point of the promotion --
+        // the suite writes one and every store takes it.
+        public void UseBinarySerializer<TEvent>(IEventBinarySerializer serializer) where TEvent : notnull
+            => _options.Events.UseBinarySerializer<TEvent>(serializer);
+
+        public void SetDefaultBinarySerializer(IEventBinarySerializer serializer)
+            => _options.Events.DefaultBinarySerializer = serializer;
+
         public void Snapshot<TDoc>(SnapshotLifecycle lifecycle) where TDoc : notnull
             => _options.Projections.Snapshot<TDoc>(lifecycle);
 

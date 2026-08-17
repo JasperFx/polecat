@@ -113,6 +113,7 @@ const config: UserConfig<DefaultTheme.Config> = {
             { text: 'Polecat as Event Store', link: '/events/' },
             { text: 'Quick Start', link: '/events/quickstart' },
             { text: 'Storage', link: '/events/storage' },
+            { text: 'Binary Event Serialization', link: '/events/binary-serialization' },
             { text: 'Appending Events', link: '/events/appending' },
             { text: 'Querying Events', link: '/events/querying' },
             { text: 'Metadata', link: '/events/metadata' },
