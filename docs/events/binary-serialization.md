@@ -236,9 +236,15 @@ the per-row dispatch cope with both formats on one stream.
   what makes adoption and rollback both free.
 - **Not** a change to querying event *metadata*. Sequence, version, stream, type name, timestamp,
   correlation, causation and headers are all still ordinary columns and still queryable.
-- ⚠️ **Not** queryable *content*. `QueryRawEventDataOnly<T>()` and any other LINQ that reaches into the
-  event body read the `data` column — which holds `{}` for a binary event. Do not make an event type
-  binary if you query its body.
+- ⚠️ **Not** queryable *content*. Anything that reaches into the event body through LINQ resolves
+  against the `data` column, which holds `{}` for a binary event — so a `Where` on a body member
+  never matches a binary row, and `QueryRawEventDataOnly<T>()` (which deserializes straight from
+  `data`) hands back an empty instance. Both fail *silently*: no exception, just no results. Do not
+  make an event type binary if you query its body.
+
+  `QueryAllRawEvents()` is the exception and is safe — it materializes `IEvent` wrappers through the
+  same per-row dispatch as `FetchStreamAsync`, so binary payloads hydrate correctly. Only the
+  *filtering* is blind to them.
 
 ## Cross-store parity
 
