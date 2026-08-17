@@ -206,15 +206,42 @@
              implicitly satisfy the contract members. Without the explicit implementations on
              IQuerySession / IDocumentSession this compiles clean and throws at runtime; see
              polecat#475. Also brings BinaryEventSerializationCompliance and
-             DocumentSessionEventsCompliance, both opt-in, which Polecat now enrolls in. -->
-        <PackageVersion Include="JasperFx" Version="2.50.0" />
-        <PackageVersion Include="JasperFx.Events" Version="2.50.0" />
+             DocumentSessionEventsCompliance, both opt-in, which Polecat now enrolls in.
+             JasperFx 2.51.0 — three additions, one per open Polecat issue, and all three opt-in.
+             Nothing in this bump is a compile break: every new contract member carries a throwing
+             default, and the two new compliance suites are enrolled by a store when it is ready.
+             (a) jasperfx#672 — DocumentComplianceConfig.StreamIdentity, nullable and defaulting to
+             null ("leave the store on its own default"). It exists because
+             DocumentSessionEventsCompliance appends by stream KEY throughout with no way to say so,
+             which is exactly the gap the fixture works around today by INFERRING string identity
+             from a non-empty config.EventTypes — see the comment in
+             PolecatDocumentComplianceFixture calling it an upstream gap. This is that gap closed;
+             polecat#479 replaces the inference with the declared value.
+             (b) jasperfx#673 — IDocumentSessionOperations.PendingStreams, the store-agnostic read of
+             the StreamActions a session has queued but not yet committed. Polecat already has the
+             collection one hop away on PendingChanges.Streams and the payload type is already the
+             shared StreamAction, so adoption is a forwarding member; polecat#477. The default
+             THROWS rather than returning empty, deliberately: an empty list is indistinguishable
+             from a session with nothing pending, so a silent default would let a consumer's derived
+             work be discarded with a clean build and green tests.
+             (c) jasperfx#674 — IAggregateWriteCache moves into JasperFx.Events, together with
+             AggregateCacheKey, the bounded node-local RecentlyUsedAggregateWriteCache default,
+             NulloAggregateWriteCache, AggregateWriteCacheOptions and
+             EventRegistry.CacheAggregatesForWriting<T>() — which Polecat's EventGraph already
+             inherits, so the registration surface needs no new code and the work is entirely in the
+             fetch path (polecat#478). Grade 1 semantics only: the cached snapshot is a BASELINE, the
+             stream version and every event after it are still read on every call, and the optimistic
+             concurrency assertion is untouched, so a stale entry costs a larger delta query and
+             never a wrong aggregate. The suites are PendingStreamActionsCompliance and
+             AggregateWriteCacheCompliance. -->
+        <PackageVersion Include="JasperFx" Version="2.51.0" />
+        <PackageVersion Include="JasperFx.Events" Version="2.51.0" />
         <!--
              The shared cross-store event sourcing compliance suites. Source-only package: the
              suites compile inside Polecat.Tests so JasperFx's aggregate source generator binds
              Polecat's own session types.
         -->
-        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="2.50.0" />
+        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="2.51.0" />
         <!-- Pin the sibling JasperFx packages for parity with Marten 9's matrix
              even though Polecat doesn't currently reference them directly —
              keeps the lockstep matrix coherent when transitive resolution
@@ -222,7 +249,7 @@
              RuntimeCompiler 5.x line is the active continuation of the 4.x
              lineage; do not pin against the parallel stale 2.0.x series. -->
         <PackageVersion Include="JasperFx.RuntimeCompiler" Version="5.0.0" />
-        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.50.0" />
+        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.51.0" />
         <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
@@ -335,7 +362,7 @@
         <PackageVersion Include="Vogen" Version="7.0.0" />
 
         <!-- Source generators (matched to JasperFx.Events above) -->
-        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.50.0" />
+        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.51.0" />
 
         <!-- Build automation -->
         <PackageVersion Include="Nuke.Common" Version="9.0.4" />
