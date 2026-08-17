@@ -195,15 +195,26 @@
              boxed Guid or string arriving through an object-typed local resolves exactly as the typed
              overload does. The fixture has to replay config.ValueTypes onto
              StoreOptions.RegisterValueType or the first two fail at runtime with the fixture still
-             compiling cleanly. -->
-        <PackageVersion Include="JasperFx" Version="2.49.0" />
-        <PackageVersion Include="JasperFx.Events" Version="2.49.0" />
+             compiling cleanly.
+             JasperFx 2.50.0: jasperfx#669 — an Events accessor on BOTH document session contracts
+             (IQueryEventStore on IDocumentReadOperations, narrowed to IEventStoreOperations on
+             IDocumentSessionOperations), plus the promotion of IEventBinarySerializer and
+             [BinaryEvent] out of Marten into JasperFx.Events so one serializer serves every store.
+             ⚠️ Both Events members carry THROWING defaults, and C# interface implementation is not
+             return-type covariant — Polecat's sessions declare Events as Polecat.Events.IQueryEventStore
+             / Polecat.Events.IEventOperations, which derive from the JasperFx types but do NOT
+             implicitly satisfy the contract members. Without the explicit implementations on
+             IQuerySession / IDocumentSession this compiles clean and throws at runtime; see
+             polecat#475. Also brings BinaryEventSerializationCompliance and
+             DocumentSessionEventsCompliance, both opt-in, which Polecat now enrolls in. -->
+        <PackageVersion Include="JasperFx" Version="2.50.0" />
+        <PackageVersion Include="JasperFx.Events" Version="2.50.0" />
         <!--
              The shared cross-store event sourcing compliance suites. Source-only package: the
              suites compile inside Polecat.Tests so JasperFx's aggregate source generator binds
              Polecat's own session types.
         -->
-        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="2.49.0" />
+        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="2.50.0" />
         <!-- Pin the sibling JasperFx packages for parity with Marten 9's matrix
              even though Polecat doesn't currently reference them directly —
              keeps the lockstep matrix coherent when transitive resolution
@@ -211,7 +222,7 @@
              RuntimeCompiler 5.x line is the active continuation of the 4.x
              lineage; do not pin against the parallel stale 2.0.x series. -->
         <PackageVersion Include="JasperFx.RuntimeCompiler" Version="5.0.0" />
-        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.49.0" />
+        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.50.0" />
         <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
@@ -324,7 +335,7 @@
         <PackageVersion Include="Vogen" Version="7.0.0" />
 
         <!-- Source generators (matched to JasperFx.Events above) -->
-        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.49.0" />
+        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.50.0" />
 
         <!-- Build automation -->
         <PackageVersion Include="Nuke.Common" Version="9.0.4" />

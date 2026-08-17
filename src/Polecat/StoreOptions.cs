@@ -544,25 +544,36 @@ public class EventStoreOptions : IEventStoreInstrumentation
     }
 
     /// <summary>
-    ///     #388: store-wide fallback <see cref="Polecat.Events.IEventBinarySerializer" /> for event types
-    ///     marked with <see cref="Polecat.Events.BinaryEventAttribute" /> that have no explicit per-type
-    ///     registration via <see cref="UseBinarySerializer{TEvent}" />. Null by default — every event type
-    ///     stays on the JSON path. Mirrors Marten's <c>opts.Events.DefaultBinarySerializer</c>.
+    ///     #388 / #475: store-wide fallback <see cref="JasperFx.Events.IEventBinarySerializer" /> for
+    ///     event types marked with <see cref="JasperFx.Events.BinaryEventAttribute" /> that have no
+    ///     explicit per-type registration via <see cref="UseBinarySerializer{TEvent}" />. Null by
+    ///     default — every event type stays on the JSON path.
     /// </summary>
-    public Polecat.Events.IEventBinarySerializer? DefaultBinarySerializer
+    /// <remarks>
+    ///     ⚠️ #475 widened this from Polecat's own interface to the shared one JasperFx 2.50.0 promoted
+    ///     out of Marten, and <b>removed</b> <c>Polecat.Events.IEventBinarySerializer</c> and
+    ///     <c>Polecat.Events.BinaryEventAttribute</c> rather than keeping them as deriving aliases: a
+    ///     consumer with both <c>JasperFx.Events</c> and <c>Polecat.Events</c> in scope got CS0104 on
+    ///     the bare name, which is the exact shape the promotion exists to serve. A serializer written
+    ///     against #388 needs its interface reference re-pointed at <c>JasperFx.Events</c> — a compile
+    ///     error, never a silent behavior change. In return a consumer compiling one body of source
+    ///     against Marten, Polecat and Fisher writes one implementation instead of three identical ones.
+    /// </remarks>
+    public JasperFx.Events.IEventBinarySerializer? DefaultBinarySerializer
     {
         get => EventGraph!.DefaultBinarySerializer;
         set => EventGraph!.DefaultBinarySerializer = value;
     }
 
     /// <summary>
-    ///     #388: opt <typeparamref name="TEvent" /> into binary serialization — its payload is written to
-    ///     the <c>pc_events.bdata</c> column instead of <c>data</c>, and read back through the same
-    ///     serializer. Per event type rather than store-wide, so JSON and binary rows coexist in one
-    ///     table and the feature can be switched on (or back off) for an existing store with no data
-    ///     migration. Mirrors Marten's <c>opts.Events.UseBinarySerializer&lt;TEvent&gt;(serializer)</c>.
+    ///     #388 / #475: opt <typeparamref name="TEvent" /> into binary serialization — its payload is
+    ///     written to the <c>pc_events.bdata</c> column instead of <c>data</c>, and read back through
+    ///     the same serializer. Per event type rather than store-wide, so JSON and binary rows coexist
+    ///     in one table and the feature can be switched on (or back off) for an existing store with no
+    ///     data migration.
     /// </summary>
-    public EventStoreOptions UseBinarySerializer<TEvent>(Polecat.Events.IEventBinarySerializer serializer)
+    /// <inheritdoc cref="DefaultBinarySerializer" path="/remarks" />
+    public EventStoreOptions UseBinarySerializer<TEvent>(JasperFx.Events.IEventBinarySerializer serializer)
         where TEvent : notnull
     {
         EventGraph!.UseBinarySerializer<TEvent>(serializer);

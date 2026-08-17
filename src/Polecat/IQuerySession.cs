@@ -104,6 +104,22 @@ public interface IQuerySession : IAsyncDisposable, IDocumentReadOperations
     IQueryEventStore Events { get; }
 
     /// <summary>
+    ///     #475 / jasperfx#669: the shared contract's read-tier <c>Events</c> accessor, so a consumer
+    ///     that opened this session through <see cref="IDocumentSessionFactory" /> can reach the event
+    ///     store without naming a Polecat type.
+    /// </summary>
+    /// <remarks>
+    ///     Explicit for exactly the same reason as <see cref="IDocumentReadOperations.Query{T}" /> just
+    ///     below: <see cref="Polecat.Events.IQueryEventStore" /> derives from
+    ///     <see cref="JasperFx.Events.IQueryEventStore" />, but C# interface implementation is not
+    ///     return-type covariant, so the narrower property above does not satisfy the contract member.
+    ///     ⚠️ The contract member carries a <em>throwing</em> default implementation, so leaving this
+    ///     out compiles perfectly and fails at runtime the first time a caller holds the session as
+    ///     <see cref="IDocumentReadOperations" />. One implementation here covers every session type.
+    /// </remarks>
+    JasperFx.Events.IQueryEventStore IDocumentReadOperations.Events => Events;
+
+    /// <summary>
     ///     Access to raw SQL query capabilities. Allows executing arbitrary SQL
     ///     and mapping results to scalars, JSON objects, or document types.
     /// </summary>
