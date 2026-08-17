@@ -41,6 +41,35 @@ public interface IDocumentSession : IDocumentOperations, IStorageOperations, ITr
     IEventStoreOperations IDocumentSessionOperations.Events => Events;
 
     /// <summary>
+    ///     #477 / jasperfx#673: the <see cref="StreamAction" />s this session has queued but not yet
+    ///     committed, read through the shared contract.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         Polecat already had the collection one hop away, and the payload type was already the
+    ///         shared <see cref="StreamAction" /> — only the accessor's NAME diverged between the
+    ///         products (Marten's <c>PendingChanges.Streams()</c>, this <c>PendingChanges.Streams</c>,
+    ///         Fisher's <c>Events.PendingStreams</c>). So this closes a naming gap rather than a
+    ///         capability gap, and a Polecat caller keeps reading
+    ///         <see cref="PendingChanges" />.<see cref="IWorkTracker.Streams" /> directly.
+    ///     </para>
+    ///     <para>
+    ///         It exists for code that did <em>not</em> do the appending — a listener, or a pre-commit
+    ///         hook deciding something from what the session is about to write. Code at the call site
+    ///         already holds the <see cref="StreamAction" />, because <c>StartStream</c> and
+    ///         <c>Append</c> return it.
+    ///     </para>
+    ///     <para>
+    ///         The contract's default <b>throws</b> rather than answering with an empty list, and here
+    ///         that choice matters more than it did for <see cref="Events" />: empty is
+    ///         indistinguishable from a session with nothing pending, so a store left on a silent
+    ///         default would discard whatever a consumer derives from these actions with a clean
+    ///         build and green tests.
+    ///     </para>
+    /// </remarks>
+    IReadOnlyList<StreamAction> IDocumentSessionOperations.PendingStreams => PendingChanges.Streams;
+
+    /// <summary>
     ///     Flush all pending operations to the database in a single transaction.
     /// </summary>
     new Task SaveChangesAsync(CancellationToken token = default);
