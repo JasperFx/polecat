@@ -3,6 +3,7 @@ using System.Linq.Expressions;
 using JasperFx;
 using JasperFx.Events;
 using JasperFx.Events.Daemon;
+using JasperFx.Events.Fetching;
 using JasperFx.Events.Projections;
 using Microsoft.Data.SqlClient;
 using Polecat.Events;
@@ -50,6 +51,55 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     }
 
     public IWorkTracker PendingChanges => _workTracker;
+
+    // #478 / jasperfx#674: aggregate snapshots this session's FetchForWriting calls owe back to the
+    // second-level write cache, published once the commit succeeds. Null until an enrolled type is
+    // actually fetched, which is the overwhelmingly common case.
+    private List<PendingAggregateCacheWrite>? _aggregateCacheWrites;
+
+    private readonly record struct PendingAggregateCacheWrite(
+        IAggregateWriteCache Cache,
+        AggregateCacheKey Key,
+        object Aggregate,
+        long Version);
+
+    /// <summary>
+    ///     Enlist an aggregate snapshot to be published to the write cache when this session commits.
+    /// </summary>
+    /// <remarks>
+    ///     Deferred rather than written at fetch time on purpose; see the call site in
+    ///     <see cref="Polecat.Events.EventOperations" /> for why take-on-read requires it.
+    /// </remarks>
+    internal void RegisterAggregateWriteCacheEntry(IAggregateWriteCache cache, AggregateCacheKey key,
+        object aggregate, long version)
+    {
+        _aggregateCacheWrites ??= new List<PendingAggregateCacheWrite>();
+        _aggregateCacheWrites.Add(new PendingAggregateCacheWrite(cache, key, aggregate, version));
+    }
+
+    /// <summary>
+    ///     Publish the enlisted aggregate snapshots. Called only after a successful commit, so a
+    ///     rolled-back unit of work leaves no entry rather than a poisoned one.
+    /// </summary>
+    private void StoreAggregateWriteCacheEntries()
+    {
+        if (_aggregateCacheWrites is not { Count: > 0 }) return;
+
+        foreach (var pending in _aggregateCacheWrites)
+        {
+            pending.Cache.Store(pending.Key, pending.Aggregate, pending.Version);
+
+            // Publishing is a hand-off, so this session gives up its own handle on the instance.
+            // Without this, an aggregate could be reachable from BOTH the cache (where another
+            // session may take it) and this session's aggregate identity map (where ProjectLatest
+            // folds pending events onto whatever it finds) -- two live references to one mutable
+            // object, which is precisely what take-on-read exists to prevent. Only reachable with
+            // UseIdentityMapForAggregates also turned on, and a no-op otherwise.
+            EvictAggregateFromIdentityMap(pending.Key.DocumentType, pending.Key.Id);
+        }
+
+        _aggregateCacheWrites.Clear();
+    }
 
     Polecat.Events.IQueryEventStore IQuerySession.Events => EventOps;
     public new Polecat.Events.IEventOperations Events => EventOps;
@@ -640,6 +690,11 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
 
             await tx.CommitAsync(token);
 
+            // #478: the aggregate write cache is published here and nowhere else. After the commit,
+            // so a failed one leaves nothing behind; before the tracker is reset, purely to keep it
+            // beside the other post-commit work.
+            StoreAggregateWriteCacheEntries();
+
             // Runtime append observation (polecat#213 / CritterWatch#500) — capture the committed
             // events before the work tracker is reset, then notify best-effort.
             NotifyAppendObserver();
@@ -674,6 +729,11 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         finally
         {
             _transactional.Transaction = null;
+
+            // Drop anything a failed commit left enlisted. Harmless either way -- an entry is stored
+            // at the version the instance reflects, so it would still be correct on a later commit --
+            // but a session should not carry a fetch's leftovers past the save that failed.
+            _aggregateCacheWrites?.Clear();
         }
     }
 

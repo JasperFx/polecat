@@ -1,6 +1,7 @@
 using JasperFx;
 using JasperFx.Events;
 using JasperFx.Events.ComplianceTests;
+using JasperFx.Events.Fetching;
 using JasperFx.Events.Daemon;
 using JasperFx.Events.Projections;
 using JasperFx.Events.Tags;
@@ -256,6 +257,16 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
 
         public void AddProjection(ProjectionBase projection, ProjectionLifecycle lifecycle)
             => _options.Projections.Add((IProjectionSource<IDocumentSession, IQuerySession>)projection, lifecycle);
+
+        // #478 / jasperfx#674. Both halves are needed and they are different things: the suite's
+        // RecordingAggregateWriteCache has to be the instance the store actually resolves (that is
+        // how the suite counts hits at all), and the type has to be enrolled, because caching is
+        // opt-in per aggregate type rather than store-wide.
+        public void CacheAggregatesForWriting<TDoc>(IAggregateWriteCache cache) where TDoc : class
+        {
+            _options.Events.AggregateWriteCaching.Cache = cache;
+            _options.Events.CacheAggregatesForWriting<TDoc>();
+        }
 
         // Wave 8: the name is pinned to ComplianceSubscription.SubscriptionName rather than left to
         // default, because the products disagree on whether an unnamed subscription takes its short
