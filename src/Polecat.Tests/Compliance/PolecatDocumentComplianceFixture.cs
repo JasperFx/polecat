@@ -88,6 +88,21 @@ public class PolecatDocumentComplianceFixture : DocumentStorageComplianceFixture
             options.Events.AddEventType(eventType);
         }
 
+        // #485 / jasperfx#679: the post-commit listeners the suite registered, replayed onto the
+        // store's own collection. The one config member that is not a Type, because a listener is
+        // registered as an INSTANCE and the suite has to hold the very instance it registered in
+        // order to read back what the store handed it.
+        //
+        // No adapter here, which is the point: Polecat's StoreOptions.CommitListeners takes
+        // IDocumentCommitListener directly rather than making every consumer wrap one in an
+        // IDocumentSessionListener. If this loop is dropped, DocumentCommitListenerCompliance does
+        // not skip -- every fact in it fails, because a listener that was never registered and a
+        // store that never invokes listeners are the same observable failure.
+        foreach (var listener in config.CommitListeners)
+        {
+            options.CommitListeners.Add(listener);
+        }
+
         _store = new DocumentStore(options);
 
         // Polecat applies schema changes explicitly rather than lazily, and the suite's very first

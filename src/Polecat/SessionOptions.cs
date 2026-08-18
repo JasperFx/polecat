@@ -32,4 +32,13 @@ public class SessionOptions
     ///     Session-specific listeners applied only to this session.
     /// </summary>
     public List<IDocumentSessionListener> Listeners { get; } = new();
+
+    /// <summary>
+    ///     Session-specific store-agnostic post-commit listeners — #485 / jasperfx#679's
+    ///     <see cref="JasperFx.Events.Documents.IDocumentCommitListener" />. The per-session
+    ///     counterpart to <see cref="StoreOptions.CommitListeners" />, exactly as
+    ///     <see cref="Listeners" /> is to <see cref="StoreOptions.Listeners" />; both collections
+    ///     run on a commit, store-level first.
+    /// </summary>
+    public List<JasperFx.Events.Documents.IDocumentCommitListener> CommitListeners { get; } = new();
 }

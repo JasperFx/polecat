@@ -170,6 +170,34 @@ public class StoreOptions
     public List<IDocumentSessionListener> Listeners { get; } = new();
 
     /// <summary>
+    ///     Global store-agnostic post-commit listeners applied to all sessions — #485 /
+    ///     jasperfx#679's <see cref="JasperFx.Events.Documents.IDocumentCommitListener" />.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         A separate collection from <see cref="Listeners" /> rather than a widening of it,
+    ///         because neither type can implement the other. Polecat's
+    ///         <see cref="IDocumentSessionListener" /> also declares <c>BeforeSaveChangesAsync</c>,
+    ///         which the shared contract deliberately does not abstract, and every parameter of the
+    ///         two <c>AfterCommitAsync</c> signatures differs
+    ///         (<see cref="IDocumentSession" /> vs <c>IDocumentSessionOperations</c>,
+    ///         <see cref="IChangeSet" /> vs <c>IDocumentChangeSet</c>). Inheritance cannot bridge
+    ///         that, so the alternative to a second list is asking every consumer to write the same
+    ///         adapter.
+    ///     </para>
+    ///     <para>
+    ///         Registered here on <see cref="StoreOptions" /> rather than swept out of the DI
+    ///         container. A DI sweep would only serve stores built by <c>AddPolecat</c>, and
+    ///         <c>new DocumentStore(options)</c> is a first-class construction path — the document
+    ///         compliance fixture itself uses it — so a container-only registration would leave the
+    ///         contract unreachable for exactly the callers most likely to be embedding Polecat.
+    ///         It would also be a new pattern for Polecat, which does not register
+    ///         <c>IDocumentSessionFactory</c> in DI at all.
+    ///     </para>
+    /// </remarks>
+    public List<JasperFx.Events.Documents.IDocumentCommitListener> CommitListeners { get; } = new();
+
+    /// <summary>
     ///     The store-level logger for SQL command logging and session tracking.
     ///     Defaults to NullPolecatLogger (no-op).
     /// </summary>

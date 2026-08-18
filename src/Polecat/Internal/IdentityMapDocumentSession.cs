@@ -20,8 +20,10 @@ internal class IdentityMapDocumentSession : DocumentSessionBase
         EventGraph eventGraph,
         IInlineProjection<IDocumentSession>[] inlineProjections,
         string tenantId,
-        IReadOnlyList<IDocumentSessionListener>? sessionListeners = null)
-        : base(options, lifetime, providers, tableEnsurer, eventGraph, inlineProjections, tenantId, sessionListeners)
+        IReadOnlyList<IDocumentSessionListener>? sessionListeners = null,
+        IReadOnlyList<JasperFx.Events.Documents.IDocumentCommitListener>? sessionCommitListeners = null)
+        : base(options, lifetime, providers, tableEnsurer, eventGraph, inlineProjections, tenantId, sessionListeners,
+            sessionCommitListeners)
     {
     }
 
