@@ -2,6 +2,7 @@ using System.Text.Json;
 using JasperFx;
 using JasperFx.Events;
 using JasperFx.Events.Daemon;
+using JasperFx.Events.Fetching;
 using JasperFx.Events.Tags;
 using Polly;
 using Polecat.Events;
@@ -541,6 +542,40 @@ public class EventStoreOptions : IEventStoreInstrumentation
     public void AddMaskingRuleForProtectedInformation<T>(Func<T, T> func) where T : notnull
     {
         EventGraph!.AddMaskingRuleForProtectedInformation(func);
+    }
+
+    /// <summary>
+    ///     #478 / jasperfx#674: the second-level cache of aggregate snapshots behind
+    ///     <c>FetchForWriting</c>. Off for every aggregate type by default.
+    /// </summary>
+    /// <remarks>
+    ///     Reach for <see cref="CacheAggregatesForWriting{T}" /> to enroll a type; this is here for
+    ///     the rest of the surface — <c>SizeLimit</c>, and <c>Cache</c> for supplying your own
+    ///     implementation instead of the bounded node-local default.
+    /// </remarks>
+    public AggregateWriteCacheOptions AggregateWriteCaching => EventGraph!.AggregateWriteCaching;
+
+    /// <summary>
+    ///     #478 / jasperfx#674: cache <typeparamref name="T" />'s snapshot across
+    ///     <c>FetchForWriting</c> calls, so a fetch folds only the events committed since the cached
+    ///     baseline instead of re-reading the stream from the beginning.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         Per aggregate type rather than store-wide, because the win is proportional to how
+    ///         often one stream is fetched for writing — real on a hot aggregate under high message
+    ///         volume, and only overhead on an aggregate written once.
+    ///     </para>
+    ///     <para>
+    ///         The cached snapshot is a <b>baseline</b> and nothing more: the stream version and
+    ///         every event after the baseline are still read on every call, and optimistic
+    ///         concurrency is untouched. Turning this on is unobservable except in latency.
+    ///     </para>
+    /// </remarks>
+    public EventStoreOptions CacheAggregatesForWriting<T>(int sizeLimit = 1000) where T : class
+    {
+        EventGraph!.CacheAggregatesForWriting<T>(sizeLimit);
+        return this;
     }
 
     /// <summary>

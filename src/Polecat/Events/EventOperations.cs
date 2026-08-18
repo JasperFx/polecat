@@ -6,6 +6,7 @@ using System.Text;
 using JasperFx.Core.Reflection;
 using JasperFx.Events;
 using JasperFx.Events.Aggregation;
+using JasperFx.Events.Fetching;
 using JasperFx.Events.Protected;
 using JasperFx.Events.Tags;
 using Microsoft.Data.SqlClient;
@@ -588,27 +589,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
         T? aggregate = null;
         if (streamExists && version > 0)
         {
-            if (streamId is Guid guidId)
-            {
-                var events = await FetchStreamAsync(guidId, token: cancellation);
-                if (events.Count > 0)
-                {
-                    var aggregator = _sessionBase.Options.Projections.AggregatorFor<T>();
-                    aggregate = await aggregator.BuildAsync(events, _sessionBase, null, cancellation);
-                    if (aggregate != null) QueryEventStore.TrySetIdentity(aggregate, guidId);
-                }
-            }
-            else
-            {
-                var key = (string)streamId;
-                var events = await FetchStreamAsync(key, token: cancellation);
-                if (events.Count > 0)
-                {
-                    var aggregator = _sessionBase.Options.Projections.AggregatorFor<T>();
-                    aggregate = await aggregator.BuildAsync(events, _sessionBase, null, cancellation);
-                    if (aggregate != null) QueryEventStore.TrySetIdentity(aggregate, key);
-                }
-            }
+            aggregate = await buildForWritingAsync<T>(streamId, version, cancellation);
 
             // Cache in session-level aggregate identity map if optimization is enabled
             if (aggregate != null && _events.UseIdentityMapForAggregates)
@@ -667,6 +648,136 @@ internal class EventOperations : QueryEventStore, IEventOperations
             return new EventStream<T>(_sessionBase, _events, (string)streamId, aggregate, cancellation, action);
         }
     }
+
+    /// <summary>
+    ///     Rebuild the aggregate a <c>FetchForWriting</c> hands back, using the second-level
+    ///     aggregate write cache (#478 / jasperfx#674) as a <b>baseline</b> when one is available.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         Polecat's <c>FetchForWriting</c> live-aggregates rather than loading a stored
+    ///         snapshot, so what a cache hit removes here is the re-read of every event in the
+    ///         stream from version 1 — it collapses to reading only the events committed after the
+    ///         cached baseline. That is a bigger saving than the snapshot load the contract
+    ///         describes, and it is the same saving in kind: reads per second, not bytes per read.
+    ///     </para>
+    ///     <para>
+    ///         <b>Grade 1 semantics and nothing more.</b> The stream version above was already read
+    ///         from the database on this very call and the concurrency assertion on append is
+    ///         untouched, so a stale entry costs a larger delta query and can never produce a wrong
+    ///         aggregate or suppress a concurrency failure.
+    ///     </para>
+    ///     <para>
+    ///         Every path that cannot trust the baseline discards it and refetches from version 1 —
+    ///         an entry ahead of the stream (a restore or a rollback), and a stream whose events
+    ///         have been archived out from under a baseline. Discarding is always sound because
+    ///         <see cref="IAggregateWriteCache.TryTake" /> has already removed the entry.
+    ///     </para>
+    /// </remarks>
+    private async Task<T?> buildForWritingAsync<T>(object streamId, long version, CancellationToken cancellation)
+        where T : class
+    {
+        // Nullo for any type nobody enrolled, so there is no `if (caching enabled)` branch here:
+        // every take simply misses. `cacheable` exists only to keep the key construction and the
+        // tenancy lookup off the overwhelmingly common uncached path, not to change behavior.
+        var cache = _events.AggregateWriteCaching.ResolveCache(typeof(T));
+        var cacheable = !ReferenceEquals(cache, NulloAggregateWriteCache.Instance);
+
+        T? baseline = null;
+        long baselineVersion = 0;
+        var key = default(AggregateCacheKey);
+
+        if (cacheable)
+        {
+            key = new AggregateCacheKey(typeof(T), databaseIdentifier(), _tenantId, streamId);
+
+            // Take-on-read: the entry is removed in the same atomic step, so exactly one caller can
+            // ever win it. That is a requirement rather than a detail -- an aggregate is commonly
+            // mutable and the fold below mutates the instance it is handed, so two callers holding
+            // one instance would corrupt each other. A loser just misses and takes the path below.
+            if (cache.TryTake(key, out var taken, out var takenVersion) && taken is T typed
+                && takenVersion <= version)
+            {
+                baseline = typed;
+                baselineVersion = takenVersion;
+            }
+        }
+
+        // fromVersion is inclusive, so a baseline at version N reads N+1 and after. With no baseline
+        // this is `fromVersion: 1`, which is the whole stream -- the uncached behavior, unchanged.
+        var events = await fetchForWritingEventsAsync(streamId, baselineVersion + 1, cancellation);
+
+        if (baseline != null && events.Count == 0 && baselineVersion < version)
+        {
+            // The stream says there are events past the baseline and the read returned none, which
+            // means they are archived. Fall back to the uncached read so this behaves exactly as it
+            // did before the cache existed (an archived stream aggregates to null).
+            baseline = null;
+            baselineVersion = 0;
+            events = await fetchForWritingEventsAsync(streamId, 1, cancellation);
+        }
+
+        T? aggregate;
+        if (events.Count > 0)
+        {
+            var aggregator = _sessionBase.Options.Projections.AggregatorFor<T>();
+            aggregate = await aggregator.BuildAsync(events, _sessionBase, baseline, cancellation);
+        }
+        else
+        {
+            // No delta to fold. With a baseline that is the aggregate; without one the stream has no
+            // readable events and the answer is null, as it was before.
+            aggregate = baseline;
+        }
+
+        if (aggregate != null)
+        {
+            if (streamId is Guid guidId)
+            {
+                QueryEventStore.TrySetIdentity(aggregate, guidId);
+            }
+            else
+            {
+                QueryEventStore.TrySetIdentity(aggregate, (string)streamId);
+            }
+        }
+
+        if (cacheable && aggregate != null)
+        {
+            // Deferred to the commit, and stored at the version the instance actually reflects --
+            // `version`, the stream version read at the top of this fetch, NOT the version the
+            // commit lands on. Polecat does not apply appended events to the instance it handed out
+            // (an inline projection writes its own document rather than mutating this one), so
+            // claiming the committed version would silently skip every event this session appended
+            // the next time the entry was used as a baseline.
+            //
+            // Deferring is what makes take-on-read work: storing at fetch time would republish the
+            // very instance this caller is still holding, and a concurrent fetch could then take it.
+            // The commit is the point at which this caller is done with it. It also means a rolled
+            // back commit leaves no entry at all rather than a poisoned one.
+            _sessionBase.RegisterAggregateWriteCacheEntry(cache, key, aggregate, version);
+        }
+
+        return aggregate;
+    }
+
+    private Task<IReadOnlyList<IEvent>> fetchForWritingEventsAsync(object streamId, long fromVersion,
+        CancellationToken cancellation)
+        => streamId is Guid guidId
+            ? FetchStreamAsync(guidId, fromVersion: fromVersion, token: cancellation)
+            : FetchStreamAsync((string)streamId, fromVersion: fromVersion, token: cancellation);
+
+    /// <summary>
+    ///     The physical database this session reads from, for the aggregate cache key.
+    /// </summary>
+    /// <remarks>
+    ///     In the key because database-per-tenant deployments genuinely have the same tenant id and
+    ///     the same stream id in more than one physical database, and a cache shared between them
+    ///     would otherwise hand one database's aggregate to the other. Resolved only for an enrolled
+    ///     type, so the tenancy lookup never runs on the uncached path.
+    /// </remarks>
+    private string databaseIdentifier()
+        => _sessionBase.Options.Tenancy?.GetDatabase(_tenantId).Identifier ?? "Polecat";
 
     /// <summary>
     ///     Unwrap a strong-typed identifier that wraps the stream identity, so the generic

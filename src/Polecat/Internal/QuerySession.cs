@@ -58,6 +58,26 @@ internal partial class QuerySession : IQuerySession
         }
     }
 
+    /// <summary>
+    ///     Drop a session-level aggregate identity map entry by runtime type and id (#478).
+    /// </summary>
+    /// <remarks>
+    ///     Non-generic because the caller is the aggregate write cache write-back, which holds an
+    ///     <see cref="JasperFx.Events.Fetching.AggregateCacheKey" /> — a <see cref="Type" /> and a
+    ///     boxed id, not a type pair. <c>Dictionary&lt;TId, TDoc&gt;</c> implements the non-generic
+    ///     <see cref="System.Collections.IDictionary" />, whose <c>Remove</c> is a no-op for a key of
+    ///     the wrong type, which is the right answer for the strong-typed-id case the generic
+    ///     <see cref="StoreAggregateInIdentityMap{TDoc,TId}" /> already sidesteps.
+    /// </remarks>
+    internal void EvictAggregateFromIdentityMap(Type documentType, object id)
+    {
+        if (AggregateIdentityMap.TryGetValue(documentType, out var raw)
+            && raw is System.Collections.IDictionary dictionary)
+        {
+            dictionary.Remove(id);
+        }
+    }
+
     internal bool TryGetAggregateFromIdentityMap<TDoc, TId>(TId id, out TDoc? document)
         where TDoc : class where TId : notnull
     {
