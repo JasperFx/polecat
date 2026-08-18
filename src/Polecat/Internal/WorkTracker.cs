@@ -1,5 +1,6 @@
 using JasperFx.Events;
 using System.Collections.Immutable;
+using JasperFx.Events.Documents;
 using Polecat.Services;
 
 namespace Polecat.Internal;
@@ -56,6 +57,76 @@ internal class WorkTracker : IWorkTracker
     public IEnumerable<IEvent> GetEvents() => Streams.SelectMany(x => x.Events);
     public IEnumerable<StreamAction> GetStreams() => Streams;
     public IChangeSet Clone() => new ChangeSet(Operations, Streams);
+
+    // #485 / jasperfx#679: the shared contract's view of the SAME live unit of work. Explicit for
+    // the covariance reason spelled out on IChangeSet -- the three IEnumerable-typed members above
+    // do not satisfy the IReadOnlyList-typed contract members -- and materialised here rather than
+    // left on IChangeSet's default implementations, which would re-run the LINQ chains over the
+    // whole operation list on every access.
+    //
+    // The memo is keyed off the Operations SNAPSHOT INSTANCE rather than cached outright, because
+    // unlike ChangeSet this object is mutable and long-lived: it accumulates operations and is
+    // Reset() and reused after every commit. Operations already invalidates its snapshot on every
+    // mutation, so a snapshot the memo was not built from is exactly the signal to rebuild -- and
+    // no new invalidation has to be threaded through Add / AddStream / Reset / Eject*, which is the
+    // version of this that goes stale the next time someone adds a mutator.
+    //
+    // ⚠️ These are still a view of a LIVE tracker, so they answer the CURRENT unit of work, not a
+    // frozen one. What DocumentSessionBase hands a commit listener is Clone()'s immutable ChangeSet.
+    private IReadOnlyList<Weasel.Storage.IStorageOperation>? _documentViewSource;
+    private IReadOnlyList<object>? _updatedView;
+    private IReadOnlyList<object>? _insertedView;
+    private IReadOnlyList<IDeletion>? _deletedView;
+
+    IReadOnlyList<object> IDocumentChangeSet.Updated
+    {
+        get
+        {
+            lock (_stateLock)
+            {
+                refreshDocumentViews();
+                return _updatedView!;
+            }
+        }
+    }
+
+    IReadOnlyList<object> IDocumentChangeSet.Inserted
+    {
+        get
+        {
+            lock (_stateLock)
+            {
+                refreshDocumentViews();
+                return _insertedView!;
+            }
+        }
+    }
+
+    IReadOnlyList<IDocumentDeletion> IDocumentChangeSet.Deleted
+    {
+        get
+        {
+            lock (_stateLock)
+            {
+                refreshDocumentViews();
+                return _deletedView!;
+            }
+        }
+    }
+
+    private void refreshDocumentViews()
+    {
+        // Operations takes the same lock; it is re-entrant (System.Threading.Lock), and reading it
+        // inside this one is what makes "snapshot taken" and "views built from it" a single atomic
+        // step.
+        var operations = Operations;
+        if (ReferenceEquals(_documentViewSource, operations)) return;
+
+        _updatedView = ChangeSet.UpdatedFrom(operations).ToList();
+        _insertedView = ChangeSet.InsertedFrom(operations).ToList();
+        _deletedView = ChangeSet.DeletedFrom(operations).ToList();
+        _documentViewSource = operations;
+    }
 
     public void Add(Weasel.Storage.IStorageOperation operation)
     {

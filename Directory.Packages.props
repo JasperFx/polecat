@@ -233,15 +233,37 @@
              stream version and every event after it are still read on every call, and the optimistic
              concurrency assertion is untouched, so a stale entry costs a larger delta query and
              never a wrong aggregate. The suites are PendingStreamActionsCompliance and
-             AggregateWriteCacheCompliance. -->
-        <PackageVersion Include="JasperFx" Version="2.51.0" />
-        <PackageVersion Include="JasperFx.Events" Version="2.51.0" />
+             AggregateWriteCacheCompliance.
+             JasperFx 2.52.0: jasperfx#679 — IDocumentCommitListener, the store-agnostic post-commit
+             session hook, plus the IDocumentChangeSet / IDocumentDeletion pair it hands over. All
+             three products already declare
+             Task AfterCommitAsync(IDocumentSession, IChangeSet, CancellationToken) and differ only
+             in the store-local types they name, so this closes a naming gap rather than a
+             capability gap; polecat#485.
+             ⚠️ NOT the same failure mode as 2.50.0 above. No member of this contract carries a
+             default implementation, so a near-miss is CS0535 at build time rather than a member
+             silently bound to a throwing default — IEnumerable&lt;object&gt; Inserted does not
+             satisfy IReadOnlyList&lt;object&gt; Inserted and the compiler says so. What the compiler
+             cannot see is the WIRING: a store that declares both interfaces perfectly and never
+             invokes a listener compiles clean and passes every other suite, which is why
+             DocumentCommitListenerCompliance is the only evidence this contract is satisfied.
+             IReadOnlyList rather than IEnumerable throughout is load-bearing — the collections are
+             SNAPSHOTS, so Polecat's ChangeSet materialises them once into fields instead of
+             re-running the lazy LINQ chains over the operation list on every access.
+             Deleted is IReadOnlyList&lt;IDocumentDeletion&gt; ({ DocumentType, Id }) and not a
+             collection of document instances, because only Marten's change set holds the deleted
+             instance; Polecat's own IDeletion is already exactly that pair.
+             The session half only — the async daemon's projection batches stay with
+             IDaemonChangeListener, which Polecat already serves through IChangeListener. The suite
+             is DocumentCommitListenerCompliance. -->
+        <PackageVersion Include="JasperFx" Version="2.52.0" />
+        <PackageVersion Include="JasperFx.Events" Version="2.52.0" />
         <!--
              The shared cross-store event sourcing compliance suites. Source-only package: the
              suites compile inside Polecat.Tests so JasperFx's aggregate source generator binds
              Polecat's own session types.
         -->
-        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="2.51.0" />
+        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="2.52.0" />
         <!-- Pin the sibling JasperFx packages for parity with Marten 9's matrix
              even though Polecat doesn't currently reference them directly —
              keeps the lockstep matrix coherent when transitive resolution
@@ -249,7 +271,7 @@
              RuntimeCompiler 5.x line is the active continuation of the 4.x
              lineage; do not pin against the parallel stale 2.0.x series. -->
         <PackageVersion Include="JasperFx.RuntimeCompiler" Version="5.0.0" />
-        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.51.0" />
+        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.52.0" />
         <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
@@ -362,7 +384,7 @@
         <PackageVersion Include="Vogen" Version="7.0.0" />
 
         <!-- Source generators (matched to JasperFx.Events above) -->
-        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.51.0" />
+        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.52.0" />
 
         <!-- Build automation -->
         <PackageVersion Include="Nuke.Common" Version="9.0.4" />

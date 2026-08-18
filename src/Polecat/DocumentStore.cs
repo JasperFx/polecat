@@ -144,7 +144,8 @@ public partial class DocumentStore : IDocumentStore
             Events,
             InlineProjections,
             options.TenantId,
-            options.Listeners);
+            options.Listeners,
+            options.CommitListeners);
     }
 
     public IDocumentSession IdentitySession()
@@ -166,7 +167,8 @@ public partial class DocumentStore : IDocumentStore
             Events,
             InlineProjections,
             options.TenantId,
-            options.Listeners);
+            options.Listeners,
+            options.CommitListeners);
     }
 
     public IQuerySession QuerySession()
@@ -213,9 +215,11 @@ public partial class DocumentStore : IDocumentStore
         return options.Tracking switch
         {
             DocumentTracking.IdentityOnly => new IdentityMapDocumentSession(
-                Options, lifetime, _providers, ensurer, Events, InlineProjections, options.TenantId, options.Listeners),
+                Options, lifetime, _providers, ensurer, Events, InlineProjections, options.TenantId, options.Listeners,
+                options.CommitListeners),
             _ => new LightweightSession(
-                Options, lifetime, _providers, ensurer, Events, InlineProjections, options.TenantId, options.Listeners)
+                Options, lifetime, _providers, ensurer, Events, InlineProjections, options.TenantId, options.Listeners,
+                options.CommitListeners)
         };
     }
 

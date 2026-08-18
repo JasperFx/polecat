@@ -30,6 +30,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     private readonly WorkTracker _workTracker = new();
     private readonly IInlineProjection<IDocumentSession>[] _inlineProjections;
     private readonly IReadOnlyList<IDocumentSessionListener> _sessionListeners;
+    private readonly IReadOnlyList<JasperFx.Events.Documents.IDocumentCommitListener> _sessionCommitListeners;
     private readonly IAlwaysConnectedLifetime _transactional;
     private readonly List<ITransactionParticipant> _transactionParticipants = new();
     private EventOperations? _eventOperations;
@@ -42,12 +43,15 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         EventGraph eventGraph,
         IInlineProjection<IDocumentSession>[] inlineProjections,
         string tenantId,
-        IReadOnlyList<IDocumentSessionListener>? sessionListeners = null)
+        IReadOnlyList<IDocumentSessionListener>? sessionListeners = null,
+        IReadOnlyList<JasperFx.Events.Documents.IDocumentCommitListener>? sessionCommitListeners = null)
         : base(options, lifetime, providers, tableEnsurer, eventGraph, tenantId)
     {
         _transactional = lifetime;
         _inlineProjections = inlineProjections;
         _sessionListeners = sessionListeners ?? Array.Empty<IDocumentSessionListener>();
+        _sessionCommitListeners = sessionCommitListeners
+                                  ?? Array.Empty<JasperFx.Events.Documents.IDocumentCommitListener>();
     }
 
     public IWorkTracker PendingChanges => _workTracker;
@@ -717,6 +721,31 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             }
 
             foreach (var listener in _sessionListeners)
+            {
+                await listener.AfterCommitAsync(this, commit, token);
+            }
+
+            // #485 / jasperfx#679: the store-agnostic post-commit listeners, after the store-native
+            // ones and on the SAME `commit` snapshot taken above -- so a consumer holding both kinds
+            // sees one consistent view of the unit of work, and the shared contract cannot observe a
+            // commit the native listeners did not.
+            //
+            // ⚠️ THIS LOOP is where the contract silently no-ops. Nothing about declaring
+            // IDocumentChangeSet on ChangeSet is visible to a consumer until a listener is actually
+            // invoked, and a store that declares every interface perfectly and never reaches here
+            // compiles clean and passes every other compliance suite. That is what
+            // DocumentCommitListenerCompliance exists to catch.
+            //
+            // Inside the `try`, after `await tx.CommitAsync`, and deliberately NOT in the `finally`
+            // below: the contract requires the callback if and only if the commit succeeded, and a
+            // rolled-back transaction that announced its writes is the one failure the suite pins
+            // explicitly.
+            foreach (var listener in Options.CommitListeners)
+            {
+                await listener.AfterCommitAsync(this, commit, token);
+            }
+
+            foreach (var listener in _sessionCommitListeners)
             {
                 await listener.AfterCommitAsync(this, commit, token);
             }
