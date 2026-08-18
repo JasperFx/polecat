@@ -21,13 +21,16 @@ public class PolecatDocumentComplianceFixture : DocumentStorageComplianceFixture
         var schemaName = (config.SchemaName ?? "compliance_documents").ToLowerInvariant();
 
         // #475 / jasperfx#669: every document suite declares the SAME schema name, which is harmless
-        // while they are all document-only -- they configure the same tables the same way. The event
-        // suite is not: it needs string stream identity (see below), so its pc_streams.id is
-        // nvarchar where a Guid-identity store's is uniqueidentifier. Sharing one schema makes
-        // whichever suite migrates second try to retype a primary key under a live foreign key, and
-        // Weasel fails with "Could not drop constraint" during fixture init -- all five facts red for
-        // a reason that has nothing to do with the code under test. Separate schema, no interaction.
-        if (config.EventTypes.Count > 0)
+        // while they are all document-only -- they configure the same tables the same way. A suite
+        // that needs string stream identity is not: its pc_streams.id is nvarchar where a
+        // Guid-identity store's is uniqueidentifier. Sharing one schema makes whichever suite
+        // migrates second try to retype a primary key under a live foreign key, and Weasel fails
+        // with "Could not drop constraint" during fixture init -- every fact red for a reason that
+        // has nothing to do with the code under test. Separate schema, no interaction.
+        //
+        // #479: keyed off the DECLARED identity rather than off "this suite has event types",
+        // because it is the identity that changes the column type. The two happen to coincide today.
+        if (config.StreamIdentity == JasperFx.Events.StreamIdentity.AsString)
         {
             schemaName += "_events";
         }
@@ -56,27 +59,33 @@ public class PolecatDocumentComplianceFixture : DocumentStorageComplianceFixture
             options.RegisterValueType(valueType);
         }
 
-        // #475 / jasperfx#669: DocumentSessionEventsCompliance appends through the session's Events
-        // accessor, so the event types it names have to be registered before the store is built --
-        // otherwise the append writes an event whose type name only resolves by assembly scanning,
-        // and the read back is at the mercy of what happens to be loaded. Only the one document suite
-        // that is also an event-store suite populates this list; it is empty for the other four.
-        if (config.EventTypes.Count > 0)
+        // #479 / jasperfx#672: the stream identity the suite DECLARES, replacing the inference this
+        // fixture used to make.
+        //
+        // The gap the old comment here called out is closed. A suite that appends by stream key --
+        // DocumentSessionEventsCompliance does throughout -- had no way to say so, so this fixture
+        // had to work it out from "the config named event types, and the only suite that does keys
+        // its streams by string". That is a guess about another repository's source: correct on the
+        // day it was written, silently wrong the moment a document suite named an event type without
+        // wanting string identity. It also failed loudly and misleadingly when it was missing, since
+        // Polecat refuses a string-keyed StartStream under AsGuid with
+        // ExistingStreamIdCollisionException, an error naming a stream collision rather than the
+        // identity mismatch that caused it.
+        //
+        // Nullable and null by default, meaning "leave the store on its own default", so this is
+        // inert for every document-only suite and no existing behavior changes.
+        if (config.StreamIdentity.HasValue)
         {
-            // ⚠️ That suite keys every stream by a STRING, and DocumentComplianceConfig carries no
-            // StreamIdentity knob the way ComplianceStoreConfig does -- so the requirement is
-            // implicit in the suite's body rather than declared. Polecat defaults to AsGuid, under
-            // which a string-keyed StartStream is refused, and the failure names a stream collision
-            // rather than an identity mismatch: three of the five facts died with
-            // ExistingStreamIdCollisionException on freshly minted Guids. Inferred from the suite,
-            // not from the config, which is why it is spelled out here. Upstream gap, tracked by the
-            // jasperfx side; do NOT "fix" it by editing the shared suite.
-            options.Events.StreamIdentity = JasperFx.Events.StreamIdentity.AsString;
+            options.Events.StreamIdentity = config.StreamIdentity.Value;
+        }
 
-            foreach (var eventType in config.EventTypes)
-            {
-                options.Events.AddEventType(eventType);
-            }
+        // Event types stay registered from the config: a suite appending through the session's Events
+        // accessor needs its types known before the store is built, or the append writes an event
+        // whose type name only resolves by assembly scanning and the read back is at the mercy of
+        // what happens to be loaded. Empty for the document-only suites.
+        foreach (var eventType in config.EventTypes)
+        {
+            options.Events.AddEventType(eventType);
         }
 
         _store = new DocumentStore(options);
