@@ -9,6 +9,11 @@ public record OrderCancelled(Guid OrderId);
 public record CustomerOrderPlaced(Guid OrderId, string CustomerName, decimal Amount);
 public record CustomerOrderCompleted(Guid OrderId, string CustomerName);
 
+// #489: fan-out event — ONE event names many players, so Identities<T> turns it into many slices
+// inside a single tenant group, which is the shape that made AggregationRunner's 10-wide block
+// drive one DbContext from ten threads at once.
+public record TeamScored(Guid GameId, string[] PlayerNames, int Points);
+
 // EF Core entity written as side effect
 public class OrderSummary
 {
@@ -36,6 +41,15 @@ public class CustomerOrderHistory
     public string Id { get; set; } = string.Empty;
     public int TotalOrders { get; set; }
     public decimal TotalSpent { get; set; }
+}
+
+// #489: fan-out aggregate. Points is mutated in place on a snapshot the DbContext is tracking,
+// which is what a concurrent Entry() runs change detection over.
+public class PlayerTally
+{
+    public string Id { get; set; } = string.Empty;
+    public int Points { get; set; }
+    public int Appearances { get; set; }
 }
 
 // Side effect entity for event projection

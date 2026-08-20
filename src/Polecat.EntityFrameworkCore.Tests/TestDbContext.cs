@@ -12,6 +12,7 @@ public class TestDbContext : DbContext
     public DbSet<Order> Orders => Set<Order>();
     public DbSet<CustomerOrderHistory> CustomerOrderHistories => Set<CustomerOrderHistory>();
     public DbSet<OrderDetail> OrderDetails => Set<OrderDetail>();
+    public DbSet<PlayerTally> PlayerTallies => Set<PlayerTally>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -45,6 +46,15 @@ public class TestDbContext : DbContext
             entity.Property(e => e.Id).HasColumnName("id").HasMaxLength(200);
             entity.Property(e => e.TotalOrders).HasColumnName("total_orders");
             entity.Property(e => e.TotalSpent).HasColumnName("total_spent").HasColumnType("decimal(18,2)");
+        });
+
+        modelBuilder.Entity<PlayerTally>(entity =>
+        {
+            entity.ToTable("ef_player_tallies");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasColumnName("id").HasMaxLength(200);
+            entity.Property(e => e.Points).HasColumnName("points");
+            entity.Property(e => e.Appearances).HasColumnName("appearances");
         });
 
         modelBuilder.Entity<OrderDetail>(entity =>

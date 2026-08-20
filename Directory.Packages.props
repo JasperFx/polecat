@@ -255,15 +255,32 @@
              instance; Polecat's own IDeletion is already exactly that pair.
              The session half only — the async daemon's projection batches stay with
              IDaemonChangeListener, which Polecat already serves through IChangeListener. The suite
-             is DocumentCommitListenerCompliance. -->
-        <PackageVersion Include="JasperFx" Version="2.52.0" />
-        <PackageVersion Include="JasperFx.Events" Version="2.52.0" />
+             is DocumentCommitListenerCompliance.
+             JasperFx 2.53.0: jasperfx#683 — IProjectionStorage.IsThreadSafe, the seam that lets a
+             projection storage refuse the daemon's concurrent slice application. AggregationRunner
+             applies every slice in a range through a fixed 10-wide Block over ONE storage instance
+             per tenant group; Polecat.EntityFrameworkCore's EfCoreProjectionStorage wraps a single
+             DbContext, which is not thread-safe, so a multi-stream projection that fans one event
+             into many slices had up to ten threads mutating one change tracker. First reported
+             against Marten (marten#5266) as an InvalidOperationException out of Dictionary.TryInsert
+             and an NRE out of ChangeDetector.DetectChanges; polecat#489.
+             ⚠️ A lock INSIDE the storage is not a substitute and this is the trap worth naming: it
+             serializes each individual call, but between calls the aggregation on one thread still
+             mutates entities that another thread's Entry() is running change detection over — the
+             NRE above. The fan-out itself has to stop, and nothing reachable from inside the
+             storage can stop it, which is why the seam has to be upstream.
+             Additive: the member is a default interface implementation returning true, so every
+             existing storage keeps today's behavior until it opts out. Polecat's SQL Server storage
+             stays on the default (it holds no shared mutable state across slices); only the EF Core
+             storage returns false. -->
+        <PackageVersion Include="JasperFx" Version="2.53.0" />
+        <PackageVersion Include="JasperFx.Events" Version="2.53.0" />
         <!--
              The shared cross-store event sourcing compliance suites. Source-only package: the
              suites compile inside Polecat.Tests so JasperFx's aggregate source generator binds
              Polecat's own session types.
         -->
-        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="2.52.0" />
+        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="2.53.0" />
         <!-- Pin the sibling JasperFx packages for parity with Marten 9's matrix
              even though Polecat doesn't currently reference them directly —
              keeps the lockstep matrix coherent when transitive resolution
@@ -271,7 +288,7 @@
              RuntimeCompiler 5.x line is the active continuation of the 4.x
              lineage; do not pin against the parallel stale 2.0.x series. -->
         <PackageVersion Include="JasperFx.RuntimeCompiler" Version="5.0.0" />
-        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.52.0" />
+        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.53.0" />
         <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
@@ -384,7 +401,7 @@
         <PackageVersion Include="Vogen" Version="7.0.0" />
 
         <!-- Source generators (matched to JasperFx.Events above) -->
-        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.52.0" />
+        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.53.0" />
 
         <!-- Build automation -->
         <PackageVersion Include="Nuke.Common" Version="9.0.4" />

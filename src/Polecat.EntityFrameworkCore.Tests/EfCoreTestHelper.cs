@@ -106,6 +106,28 @@ public static class EfCoreTestHelper
     }
 
     /// <summary>
+    ///     #489: a store whose multi-stream projection fans one event into many slices, so the
+    ///     daemon drives one EfCoreProjectionStorage with a whole range of them.
+    /// </summary>
+    public static async Task<DocumentStore> CreateStoreWithFanOutProjection(ProjectionLifecycle lifecycle)
+    {
+        var store = DocumentStore.For(opts =>
+        {
+            opts.ConnectionString = ConnectionSource.ConnectionString;
+            opts.AutoCreateSchemaObjects = AutoCreate.All;
+            opts.DatabaseSchemaName = $"efcore_fanout_{lifecycle.ToString().ToLowerInvariant()}";
+
+            opts.Projections.Add<PlayerTallyProjection, PlayerTally, string, TestDbContext>(
+                opts, new PlayerTallyProjection(), lifecycle);
+        });
+
+        await store.Database.ApplyAllConfiguredChangesToDatabaseAsync();
+        await EnsureEfCoreTablesAsync<TestDbContext>(ConnectionSource.ConnectionString);
+        await CleanEfCoreTablesAsync(ConnectionSource.ConnectionString, "ef_player_tallies");
+        return store;
+    }
+
+    /// <summary>
     ///     Create a DocumentStore configured with an EF Core event projection.
     /// </summary>
     public static async Task<DocumentStore> CreateStoreWithEventProjection(ProjectionLifecycle lifecycle)

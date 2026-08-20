@@ -80,6 +80,64 @@ public class CustomerOrderHistoryProjection
 }
 
 /// <summary>
+///     #489: multi-stream projection whose grouping fans ONE event out into many slices, so the
+///     async daemon hands a whole rangeful of slices to a single EfCoreProjectionStorage. That is
+///     the shape marten#5266 reported, and the reason that storage declares IsThreadSafe => false.
+/// </summary>
+public class PlayerTallyProjection
+    : EfCoreMultiStreamProjection<PlayerTally, string, TestDbContext>
+{
+    /// <summary>
+    ///     #489 probe. Records how the async daemon dispatched each slice application: through
+    ///     AggregationRunner's 10-wide <c>Block</c>, or inline. Only the storage's IsThreadSafe answer
+    ///     decides that, so it is the one observable that actually distinguishes fixed from unfixed.
+    /// </summary>
+    public static bool ProbeEnabled;
+
+    public static int ProbedCalls;
+
+    public static bool SawBlockDispatch;
+
+    public PlayerTallyProjection()
+    {
+        Identities<TeamScored>(e => e.PlayerNames);
+    }
+
+    public static void ResetProbe()
+    {
+        ProbedCalls = 0;
+        SawBlockDispatch = false;
+        ProbeEnabled = true;
+    }
+
+    protected override PlayerTally? ApplyEvent(PlayerTally? snapshot,
+        string identity, IEvent @event, TestDbContext dbContext)
+    {
+        snapshot ??= new PlayerTally { Id = identity };
+
+        // Sampled — a StackTrace per call over a whole rebuild would dominate the test's runtime, and
+        // the dispatch route is a property of the storage, not of any individual slice.
+        if (ProbeEnabled && Interlocked.Increment(ref ProbedCalls) <= 50)
+        {
+            if (new System.Diagnostics.StackTrace(false).ToString().Contains("JasperFx.Blocks.Block"))
+            {
+                SawBlockDispatch = true;
+            }
+        }
+
+        if (@event.Data is TeamScored scored)
+        {
+            // Mutating a snapshot the DbContext is already tracking (on a rebuild it was loaded,
+            // not constructed) is precisely what a concurrent Entry() would run DetectChanges over.
+            snapshot.Points += scored.Points;
+            snapshot.Appearances++;
+        }
+
+        return snapshot;
+    }
+}
+
+/// <summary>
 ///     Event projection: dual-writes to both EF Core (OrderDetail) and Polecat (OrderLog).
 /// </summary>
 public class OrderDetailProjection : EfCoreEventProjection<TestDbContext>
