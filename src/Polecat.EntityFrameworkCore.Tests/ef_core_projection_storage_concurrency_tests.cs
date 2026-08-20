@@ -49,21 +49,6 @@ public class ef_core_projection_storage_concurrency_tests : IAsyncLifetime
     }
 
     /// <summary>
-    ///     The contract, asserted directly on the storage.
-    /// </summary>
-    [Fact]
-    public void ef_core_storage_declares_itself_not_thread_safe()
-    {
-        var optionsBuilder = new DbContextOptionsBuilder<TestDbContext>();
-        optionsBuilder.UseSqlServer(ConnectionSource.ConnectionString);
-
-        using var dbContext = new TestDbContext(optionsBuilder.Options);
-        var storage = new EfCoreProjectionStorage<PlayerTally, string, TestDbContext>(dbContext, "*DEFAULT*");
-
-        ((IProjectionStorage<PlayerTally, string>)storage).IsThreadSafe.ShouldBeFalse();
-    }
-
-    /// <summary>
     ///     The regression itself: the daemon must apply this storage's slices inline, never through
     ///     AggregationRunner's concurrent block. Revert IsThreadSafe to true and this fails — the
     ///     probe sees JasperFx.Blocks.Block on the stack.
@@ -130,5 +115,34 @@ public class ef_core_projection_storage_concurrency_tests : IAsyncLifetime
         var rowCount = await EfCoreTestHelper.QueryScalarAsync<int>(
             "SELECT COUNT(*) FROM ef_player_tallies");
         rowCount.ShouldBe(PlayersPerEvent);
+    }
+}
+
+/// <summary>
+///     #489, the deterministic half — deliberately in its own class with NO
+///     <see cref="IAsyncLifetime" />.
+/// </summary>
+/// <remarks>
+///     Every other test class in this project gates ALL of its tests behind
+///     <see cref="RequiresNativeJsonFactAttribute" />, so on a SQL Server without the native
+///     <c>json</c> type xUnit skips them all and never constructs the class — which is what keeps
+///     their store-building InitializeAsync from running. A single plain <c>[Fact]</c> alongside a
+///     gated one breaks that: the class gets constructed for the ungated test, InitializeAsync runs,
+///     and store creation dies with "Cannot find data type json" on the edge matrix leg. Hence the
+///     split — this assertion needs no database at all (it opens no connection), so it belongs
+///     nowhere near a fixture.
+/// </remarks>
+public class ef_core_projection_storage_thread_safety_tests
+{
+    [Fact]
+    public void ef_core_storage_declares_itself_not_thread_safe()
+    {
+        var optionsBuilder = new DbContextOptionsBuilder<TestDbContext>();
+        optionsBuilder.UseSqlServer(ConnectionSource.ConnectionString);
+
+        using var dbContext = new TestDbContext(optionsBuilder.Options);
+        var storage = new EfCoreProjectionStorage<PlayerTally, string, TestDbContext>(dbContext, "*DEFAULT*");
+
+        ((IProjectionStorage<PlayerTally, string>)storage).IsThreadSafe.ShouldBeFalse();
     }
 }
