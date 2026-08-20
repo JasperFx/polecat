@@ -15,17 +15,29 @@ public interface IChangeSet : IDocumentChangeSet
     /// <summary>
     ///     Documents that were updated (Update or Upsert operations) in this unit of work.
     /// </summary>
-    IEnumerable<object> Updated { get; }
+    /// <remarks>
+    ///     #492: <c>new</c> because this narrows <see cref="IDocumentChangeSet.Updated" /> from
+    ///     <see cref="IReadOnlyList{T}" /> to <see cref="IEnumerable{T}" />. The explicit adapter
+    ///     below implements the contract member by materialising a snapshot.
+    /// </remarks>
+    new IEnumerable<object> Updated { get; }
 
     /// <summary>
     ///     Documents that were inserted in this unit of work.
     /// </summary>
-    IEnumerable<object> Inserted { get; }
+    /// <inheritdoc cref="Updated" path="/remarks" />
+    new IEnumerable<object> Inserted { get; }
 
     /// <summary>
     ///     Documents that were deleted in this unit of work.
     /// </summary>
-    IEnumerable<IDeletion> Deleted { get; }
+    /// <remarks>
+    ///     #492: <c>new</c> for the same reason as <see cref="Updated" />, and doubly so — this
+    ///     narrows both the collection (<see cref="IReadOnlyList{T}" /> to
+    ///     <see cref="IEnumerable{T}" />) and the element (<see cref="IDocumentDeletion" /> to
+    ///     <see cref="IDeletion" />).
+    /// </remarks>
+    new IEnumerable<IDeletion> Deleted { get; }
 
     /// <summary>
     ///     #485 / jasperfx#679: the shared contract's view of this change set, so a consumer that
@@ -95,22 +107,23 @@ public interface IChangeSet : IDocumentChangeSet
 ///     Describes a single document deletion within an <see cref="IChangeSet" />.
 /// </summary>
 /// <remarks>
-///     #485 / jasperfx#679: derives from the shared <see cref="IDocumentDeletion" />, which declares
-///     the identical pair. The inheritance is what lets a Polecat <see cref="IDeletion" /> instance
-///     be handed straight to an <see cref="IDocumentCommitListener" /> — but note it does NOT make
-///     <c>IEnumerable&lt;IDeletion&gt;</c> satisfy the contract's
-///     <c>IReadOnlyList&lt;IDocumentDeletion&gt;</c>; see the adapter above.
+///     <para>
+///         #485 / jasperfx#679: derives from the shared <see cref="IDocumentDeletion" />, which
+///         declares the <c>{ DocumentType, Id }</c> pair. The inheritance is what lets a Polecat
+///         <see cref="IDeletion" /> instance be handed straight to an
+///         <see cref="IDocumentCommitListener" /> — but note it does NOT make
+///         <c>IEnumerable&lt;IDeletion&gt;</c> satisfy the contract's
+///         <c>IReadOnlyList&lt;IDocumentDeletion&gt;</c>; see the adapter on
+///         <see cref="IChangeSet" /> above.
+///     </para>
+///     <para>
+///         #492: deliberately declares NO members of its own. It used to re-declare
+///         <c>DocumentType</c> and <c>Id</c>, which were identical to the base's rather than
+///         narrowed — so they hid the inherited members for no benefit and cost two CS0108 in every
+///         consumer build. Unlike <see cref="IChangeSet" />'s three properties, there was nothing
+///         here for a <c>new</c> to document. What remains is Polecat's own NAME for the shared
+///         descriptor, which is worth keeping: it is the element type of
+///         <see cref="IChangeSet.Deleted" /> and part of the public surface.
+///     </para>
 /// </remarks>
-public interface IDeletion : IDocumentDeletion
-{
-    /// <summary>
-    ///     The .NET type of the deleted document.
-    /// </summary>
-    Type DocumentType { get; }
-
-    /// <summary>
-    ///     The identity of the deleted document, when the deletion targeted a single document by id.
-    ///     Null for predicate-based (delete-where) operations.
-    /// </summary>
-    object? Id { get; }
-}
+public interface IDeletion : IDocumentDeletion;
