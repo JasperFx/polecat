@@ -48,6 +48,31 @@ internal class EfCoreProjectionStorage<
 
     public string TenantId { get; }
 
+    /// <summary>
+    ///     #489 / jasperfx#683: this storage cannot take concurrently applied slices, so the async
+    ///     daemon must apply them one at a time.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///     <see cref="AggregationRunner{TDoc,TId,TOperations,TQuerySession}" /> applies every slice in
+    ///     a range through a fixed 10-wide block, and hands every slice in a tenant group this same
+    ///     storage instance. This one wraps a single <see cref="DbContext" />, which is not
+    ///     thread-safe, so a multi-stream projection with custom grouping — where one event fans out
+    ///     into many slices — otherwise has up to ten threads calling <c>Entry()</c> / <c>Find</c>
+    ///     against one change tracker. Reported against Marten's identically shaped storage as
+    ///     marten#5266: an <see cref="InvalidOperationException" /> out of <c>Dictionary.TryInsert</c>
+    ///     and a <see cref="NullReferenceException" /> out of <c>ChangeDetector.DetectChanges</c>.
+    ///     </para>
+    ///     <para>
+    ///     ⚠️ <see cref="_dbContextLock" /> does not make this <see langword="true" />. It serializes
+    ///     each individual member, but between calls the aggregation on one thread mutates entities
+    ///     that another thread's <c>Entry()</c> is running change detection over — which is the
+    ///     <c>ChangeDetector</c> failure above. The fan-out itself has to stop, and only the runner
+    ///     can stop it. The lock stays as protection for any non-daemon caller.
+    ///     </para>
+    /// </remarks>
+    public bool IsThreadSafe => false;
+
     public void SetIdentity(TDoc document, TId identity)
     {
         _dbContextLock.Wait();

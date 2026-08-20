@@ -17,6 +17,12 @@
     </ItemGroup>
 
     <ItemGroup>
+        <!-- #489: so the tests can assert EfCoreProjectionStorage.IsThreadSafe directly. Mirrors the
+             InternalsVisibleTo Polecat.csproj already declares for its own test project. -->
+        <InternalsVisibleTo Include="Polecat.EntityFrameworkCore.Tests" />
+    </ItemGroup>
+
+    <ItemGroup>
         <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" />
         <PackageReference Include="Weasel.EntityFrameworkCore" />
     </ItemGroup>
