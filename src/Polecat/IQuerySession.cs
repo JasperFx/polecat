@@ -101,7 +101,15 @@ public interface IQuerySession : IAsyncDisposable, IDocumentReadOperations
     /// <summary>
     ///     Read-only access to event store queries.
     /// </summary>
-    IQueryEventStore Events { get; }
+    /// <remarks>
+    ///     #487: <c>new</c> because jasperfx#669 added <see cref="IDocumentReadOperations.Events" /> to
+    ///     the shared contract, and this property deliberately hides it to narrow the return type to
+    ///     Polecat's own <see cref="Polecat.Events.IQueryEventStore" />. The explicit forwarder just
+    ///     below implements the contract member and returns this same instance, so which member a
+    ///     caller reaches through is invisible. <see cref="IDocumentSession.Events" /> declares
+    ///     <c>new</c> one tier up for exactly the same reason.
+    /// </remarks>
+    new IQueryEventStore Events { get; }
 
     /// <summary>
     ///     #475 / jasperfx#669: the shared contract's read-tier <c>Events</c> accessor, so a consumer
