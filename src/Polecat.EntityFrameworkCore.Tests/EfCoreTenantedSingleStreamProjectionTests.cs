@@ -13,6 +13,8 @@ public abstract class ef_core_tenanted_single_stream_tests_base : IAsyncLifetime
         {
             opts.ConnectionString = ConnectionSource.ConnectionString;
             opts.AutoCreateSchemaObjects = AutoCreate.All;
+            // #498: see EfCoreTestHelper — adapt to the server rather than skip the whole class.
+            opts.UseNativeJsonType = ConnectionSource.SupportsNativeJson;
             opts.DatabaseSchemaName = $"efcore_ten_{Lifecycle.ToString().ToLowerInvariant()}";
             opts.Events.TenancyStyle = TenancyStyle.Conjoined;
 
@@ -33,7 +35,7 @@ public abstract class ef_core_tenanted_single_stream_tests_base : IAsyncLifetime
 
     protected virtual Task WaitForProjectionAsync() => Task.CompletedTask;
 
-    [RequiresNativeJsonFact(true)]
+    [Fact]
     public async Task tenant_id_is_written_to_ef_core_table()
     {
         var orderId = Guid.NewGuid();
@@ -53,7 +55,7 @@ public abstract class ef_core_tenanted_single_stream_tests_base : IAsyncLifetime
         row["tenant_id"].ShouldBe("tenant-a");
     }
 
-    [RequiresNativeJsonFact(true)]
+    [Fact]
     public async Task different_tenants_get_isolated_data()
     {
         var orderId1 = Guid.NewGuid();
@@ -87,7 +89,7 @@ public abstract class ef_core_tenanted_single_stream_tests_base : IAsyncLifetime
         rowY["tenant_id"].ShouldBe("tenant-y");
     }
 
-    [RequiresNativeJsonFact(true)]
+    [Fact]
     public async Task subsequent_appends_preserve_tenant_id()
     {
         var orderId = Guid.NewGuid();

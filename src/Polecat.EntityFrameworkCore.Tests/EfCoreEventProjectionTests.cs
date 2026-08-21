@@ -17,7 +17,7 @@ public class ef_core_event_projection_tests : IAsyncLifetime
         return ValueTask.CompletedTask;
     }
 
-    [RequiresNativeJsonFact(true)]
+    [Fact]
     public async Task can_project_event_to_ef_core_and_polecat()
     {
         var orderId = Guid.NewGuid();
@@ -43,7 +43,7 @@ public class ef_core_event_projection_tests : IAsyncLifetime
         log.EventType.ShouldBe("OrderPlaced");
     }
 
-    [RequiresNativeJsonFact(true)]
+    [Fact]
     public async Task can_project_multiple_events()
     {
         var orderId = Guid.NewGuid();
