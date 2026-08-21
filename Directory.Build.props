@@ -8,6 +8,14 @@
         <LangVersion>latest</LangVersion>
         <Authors>Jeremy D. Miller</Authors>
         <PackageIcon>logo.png</PackageIcon>
+        <!--
+          nuget.org renders this on the package page, and pack/push warn without it. Set per-project
+          rather than repo-wide: each packable project carries its OWN README.md so the three package
+          pages describe the three packages, and only projects that actually have one opt in. The
+          root README.md is deliberately NOT reused here — it links ./docs/polecat-logo.png
+          relatively, and relative paths do not resolve on nuget.org.
+        -->
+        <PackageReadmeFile Condition="Exists('$(MSBuildProjectDirectory)/README.md')">README.md</PackageReadmeFile>
         <PackageProjectUrl>https://polecat.netlify.app/</PackageProjectUrl>
         <PackageLicenseExpression>MIT</PackageLicenseExpression>
         <NoWarn>1570;1571;1572;1573;1574;1587;1591;1701;1702;1711;1735;0618</NoWarn>
@@ -51,5 +59,7 @@
 
     <ItemGroup>
         <None Include="$(MSBuildThisFileDirectory)logo.png" Pack="true" PackagePath="" Visible="false" />
+        <None Include="$(MSBuildProjectDirectory)/README.md" Pack="true" PackagePath="" Visible="false"
+              Condition="Exists('$(MSBuildProjectDirectory)/README.md')" />
     </ItemGroup>
 </Project>
