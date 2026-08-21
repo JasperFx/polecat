@@ -53,7 +53,7 @@ public class ef_core_projection_storage_concurrency_tests : IAsyncLifetime
     ///     AggregationRunner's concurrent block. Revert IsThreadSafe to true and this fails — the
     ///     probe sees JasperFx.Blocks.Block on the stack.
     /// </summary>
-    [RequiresNativeJsonFact(true)]
+    [Fact]
     public async Task daemon_applies_slices_inline_and_never_through_the_concurrent_block()
     {
         var token = TestContext.Current.CancellationToken;

@@ -19,7 +19,7 @@ public abstract class ef_core_multi_stream_projection_tests_base : IAsyncLifetim
 
     protected virtual Task WaitForProjectionAsync() => Task.CompletedTask;
 
-    [RequiresNativeJsonFact(true)]
+    [Fact]
     public async Task multi_stream_projection_aggregates_across_streams()
     {
         var orderId1 = Guid.NewGuid();
@@ -43,7 +43,7 @@ public abstract class ef_core_multi_stream_projection_tests_base : IAsyncLifetim
         ((decimal)row["total_spent"]!).ShouldBe(300.00m);
     }
 
-    [RequiresNativeJsonFact(true)]
+    [Fact]
     public async Task multi_stream_projection_creates_separate_aggregates_per_identity()
     {
         var orderId1 = Guid.NewGuid();
@@ -74,7 +74,7 @@ public abstract class ef_core_multi_stream_projection_tests_base : IAsyncLifetim
         ((decimal)charlieRow["total_spent"]!).ShouldBe(75.00m);
     }
 
-    [RequiresNativeJsonFact(true)]
+    [Fact]
     public async Task multi_stream_projection_handles_subsequent_appends()
     {
         var orderId1 = Guid.NewGuid();
@@ -134,7 +134,7 @@ public class ef_core_multi_stream_live_tests : IAsyncLifetime
         return ValueTask.CompletedTask;
     }
 
-    [RequiresNativeJsonFact(true)]
+    [Fact]
     public async Task can_store_events_without_error()
     {
         var orderId = Guid.NewGuid();

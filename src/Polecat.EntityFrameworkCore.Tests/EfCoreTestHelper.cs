@@ -72,6 +72,12 @@ public static class EfCoreTestHelper
         {
             opts.ConnectionString = ConnectionSource.ConnectionString;
             opts.AutoCreateSchemaObjects = AutoCreate.All;
+            // #498: adapt to the server instead of skipping on it. The edge matrix leg runs SQL
+            // Server 2022, which has no native `json` type, so a store left on the default
+            // UseNativeJsonType = true dies in the Weasel migration with "Cannot find data type
+            // json". Polecat.Tests has used this idiom for exactly this reason all along; this
+            // project gated its tests off instead and so asserted nothing at all on edge.
+            opts.UseNativeJsonType = ConnectionSource.SupportsNativeJson;
             opts.DatabaseSchemaName = $"efcore_ss_{lifecycle.ToString().ToLowerInvariant()}";
 
             opts.Projections.Add<OrderAggregate, Order, TestDbContext>(
@@ -93,6 +99,12 @@ public static class EfCoreTestHelper
         {
             opts.ConnectionString = ConnectionSource.ConnectionString;
             opts.AutoCreateSchemaObjects = AutoCreate.All;
+            // #498: adapt to the server instead of skipping on it. The edge matrix leg runs SQL
+            // Server 2022, which has no native `json` type, so a store left on the default
+            // UseNativeJsonType = true dies in the Weasel migration with "Cannot find data type
+            // json". Polecat.Tests has used this idiom for exactly this reason all along; this
+            // project gated its tests off instead and so asserted nothing at all on edge.
+            opts.UseNativeJsonType = ConnectionSource.SupportsNativeJson;
             opts.DatabaseSchemaName = $"efcore_ms_{lifecycle.ToString().ToLowerInvariant()}";
 
             opts.Projections.Add<CustomerOrderHistoryProjection, CustomerOrderHistory, string, TestDbContext>(
@@ -115,6 +127,12 @@ public static class EfCoreTestHelper
         {
             opts.ConnectionString = ConnectionSource.ConnectionString;
             opts.AutoCreateSchemaObjects = AutoCreate.All;
+            // #498: adapt to the server instead of skipping on it. The edge matrix leg runs SQL
+            // Server 2022, which has no native `json` type, so a store left on the default
+            // UseNativeJsonType = true dies in the Weasel migration with "Cannot find data type
+            // json". Polecat.Tests has used this idiom for exactly this reason all along; this
+            // project gated its tests off instead and so asserted nothing at all on edge.
+            opts.UseNativeJsonType = ConnectionSource.SupportsNativeJson;
             opts.DatabaseSchemaName = $"efcore_fanout_{lifecycle.ToString().ToLowerInvariant()}";
 
             opts.Projections.Add<PlayerTallyProjection, PlayerTally, string, TestDbContext>(
@@ -136,6 +154,12 @@ public static class EfCoreTestHelper
         {
             opts.ConnectionString = ConnectionSource.ConnectionString;
             opts.AutoCreateSchemaObjects = AutoCreate.All;
+            // #498: adapt to the server instead of skipping on it. The edge matrix leg runs SQL
+            // Server 2022, which has no native `json` type, so a store left on the default
+            // UseNativeJsonType = true dies in the Weasel migration with "Cannot find data type
+            // json". Polecat.Tests has used this idiom for exactly this reason all along; this
+            // project gated its tests off instead and so asserted nothing at all on edge.
+            opts.UseNativeJsonType = ConnectionSource.SupportsNativeJson;
             opts.DatabaseSchemaName = $"efcore_ep_{lifecycle.ToString().ToLowerInvariant()}";
 
             opts.Projections.Add<OrderDetailProjection, TestDbContext>(
