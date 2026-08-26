@@ -9,6 +9,8 @@ using Polecat.Schema.Identity.Sequences;
 using Polecat.Storage.Metadata;
 using Weasel.Core.Identity;
 using Weasel.Core.Sequences;
+using Polecat.Patching;
+using System.Text.Json;
 
 namespace Polecat.Storage;
 
@@ -161,10 +163,19 @@ internal class DocumentMapping
         var current = _documentType;
         foreach (var segment in jsonPath[2..].Split('.'))
         {
-            // Index paths are camelCased property names; match case-insensitively since
-            // camelCasing only changes the first character.
-            var prop = current.GetProperties(BindingFlags.Public | BindingFlags.Instance)
-                .FirstOrDefault(p => string.Equals(p.Name, segment, StringComparison.OrdinalIgnoreCase));
+            // #507: match on the SERIALIZED name, not the CLR name. An index path segment is
+            // whatever the serializer writes, which for a [JsonPropertyName] member is the alias and
+            // bears no relation to the property name — "bucket_label" never matches "Label" however
+            // it is cased. Resolving to null here is not loud: the caller falls back to a default SQL
+            // type, so the computed column is silently mistyped rather than refused.
+            // The CLR-name comparison is kept as a fallback so a path written by hand (JsonPaths and
+            // SqlTypeByPath are both settable) still resolves the way it always did.
+            var props = current.GetProperties(BindingFlags.Public | BindingFlags.Instance);
+            var prop = Array.Find(props,
+                           p => string.Equals(JsonPathHelper.FormatMember(p, JsonNamingPolicy.CamelCase),
+                               segment, StringComparison.Ordinal))
+                       ?? Array.Find(props,
+                           p => string.Equals(p.Name, segment, StringComparison.OrdinalIgnoreCase));
             if (prop == null) return null;
             current = prop.PropertyType;
         }

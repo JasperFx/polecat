@@ -112,7 +112,13 @@ internal static class JsonPathHelper
     ///     explicit [JsonPropertyName] wins verbatim over the naming policy, otherwise the configured
     ///     naming policy is applied — so a patch targets the same key the document was written with.
     /// </summary>
-    private static string FormatMember(MemberInfo member, JsonNamingPolicy? namingPolicy)
+    /// <remarks>
+    ///     #507: internal rather than private because the index DDL builder needs the SAME answer.
+    ///     It had its own copy that applied a casing transform and never looked at the attribute, so
+    ///     an aliased member got a computed column over a path the serializer never writes.
+    ///     There is one rule and it lives here.
+    /// </remarks>
+    internal static string FormatMember(MemberInfo member, JsonNamingPolicy? namingPolicy)
     {
         var attribute = member.GetCustomAttribute<JsonPropertyNameAttribute>();
         if (attribute != null)

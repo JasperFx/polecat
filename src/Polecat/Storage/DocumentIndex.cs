@@ -1,6 +1,8 @@
 using System.Linq.Expressions;
 using System.Reflection;
 using Polecat.Internal;
+using Polecat.Patching;
+using System.Text.Json;
 
 namespace Polecat.Storage;
 
@@ -258,16 +260,36 @@ public class DocumentIndex
     /// </summary>
     internal static string MemberToJsonPath(MemberInfo member)
     {
-        var name = member.Name;
-        return "$." + char.ToLowerInvariant(name[0]) + name[1..];
+        return "$." + SerializedName(member);
     }
+
+    /// <summary>
+    ///     #507: the serialized key for a member, which is what the computed column has to read.
+    ///     Delegates to the single rule in <see cref="JsonPathHelper.FormatMember" /> — an explicit
+    ///     <c>[JsonPropertyName]</c> wins verbatim, otherwise the casing transform applies. Before
+    ///     this, the index builders camelCased the CLR name and never consulted the attribute, so an
+    ///     aliased member produced a column over a path the serializer never writes: permanently
+    ///     NULL, and an index that could never match. Queries kept returning correct results by
+    ///     scanning <c>data</c>, so nothing ever errored.
+    /// </summary>
+    /// <remarks>
+    ///     ⚠️ The naming policy is hardcoded to CamelCase, which is the serializer default and what
+    ///     these builders have always assumed. It is NOT read from the store, because index paths are
+    ///     resolved at <c>Schema.For&lt;T&gt;().Index(...)</c> time, where
+    ///     <c>DocumentMappingExpression</c> holds no <c>StoreOptions</c>. A store configured for
+    ///     <c>Casing.SnakeCase</c> therefore still builds camelCased index paths — the same class of
+    ///     mismatch as the alias bug, tracked separately. Fixing it means deferring path resolution
+    ///     to DDL time, where the mapping does have the options.
+    /// </remarks>
+    private static string SerializedName(MemberInfo member)
+        => JsonPathHelper.FormatMember(member, JsonNamingPolicy.CamelCase);
 
     /// <summary>
     ///     Resolves a (possibly nested) member access expression to a JSON path by walking the
     ///     member chain, e.g. x => x.Address.City → "$.address.city". This mirrors the LINQ
     ///     translator's MemberFactory.BuildJsonPath so an index path and the query predicate path
-    ///     are identical (otherwise the computed-column index can never match). Each segment is
-    ///     camelCased, matching the default serializer casing the rest of the index DSL assumes.
+    ///     are identical (otherwise the computed-column index can never match). #507: that claim was
+    ///     false for a member carrying [JsonPropertyName] — see <see cref="SerializedName" />.
     /// </summary>
     internal static string MemberExpressionToJsonPath(MemberExpression expression)
     {
@@ -276,8 +298,7 @@ public class DocumentIndex
 
         while (current != null)
         {
-            var name = current.Member.Name;
-            segments.Insert(0, char.ToLowerInvariant(name[0]) + name[1..]);
+            segments.Insert(0, SerializedName(current.Member));
 
             if (current.Expression is ParameterExpression)
                 break;
