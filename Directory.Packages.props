@@ -424,10 +424,51 @@
              stamp.
              (c) weasel#431 — bounded-parallel db-apply / db-assert across physical databases, plus
              the per-database redirectable migration logger it needed. Polecat's multi-database
-             tenancy inherits this through the shared CLI commands. -->
-        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.24.0" />
-        <PackageVersion Include="Weasel.SqlServer" Version="9.24.0" />
-        <PackageVersion Include="Weasel.Storage" Version="9.24.0" />
+             tenancy inherits this through the shared CLI commands.
+             Weasel 9.25.0 — the provider parity release, and BREAKING in two ways that reach SQL
+             Server. (a) Identifiers are now quoted where they previously were not. Ordinary schemas
+             emit byte-identical DDL, but anything hashing DDL — the schema fingerprint stamps from
+             9.24.0(b) above — re-evaluates once on the first run after upgrade. That is a one-time
+             "everything looks changed" pass, not drift. (b) Column names are no longer rewritten
+             (a space stopped becoming an underscore). Polecat generates every column name it uses
+             and none contains a space, so this is inert here. The SQLite data-loss fix (weasel#477)
+             and the Oracle introspection fix (weasel#474) headline the release but are other
+             providers.
+             Weasel 9.26.0: four silent-failure fixes plus two migrations that failed outright.
+             The two SQL Server ones are the reason to take it: weasel#496/#497 — introspection bound
+             two parameters per table into ONE command against SQL Server's 2100-parameter ceiling,
+             so a schema past roughly a thousand tables failed the migration before any comparison
+             happened; and weasel#505 — a SQL Server column carrying a default could never be
+             dropped, the patch generated fine and then always failed. Also weasel#499, where a
+             delimited schema name surfaced on SQL Server as "There is already an object named 'x'".
+             ⚠️ DbObjectName.Schema/.Name now hold the UNDELIMITED name (weasel#500). Polecat compares
+             these against bare names, which are byte-identical.
+             Weasel 9.27.0: nine read-back fidelity fixes — every one a case where Weasel read a
+             schema back as something other than what the database held. No DDL changes for a schema
+             it was already reading correctly. Four land squarely on paths Polecat drives:
+             weasel#512 — a PARTITION-ALIGNED INDEX on SQL Server was dropped and recreated on every
+             single run, because the implicit sys.index_columns row for the partitioning column was
+             read as a declared key column, so the index compared unequal to itself and the rebuilt
+             index read back the same way. This is #335 tenant partitioning and #386 rolling-range
+             partitioning — every partitioned table Polecat manages.
+             weasel#511 — SQL Server column type ARGUMENTS and IDENTITY were lost on read-back, and
+             IgnoreIndex was ignored entirely so the generated patch dropped the very index it was
+             meant to protect. pc_events.seq_id is bigint IDENTITY(1,1).
+             weasel#511/#516/#517 — composite PRIMARY KEY ORDER was discarded, and a composite
+             foreign key could pair the wrong columns because both sides were sorted independently.
+             Polecat's conjoined-tenancy and partitioned tables carry composite PKs, and the
+             alphabetical-FK-column hazard noted elsewhere in this repo is the same family of bug.
+             ⚠️ Reading key order faithfully is deliberately NOT the same as comparing it: the new
+             SetPrimaryKeyOrder / HasExplicitPrimaryKeyOrder on TableBase are opt-in, so a model that
+             never expressed an order does not start reporting drift it cannot resolve. Polecat does
+             not opt in, so ordering is read correctly and not compared.
+             weasel#513 — an index's per-column sort direction was read as a whole-index flag, so
+             (a DESC, b) read back as (a, b DESC) and a genuinely different index never reported
+             drift. New opt-in DescendingColumns / CompareColumnDirection on SQL Server's
+             IndexDefinition; Polecat does not opt in. -->
+        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.27.0" />
+        <PackageVersion Include="Weasel.SqlServer" Version="9.27.0" />
+        <PackageVersion Include="Weasel.Storage" Version="9.27.0" />
 
         <!-- Strongly typed IDs. Both generators are test-only: they prove Polecat's value-type id
              support against the two libraries Marten's ValueTypeTests exercise. StronglyTypedId emits
