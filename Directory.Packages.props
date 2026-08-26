@@ -272,15 +272,51 @@
              Additive: the member is a default interface implementation returning true, so every
              existing storage keeps today's behavior until it opts out. Polecat's SQL Server storage
              stays on the default (it holds no shared mutable state across slices); only the EF Core
-             storage returns false. -->
-        <PackageVersion Include="JasperFx" Version="2.53.0" />
-        <PackageVersion Include="JasperFx.Events" Version="2.53.0" />
+             storage returns false.
+             JasperFx 2.54.0 / 2.55.0: Event Modeling semantic model v2 (jasperfx#687/#689/#690) and
+             the application-assembly detection fix (jasperfx#697). Both inert here — Polecat
+             registers no IEventModelDefinitionSource, and the assembly walk it fixes runs during
+             runtime code generation, which Polecat does not do. Rolled through on the way to
+             2.56.0 rather than pinned for their own sake. ProjectionScenario's PlannedSteps /
+             Observer (jasperfx#688) are additive on the base class; Polecat's subclass is unchanged.
+             JasperFx 2.56.0: an async daemon reliability release. Three fixes in the shared daemon
+             Polecat runs, all first diagnosed on Marten but all in JasperFx.Events:
+             jasperfx#702 — a tenant agent seeded below its own committed position no longer throws
+             into ReportCriticalFailureAsync → Paused, which nothing restarts under a node-distributed
+             daemon. The seed is clamped to the committed position with a warning; nothing is replayed
+             or skipped, since loading only ever starts above LastCommitted.
+             jasperfx#709 — HighWaterAgent.IsRunning flipped BEFORE the Detect() it exists to gate, so
+             a second concurrent StartAgentAsync skipped priming and read Tracker.HighWaterMark at 0.
+             The flag now means "detection completed", a failed detection leaves the agent not running,
+             and both start paths meet at a single-flight rendezvous.
+             ⚠️ Reachable on a plain non-tenanted store, not only under sharded tenancy — the default
+             CatchUp strategy returns the persisted progression regardless of the mark handed to it.
+             This is the in-process half of polecat#500; it collapses N concurrent agent starts into
+             one priming Detect(). It does NOT close that issue — a second process still races, which
+             is why the progression MERGE also needs WITH (HOLDLOCK) server-side.
+             jasperfx#710 — per-tenant catch-up and rebuild pin their tenants across the priming poll
+             instead of using Activate, and catch-up distinguishes "never polled" (logged) from
+             "polled, no events yet" (the benign skip).
+             ⚠️ New compliance requirement: EventStoreExplorerCompliance gains
+             usage_describes_the_registered_projections (jasperfx#700). Polecat passes unchanged —
+             DocumentStore.EventStore.cs already calls Options.Projections.Describe(usage, this). It is
+             a regression guard against an unpopulated EventStoreUsage slot, scoped upstream to
+             Subscriptions only. Two consequences in Polecat.Tests: the suite registers VoyageSnapshot
+             as an Inline snapshot, so the compliance_explorer schema gains a document table, and
+             VoyageSnapshot is a new partial type in the source-shipped package, so the aggregate
+             source generator emits its dispatcher. Nothing to register by hand.
+             Event Model merge precedence now runs on a Declared < Derived < Observed provenance
+             ladder rather than registration order (jasperfx#703/#704). Inert here for the same reason
+             2.54.0 was: IEventModelDefinitionSource.Provenance is a default member returning Declared,
+             and Polecat registers no source. Affects Wolverine and CritterWatch, not this store. -->
+        <PackageVersion Include="JasperFx" Version="2.56.0" />
+        <PackageVersion Include="JasperFx.Events" Version="2.56.0" />
         <!--
              The shared cross-store event sourcing compliance suites. Source-only package: the
              suites compile inside Polecat.Tests so JasperFx's aggregate source generator binds
              Polecat's own session types.
         -->
-        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="2.53.0" />
+        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="2.56.0" />
         <!-- Pin the sibling JasperFx packages for parity with Marten 9's matrix
              even though Polecat doesn't currently reference them directly —
              keeps the lockstep matrix coherent when transitive resolution
@@ -288,7 +324,7 @@
              RuntimeCompiler 5.x line is the active continuation of the 4.x
              lineage; do not pin against the parallel stale 2.0.x series. -->
         <PackageVersion Include="JasperFx.RuntimeCompiler" Version="5.0.0" />
-        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.53.0" />
+        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.56.0" />
         <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
@@ -401,7 +437,7 @@
         <PackageVersion Include="Vogen" Version="7.0.0" />
 
         <!-- Source generators (matched to JasperFx.Events above) -->
-        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.53.0" />
+        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.56.0" />
 
         <!-- Build automation -->
         <PackageVersion Include="Nuke.Common" Version="9.0.4" />
