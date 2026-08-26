@@ -290,11 +290,30 @@ an orphaned `cc_<clrname>` column and its `ix_<table>_<clrname>` index, both saf
 once you no longer need to roll back.
 :::
 
-::: warning Naming policy
-The index path applies camelCase, the serializer default. A store configured for
-`Casing.SnakeCase` still gets camelCased index paths, which will not match the serialized document —
-the same mismatch the alias case had, tracked as
-[polecat#510](https://github.com/JasperFx/polecat/issues/510). Until that is fixed, put an explicit
-`[JsonPropertyName]` on members you index when using a non-default naming policy: the alias is
-honored verbatim, so the index and the serializer agree again.
+## Naming Policies
+
+The index path follows the store's configured naming policy, so a non-default casing indexes the
+path the serializer actually writes:
+
+```cs
+opts.ConfigureSerialization(casing: Casing.SnakeCase);
+opts.Schema.For<Metric>().Index(x => x.ServiceName);
+```
+
+produces a `cc_service_name` column over `$.service_name`, matching both the document and the
+queries translated against it. Every segment of a nested path is converted, and native
+`JsonIndex(...)` paths follow the same rule.
+
+An explicit `[JsonPropertyName]` still wins verbatim and is **not** put through the policy on top,
+matching how `System.Text.Json` itself behaves.
+
+::: warning Upgrading from before 5.20
+Prior to 5.20 index paths were always camelCased regardless of the configured policy, so on a
+`Casing.SnakeCase` store every computed column read a path the document did not contain — `NULL` for
+every row, and an index that could never match. As with the alias case above, queries returned
+correct results by scanning `data`, so there was nothing to notice.
+
+On upgrade the correctly-named column and index are created additively and the stale ones are left
+in place. Expect an orphaned `cc_<camelCase>` column and its index per affected member, both safe to
+drop by hand once you no longer need to roll back.
 :::

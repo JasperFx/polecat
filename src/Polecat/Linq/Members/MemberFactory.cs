@@ -32,14 +32,10 @@ internal class MemberFactory : IMemberResolver
         // On nvarchar(max) storage the RETURNING clause is a syntax error, so fall back to CAST.
         _useReturning = options.UseNativeJsonType;
 
-        if (options.Serializer is Serializer s)
-        {
-            _namingPolicy = s.Options.PropertyNamingPolicy;
-        }
-        else
-        {
-            _namingPolicy = JsonNamingPolicy.CamelCase;
-        }
+        // #510: one resolver, shared with the index DDL builder. These two worked the policy out
+        // separately and drifted, which is what made a snake_case store's computed columns index a
+        // path the serializer never writes.
+        _namingPolicy = SerializedNames.PolicyFor(options);
     }
 
     public IQueryableMember ResolveMember(MemberExpression expression)

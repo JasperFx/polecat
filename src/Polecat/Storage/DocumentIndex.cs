@@ -21,7 +21,78 @@ public class DocumentIndex
     /// <summary>
     ///     The JSON paths (e.g., "$.userName", "$.address.city") to index.
     /// </summary>
-    public string[] JsonPaths { get; }
+    /// <remarks>
+    ///     #510: settable because these are re-rendered once the store's naming policy is known —
+    ///     see <see cref="ApplyNamingPolicy" />. Set one by hand and it is left exactly as written.
+    /// </remarks>
+    public string[] JsonPaths { get; set; }
+
+    /// <summary>
+    ///     #510: the member chains the paths were resolved from, when they came from a lambda.
+    ///     Null for a hand-written path or a path with no expression behind it, which is what makes
+    ///     <see cref="ApplyNamingPolicy" /> able to tell the two apart.
+    /// </summary>
+    internal MemberInfo[][]? MemberChains { get; set; }
+
+    /// <summary>
+    ///     #510: member chains behind <see cref="IncludeColumns" />, same contract as
+    ///     <see cref="MemberChains" />.
+    /// </summary>
+    internal MemberInfo[][]? IncludeMemberChains { get; set; }
+
+    /// <summary>
+    ///     #510: re-render the paths under the store's serializer naming policy.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         Index paths are resolved at <c>Schema.For&lt;T&gt;().Index(...)</c> time, inside a
+    ///         <c>DocumentMappingExpression&lt;T&gt;</c> that holds no <c>StoreOptions</c> — there is
+    ///         nothing to read the policy from at that point, so the paths are first rendered with
+    ///         the CamelCase default. This runs later, when the index is attached to a
+    ///         <c>DocumentMapping</c> and the options are finally in reach.
+    ///     </para>
+    ///     <para>
+    ///         Only paths that came from a lambda are re-rendered. A hand-written
+    ///         <see cref="JsonPaths" /> entry is left verbatim: the caller wrote the exact path they
+    ///         meant, and second-guessing it would silently retarget the column.
+    ///     </para>
+    ///     <para>
+    ///         Idempotent, and a no-op under the default CamelCase policy — which is the common case,
+    ///         so the overwhelming majority of stores see byte-identical DDL to before.
+    ///     </para>
+    /// </remarks>
+    internal void ApplyNamingPolicy(StoreOptions options)
+    {
+        if (MemberChains is { Length: > 0 })
+        {
+            var rendered = MemberChains.Select(chain => SerializedNames.PathFor(chain, options)).ToArray();
+
+            // Per-path SQL type overrides are keyed by path, so a rename has to carry them across or
+            // a composite index silently loses a column's declared type.
+            RekeySqlTypeOverrides(JsonPaths, rendered);
+            JsonPaths = rendered;
+        }
+
+        if (IncludeMemberChains is { Length: > 0 })
+        {
+            IncludeColumns = IncludeMemberChains
+                .Select(chain => SerializedNames.PathFor(chain, options)).ToArray();
+        }
+    }
+
+    private void RekeySqlTypeOverrides(string[] before, string[] after)
+    {
+        if (SqlTypeByPath.Count == 0) return;
+
+        for (var i = 0; i < before.Length && i < after.Length; i++)
+        {
+            if (before[i] == after[i]) continue;
+            if (SqlTypeByPath.Remove(before[i], out var sqlType))
+            {
+                SqlTypeByPath[after[i]] = sqlType;
+            }
+        }
+    }
 
     /// <summary>
     ///     Optional explicit index name. Auto-generated if null.
@@ -315,6 +386,15 @@ public class DocumentIndex
     ///     several — x => new { x.Prop1, x.Address.City }.
     /// </summary>
     internal static string[] ResolveJsonPaths<T>(Expression<Func<T, object?>> expression)
+        => ResolveMemberChains(expression).Select(MemberChainToJsonPath).ToArray();
+
+    /// <summary>
+    ///     #510: the member chains behind an index expression, outermost member first. Kept so the
+    ///     paths can be re-rendered once the store's naming policy is known — see
+    ///     <see cref="ApplyNamingPolicy" />. Path rendering is a projection of this, never the other
+    ///     way round, so the two cannot disagree.
+    /// </summary>
+    internal static MemberInfo[][] ResolveMemberChains<T>(Expression<Func<T, object?>> expression)
     {
         var body = expression.Body;
 
@@ -327,7 +407,7 @@ public class DocumentIndex
         // Single (possibly nested) member: x => x.Property / x => x.Address.City
         if (body is MemberExpression memberExpr)
         {
-            return [MemberExpressionToJsonPath(memberExpr)];
+            return [MemberChainOf(memberExpr)];
         }
 
         // Anonymous type: x => new { x.Prop1, x.Address.City }
@@ -336,7 +416,7 @@ public class DocumentIndex
             return newExpr.Arguments
                 .Select(UnwrapToMemberExpression)
                 .Where(m => m != null)
-                .Select(m => MemberExpressionToJsonPath(m!))
+                .Select(m => MemberChainOf(m!))
                 .ToArray();
         }
 
@@ -345,6 +425,27 @@ public class DocumentIndex
             "Use a single property (x => x.Prop), a nested property (x => x.Address.City), " +
             "or an anonymous type (x => new {{ x.Prop1, x.Prop2 }}).");
     }
+
+    private static MemberInfo[] MemberChainOf(MemberExpression expression)
+    {
+        var chain = new List<MemberInfo>();
+        var current = expression;
+
+        while (current != null)
+        {
+            chain.Insert(0, current.Member);
+
+            if (current.Expression is ParameterExpression)
+                break;
+
+            current = current.Expression as MemberExpression;
+        }
+
+        return chain.ToArray();
+    }
+
+    private static string MemberChainToJsonPath(MemberInfo[] chain)
+        => "$." + string.Join(".", chain.Select(SerializedName));
 
     /// <summary>
     ///     Strips a Convert wrapper (value-type members boxed to object in some anonymous-type

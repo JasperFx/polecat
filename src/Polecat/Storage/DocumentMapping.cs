@@ -170,10 +170,13 @@ internal class DocumentMapping
             // type, so the computed column is silently mistyped rather than refused.
             // The CLR-name comparison is kept as a fallback so a path written by hand (JsonPaths and
             // SqlTypeByPath are both settable) still resolves the way it always did.
+            // #510: match under the store's ACTUAL policy. Hardcoding CamelCase here would fail to
+            // resolve a snake_case path, and the caller answers an unresolved member by falling back
+            // to a default SQL type — a silently mistyped column rather than a refused one.
             var props = current.GetProperties(BindingFlags.Public | BindingFlags.Instance);
             var prop = Array.Find(props,
-                           p => string.Equals(JsonPathHelper.FormatMember(p, JsonNamingPolicy.CamelCase),
-                               segment, StringComparison.Ordinal))
+                           p => string.Equals(SerializedNames.For(p, StoreOptions), segment,
+                               StringComparison.Ordinal))
                        ?? Array.Find(props,
                            p => string.Equals(p.Name, segment, StringComparison.OrdinalIgnoreCase));
             if (prop == null) return null;
@@ -632,12 +635,15 @@ internal class DocumentMapping
             var indexAttr = prop.GetCustomAttribute<IndexAttribute>();
             if (indexAttr == null) continue;
 
-            var jsonPath = DocumentIndex.MemberToJsonPath(prop);
+            // #510: StoreOptions is assigned before this runs, so an attribute index can be
+            // rendered under the real policy immediately rather than re-rendered later.
+            var jsonPath = "$." + SerializedNames.For(prop, StoreOptions);
             var index = new DocumentIndex([jsonPath])
             {
                 IndexName = indexAttr.IndexName,
                 SortOrder = indexAttr.SortOrder,
-                Casing = indexAttr.Casing
+                Casing = indexAttr.Casing,
+                MemberChains = [[prop]]
             };
             if (indexAttr.SqlType != null) index.SqlType = indexAttr.SqlType;
             Indexes.Add(index);
@@ -655,10 +661,12 @@ internal class DocumentMapping
         {
             var members = group.ToList();
             var firstAttr = members[0].Attr!;
-            var jsonPaths = members.Select(m => DocumentIndex.MemberToJsonPath(m.Property)).ToArray();
+            var jsonPaths = members
+                .Select(m => "$." + SerializedNames.For(m.Property, StoreOptions)).ToArray();
 
             var index = new DocumentIndex(jsonPaths)
             {
+                MemberChains = members.Select(m => new[] { (MemberInfo)m.Property }).ToArray(),
                 IsUnique = true,
                 IndexName = firstAttr.IndexName,
                 TenancyScope = firstAttr.TenancyScope,
