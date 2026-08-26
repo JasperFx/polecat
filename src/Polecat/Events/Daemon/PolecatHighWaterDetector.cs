@@ -224,8 +224,31 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
             await conn.OpenAsync(ct);
 
             await using var cmd = conn.CreateCommand();
+            // WITH (UPDLOCK, HOLDLOCK) is load-bearing, not decoration — #500. A bare MERGE takes no
+            // lasting lock over the key it probed, so two detectors racing on a cold start (no
+            // HighWaterMark row yet) both match nothing and both take the INSERT branch: "Violation
+            // of PRIMARY KEY constraint 'pkey_pc_event_progression_name'".
+            // Why both hints rather than HOLDLOCK alone. HOLDLOCK makes the probe hold its range
+            // lock to end of statement, which is what closes the probe/probe/insert/insert window.
+            // UPDLOCK additionally makes that a RangeS-U rather than a RangeS-S: two RangeS-U locks
+            // are mutually incompatible, so the loser blocks at the probe and re-reads into the
+            // MATCHED branch, instead of both sides holding a shared lock and then needing to
+            // convert it to an insert lock the other side blocks — the documented lock-conversion
+            // deadlock (1205) that a bare HOLDLOCK upsert is prone to.
+            // Measured, so the comment does not overstate it: against Bug_500's reproducer the bare
+            // MERGE fails with 2627 every run, and BOTH hinted forms pass — the conversion deadlock
+            // did not reproduce here. UPDLOCK is kept because it forecloses that failure mode at no
+            // cost on a row this cold (one write per detection cycle), not because it was observed
+            // to be load-bearing. Do not "simplify" it away on the grounds that HOLDLOCK passes.
+            // The document upserts in SqlServerDocumentStorageDescriptorBuilder carry HOLDLOCK alone
+            // and are deliberately left alone: they contend on distinct document ids, where two
+            // sessions rarely probe the SAME key. Every agent here contends on the one literal
+            // 'HighWaterMark' row, so this is the maximal-contention case.
+            // JasperFx 2.56.0 (jasperfx#709) collapses N concurrent agent starts in ONE process into
+            // a single priming Detect(), which is what produced the reported trace — but a second
+            // process still races, so the guard has to be here, server-side.
             cmd.CommandText = $"""
-                MERGE {events.ProgressionTableName} AS target
+                MERGE {events.ProgressionTableName} WITH (UPDLOCK, HOLDLOCK) AS target
                 USING (SELECT 'HighWaterMark' AS name) AS source ON target.name = source.name
                 WHEN MATCHED THEN UPDATE SET last_seq_id = @mark, last_updated = SYSDATETIMEOFFSET()
                 WHEN NOT MATCHED THEN INSERT (name, last_seq_id, last_updated)

@@ -46,8 +46,10 @@ internal class RecordProgressionOperation : IStorageOperation
                 ? "@name, @seq, SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET()"
                 : "@name, @seq, SYSDATETIMEOFFSET()";
 
+            // HOLDLOCK: this is the Floor == 0 path, where the row does not exist yet and two
+            // agents starting together both take the INSERT branch without it. See #500.
             builder.Append($"""
-                MERGE {_progressionTableName} AS target
+                MERGE {_progressionTableName} WITH (UPDLOCK, HOLDLOCK) AS target
                 USING (SELECT @name AS name) AS source ON target.name = source.name
                 WHEN MATCHED THEN UPDATE SET {set}
                 WHEN NOT MATCHED THEN INSERT ({columns})
