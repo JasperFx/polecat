@@ -166,8 +166,10 @@ public class StatementMap<TEvent> : IFlatTableEventHandler
         var insertCols = string.Join(", ", insertColumns);
         var insertVals = string.Join(", ", insertValues);
 
+        // HOLDLOCK: the daemon applies slices concurrently, so two slices touching the same flat
+        // table row race the probe and both insert on the PK without it. See #500.
         _compiledSql = $"""
-            MERGE {SqlEscaping.QualifiedName(table.Identifier.Schema, table.Identifier.Name)} AS target
+            MERGE {SqlEscaping.QualifiedName(table.Identifier.Schema, table.Identifier.Name)} WITH (UPDLOCK, HOLDLOCK) AS target
             USING (SELECT @p0 AS {SqlEscaping.QuoteIdentifier(pkColumn)}) AS source ON target.{SqlEscaping.QuoteIdentifier(pkColumn)} = source.{SqlEscaping.QuoteIdentifier(pkColumn)}
             WHEN MATCHED THEN UPDATE SET {updateSet}
             WHEN NOT MATCHED THEN INSERT ({insertCols}) VALUES ({insertVals});

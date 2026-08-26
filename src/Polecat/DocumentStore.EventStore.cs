@@ -495,8 +495,10 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
             else
             {
                 await using var cmd = conn.CreateCommand();
+                // HOLDLOCK: concurrent rewinds of the same shard would otherwise both miss the row
+                // and both insert. See PolecatHighWaterDetector.MarkHighWaterAsync (#500).
                 cmd.CommandText = $"""
-                    MERGE {progressionTable} AS target
+                    MERGE {progressionTable} WITH (UPDLOCK, HOLDLOCK) AS target
                     USING (SELECT @name AS name) AS source ON target.name = source.name
                     WHEN MATCHED THEN UPDATE SET last_seq_id = @seq, last_updated = SYSDATETIMEOFFSET()
                     WHEN NOT MATCHED THEN INSERT (name, last_seq_id, last_updated)
@@ -521,8 +523,9 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
             await conn.OpenAsync(ct);
 
             await using var cmd = conn.CreateCommand();
+            // HOLDLOCK: see the sibling upsert above and #500.
             cmd.CommandText = $"""
-                MERGE {progressionTable} AS target
+                MERGE {progressionTable} WITH (UPDLOCK, HOLDLOCK) AS target
                 USING (SELECT @name AS name) AS source ON target.name = source.name
                 WHEN MATCHED THEN UPDATE SET last_seq_id = @seq, last_updated = SYSDATETIMEOFFSET()
                 WHEN NOT MATCHED THEN INSERT (name, last_seq_id, last_updated)

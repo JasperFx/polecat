@@ -37,10 +37,12 @@ internal class NaturalKeyUpsertOperation : Polecat.Internal.IStorageOperation
     {
         var streamColumn = _isGuidStream ? "stream_id" : "stream_key";
 
+        // HOLDLOCK on both branches: two sessions first-writing the same natural key would
+        // otherwise both probe, both miss, and both insert against the unique key. See #500.
         if (_isConjoined)
         {
             builder.Append($"""
-                MERGE {_tableName} AS target
+                MERGE {_tableName} WITH (UPDLOCK, HOLDLOCK) AS target
                 USING (VALUES (
                 """);
             builder.AppendParameter(_naturalKeyValue);
@@ -58,7 +60,7 @@ internal class NaturalKeyUpsertOperation : Polecat.Internal.IStorageOperation
         else
         {
             builder.Append($"""
-                MERGE {_tableName} AS target
+                MERGE {_tableName} WITH (UPDLOCK, HOLDLOCK) AS target
                 USING (VALUES (
                 """);
             builder.AppendParameter(_naturalKeyValue);
