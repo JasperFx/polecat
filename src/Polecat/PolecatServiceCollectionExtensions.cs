@@ -4,6 +4,7 @@ using JasperFx.MultiTenancy;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Polecat.Internal;
+using Polecat.Storage;
 
 namespace Polecat;
 
@@ -125,6 +126,15 @@ public static class PolecatServiceCollectionExtensions
         // The "resources" CLI commands also discover the Polecat database through this.
         services.AddSingleton<ISystemPart>(sp =>
             new PolecatSystemPart(sp.GetRequiredService<IDocumentStore>()));
+
+        // #501: the OTHER half of the same seam. "resources setup/list/check" go through the
+        // ISystemPart above, but Weasel's db-apply / db-assert / db-dump resolve IDatabaseSource
+        // instead — so on Polecat they found nothing and failed with "No Weasel databases were
+        // registered in this application". Marten satisfies both because its ITenancy IS an
+        // IDatabaseSource; Polecat's is adapted rather than widened, since ITenancy is public and
+        // has outside implementers. See PolecatDatabaseSource.
+        services.AddSingleton<Weasel.Core.Migrations.IDatabaseSource>(sp =>
+            new PolecatDatabaseSource(sp.GetRequiredService<IDocumentStore>));
 
         // Bridge so monitoring tools (CritterWatch / Wolverine
         // ServiceCapabilities.readDocumentStores) can discover this store via

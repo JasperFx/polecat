@@ -92,6 +92,12 @@ public static class PolecatStoreServiceCollectionExtensions
         services.AddSingleton<JasperFx.Documents.IDocumentStoreDiagnostics>(sp =>
             (JasperFx.Documents.IDocumentStoreDiagnostics)sp.GetRequiredService<T>());
 
+        // #501: and the db-apply / db-assert / db-dump half, so an ancillary store's databases are
+        // migrated by those commands too. Marten registers IDatabaseSource for its ancillary stores
+        // on the same line of reasoning (MartenServiceCollectionExtensions, AddMartenStore<T>).
+        services.AddSingleton<Weasel.Core.Migrations.IDatabaseSource>(sp =>
+            new Polecat.Storage.PolecatDatabaseSource(() => sp.GetRequiredService<T>()));
+
         return new PolecatStoreExpression<T>(services);
     }
 

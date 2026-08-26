@@ -52,3 +52,26 @@ All schema management is delegated to Weasel.SqlServer, which provides:
 - **Safe operations** -- Never drops columns or tables
 - **Idempotent** -- Safe to run multiple times
 - **Transaction safety** -- Schema changes are transactional
+
+## Command Line Schema Management
+
+With `RunJasperFxCommands(args)` on a host that calls `AddPolecat(...)`, both families of schema
+commands see the Polecat database:
+
+```bash
+dotnet run -- db-apply
+```
+
+| Command | Does |
+|---|---|
+| `db-apply` | Apply every outstanding migration |
+| `db-assert` | Fail if the database is out of step with the configuration — useful as a deployment gate |
+| `db-dump` | Write the DDL to a file instead of executing it |
+| `resources setup` | Provision every registered resource, Polecat's schema among them |
+| `resources list` / `resources check` | List or verify registered resources |
+
+The `db-*` commands operate on Weasel databases specifically; `resources *` covers every JasperFx
+resource in the application, so on a Wolverine host it also provisions envelope storage and broker
+topology alongside the Polecat schema. Both work against a single database and against every tenant
+database under separate-database or master-table tenancy, and ancillary stores registered with
+`AddPolecatStore<T>()` are included.
