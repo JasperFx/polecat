@@ -257,3 +257,44 @@ opts.Schema.For<User>().UniqueIndex(x => x.Email, idx =>
 ```
 
 This includes `tenant_id` in the index columns, allowing the same email across different tenants while enforcing uniqueness within each tenant.
+
+## Serialized Names and `[JsonPropertyName]`
+
+The computed column reads the JSON path the **serializer** writes, not the CLR property name. A
+member carrying `[JsonPropertyName]` is indexed under its alias:
+
+```cs
+public class Metric
+{
+    public Guid Id { get; set; }
+
+    [JsonPropertyName("bucket_label")]
+    public string Label { get; set; } = string.Empty;
+}
+
+opts.Schema.For<Metric>().Index(x => x.Label);
+```
+
+produces a column over `$.bucket_label`, matching what queries on `x.Label` translate to, so the
+index is usable.
+
+::: warning Upgrading from before 5.20
+Prior to 5.20 the index path was built from the CLR member name, so an aliased member got a column
+over a path the serializer never writes — permanently `NULL`, and an index that could never match.
+Queries kept returning correct results by scanning the `data` column, so there was no error to
+notice.
+
+On upgrade the correct column and index are created additively; the stale ones are left in place,
+since Polecat's migrations never drop. For a member previously indexed under an alias you will find
+an orphaned `cc_<clrname>` column and its `ix_<table>_<clrname>` index, both safe to drop by hand
+once you no longer need to roll back.
+:::
+
+::: warning Naming policy
+The index path applies camelCase, the serializer default. A store configured for
+`Casing.SnakeCase` still gets camelCased index paths, which will not match the serialized document —
+the same mismatch the alias case had, tracked as
+[polecat#510](https://github.com/JasperFx/polecat/issues/510). Until that is fixed, put an explicit
+`[JsonPropertyName]` on members you index when using a non-default naming policy: the alias is
+honored verbatim, so the index and the serializer agree again.
+:::

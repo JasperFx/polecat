@@ -96,9 +96,7 @@ public class patching_with_computed_column_index : OneOffConfigurationsContext
         (await ReadColumnAsync("pc_doc_simpleindexed", "cc_servicename", id)).ShouldBe("after");
     }
 
-    [Fact(Skip = "polecat#507: Index() builds its path from the CLR member name, so an aliased " +
-                 "member's computed column is permanently NULL. Un-skip with that fix — the test " +
-                 "is correct as written and fails on the column-existence assertion.")]
+    [Fact]
     public async Task patch_keeps_an_indexed_aliased_member_consistent()
     {
         ConfigureStore(opts => opts.Schema.For<AliasedIndexed>().Index(x => x.Label));
