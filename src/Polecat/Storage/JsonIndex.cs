@@ -33,7 +33,31 @@ public class JsonIndex
     ///     The JSON paths to index (e.g. "$.serviceName", "$.address.city"). When empty, the entire
     ///     JSON document is indexed (the <c>FOR</c> clause is omitted).
     /// </summary>
-    public string[] JsonPaths { get; }
+    /// <remarks>
+    ///     #510: settable for the same reason as <see cref="DocumentIndex.JsonPaths" /> — re-rendered
+    ///     once the store's naming policy is known. A hand-written path is left verbatim.
+    /// </remarks>
+    public string[] JsonPaths { get; set; }
+
+    /// <summary>
+    ///     #510: the member chains the paths came from, when they came from a lambda. Null for a
+    ///     hand-written path.
+    /// </summary>
+    internal System.Reflection.MemberInfo[][]? MemberChains { get; set; }
+
+    /// <summary>
+    ///     #510: re-render the paths under the store's serializer naming policy. A JSON index names
+    ///     its paths in a <c>FOR</c> clause, so a camelCased path on a snake_case store indexes
+    ///     something the document does not contain — the same silent miss as
+    ///     <see cref="DocumentIndex" />, and invisible for the same reason.
+    /// </summary>
+    internal void ApplyNamingPolicy(StoreOptions options)
+    {
+        if (MemberChains is { Length: > 0 })
+        {
+            JsonPaths = MemberChains.Select(chain => SerializedNames.PathFor(chain, options)).ToArray();
+        }
+    }
 
     /// <summary>
     ///     Optional explicit index name. Auto-derived from the table name when null.
@@ -100,4 +124,12 @@ public class JsonIndex
     /// </summary>
     internal static string[] ResolveJsonPaths<T>(Expression<Func<T, object?>> expression)
         => DocumentIndex.ResolveJsonPaths(expression);
+
+    /// <summary>
+    ///     #510: member chains behind an expression. Reuses
+    ///     <see cref="DocumentIndex.ResolveMemberChains{T}" />.
+    /// </summary>
+    internal static System.Reflection.MemberInfo[][] ResolveMemberChains<T>(
+        Expression<Func<T, object?>> expression)
+        => DocumentIndex.ResolveMemberChains(expression);
 }

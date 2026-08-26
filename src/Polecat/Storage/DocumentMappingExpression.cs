@@ -78,9 +78,7 @@ public class DocumentMappingExpression<T>
     public DocumentMappingExpression<T> Index(Expression<Func<T, object?>> expression,
         Action<DocumentIndex>? configure = null, Expression<Func<T, object?>>? include = null)
     {
-        var paths = DocumentIndex.ResolveJsonPaths(expression);
-        var index = new DocumentIndex(paths);
-        if (include != null) index.IncludeColumns = DocumentIndex.ResolveJsonPaths(include);
+        var index = BuildIndex(expression, include, isUnique: false);
         configure?.Invoke(index);
         Indexes.Add(index);
         return this;
@@ -94,12 +92,35 @@ public class DocumentMappingExpression<T>
     public DocumentMappingExpression<T> UniqueIndex(Expression<Func<T, object?>> expression,
         Action<DocumentIndex>? configure = null, Expression<Func<T, object?>>? include = null)
     {
-        var paths = DocumentIndex.ResolveJsonPaths(expression);
-        var index = new DocumentIndex(paths) { IsUnique = true };
-        if (include != null) index.IncludeColumns = DocumentIndex.ResolveJsonPaths(include);
+        var index = BuildIndex(expression, include, isUnique: true);
         configure?.Invoke(index);
         Indexes.Add(index);
         return this;
+    }
+
+    /// <summary>
+    ///     #510: builds the index carrying BOTH the rendered paths and the member chains they came
+    ///     from. The paths are rendered here with the CamelCase default because this expression holds
+    ///     no <c>StoreOptions</c>; the chains let <c>DocumentIndex.ApplyNamingPolicy</c> re-render
+    ///     them once the index is attached to a mapping and the store's policy is in reach.
+    /// </summary>
+    private static DocumentIndex BuildIndex(Expression<Func<T, object?>> expression,
+        Expression<Func<T, object?>>? include, bool isUnique)
+    {
+        var chains = DocumentIndex.ResolveMemberChains(expression);
+        var index = new DocumentIndex(DocumentIndex.ResolveJsonPaths(expression))
+        {
+            IsUnique = isUnique,
+            MemberChains = chains
+        };
+
+        if (include != null)
+        {
+            index.IncludeColumns = DocumentIndex.ResolveJsonPaths(include);
+            index.IncludeMemberChains = DocumentIndex.ResolveMemberChains(include);
+        }
+
+        return index;
     }
 
     /// <summary>
@@ -113,7 +134,10 @@ public class DocumentMappingExpression<T>
         Action<JsonIndex>? configure = null)
     {
         var paths = Storage.JsonIndex.ResolveJsonPaths(expression);
-        var index = new JsonIndex(paths);
+        var index = new JsonIndex(paths)
+        {
+            MemberChains = Storage.JsonIndex.ResolveMemberChains(expression)
+        };
         configure?.Invoke(index);
         JsonIndexes.Add(index);
         return this;

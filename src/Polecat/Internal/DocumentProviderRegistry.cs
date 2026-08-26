@@ -118,6 +118,12 @@ internal class DocumentProviderRegistry
             {
                 foreach (var index in indexes)
                 {
+                    // #510: the paths were rendered with the CamelCase default back in
+                    // DocumentMappingExpression, which holds no StoreOptions. This is the first point
+                    // where the store's serializer policy is reachable, so re-render before the
+                    // index is used for DDL or matched by the LINQ translator. A no-op under the
+                    // default policy.
+                    index.ApplyNamingPolicy(mapping.StoreOptions);
                     mapping.Indexes.Add(index);
                 }
             }
@@ -128,6 +134,8 @@ internal class DocumentProviderRegistry
             {
                 foreach (var jsonIndex in jsonIndexes)
                 {
+                    // #510: same re-render as the computed-column indexes above.
+                    jsonIndex.ApplyNamingPolicy(mapping.StoreOptions);
                     mapping.JsonIndexes.Add(jsonIndex);
                 }
             }
