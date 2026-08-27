@@ -56,6 +56,14 @@ internal class EventStoreFeatureSchema : FeatureSchemaBase
             yield return _events.BuildEventTagTable(tagRegistration);
         }
 
+        // gh-515: the side table the DCB boundary check serializes on. One table for every registered
+        // tag type, so it materializes once as soon as any tag type exists — a store with no tag types
+        // has no DCB boundaries to guard and sees no schema delta.
+        if (_events.TagTypes.Count > 0)
+        {
+            yield return _events.BuildDcbTagVersionTable();
+        }
+
         // Natural key tables
         foreach (var naturalKey in _naturalKeys)
         {
