@@ -197,7 +197,27 @@ CREATE TABLE [dbo].[pc_event_tag_student] (
 
 ### Consistency Check
 
-At `SaveChangesAsync` time, Polecat executes an `EXISTS` query checking for new events matching the tag query with `seq_id > lastSeenSequence`. This runs in the same transaction as the event appends, providing serializable consistency for the tagged boundary.
+Polecat keeps a side table, `pc_dcb_tag_version`, holding one row per tag boundary with a counter of the
+commits that have touched it. `FetchForWritingByTags` reads the counter for every tag the query names;
+at `SaveChangesAsync` time, before any events are inserted, Polecat asserts the counter has not moved and
+bumps it with a single `UPDATE ... WHERE version = @captured`. Concurrent savers queue on that row's
+exclusive lock, and the loser gets a `DcbConcurrencyException`.
+
+Every save that appends a tagged event bumps the counter, boundary or not — so an ordinary
+`session.Events.Append(streamId, taggedEvent)` invalidates an in-flight boundary just as another
+boundary save would.
+
+A save that appends nothing does **not** assert its boundaries. A boundary is a condition on an append,
+so a session that read one and then wrote nothing has nothing for it to guard, and bumping the counter
+would invalidate other sessions over a save that changed nothing.
+
+::: warning
+Through 5.20.0 this check was an `EXISTS` query over the tag tables. That is a non-locking predicate read:
+concurrent savers each ran it before any of them had committed, so none could see the others, and their
+event inserts did not collide either because a boundary routinely spans distinct streams. Every racer
+committed. If you rely on DCB boundaries under concurrent load, upgrade — and note that the new table is
+created by the ordinary schema migration, with no data migration needed.
+:::
 
 ### Tag Routing
 

@@ -18,6 +18,12 @@ using Polecat.Projections;
 using Weasel.Core;
 using Weasel.SqlServer;
 
+// The `Events` property on this class shadows the Polecat.Events namespace, so the DCB types have to be
+// reached by alias rather than by `Events.Dcb.X`.
+using DcbTagVersionEntry = Polecat.Events.Dcb.DcbTagVersionEntry;
+using DcbTagVersionPhase = Polecat.Events.Dcb.DcbTagVersionPhase;
+using TagValueStringifier = Polecat.Events.Dcb.TagValueStringifier;
+
 namespace Polecat.Internal;
 
 /// <summary>
@@ -122,6 +128,126 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     internal WorkTracker WorkTracker => _workTracker;
 
     internal EventGraph EventGraph => _eventGraph;
+
+    /// <summary>
+    ///     The <c>pc_dcb_tag_version</c> rows this session's boundaries read, held until save (gh-515).
+    /// </summary>
+    /// <remarks>
+    ///     Held rather than queued as operations because a DCB boundary is a condition on an APPEND. A
+    ///     session that reads a boundary, decides there is nothing to do, and saves has written nothing
+    ///     for the condition to guard — and asserting it anyway would bump the row, invalidating every
+    ///     concurrent session's boundary over a save that changed nothing.
+    /// </remarks>
+    private List<DcbTagVersionEntry>? _capturedDcbRows;
+
+    internal void CaptureDcbBoundary(IReadOnlyList<DcbTagVersionEntry> rows)
+    {
+        if (rows.Count == 0) return;
+
+        _capturedDcbRows ??= new List<DcbTagVersionEntry>(rows.Count);
+        _capturedDcbRows.AddRange(rows);
+    }
+
+    /// <summary>
+    ///     Run the DCB tag-version phase for this save: assert the boundaries the session read, bump the
+    ///     rows it appends under, and throw if any boundary lost its race (gh-515).
+    /// </summary>
+    private async Task AssertDcbBoundariesAsync(CancellationToken token)
+    {
+        // The overwhelming majority of saves never touch a tag at all, so this returns before walking
+        // the streams.
+        var captured = _capturedDcbRows;
+        var anyTags = _eventGraph.TagTypes.Count > 0;
+        if (!anyTags || (captured is not { Count: > 0 } && !_workTracker.Streams.Any(s => s.Events.Count > 0)))
+        {
+            _capturedDcbRows?.Clear();
+            return;
+        }
+
+        var appended = CollectAppendedTagRows();
+
+        // A boundary guards an APPEND. A session that read one and then wrote nothing has nothing for it
+        // to guard, and asserting anyway would bump the row and invalidate every concurrent session's
+        // boundary over a save that changed nothing. The gate is "does this save append anything", not
+        // "does it append under a tag" — matching Marten, so a boundary means the same thing in both
+        // stores.
+        var appendsEvents = _workTracker.Streams.Any(s => s.Events.Count > 0);
+
+        // .ToArray() because `captured` IS _capturedDcbRows: the clear below would otherwise empty the
+        // very list being handed to the phase, leaving every save with bumps and no assertions — which
+        // is to say no boundary check at all.
+        var capturedRows = appendsEvents && captured is { Count: > 0 }
+            ? captured.ToArray()
+            : Array.Empty<DcbTagVersionEntry>();
+
+        // The captures belong to the unit of work that is ending here either way -- a retry after a
+        // conflict re-fetches the boundary and captures it again.
+        _capturedDcbRows?.Clear();
+
+        var phase = DcbTagVersionPhase.Build(_eventGraph, capturedRows, appended);
+        if (phase == null) return;
+
+        await using var batch = new SqlBatch();
+        var builder = new BatchBuilder(batch);
+        phase.WriteCommands(builder);
+        builder.Compile();
+
+        IReadOnlyList<DcbTagVersionEntry> losers;
+        await using (var reader = await ExecuteReaderAsync(batch, token))
+        {
+            losers = await phase.ReadLosersAsync(reader, token);
+        }
+
+        if (losers.Count == 0) return;
+
+        // #394: a session with a single violated boundary — overwhelmingly the common case — throws the
+        // DcbConcurrencyException directly, matching Marten, so the documented `catch
+        // (DcbConcurrencyException)` retry pattern ports between the two stores. Only a session that
+        // violates several at once still wraps them, since there is more than one failure to carry.
+        var exceptions = losers
+            .Select(x => (Exception)new DcbConcurrencyException(x.Query!, x.LastSeenSequence))
+            .ToList();
+
+        if (exceptions.Count == 1) throw exceptions[0];
+
+        throw new AggregateException(exceptions);
+    }
+
+    /// <summary>
+    ///     The distinct tag rows this save appends under — the producer side of the boundary check, and
+    ///     what makes a plain <c>Events.Append</c> of a tagged event invalidate someone else's in-flight
+    ///     boundary rather than sliding past it.
+    /// </summary>
+    private List<DcbTagVersionEntry> CollectAppendedTagRows()
+    {
+        var rows = new List<DcbTagVersionEntry>();
+        var seen = new HashSet<(string, string, string)>();
+
+        foreach (var stream in _workTracker.Streams)
+        {
+            foreach (var @event in stream.Events)
+            {
+                if (@event.Tags is not { Count: > 0 }) continue;
+
+                var tenantId = @event.TenantId ?? stream.TenantId ?? TenantId;
+
+                foreach (var tag in @event.Tags)
+                {
+                    var registration = _eventGraph.FindTagType(tag.TagType);
+                    if (registration == null) continue;
+
+                    var value = TagValueStringifier.Stringify(registration.ExtractValue(tag.Value));
+                    if (seen.Add((registration.TableSuffix, value, tenantId)))
+                    {
+                        rows.Add(new DcbTagVersionEntry(
+                            registration.TableSuffix, value, tenantId, null, null, 0));
+                    }
+                }
+            }
+        }
+
+        return rows;
+    }
 
     /// <summary>
     ///     Access the transactional connection's active transaction (if any).
@@ -536,51 +662,10 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         using var tx = _transactional.Transaction!;
         try
         {
-            // Run DCB consistency checks BEFORE inserting new events,
-            // so that newly appended events don't trigger false violations
-            var dcbAssertions = _workTracker.Operations
-                .OfType<AssertDcbConsistencyOperation>()
-                .ToList();
-
-            if (dcbAssertions.Count > 0)
-            {
-                await using var dcbBatch = new SqlBatch();
-                var dcbBuilder = new BatchBuilder(dcbBatch);
-
-                for (var i = 0; i < dcbAssertions.Count; i++)
-                {
-                    if (i > 0) dcbBuilder.StartNewCommand();
-                    dcbAssertions[i].ConfigureCommand(dcbBuilder);
-                }
-
-                dcbBuilder.Compile();
-
-                var dcbExceptions = new List<Exception>();
-                await using var dcbReader = await ExecuteReaderAsync(dcbBatch, token);
-                for (var i = 0; i < dcbAssertions.Count; i++)
-                {
-                    await dcbAssertions[i].PostprocessAsync(dcbReader, dcbExceptions, token);
-                    if (i < dcbAssertions.Count - 1)
-                    {
-                        await dcbReader.NextResultAsync(token);
-                    }
-                }
-
-                // #394: a session with a single DCB boundary — overwhelmingly the common case —
-                // throws its DcbConcurrencyException directly, matching Marten, so the documented
-                // `catch (DcbConcurrencyException)` retry pattern ports between the two stores.
-                // Only a session with several boundaries failing at once still needs the
-                // AggregateException to carry all of them.
-                if (dcbExceptions.Count == 1)
-                {
-                    throw dcbExceptions[0];
-                }
-
-                if (dcbExceptions.Count > 0)
-                {
-                    throw new AggregateException(dcbExceptions);
-                }
-            }
+            // gh-515: the DCB boundary check, run BEFORE the events are inserted so this session's own
+            // appends can't trip it. It asserts-and-bumps the pc_dcb_tag_version rows the session's
+            // boundaries captured, and bumps the rows it merely appends under, in one sorted phase.
+            await AssertDcbBoundariesAsync(token);
 
             // Process event streams through the shared Weasel.Storage.EventStorage<TId> hierarchy
             // (SqlServerEventStoreDialect + PolecatQuickAppendEventsOperation) — #273.
@@ -615,11 +700,10 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
                 }
             }
 
-            // Process document operations using BatchBuilder/SqlBatch
-            // (excluding DCB assertions which were already run above)
-            var remainingOps = _workTracker.Operations
-                .Where(op => op is not AssertDcbConsistencyOperation)
-                .ToList();
+            // Process document operations using BatchBuilder/SqlBatch. gh-515: the DCB boundary check is
+            // no longer an operation in this list — it is held on the session and run as its own phase
+            // above — so there is nothing to filter out here any more.
+            var remainingOps = _workTracker.Operations.ToList();
             if (remainingOps.Count > 0)
             {
                 await using var batch = new SqlBatch();

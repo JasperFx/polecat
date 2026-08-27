@@ -1189,6 +1189,21 @@ internal class EventOperations : QueryEventStore, IEventOperations
     public async Task<IEventBoundary<T>> FetchForWritingByTags<T>(EventTagQuery query,
         CancellationToken cancellation = default) where T : class
     {
+        if (query.Conditions.Count == 0)
+            throw new ArgumentException("EventTagQuery must have at least one condition.");
+
+        await _sessionBase.EnsureEventStoreSchemaAsync(cancellation);
+
+        // gh-515: capture the tag versions FIRST, ahead of the events read. See DcbTagVersionCapture
+        // for why the order is load-bearing and not an accident of how this method grew.
+        var targets = DcbTagVersionCapture.TargetsFor(_events, query);
+        Dictionary<(string, string), long> capturedByKey;
+        await using (var captureCommand = DcbTagVersionCapture.BuildCommand(_events, targets, _tenantId))
+        await using (var captureReader = await _sessionBase.ExecuteReaderAsync(captureCommand, cancellation))
+        {
+            capturedByKey = await DcbTagVersionCapture.ReadAsync(captureReader, cancellation);
+        }
+
         var events = await QueryByTagsAsync(query, cancellation);
         var lastSeenSequence = events.Count > 0 ? events.Max(e => e.Sequence) : 0;
 
@@ -1199,8 +1214,10 @@ internal class EventOperations : QueryEventStore, IEventOperations
             aggregate = await aggregator.BuildAsync(events, _sessionBase, default, cancellation);
         }
 
-        // Register DCB assertion operation
-        _workTracker.Add(new AssertDcbConsistencyOperation(_events, query, lastSeenSequence, _tenantId));
+        // Handed to the session rather than queued as an operation: a boundary only belongs in the unit
+        // of work if the session actually appends something. See DocumentSessionBase.CaptureDcbBoundary.
+        _sessionBase.CaptureDcbBoundary(
+            DcbTagVersionCapture.BuildEntries(targets, capturedByKey, _tenantId, query, lastSeenSequence));
 
         return new EventBoundary<T>(_sessionBase, _events, aggregate, events, lastSeenSequence);
     }

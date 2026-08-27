@@ -17,6 +17,7 @@ internal class FetchForWritingByTagsBatchItem<T> : IBatchQueryItem where T : cla
     private readonly ISerializer _serializer;
     private readonly string _tenantId;
     private readonly TaskCompletionSource<IEventBoundary<T>> _tcs = new();
+    private List<(string TagTable, string TagValue)>? _targets;
 
     public FetchForWritingByTagsBatchItem(EventGraph eventGraph, EventTagQuery query,
         DocumentSessionBase session, ISerializer serializer)
@@ -30,13 +31,24 @@ internal class FetchForWritingByTagsBatchItem<T> : IBatchQueryItem where T : cla
 
     public Task<IEventBoundary<T>> Result => _tcs.Task;
 
+    // gh-515: two statements, capture first. The batch runner advances one result set between items, so
+    // an item that emits two consumes the extra one itself and leaves the reader on its last set — see
+    // ReadResultSetAsync. Ordering is load-bearing: see DcbTagVersionCapture.
     public void WriteSql(ICommandBuilder builder)
     {
+        _targets = DcbTagVersionCapture.TargetsFor(_eventGraph, _query);
+        DcbTagVersionCapture.WriteSql(builder, _eventGraph, _targets, _tenantId);
+
+        builder.StartNewCommand();
+
         EventOperations.WriteTagQuerySql(builder, _eventGraph, _query, _tenantId);
     }
 
     public async Task ReadResultSetAsync(DbDataReader reader, CancellationToken token)
     {
+        var capturedByKey = await DcbTagVersionCapture.ReadAsync(reader, token).ConfigureAwait(false);
+        await reader.NextResultAsync(token).ConfigureAwait(false);
+
         var events = new List<IEvent>();
         while (await reader.ReadAsync(token).ConfigureAwait(false))
         {
@@ -56,7 +68,8 @@ internal class FetchForWritingByTagsBatchItem<T> : IBatchQueryItem where T : cla
             }
         }
 
-        _session.WorkTracker.Add(new AssertDcbConsistencyOperation(_eventGraph, _query, lastSeenSequence, _tenantId));
+        _session.CaptureDcbBoundary(DcbTagVersionCapture.BuildEntries(
+            _targets!, capturedByKey, _tenantId, _query, lastSeenSequence));
 
         _tcs.SetResult(new EventBoundary<T>(_session, _eventGraph, aggregate, events, lastSeenSequence));
     }
