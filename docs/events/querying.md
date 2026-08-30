@@ -196,6 +196,18 @@ These queries search the entire event table and should be used judiciously. For 
 `AggregateToAsync<T>()` is a LINQ terminal that folds **every** event matched by an event query into a single live aggregate of type `T`, regardless of which stream each event came from. It uses the same conventional `Create`/`Apply` aggregation that `AggregateStreamAsync` uses, but over an arbitrary event query instead of one stream:
 
 <!-- snippet: sample_aggregate_to_async -->
+<a id='snippet-sample_aggregate_to_async'></a>
+```cs
+var questParty = await session.Events
+    .QueryAllRawEvents()
+
+    // You could of course chain all the Linq
+    // Where()/OrderBy()/Take()/Skip() operators
+    // you need here
+
+    .AggregateToAsync<QuestParty>(token: TestContext.Current.CancellationToken);
+```
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.Tests/Projections/aggregateto_linq_operator_tests.cs#L57-L68' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_aggregate_to_async' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 You can also seed the fold with initial state:
@@ -217,11 +229,43 @@ The aggregate's identity is stamped from the last queried event's stream (`Strea
 Given a multi-stream projection:
 
 <!-- snippet: sample_aggregate_to_many_projection -->
+<a id='snippet-sample_aggregate_to_many_projection'></a>
+```cs
+public record MoneyDeposited(Guid AccountId, int Amount);
+public record AccountFrozen(Guid AccountId);
+
+public class Balance
+{
+    public Guid Id { get; set; }
+    public int Amount { get; set; }
+}
+
+public partial class BalanceProjection : MultiStreamProjection<Balance, Guid>
+{
+    public BalanceProjection()
+    {
+        Identity<MoneyDeposited>(e => e.AccountId);
+        Identity<AccountFrozen>(e => e.AccountId);
+    }
+
+    public void Apply(MoneyDeposited e, Balance b) => b.Amount += e.Amount;
+
+    public bool ShouldDelete(AccountFrozen e) => true;
+}
+```
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.Tests/Projections/aggregate_to_many_tests.cs#L11-L35' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_aggregate_to_many_projection' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 query any slice of the event store and fan it out to one aggregate per identity:
 
 <!-- snippet: sample_aggregate_to_many -->
+<a id='snippet-sample_aggregate_to_many'></a>
+```cs
+var aggregates = await session.Events.QueryAllRawEvents()
+    .Where(e => e.StreamId == stream1 || e.StreamId == stream2)
+    .AggregateToManyAsync<Balance>(TestContext.Current.CancellationToken);
+```
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.Tests/Projections/aggregate_to_many_tests.cs#L115-L121' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_aggregate_to_many' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 Each returned aggregate has its identity stamped from the projection's slice id. Aggregates whose event slice resolves to a delete (`ShouldDelete`) are omitted, an empty query returns an empty list, and calling it for an aggregate type with no registered projection throws `ArgumentException`.

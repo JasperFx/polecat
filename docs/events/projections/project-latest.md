@@ -50,6 +50,34 @@ identically to `FetchLatest` — it returns the current committed state.
 ## Example
 
 <!-- snippet: sample_polecat_project_latest_example -->
+<a id='snippet-sample_polecat_project_latest_example'></a>
+```cs
+[Fact]
+public async Task includes_pending_events_from_start_stream()
+{
+    var streamId = Guid.NewGuid();
+
+    await using var session = theStore.LightweightSession();
+
+    // Append events without committing
+    session.Events.StartStream(streamId,
+        new ReportCreated("Q1 Report"),
+        new SectionAdded("Revenue"),
+        new SectionAdded("Costs")
+    );
+
+    // ProjectLatest includes the pending events above
+    var report = await session.Events.ProjectLatest<Report>(streamId, TestContext.Current.CancellationToken);
+
+    report.ShouldNotBeNull();
+    report.Title.ShouldBe("Q1 Report");
+    report.SectionCount.ShouldBe(2);
+
+    // SaveChangesAsync can happen later
+    await session.SaveChangesAsync(TestContext.Current.CancellationToken);
+}
+```
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.Tests/Events/project_latest_tests.cs#L46-L73' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_project_latest_example' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 ## Merging Committed and Pending Events
@@ -58,6 +86,43 @@ identically to `FetchLatest` — it returns the current committed state.
 are appended in the current session:
 
 <!-- snippet: sample_polecat_project_latest_merge_example -->
+<a id='snippet-sample_polecat_project_latest_merge_example'></a>
+```cs
+[Fact]
+public async Task includes_pending_events_after_committed_events()
+{
+    var streamId = Guid.NewGuid();
+
+    // First, commit some events
+    await using (var session = theStore.LightweightSession())
+    {
+        session.Events.StartStream(streamId,
+            new ReportCreated("Q1 Report"),
+            new SectionAdded("Revenue")
+        );
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
+    }
+
+    // In a new session, append more events without committing
+    await using (var session = theStore.LightweightSession())
+    {
+        session.Events.Append(streamId,
+            new SectionAdded("Costs"),
+            new SectionAdded("Outlook"),
+            new ReportPublished()
+        );
+
+        // ProjectLatest merges the committed state with pending events
+        var report = await session.Events.ProjectLatest<Report>(streamId, TestContext.Current.CancellationToken);
+
+        report.ShouldNotBeNull();
+        report.Title.ShouldBe("Q1 Report");
+        report.SectionCount.ShouldBe(3);       // 1 committed + 2 pending
+        report.IsPublished.ShouldBeTrue();      // from pending ReportPublished
+    }
+}
+```
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.Tests/Events/project_latest_tests.cs#L75-L111' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_project_latest_merge_example' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 ## String-Keyed Streams
