@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
+using System.Reflection;
 using System.Text;
 using JasperFx.Events;
 using JasperFx.Events.Aggregation;
@@ -364,7 +365,7 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
         // Falling back to typeof(Guid) / typeof(string) (the underlying stream-identity
         // primitive) misses the wrapper and trips the post-FEC fail-fast in
         // JasperFxAggregationProjectionBase.tryUseAssemblyRegisteredEvolver (JasperFx#276).
-        var idType = new DocumentMapping(typeof(TDoc), _options).IdType;
+        var idType = ResolveAggregateIdType(typeof(TDoc));
         var projectionType = typeof(SingleStreamProjection<,>).MakeGenericType(typeof(TDoc), idType);
 #pragma warning disable CS8714 // notnull constraint mismatch
         var projection = (ProjectionBase)Activator.CreateInstance(projectionType)!;
@@ -373,6 +374,57 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
         projection.AssembleAndAssertValidity();
         foreach (var et in projection.IncludedEventTypes) AddEventType(et);
         return projection as IAggregatorSource<IQuerySession>;
+    }
+
+    /// <summary>
+    ///     The identity type to close <see cref="SingleStreamProjection{TDoc,TId}" /> over for a
+    ///     conventionally-aggregated type.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///     <see cref="BoundaryAggregateAttribute" /> is an explicit opt-out of single-stream
+    ///     identity (polecat#521). A DCB boundary aggregate is <em>defined</em> by spanning streams
+    ///     by tag rather than being keyed to one, so demanding an <c>Id</c> asks its author for a
+    ///     member the model has no use for — and Polecat's own DCB docs told them they did not need
+    ///     one. The marker is the source generator's own opt-in: it emits an
+    ///     <c>IGeneratedSyncEvolver&lt;TDoc, string&gt;</c> for a marked identity-less type, so
+    ///     <c>string</c> is the only answer that finds that dispatcher. It is vestigial — nothing on
+    ///     the DCB path reads the id — but it has to agree with what the generator emitted.
+    ///     </para>
+    ///     <para>
+    ///     Not inherited: the generator reads the attribute off the declaring type in its own
+    ///     compilation, so a subclass that merely inherited the marker would resolve to
+    ///     <c>string</c> and then fail to find a dispatcher of its own.
+    ///     </para>
+    ///     <para>
+    ///     An identity-less aggregate WITHOUT the marker still throws, deliberately: the generator
+    ///     emits nothing for one, and a missing <c>Id</c> is far more often an oversight than a
+    ///     boundary aggregate. The message is re-thrown here rather than left to
+    ///     <see cref="DocumentMapping" /> because that one is phrased for documents and never
+    ///     mentions the marker that would fix this case.
+    ///     </para>
+    /// </remarks>
+    private Type ResolveAggregateIdType(Type aggregateType)
+    {
+        if (aggregateType.GetCustomAttribute<BoundaryAggregateAttribute>(false) is not null)
+        {
+            return typeof(string);
+        }
+
+        try
+        {
+            return new DocumentMapping(aggregateType, _options).IdType;
+        }
+        catch (InvalidOperationException e)
+        {
+            throw new InvalidOperationException(
+                $"Aggregate type '{aggregateType.FullName}' has no identity member. Single stream " +
+                "aggregates need a public property named 'Id', or one marked with [Identity], of " +
+                "type Guid, string, int, or long. An aggregate reached only through a DCB tag " +
+                "boundary has no stream to be keyed to — mark it [BoundaryAggregate] " +
+                "(JasperFx.Events.Aggregation) instead of giving it an identity it has no use for.",
+                e);
+        }
     }
 
     public override Type AggregateTypeFor(string aggregateTypeName)

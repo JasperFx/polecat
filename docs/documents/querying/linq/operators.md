@@ -99,6 +99,26 @@ Polecat supports the `GroupBy()` LINQ operator for grouping documents by one or 
 ### Simple Key with Aggregates
 
 <!-- snippet: sample_polecat_group_by_simple_key_with_count -->
+<a id='snippet-sample_polecat_group_by_simple_key_with_count'></a>
+```cs
+[Fact]
+public async Task group_by_simple_key_with_count()
+{
+    await StoreSeedDataAsync();
+
+    await using var query = theStore.QuerySession();
+    var results = await query.Query<LinqTarget>()
+        .GroupBy(x => x.Color)
+        .Select(g => new { Color = g.Key, Count = g.Count() })
+        .ToListAsync(TestContext.Current.CancellationToken);
+
+    results.Count.ShouldBe(3);
+    results.Single(x => x.Color == TargetColor.Blue).Count.ShouldBe(2);
+    results.Single(x => x.Color == TargetColor.Green).Count.ShouldBe(3);
+    results.Single(x => x.Color == TargetColor.Red).Count.ShouldBe(1);
+}
+```
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.Tests/Linq/group_by_operator.cs#L22-L41' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_group_by_simple_key_with_count' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 ### Composite Key

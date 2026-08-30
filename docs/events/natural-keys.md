@@ -15,6 +15,69 @@ Use natural keys when:
 Mark a property on your aggregate with `[NaturalKey]`, and mark the methods that set or change the key value with `[NaturalKeySource]`:
 
 <!-- snippet: sample_polecat_natural_key_aggregate_types -->
+<a id='snippet-sample_polecat_natural_key_aggregate_types'></a>
+```cs
+public record OrderNumber(string Value);
+
+public partial class OrderAggregate
+{
+    public Guid Id { get; set; }
+
+    [NaturalKey]
+    public OrderNumber OrderNum { get; set; } = null!;
+
+    public decimal TotalAmount { get; set; }
+    public string CustomerName { get; set; } = string.Empty;
+    public bool IsComplete { get; set; }
+
+    [NaturalKeySource]
+    public void Apply(NkOrderCreated e)
+    {
+        OrderNum = e.OrderNumber;
+        CustomerName = e.CustomerName;
+    }
+
+    public void Apply(NkOrderItemAdded e)
+    {
+        TotalAmount += e.Price;
+    }
+
+    [NaturalKeySource]
+    public void Apply(NkOrderNumberChanged e)
+    {
+        OrderNum = e.NewOrderNumber;
+    }
+
+    public void Apply(NkOrderCompleted e)
+    {
+        IsComplete = true;
+    }
+}
+
+public partial class InvoiceAggregate
+{
+    public Guid Id { get; set; }
+
+    [NaturalKey]
+    public string InvoiceCode { get; set; } = string.Empty;
+
+    public decimal Amount { get; set; }
+
+    [NaturalKeySource]
+    public void Apply(NkInvoiceCreated e)
+    {
+        InvoiceCode = e.Code;
+        Amount = e.Amount;
+    }
+}
+
+public record NkOrderCreated(OrderNumber OrderNumber, string CustomerName);
+public record NkOrderItemAdded(string ItemName, decimal Price);
+public record NkOrderNumberChanged(OrderNumber NewOrderNumber);
+public record NkOrderCompleted;
+public record NkInvoiceCreated(string Code, decimal Amount);
+```
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.Tests/Events/natural_key_tests.cs#L9-L71' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_natural_key_aggregate_types' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 The `[NaturalKeySource]` attribute tells Polecat which `Create` / `Apply` methods produce or change the natural key value. Polecat uses this information to keep the lookup table in sync whenever events are appended.
@@ -78,6 +141,19 @@ Unlike Marten's PostgreSQL-based implementation which uses table partitioning fo
 The primary use case for natural keys is looking up a stream for writing without knowing its stream id:
 
 <!-- snippet: sample_polecat_fetch_for_writing_by_natural_key -->
+<a id='snippet-sample_polecat_fetch_for_writing_by_natural_key'></a>
+```cs
+// FetchForWriting by the business identifier instead of stream id
+var stream = await session2.Events.FetchForWriting<OrderAggregate, OrderNumber>(orderNumber, TestContext.Current.CancellationToken);
+
+stream.Aggregate.ShouldNotBeNull();
+stream.Aggregate!.OrderNum.ShouldBe(orderNumber);
+
+// Append new events through the stream
+stream.AppendOne(new NkOrderItemAdded("Gadget", 19.99m));
+await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
+```
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.Tests/Events/natural_key_tests.cs#L113-L123' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_fetch_for_writing_by_natural_key' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 This resolves the natural key to a stream id and fetches the aggregate in a single database round-trip. Polecat uses `WITH (UPDLOCK, HOLDLOCK)` hints to ensure safe concurrent access during the lookup.
@@ -87,6 +163,12 @@ This resolves the natural key to a stream id and fetches the aggregate in a sing
 For read-only access, you can use `FetchLatest` with a natural key:
 
 <!-- snippet: sample_polecat_fetch_latest_by_natural_key -->
+<a id='snippet-sample_polecat_fetch_latest_by_natural_key'></a>
+```cs
+// Read-only access by natural key
+var aggregate = await session2.Events.FetchLatest<OrderAggregate, OrderNumber>(orderNumber, TestContext.Current.CancellationToken);
+```
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.Tests/Events/natural_key_tests.cs#L169-L172' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_fetch_latest_by_natural_key' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 ## Mutability

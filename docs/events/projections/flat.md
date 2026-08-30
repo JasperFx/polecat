@@ -118,7 +118,7 @@ public partial class ImportSqlProjection: EventProjection
     }
 }
 ```
-<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.Tests/Projections/using_event_projection_for_flat_tables.cs#L26-L57' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_import_sql_event_projection' title='Start of snippet'>anchor</a></sup>
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.Tests/Projections/using_event_projection_for_flat_tables.cs#L25-L57' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_import_sql_event_projection' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 A couple notes about the `EventProjection` approach:

@@ -114,6 +114,61 @@ that needs to consult the upstream `Order` that is being projected in the same b
 reach into the upstream stage's in-memory aggregate cache.
 
 <!-- snippet: sample_polecat_try_find_upstream_cache -->
+<a id='snippet-sample_polecat_try_find_upstream_cache'></a>
+```cs
+public partial class OrderShippingNotificationProjection : MultiStreamProjection<OrderShippingNotification, Guid>
+{
+    public OrderShippingNotificationProjection()
+    {
+        Identity<IEvent<CompositeOrderShipped>>(e => e.StreamId);
+    }
+
+    public override Task EnrichEventsAsync(SliceGroup<OrderShippingNotification, Guid> group,
+        IQuerySession querySession, CancellationToken cancellation)
+    {
+        // Ask the upstream CompositeOrderProjection (running earlier in the same composite stage)
+        // for its in-memory aggregate cache. A SQL query for CompositeOrder in this same batch
+        // would return nothing — those writes are still queued on the shared IProjectionBatch
+        // and have not been committed to SQL Server yet.
+        if (!group.TryFindUpstreamCache<Guid, CompositeOrder>(out var upstreamOrders))
+        {
+            return Task.CompletedTask;
+        }
+
+        foreach (var slice in group.Slices)
+        {
+            if (upstreamOrders.TryFind(slice.Id, out var order))
+            {
+                // Stamp a synthetic References<CompositeOrder> event onto the slice so
+                // the Evolve method can read the upstream entity's data.
+                slice.Reference(order);
+            }
+        }
+
+        return Task.CompletedTask;
+    }
+
+    public override OrderShippingNotification? Evolve(OrderShippingNotification? snapshot, Guid id, IEvent e)
+    {
+        switch (e.Data)
+        {
+            case CompositeOrderShipped shipped:
+                snapshot ??= new OrderShippingNotification { Id = id };
+                snapshot.Carrier = shipped.Carrier;
+                break;
+
+            case References<CompositeOrder> orderRef:
+                snapshot ??= new OrderShippingNotification { Id = id };
+                snapshot.CustomerId = orderRef.Entity.CustomerId;
+                snapshot.OrderTotal = orderRef.Entity.Total;
+                break;
+        }
+
+        return snapshot;
+    }
+}
+```
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.Tests/Projections/composite_try_find_upstream_cache_tests.cs#L66-L120' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_try_find_upstream_cache' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 `TryFindUpstreamCache` returns `false` when no upstream stage of this composite is

@@ -75,16 +75,81 @@ The key technique is using a composite identity that combines the stream ID with
 **Events:**
 
 <!-- snippet: sample_polecat_monthly_account_activity_events -->
+<a id='snippet-sample_polecat_monthly_account_activity_events'></a>
+```cs
+public record AccountOpened(string AccountName);
+public record AccountDebited(decimal Amount, string Description);
+public record AccountCredited(decimal Amount, string Description);
+```
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.Tests/Projections/time_based_multi_stream_projection_tests.cs#L9-L15' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_monthly_account_activity_events' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 **Read model document:**
 
 <!-- snippet: sample_polecat_monthly_account_activity_document -->
+<a id='snippet-sample_polecat_monthly_account_activity_document'></a>
+```cs
+public partial class MonthlyAccountActivity
+{
+    public string Id { get; set; } = "";
+    public Guid AccountId { get; set; }
+    public string Month { get; set; } = "";
+    public int TransactionCount { get; set; }
+    public decimal TotalDebits { get; set; }
+    public decimal TotalCredits { get; set; }
+    public decimal NetChange => TotalCredits - TotalDebits;
+}
+```
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.Tests/Projections/time_based_multi_stream_projection_tests.cs#L17-L30' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_monthly_account_activity_document' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 **Projection with time-based routing:**
 
 <!-- snippet: sample_polecat_monthly_account_activity_projection -->
+<a id='snippet-sample_polecat_monthly_account_activity_projection'></a>
+```cs
+public partial class MonthlyAccountActivityProjection : MultiStreamProjection<MonthlyAccountActivity, string>
+{
+    public MonthlyAccountActivityProjection()
+    {
+        // Route each event to a document keyed by "{streamId}:{yyyy-MM}"
+        // This segments a single account stream into monthly summaries
+        Identity<IEvent<AccountDebited>>(e =>
+            $"{e.StreamId}:{e.Timestamp:yyyy-MM}");
+        Identity<IEvent<AccountCredited>>(e =>
+            $"{e.StreamId}:{e.Timestamp:yyyy-MM}");
+    }
+
+    public MonthlyAccountActivity Create(IEvent<AccountDebited> e) => new()
+    {
+        AccountId = e.StreamId,
+        Month = e.Timestamp.ToString("yyyy-MM"),
+        TransactionCount = 1,
+        TotalDebits = e.Data.Amount
+    };
+
+    public MonthlyAccountActivity Create(IEvent<AccountCredited> e) => new()
+    {
+        AccountId = e.StreamId,
+        Month = e.Timestamp.ToString("yyyy-MM"),
+        TransactionCount = 1,
+        TotalCredits = e.Data.Amount
+    };
+
+    public void Apply(IEvent<AccountDebited> e, MonthlyAccountActivity view)
+    {
+        view.TransactionCount++;
+        view.TotalDebits += e.Data.Amount;
+    }
+
+    public void Apply(IEvent<AccountCredited> e, MonthlyAccountActivity view)
+    {
+        view.TransactionCount++;
+        view.TotalCredits += e.Data.Amount;
+    }
+}
+```
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.Tests/Projections/time_based_multi_stream_projection_tests.cs#L32-L75' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_monthly_account_activity_projection' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 Register the projection as inline (for immediate consistency) or async (for eventual consistency):
