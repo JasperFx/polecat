@@ -308,15 +308,30 @@
              Event Model merge precedence now runs on a Declared < Derived < Observed provenance
              ladder rather than registration order (jasperfx#703/#704). Inert here for the same reason
              2.54.0 was: IEventModelDefinitionSource.Provenance is a default member returning Declared,
-             and Polecat registers no source. Affects Wolverine and CritterWatch, not this store. -->
-        <PackageVersion Include="JasperFx" Version="2.56.0" />
-        <PackageVersion Include="JasperFx.Events" Version="2.56.0" />
+             and Polecat registers no source. Affects Wolverine and CritterWatch, not this store.
+             JasperFx 2.57.2 (from 2.56.0, three releases at once):
+             (a) jasperfx#712/#713 — EventStoreUsage guarding was extended past Events and
+             Subscriptions to the rest of the object. Polecat builds EventStoreUsage explicitly in
+             DocumentStore.EventStore.TryCreateUsage rather than by reflection, so this is a
+             robustness fix in shared code Polecat already feeds correctly, not a behaviour change
+             here.
+             (b) jasperfx#716/#717 — HardStopAsync now sets the subscription agent's own Status
+             rather than only publishing it. Polecat's daemon is JasperFxAsyncDaemon, so this lands
+             for free: an agent hard-stopped by the coordinator no longer reports a stale Running
+             status to health checks.
+             (c) wolverine#4171/#4159 and wolverine#4167 — DI scope priming for open generic
+             registrations, and a Block no longer running its action on the publisher's thread.
+             Both are Wolverine-side; inert for Polecat, carried along by the version bump.
+             Weasel stays at 9.27.0 — already the latest, and its JasperFx.Events floor (2.46.0) is
+             satisfied by this line, so the matrix stays coherent without a lockstep bump. -->
+        <PackageVersion Include="JasperFx" Version="2.57.2" />
+        <PackageVersion Include="JasperFx.Events" Version="2.57.2" />
         <!--
              The shared cross-store event sourcing compliance suites. Source-only package: the
              suites compile inside Polecat.Tests so JasperFx's aggregate source generator binds
              Polecat's own session types.
         -->
-        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="2.56.0" />
+        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="2.57.2" />
         <!-- Pin the sibling JasperFx packages for parity with Marten 9's matrix
              even though Polecat doesn't currently reference them directly —
              keeps the lockstep matrix coherent when transitive resolution
@@ -324,7 +339,7 @@
              RuntimeCompiler 5.x line is the active continuation of the 4.x
              lineage; do not pin against the parallel stale 2.0.x series. -->
         <PackageVersion Include="JasperFx.RuntimeCompiler" Version="5.0.0" />
-        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.56.0" />
+        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.57.2" />
         <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
@@ -478,7 +493,7 @@
         <PackageVersion Include="Vogen" Version="7.0.0" />
 
         <!-- Source generators (matched to JasperFx.Events above) -->
-        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.56.0" />
+        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.57.2" />
 
         <!-- Build automation -->
         <PackageVersion Include="Nuke.Common" Version="9.0.4" />
