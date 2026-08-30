@@ -3,6 +3,8 @@ using JasperFx.Descriptors;
 using JasperFx.Events;
 using JasperFx.MultiTenancy;
 using Microsoft.Data.SqlClient;
+using Polecat.Linq;
+using Weasel.Core;
 using Polecat.Storage;
 using Polecat.Tests.Harness;
 
@@ -68,6 +70,125 @@ public class separate_database_tenancy_tests : IAsyncLifetime
                 tenancy.AddTenant(TenantB, TenantConnectionString(DbB));
             });
         });
+    }
+
+    /// <summary>
+    ///     Port of Marten's <c>using_static_database_multitenancy.can_use_bulk_inserts</c>.
+    /// </summary>
+    [Fact]
+    public async Task can_use_bulk_inserts()
+    {
+        using var store = CreateSeparateTenantStore();
+        await EnsureSchemaOnAllDatabasesAsync(store);
+
+        var targetsA = GenerateTargets(100);
+        var targetsB = GenerateTargets(50);
+
+        await store.Advanced.Clean.DeleteAllDocumentsAsync(TestContext.Current.CancellationToken);
+
+        await store.Advanced.BulkInsertAsync(targetsA, BulkInsertMode.InsertsOnly, 200, TenantA,
+            TestContext.Current.CancellationToken);
+        await store.Advanced.BulkInsertAsync(targetsB, BulkInsertMode.InsertsOnly, 200, TenantB,
+            TestContext.Current.CancellationToken);
+
+        await using (var queryA = store.QuerySession(new SessionOptions { TenantId = TenantA }))
+        {
+            var ids = await queryA.Query<Target>().Select(x => x.Id).ToListAsync(TestContext.Current.CancellationToken);
+            ids.OrderBy(x => x).ToList().ShouldBe(targetsA.OrderBy(x => x.Id).Select(x => x.Id).ToList());
+        }
+
+        await using (var queryB = store.QuerySession(new SessionOptions { TenantId = TenantB }))
+        {
+            var ids = await queryB.Query<Target>().Select(x => x.Id).ToListAsync(TestContext.Current.CancellationToken);
+            ids.OrderBy(x => x).ToList().ShouldBe(targetsB.OrderBy(x => x.Id).Select(x => x.Id).ToList());
+        }
+    }
+
+    /// <summary>
+    ///     Port of Marten's <c>using_static_database_multitenancy.clean_crosses_the_tenanted_databases</c>.
+    ///     Polecat's cleaners used to read StoreOptions.ConnectionString and so emptied exactly one
+    ///     database, silently leaving every other tenant populated. polecat#514.
+    /// </summary>
+    [Fact]
+    public async Task clean_crosses_the_tenanted_databases()
+    {
+        using var store = CreateSeparateTenantStore();
+        await EnsureSchemaOnAllDatabasesAsync(store);
+
+        var targetsA = GenerateTargets(100);
+        var targetsB = GenerateTargets(50);
+
+        await store.Advanced.BulkInsertAsync(targetsA, BulkInsertMode.InsertsOnly, 200, TenantA,
+            TestContext.Current.CancellationToken);
+        await store.Advanced.BulkInsertAsync(targetsB, BulkInsertMode.InsertsOnly, 200, TenantB,
+            TestContext.Current.CancellationToken);
+
+        await store.Advanced.Clean.DeleteAllDocumentsAsync(TestContext.Current.CancellationToken);
+
+        await using (var queryA = store.QuerySession(new SessionOptions { TenantId = TenantA }))
+        {
+            (await queryA.Query<Target>().AnyAsync(TestContext.Current.CancellationToken)).ShouldBeFalse();
+        }
+
+        await using (var queryB = store.QuerySession(new SessionOptions { TenantId = TenantB }))
+        {
+            (await queryB.Query<Target>().AnyAsync(TestContext.Current.CancellationToken)).ShouldBeFalse();
+        }
+    }
+
+    /// <summary>
+    ///     The event-store twin of <c>clean_crosses_the_tenanted_databases</c> — Polecat has
+    ///     CleanAllEventDataAsync where Marten's cleaner exposes DeleteAllEventDataAsync, and it had
+    ///     the same single-database bug.
+    /// </summary>
+    [Fact]
+    public async Task clean_event_data_crosses_the_tenanted_databases()
+    {
+        using var store = CreateSeparateTenantStore();
+        await EnsureSchemaOnAllDatabasesAsync(store);
+
+        foreach (var tenant in new[] { TenantA, TenantB })
+        {
+            await using var session = store.LightweightSession(new SessionOptions { TenantId = tenant });
+            session.Events.StartStream(Guid.NewGuid(), new TenancyEventHappened());
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        await store.Advanced.Clean.DeleteAllEventDataAsync(TestContext.Current.CancellationToken);
+
+        foreach (var tenant in new[] { TenantA, TenantB })
+        {
+            await using var session = store.QuerySession(new SessionOptions { TenantId = tenant });
+            var events = await session.Events.QueryAllRawEvents()
+                .ToListAsync(TestContext.Current.CancellationToken);
+            events.ShouldBeEmpty();
+        }
+    }
+
+    private static async Task EnsureSchemaOnAllDatabasesAsync(DocumentStore store)
+    {
+        foreach (var database in store.Options.Tenancy!.AllDatabases())
+        {
+            await database.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
+        }
+    }
+
+    private static Target[] GenerateTargets(int count) =>
+        Enumerable.Range(0, count)
+            .Select(i => new Target { Id = Guid.NewGuid(), Number = i, Color = "Blue" })
+            .ToArray();
+
+    /// <summary>
+    ///     Mirrors Marten's <c>using_static_database_multitenancy.default_tenant_usage_is_disabled</c>:
+    ///     configuring a database per tenant turns the default tenant off, so no dummy "*DEFAULT*"
+    ///     tenant is ever needed. polecat#514.
+    /// </summary>
+    [Fact]
+    public void default_tenant_usage_is_disabled()
+    {
+        using var store = CreateSeparateTenantStore();
+
+        store.Options.DefaultTenantUsageEnabled.ShouldBeFalse();
     }
 
     [Fact]
@@ -225,6 +346,8 @@ public class separate_database_tenancy_tests : IAsyncLifetime
         store.Options.Tenancy.Cardinality.ShouldBe(DatabaseCardinality.Single);
         store.Options.Tenancy.AllDatabases().Count.ShouldBe(1);
     }
+
+    public record TenancyEventHappened;
 
     public class TestDoc
     {

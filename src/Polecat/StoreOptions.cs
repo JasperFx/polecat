@@ -263,6 +263,23 @@ public class StoreOptions
     public ITenancy? Tenancy { get; set; }
 
     /// <summary>
+    ///     Option to enable or disable usage of the default tenant when using multi-tenanted
+    ///     documents. Configuring a database-per-tenant tenancy —
+    ///     <see cref="MultiTenantedDatabases" /> or <see cref="MultiTenantedMasterTable" /> — turns
+    ///     this off automatically, so a session or daemon opened with no tenant fails loudly with a
+    ///     <see cref="Exceptions.DefaultTenantUsageDisabledException" /> rather than silently
+    ///     landing on whichever database happens to back
+    ///     <see cref="ConnectionString" />. A default tenant is never required to configure
+    ///     database-per-tenant multi-tenancy.
+    ///     <para>
+    ///     Marten carries this as <c>StoreOptions.Advanced.DefaultTenantUsageEnabled</c>; Polecat
+    ///     has no <c>Advanced</c> sub-object and flattens it onto <see cref="StoreOptions" />, as
+    ///     with the other <c>Advanced.*</c> members it mirrors. polecat#514.
+    ///     </para>
+    /// </summary>
+    public bool DefaultTenantUsageEnabled { get; set; } = true;
+
+    /// <summary>
     ///     Custom projection storage providers registered by extensions (e.g., EF Core).
     ///     Keyed by document type, returns a factory that creates IProjectionStorage instances.
     /// </summary>
@@ -315,6 +332,11 @@ public class StoreOptions
     /// </summary>
     public void MultiTenantedDatabases(Action<SeparateDatabaseTenancy> configure)
     {
+        // Marten's MultiTenantedDatabases() does the same. Every tenant has its own database, so
+        // there is no coherent database for the default tenant to mean — asking for one is a
+        // configuration mistake, not a fallback.
+        DefaultTenantUsageEnabled = false;
+
         var tenancy = new SeparateDatabaseTenancy(this);
         configure(tenancy);
         Tenancy = tenancy;
@@ -333,6 +355,10 @@ public class StoreOptions
     public MasterTableTenancy MultiTenantedMasterTable(string masterConnectionString,
         string? schemaName = null, Action<MasterTableTenancy>? configure = null)
     {
+        // Matches Marten's MultiTenantedDatabasesWithMasterDatabaseTable — see the note on
+        // MultiTenantedDatabases above.
+        DefaultTenantUsageEnabled = false;
+
         var tenancy = new MasterTableTenancy(this, masterConnectionString, schemaName ?? DatabaseSchemaName);
         configure?.Invoke(tenancy);
         Tenancy = tenancy;
@@ -409,10 +435,19 @@ public class StoreOptions
 
     internal ConnectionFactory CreateConnectionFactory()
     {
+        // #514: a configured tenancy already names every database the store will touch, so it can
+        // seed the store's own connection string. Requiring the application to ALSO nominate one of
+        // the tenant databases at the top level was ceremony that made that tenant's database
+        // quietly special — and the store would throw on startup without it.
+        if (string.IsNullOrWhiteSpace(_connectionString) && Tenancy?.SeedConnectionString is { } seeded)
+        {
+            _connectionString = seeded;
+        }
+
         if (string.IsNullOrWhiteSpace(_connectionString))
         {
             throw new InvalidOperationException(
-                "A connection string must be configured. Set StoreOptions.ConnectionString.");
+                "A connection string must be configured. Set StoreOptions.ConnectionString, or configure a tenancy (MultiTenantedDatabases / MultiTenantedMasterTable) that supplies one.");
         }
 
         return new ConnectionFactory(_connectionString);

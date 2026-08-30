@@ -109,6 +109,12 @@ public class MasterTableTenancy : ITenancy, IDynamicTenantSource<string>
     ///     and return the full set of tenant databases the tenancy currently knows about. Mirrors
     ///     Marten's <c>BuildDatabases()</c>.
     /// </summary>
+    /// <summary>
+    ///     The control-plane database. Master table tenancy always has one, so an application never
+    ///     needs to set StoreOptions.ConnectionString as well. polecat#514.
+    /// </summary>
+    public string? SeedConnectionString => _masterConnectionString;
+
     public async Task<IReadOnlyList<PolecatDatabase>> BuildDatabasesAsync(CancellationToken token = default)
     {
         await EnsureMasterTableAsync(token).ConfigureAwait(false);

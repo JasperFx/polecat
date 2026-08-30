@@ -17,6 +17,8 @@ public partial class DocumentStore : IDocumentStore
     private readonly ConnectionFactory _connectionFactory;
     private readonly DocumentProviderRegistry _providers;
     private readonly DocumentTableEnsurer _tableEnsurer;
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, DocumentTableEnsurer> _tableEnsurers =
+        new(StringComparer.OrdinalIgnoreCase);
     private Lazy<IInlineProjection<IDocumentSession>[]> _inlineProjections;
 
     public DocumentStore(StoreOptions options)
@@ -115,15 +117,68 @@ public partial class DocumentStore : IDocumentStore
         return Options.Tenancy!.GetConnectionFactory(tenantId);
     }
 
+    /// <summary>
+    ///     Resolve the connection for a session, honouring an explicit
+    ///     <see cref="SessionOptions.Database" /> binding before falling back to tenant routing.
+    ///     polecat#514.
+    /// </summary>
+    private ConnectionFactory ResolveConnectionFactory(SessionOptions options)
+    {
+        AssertTenantIsValid(options);
+
+        return options.Database != null
+            ? new ConnectionFactory(options.Database.ConnectionString)
+            : ResolveConnectionFactory(options.TenantId);
+    }
+
+    private DocumentTableEnsurer ResolveTableEnsurer(SessionOptions options) =>
+        options.Database == null
+            ? ResolveTableEnsurer(options.TenantId)
+            : EnsurerFor(options.Database.ConnectionString);
+
+    /// <summary>
+    ///     Mirrors Marten's <c>DocumentStore.AssertTenantOrDatabaseIdentifierIsValid</c> and the
+    ///     matching guard in <c>SessionOptions.Initialize</c>: with the default tenant disabled,
+    ///     asking for a session or daemon without a tenant is a configuration error, not a fallback.
+    /// </summary>
+    private void AssertTenantIsValid(SessionOptions options)
+    {
+        if (options.AllowAnyTenant) return;
+        AssertTenantOrDatabaseIdentifierIsValid(options.TenantId);
+    }
+
+    private void AssertTenantOrDatabaseIdentifierIsValid(string? tenantIdOrDatabaseIdentifier)
+    {
+        if (Options.DefaultTenantUsageEnabled) return;
+
+        if (string.IsNullOrEmpty(tenantIdOrDatabaseIdentifier)
+            || tenantIdOrDatabaseIdentifier == JasperFx.StorageConstants.DefaultTenantId)
+        {
+            throw new Exceptions.DefaultTenantUsageDisabledException();
+        }
+    }
+
     internal DocumentTableEnsurer ResolveTableEnsurer(string tenantId)
     {
         var factory = ResolveConnectionFactory(tenantId);
         // For default tenancy, the factory is the same so we reuse the shared ensurer
         if (ReferenceEquals(factory, _connectionFactory)) return _tableEnsurer;
-        var ensurer = new DocumentTableEnsurer(factory, Options);
-        ensurer.SetProviderRegistry(_providers);
-        return ensurer;
+        return EnsurerFor(factory.ConnectionString);
     }
+
+    /// <summary>
+    ///     One <see cref="DocumentTableEnsurer" /> per database, cached for the life of the store.
+    ///     The ensurer memoizes which tables it has already checked, so handing out a fresh one per
+    ///     session would re-run the existence checks on every call — cheap once, but the async
+    ///     daemon opens a session per batch per tenant database. #514.
+    /// </summary>
+    private DocumentTableEnsurer EnsurerFor(string connectionString) =>
+        _tableEnsurers.GetOrAdd(connectionString, cs =>
+        {
+            var ensurer = new DocumentTableEnsurer(new ConnectionFactory(cs), Options);
+            ensurer.SetProviderRegistry(_providers);
+            return ensurer;
+        });
 
     public IDocumentSession LightweightSession()
     {
@@ -132,8 +187,8 @@ public partial class DocumentStore : IDocumentStore
 
     public IDocumentSession LightweightSession(SessionOptions options)
     {
-        var factory = ResolveConnectionFactory(options.TenantId);
-        var ensurer = ResolveTableEnsurer(options.TenantId);
+        var factory = ResolveConnectionFactory(options);
+        var ensurer = ResolveTableEnsurer(options);
         var timeout = options.Timeout ?? Options.CommandTimeout;
         var lifetime = new TransactionalConnection(factory, timeout);
         return new LightweightSession(
@@ -155,8 +210,8 @@ public partial class DocumentStore : IDocumentStore
 
     public IDocumentSession IdentitySession(SessionOptions options)
     {
-        var factory = ResolveConnectionFactory(options.TenantId);
-        var ensurer = ResolveTableEnsurer(options.TenantId);
+        var factory = ResolveConnectionFactory(options);
+        var ensurer = ResolveTableEnsurer(options);
         var timeout = options.Timeout ?? Options.CommandTimeout;
         var lifetime = new TransactionalConnection(factory, timeout);
         return new IdentityMapDocumentSession(
@@ -178,8 +233,8 @@ public partial class DocumentStore : IDocumentStore
 
     public IQuerySession QuerySession(SessionOptions options)
     {
-        var factory = ResolveConnectionFactory(options.TenantId);
-        var ensurer = ResolveTableEnsurer(options.TenantId);
+        var factory = ResolveConnectionFactory(options);
+        var ensurer = ResolveTableEnsurer(options);
         var timeout = options.Timeout ?? Options.CommandTimeout;
         var lifetime = new AutoClosingLifetime(factory, timeout);
         return new Internal.QuerySession(
@@ -202,8 +257,8 @@ public partial class DocumentStore : IDocumentStore
 
     public async Task<IDocumentSession> OpenSessionAsync(SessionOptions options, CancellationToken token = default)
     {
-        var factory = ResolveConnectionFactory(options.TenantId);
-        var ensurer = ResolveTableEnsurer(options.TenantId);
+        var factory = ResolveConnectionFactory(options);
+        var ensurer = ResolveTableEnsurer(options);
         var timeout = options.Timeout ?? Options.CommandTimeout;
         var lifetime = new TransactionalConnection(factory, timeout);
 

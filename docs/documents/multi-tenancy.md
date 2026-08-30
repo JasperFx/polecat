@@ -44,13 +44,26 @@ var store = DocumentStore.For(opts =>
 {
     opts.MultiTenantedDatabases(databases =>
     {
-        databases.AddSingleTenantDatabase("Server=localhost;Database=tenant_a;...", "tenant-a");
-        databases.AddSingleTenantDatabase("Server=localhost;Database=tenant_b;...", "tenant-b");
+        databases.AddTenant("tenant-a", "Server=localhost;Database=tenant_a;...");
+        databases.AddTenant("tenant-b", "Server=localhost;Database=tenant_b;...");
     });
 });
 ```
 
 Sessions are automatically routed to the correct database.
+
+::: warning No default tenant — and no top level connection string
+`MultiTenantedDatabases()` (and `MultiTenantedMasterTable()`) sets
+`StoreOptions.DefaultTenantUsageEnabled` to `false`. Do **not** register a placeholder
+`*DEFAULT*` tenant, and you do **not** need to set `StoreOptions.ConnectionString` — the tenancy
+supplies one. Opening a session or building a daemon without a tenant throws
+`DefaultTenantUsageDisabledException` rather than quietly using whichever database happened to be
+first.
+
+The async daemon starts one daemon per tenant database with the default tenant disabled, and
+`ApplyAllDatabaseChangesOnStartup()` migrates every tenant database. See
+[No default tenant is required](/configuration/multitenancy#no-default-tenant-is-required).
+:::
 
 ## ITenanted Interface
 

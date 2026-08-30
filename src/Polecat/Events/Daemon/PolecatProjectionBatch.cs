@@ -10,6 +10,7 @@ using Polecat.Events.Aggregation;
 using Polecat.Internal;
 using Polecat.Internal.Operations;
 using Polecat.Services;
+using Polecat.Storage;
 using Weasel.SqlServer;
 
 namespace Polecat.Events.Daemon;
@@ -24,6 +25,7 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
 {
     private readonly DocumentStore _store;
     private readonly EventGraph _events;
+    private readonly PolecatDatabase _database;
     private readonly string _connectionString;
     private readonly ShardExecutionMode _mode;
     private readonly ResiliencePipeline _resilience;
@@ -46,19 +48,26 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
     private IMessageBatch? _messageBatch;
     private readonly SemaphoreSlim _messageBatchGate = new(1, 1);
 
-    public PolecatProjectionBatch(DocumentStore store, EventGraph events, string connectionString,
+    public PolecatProjectionBatch(DocumentStore store, EventGraph events, PolecatDatabase database,
         ShardExecutionMode mode = ShardExecutionMode.Continuous)
     {
         _store = store;
         _events = events;
-        _connectionString = connectionString;
+        _database = database;
+        _connectionString = database.ConnectionString;
         _mode = mode;
         _resilience = store.Options.ResiliencePipeline;
     }
 
     public IDocumentSession SessionForTenant(string tenantId)
     {
-        var session = _store.LightweightSession(new SessionOptions { TenantId = tenantId });
+        // #514: bind to the database this batch is working rather than routing tenantId through the
+        // tenancy. The batch drains these sessions' work trackers and executes the operations
+        // against _connectionString, so writes were already landing correctly — but the sessions'
+        // own READS (loading an existing projected document before applying to it) went wherever
+        // tenant routing sent them, and under database-per-tenant tenancy "*DEFAULT*" maps to no
+        // tenant at all. Mirrors Marten's SessionOptions.ForDatabase.
+        var session = _store.LightweightSession(SessionOptions.ForDatabase(tenantId, _database));
         _sessions.Add(session);
         return session;
     }

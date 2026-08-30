@@ -91,7 +91,7 @@ public partial class DocumentStore : IDocumentStoreUsageSource
         //   Marten side                          Polecat side
         //   ----------------------------------   ----------------------------------
         //   TenantIdStyle                        (n/a — Polecat doesn't have it)
-        //   DefaultTenantUsageEnabled            (n/a)
+        //   DefaultTenantUsageEnabled            Options.DefaultTenantUsageEnabled (#514)
         //   RlsTenantSessionSetting              (n/a)
         //   NameDataLength                       (n/a — SQL Server uses 128)
         //   ApplyChangesLockId                   (n/a)
@@ -108,6 +108,7 @@ public partial class DocumentStore : IDocumentStoreUsageSource
         // Polecat-specific:
         //   UseNativeJsonType                    (json column type policy)
 
+        usage.AddValue(nameof(Options.DefaultTenantUsageEnabled), Options.DefaultTenantUsageEnabled);
         usage.AddValue(nameof(Options.CommandTimeout), Options.CommandTimeout);
         usage.AddValue("OpenTelemetryTrackConnections", Options.OpenTelemetry.TrackConnections.ToString());
         usage.AddValue("HiloMaxLo", Options.HiloSequenceDefaults.MaxLo);

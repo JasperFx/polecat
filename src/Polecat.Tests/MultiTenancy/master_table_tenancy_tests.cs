@@ -2,7 +2,10 @@ using JasperFx;
 using JasperFx.Descriptors;
 using JasperFx.MultiTenancy;
 using Microsoft.Data.SqlClient;
+using Polecat.Linq;
+using Weasel.Core;
 using Polecat.Storage;
+using Polecat.Tests.Harness;
 using Polecat.TestUtils;
 
 namespace Polecat.Tests.MultiTenancy;
@@ -76,6 +79,20 @@ public class master_table_tenancy_tests : IAsyncLifetime
         }
     }
 
+    /// <summary>
+    ///     Mirrors Marten's <c>using_master_table_multi_tenancy.default_tenant_usage_is_disabled</c>.
+    ///     polecat#514.
+    /// </summary>
+    [Fact]
+    public void default_tenant_usage_is_disabled()
+    {
+        var (store, _) = CreateStore();
+        using (store)
+        {
+            store.Options.DefaultTenantUsageEnabled.ShouldBeFalse();
+        }
+    }
+
     [Fact]
     public async Task cardinality_is_dynamic_multiple()
     {
@@ -116,6 +133,86 @@ public class master_table_tenancy_tests : IAsyncLifetime
             }
         }
     }
+
+    /// <summary>
+    ///     Port of Marten's <c>using_master_table_multi_tenancy.can_use_bulk_inserts</c>.
+    /// </summary>
+    [Fact]
+    public async Task can_use_bulk_inserts()
+    {
+        var (store, tenancy) = CreateStore();
+        using (store)
+        {
+            await tenancy.AddDatabaseRecordAsync(TenantA, Db(DbA), TestContext.Current.CancellationToken);
+            await tenancy.AddDatabaseRecordAsync(TenantB, Db(DbB), TestContext.Current.CancellationToken);
+            await ApplySchemaAsync(tenancy);
+
+            var targetsA = GenerateTargets(100);
+            var targetsB = GenerateTargets(50);
+
+            await store.Advanced.Clean.DeleteAllDocumentsAsync(TestContext.Current.CancellationToken);
+
+            await store.Advanced.BulkInsertAsync(targetsA, BulkInsertMode.InsertsOnly, 200, TenantA,
+                TestContext.Current.CancellationToken);
+            await store.Advanced.BulkInsertAsync(targetsB, BulkInsertMode.InsertsOnly, 200, TenantB,
+                TestContext.Current.CancellationToken);
+
+            await using (var queryA = store.QuerySession(new SessionOptions { TenantId = TenantA }))
+            {
+                var ids = await queryA.Query<Target>().Select(x => x.Id)
+                    .ToListAsync(TestContext.Current.CancellationToken);
+                ids.OrderBy(x => x).ToList()
+                    .ShouldBe(targetsA.OrderBy(x => x.Id).Select(x => x.Id).ToList());
+            }
+
+            await using (var queryB = store.QuerySession(new SessionOptions { TenantId = TenantB }))
+            {
+                var ids = await queryB.Query<Target>().Select(x => x.Id)
+                    .ToListAsync(TestContext.Current.CancellationToken);
+                ids.OrderBy(x => x).ToList()
+                    .ShouldBe(targetsB.OrderBy(x => x.Id).Select(x => x.Id).ToList());
+            }
+        }
+    }
+
+    /// <summary>
+    ///     Port of Marten's <c>using_master_table_multi_tenancy.clean_crosses_the_tenanted_databases</c>.
+    ///     The dynamic-tenancy twin of the static case — the cleaner has to resolve tenant databases
+    ///     out of the control table, not off StoreOptions.ConnectionString. polecat#514.
+    /// </summary>
+    [Fact]
+    public async Task clean_crosses_the_tenanted_databases()
+    {
+        var (store, tenancy) = CreateStore();
+        using (store)
+        {
+            await tenancy.AddDatabaseRecordAsync(TenantA, Db(DbA), TestContext.Current.CancellationToken);
+            await tenancy.AddDatabaseRecordAsync(TenantB, Db(DbB), TestContext.Current.CancellationToken);
+            await ApplySchemaAsync(tenancy);
+
+            await store.Advanced.BulkInsertAsync(GenerateTargets(100), BulkInsertMode.InsertsOnly, 200, TenantA,
+                TestContext.Current.CancellationToken);
+            await store.Advanced.BulkInsertAsync(GenerateTargets(50), BulkInsertMode.InsertsOnly, 200, TenantB,
+                TestContext.Current.CancellationToken);
+
+            await store.Advanced.Clean.DeleteAllDocumentsAsync(TestContext.Current.CancellationToken);
+
+            await using (var queryA = store.QuerySession(new SessionOptions { TenantId = TenantA }))
+            {
+                (await queryA.Query<Target>().AnyAsync(TestContext.Current.CancellationToken)).ShouldBeFalse();
+            }
+
+            await using (var queryB = store.QuerySession(new SessionOptions { TenantId = TenantB }))
+            {
+                (await queryB.Query<Target>().AnyAsync(TestContext.Current.CancellationToken)).ShouldBeFalse();
+            }
+        }
+    }
+
+    private static Target[] GenerateTargets(int count) =>
+        Enumerable.Range(0, count)
+            .Select(i => new Target { Id = Guid.NewGuid(), Number = i, Color = "Green" })
+            .ToArray();
 
     [Fact]
     public async Task unknown_tenant_throws()

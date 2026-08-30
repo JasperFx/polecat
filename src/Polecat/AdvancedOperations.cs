@@ -349,8 +349,20 @@ public class AdvancedOperations
     /// </summary>
     public async Task CleanAllDocumentsAsync(CancellationToken token = default)
     {
+        // #514: fan out across EVERY tenant database. Reading _store.Options.ConnectionString
+        // cleaned only the database behind it, so under database-per-tenant tenancy a "clean
+        // everything" call silently left every other tenant populated — which mostly bites test
+        // harnesses, exactly where a stale row is hardest to explain. Marten fans the same
+        // operations out through its CompositeDocumentCleaner.
+        foreach (var connectionString in AllDatabaseConnectionStrings())
+        {
+            await CleanAllDocumentsForDatabaseAsync(connectionString, token);
+        }
+    }
+
+    private async Task CleanAllDocumentsForDatabaseAsync(string connStr, CancellationToken token = default)
+{
         var schema = _store.Options.DatabaseSchemaName;
-        var connStr = _store.Options.ConnectionString;
         var flatTables = CollectFlatTableNames();
         await _resilience.ExecuteAsync(static async (state, ct) =>
         {
@@ -400,8 +412,20 @@ public class AdvancedOperations
     /// </summary>
     public async Task CompletelyRemoveAllAsync(CancellationToken token = default)
     {
+        // #514: fan out across EVERY tenant database. Reading _store.Options.ConnectionString
+        // cleaned only the database behind it, so under database-per-tenant tenancy a "clean
+        // everything" call silently left every other tenant populated — which mostly bites test
+        // harnesses, exactly where a stale row is hardest to explain. Marten fans the same
+        // operations out through its CompositeDocumentCleaner.
+        foreach (var connectionString in AllDatabaseConnectionStrings())
+        {
+            await CompletelyRemoveAllForDatabaseAsync(connectionString, token);
+        }
+    }
+
+    private async Task CompletelyRemoveAllForDatabaseAsync(string connStr, CancellationToken token = default)
+{
         var schema = _store.Options.DatabaseSchemaName;
-        var connStr = _store.Options.ConnectionString;
         var flatTables = CollectFlatTableNames();
         await _resilience.ExecuteAsync(static async (state, ct) =>
         {
@@ -505,9 +529,21 @@ public class AdvancedOperations
     /// </remarks>
     public async Task CleanAsync(Type documentType, CancellationToken token = default)
     {
+        // #514: fan out across EVERY tenant database. Reading _store.Options.ConnectionString
+        // cleaned only the database behind it, so under database-per-tenant tenancy a "clean
+        // everything" call silently left every other tenant populated — which mostly bites test
+        // harnesses, exactly where a stale row is hardest to explain. Marten fans the same
+        // operations out through its CompositeDocumentCleaner.
+        foreach (var connectionString in AllDatabaseConnectionStrings())
+        {
+            await CleanForDatabaseAsync(connectionString, documentType, token);
+        }
+    }
+
+    private async Task CleanForDatabaseAsync(string connStr, Type documentType, CancellationToken token = default)
+{
         var provider = _store.GetProvider(documentType);
         var tableName = provider.Mapping.QualifiedTableName;
-        var connStr = _store.Options.ConnectionString;
         await _resilience.ExecuteAsync(static async (state, ct) =>
         {
             var (connectionString, qualifiedTableName) = state;
@@ -614,9 +650,21 @@ public class AdvancedOperations
     /// </summary>
     public async Task CleanAllEventDataAsync(CancellationToken token = default)
     {
+        // #514: fan out across EVERY tenant database. Reading _store.Options.ConnectionString
+        // cleaned only the database behind it, so under database-per-tenant tenancy a "clean
+        // everything" call silently left every other tenant populated — which mostly bites test
+        // harnesses, exactly where a stale row is hardest to explain. Marten fans the same
+        // operations out through its CompositeDocumentCleaner.
+        foreach (var connectionString in AllDatabaseConnectionStrings())
+        {
+            await CleanAllEventDataForDatabaseAsync(connectionString, token);
+        }
+    }
+
+    private async Task CleanAllEventDataForDatabaseAsync(string connStr, CancellationToken token = default)
+{
         var events = _store.Events;
         var schema = events.DatabaseSchemaName;
-        var connStr = _store.Options.ConnectionString;
         var eventsTable = events.EventsTableName;
         var streamsTable = events.StreamsTableName;
         var progressionTable = events.ProgressionTableName;
@@ -854,6 +902,21 @@ public class AdvancedOperations
     public Task<TablePartitionStatus[]> DropAgedRollingPartitionsAsync(CancellationToken token = default)
         => RollingPartitions.ApplyAsync(RollingPartitionDatabases(), NullLogger.Instance,
             rollForward: false, dropAged: true, token);
+
+    /// <summary>
+    ///     Every database this store can reach — one per tenant under a database-per-tenant tenancy,
+    ///     otherwise just the store's own. #514.
+    /// </summary>
+    private IEnumerable<string> AllDatabaseConnectionStrings()
+    {
+        var databases = _store.Options.Tenancy?.AllDatabases();
+        if (databases is not { Count: > 0 })
+        {
+            return [_store.Options.ConnectionString];
+        }
+
+        return databases.Select(d => d.ConnectionString).Distinct(StringComparer.OrdinalIgnoreCase);
+    }
 
     private IEnumerable<PolecatDatabase> RollingPartitionDatabases() =>
         _store.Options.Tenancy?.AllDatabases() ?? [_store.Database];

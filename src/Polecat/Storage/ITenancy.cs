@@ -25,6 +25,22 @@ public interface ITenancy
     ///     <c>AddResourceSetupOnStartup()</c> can provision every tenant schema.
     /// </summary>
     Task<IReadOnlyList<PolecatDatabase>> BuildDatabasesAsync(CancellationToken token = default);
+
+    /// <summary>
+    ///     A connection string this tenancy can nominate for the store's own
+    ///     <see cref="StoreOptions.ConnectionString" /> when the application did not set one.
+    ///     Configuring a database-per-tenant tenancy already names every database the store will
+    ///     ever touch, so requiring the application to ALSO nominate one of them as a top level
+    ///     connection string is pure ceremony — and picking one arbitrarily (as users were doing)
+    ///     makes that tenant's database quietly special. Returns null when the tenancy has nothing
+    ///     to offer, which leaves the existing "a connection string must be configured" error in
+    ///     place. polecat#514.
+    ///     <para>
+    ///     Default-implemented so existing <see cref="ITenancy" /> implementations outside this
+    ///     repo keep compiling.
+    ///     </para>
+    /// </summary>
+    string? SeedConnectionString => null;
 }
 
 /// <summary>
@@ -50,6 +66,10 @@ internal class DefaultTenancy : ITenancy
 
     public Task<IReadOnlyList<PolecatDatabase>> BuildDatabasesAsync(CancellationToken token = default) =>
         Task.FromResult(AllDatabases());
+
+    // DefaultTenancy is only ever constructed FROM the store's connection string, so it has nothing
+    // to seed back.
+    public string? SeedConnectionString => null;
 }
 
 /// <summary>
@@ -112,4 +132,10 @@ public class SeparateDatabaseTenancy : ITenancy
 
     Task<IReadOnlyList<PolecatDatabase>> ITenancy.BuildDatabasesAsync(CancellationToken token) =>
         Task.FromResult(((ITenancy)this).AllDatabases());
+
+    // The first tenant registered, matching how Marten's StaticMultiTenancy nominates the first
+    // AddSingleTenantDatabase call as its Default. It only backs schema modelling and the store's
+    // own Database property — nothing routes to it, because DefaultTenantUsageEnabled is off.
+    string? ITenancy.SeedConnectionString =>
+        _factories.Values.FirstOrDefault()?.ConnectionString;
 }
