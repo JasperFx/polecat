@@ -27,7 +27,7 @@ public class projection_message_outbox_tests : OneOffConfigurationsContext
         await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         var batch = new PolecatProjectionBatch(theStore, theStore.Options.EventGraph,
-            ConnectionSource.ConnectionString);
+            theStore.Database);
         var session = batch.SessionForTenant(theStore.Options.Tenancy!.DefaultTenantId);
         session.Store(new SimpleDoc { Id = Guid.NewGuid() });
 
@@ -49,7 +49,7 @@ public class projection_message_outbox_tests : OneOffConfigurationsContext
         await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         var batch = new PolecatProjectionBatch(theStore, theStore.Options.EventGraph,
-            ConnectionSource.ConnectionString);
+            theStore.Database);
         var session = batch.SessionForTenant(theStore.Options.Tenancy!.DefaultTenantId);
         session.Store(new SimpleDoc { Id = Guid.NewGuid() });
 
@@ -77,7 +77,7 @@ public class projection_message_outbox_tests : OneOffConfigurationsContext
         await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         var batch = new PolecatProjectionBatch(theStore, theStore.Options.EventGraph,
-            ConnectionSource.ConnectionString);
+            theStore.Database);
         var session = batch.SessionForTenant(theStore.Options.Tenancy!.DefaultTenantId);
         session.Store(new SimpleDoc { Id = Guid.NewGuid() });
 
@@ -102,7 +102,7 @@ public class projection_message_outbox_tests : OneOffConfigurationsContext
         await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         var batch = new PolecatProjectionBatch(theStore, theStore.Options.EventGraph,
-            ConnectionSource.ConnectionString);
+            theStore.Database);
         var session = batch.SessionForTenant(theStore.Options.Tenancy!.DefaultTenantId);
         session.Store(new SimpleDoc { Id = Guid.NewGuid() });
 

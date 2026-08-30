@@ -76,6 +76,20 @@ public class master_table_tenancy_tests : IAsyncLifetime
         }
     }
 
+    /// <summary>
+    ///     Mirrors Marten's <c>using_master_table_multi_tenancy.default_tenant_usage_is_disabled</c>.
+    ///     polecat#514.
+    /// </summary>
+    [Fact]
+    public void default_tenant_usage_is_disabled()
+    {
+        var (store, _) = CreateStore();
+        using (store)
+        {
+            store.Options.DefaultTenantUsageEnabled.ShouldBeFalse();
+        }
+    }
+
     [Fact]
     public async Task cardinality_is_dynamic_multiple()
     {

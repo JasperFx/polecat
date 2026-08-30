@@ -75,8 +75,8 @@ var store = DocumentStore.For(opts =>
 {
     opts.MultiTenantedDatabases(databases =>
     {
-        databases.AddSingleTenantDatabase("Server=localhost;Database=tenant_a;...", "tenant-a");
-        databases.AddSingleTenantDatabase("Server=localhost;Database=tenant_b;...", "tenant-b");
+        databases.AddTenant("tenant-a", "Server=localhost;Database=tenant_a;...");
+        databases.AddTenant("tenant-b", "Server=localhost;Database=tenant_b;...");
     });
 });
 ```
@@ -84,9 +84,42 @@ var store = DocumentStore.For(opts =>
 With separate database tenancy:
 
 - Each tenant has completely isolated data
-- Schema management runs independently per database
+- Schema management runs independently per database — `ApplyAllDatabaseChangesOnStartup()` migrates
+  every tenant database, not just the one behind `StoreOptions.ConnectionString`
 - Sessions automatically route to the correct database based on tenant ID
-- The async daemon runs independently per tenant database
+- The async daemon runs independently per tenant database: `AddAsyncDaemon(...)` starts one daemon
+  per tenant database, each tracking its own high-water mark and projection progress
+
+### No default tenant is required
+
+Calling `MultiTenantedDatabases()` (or `MultiTenantedMasterTable()`) sets
+`StoreOptions.DefaultTenantUsageEnabled` to `false`. Every tenant has its own database, so there is
+no database the default tenant could coherently mean — and you should **not** register a
+placeholder `*DEFAULT*` tenant to satisfy startup.
+
+With the default tenant disabled, opening a session or building a projection daemon without a
+tenant throws `DefaultTenantUsageDisabledException` rather than quietly landing on whichever
+database happens to back `StoreOptions.ConnectionString`:
+
+```cs
+// throws DefaultTenantUsageDisabledException
+await using var session = store.LightweightSession();
+
+// correct — always name the tenant
+await using var session = store.LightweightSession(new SessionOptions { TenantId = "tenant-a" });
+```
+
+Infrastructure that has already resolved a database — the async daemon, for instance — opts out
+with `SessionOptions.AllowAnyTenant`, which `SessionOptions.ForDatabase(database)` sets for you.
+You can also re-enable the default tenant explicitly if your application genuinely wants it:
+
+```cs
+opts.MultiTenantedDatabases(databases => { /* ... */ });
+opts.DefaultTenantUsageEnabled = true; // opt back in, after configuring the tenancy
+```
+
+This mirrors Marten's `StoreOptions.Advanced.DefaultTenantUsageEnabled`; Polecat has no `Advanced`
+sub-object and carries the setting directly on `StoreOptions`.
 
 ### Dynamic Tenant Management (Master Table Tenancy)
 
@@ -248,6 +281,10 @@ await using var session = store.LightweightSession(new SessionOptions
 
 ::: warning
 If no tenant ID is specified, Polecat uses `"DEFAULT"` as the tenant ID. In conjoined tenancy mode, this means documents and events will be stored with `tenant_id = 'DEFAULT'`.
+
+Under **separate database** tenancy this fallback is switched off — see
+[No default tenant is required](#no-default-tenant-is-required) — and a tenantless session throws
+`DefaultTenantUsageDisabledException` instead.
 :::
 
 ## ITenanted Interface

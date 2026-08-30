@@ -33,7 +33,21 @@ internal class PolecatActivator : IHostedService
         if (_store.Options.ShouldApplyChangesOnStartup)
         {
             var documentStore = (DocumentStore)_store;
-            await documentStore.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: cancellationToken);
+
+            // #514: migrate EVERY tenant database, not just the one behind
+            // StoreOptions.ConnectionString. Under database-per-tenant tenancy the other tenants'
+            // databases were silently left unprovisioned, so the first write to them failed at
+            // runtime with a missing-table error long after startup had reported success. Mirrors
+            // Marten's MartenActivator, which iterates Store.Tenancy.BuildDatabases(). Resolved
+            // asynchronously so a dynamic tenancy (MasterTableTenancy) reads its control table here.
+            var tenantDatabases = _store.Options.Tenancy is { } tenancy
+                ? await tenancy.BuildDatabasesAsync(cancellationToken)
+                : [documentStore.Database];
+
+            foreach (var database in tenantDatabases)
+            {
+                await database.ApplyAllConfiguredChangesToDatabaseAsync(ct: cancellationToken);
+            }
 
             // #386: roll every configured rolling-window RANGE partition forward and retire the aged
             // ones. The migration above already provisions the leading edge — with a rolling-window
@@ -41,8 +55,7 @@ internal class PolecatActivator : IHostedService
             // never removes data, so the retention half has to be driven separately. Gated on the same
             // opt-in as the migration itself: applying changes on startup is how a host says "Polecat
             // owns this schema", and retiring a partition is emphatically a schema change.
-            var databases = _store.Options.Tenancy?.AllDatabases() ?? [documentStore.Database];
-            await Storage.RollingPartitions.ApplyAsync(databases, _logger, rollForward: true, dropAged: true,
+            await Storage.RollingPartitions.ApplyAsync(tenantDatabases, _logger, rollForward: true, dropAged: true,
                 cancellationToken);
         }
 

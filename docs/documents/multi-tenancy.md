@@ -44,8 +44,8 @@ var store = DocumentStore.For(opts =>
 {
     opts.MultiTenantedDatabases(databases =>
     {
-        databases.AddSingleTenantDatabase("Server=localhost;Database=tenant_a;...", "tenant-a");
-        databases.AddSingleTenantDatabase("Server=localhost;Database=tenant_b;...", "tenant-b");
+        databases.AddTenant("tenant-a", "Server=localhost;Database=tenant_a;...");
+        databases.AddTenant("tenant-b", "Server=localhost;Database=tenant_b;...");
     });
 });
 ```

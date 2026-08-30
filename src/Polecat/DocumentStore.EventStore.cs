@@ -112,12 +112,17 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
     Type IEventStore<IDocumentSession, IQuerySession>.IdentityTypeForProjectedType(Type aggregateType) =>
         Events.StreamIdentity == StreamIdentity.AsGuid ? typeof(Guid) : typeof(string);
 
+    // #514: bind the session to the database the daemon resolved rather than routing its tenant id
+    // back through the tenancy. Under database-per-tenant the two are different coordinates — the
+    // events being replayed carry "*DEFAULT*", which no tenancy entry maps to — so the old
+    // tenant-only routing threw UnknownTenantIdException and no shard could start at all. Mirrors
+    // Marten's LightweightSession(SessionOptions.ForDatabase(database)).
     IDocumentSession IEventStore<IDocumentSession, IQuerySession>.OpenSession(IEventDatabase database) =>
-        LightweightSession();
+        LightweightSession(SessionOptions.ForDatabase((PolecatDatabase)database));
 
     IDocumentSession IEventStore<IDocumentSession, IQuerySession>.OpenSession(IEventDatabase database,
         string tenantId) =>
-        LightweightSession(new SessionOptions { TenantId = tenantId });
+        LightweightSession(SessionOptions.ForDatabase(tenantId, (PolecatDatabase)database));
 
     ErrorHandlingOptions IEventStore<IDocumentSession, IQuerySession>.ErrorHandlingOptions(
         ShardExecutionMode mode) =>
@@ -161,8 +166,7 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
             EventRange range, IEventDatabase database, ShardExecutionMode mode,
             AsyncOptions projectionOptions, CancellationToken token)
     {
-        var connStr = database is PolecatDatabase pdb ? pdb.ConnectionString : Options.ConnectionString;
-        var batch = new PolecatProjectionBatch(this, Events, connStr, mode);
+        var batch = new PolecatProjectionBatch(this, Events, (PolecatDatabase)database, mode);
         await batch.RecordProgress(range);
 
         // #259: when rebuilding a snapshot whose aggregate has a [NaturalKey], re-emit the natural-key
@@ -379,11 +383,16 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
     {
         logger ??= NullLogger.Instance;
 
+        // #514: with the default tenant disabled (which configuring a database-per-tenant tenancy
+        // does), building a daemon with no tenant has no coherent answer. Marten asserts the same
+        // thing in BuildProjectionDaemonAsync before resolving a database.
+        AssertTenantOrDatabaseIdentifierIsValid(tenantIdOrDatabaseIdentifier);
+
         // Resolve the right database — tenant-specific or default
         PolecatDatabase db;
-        if (tenantIdOrDatabaseIdentifier != null && Options.Tenancy is SeparateDatabaseTenancy)
+        if (tenantIdOrDatabaseIdentifier != null && Options.Tenancy is not DefaultTenancy)
         {
-            db = Options.Tenancy.GetDatabase(tenantIdOrDatabaseIdentifier);
+            db = Options.Tenancy!.GetDatabase(tenantIdOrDatabaseIdentifier);
         }
         else
         {
@@ -658,14 +667,15 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
         ISubscription subscription, IEventDatabase database, EventRange range,
         ShardExecutionMode mode, CancellationToken token)
     {
-        var connStr = ResolveConnectionString(database, Options);
-        var batch = new PolecatProjectionBatch(this, Events, connStr, mode);
+        var polecatDatabase = (PolecatDatabase)database;
+        var batch = new PolecatProjectionBatch(this, Events, polecatDatabase, mode);
         await batch.RecordProgress(range);
 
-        // Create a session the subscription can use for reads/writes,
-        // and register it with the batch so its pending operations are included
-        // in the batch's transaction.
-        await using var session = LightweightSession();
+        // Create a session the subscription can use for reads/writes, and register it with the
+        // batch so its pending operations are included in the batch's transaction. #514: bound to
+        // the database this subscription is running against — routing the default tenant through
+        // the tenancy reaches no database at all under database-per-tenant tenancy.
+        await using var session = LightweightSession(SessionOptions.ForDatabase(polecatDatabase));
         batch.RegisterSession(session);
         var listener = await subscription.ProcessEventsAsync(range, range.Agent, session, token);
 

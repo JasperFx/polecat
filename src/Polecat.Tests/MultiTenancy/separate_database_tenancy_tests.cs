@@ -70,6 +70,19 @@ public class separate_database_tenancy_tests : IAsyncLifetime
         });
     }
 
+    /// <summary>
+    ///     Mirrors Marten's <c>using_static_database_multitenancy.default_tenant_usage_is_disabled</c>:
+    ///     configuring a database per tenant turns the default tenant off, so no dummy "*DEFAULT*"
+    ///     tenant is ever needed. polecat#514.
+    /// </summary>
+    [Fact]
+    public void default_tenant_usage_is_disabled()
+    {
+        using var store = CreateSeparateTenantStore();
+
+        store.Options.DefaultTenantUsageEnabled.ShouldBeFalse();
+    }
+
     [Fact]
     public async Task separate_databases_store_documents_independently()
     {

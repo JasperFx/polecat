@@ -7,6 +7,7 @@ using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Polecat.Events.Daemon;
+using Polecat.Exceptions;
 using Polecat.Projections;
 using Polecat.Storage;
 using Polecat.Tests.Harness;
@@ -89,9 +90,12 @@ public class daemon_multi_tenancy_by_database_tests : IClassFixture<TenantDataba
     ///     <c>MultiTenantedDatabases()</c> flips <c>Advanced.DefaultTenantUsageEnabled</c> to false,
     ///     so a session opened with no tenant fails loudly instead of silently landing somewhere.
     /// </summary>
-    [Fact(Skip = "polecat#514 - StoreOptions has no DefaultTenantUsageEnabled yet")]
+    [Fact]
     public void default_tenant_usage_is_disabled_by_configuring_separate_databases()
     {
+        using var store = CreateStore();
+
+        store.Options.DefaultTenantUsageEnabled.ShouldBeFalse();
     }
 
     /// <summary>
@@ -100,16 +104,27 @@ public class daemon_multi_tenancy_by_database_tests : IClassFixture<TenantDataba
     ///     <c>UnknownTenantIdException</c> for "*DEFAULT*" only because the tenancy has no such
     ///     entry — which is what pushes users into registering a dummy "*DEFAULT*" tenant.
     /// </summary>
-    [Fact(Skip = "polecat#514 - no DefaultTenantUsageDisabledException yet")]
+    [Fact]
     public void opening_a_session_with_no_tenant_throws_default_tenant_usage_disabled()
     {
+        using var store = CreateStore();
+
+        Should.Throw<DefaultTenantUsageDisabledException>(() => store.LightweightSession());
     }
 
     /// <summary>
     ///     Marten's <c>multi_tenancy_by_database.fail_when_trying_to_create_daemon_with_no_tenant</c>.
     /// </summary>
-    [Fact(Skip = "polecat#514 - no DefaultTenantUsageDisabledException yet")]
-    public Task fail_when_trying_to_create_daemon_with_no_tenant() => Task.CompletedTask;
+    [Fact]
+    public async Task fail_when_trying_to_create_daemon_with_no_tenant()
+    {
+        using var store = CreateStore();
+
+        await Should.ThrowAsync<DefaultTenantUsageDisabledException>(async () =>
+        {
+            await store.BuildProjectionDaemonAsync();
+        });
+    }
 
     // -------------------------------------------------------------------------------------
     // Schema provisioning
