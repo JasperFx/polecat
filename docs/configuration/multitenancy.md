@@ -97,6 +97,26 @@ Calling `MultiTenantedDatabases()` (or `MultiTenantedMasterTable()`) sets
 no database the default tenant could coherently mean — and you should **not** register a
 placeholder `*DEFAULT*` tenant to satisfy startup.
 
+You also do not need to set `StoreOptions.ConnectionString`. A configured tenancy already names
+every database the store will touch, so it supplies the store's own connection string: the first
+registered tenant for `MultiTenantedDatabases()`, the control-plane database for
+`MultiTenantedMasterTable()`. Nominating one of the tenant databases at the top level is not
+required and makes that tenant's database quietly special.
+
+```cs
+var store = DocumentStore.For(opts =>
+{
+    // No opts.ConnectionString, and no "*DEFAULT*" tenant.
+    opts.MultiTenantedDatabases(databases =>
+    {
+        databases.AddTenant("tenant-a", "Server=localhost;Database=tenant_a;...");
+        databases.AddTenant("tenant-b", "Server=localhost;Database=tenant_b;...");
+    });
+
+    opts.Projections.Add<MyProjection>(ProjectionLifecycle.Async);
+});
+```
+
 With the default tenant disabled, opening a session or building a projection daemon without a
 tenant throws `DefaultTenantUsageDisabledException` rather than quietly landing on whichever
 database happens to back `StoreOptions.ConnectionString`:

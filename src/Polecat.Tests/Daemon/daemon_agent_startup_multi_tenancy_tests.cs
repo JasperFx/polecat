@@ -39,6 +39,10 @@ public class daemon_agent_startup_multi_tenancy_tests : IClassFixture<AgentStart
 
     private const string Schema = "agentstart";
 
+    // A schema of its own so the no-connection-string test proves the activator provisioned it,
+    // rather than inheriting tables a sibling test already created.
+    private const string NoConnStrSchema = "agentstart_noconn";
+
     private static string ConnectionFor(string db) => ConnectionSource.ConnectionStringFor(db);
 
     private static readonly TimeSpan Timeout = 30.Seconds();
@@ -150,6 +154,92 @@ public class daemon_agent_startup_multi_tenancy_tests : IClassFixture<AgentStart
         (await LoadTallyAsync(store, TenantB, idA)).ShouldBeNull();
 
         await host.StopAsync(TestContext.Current.CancellationToken);
+    }
+
+    /// <summary>
+    ///     polecat#514's headline scenario, end to end: NO top level connection string and NO
+    ///     "*DEFAULT*" tenant — just the tenant databases. Every tenant database must be migrated on
+    ///     startup and get a daemon with running agents that actually project.
+    /// </summary>
+    [Fact]
+    public async Task everything_starts_with_no_connection_string_and_no_default_tenant()
+    {
+        using var host = await Host.CreateDefaultBuilder()
+            .ConfigureServices(services =>
+            {
+                services.AddPolecat(opts =>
+                    {
+                        // Deliberately no opts.ConnectionString.
+                        opts.DatabaseSchemaName = NoConnStrSchema;
+                        opts.AutoCreateSchemaObjects = AutoCreate.All;
+                        opts.UseNativeJsonType = ConnectionSource.SupportsNativeJson;
+
+                        opts.MultiTenantedDatabases(tenancy =>
+                        {
+                            tenancy.AddTenant(TenantA, ConnectionFor(DbA));
+                            tenancy.AddTenant(TenantB, ConnectionFor(DbB));
+                        });
+
+                        opts.Projections.Add<AgentTallyProjection>(ProjectionLifecycle.Async);
+                    })
+                    .ApplyAllDatabaseChangesOnStartup()
+                    .AddAsyncDaemon(DaemonMode.Solo);
+            })
+            .StartAsync(TestContext.Current.CancellationToken);
+
+        var store = (DocumentStore)host.Services.GetRequiredService<IDocumentStore>();
+        var hostedService = host.Services.GetRequiredService<PolecatDaemonHostedService>();
+
+        store.Options.DefaultTenantUsageEnabled.ShouldBeFalse();
+        hostedService.Daemons.Count.ShouldBe(2);
+
+        foreach (var daemon in hostedService.Daemons)
+        {
+            await daemon.WaitForShardToBeRunning(ShardName, Timeout);
+        }
+
+        var idA = Guid.NewGuid();
+        var idB = Guid.NewGuid();
+        await AppendAsync(store, TenantA, idA, 3);
+        await AppendAsync(store, TenantB, idB, 7);
+
+        await WaitForTallyAsync(store, TenantA, idA, 3);
+        await WaitForTallyAsync(store, TenantB, idB, 7);
+
+        await host.StopAsync(TestContext.Current.CancellationToken);
+    }
+
+    /// <summary>
+    ///     A configured tenancy supplies the store's own connection string, so the application never
+    ///     has to nominate one of the tenant databases at the top level.
+    /// </summary>
+    [Fact]
+    public void a_tenancy_seeds_the_store_connection_string()
+    {
+        using var store = DocumentStore.For(opts =>
+        {
+            opts.DatabaseSchemaName = NoConnStrSchema;
+            opts.UseNativeJsonType = ConnectionSource.SupportsNativeJson;
+            opts.MultiTenantedDatabases(tenancy =>
+            {
+                tenancy.AddTenant(TenantA, ConnectionFor(DbA));
+                tenancy.AddTenant(TenantB, ConnectionFor(DbB));
+            });
+        });
+
+        store.Options.ConnectionString.ShouldBe(ConnectionFor(DbA));
+    }
+
+    /// <summary>
+    ///     With no tenancy and no connection string there is still nothing to fall back to, and the
+    ///     error has to say so.
+    /// </summary>
+    [Fact]
+    public void still_throws_without_a_connection_string_or_a_tenancy()
+    {
+        var ex = Should.Throw<InvalidOperationException>(() => DocumentStore.For(_ => { }));
+
+        ex.Message.ShouldContain("connection string");
     }
 
     // -------------------------------------------------------------------------------------

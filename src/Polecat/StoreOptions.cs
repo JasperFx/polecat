@@ -435,10 +435,19 @@ public class StoreOptions
 
     internal ConnectionFactory CreateConnectionFactory()
     {
+        // #514: a configured tenancy already names every database the store will touch, so it can
+        // seed the store's own connection string. Requiring the application to ALSO nominate one of
+        // the tenant databases at the top level was ceremony that made that tenant's database
+        // quietly special — and the store would throw on startup without it.
+        if (string.IsNullOrWhiteSpace(_connectionString) && Tenancy?.SeedConnectionString is { } seeded)
+        {
+            _connectionString = seeded;
+        }
+
         if (string.IsNullOrWhiteSpace(_connectionString))
         {
             throw new InvalidOperationException(
-                "A connection string must be configured. Set StoreOptions.ConnectionString.");
+                "A connection string must be configured. Set StoreOptions.ConnectionString, or configure a tenancy (MultiTenantedDatabases / MultiTenantedMasterTable) that supplies one.");
         }
 
         return new ConnectionFactory(_connectionString);

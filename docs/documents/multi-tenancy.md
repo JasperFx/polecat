@@ -52,6 +52,19 @@ var store = DocumentStore.For(opts =>
 
 Sessions are automatically routed to the correct database.
 
+::: warning No default tenant — and no top level connection string
+`MultiTenantedDatabases()` (and `MultiTenantedMasterTable()`) sets
+`StoreOptions.DefaultTenantUsageEnabled` to `false`. Do **not** register a placeholder
+`*DEFAULT*` tenant, and you do **not** need to set `StoreOptions.ConnectionString` — the tenancy
+supplies one. Opening a session or building a daemon without a tenant throws
+`DefaultTenantUsageDisabledException` rather than quietly using whichever database happened to be
+first.
+
+The async daemon starts one daemon per tenant database with the default tenant disabled, and
+`ApplyAllDatabaseChangesOnStartup()` migrates every tenant database. See
+[No default tenant is required](/configuration/multitenancy#no-default-tenant-is-required).
+:::
+
 ## ITenanted Interface
 
 Documents implementing `ITenanted` have their `TenantId` property automatically synced:

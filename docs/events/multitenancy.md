@@ -57,12 +57,31 @@ var store = DocumentStore.For(opts =>
 With separate database tenancy:
 
 - Each tenant has completely isolated event data
-- The async daemon runs independently per database
-- Schema management is independent per database
+- The async daemon runs one daemon per tenant database, each with its own high-water mark and
+  projection progress
+- Schema management is independent per database; `ApplyAllDatabaseChangesOnStartup()` migrates
+  every tenant database
+
+::: warning No default tenant — and no top level connection string
+`MultiTenantedDatabases()` (and `MultiTenantedMasterTable()`) sets
+`StoreOptions.DefaultTenantUsageEnabled` to `false`. Do **not** register a placeholder
+`*DEFAULT*` tenant, and you do **not** need to set `StoreOptions.ConnectionString` — the tenancy
+supplies one. Opening a session or building a daemon without a tenant throws
+`DefaultTenantUsageDisabledException` rather than quietly using whichever database happened to be
+first.
+
+The async daemon starts one daemon per tenant database with the default tenant disabled, and
+`ApplyAllDatabaseChangesOnStartup()` migrates every tenant database. See
+[No default tenant is required](/configuration/multitenancy#no-default-tenant-is-required).
+:::
 
 ## Default Tenant
 
-When no tenant ID is specified, events are stored with `tenant_id = 'DEFAULT'`. In single-tenant mode, all queries use this default value.
+When no tenant ID is specified, events are stored with `tenant_id = 'DEFAULT'`. In single-tenant
+mode, all queries use this default value.
+
+Under **separate database** tenancy the default tenant is disabled, so there is no `'DEFAULT'`
+fallback — every session must name its tenant. See the warning above.
 
 ## Per-Tenant Event Partitioning <Badge type="tip" text="4.2" />
 
