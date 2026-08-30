@@ -480,10 +480,20 @@
              weasel#513 — an index's per-column sort direction was read as a whole-index flag, so
              (a DESC, b) read back as (a, b DESC) and a genuinely different index never reported
              drift. New opt-in DescendingColumns / CompareColumnDirection on SQL Server's
-             IndexDefinition; Polecat does not opt in. -->
-        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.27.0" />
-        <PackageVersion Include="Weasel.SqlServer" Version="9.27.0" />
-        <PackageVersion Include="Weasel.Storage" Version="9.27.0" />
+             IndexDefinition; Polecat does not opt in.
+             Weasel 9.27.1: weasel#526/#527 — BatchBuilder.AppendWithParameters now materializes the
+             batch command BEFORE writing its text. It previously only created the command as a side
+             effect of appending a PARAMETER, so a statement with no placeholders left _current null
+             and the next StartNewCommand() cleared the builder and discarded the SQL silently. That
+             is polecat#517: a QueueSqlCommand statement was dropped whenever the session also
+             carried a document operation, with SaveChangesAsync reporting success.
+             This bump is what lets polecat#522 remove Polecat's own guard (the empty Append in
+             StorageOperationExecution.Configure), so 9.27.1 is a FLOOR, not a preference — the nine
+             queued_sql_command_tests are the proof it holds, and five of them fail against 9.27.0
+             once the local guard is gone. -->
+        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.27.1" />
+        <PackageVersion Include="Weasel.SqlServer" Version="9.27.1" />
+        <PackageVersion Include="Weasel.Storage" Version="9.27.1" />
 
         <!-- Strongly typed IDs. Both generators are test-only: they prove Polecat's value-type id
              support against the two libraries Marten's ValueTypeTests exercise. StronglyTypedId emits
