@@ -23,7 +23,7 @@ namespace Polecat.Internal;
     Justification = "Class-level (all partials): routes load/query operations through ISerializer.FromJson and per-document DocumentProvider reflection. Document types T flow in from caller registration (Schema.For<T>() / session.Load<T>) and are preserved per the AOT publishing guide.")]
 [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
     Justification = "Class-level (all partials): ISerializer.FromJson is annotated RDC; AOT consumers supply a source-generator-backed ISerializer impl.")]
-internal partial class QuerySession : IQuerySession
+internal partial class QuerySession : IQuerySession, JasperFx.Events.IEventTenancySource
 {
     internal readonly IConnectionLifetime _lifetime;
     private readonly ResiliencePipeline _resilience;
@@ -122,6 +122,21 @@ internal partial class QuerySession : IQuerySession
     }
 
     internal StoreOptions Options { get; }
+
+    /// <summary>
+    ///     The event store's tenancy style, for the shared single-stream projection base.
+    /// </summary>
+    /// <remarks>
+    ///     <b>gh-526.</b> <c>JasperFxSingleStreamProjectionBase.BuildSlicer</c> reads this to decide
+    ///     whether to set <c>ForceSingleTenancy</c> on the slicer it builds. On a single-tenanted store,
+    ///     events whose <c>tenant_id</c> values disagree must still fold into one aggregate rather than
+    ///     being sliced per tenant — wolverine#2053 / marten#4085, which only ever bit the async daemon.
+    ///     Marten got that fix by overriding <c>BuildSlicer</c> in its own subclass; ours is an empty
+    ///     class body, so we went without it until jasperfx#723 moved the decision into the base.
+    ///     Answering here is the whole of our side.
+    /// </remarks>
+    public TenancyStyle EventTenancyStyle => Options.Events.TenancyStyle;
+
     internal DocumentProviderRegistry Providers => _providers;
     public string TenantId { get; }
     public ISerializer Serializer { get; }
