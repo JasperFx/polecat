@@ -323,15 +323,41 @@
              registrations, and a Block no longer running its action on the publisher's thread.
              Both are Wolverine-side; inert for Polecat, carried along by the version bump.
              Weasel stays at 9.27.0 — already the latest, and its JasperFx.Events floor (2.46.0) is
-             satisfied by this line, so the matrix stays coherent without a lockstep bump. -->
-        <PackageVersion Include="JasperFx" Version="2.59.0" />
-        <PackageVersion Include="JasperFx.Events" Version="2.59.0" />
+             satisfied by this line, so the matrix stays coherent without a lockstep bump.
+
+             JasperFx 2.61.0 (from 2.59.0, spanning 2.60.0):
+             (a) jasperfx#728/#729 — a `projection-run` CLI command, and jasperfx#734, which is why
+             this pin is 2.61.0 and not 2.60.0. The command shipped in 2.60.0 resolving as
+             `projectionrun`: CommandFactory.CommandNameFor only strips the "Command" suffix and
+             lowercases, so ProjectionRunCommand never got its PascalCase split. 2.61.0 names it
+             explicitly. Polecat already implements every member the command calls
+             (ReadStreamAsync and QueryByTagsAsync in DocumentStore.EventStoreExplorer.cs,
+             RunMultiStreamProjectionAsync in DocumentStore.ProjectionReplay.cs), so the floor lift
+             alone is what puts the command in a consuming app's `help` output — under the name it
+             is documented by.
+             (b) jasperfx#730/#731 — [BoundaryAggregate] is honored on the Evolve path rather than
+             failing silently. Adjacent to Polecat's own #521, which fixed the identity-less
+             boundary aggregate throw; this closes the Evolve half upstream.
+             (c) jasperfx#733/#735 — event constructors fold into the self-aggregating
+             DetermineAction switch.
+
+             Weasel 9.29.0 (from 9.27.1, spanning 9.28.0). 9.28 is a SQLite release and its upgrade
+             guide's `numeric`/`decimal` migration warning does not reach this store — SQL Server
+             emits no SQLite DDL. Two changes here are NOT provider-inert, though, and are the
+             reason this bump wants a full CI pass rather than a glance:
+             (a) weasel#540 — foreign key cycle creation, which edits Weasel.SqlServer's Table and
+             TableDelta and SqlServerMigrator alongside Weasel.Core's SchemaMigration and Migrator.
+             Polecat creates foreign keys on document tables, so this is live schema-management code.
+             (b) weasel#538/#542 — AssertPatchingIsValid lets a rebuildable Invalid delta through,
+             in Weasel.Core.SchemaMigration and ISchemaObject. Core, so every provider sees it. -->
+        <PackageVersion Include="JasperFx" Version="2.61.0" />
+        <PackageVersion Include="JasperFx.Events" Version="2.61.0" />
         <!--
              The shared cross-store event sourcing compliance suites. Source-only package: the
              suites compile inside Polecat.Tests so JasperFx's aggregate source generator binds
              Polecat's own session types.
         -->
-        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="2.59.0" />
+        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="2.61.0" />
         <!-- Pin the sibling JasperFx packages for parity with Marten 9's matrix
              even though Polecat doesn't currently reference them directly —
              keeps the lockstep matrix coherent when transitive resolution
@@ -339,7 +365,7 @@
              RuntimeCompiler 5.x line is the active continuation of the 4.x
              lineage; do not pin against the parallel stale 2.0.x series. -->
         <PackageVersion Include="JasperFx.RuntimeCompiler" Version="5.0.0" />
-        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.59.0" />
+        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.61.0" />
         <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
@@ -491,9 +517,9 @@
              StorageOperationExecution.Configure), so 9.27.1 is a FLOOR, not a preference — the nine
              queued_sql_command_tests are the proof it holds, and five of them fail against 9.27.0
              once the local guard is gone. -->
-        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.27.1" />
-        <PackageVersion Include="Weasel.SqlServer" Version="9.27.1" />
-        <PackageVersion Include="Weasel.Storage" Version="9.27.1" />
+        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.29.0" />
+        <PackageVersion Include="Weasel.SqlServer" Version="9.29.0" />
+        <PackageVersion Include="Weasel.Storage" Version="9.29.0" />
 
         <!-- Strongly typed IDs. Both generators are test-only: they prove Polecat's value-type id
              support against the two libraries Marten's ValueTypeTests exercise. StronglyTypedId emits
@@ -503,7 +529,7 @@
         <PackageVersion Include="Vogen" Version="7.0.0" />
 
         <!-- Source generators (matched to JasperFx.Events above) -->
-        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.59.0" />
+        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.61.0" />
 
         <!-- Build automation -->
         <PackageVersion Include="Nuke.Common" Version="9.0.4" />
