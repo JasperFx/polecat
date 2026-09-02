@@ -324,14 +324,14 @@
              Both are Wolverine-side; inert for Polecat, carried along by the version bump.
              Weasel stays at 9.27.0 — already the latest, and its JasperFx.Events floor (2.46.0) is
              satisfied by this line, so the matrix stays coherent without a lockstep bump. -->
-        <PackageVersion Include="JasperFx" Version="2.59.0" />
-        <PackageVersion Include="JasperFx.Events" Version="2.59.0" />
+        <PackageVersion Include="JasperFx" Version="2.60.0" />
+        <PackageVersion Include="JasperFx.Events" Version="2.60.0" />
         <!--
              The shared cross-store event sourcing compliance suites. Source-only package: the
              suites compile inside Polecat.Tests so JasperFx's aggregate source generator binds
              Polecat's own session types.
         -->
-        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="2.59.0" />
+        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="2.60.0" />
         <!-- Pin the sibling JasperFx packages for parity with Marten 9's matrix
              even though Polecat doesn't currently reference them directly —
              keeps the lockstep matrix coherent when transitive resolution
