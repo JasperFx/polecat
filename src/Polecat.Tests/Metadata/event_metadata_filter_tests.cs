@@ -10,6 +10,9 @@ namespace Polecat.Tests.Metadata;
 /// (parity with the JasperFx EventQuery surface). CorrelationId / CausationId / UserName are honored only
 /// when the option is set AND the event store captures that column (EnableCorrelationId / EnableCausationId /
 /// EnableUserName, #237). UserName is sourced from the session's LastModifiedBy (#237/#239).
+/// #532 (jasperfx#737): a supplied metadata filter whose column is NOT captured is now REFUSED with a
+/// NotSupportedException naming the field, via EventQuery.AssertFiltersAreSupported — never silently
+/// dropped, because unfiltered results read as filtered.
 ///
 /// Seeding: 8 single-event streams covering every combination of correlation ∈ {c0,c1} ×
 /// causation ∈ {u0,u1} × user ∈ {b0,b1}, indexed 0..7 by the (corr,caus,user) binary tuple.
@@ -110,12 +113,14 @@ public class event_metadata_filter_tests
     }
 
     [Theory]
-    [InlineData(false, true, true, "correlation")]
-    [InlineData(true, false, true, "causation")]
-    [InlineData(true, true, false, "username")]
-    public async Task filter_is_silently_ignored_when_its_column_is_disabled(
-        bool enableCorr, bool enableCaus, bool enableUser, string which)
+    [InlineData(false, true, true, "correlation", nameof(EventQuery.CorrelationId))]
+    [InlineData(true, false, true, "causation", nameof(EventQuery.CausationId))]
+    [InlineData(true, true, false, "username", nameof(EventQuery.UserName))]
+    public async Task filter_is_refused_when_its_column_is_disabled(
+        bool enableCorr, bool enableCaus, bool enableUser, string which, string expectedFieldName)
     {
+        // jasperfx#737 guard rail: an unsupported-but-supplied filter must throw naming the field,
+        // never be silently dropped (this test used to pin the old drop-it behavior — TotalCount 8).
         await using var store = await CreateStoreAsync($"evt256_off_{which}", enableCorr, enableCaus, enableUser);
         await SeedMatrixAsync(store);
 
@@ -126,24 +131,34 @@ public class event_metadata_filter_tests
             _ => new EventQuery { PageSize = 50, UserName = "b0" }
         };
 
-        var result = await QueryAsync(store, query);
-
-        result.TotalCount.ShouldBe(8); // disabled column → filter dropped → all events
+        var ex = await Should.ThrowAsync<NotSupportedException>(() => QueryAsync(store, query));
+        ex.Message.ShouldContain($"{nameof(EventQuery)}.{expectedFieldName}");
     }
 
     [Fact]
-    public async Task disabled_filter_does_not_suppress_an_enabled_one()
+    public async Task a_disabled_filter_in_a_mixed_query_refuses_the_whole_query()
     {
-        // causation disabled, correlation + user enabled.
+        // causation disabled, correlation + user enabled: the query carries one refusable filter,
+        // so the whole call throws rather than answering with the other two applied — a partially
+        // filtered answer would read as the fully filtered one (jasperfx#737).
         await using var store = await CreateStoreAsync("evt256_mixed", enableCorr: true, enableCaus: false, enableUser: true);
         await SeedMatrixAsync(store);
 
+        var ex = await Should.ThrowAsync<NotSupportedException>(() => QueryAsync(store, new EventQuery
+        {
+            PageSize = 50,
+            CorrelationId = "c0", // capturable
+            CausationId = "u0",   // NOT captured → refusal
+            UserName = "b0"       // capturable
+        }));
+        ex.Message.ShouldContain($"{nameof(EventQuery)}.{nameof(EventQuery.CausationId)}");
+
+        // And the capturable filters still work on their own against the same store.
         var result = await QueryAsync(store, new EventQuery
         {
             PageSize = 50,
-            CorrelationId = "c0", // honored
-            CausationId = "u0",    // ignored (disabled)
-            UserName = "b0"        // honored
+            CorrelationId = "c0",
+            UserName = "b0"
         });
 
         result.TotalCount.ShouldBe(2); // c0 ∩ b0

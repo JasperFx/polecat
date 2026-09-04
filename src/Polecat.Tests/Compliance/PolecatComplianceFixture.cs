@@ -49,6 +49,12 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
             options.Events.EnableCausationId = true;
         }
 
+        // jasperfx#737: opt-in like correlation — the event query suite filters on user_name.
+        if (config.EnableUserNameTracking)
+        {
+            options.Events.EnableUserName = true;
+        }
+
         if (config.EnableHeaders)
         {
             options.Events.EnableHeaders = true;
@@ -113,6 +119,11 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
 
     public override void SetCorrelationId(IDocumentSession session, string? correlationId)
         => session.CorrelationId = correlationId;
+
+    // jasperfx#737: the event query suite filters on the user_name column, which Polecat stamps
+    // from the session's LastModifiedBy (#237/#239) when EnableUserName is on.
+    public override void SetUserName(IDocumentSession session, string? userName)
+        => session.LastModifiedBy = userName;
 
     public override IEventStore EventStore => _store;
 

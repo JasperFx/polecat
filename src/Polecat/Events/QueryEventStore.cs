@@ -1,6 +1,8 @@
 using System.Collections.Concurrent;
+using System.Linq.Expressions;
 using System.Reflection;
 using JasperFx.Events;
+using JasperFx.Events.Tags;
 using JasperFx.Events.Projections;
 using Microsoft.Data.SqlClient;
 using Polecat.Events.Internal;
@@ -49,14 +51,21 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
     }
 
     /// <summary>
-    ///     #256: query events across all streams with exact-match metadata filters and pagination
-    ///     (the JasperFx <see cref="EventQuery" /> surface). The correlation/causation/user-name
-    ///     filters are honored only when the option is set AND the event store actually captures that
-    ///     metadata column (the <c>Enable*</c> flag), since a disabled column isn't populated. v1 is
-    ///     exact-match, AND-combined; headers and timestamp ranges are deferred.
+    ///     #256 / #532 (jasperfx#737): query events across all streams with metadata filters,
+    ///     inclusive timestamp/sequence windows, multi-type union, DCB tag conditions, and
+    ///     pagination — the full JasperFx <see cref="EventQuery" /> surface. All supplied filters
+    ///     AND-combine; results are ordered by the store-global sequence ascending and
+    ///     <see cref="PagedEvents.TotalCount" /> is the match count across every page.
+    ///     The correlation/causation/user-name filters are honored only when the event store
+    ///     actually captures that metadata column (the <c>Enable*</c> flag), since a disabled
+    ///     column isn't populated — a query supplying one of those against a store that does not
+    ///     capture it is REFUSED by <see cref="EventQuery.AssertFiltersAreSupported" /> (never
+    ///     silently ignored; unfiltered results would read as filtered).
     /// </summary>
     public async Task<PagedEvents> QueryEventsAsync(EventQuery query, CancellationToken token = default)
     {
+        query.AssertFiltersAreSupported(SupportedEventQueryFilters());
+
         IQueryable<IEvent> queryable = QueryAllRawEvents();
 
         // #353 / jasperfx#555 — honour the tenant scope the Event Explorer sets. On a conjoined
@@ -69,9 +78,18 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
             queryable = queryable.TenantIsOneOf(query.TenantId);
         }
 
-        if (query.EventTypeName != null)
+        // jasperfx#737: EventTypeName and EventTypeNames union through CombinedEventTypeNames(),
+        // so both spellings share one code path and the single/plural semantics stay upstream.
+        var eventTypeNames = query.CombinedEventTypeNames();
+        if (eventTypeNames.Count == 1)
         {
-            queryable = queryable.Where(e => e.EventTypeName == query.EventTypeName);
+            var single = eventTypeNames[0];
+            queryable = queryable.Where(e => e.EventTypeName == single);
+        }
+        else if (eventTypeNames.Count > 1)
+        {
+            var names = eventTypeNames.ToArray();
+            queryable = queryable.Where(e => e.EventTypeName.IsOneOf(names));
         }
 
         if (query.StreamId != null)
@@ -86,20 +104,54 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
             }
         }
 
-        var options = _events.EventOptions;
-        if (query.CorrelationId != null && options.EnableCorrelationId)
+        // The Enable* capture guards live in SupportedEventQueryFilters(): a supplied metadata
+        // filter against a store that doesn't capture the column was already refused above, so
+        // reaching here means the column exists and the filter is applied unconditionally.
+        if (query.CorrelationId != null)
         {
             queryable = queryable.Where(e => e.CorrelationId == query.CorrelationId);
         }
 
-        if (query.CausationId != null && options.EnableCausationId)
+        if (query.CausationId != null)
         {
             queryable = queryable.Where(e => e.CausationId == query.CausationId);
         }
 
-        if (query.UserName != null && options.EnableUserName)
+        if (query.UserName != null)
         {
             queryable = queryable.Where(e => e.UserName == query.UserName);
+        }
+
+        // jasperfx#737: inclusive at both ends; a half-open window (one bound null) is valid, and
+        // an inverted window is a well-formed range containing nothing — the SQL comparisons
+        // produce exactly that (empty page, TotalCount 0), never an error.
+        if (query.TimestampFrom.HasValue)
+        {
+            var timestampFrom = query.TimestampFrom.Value;
+            queryable = queryable.Where(e => e.Timestamp >= timestampFrom);
+        }
+
+        if (query.TimestampTo.HasValue)
+        {
+            var timestampTo = query.TimestampTo.Value;
+            queryable = queryable.Where(e => e.Timestamp <= timestampTo);
+        }
+
+        if (query.SequenceFloor.HasValue)
+        {
+            var sequenceFloor = query.SequenceFloor.Value;
+            queryable = queryable.Where(e => e.Sequence >= sequenceFloor);
+        }
+
+        if (query.SequenceCeiling.HasValue)
+        {
+            var sequenceCeiling = query.SequenceCeiling.Value;
+            queryable = queryable.Where(e => e.Sequence <= sequenceCeiling);
+        }
+
+        if (query.TagConditions != null)
+        {
+            queryable = ApplyTagConditions(queryable, query.TagConditions);
         }
 
         var pageNumber = query.PageNumber <= 0 ? 1 : query.PageNumber;
@@ -120,6 +172,83 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
             PageNumber = pageNumber,
             PageSize = pageSize
         };
+    }
+
+    /// <summary>
+    ///     The jasperfx#737 declaration: every <see cref="EventQuery" /> filter Polecat honors.
+    ///     Structural filters (types, stream, tenant, both windows, tag conditions) are always
+    ///     supported; the metadata filters are supported exactly when the store captures the
+    ///     column, because a disabled column is never populated and filtering on it would return
+    ///     truthful-looking garbage (everything or nothing depending on NULL semantics).
+    /// </summary>
+    private EventQueryFilters SupportedEventQueryFilters()
+    {
+        var supported = EventQueryFilters.EventTypeName
+                        | EventQueryFilters.EventTypeNames
+                        | EventQueryFilters.StreamId
+                        | EventQueryFilters.TenantId
+                        | EventQueryFilters.TimestampWindow
+                        | EventQueryFilters.SequenceWindow
+                        | EventQueryFilters.TagConditions;
+
+        var options = _events.EventOptions;
+        if (options.EnableCorrelationId) supported |= EventQueryFilters.CorrelationId;
+        if (options.EnableCausationId) supported |= EventQueryFilters.CausationId;
+        if (options.EnableUserName) supported |= EventQueryFilters.UserName;
+
+        return supported;
+    }
+
+    private static readonly MethodInfo _hasTagMethod =
+        typeof(LinqExtensions).GetMethod(nameof(LinqExtensions.HasTag))!;
+
+    /// <summary>
+    ///     jasperfx#737: fold the wire-form <see cref="EventTagQuerySpec" /> into the event LINQ
+    ///     query as an OR of <see cref="LinqExtensions.HasTag{TTag}" /> marker calls — each
+    ///     compiling to the same correlated <c>seq_id IN (SELECT seq_id FROM pc_event_tag_*)</c>
+    ///     subquery Polecat's DCB tag path emits (see <see cref="HasTagParser" />), so an event
+    ///     matching several conditions still reads back once and the whole selection AND-combines
+    ///     with every other filter on the query. A type-scoped condition
+    ///     (<c>EventTagQueryConditionSpec.EventType</c>) ANDs an <c>e.type</c> match into its own
+    ///     OR branch, distinct from the query-level event type filter.
+    /// </summary>
+    private IQueryable<IEvent> ApplyTagConditions(IQueryable<IEvent> queryable, EventTagQuerySpec spec)
+    {
+        // Resolve the wire descriptors back to CLR types against the registered tag/event graph;
+        // an unknown type raises UnknownTagQueryTypeException naming the descriptor.
+        var knownTypes = _events.TagTypes.Select(x => x.TagType)
+            .Concat(_events.AllKnownEventTypes().Select(x => x.EventType));
+        var tagQuery = spec.Resolve(EventTagQuerySpec.ResolverFor(knownTypes));
+
+        if (tagQuery.Conditions.Count == 0)
+        {
+            return queryable;
+        }
+
+        var e = Expression.Parameter(typeof(IEvent), "e");
+
+        Expression? body = null;
+        foreach (var condition in tagQuery.Conditions)
+        {
+            Expression branch = Expression.Call(
+                _hasTagMethod.MakeGenericMethod(condition.TagType),
+                e,
+                Expression.Constant(condition.TagValue, condition.TagType));
+
+            if (condition.EventType != null)
+            {
+                var eventTypeName = _events.EventMappingFor(condition.EventType).EventTypeName;
+                branch = Expression.AndAlso(
+                    branch,
+                    Expression.Equal(
+                        Expression.Property(e, typeof(IEvent).GetProperty(nameof(IEvent.EventTypeName))!),
+                        Expression.Constant(eventTypeName)));
+            }
+
+            body = body == null ? branch : Expression.OrElse(body, branch);
+        }
+
+        return queryable.Where(Expression.Lambda<Func<IEvent, bool>>(body!, e));
     }
 
     public async Task<IReadOnlyList<IEvent>> FetchStreamAsync(Guid streamId, long version = 0,
