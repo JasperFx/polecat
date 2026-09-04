@@ -107,6 +107,17 @@ internal static class StreamCompactingExecution
         {
             session.WorkTracker.Add(new DeleteEventsOperation(session.Options.EventGraph, sequences));
         }
+
+        // 7. jasperfx#740: record the compaction watermark on pc_streams. request.Version was set
+        //    in step 2 to the version of the last event being folded into the snapshot — the
+        //    cutoff for a partial compaction, the stream's version for a full one — which is what
+        //    StreamState.CompactedVersion reads back so (Version - CompactedVersion) measures
+        //    un-compacted growth.
+        session.WorkTracker.Add(new SetCompactedVersionOperation(
+            graph,
+            (object?)request.StreamId ?? request.StreamKey!,
+            request.Version,
+            session.TenantId));
     }
 
     private static IAggregator<T, IQuerySession> FindAggregator<T>(DocumentSessionBase session) where T : class

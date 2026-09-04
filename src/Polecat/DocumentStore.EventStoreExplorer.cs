@@ -143,14 +143,15 @@ public partial class DocumentStore
         // #57: share the pc_streams column projection + row read with the
         // other two stream-reading sites via PcStreamsRowReader. The JOIN'd
         // first_event_at column is appended after the canonical projection
-        // (index 7) and threaded into ReadStreamMetadata explicitly.
+        // (index 8, following jasperfx#740's compacted_version at 7) and
+        // threaded into ReadStreamMetadata explicitly.
         cmd.CommandText = $"""
             SELECT {PcStreamsRowReader.SelectColumnsWithAlias("s")},
                    MIN(e.timestamp) AS first_event_at
             FROM {Events.StreamsTableName} s
             LEFT JOIN {Events.EventsTableName} e ON e.stream_id = s.id AND e.tenant_id = s.tenant_id
             WHERE s.id = @id
-            GROUP BY s.id, s.type, s.version, s.created, s.timestamp, s.tenant_id, s.is_archived;
+            GROUP BY s.id, s.type, s.version, s.created, s.timestamp, s.tenant_id, s.is_archived, s.compacted_version;
             """;
         cmd.Parameters.AddIdParameter("@id", resolvedStreamId);
 
@@ -160,9 +161,9 @@ public partial class DocumentStore
             return null;
         }
 
-        var firstEventAt = reader.IsDBNull(7)
+        var firstEventAt = reader.IsDBNull(8)
             ? (DateTimeOffset?)null
-            : reader.GetFieldValue<DateTimeOffset>(7);
+            : reader.GetFieldValue<DateTimeOffset>(8);
 
         return PcStreamsRowReader.ReadStreamMetadata(reader, JasperFx.StorageConstants.DefaultTenantId, firstEventAt);
     }
