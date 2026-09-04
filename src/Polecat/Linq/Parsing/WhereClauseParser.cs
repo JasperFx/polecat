@@ -95,6 +95,18 @@ internal class WhereClauseParser
             return moduloFragment!;
         }
 
+        // jasperfx#740: member arithmetic compared to a value — x.Version - x.CompactedVersion > N,
+        // the Stream Compaction Policy's growth predicate. Both orientations.
+        if (TryParseMemberArithmetic(binary.Left, binary.Right, op, out var arithmeticFragment))
+        {
+            return arithmeticFragment!;
+        }
+
+        if (TryParseMemberArithmetic(binary.Right, binary.Left, ReverseOperator(op), out arithmeticFragment))
+        {
+            return arithmeticFragment!;
+        }
+
         // Handle string transform methods: x.Name.ToLower() == "value"
         if (TryParseMethodTransform(binary.Left, binary.Right, op, out var transformFragment))
         {
@@ -178,6 +190,41 @@ internal class WhereClauseParser
         var member = _memberFactory.ResolveMember(innerMember);
         var value = ExtractValue(valueSide);
         fragment = new FunctionComparisonFilter("LEN", member.RawLocator, op, value!);
+        return true;
+    }
+
+    /// <summary>
+    ///     jasperfx#740: (member + member) / (member - member) compared against a value —
+    ///     e.g. <c>x.Version - x.CompactedVersion &gt; N</c>, the compaction policy's un-compacted
+    ///     growth predicate. Restricted to two document members so the emitted SQL is pure column
+    ///     arithmetic; the comparison value rides a parameter like any other comparison.
+    /// </summary>
+    private bool TryParseMemberArithmetic(Expression arithmeticSide, Expression valueSide, string op,
+        out ISqlFragment? fragment)
+    {
+        fragment = null;
+
+        if (StripConvert(arithmeticSide) is not BinaryExpression arithmetic) return false;
+
+        var sqlOperator = arithmetic.NodeType switch
+        {
+            ExpressionType.Subtract or ExpressionType.SubtractChecked => "-",
+            ExpressionType.Add or ExpressionType.AddChecked => "+",
+            _ => null
+        };
+        if (sqlOperator == null) return false;
+
+        if (StripConvert(arithmetic.Left) is not MemberExpression leftMember
+            || !IsDocumentMember(leftMember)) return false;
+        if (StripConvert(arithmetic.Right) is not MemberExpression rightMember
+            || !IsDocumentMember(rightMember)) return false;
+
+        var left = _memberFactory.ResolveMember(leftMember);
+        var right = _memberFactory.ResolveMember(rightMember);
+        var value = ExtractValue(valueSide);
+        if (value == null) return false;
+
+        fragment = new ComparisonFilter($"({left.TypedLocator} {sqlOperator} {right.TypedLocator})", op, value);
         return true;
     }
 

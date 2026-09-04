@@ -30,14 +30,15 @@ internal static class PcStreamsRowReader
     ///     reads. When this changes, every call site that composes its SELECT
     ///     from this constant adjusts automatically.
     /// </summary>
-    internal const string SelectColumns = "id, type, version, created, timestamp, tenant_id, is_archived";
+    internal const string SelectColumns =
+        "id, type, version, created, timestamp, tenant_id, is_archived, compacted_version";
 
     /// <summary>
     ///     Same column list with a table alias prefix, for queries that join
     ///     <c>pc_streams</c> against other tables.
     /// </summary>
     internal static string SelectColumnsWithAlias(string alias) =>
-        $"{alias}.id, {alias}.type, {alias}.version, {alias}.created, {alias}.timestamp, {alias}.tenant_id, {alias}.is_archived";
+        $"{alias}.id, {alias}.type, {alias}.version, {alias}.created, {alias}.timestamp, {alias}.tenant_id, {alias}.is_archived, {alias}.compacted_version";
 
     /// <summary>
     ///     Read the row the reader is positioned on into a
@@ -63,7 +64,11 @@ internal static class PcStreamsRowReader
             Version = reader.GetInt64(2),
             Created = reader.GetFieldValue<DateTimeOffset>(3),
             LastTimestamp = reader.GetFieldValue<DateTimeOffset>(4),
-            IsArchived = reader.GetBoolean(6)
+            IsArchived = reader.GetBoolean(6),
+            // jasperfx#740: the compaction watermark, appended LAST in SelectColumns so the
+            // positional reads above (and ReadStreamSummary / ReadStreamMetadata) keep their
+            // ordinals across the schema addition.
+            CompactedVersion = reader.GetInt64(7)
         };
 
         if (!reader.IsDBNull(1))

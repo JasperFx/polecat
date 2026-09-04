@@ -51,6 +51,34 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
     }
 
     /// <summary>
+    ///     jasperfx#740 (#534): the streams table as a real <see cref="IQueryable{T}"/> of
+    ///     <see cref="StreamState"/> — the read surface behind the Stream Compaction Policies
+    ///     (<c>AggregateType == typeof(X) &amp;&amp; Version - CompactedVersion &gt; N &amp;&amp;
+    ///     !IsArchived</c>). Every public get member of <see cref="StreamState"/> translates in
+    ///     <c>Where()</c>/<c>OrderBy()</c>; an untranslatable member throws naming it. Executed
+    ///     through the shared JasperFx.Events.Documents terminators (the provider implements
+    ///     <see cref="JasperFx.Events.Documents.IDocumentQueryExecutor"/>) or Polecat's own.
+    /// </summary>
+    /// <param name="tenantId">
+    ///     Optional tenant scope. Refused with <see cref="NotSupportedException"/> on a store
+    ///     without conjoined tenancy — a tenant filter this store cannot honor must never
+    ///     silently return the unscoped global set (the jasperfx#737 rule).
+    /// </param>
+    public IQueryable<StreamState> QueryStreamStates(string? tenantId = null)
+    {
+        if (tenantId != null && _events.TenancyStyle != TenancyStyle.Conjoined)
+        {
+            throw new NotSupportedException(
+                $"A tenantId was supplied to {nameof(QueryStreamStates)}, but this event store has no tenant " +
+                "dimension (Events.TenancyStyle is not Conjoined). A tenant filter must be honored or refused, " +
+                "never silently ignored — unscoped results would read as tenant-scoped. See jasperfx#740.");
+        }
+
+        var provider = new StreamStateLinqQueryProvider(_session, _events, tenantId);
+        return new PolecatLinqQueryable<StreamState>(provider);
+    }
+
+    /// <summary>
     ///     #256 / #532 (jasperfx#737): query events across all streams with metadata filters,
     ///     inclusive timestamp/sequence windows, multi-type union, DCB tag conditions, and
     ///     pagination — the full JasperFx <see cref="EventQuery" /> surface. All supplied filters

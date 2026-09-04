@@ -55,5 +55,13 @@ internal class StreamsTable : Table
         }
 
         AddColumn("is_archived", "bit").NotNull().DefaultValue(0);
+
+        // jasperfx#740 (#534): the compaction watermark — the stream version through which events
+        // have been folded into a Compacted<T> snapshot. 0 = never compacted. Written by
+        // CompactStreamAsync (SetCompactedVersionOperation), read back onto
+        // StreamState.CompactedVersion by PcStreamsRowReader, and queryable through
+        // QueryStreamStates. NOT NULL DEFAULT 0 so the Weasel delta migration backfills existing
+        // rows as "never compacted" and inserts need not name the column.
+        AddColumn("compacted_version", "bigint").NotNull().DefaultValue(0);
     }
 }
