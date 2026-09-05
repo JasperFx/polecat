@@ -320,6 +320,35 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
             : StringEventStorage.UpdateProgress(shardIdentity, sequence, upsert);
 
     /// <summary>
+    ///     Guard for identity-sensitive entry points that take a Guid stream id (marten#5244's
+    ///     Polecat twin — same messages as Marten's EnsureAsGuidStorage/EnsureAsStringStorage).
+    ///     Downstream code branches on the store's configured <see cref="StreamIdentity" /> rather
+    ///     than on which overload the caller used, so a mismatched overload otherwise either
+    ///     silently matches nothing or fails with an error naming nothing actionable.
+    /// </summary>
+    internal void EnsureAsGuidStorage()
+    {
+        if (StreamIdentity == StreamIdentity.AsString)
+        {
+            throw new InvalidOperationException(
+                "This Polecat event store is configured to identify streams with strings");
+        }
+    }
+
+    /// <summary>
+    ///     Guard for identity-sensitive entry points that take a string stream key. See
+    ///     <see cref="EnsureAsGuidStorage" />.
+    /// </summary>
+    internal void EnsureAsStringStorage()
+    {
+        if (StreamIdentity == StreamIdentity.AsGuid)
+        {
+            throw new InvalidOperationException(
+                "This Polecat event store is configured to identify streams with Guids");
+        }
+    }
+
+    /// <summary>
     ///     Wrap raw event data into an IEvent instance with type metadata.
     /// </summary>
     public override IEvent BuildEvent(object eventData)

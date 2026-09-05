@@ -524,7 +524,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
             ? _sessionBase.Serializer.ToJson(@event.Headers)
             : null;
         _workTracker.Add(new Protected.OverwriteEventOperation(
-            _events, @event, serializedData, serializedBdata, serializedHeaders));
+            _events, @event, serializedData, serializedBdata, serializedHeaders, _tenantId));
     }
 
     public Guid CompletelyReplaceEvent<T>(long sequence, T eventBody) where T : class
@@ -542,7 +542,8 @@ internal class EventOperations : QueryEventStore, IEventOperations
             ? _sessionBase.Serializer.ToJson(eventBody)
             : EventGraph.JsonPlaceholderForBinaryEvent;
         var op = new Protected.ReplaceEventOperation(
-            _events, sequence, serializedData, serializedBdata, mapping.EventTypeName, mapping.DotNetTypeName);
+            _events, sequence, serializedData, serializedBdata, mapping.EventTypeName, mapping.DotNetTypeName,
+            _tenantId);
 
         _workTracker.Add(op);
         return op.Id;
@@ -931,6 +932,14 @@ internal class EventOperations : QueryEventStore, IEventOperations
     public async Task CompactStreamAsync<T>(Guid streamId, Action<StreamCompactingRequest<T>>? configure = null)
         where T : class
     {
+        // marten#5244's Polecat twin: StreamCompactingExecution branches on the store's configured
+        // StreamIdentity, not on which overload was called. Without this guard, the Guid overload
+        // against a string-identified store takes the AsString branch, reads a null StreamKey,
+        // matches no stream, and returns at the empty-events guard — compaction silently did
+        // NOTHING while looking like it succeeded, with no way to tell a no-op from a completed
+        // compaction of a destructive operation.
+        _events.EnsureAsGuidStorage();
+
         var request = new StreamCompactingRequest<T>(streamId);
         configure?.Invoke(request);
         await request.ExecuteAsync(_sessionBase).ConfigureAwait(false);
@@ -939,6 +948,11 @@ internal class EventOperations : QueryEventStore, IEventOperations
     public async Task CompactStreamAsync<T>(string streamKey, Action<StreamCompactingRequest<T>>? configure = null)
         where T : class
     {
+        // The mirror case of the Guid overload above: on a Guid-identified store the request
+        // carries a null StreamId into ExecuteAsync, and the caller got "Nullable object must have
+        // a value" — an error that names nothing the caller can act on.
+        _events.EnsureAsStringStorage();
+
         var request = new StreamCompactingRequest<T>(streamKey);
         configure?.Invoke(request);
         await request.ExecuteAsync(_sessionBase).ConfigureAwait(false);

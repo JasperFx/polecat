@@ -13,15 +13,17 @@ internal class OverwriteEventOperation : Polecat.Internal.IStorageOperation
     private readonly string _serializedData;
     private readonly byte[]? _serializedBdata;
     private readonly string? _serializedHeaders;
+    private readonly string _tenantId;
 
     public OverwriteEventOperation(EventGraph events, IEvent @event, string serializedData,
-        byte[]? serializedBdata, string? serializedHeaders)
+        byte[]? serializedBdata, string? serializedHeaders, string tenantId)
     {
         _events = events;
         _event = @event;
         _serializedData = serializedData;
         _serializedBdata = serializedBdata;
         _serializedHeaders = serializedHeaders;
+        _tenantId = tenantId;
     }
 
     public Type DocumentType => typeof(IEvent);
@@ -54,6 +56,11 @@ internal class OverwriteEventOperation : Polecat.Internal.IStorageOperation
 
         builder.Append(" WHERE seq_id = ");
         builder.AppendParameter(_event.Sequence);
+
+        // marten#5234's Polecat twin: under UseTenantPartitionedEvents seq_id is per-tenant, so
+        // without this predicate masking tenant A's stream rewrites (and discloses A's masked JSON
+        // into) tenant B's same-numbered event.
+        builder.AppendConjoinedTenantFilter(_events, _tenantId);
         builder.Append(";");
     }
 

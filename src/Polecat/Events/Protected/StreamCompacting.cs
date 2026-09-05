@@ -98,14 +98,15 @@ internal static class StreamCompactingExecution
 
         var replaceOp = new ReplaceEventOperation(
             graph, request.Sequence, serializedData, serializedBdata,
-            mapping.EventTypeName, mapping.DotNetTypeName);
+            mapping.EventTypeName, mapping.DotNetTypeName, session.TenantId);
 
         session.WorkTracker.Add(replaceOp);
 
         // 6. Delete the old events
         if (sequences.Length > 0)
         {
-            session.WorkTracker.Add(new DeleteEventsOperation(session.Options.EventGraph, sequences));
+            session.WorkTracker.Add(new DeleteEventsOperation(session.Options.EventGraph, sequences,
+                session.TenantId));
         }
 
         // 7. jasperfx#740: record the compaction watermark on pc_streams. request.Version was set

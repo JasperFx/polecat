@@ -15,9 +15,10 @@ internal class ReplaceEventOperation : Polecat.Internal.IStorageOperation
     private readonly string _eventTypeName;
     private readonly string _dotNetTypeName;
     private readonly Guid _newId;
+    private readonly string _tenantId;
 
     public ReplaceEventOperation(EventGraph events, long sequence, string serializedData,
-        byte[]? serializedBdata, string eventTypeName, string dotNetTypeName)
+        byte[]? serializedBdata, string eventTypeName, string dotNetTypeName, string tenantId)
     {
         _events = events;
         _sequence = sequence;
@@ -26,6 +27,7 @@ internal class ReplaceEventOperation : Polecat.Internal.IStorageOperation
         _eventTypeName = eventTypeName;
         _dotNetTypeName = dotNetTypeName;
         _newId = Guid.NewGuid();
+        _tenantId = tenantId;
     }
 
     public Guid Id => _newId;
@@ -66,6 +68,11 @@ internal class ReplaceEventOperation : Polecat.Internal.IStorageOperation
 
         builder.Append(" WHERE seq_id = ");
         builder.AppendParameter(_sequence);
+
+        // marten#5234's Polecat twin: without this the Compacted<T> snapshot — the calling
+        // tenant's whole aggregate state — is written into another tenant's same-numbered event
+        // under UseTenantPartitionedEvents.
+        builder.AppendConjoinedTenantFilter(_events, _tenantId);
         builder.Append(";");
     }
 
