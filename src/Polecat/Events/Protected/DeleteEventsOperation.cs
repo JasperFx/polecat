@@ -10,11 +10,13 @@ internal class DeleteEventsOperation : Polecat.Internal.IStorageOperation
 {
     private readonly EventGraph _events;
     private readonly long[] _sequences;
+    private readonly string _tenantId;
 
-    public DeleteEventsOperation(EventGraph events, long[] sequences)
+    public DeleteEventsOperation(EventGraph events, long[] sequences, string tenantId)
     {
         _events = events;
         _sequences = sequences;
+        _tenantId = tenantId;
     }
 
     public Type DocumentType => typeof(IEvent);
@@ -28,7 +30,13 @@ internal class DeleteEventsOperation : Polecat.Internal.IStorageOperation
             if (i > 0) builder.Append(", ");
             builder.AppendParameter(_sequences[i]);
         }
-        builder.Append(");");
+        builder.Append(")");
+
+        // marten#5234's Polecat twin: under UseTenantPartitionedEvents seq_id is per-tenant, so
+        // without this predicate compacting one tenant's stream permanently deletes the
+        // same-numbered events out of every other tenant's partition.
+        builder.AppendConjoinedTenantFilter(_events, _tenantId);
+        builder.Append(";");
     }
 
     public Task PostprocessAsync(DbDataReader reader, IList<Exception> exceptions, CancellationToken token)
