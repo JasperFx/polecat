@@ -284,6 +284,28 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
         // or full type name and daemon progression is keyed on it.
         public void Subscribe(ComplianceSubscription subscription)
             => _options.Projections.Subscribe(subscription, x => x.Name = ComplianceSubscription.SubscriptionName);
+
+        // Wave 13 / jasperfx#725: composites. The seam member carries a throwing default because a
+        // composite cannot be constructed by a suite -- PolecatCompositeProjection's constructor is
+        // internal and needs StoreOptions -- so the forward goes through Polecat's own
+        // Projections.CompositeProjectionFor and the builder adapts the one call the suite makes,
+        // Snapshot<T>(stageNumber), which Polecat spells identically (void-returning).
+        public void AddCompositeProjection(string name, Action<IComplianceCompositeBuilder> configure)
+            => _options.Projections.CompositeProjectionFor(name,
+                composite => configure(new ComplianceCompositeBuilder(composite)));
+    }
+
+    internal class ComplianceCompositeBuilder : IComplianceCompositeBuilder
+    {
+        private readonly Polecat.Projections.PolecatCompositeProjection _composite;
+
+        public ComplianceCompositeBuilder(Polecat.Projections.PolecatCompositeProjection composite)
+        {
+            _composite = composite;
+        }
+
+        public void Snapshot<TDoc>(int stageNumber) where TDoc : notnull
+            => _composite.Snapshot<TDoc>(stageNumber);
     }
 
     internal class PolecatComplianceBatch : IComplianceBatch
