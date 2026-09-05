@@ -908,6 +908,10 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
 
         var ops = new List<Weasel.Storage.IStorageOperation>();
 
+        // First pass: run the no-event consistency asserts and collect the appending streams that
+        // need a stream-state read, so the N per-stream locking round trips collapse into ONE
+        // batched read per save below.
+        var appendingStreams = new List<StreamAction>();
         foreach (var stream in _workTracker.Streams)
         {
             if (!stream.Events.Any())
@@ -920,6 +924,21 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
                     await AssertStreamVersionAsync(stream, token);
                 }
 
+                continue;
+            }
+
+            if (stream.ActionType != StreamActionType.Start)
+            {
+                appendingStreams.Add(stream);
+            }
+        }
+
+        var states = await ReadStreamStatesForClosedShapeAsync(appendingStreams, token);
+
+        foreach (var stream in _workTracker.Streams)
+        {
+            if (!stream.Events.Any())
+            {
                 continue;
             }
 
@@ -936,9 +955,11 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             }
             else
             {
-                var (currentVersion, exists, archived) = await ReadStreamStateForClosedShapeAsync(stream, token);
-
                 var streamId = isGuid ? (object)stream.Id : stream.Key!;
+                var (currentVersion, exists, archived) = states.TryGetValue(streamId, out var state)
+                    ? state
+                    : (0L, false, false);
+
                 if (archived)
                 {
                     throw new Exceptions.InvalidStreamException(streamId, "Cannot append to an archived stream.");
@@ -968,11 +989,12 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     }
 
     /// <summary>
-    ///     #420: build the append operation for a <see cref="StreamAction" /> a projection raised,
-    ///     so the async daemon batch can write it inside its own transaction rather than dropping
-    ///     it. Same path as the inline append — resolve the tenant partition, read the stream row
-    ///     under <c>UPDLOCK, HOLDLOCK</c>, assign versions client-side from what that read
-    ///     returned, then build the closed-shape quick-append op.
+    ///     #420: build the append operations for the <see cref="StreamAction" />s a projection
+    ///     raised, so the async daemon batch can write them inside its own transaction rather than
+    ///     dropping them. Same path as the inline append — resolve the tenant partition, read the
+    ///     stream rows under <c>UPDLOCK, HOLDLOCK</c> (one batched read for the whole group),
+    ///     assign versions client-side from what that read returned, then build the closed-shape
+    ///     quick-append ops.
     ///     <para>
     ///     The one deliberate difference is the concurrency expectation. JasperFx's
     ///     <c>EventSlice.BuildOperations</c> pre-assigns versions on the single-stream-start path
@@ -982,35 +1004,49 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     ///     and as the guard on the stream-row update.
     ///     </para>
     /// </summary>
-    internal async Task<Weasel.Storage.IStorageOperation> BuildRaisedEventAppendAsync(
-        StreamAction stream, CancellationToken token)
+    internal async Task<List<Weasel.Storage.IStorageOperation>> BuildRaisedEventAppendsAsync(
+        IReadOnlyList<StreamAction> streams, CancellationToken token)
     {
+        var ops = new List<Weasel.Storage.IStorageOperation>();
+        if (streams.Count == 0) return ops;
+
         var storage = _eventGraph.ClosedShapeEventStorage;
         var isGuid = _eventGraph.StreamIdentity == JasperFx.Events.StreamIdentity.AsGuid;
 
-        var (partitionOrdinal, partitionSequenceName) = await ResolvePartitionForClosedShapeAsync(stream, token);
-        var (currentVersion, exists, archived) = await ReadStreamStateForClosedShapeAsync(stream, token);
+        // One batched locking read for the whole group instead of one round trip per action.
+        var states = await ReadStreamStatesForClosedShapeAsync(streams, token);
 
-        var streamId = isGuid ? (object)stream.Id : stream.Key!;
-        if (archived)
+        foreach (var stream in streams)
         {
-            throw new Exceptions.InvalidStreamException(streamId, "Cannot append to an archived stream.");
+            var (partitionOrdinal, partitionSequenceName) = await ResolvePartitionForClosedShapeAsync(stream, token);
+
+            var streamId = isGuid ? (object)stream.Id : stream.Key!;
+            var (currentVersion, exists, archived) = states.TryGetValue(streamId, out var state)
+                ? state
+                : (0L, false, false);
+
+            if (archived)
+            {
+                throw new Exceptions.InvalidStreamException(streamId, "Cannot append to an archived stream.");
+            }
+
+            AssignEventMetadataForClosedShape(stream, currentVersion);
+            stream.Version = currentVersion + stream.Events.Count;
+
+            // Replace (not ??=) JasperFx's client-side guess with the locked read, so the guarded
+            // stream-row update asserts something true rather than failing the shard on a stream the
+            // projection has only partially seen. A stream row that does not exist yet is inserted.
+            stream.ExpectedVersionOnServer = exists ? currentVersion : null;
+
+            var mode = exists
+                ? Polecat.Events.Storage.StreamWriteMode.Update
+                : Polecat.Events.Storage.StreamWriteMode.Insert;
+
+            ops.Add(QuickAppendEventsClosedShape(storage, isGuid, stream, mode,
+                partitionOrdinal, partitionSequenceName));
         }
 
-        AssignEventMetadataForClosedShape(stream, currentVersion);
-        stream.Version = currentVersion + stream.Events.Count;
-
-        // Replace (not ??=) JasperFx's client-side guess with the locked read, so the guarded
-        // stream-row update asserts something true rather than failing the shard on a stream the
-        // projection has only partially seen. A stream row that does not exist yet is inserted.
-        stream.ExpectedVersionOnServer = exists ? currentVersion : null;
-
-        var mode = exists
-            ? Polecat.Events.Storage.StreamWriteMode.Update
-            : Polecat.Events.Storage.StreamWriteMode.Insert;
-
-        return QuickAppendEventsClosedShape(storage, isGuid, stream, mode,
-            partitionOrdinal, partitionSequenceName);
+        return ops;
     }
 
     private async Task<(int? ordinal, string? sequenceName)> ResolvePartitionForClosedShapeAsync(
@@ -1062,26 +1098,120 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         }
     }
 
-    private async Task<(long currentVersion, bool exists, bool archived)> ReadStreamStateForClosedShapeAsync(
-        StreamAction stream, CancellationToken token)
+    /// <summary>
+    ///     Read the (version, exists, archived) state of every stream in <paramref name="streams" />
+    ///     under <c>UPDLOCK, HOLDLOCK</c> in ONE round trip, instead of one locking read per stream.
+    ///     A stream absent from the result simply has no entry in the returned dictionary — callers
+    ///     treat that as (0, not-exists, not-archived), exactly as the old per-stream read did.
+    ///     <para>
+    ///     Lock ordering: the ids travel to <c>OPENJSON</c> pre-sorted — <see cref="SqlGuid" />
+    ///     ordering for Guid identity (matching SQL Server's uniqueidentifier index order) and
+    ///     ordinal ordering for string identity — so two sessions appending to overlapping stream
+    ///     sets tend to acquire their row locks in a consistent order. A single statement per save
+    ///     also removes the interleaving window the old N sequential statements offered.
+    ///     </para>
+    ///     <para>
+    ///     Tenancy: like the per-stream read this replaces, the lookup is scoped to the session's
+    ///     own <see cref="QuerySession.TenantId" /> (the daemon path builds one session per tenant
+    ///     group before calling in).
+    ///     </para>
+    /// </summary>
+    private async Task<Dictionary<object, (long currentVersion, bool exists, bool archived)>>
+        ReadStreamStatesForClosedShapeAsync(IReadOnlyList<StreamAction> streams, CancellationToken token)
     {
-        var streamId = _eventGraph.StreamIdentity == JasperFx.Events.StreamIdentity.AsGuid
-            ? (object)stream.Id
-            : stream.Key!;
+        var states = new Dictionary<object, (long currentVersion, bool exists, bool archived)>();
+        if (streams.Count == 0) return states;
 
-        await using var cmd = new SqlCommand();
-        cmd.CommandText =
-            $"SELECT version, is_archived FROM {_eventGraph.StreamsTableName} WITH (UPDLOCK, HOLDLOCK) WHERE id = @id AND tenant_id = @tenant_id;";
-        cmd.Parameters.AddIdParameter("@id", streamId);
-        cmd.Parameters.AddVarChar("@tenant_id", TenantId);
+        var isGuid = _eventGraph.StreamIdentity == JasperFx.Events.StreamIdentity.AsGuid;
 
-        await using var reader = await ExecuteReaderAsync(cmd, token);
-        if (await reader.ReadAsync(token))
+        if (streams.Count == 1)
         {
-            return (reader.GetInt64(0), true, reader.GetBoolean(1));
+            // Single-aggregate saves are the hot path; keep the simple point-lookup SQL (and its plan).
+            var streamId = isGuid ? (object)streams[0].Id : streams[0].Key!;
+
+            await using var cmd = new SqlCommand();
+            cmd.CommandText =
+                $"SELECT version, is_archived FROM {_eventGraph.StreamsTableName} WITH (UPDLOCK, HOLDLOCK) WHERE id = @id AND tenant_id = @tenant_id;";
+            cmd.Parameters.AddIdParameter("@id", streamId);
+            cmd.Parameters.AddVarChar("@tenant_id", TenantId);
+
+            // Through the db-neutral seam so the session logger sees the stream-state read
+            await using var reader = await ExecuteReaderAsync((System.Data.Common.DbCommand)cmd, token);
+            if (await reader.ReadAsync(token))
+            {
+                states[streamId] = (reader.GetInt64(0), true, reader.GetBoolean(1));
+            }
+
+            return states;
         }
 
-        return (0, false, false);
+        // #363 OPENJSON id-list pattern (see PolecatDocumentStorage): SQL Server has no array
+        // parameters, so the ids travel as one JSON array. OPENJSON's value column is nvarchar(4000),
+        // so cast back to the id column's own type to keep the index seek.
+        object[] ids = isGuid
+            ? streams.Select(x => x.Id).Distinct()
+                .OrderBy(x => new System.Data.SqlTypes.SqlGuid(x))
+                .Cast<object>().ToArray()
+            : streams.Select(x => x.Key!).Distinct()
+                .OrderBy(x => x, StringComparer.Ordinal)
+                .Cast<object>().ToArray();
+
+        var idsSelect = isGuid
+            ? "SELECT CAST(value AS uniqueidentifier) FROM OPENJSON(@ids)"
+            : "SELECT CAST(value AS varchar(250)) FROM OPENJSON(@ids)";
+
+        await using var batchCmd = new SqlCommand();
+        batchCmd.CommandText =
+            $"SELECT id, version, is_archived FROM {_eventGraph.StreamsTableName} WITH (UPDLOCK, HOLDLOCK) WHERE tenant_id = @tenant_id AND id IN ({idsSelect});";
+        batchCmd.Parameters.Add(
+            new SqlParameter("@ids", WriteStreamIdsAsJsonArray(ids))
+            {
+                SqlDbType = System.Data.SqlDbType.NVarChar
+            });
+        batchCmd.Parameters.AddVarChar("@tenant_id", TenantId);
+
+        // Through the db-neutral seam so the session logger sees the stream-state read
+        await using var batchReader = await ExecuteReaderAsync((System.Data.Common.DbCommand)batchCmd, token);
+        while (await batchReader.ReadAsync(token))
+        {
+            var id = isGuid ? (object)batchReader.GetGuid(0) : batchReader.GetString(0);
+            states[id] = (batchReader.GetInt64(1), true, batchReader.GetBoolean(2));
+        }
+
+        return states;
+    }
+
+    /// <summary>
+    ///     Stream ids as one JSON array string for OPENJSON — the same manual, reflection-free
+    ///     writing as <c>SqlServerStorageDialect.WriteIdsAsJsonArray</c> (that one is private on a
+    ///     generic type). Only Guid and string, the two stream identity modes.
+    /// </summary>
+    private static string WriteStreamIdsAsJsonArray(object[] ids)
+    {
+        var buffer = new System.Buffers.ArrayBufferWriter<byte>();
+        using (var writer = new System.Text.Json.Utf8JsonWriter(buffer))
+        {
+            writer.WriteStartArray();
+            foreach (var id in ids)
+            {
+                switch (id)
+                {
+                    case Guid guid:
+                        writer.WriteStringValue(guid);
+                        break;
+                    case string text:
+                        writer.WriteStringValue(text);
+                        break;
+                    default:
+                        throw new ArgumentOutOfRangeException(nameof(ids),
+                            $"Unsupported stream id type {id?.GetType().FullName ?? "null"}; expected Guid or string.");
+                }
+            }
+
+            writer.WriteEndArray();
+        }
+
+        return System.Text.Encoding.UTF8.GetString(buffer.WrittenSpan);
     }
 
     private async Task ExecuteClosedShapeEventOperationsAsync(

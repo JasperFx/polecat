@@ -361,9 +361,10 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
                      .GroupBy(a => a.TenantId ?? JasperFx.StorageConstants.DefaultTenantId))
         {
             var session = (DocumentSessionBase)SessionForTenant(group.Key);
-            foreach (var action in group)
+            // One batched stream-state read per tenant group instead of one per action.
+            var built = await session.BuildRaisedEventAppendsAsync(group.ToList(), token).ConfigureAwait(false);
+            foreach (var op in built)
             {
-                var op = await session.BuildRaisedEventAppendAsync(action, token).ConfigureAwait(false);
                 // The batch configures commands with a null session, so the append has to arrive
                 // already bound to the one that will write it.
                 ops.Add(new SessionBoundOperationAdapter(op, (Weasel.Storage.IStorageSession)session));
