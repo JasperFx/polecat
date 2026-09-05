@@ -99,8 +99,14 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
     {
         // Collect all operations outside the lambda to keep state simple
         var allOps = new List<Weasel.Storage.IStorageOperation>();
-        var tableEnsurer = new DocumentTableEnsurer(
-            new ConnectionFactory(_connectionString), _store.Options);
+
+        // #538: resolve the store's long-lived, per-database ensurer instead of constructing one
+        // per batch. DocumentTableEnsurer memoizes on instance state, so a per-batch instance
+        // re-ran the full schema check (SchemaMigration.DetermineAsync + version-column widening +
+        // index DDL) for every projected document type on every single daemon batch — the same bug
+        // class as marten#4946. The store cache is keyed per connection string, so scoping stays
+        // correct under database-per-tenant tenancy.
+        var tableEnsurer = _store.EnsurerFor(_connectionString);
 
         // #420: built before the session sweep below so any tenant session this creates is picked
         // up by it (and disposed with the rest). The appends themselves are added after the

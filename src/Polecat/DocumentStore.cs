@@ -170,15 +170,26 @@ public partial class DocumentStore : IDocumentStore
     ///     One <see cref="DocumentTableEnsurer" /> per database, cached for the life of the store.
     ///     The ensurer memoizes which tables it has already checked, so handing out a fresh one per
     ///     session would re-run the existence checks on every call — cheap once, but the async
-    ///     daemon opens a session per batch per tenant database. #514.
+    ///     daemon opens a session per batch per tenant database. #514. The default database maps to
+    ///     the store's shared ensurer so daemon batches (#538) and regular sessions warm the same
+    ///     memoization. Internal so <see cref="Events.Daemon.PolecatProjectionBatch" /> can resolve
+    ///     the ensurer for the database it is bound to instead of constructing one per batch.
     /// </summary>
-    private DocumentTableEnsurer EnsurerFor(string connectionString) =>
-        _tableEnsurers.GetOrAdd(connectionString, cs =>
+    internal DocumentTableEnsurer EnsurerFor(string connectionString)
+    {
+        if (string.Equals(connectionString, _connectionFactory.ConnectionString,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return _tableEnsurer;
+        }
+
+        return _tableEnsurers.GetOrAdd(connectionString, cs =>
         {
             var ensurer = new DocumentTableEnsurer(new ConnectionFactory(cs), Options);
             ensurer.SetProviderRegistry(_providers);
             return ensurer;
         });
+    }
 
     public IDocumentSession LightweightSession()
     {

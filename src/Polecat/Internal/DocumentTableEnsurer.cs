@@ -34,6 +34,16 @@ internal class DocumentTableEnsurer
 
     private bool _hiloTableEnsured;
 
+    private int _schemaEnsureExecutions;
+
+    /// <summary>
+    ///     #538: how many times the actual schema-ensure work (migration diff + DDL) has run on this
+    ///     instance — i.e. slow-path executions past the per-type memo, not calls. Test seam for the
+    ///     regression where the daemon constructed a fresh (empty-memo) ensurer per projection batch
+    ///     and re-ran the full schema check per document type on every batch.
+    /// </summary>
+    internal int SchemaEnsureExecutions => Volatile.Read(ref _schemaEnsureExecutions);
+
     public async Task EnsureTableAsync(DocumentProvider provider, CancellationToken token)
     {
         var docType = provider.Mapping.DocumentType;
@@ -59,6 +69,8 @@ internal class DocumentTableEnsurer
             {
                 return;
             }
+
+            Interlocked.Increment(ref _schemaEnsureExecutions);
 
             await using var conn = _connectionFactory.Create();
             await conn.OpenAsync(token);
