@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using System.Text;
+using JasperFx.Core.Reflection;
 using JasperFx.Events;
 using JasperFx.Events.Aggregation;
 using JasperFx.Events.Projections;
@@ -32,6 +33,9 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
     private readonly StoreOptions _options;
     private readonly ConcurrentDictionary<Type, PolecatEventType> _eventTypes = new();
     private readonly ConcurrentDictionary<string, Type> _aggregateTypes = new();
+
+    // Memoizes ResolveEventType, including misses (null values) — see the remarks on that method.
+    private readonly ConcurrentDictionary<string, Type?> _eventTypeByDotNetName = new();
     private readonly List<ITagTypeRegistration> _tagTypes = new();
     private readonly List<IMasker> _maskers = new();
 
@@ -341,9 +345,17 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
     /// <summary>
     ///     Get or create event type metadata for the given .NET type.
     /// </summary>
+    // Roots PolecatEventType<>'s constructor for trimming / Native AOT — without this root the
+    // constructor metadata is trimmed and CloseAndBuildAs throws MissingMethodException at runtime.
+    // Same pattern as Marten's EventGraph rooting EventMapping<>.
+    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicConstructors, typeof(PolecatEventType<>))]
     public override PolecatEventType EventMappingFor(Type eventType)
     {
-        return _eventTypes.GetOrAdd(eventType, static type => new PolecatEventType(type));
+        // The generic PolecatEventType<T> is closed ONCE per event type here at registration,
+        // so the per-event Wrap call is a plain `new Event<T>((T)data)` with no reflection
+        // (mirrors JasperFx.Events.EventTypeData<T>.Wrap). See gh-537.
+        return _eventTypes.GetOrAdd(eventType,
+            static type => typeof(PolecatEventType<>).CloseAndBuildAs<PolecatEventType>(type));
     }
 
     public override void AddEventType(Type eventType)
@@ -492,10 +504,18 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
     /// <summary>
     ///     Try to resolve a .NET type from the dotnet_type name stored in the database.
     /// </summary>
+    /// <remarks>
+    ///     Memoized — <see cref="Type.GetType(string)" /> parses the assembly-qualified name and
+    ///     probes assemblies on every call, and this runs once per event row hydrated. Mirrors
+    ///     Marten's <c>EventGraph.TypeForDotNetName</c> cache, except Polecat tolerates
+    ///     unknown/foreign event types by returning null — so misses are cached too (the null
+    ///     value in the dictionary is the sentinel) and an unrecognized type name stored by some
+    ///     other application does not re-probe assemblies for every row it appears on. See gh-537.
+    /// </remarks>
     internal Type? ResolveEventType(string? dotNetTypeName)
     {
         if (string.IsNullOrEmpty(dotNetTypeName)) return null;
-        return Type.GetType(dotNetTypeName);
+        return _eventTypeByDotNetName.GetOrAdd(dotNetTypeName, static name => Type.GetType(name));
     }
 
     internal StreamsTable BuildStreamsTable()
@@ -807,12 +827,36 @@ public class PolecatEventType : IEventType
     /// <summary>
     ///     Wrap raw event data into an Event&lt;T&gt; with type metadata.
     /// </summary>
-    public IEvent Wrap(object eventData)
+    /// <remarks>
+    ///     This base implementation is a reflection fallback for directly constructed instances.
+    ///     Everything registered through <see cref="EventGraph.EventMappingFor" /> gets the generic
+    ///     <see cref="PolecatEventType{T}" /> subclass, whose override constructs the
+    ///     <see cref="Event{T}" /> envelope with no per-event reflection (gh-537).
+    /// </remarks>
+    public virtual IEvent Wrap(object eventData)
     {
         var genericType = typeof(Event<>).MakeGenericType(_eventType);
         var @event = (IEvent)Activator.CreateInstance(genericType, eventData)!;
         @event.EventTypeName = EventTypeName;
         @event.DotNetTypeName = DotNetTypeName;
         return @event;
+    }
+}
+
+/// <summary>
+///     Reflection-free <see cref="PolecatEventType.Wrap" /> for a known event type. Closed once
+///     per event type at registration in <see cref="EventGraph.EventMappingFor" />, so the
+///     per-event cost is a constructor call and a cast — the same shape as
+///     JasperFx.Events' <c>EventTypeData&lt;T&gt;.Wrap</c> (gh-537).
+/// </summary>
+public class PolecatEventType<T> : PolecatEventType where T : notnull
+{
+    public PolecatEventType() : base(typeof(T))
+    {
+    }
+
+    public override IEvent Wrap(object eventData)
+    {
+        return new Event<T>((T)eventData) { EventTypeName = EventTypeName, DotNetTypeName = DotNetTypeName };
     }
 }
