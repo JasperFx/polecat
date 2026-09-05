@@ -49,8 +49,22 @@ internal class PatchOperation : Polecat.Internal.IStorageOperation
 
     // --- Static helpers for building JSON_MODIFY expressions ---
 
+    /// <summary>
+    ///     Escapes a JSON path (or a single path segment) that is inlined into a single-quoted
+    ///     <c>'$.{path}'</c> literal inside a JSON_MODIFY / JSON_VALUE / JSON_QUERY call. The path is
+    ///     assembled from runtime-supplied strings — a dictionary indexer key (see
+    ///     <see cref="JsonPathHelper"/>), or a property/key name passed straight to the patch API
+    ///     (e.g. <c>Patch.Set("name", ...)</c>, <c>Append(expr, key, ...)</c>) — so a value containing
+    ///     a single quote would otherwise terminate the literal and inject arbitrary SQL into the
+    ///     generated UPDATE (SQL injection, CWE-89; the same class of hole as JasperFx/marten#4911).
+    ///     Doubling embedded single quotes keeps the value as data. The '.' path separators are not
+    ///     quote characters, so escaping only single quotes leaves legitimate nested paths intact.
+    /// </summary>
+    internal static string EscapePath(string path) => path.Replace("'", "''");
+
     internal static Action<ICommandBuilder> SetScalar(string jsonPath, object? value)
     {
+        jsonPath = EscapePath(jsonPath);
         return builder =>
         {
             builder.Append($"JSON_MODIFY(data, '$.{jsonPath}', ");
@@ -61,6 +75,7 @@ internal class PatchOperation : Polecat.Internal.IStorageOperation
 
     internal static Action<ICommandBuilder> SetComplex(string jsonPath, string jsonValue)
     {
+        jsonPath = EscapePath(jsonPath);
         return builder =>
         {
             builder.Append($"JSON_MODIFY(data, '$.{jsonPath}', JSON_QUERY(");
@@ -71,6 +86,7 @@ internal class PatchOperation : Polecat.Internal.IStorageOperation
 
     internal static Action<ICommandBuilder> IncrementInt(string jsonPath, object increment, string sqlType)
     {
+        jsonPath = EscapePath(jsonPath);
         return builder =>
         {
             builder.Append(
@@ -82,6 +98,7 @@ internal class PatchOperation : Polecat.Internal.IStorageOperation
 
     internal static Action<ICommandBuilder> IncrementFloat(string jsonPath, object increment, string sqlType)
     {
+        jsonPath = EscapePath(jsonPath);
         return builder =>
         {
             builder.Append(
@@ -93,6 +110,7 @@ internal class PatchOperation : Polecat.Internal.IStorageOperation
 
     internal static Action<ICommandBuilder> AppendScalar(string jsonPath, object element)
     {
+        jsonPath = EscapePath(jsonPath);
         return builder =>
         {
             builder.Append($"JSON_MODIFY(data, 'append $.{jsonPath}', ");
@@ -103,6 +121,7 @@ internal class PatchOperation : Polecat.Internal.IStorageOperation
 
     internal static Action<ICommandBuilder> AppendComplex(string jsonPath, string jsonElement)
     {
+        jsonPath = EscapePath(jsonPath);
         return builder =>
         {
             builder.Append($"JSON_MODIFY(data, 'append $.{jsonPath}', JSON_QUERY(");
@@ -113,6 +132,7 @@ internal class PatchOperation : Polecat.Internal.IStorageOperation
 
     internal static Action<ICommandBuilder> AppendIfNotExistsScalar(string jsonPath, object element)
     {
+        jsonPath = EscapePath(jsonPath);
         return builder =>
         {
             builder.Append($"CASE WHEN NOT EXISTS (SELECT 1 FROM OPENJSON(JSON_QUERY(data, '$.{jsonPath}')) ");
@@ -126,6 +146,7 @@ internal class PatchOperation : Polecat.Internal.IStorageOperation
 
     internal static Action<ICommandBuilder> AppendIfNotExistsComplex(string jsonPath, string jsonElement)
     {
+        jsonPath = EscapePath(jsonPath);
         return builder =>
         {
             builder.Append($"CASE WHEN NOT EXISTS (SELECT 1 FROM OPENJSON(JSON_QUERY(data, '$.{jsonPath}')) ");
@@ -139,6 +160,8 @@ internal class PatchOperation : Polecat.Internal.IStorageOperation
 
     internal static Action<ICommandBuilder> SetDictKey(string dictPath, string key, string jsonValue)
     {
+        dictPath = EscapePath(dictPath);
+        key = EscapePath(key);
         return builder =>
         {
             builder.Append($"JSON_MODIFY(data, '$.{dictPath}.{key}', JSON_QUERY(");
@@ -149,6 +172,8 @@ internal class PatchOperation : Polecat.Internal.IStorageOperation
 
     internal static Action<ICommandBuilder> SetDictKeyIfNotExists(string dictPath, string key, string jsonValue)
     {
+        dictPath = EscapePath(dictPath);
+        key = EscapePath(key);
         return builder =>
         {
             builder.Append($"CASE WHEN JSON_VALUE(data, '$.{dictPath}.{key}') IS NULL AND ");
@@ -168,6 +193,7 @@ internal class PatchOperation : Polecat.Internal.IStorageOperation
     internal static Action<ICommandBuilder> InsertAtIndex(string jsonPath, int index, object element, bool isComplex,
         string? jsonElement, ISerializer serializer)
     {
+        jsonPath = EscapePath(jsonPath);
         return builder =>
         {
             builder.Append($"JSON_MODIFY(data, '$.{jsonPath}', JSON_QUERY(");
@@ -191,6 +217,7 @@ internal class PatchOperation : Polecat.Internal.IStorageOperation
     internal static Action<ICommandBuilder> InsertIfNotExistsScalar(string jsonPath, object element, int? index,
         ISerializer serializer)
     {
+        jsonPath = EscapePath(jsonPath);
         return builder =>
         {
             builder.Append($"CASE WHEN NOT EXISTS (SELECT 1 FROM OPENJSON(JSON_QUERY(data, '$.{jsonPath}')) ");
@@ -229,6 +256,7 @@ internal class PatchOperation : Polecat.Internal.IStorageOperation
     internal static Action<ICommandBuilder> InsertIfNotExistsComplex(string jsonPath, string jsonElement, int? index,
         ISerializer serializer)
     {
+        jsonPath = EscapePath(jsonPath);
         return builder =>
         {
             builder.Append($"CASE WHEN NOT EXISTS (SELECT 1 FROM OPENJSON(JSON_QUERY(data, '$.{jsonPath}')) ");
@@ -264,6 +292,7 @@ internal class PatchOperation : Polecat.Internal.IStorageOperation
 
     internal static Action<ICommandBuilder> RemoveScalarFirst(string jsonPath, object element)
     {
+        jsonPath = EscapePath(jsonPath);
         return builder =>
         {
             builder.Append($"JSON_MODIFY(data, '$.{jsonPath}', JSON_QUERY(");
@@ -286,6 +315,7 @@ internal class PatchOperation : Polecat.Internal.IStorageOperation
 
     internal static Action<ICommandBuilder> RemoveScalarAll(string jsonPath, object element)
     {
+        jsonPath = EscapePath(jsonPath);
         return builder =>
         {
             builder.Append($"JSON_MODIFY(data, '$.{jsonPath}', JSON_QUERY(");
@@ -304,6 +334,7 @@ internal class PatchOperation : Polecat.Internal.IStorageOperation
 
     internal static Action<ICommandBuilder> RemoveComplexFirst(string jsonPath, string jsonElement)
     {
+        jsonPath = EscapePath(jsonPath);
         return builder =>
         {
             builder.Append($"JSON_MODIFY(data, '$.{jsonPath}', JSON_QUERY(");
@@ -325,6 +356,7 @@ internal class PatchOperation : Polecat.Internal.IStorageOperation
 
     internal static Action<ICommandBuilder> RemoveComplexAll(string jsonPath, string jsonElement)
     {
+        jsonPath = EscapePath(jsonPath);
         return builder =>
         {
             builder.Append($"JSON_MODIFY(data, '$.{jsonPath}', JSON_QUERY(");
@@ -342,16 +374,21 @@ internal class PatchOperation : Polecat.Internal.IStorageOperation
 
     internal static Action<ICommandBuilder> RemoveDictKey(string dictPath, string key)
     {
+        dictPath = EscapePath(dictPath);
+        key = EscapePath(key);
         return builder => { builder.Append($"JSON_MODIFY(data, '$.{dictPath}.{key}', NULL)"); };
     }
 
     internal static Action<ICommandBuilder> DeleteProperty(string jsonPath)
     {
+        jsonPath = EscapePath(jsonPath);
         return builder => { builder.Append($"JSON_MODIFY(data, '$.{jsonPath}', NULL)"); };
     }
 
     internal static Action<ICommandBuilder> RenameProperty(string oldJsonPath, string newJsonPath, bool isScalarType)
     {
+        oldJsonPath = EscapePath(oldJsonPath);
+        newJsonPath = EscapePath(newJsonPath);
         return builder =>
         {
             builder.Append($"JSON_MODIFY(JSON_MODIFY(data, '$.{newJsonPath}', ");
@@ -363,6 +400,8 @@ internal class PatchOperation : Polecat.Internal.IStorageOperation
 
     internal static Action<ICommandBuilder> DuplicateProperty(string sourcePath, string[] destPaths, bool isScalarType)
     {
+        sourcePath = EscapePath(sourcePath);
+        destPaths = Array.ConvertAll(destPaths, EscapePath);
         return builder =>
         {
             for (var i = 0; i < destPaths.Length; i++)
