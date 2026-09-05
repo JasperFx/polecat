@@ -297,30 +297,38 @@ internal class GroupBySelectBuilder
                 $"Unsupported comparison in HAVING: {binary.NodeType}")
         };
 
-        var leftSql = ResolveHavingOperand(binary.Left, groupingParam);
-        var rightSql = ResolveHavingOperand(binary.Right, groupingParam);
+        var leftOperand = ResolveHavingOperand(binary.Left, groupingParam);
+        var rightOperand = ResolveHavingOperand(binary.Right, groupingParam);
 
-        return new LiteralSqlFragment($"{leftSql} {op} {rightSql}");
+        return new HavingComparisonFragment(leftOperand, op, rightOperand);
     }
 
-    private string ResolveHavingOperand(Expression expr, ParameterExpression groupingParam)
+    /// <summary>
+    ///     An operand of a HAVING comparison: either a server-side aggregate expression (safe,
+    ///     built from developer-controlled member locators) or a runtime constant value. Constants
+    ///     are bound as command parameters rather than rendered into the SQL text — the constant is a
+    ///     captured local / request value and rendering its <c>ToString()</c> verbatim was a SQL
+    ///     injection vector (CWE-89), the same class as JasperFx/marten#4954 (non-string projection
+    ///     constants rendered unparameterized).
+    /// </summary>
+    private HavingOperand ResolveHavingOperand(Expression expr, ParameterExpression groupingParam)
     {
         if (expr is MethodCallExpression method)
         {
             var sql = ResolveAggregate(method, groupingParam);
-            if (sql != null) return sql;
+            if (sql != null) return HavingOperand.Aggregate(sql);
         }
 
         if (expr is ConstantExpression constant)
         {
-            return constant.Value?.ToString() ?? "NULL";
+            return HavingOperand.Constant(constant.Value);
         }
 
         // Try to evaluate as constant
         try
         {
             var value = Expression.Lambda(expr).Compile().DynamicInvoke();
-            return value?.ToString() ?? "NULL";
+            return HavingOperand.Constant(value);
         }
         catch
         {
@@ -373,6 +381,72 @@ internal class GroupBySelectBuilder
     private string FormatKey(string name)
     {
         return _namingPolicy?.ConvertName(name) ?? name;
+    }
+}
+
+/// <summary>
+///     One side of a HAVING comparison — either aggregate SQL rendered inline (developer-controlled)
+///     or a runtime constant value that must be bound as a parameter.
+/// </summary>
+internal readonly struct HavingOperand
+{
+    private HavingOperand(string? sql, object? value, bool isConstant)
+    {
+        Sql = sql;
+        Value = value;
+        IsConstant = isConstant;
+    }
+
+    public string? Sql { get; }
+    public object? Value { get; }
+    public bool IsConstant { get; }
+
+    public static HavingOperand Aggregate(string sql) => new(sql, null, isConstant: false);
+    public static HavingOperand Constant(object? value) => new(null, value, isConstant: true);
+}
+
+/// <summary>
+///     Emits <c>{left} {op} {right}</c> for a HAVING comparison. Aggregate operands are appended as
+///     SQL text; constant operands are bound as command parameters so an attacker-influenced value
+///     cannot break out of the SQL grammar.
+/// </summary>
+internal class HavingComparisonFragment : ISqlFragment
+{
+    private readonly HavingOperand _left;
+    private readonly string _op;
+    private readonly HavingOperand _right;
+
+    public HavingComparisonFragment(HavingOperand left, string op, HavingOperand right)
+    {
+        _left = left;
+        _op = op;
+        _right = right;
+    }
+
+    public void Apply(ICommandBuilder builder)
+    {
+        ApplyOperand(builder, _left);
+        builder.Append(" ");
+        builder.Append(_op);
+        builder.Append(" ");
+        ApplyOperand(builder, _right);
+    }
+
+    private static void ApplyOperand(ICommandBuilder builder, HavingOperand operand)
+    {
+        if (!operand.IsConstant)
+        {
+            builder.Append(operand.Sql!);
+            return;
+        }
+
+        if (operand.Value == null)
+        {
+            builder.Append("NULL");
+            return;
+        }
+
+        builder.AppendParameter(operand.Value);
     }
 }
 
