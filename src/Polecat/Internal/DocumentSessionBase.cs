@@ -290,15 +290,18 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     // types resolve a SubClassPolecatStorage delegating to the hierarchy root's storage.
     // A tenant override (IDocumentSession.ForTenant) wraps the session in a
     // TenantScopedStorageSession so flush-time metadata binders write the override tenant.
+    /// <param name="tenantScope">
+    ///     polecat#548 — the ForTenant view's own tenant scope, when this write comes through one.
+    ///     Supplied by the caller (rather than built here) so a nested tenant session's reads and
+    ///     writes share one scope, and therefore one per-tenant identity map: Store() adds to the map
+    ///     just as a load does, so building a fresh sharing wrapper per write would put another
+    ///     tenant's document into the parent's map (marten#4801).
+    /// </param>
     internal Operations.ClosedShapeOperationAdapter BuildClosedShapeWrite<T>(T document, DocumentProvider provider,
-        WriteKind kind, string? tenantOverride = null) where T : notnull
+        WriteKind kind, Weasel.Storage.IStorageSession? tenantScope = null) where T : notnull
     {
-        Weasel.Storage.IStorageSession session = (Weasel.Storage.IStorageSession)this;
+        Weasel.Storage.IStorageSession session = tenantScope ?? (Weasel.Storage.IStorageSession)this;
         var storage = (Weasel.Storage.IDocumentStorage<T>)session.StorageFor<T>();
-        if (tenantOverride is not null && tenantOverride != TenantId)
-        {
-            session = new TenantScopedStorageSession(session, tenantOverride);
-        }
 
         storage.Store(session, document); // id assignment + identity-map/version bookkeeping
 
@@ -319,14 +322,10 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     ///     StoreObjects (#273 E2e) — dispatches through the non-generic object-write bridge.
     /// </summary>
     internal Operations.ClosedShapeOperationAdapter BuildClosedShapeObjectWrite(object document,
-        DocumentProvider provider, string? tenantOverride = null)
+        DocumentProvider provider, Weasel.Storage.IStorageSession? tenantScope = null)
     {
-        Weasel.Storage.IStorageSession session = (Weasel.Storage.IStorageSession)this;
+        Weasel.Storage.IStorageSession session = tenantScope ?? (Weasel.Storage.IStorageSession)this;
         var storage = (Polecat.Storage.ClosedShape.IPolecatObjectWriteStorage)session.StorageFor(document.GetType());
-        if (tenantOverride is not null && tenantOverride != TenantId)
-        {
-            session = new TenantScopedStorageSession(session, tenantOverride);
-        }
 
         storage.StoreObject(session, document);
         var op = storage.UpsertObject(document, session, session.TenantId);

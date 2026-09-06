@@ -18,6 +18,7 @@ internal class NestedTenantSession : ITenantOperations
     private readonly DocumentSessionBase _parent;
     private readonly string _tenantId;
     private EventOperations? _eventOperations;
+    private TenantScopedStorageSession? _storageScope;
 
     public NestedTenantSession(DocumentSessionBase parent, string tenantId)
     {
@@ -26,6 +27,23 @@ internal class NestedTenantSession : ITenantOperations
     }
 
     public string TenantId => _tenantId;
+
+    /// <summary>
+    ///     polecat#548 — the single <see cref="TenantScopedStorageSession" /> this view's reads and
+    ///     writes both run against. One instance per nested session (and ForTenant caches one nested
+    ///     session per tenant), so identity-map and version state persist per tenant across repeated
+    ///     ForTenant(t) calls the way the parent session's do for its own tenant — Marten reaches the
+    ///     same result by caching one nested session per tenant.
+    ///
+    ///     Identity state is isolated only for CONJOINED storage, where the same id names a different
+    ///     document per tenant (marten#4801). Under single-tenant storage there is one row per id for
+    ///     the whole database, so the parent's map is aliased instead — isolating it there would hide
+    ///     the parent's uncommitted documents from this view, which is marten#4947.
+    /// </summary>
+    private TenantScopedStorageSession StorageScope
+        => _storageScope ??= new TenantScopedStorageSession(
+            (Weasel.Storage.IStorageSession)_parent, _tenantId,
+            shareIdentityState: _parent.Options.Events.TenancyStyle != TenancyStyle.Conjoined);
     public IDocumentSession Parent => _parent;
 
     public IEventOperations Events =>
@@ -43,57 +61,83 @@ internal class NestedTenantSession : ITenantOperations
     public void SetHeader(string key, object value) => _parent.SetHeader(key, value);
     public object? GetHeader(string key) => _parent.GetHeader(key);
 
+    // ── IQuerySession reads ────────────────────────────────────────────────
+    //
+    // polecat#548: these run on the parent's connection but MUST be scoped to _tenantId, not the
+    // parent's tenant. Under conjoined tenancy the same id names a different document per tenant, so
+    // a read that carries the parent's tenant answers with another tenant's row — the Polecat
+    // analogue of marten#4801, and worse than it: Marten's bug was an identity-map cache collision
+    // over a correctly-scoped query, whereas delegating the whole read sends the wrong tenant to the
+    // database. The writes here were already tenant-correct (TenantScopedStorageSession), which is
+    // what made the read side quiet: rows land under the right tenant and are read back as another's.
+    //
+    // The tenant-explicit storage overloads these route through also bypass the session's
+    // identity-map flavor logic, so a cross-tenant read can neither be answered from nor poison the
+    // parent's tenant-blind ItemMap — covering the #4801 cache shape as well as the query shape.
+
     public Task<DocumentMetadata?> MetadataForAsync<T>(T document, CancellationToken token = default) where T : notnull
-        => _parent.MetadataForAsync(document, token);
+    {
+        var provider = _parent.Providers.GetProvider<T>();
+        return _parent.MetadataForIdForTenantAsync(provider, provider.Mapping.GetId(document), _tenantId, token);
+    }
+
     public Task<DocumentMetadata?> MetadataForAsync<T>(Guid id, CancellationToken token = default) where T : class
-        => _parent.MetadataForAsync<T>(id, token);
+        => MetadataForTenantAsync<T>(id, token);
     public Task<DocumentMetadata?> MetadataForAsync<T>(string id, CancellationToken token = default) where T : class
-        => _parent.MetadataForAsync<T>(id, token);
+        => MetadataForTenantAsync<T>(id, token);
     public Task<DocumentMetadata?> MetadataForAsync<T>(int id, CancellationToken token = default) where T : class
-        => _parent.MetadataForAsync<T>(id, token);
+        => MetadataForTenantAsync<T>(id, token);
     public Task<DocumentMetadata?> MetadataForAsync<T>(long id, CancellationToken token = default) where T : class
-        => _parent.MetadataForAsync<T>(id, token);
+        => MetadataForTenantAsync<T>(id, token);
+
+    private Task<DocumentMetadata?> MetadataForTenantAsync<T>(object id, CancellationToken token) where T : class
+        => _parent.MetadataForIdForTenantAsync(_parent.Providers.GetProvider<T>(), id, _tenantId, token);
 
     public int RequestCount => _parent.RequestCount;
     public IPolecatSessionLogger Logger { get => _parent.Logger; set => _parent.Logger = value; }
     public IAdvancedSql AdvancedSql => _parent.AdvancedSql;
 
     public Task<bool> CheckExistsAsync<T>(Guid id, CancellationToken token = default) where T : class
-        => _parent.CheckExistsAsync<T>(id, token);
+        => _parent.CheckExistsForTenantAsync<T>(id, _tenantId, token);
 
     public Task<bool> CheckExistsAsync<T>(string id, CancellationToken token = default) where T : class
-        => _parent.CheckExistsAsync<T>(id, token);
+        => _parent.CheckExistsForTenantAsync<T>(id, _tenantId, token);
 
     public Task<bool> CheckExistsAsync<T>(int id, CancellationToken token = default) where T : class
-        => _parent.CheckExistsAsync<T>(id, token);
+        => _parent.CheckExistsForTenantAsync<T>(id, _tenantId, token);
 
     public Task<bool> CheckExistsAsync<T>(long id, CancellationToken token = default) where T : class
-        => _parent.CheckExistsAsync<T>(id, token);
+        => _parent.CheckExistsForTenantAsync<T>(id, _tenantId, token);
 
     public Task<T?> LoadAsync<T>(Guid id, CancellationToken token = default) where T : notnull
-        => _parent.LoadAsync<T>(id, token);
+        => _parent.LoadForTenantAsync<T>(id, _tenantId, StorageScope, token);
 
     public Task<T?> LoadAsync<T>(string id, CancellationToken token = default) where T : notnull
-        => _parent.LoadAsync<T>(id, token);
+        => _parent.LoadForTenantAsync<T>(id, _tenantId, StorageScope, token);
 
     public Task<T?> LoadAsync<T>(int id, CancellationToken token = default) where T : class
-        => _parent.LoadAsync<T>(id, token);
+        => _parent.LoadForTenantAsync<T>(id, _tenantId, StorageScope, token);
 
     public Task<T?> LoadAsync<T>(long id, CancellationToken token = default) where T : class
-        => _parent.LoadAsync<T>(id, token);
+        => _parent.LoadForTenantAsync<T>(id, _tenantId, StorageScope, token);
 
-    // polecat#472: the runtime-typed identity overload delegates like every other read here.
+    // polecat#472: the runtime-typed identity overload reduces to the same inner scalar the typed
+    // overloads pass, so it takes the same tenant-scoped path (polecat#548).
     public Task<T?> LoadAsync<T>(object id, CancellationToken token = default) where T : notnull
-        => _parent.LoadAsync<T>(id, token);
+    {
+        ArgumentNullException.ThrowIfNull(id);
+        var mapping = _parent.Providers.GetProvider<T>().Mapping;
+        return _parent.LoadForTenantAsync<T>(mapping.UnwrapIdentity(id, nameof(id)), _tenantId, StorageScope, token);
+    }
 
     public Task<IReadOnlyList<T>> LoadManyAsync<T>(IEnumerable<Guid> ids, CancellationToken token = default) where T : class
-        => _parent.LoadManyAsync<T>(ids, token);
+        => _parent.LoadManyForTenantAsync<T>(ids.Cast<object>().ToList(), _tenantId, StorageScope, token);
 
     public Task<IReadOnlyList<T>> LoadManyAsync<T>(IEnumerable<string> ids, CancellationToken token = default) where T : class
-        => _parent.LoadManyAsync<T>(ids, token);
+        => _parent.LoadManyForTenantAsync<T>(ids.Cast<object>().ToList(), _tenantId, StorageScope, token);
 
     public IPolecatQueryable<T> Query<T>() where T : notnull
-        => _parent.Query<T>();
+        => _parent.QueryForTenant<T>(_tenantId);
 
     public IBatchedQuery CreateBatchQuery()
         => _parent.CreateBatchQuery();
@@ -105,16 +149,16 @@ internal class NestedTenantSession : ITenantOperations
         => _parent.QueryByPlanAsync(plan, token);
 
     public Task<string?> LoadJsonAsync<T>(Guid id, CancellationToken token = default) where T : class
-        => _parent.LoadJsonAsync<T>(id, token);
+        => _parent.LoadJsonForTenantAsync<T>(id, _tenantId, token);
 
     public Task<string?> LoadJsonAsync<T>(string id, CancellationToken token = default) where T : class
-        => _parent.LoadJsonAsync<T>(id, token);
+        => _parent.LoadJsonForTenantAsync<T>(id, _tenantId, token);
 
     public Task<string?> LoadJsonAsync<T>(int id, CancellationToken token = default) where T : class
-        => _parent.LoadJsonAsync<T>(id, token);
+        => _parent.LoadJsonForTenantAsync<T>(id, _tenantId, token);
 
     public Task<string?> LoadJsonAsync<T>(long id, CancellationToken token = default) where T : class
-        => _parent.LoadJsonAsync<T>(id, token);
+        => _parent.LoadJsonForTenantAsync<T>(id, _tenantId, token);
 
     // ── IDocumentOperations (mutations flow through the closed-shape layer with the
     //    override tenant; #273 E2e. Deletions carry _tenantId explicitly; writes bind
@@ -125,7 +169,7 @@ internal class NestedTenantSession : ITenantOperations
         SyncMetadata(document);
         var provider = _parent.Providers.GetProvider<T>();
         _parent.WorkTracker.Add(_parent.BuildClosedShapeWrite(document, provider,
-            DocumentSessionBase.WriteKind.Upsert, _tenantId));
+            DocumentSessionBase.WriteKind.Upsert, StorageScope));
     }
 
     public void Store<T>(params T[] documents) where T : notnull
@@ -141,7 +185,7 @@ internal class NestedTenantSession : ITenantOperations
 
             SyncMetadata(document);
             var provider = _parent.Providers.GetProvider(document.GetType());
-            _parent.WorkTracker.Add(_parent.BuildClosedShapeObjectWrite(document, provider, _tenantId));
+            _parent.WorkTracker.Add(_parent.BuildClosedShapeObjectWrite(document, provider, StorageScope));
         }
     }
 
@@ -150,7 +194,7 @@ internal class NestedTenantSession : ITenantOperations
         SyncMetadata(document);
         var provider = _parent.Providers.GetProvider<T>();
         _parent.WorkTracker.Add(_parent.BuildClosedShapeWrite(document, provider,
-            DocumentSessionBase.WriteKind.Insert, _tenantId));
+            DocumentSessionBase.WriteKind.Insert, StorageScope));
     }
 
     public void Update<T>(T document) where T : notnull
@@ -158,12 +202,12 @@ internal class NestedTenantSession : ITenantOperations
         SyncMetadata(document);
         var provider = _parent.Providers.GetProvider<T>();
         _parent.WorkTracker.Add(_parent.BuildClosedShapeWrite(document, provider,
-            DocumentSessionBase.WriteKind.Update, _tenantId));
+            DocumentSessionBase.WriteKind.Update, StorageScope));
     }
 
     public void Delete<T>(T document) where T : notnull
     {
-        var session = (Weasel.Storage.IStorageSession)_parent;
+        Weasel.Storage.IStorageSession session = StorageScope;
         var storage = (Weasel.Storage.IDocumentStorage<T>)session.StorageFor<T>();
         var provider = _parent.Providers.GetProvider<T>();
         _parent.WorkTracker.Add(new Operations.ClosedShapeOperationAdapter(
@@ -186,7 +230,7 @@ internal class NestedTenantSession : ITenantOperations
 
     private void DeleteByObjectId<T>(object id) where T : notnull
     {
-        var session = (Weasel.Storage.IStorageSession)_parent;
+        Weasel.Storage.IStorageSession session = StorageScope;
         var storage = (Polecat.Storage.ClosedShape.IPolecatObjectStorage<T>)session.StorageFor<T>();
         _parent.WorkTracker.Add(new Operations.ClosedShapeOperationAdapter(
             storage.DeletionForObjectId(id, _tenantId), session, id, id));
@@ -194,7 +238,7 @@ internal class NestedTenantSession : ITenantOperations
 
     public void HardDelete<T>(T document) where T : notnull
     {
-        var session = (Weasel.Storage.IStorageSession)_parent;
+        Weasel.Storage.IStorageSession session = StorageScope;
         var storage = (Weasel.Storage.IDocumentStorage<T>)session.StorageFor<T>();
         _parent.WorkTracker.Add(new Operations.ClosedShapeOperationAdapter(
             storage.HardDeleteForDocument(document, _tenantId), session, document,
@@ -211,7 +255,7 @@ internal class NestedTenantSession : ITenantOperations
 
     private void HardDeleteByObjectId<T>(object id) where T : notnull
     {
-        var session = (Weasel.Storage.IStorageSession)_parent;
+        Weasel.Storage.IStorageSession session = StorageScope;
         var storage = (Polecat.Storage.ClosedShape.IPolecatObjectStorage<T>)session.StorageFor<T>();
         _parent.WorkTracker.Add(new Operations.ClosedShapeOperationAdapter(
             storage.HardDeletionForObjectId(id, _tenantId), session, id, id));

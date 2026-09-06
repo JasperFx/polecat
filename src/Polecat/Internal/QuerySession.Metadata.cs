@@ -18,23 +18,30 @@ internal partial class QuerySession
     {
         var provider = _providers.GetProvider<T>();
         var id = provider.Mapping.GetId(document);
-        return MetadataForIdAsync(provider, id, token);
+        return MetadataForIdAsync(provider, id, TenantId, token);
     }
 
     public Task<DocumentMetadata?> MetadataForAsync<T>(Guid id, CancellationToken token = default) where T : class
-        => MetadataForIdAsync(_providers.GetProvider<T>(), id, token);
+        => MetadataForIdAsync(_providers.GetProvider<T>(), id, TenantId, token);
 
     public Task<DocumentMetadata?> MetadataForAsync<T>(string id, CancellationToken token = default) where T : class
-        => MetadataForIdAsync(_providers.GetProvider<T>(), id, token);
+        => MetadataForIdAsync(_providers.GetProvider<T>(), id, TenantId, token);
 
     public Task<DocumentMetadata?> MetadataForAsync<T>(int id, CancellationToken token = default) where T : class
-        => MetadataForIdAsync(_providers.GetProvider<T>(), id, token);
+        => MetadataForIdAsync(_providers.GetProvider<T>(), id, TenantId, token);
 
     public Task<DocumentMetadata?> MetadataForAsync<T>(long id, CancellationToken token = default) where T : class
-        => MetadataForIdAsync(_providers.GetProvider<T>(), id, token);
+        => MetadataForIdAsync(_providers.GetProvider<T>(), id, TenantId, token);
+
+    /// <summary>
+    ///     polecat#548: metadata for a row under an explicit tenant, for ForTenant() views.
+    /// </summary>
+    internal Task<DocumentMetadata?> MetadataForIdForTenantAsync(DocumentProvider provider, object id,
+        string tenantId, CancellationToken token)
+        => MetadataForIdAsync(provider, id, tenantId, token);
 
     private async Task<DocumentMetadata?> MetadataForIdAsync(DocumentProvider provider, object id,
-        CancellationToken token)
+        string tenantId, CancellationToken token)
     {
         var mapping = provider.Mapping;
         await _tableEnsurer.EnsureTableAsync(provider, token);
@@ -63,7 +70,7 @@ internal partial class QuerySession
             $"SELECT {string.Join(", ", columns)} FROM {mapping.QualifiedTableName} " +
             (isConjoined ? "WHERE id = @id AND tenant_id = @tenant_id" : "WHERE id = @id");
         cmd.Parameters.AddIdParameter("@id", id);
-        if (isConjoined) cmd.Parameters.AddVarChar("@tenant_id", TenantId);
+        if (isConjoined) cmd.Parameters.AddVarChar("@tenant_id", tenantId);
 
         Logger.OnBeforeExecute(cmd.CommandText);
         try
