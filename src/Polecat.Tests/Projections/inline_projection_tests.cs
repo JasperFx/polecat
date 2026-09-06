@@ -277,4 +277,33 @@ public class inline_projection_tests : IntegrationContext
         loaded.ShouldNotBeNull();
         loaded.FirstName.ShouldBe("Test");
     }
+
+    /// <summary>
+    ///     #548 — the inline-projected provider set SaveChangesAsync pre-creates tables from is derived
+    ///     entirely from configuration, so it is computed once per store instead of being rebuilt from
+    ///     <c>Projections.All</c> on every save. Two facts: it still resolves the projections registered
+    ///     before the store was built (the reason it has to be lazy rather than eager), and repeated
+    ///     saves keep handing back the very same cached array.
+    /// </summary>
+    [Fact]
+    public async Task the_inline_projected_provider_set_is_computed_once_per_store()
+    {
+        var store = await CreateStoreWithProjections();
+
+        var providers = store.Options.Projections.InlineProjectedProviders;
+
+        // The projection was registered while the store options were still open, and it is in the set.
+        providers.Select(x => x.Mapping.DocumentType).ShouldContain(typeof(QuestParty));
+
+        await using var session = store.LightweightSession();
+        session.Events.StartStream(Guid.NewGuid(), new QuestStarted("First"));
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        await using var second = store.LightweightSession();
+        second.Events.StartStream(Guid.NewGuid(), new QuestStarted("Second"));
+        await second.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        // Same array instance, so neither save rebuilt it.
+        store.Options.Projections.InlineProjectedProviders.ShouldBeSameAs(providers);
+    }
 }

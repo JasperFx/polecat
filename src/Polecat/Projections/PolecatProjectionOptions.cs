@@ -7,6 +7,7 @@ using JasperFx.Events.Projections.Composite;
 using JasperFx.Events.Subscriptions;
 using Polecat.Events;
 using Polecat.Events.Projections;
+using Polecat.Internal;
 using Polecat.Projections.Flattened;
 using Polecat.Storage;
 using Polecat.Subscriptions;
@@ -23,10 +24,21 @@ public class PolecatProjectionOptions
     private readonly EventGraph _events;
     private StoreOptions? _storeOptions;
     private IInlineProjection<IDocumentSession>[]? _inlineProjections;
+    private readonly Lazy<DocumentProvider[]> _inlineProjectedProviders;
 
     internal PolecatProjectionOptions(EventGraph events) : base(events, "polecat")
     {
         _events = events;
+
+        // #548: see InlineProjectedProviders. Lazy, not eager, because registration is still open when
+        // this runs — StoreOptions constructs the graph before any Projections.Add call, and wires
+        // StoreOptions.Providers later still, when the DocumentStore is built.
+        _inlineProjectedProviders = new Lazy<DocumentProvider[]>(() => All
+            .Where(x => x.Lifecycle == ProjectionLifecycle.Inline)
+            .SelectMany(x => x.PublishedTypes())
+            .Distinct()
+            .Select(t => _storeOptions!.Providers.GetProvider(t))
+            .ToArray());
     }
 
     internal void SetStoreOptions(StoreOptions options) => _storeOptions = options;
@@ -206,5 +218,26 @@ public class PolecatProjectionOptions
 
         return _inlineProjections;
     }
+
+    /// <summary>
+    ///     The document providers for every type published by an <see cref="ProjectionLifecycle.Inline" />
+    ///     projection, so <c>SaveChangesAsync</c> can pre-create those tables before the projections run.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         #548: this set is derived entirely from configuration — it cannot change between saves —
+    ///         but it used to be rebuilt from <see cref="ProjectionGraph{T,TOperations,TQuerySession}.All" />
+    ///         on <em>every</em> save that touched a stream in a store with any inline projection. Computed
+    ///         once here instead.
+    ///     </para>
+    ///     <para>
+    ///         Deferred to first use rather than computed when the store is constructed, because
+    ///         projections can be registered right up until the store is built and
+    ///         <see cref="StoreOptions.Providers" /> is not wired until then either. Same discipline as
+    ///         <see cref="BuildInlineProjections" /> above, which the store wraps in a <c>Lazy</c> for the
+    ///         same reason.
+    ///     </para>
+    /// </remarks>
+    internal DocumentProvider[] InlineProjectedProviders => _inlineProjectedProviders.Value;
 }
 
