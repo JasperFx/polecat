@@ -47,6 +47,11 @@ public partial class DocumentStore : IDocumentStore
         // function/scheme and table are created and rolled forward by schema migration at activation.
         _providers.ConfigurePartitionedDocuments();
 
+        // #561 / jasperfx#752: register the TARGET event type of every upcast transformation. An
+        // upcast row can be read before this deployment has ever appended the new type, and without
+        // a mapping there is nothing to wrap the transformed payload in.
+        options.EventGraph.RegisterUpcastTargetTypes();
+
         // Back-reference so the database can open sessions for the dead-letter
         // document store/queries (it has no store/session of its own otherwise).
         Database.Store = this;

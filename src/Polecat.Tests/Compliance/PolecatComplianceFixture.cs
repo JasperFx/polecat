@@ -232,6 +232,13 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
     /// </summary>
     public override bool SupportsNaturalKeys => true;
 
+    /// <summary>
+    ///     #561 / jasperfx#752. Polecat routes every event hydration path through the shared
+    ///     <c>EventRegistry.Upcasters</c> and implements <c>IUpcastPayload</c> over its own row
+    ///     reader and serializer.
+    /// </summary>
+    public override bool SupportsUpcasting => true;
+
     // #364. Both operators are extensions in Polecat.Events over the store's raw-event queryable,
     // which is why they cannot be reached through any shared interface. The single Where() is the
     // seam's contract, not a convenience: the HasTag facts next door depend on the predicate staying
@@ -585,6 +592,12 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
                     x.IncludeType(eventType);
                 }
             });
+
+        // #561 / jasperfx#752. One registrar member covers every registration shape -- typed sync,
+        // typed async-only, raw JsonDocument -- because UpcastTransformation is the shared carrier
+        // they all funnel into, and the suite builds them through the shared factories.
+        public void Upcast(JasperFx.Events.Upcasting.UpcastTransformation transformation)
+            => _options.Events.Upcasters.Register(transformation);
 
         // jasperfx#763. Polecat spells the outbox as a single settable property on the event store
         // options, which the projection batch asks for a batch from once per update. The suite's

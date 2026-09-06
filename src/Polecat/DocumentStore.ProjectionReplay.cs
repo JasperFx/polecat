@@ -240,10 +240,27 @@ public partial class DocumentStore
     [RequiresDynamicCode("ISerializer.FromJson uses STJ which requires runtime code generation for non-source-generated types.")]
     private IEvent? ToDomainEvent(EventRecord record)
     {
-        var clrType = ResolveEventClrType(record.EventTypeName);
-        if (clrType is null) return null;
+        // #561 / jasperfx#752: upcast first, like every other read path. This one is already keyed on
+        // the stored event type name rather than the dotnet_type hint, so there is no authority
+        // question to resolve here -- but a replay that skipped upcasting would show the timeline in
+        // terms of an event schema the rest of the store has stopped producing.
+        object? raw;
+        Type clrType;
 
-        var raw = Options.Serializer.FromJson(clrType, record.Data.GetRawText());
+        if (Events.TryFindUpcast(record.EventTypeName, bdata: null, out var transformation))
+        {
+            clrType = transformation.EventType;
+            raw = Events.Upcast(transformation, record.Data.GetRawText(), Options.Serializer);
+        }
+        else
+        {
+            var resolved = ResolveEventClrType(record.EventTypeName);
+            if (resolved is null) return null;
+
+            clrType = resolved;
+            raw = Options.Serializer.FromJson(clrType, record.Data.GetRawText());
+        }
+
         if (raw is null) return null;
 
         var mapping = Events.EventMappingFor(clrType);

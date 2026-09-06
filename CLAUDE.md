@@ -171,6 +171,29 @@ A bare `marten#NNNN` citation means the opposite: Polecat implemented the same f
 number is provenance. Do not treat a `marten#NNNN` count as a porting backlog; it grows with every
 parity feature and never converges.
 
+### Event hydration paths — there are five, and they are copies
+
+Anything that changes how a stored `pc_events` row becomes an `IEvent` has to change **five** places.
+`PcEventsRowReader.ReadEventCore` is the canonical one, but four other loops hand-copy it:
+
+| Path | Feeds |
+|---|---|
+| `Events/Internal/PcEventsRowReader.ReadEventCore` | `FetchStreamAsync`, live aggregation, `FetchForWriting`/`FetchLatest`, compaction, masking, batched stream fetch |
+| `Events/EventOperations.QueryByTagsAsync` | DCB tag queries |
+| `Events/EventOperations.ReadEventFromReader` | batched DCB tag queries |
+| `Events/Linq/EventListHandler` | `QueryAllRawEvents()`, `QueryEventsAsync`, `AggregateTo*` |
+| `Events/Daemon/PolecatEventLoader` | **every** async projection and subscription |
+
+Two more resolve differently and are easy to miss: `DocumentStore.ProjectionReplay.ToDomainEvent`
+keys on the event type ALIAS rather than `dotnet_type`, and `QueryRawEventDataOnly<T>` bypasses
+`EventGraph` entirely (it never builds an `IEvent`).
+
+`dotnet_type` — not the `type` alias — is the sole input to CLR type resolution on all five hot
+paths. Upcasting (#561) is the one thing that must be consulted *before* it; see
+`EventGraph.TryFindUpcast`. **The daemon loader additionally pushes a `dotnet_type` allow list into
+its SQL**, so any read-time reinterpretation of a row has to widen that filter too or the row is
+gone before hydration ever runs.
+
 ### Writing tests that survive being run in parallel processes
 
 The suite is a candidate for being run across several worker processes at once (Bobcat's supervisor

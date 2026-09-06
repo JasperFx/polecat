@@ -47,6 +47,20 @@ internal class PolecatEventLoader : IEventLoader
     private readonly string _commandText;
     private readonly string[]? _pushedDownTypeNames;
 
+    /// <summary>
+    ///     #561 / jasperfx#752: the stored event type names that have a registered upcast
+    ///     transformation. Pushed into the SQL alongside the dotnet_type allow list so a legacy row
+    ///     survives the filter and reaches the upcaster.
+    /// </summary>
+    /// <remarks>
+    ///     A SECOND column in the predicate, not more values in the first: the allow list matches on
+    ///     <c>dotnet_type</c> while an upcast source is a <c>type</c> alias, and for a raw-JSON
+    ///     transformation there may be no old CLR type — and therefore no dotnet_type — to name at
+    ///     all. Null when nothing is registered, which is the overwhelming majority and leaves the
+    ///     rendered SQL byte-for-byte as it was.
+    /// </remarks>
+    private readonly string[]? _upcastSourceNames;
+
     public PolecatEventLoader(EventGraph events, StoreOptions options, string connectionString,
         EventFilterable? filtering = null, string? tenantFilter = null)
     {
@@ -74,6 +88,15 @@ internal class PolecatEventLoader : IEventLoader
                 // values bound on each load.
                 _pushedDownTypeNames = _allowedDotNetTypes.ToArray();
             }
+        }
+
+        // Only meaningful alongside a type allow list: an unfiltered shard already reads every row.
+        if (_pushedDownTypeNames is { Length: > 0 } && events.Upcasters.HasAny)
+        {
+            _upcastSourceNames = events.Upcasters.AllTransformations
+                .Select(x => x.EventTypeName)
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
         }
 
         _commandText = BuildCommandText();
@@ -119,7 +142,16 @@ internal class PolecatEventLoader : IEventLoader
         if (_pushedDownTypeNames is { Length: > 0 })
         {
             var markers = string.Join(", ", Enumerable.Range(0, _pushedDownTypeNames.Length).Select(i => $"@t{i}"));
-            typePredicate = $" AND (dotnet_type IS NULL OR dotnet_type IN ({markers}))";
+            typePredicate = $" AND (dotnet_type IS NULL OR dotnet_type IN ({markers})";
+
+            if (_upcastSourceNames is { Length: > 0 })
+            {
+                var upcastMarkers = string.Join(", ",
+                    Enumerable.Range(0, _upcastSourceNames.Length).Select(i => $"@u{i}"));
+                typePredicate += $" OR type IN ({upcastMarkers})";
+            }
+
+            typePredicate += ")";
         }
 
         return $"""
@@ -174,6 +206,15 @@ internal class PolecatEventLoader : IEventLoader
             }
         }
 
+        if (_upcastSourceNames is not null)
+        {
+            // Same varchar binding reasoning as above (#363) — pc_events.type is varchar too.
+            for (var i = 0; i < _upcastSourceNames.Length; i++)
+            {
+                cmd.Parameters.AddVarChar($"@u{i}", _upcastSourceNames[i]);
+            }
+        }
+
         var skippedEvents = 0;
 
         await using var reader = await cmd.ExecuteReaderAsync(token);
@@ -204,49 +245,88 @@ internal class PolecatEventLoader : IEventLoader
             // when the allow-list was too large to push down. Counting a discarded row as skipped is
             // what keeps the ceiling honest in that fallback: the row genuinely consumed a slot of this
             // page's range, so the batch was saturated even though the page came back short.
-            if (_allowedDotNetTypes != null && dotNetTypeName != null &&
+            // #561 / jasperfx#752: an upcast SOURCE row is admitted whatever its dotnet_type says.
+            // The allow list is built from the projection's declared event types -- which are the
+            // NEW types -- so a legacy row would otherwise be discarded here before anything got a
+            // chance to upcast it, and for a raw-JSON transformation the old CLR type may not even
+            // exist to put on the list. Mirrors the SQL push-down in BuildCommandText.
+            var upcastable = _events.TryFindUpcast(typeName, bdata, out var transformation);
+
+            if (!upcastable && _allowedDotNetTypes != null && dotNetTypeName != null &&
                 !_allowedDotNetTypes.Contains(dotNetTypeName))
             {
                 skippedEvents++;
                 continue;
             }
 
-            var resolvedType = _events.ResolveEventType(dotNetTypeName);
-            if (resolvedType == null)
-            {
-                if (request.ErrorOptions.SkipUnknownEvents)
-                {
-                    skippedEvents++;
-                    continue;
-                }
-
-                // #368 / jasperfx#565: a typed exception carrying its own ShardFailureCategory, so a shard
-                // paused by an unregistered event type reports UnknownEventType with the offending
-                // sequence rather than classifying as Other with no detail. The daemon does not sniff
-                // exception type names — the exception has to declare its own kind.
-                throw new Polecat.Exceptions.UnknownEventTypeException(dotNetTypeName, seqId);
-            }
-
             object data;
-            try
+            IEventType mapping;
+
+            if (upcastable)
             {
-                data = _events.DeserializeEventData(resolvedType, json, bdata, _options.Serializer);
-            }
-            catch (Exception ex)
-            {
-                if (request.ErrorOptions.SkipSerializationErrors)
+                // Upcast FIRST, so the dotnet_type hint cannot shadow a registered transformation
+                // (marten#4680). The async delegate, because the daemon's read is awaited.
+                try
                 {
-                    skippedEvents++;
-                    continue;
+                    data = await _events
+                        .UpcastAsync(transformation!, json, _options.Serializer, token)
+                        .ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    if (request.ErrorOptions.SkipSerializationErrors)
+                    {
+                        skippedEvents++;
+                        continue;
+                    }
+
+                    // An upcast that throws is a payload-shape problem like any other failed
+                    // deserialization, so it carries the same ShardFailureCategory and obeys the same
+                    // SkipSerializationErrors policy rather than pausing the shard as something new.
+                    throw new Polecat.Exceptions.EventDeserializationFailureException(seqId, typeName, ex);
                 }
 
-                // #368 / jasperfx#565: report the store's type alias (the `type` column) rather than the
-                // assembly-qualified dotnet_type, matching what ShardFailure.Event.EventTypeName carries
-                // everywhere else and what a client-side consumer can act on.
-                throw new Polecat.Exceptions.EventDeserializationFailureException(seqId, typeName, ex);
+                mapping = _events.EventMappingFor(transformation!.EventType);
+            }
+            else
+            {
+                var resolvedType = _events.ResolveEventType(dotNetTypeName);
+                if (resolvedType == null)
+                {
+                    if (request.ErrorOptions.SkipUnknownEvents)
+                    {
+                        skippedEvents++;
+                        continue;
+                    }
+
+                    // #368 / jasperfx#565: a typed exception carrying its own ShardFailureCategory, so a shard
+                    // paused by an unregistered event type reports UnknownEventType with the offending
+                    // sequence rather than classifying as Other with no detail. The daemon does not sniff
+                    // exception type names — the exception has to declare its own kind.
+                    throw new Polecat.Exceptions.UnknownEventTypeException(dotNetTypeName, seqId);
+                }
+
+                try
+                {
+                    data = _events.DeserializeEventData(resolvedType, json, bdata, _options.Serializer);
+                }
+                catch (Exception ex)
+                {
+                    if (request.ErrorOptions.SkipSerializationErrors)
+                    {
+                        skippedEvents++;
+                        continue;
+                    }
+
+                    // #368 / jasperfx#565: report the store's type alias (the `type` column) rather than the
+                    // assembly-qualified dotnet_type, matching what ShardFailure.Event.EventTypeName carries
+                    // everywhere else and what a client-side consumer can act on.
+                    throw new Polecat.Exceptions.EventDeserializationFailureException(seqId, typeName, ex);
+                }
+
+                mapping = _events.EventMappingFor(resolvedType);
             }
 
-            var mapping = _events.EventMappingFor(resolvedType);
             var @event = mapping.Wrap(data);
 
             @event.Id = eventId;
