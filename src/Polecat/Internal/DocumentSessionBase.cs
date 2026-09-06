@@ -1,6 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using JasperFx;
+using JasperFx.Core.Reflection;
 using JasperFx.Events;
 using JasperFx.Events.Daemon;
 using JasperFx.Events.Fetching;
@@ -504,6 +505,19 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     {
         var fragment = ParseDeleteWhere(predicate);
         var storage = ClosedShapeDeletionStorageFor<T>();
+        // gh-558: UndeleteFragment is an UPDATE of is_deleted / deleted_at, columns DocumentTable
+        // only adds for a soft-deleted type. Refused here, naming the type, rather than left to
+        // fail at SaveChangesAsync as SQL Server's "Invalid column name 'is_deleted'". Marten and
+        // Fisher both guard the same call.
+        if (!storage.IsSoftDeleted)
+        {
+            throw new InvalidOperationException(
+                $"'{typeof(T).FullNameInCode()}' is not configured for soft deletes, so a delete removed "
+                + "the row outright and there is nothing to undo. Mark it with [SoftDeleted], implement "
+                + $"ISoftDeleted, or call StoreOptions.Schema.For<{typeof(T).NameInCode()}>().SoftDeleted() "
+                + "if it should be.");
+        }
+
         _workTracker.Add(new UndoDeleteWhereOperation(
             storage.UndeleteFragment, storage.IsConjoined, TenantId, fragment, typeof(T)));
     }

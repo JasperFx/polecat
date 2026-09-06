@@ -99,6 +99,10 @@ internal class EventLinqQueryProvider : IPolecatAsyncQueryProvider
     {
         // HasTag() is only meaningful over IEvent queries, where the FROM table is pc_events.
         var parser = new LinqQueryParser(_memberFactory, _eventsTable,
+            // gh-558: the events table has no is_deleted column, so a soft-delete operator over an
+            // event query is refused rather than ignored, exactly as it is over a hard-delete
+            // document type.
+            SoftDeleteTarget.NeverSoftDeleted("The event store"),
             _isAllEvents ? [new HasTagParser(_events)] : null);
         parser.Parse(expression);
 

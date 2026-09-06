@@ -93,6 +93,15 @@ var oldDeleted = await session.Query<Order>()
     .ToListAsync();
 ```
 
+::: warning Only against a soft-deleted type
+All four operators are refused with a `BadLinqExpressionException` when the document type is not
+configured for soft deletes, because there is no `is_deleted` column for them to filter on. They
+used to be silently ignored instead, so `IsDeleted()` on a hard-delete type returned *every* row
+rather than none. If you remove a type from soft-delete configuration, its existing
+`IsDeleted()` / `MaybeDeleted()` queries will now throw — which is the point, but it is a behavior
+change. Marten and Fisher refuse the same calls.
+:::
+
 ### Undoing Soft Deletes
 
 Restore soft-deleted documents:
@@ -101,6 +110,9 @@ Restore soft-deleted documents:
 session.UndoDeleteWhere<Order>(x => x.Description == "Restore me");
 await session.SaveChangesAsync();
 ```
+
+`UndoDeleteWhere` also throws an `InvalidOperationException` for a type that is not soft-deleted — a
+delete removed the row outright, so there is nothing to undo.
 
 ## Hard Delete (Force)
 
