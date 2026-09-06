@@ -485,21 +485,56 @@ internal class EventOperations : QueryEventStore, IEventOperations
     public void ArchiveStream(Guid streamId)
     {
         _workTracker.Add(_events.ArchiveStreamOperation(streamId, _tenantId, archived: true));
+        SetNaturalKeysArchived(streamId, archived: true);
     }
 
     public void ArchiveStream(string streamKey)
     {
         _workTracker.Add(_events.ArchiveStreamOperation(streamKey, _tenantId, archived: true));
+        SetNaturalKeysArchived(streamKey, archived: true);
     }
 
     public void UnArchiveStream(Guid streamId)
     {
         _workTracker.Add(_events.ArchiveStreamOperation(streamId, _tenantId, archived: false));
+        SetNaturalKeysArchived(streamId, archived: false);
     }
 
     public void UnArchiveStream(string streamKey)
     {
         _workTracker.Add(_events.ArchiveStreamOperation(streamKey, _tenantId, archived: false));
+        SetNaturalKeysArchived(streamKey, archived: false);
+    }
+
+    /// <summary>
+    ///     Carry an explicit archive (or un-archive) through to every natural key lookup table, so a
+    ///     key stops resolving to a stream that is no longer live.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         #556. Polecat had only ONE of the two routes into an archived lookup row: an
+    ///         <see cref="Archived" /> EVENT, which <c>NaturalKeyProjection</c> sees as it goes past.
+    ///         The explicit <c>ArchiveStream</c> API queues no event, so its stream's key stayed live
+    ///         in the lookup and <c>FetchLatest&lt;T, TKey&gt;</c> went on resolving an archived
+    ///         stream. Found by
+    ///         <c>NaturalKeyCompliance.an_archived_stream_no_longer_resolves_by_natural_key</c>.
+    ///     </para>
+    ///     <para>
+    ///         Fisher does not have the equivalent gap because it resolves the lookup by JOINing the
+    ///         streams table rather than copying the flag onto the lookup row, so both routes are free
+    ///         there. Polecat copies the flag — cheaper to read, and this is the cost of it: every
+    ///         writer of <c>is_archived</c> on a stream has to write it here too.
+    ///     </para>
+    /// </remarks>
+    private void SetNaturalKeysArchived(object streamIdentity, bool archived)
+    {
+        foreach (var definition in _events.NaturalKeyDefinitions())
+        {
+            _workTracker.Add(new Projections.NaturalKeyArchiveOperation(
+                _events.NaturalKeyTableName(definition.AggregateType), streamIdentity,
+                _events.StreamIdentity == JasperFx.Events.StreamIdentity.AsGuid,
+                _events.TenancyStyle == TenancyStyle.Conjoined, _tenantId, archived));
+        }
     }
 
     public void TombstoneStream(Guid streamId)

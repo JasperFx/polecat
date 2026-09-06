@@ -178,6 +178,23 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
     internal string NaturalKeyTableName(Type aggregateType)
         => Polecat.Internal.SqlEscaping.QualifiedName(DatabaseSchemaName, NaturalKeyTableNameFor(aggregateType));
 
+    /// <summary>
+    ///     Every registered natural key definition — one per aggregate projection that declares a
+    ///     <c>[NaturalKey]</c> property, and therefore one lookup table each.
+    /// </summary>
+    /// <remarks>
+    ///     #556: needed by the explicit archive path, which has a stream identity but no event to
+    ///     route on, so it has to touch every lookup table rather than the one an event's aggregate
+    ///     type would have named. Reads the same registered projections
+    ///     <c>BuildInlineProjections</c> derives its <c>NaturalKeyProjection</c> instances from, so
+    ///     the two paths cannot drift apart over which tables exist.
+    /// </remarks>
+    internal IEnumerable<NaturalKeyDefinition> NaturalKeyDefinitions()
+        => _options.Projections.All
+            .OfType<IAggregateProjection>()
+            .Select(x => x.NaturalKeyDefinition)
+            .Where(x => x != null)!;
+
     private ManagedTenantPartitions? _tenantPartitions;
 
     /// <summary>

@@ -17,15 +17,23 @@ internal class NaturalKeyArchiveOperation : Polecat.Internal.IStorageOperation
     private readonly bool _isGuidStream;
     private readonly bool _isConjoined;
     private readonly string? _tenantId;
+    private readonly bool _archived;
 
+    /// <param name="archived">
+    ///     #556: false un-archives. The explicit UnArchiveStream API has to be able to put a key back
+    ///     into service, or an un-archived stream would stay permanently unreachable by the
+    ///     identifier it was created with -- the same silent unreachability #549 is about, reached
+    ///     from the other side. The Archived-event path only ever passes true.
+    /// </param>
     public NaturalKeyArchiveOperation(string tableName, object streamId, bool isGuidStream,
-        bool isConjoined = false, string? tenantId = null)
+        bool isConjoined = false, string? tenantId = null, bool archived = true)
     {
         _tableName = tableName;
         _streamId = streamId;
         _isGuidStream = isGuidStream;
         _isConjoined = isConjoined;
         _tenantId = tenantId;
+        _archived = archived;
     }
 
     public Type DocumentType => typeof(object);
@@ -35,7 +43,7 @@ internal class NaturalKeyArchiveOperation : Polecat.Internal.IStorageOperation
     {
         var streamColumn = _isGuidStream ? "stream_id" : "stream_key";
 
-        builder.Append($"UPDATE {_tableName} SET is_archived = 1 WHERE {streamColumn} = ");
+        builder.Append($"UPDATE {_tableName} SET is_archived = {(_archived ? 1 : 0)} WHERE {streamColumn} = ");
         // #363: string stream keys must bind varchar to seek the varchar(250) stream_key column.
         builder.AppendParameter(_streamId, _streamId is string ? System.Data.SqlDbType.VarChar : null);
 

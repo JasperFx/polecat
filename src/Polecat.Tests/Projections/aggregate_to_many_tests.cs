@@ -127,98 +127,16 @@ public class aggregate_to_many_tests : OneOffConfigurationsContext
         aggregates.Single(x => x.Id == acctB).Amount.ShouldBe(50);
     }
 
-    [Fact]
-    public async Task excludes_aggregates_that_should_delete()
-    {
-        var store = await CreateStore();
-
-        var acctA = Guid.NewGuid();
-        var acctB = Guid.NewGuid();
-        var stream = Guid.NewGuid();
-
-        await using var session = store.LightweightSession();
-
-        session.Events.Append(stream,
-            new MoneyDeposited(acctA, 100),
-            new MoneyDeposited(acctB, 200),
-            new AccountFrozen(acctB));
-        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
-
-        var aggregates = await session.Events.QueryAllRawEvents()
-            .Where(e => e.StreamId == stream)
-            .AggregateToManyAsync<Balance>(TestContext.Current.CancellationToken);
-
-        // acctB is frozen (ShouldDelete) and so is absent; only acctA survives.
-        aggregates.Count.ShouldBe(1);
-        aggregates.Single().Id.ShouldBe(acctA);
-        aggregates.Single().Amount.ShouldBe(100);
-    }
-
-    [Fact]
-    public async Task enrichment_reads_reference_data_from_the_live_session()
-    {
-        var store = await CreateStore();
-
-        var cardA = Guid.NewGuid();
-        var cardB = Guid.NewGuid();
-        var cardC = Guid.NewGuid();
-        var memberX = Guid.NewGuid();
-        var memberY = Guid.NewGuid();
-
-        await using var session = store.LightweightSession();
-
-        // Present-day reference data the grouper reads during enrichment.
-        session.Store(new CardOwner { Id = cardA, MemberId = memberX });
-        session.Store(new CardOwner { Id = cardB, MemberId = memberX });
-        session.Store(new CardOwner { Id = cardC, MemberId = memberY });
-        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
-
-        var stream = Guid.NewGuid();
-        session.Events.Append(stream,
-            new LoyaltyEarned(cardA, 10),
-            new LoyaltyEarned(cardB, 5),
-            new LoyaltyEarned(cardC, 20));
-        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
-
-        var aggregates = await session.Events.QueryAllRawEvents()
-            .Where(e => e.StreamId == stream)
-            .AggregateToManyAsync<MemberLoyalty>(TestContext.Current.CancellationToken);
-
-        // Member-keyed, not card-keyed — only possible because the grouper read CardOwner from the session.
-        aggregates.Count.ShouldBe(2);
-        aggregates.Single(x => x.Id == memberX).Points.ShouldBe(15);
-        aggregates.Single(x => x.Id == memberY).Points.ShouldBe(20);
-    }
-
-    [Fact]
-    public async Task empty_query_returns_empty_list()
-    {
-        var store = await CreateStore();
-
-        await using var session = store.LightweightSession();
-
-        var aggregates = await session.Events.QueryAllRawEvents()
-            .Where(e => e.StreamId == Guid.NewGuid()) // matches nothing
-            .AggregateToManyAsync<Balance>(TestContext.Current.CancellationToken);
-
-        aggregates.ShouldBeEmpty();
-    }
-
-    [Fact]
-    public async Task throws_when_no_projection_produces_the_aggregate_type()
-    {
-        var store = await CreateStore();
-
-        await using var session = store.LightweightSession();
-
-        await Should.ThrowAsync<ArgumentException>(async () =>
-        {
-            await session.Events.QueryAllRawEvents().AggregateToManyAsync<UnrelatedAggregate>();
-        });
-    }
-
-    public class UnrelatedAggregate
-    {
-        public Guid Id { get; set; }
-    }
+    /* The four other facts this class used to carry -- excludes_aggregates_that_should_delete,
+     * enrichment_reads_reference_data_from_the_live_session, empty_query_returns_empty_list and
+     * throws_when_no_projection_produces_the_aggregate_type -- were retired when Polecat enrolled
+     * AggregateToManyCompliance (#556). The shared suite carries all four under the same names, so
+     * they were duplicates in the strictest sense: same scenario, same assertions, one copy per
+     * store.
+     *
+     * The one above stays because it is the DOCS sample: both sample_aggregate_to_many_projection
+     * (the types) and sample_aggregate_to_many (the query) are pulled into
+     * docs/events/querying.md by mdsnippets, and a compiling, executing sample is worth more than
+     * the duplication costs. It is the only fact in this file that is not carried upstream verbatim.
+     */
 }

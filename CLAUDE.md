@@ -138,8 +138,23 @@ Event sourcing behavior that Polecat and Marten both have belongs in
 `JasperFx.Events.ComplianceTests` (source-only package; the suites compile into `Polecat.Tests` so
 JasperFx's aggregate source generator binds Polecat's session types). Enroll a suite with an empty
 subclass in `Compliance/polecat_event_store_compliance.cs`, implement whatever seam it needs on
-`PolecatComplianceFixture`, and delete the Polecat-local copy. Ten suites are enrolled across three
-waves (#393, #400, #399).
+`PolecatComplianceFixture`, and delete the Polecat-local copy. **50 suites are enrolled across
+fifteen waves** — the enrollment files are `Compliance/polecat_event_store_compliance*.cs`, one per
+wave, and the fixture's `Supports…` overrides are the map of what Polecat has opted into.
+
+**A `Supports…` flag that is false is a claim, and it needs a reason in a comment.** Most recent
+gates default false so a store can enroll a suite across a package bump and flip the gate when the
+behavior lands — so "false" means either "not built yet" or "deliberate divergence", and only a
+comment tells the two apart. Polecat leaves exactly one false today:
+`SupportsCommitVisibilityProbe`, because SQL Server does not run READ COMMITTED SNAPSHOT by default
+and the probe would deadlock against the commit hook holding the transaction open.
+
+**Enrolling a suite is the first time it has ever run.** JasperFx enrolls only the document suites,
+so an event-sourcing suite arrives compile-checked and design-reasoned but never executed. Wave 15
+(#556) is the worked example: adopting nine suites found **five genuine Polecat bugs** — two the
+maintainer had already ruled on (#549, #553) and three nobody knew about, including two seams that
+were silently stubbed empty. Budget for that, and read a failure as evidence before reading it as a
+suite bug. When it *is* a suite bug, fix it upstream rather than weakening the assertion locally.
 
 To iterate on a suite before the JasperFx release, build against a working copy instead of the
 package:

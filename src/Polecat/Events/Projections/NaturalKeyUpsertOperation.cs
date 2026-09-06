@@ -1,5 +1,7 @@
 using System.Data.Common;
+using JasperFx.Core.Exceptions;
 using JasperFx.Events;
+using Microsoft.Data.SqlClient;
 using Polecat.Internal;
 using Weasel.Core;
 using Weasel.SqlServer;
@@ -31,8 +33,14 @@ namespace Polecat.Events.Projections;
 ///         identifier for a later stream.
 ///     </para>
 /// </remarks>
-internal class NaturalKeyUpsertOperation : Polecat.Internal.IStorageOperation
+internal class NaturalKeyUpsertOperation : Polecat.Internal.IStorageOperation, IExceptionTransform
 {
+    /// <summary>
+    ///     User-defined SQL error number the guard raises. Above the 50000 floor <c>THROW</c>
+    ///     requires, and carries the issue number so a stray occurrence in a log is traceable.
+    /// </summary>
+    internal const int DuplicateNaturalKeyErrorNumber = 51549;
+
     private readonly string _tableName;
     private readonly object _naturalKeyValue;
     private readonly object _streamId;
@@ -61,23 +69,24 @@ internal class NaturalKeyUpsertOperation : Polecat.Internal.IStorageOperation
         var streamColumn = _isGuidStream ? "stream_id" : "stream_key";
 
         // The matched arm fires only for this stream's own row, or for a row whose stream is already
-        // archived. Anything else is a second claimant on a live key and is left untouched, which is
-        // what PostprocessAsync detects. OUTPUT is how it detects it: MERGE emits one row per action
-        // it actually performs, so an untouched match emits nothing at all.
+        // archived. Anything else is a second claimant on a live key, and the MERGE leaves it
+        // untouched -- so @@ROWCOUNT is zero and the guard below turns that into a refusal.
         var matchedArm =
             $"WHEN MATCHED AND (target.{streamColumn} = source.{streamColumn} OR target.is_archived = 1) "
             + $"THEN UPDATE SET {streamColumn} = source.{streamColumn}, is_archived = 0";
 
-        // deleted.* is the pre-update image, so this hands the throw site the stream the key was
-        // already mapped to on the update path. It is NULL on the insert path, where there was no
-        // prior mapping -- and unreachable on the refusal path, which is precisely why the refusal
-        // has to probe for the existing id separately below.
-        var output = $"OUTPUT $action AS merge_action, deleted.{streamColumn} AS previous_stream";
+        // Detected in SQL rather than by reading a MERGE OUTPUT row back in PostprocessAsync,
+        // deliberately. The flush loop advances the reader one result set per queued operation, and
+        // a MERGE that emits OUTPUT rows does not line up with that walk -- an operation that reads
+        // rows here lands on a neighbour's result set and reports a conflict for a key that never
+        // had one. @@ROWCOUNT needs no result set at all and is read in the same batch that set it.
+        var guard =
+            $"IF @@ROWCOUNT = 0 THROW {DuplicateNaturalKeyErrorNumber}, 'Natural key already mapped to a different live stream', 1;";
 
         // HOLDLOCK on both branches: two sessions first-writing the same natural key would
         // otherwise both probe, both miss, and both insert against the unique key. See #500.
-        // The same lock is what makes the #549 refusal sound -- the matched row cannot be changed
-        // by another session between the MERGE and the probe that reads its stream back.
+        // The same lock is what makes the #549 refusal sound -- the matched row cannot change
+        // between the MERGE testing it and the guard reading @@ROWCOUNT.
         if (_isConjoined)
         {
             builder.Append($"""
@@ -93,8 +102,8 @@ internal class NaturalKeyUpsertOperation : Polecat.Internal.IStorageOperation
                 , 0)) AS source (natural_key_value, tenant_id, {streamColumn}, is_archived)
                 ON target.natural_key_value = source.natural_key_value AND target.tenant_id = source.tenant_id
                 {matchedArm}
-                WHEN NOT MATCHED THEN INSERT (natural_key_value, tenant_id, {streamColumn}, is_archived) VALUES (source.natural_key_value, source.tenant_id, source.{streamColumn}, source.is_archived)
-                {output};
+                WHEN NOT MATCHED THEN INSERT (natural_key_value, tenant_id, {streamColumn}, is_archived) VALUES (source.natural_key_value, source.tenant_id, source.{streamColumn}, source.is_archived);
+                {guard}
                 """);
         }
         else
@@ -110,26 +119,36 @@ internal class NaturalKeyUpsertOperation : Polecat.Internal.IStorageOperation
                 , 0)) AS source (natural_key_value, {streamColumn}, is_archived)
                 ON target.natural_key_value = source.natural_key_value
                 {matchedArm}
-                WHEN NOT MATCHED THEN INSERT (natural_key_value, {streamColumn}, is_archived) VALUES (source.natural_key_value, source.{streamColumn}, source.is_archived)
-                {output};
+                WHEN NOT MATCHED THEN INSERT (natural_key_value, {streamColumn}, is_archived) VALUES (source.natural_key_value, source.{streamColumn}, source.is_archived);
+                {guard}
                 """);
         }
     }
 
-    public async Task PostprocessAsync(DbDataReader reader, IList<Exception> exceptions, CancellationToken token)
+    public Task PostprocessAsync(DbDataReader reader, IList<Exception> exceptions, CancellationToken token)
+        => Task.CompletedTask;
+
+    /// <summary>
+    ///     Turn the guard's SQL error into the shared
+    ///     <see cref="DuplicateNaturalKeyException" />, which is what a store-agnostic caller — and
+    ///     <c>NaturalKeyCompliance.a_second_stream_cannot_claim_a_live_natural_key</c> — catches.
+    /// </summary>
+    /// <remarks>
+    ///     <see cref="DuplicateNaturalKeyException.ExistingStreamId" /> stays null. The conflict is
+    ///     inferred from a write that affected no rows rather than from a probe that read the
+    ///     existing row first, so the id the key was already mapped to is not in hand here; the
+    ///     shared exception makes both id members nullable for exactly this case. The key is the
+    ///     UNWRAPPED value, because NaturalKeyDefinition.Unwrap runs before the operation is queued.
+    /// </remarks>
+    public bool TryTransform(Exception original, out Exception? transformed)
     {
-        // One OUTPUT row means the MERGE inserted or updated -- the ordinary case. No row means the
-        // key matched a live row belonging to a DIFFERENT stream and the conditional matched arm
-        // declined to touch it, which is the #549 refusal.
-        if (await reader.ReadAsync(token).ConfigureAwait(false))
+        if (original is SqlException { Number: DuplicateNaturalKeyErrorNumber })
         {
-            return;
+            transformed = new DuplicateNaturalKeyException(_aggregateType, _naturalKeyValue, null, _streamId);
+            return true;
         }
 
-        // ExistingStreamId stays null: the refusal path produces no OUTPUT row, so the id the key was
-        // already mapped to is not in hand here, and re-reading it would need a second round trip
-        // inside a failing unit of work. The shared exception makes both id members nullable for
-        // exactly this "inferred the conflict from a write that affected no rows" case.
-        exceptions.Add(new DuplicateNaturalKeyException(_aggregateType, _naturalKeyValue, null, _streamId));
+        transformed = null;
+        return false;
     }
 }

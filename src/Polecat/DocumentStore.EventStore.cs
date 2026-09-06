@@ -479,14 +479,39 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
         return ProgressionNameFilter.For(roots);
     }
 
+    /// <remarks>
+    ///     ⚠️ The two branches below must agree on how a progression row is NAMED, and they did not
+    ///     until #556. Progression is keyed on <see cref="ShardName.Identity" /> — the versioned,
+    ///     per-tenant grammar (<c>Name:V2:All:tenant</c>) — never on the bare subscription name. The
+    ///     delete branch had that right through <see cref="ProgressionFilterFor" />; the rewind branch
+    ///     wrote a single row under the BARE name instead, which is not a row any agent reads or
+    ///     advances. Two things followed, and only the second was visible: the shard's real
+    ///     progression row was left untouched at its old position, and the orphan row sat at the
+    ///     floor forever, so the database never reported non-stale again.
+    ///     <para>
+    ///     Delivery still looked correct, which is what made it survive: the daemon restarts the
+    ///     agent with an explicit <c>SubscriptionExecutionRequest(sequenceFloor)</c>, so the replay
+    ///     happens whatever the row says. Found by
+    ///     <c>SubscriptionCompliance.a_rewind_to_a_sequence_floor_replays_only_past_it</c>, whose
+    ///     delivery assertions passed and whose non-stale wait timed out.
+    ///     </para>
+    /// </remarks>
     async Task IEventStore<IDocumentSession, IQuerySession>.RewindSubscriptionProgressAsync(
         IEventDatabase database, string subscriptionName, CancellationToken token, long? sequenceFloor)
     {
         var connStr = ResolveConnectionString(database, Options);
         var filter = ProgressionFilterFor(subscriptionName);
+
+        // The same roots the delete branch matches on, so a rewind rewinds exactly the rows a
+        // teardown would have removed.
+        var shards = ProgressionShardsFor(subscriptionName);
+        var identities = shards.Length > 0
+            ? shards.Select(x => x.Identity).Distinct().ToArray()
+            : [subscriptionName];
+
         await Options.ResiliencePipeline.ExecuteAsync(static async (state, ct) =>
         {
-            var (connString, progressionTable, name, seqFloor, where, filterParameters) = state;
+            var (connString, progressionTable, names, seqFloor, where, filterParameters) = state;
             await using var conn = new SqlConnection(connString);
             await conn.OpenAsync(ct);
 
@@ -503,21 +528,24 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
             }
             else
             {
-                await using var cmd = conn.CreateCommand();
-                // HOLDLOCK: concurrent rewinds of the same shard would otherwise both miss the row
-                // and both insert. See PolecatHighWaterDetector.MarkHighWaterAsync (#500).
-                cmd.CommandText = $"""
-                    MERGE {progressionTable} WITH (UPDLOCK, HOLDLOCK) AS target
-                    USING (SELECT @name AS name) AS source ON target.name = source.name
-                    WHEN MATCHED THEN UPDATE SET last_seq_id = @seq, last_updated = SYSDATETIMEOFFSET()
-                    WHEN NOT MATCHED THEN INSERT (name, last_seq_id, last_updated)
-                        VALUES (@name, @seq, SYSDATETIMEOFFSET());
-                    """;
-                cmd.Parameters.AddVarChar("@name", name);
-                cmd.Parameters.AddWithValue("@seq", seqFloor.Value);
-                await cmd.ExecuteNonQueryAsync(ct);
+                foreach (var name in names)
+                {
+                    await using var cmd = conn.CreateCommand();
+                    // HOLDLOCK: concurrent rewinds of the same shard would otherwise both miss the row
+                    // and both insert. See PolecatHighWaterDetector.MarkHighWaterAsync (#500).
+                    cmd.CommandText = $"""
+                        MERGE {progressionTable} WITH (UPDLOCK, HOLDLOCK) AS target
+                        USING (SELECT @name AS name) AS source ON target.name = source.name
+                        WHEN MATCHED THEN UPDATE SET last_seq_id = @seq, last_updated = SYSDATETIMEOFFSET()
+                        WHEN NOT MATCHED THEN INSERT (name, last_seq_id, last_updated)
+                            VALUES (@name, @seq, SYSDATETIMEOFFSET());
+                        """;
+                    cmd.Parameters.AddVarChar("@name", name);
+                    cmd.Parameters.AddWithValue("@seq", seqFloor.Value);
+                    await cmd.ExecuteNonQueryAsync(ct);
+                }
             }
-        }, (connStr, Events.ProgressionTableName, subscriptionName, sequenceFloor, filter.Where,
+        }, (connStr, Events.ProgressionTableName, identities, sequenceFloor, filter.Where,
             filter.Parameters), token);
     }
 

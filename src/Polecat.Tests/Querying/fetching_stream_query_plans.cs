@@ -19,95 +19,20 @@ public class fetching_stream_query_plans : IntegrationContext
     {
     }
 
-    [Fact]
-    public async Task fetch_stream_state_plan_standalone()
-    {
-        var streamId = await StartQuestStreamAsync();
 
-        await using var query = theStore.QuerySession();
-        var state = await query.QueryByPlanAsync(new FetchStreamStatePlan(streamId), TestContext.Current.CancellationToken);
-
-        state.ShouldNotBeNull();
-        state.Id.ShouldBe(streamId);
-        state.Version.ShouldBe(3);
-        state.IsArchived.ShouldBeFalse();
-    }
-
-    [Fact]
-    public async Task fetch_stream_state_plan_batched()
-    {
-        var streamId = await StartQuestStreamAsync();
-
-        await using var query = theStore.QuerySession();
-        var batch = query.CreateBatchQuery();
-        var fetcher = batch.QueryByPlan(new FetchStreamStatePlan(streamId));
-        await batch.Execute(TestContext.Current.CancellationToken);
-
-        var state = await fetcher;
-        state.ShouldNotBeNull();
-        state.Id.ShouldBe(streamId);
-        state.Version.ShouldBe(3);
-    }
-
-    [Fact]
-    public async Task fetch_stream_state_plan_yields_null_for_a_missing_stream()
-    {
-        await using var query = theStore.QuerySession();
-
-        (await query.QueryByPlanAsync(new FetchStreamStatePlan(Guid.NewGuid()), TestContext.Current.CancellationToken)).ShouldBeNull();
-
-        var batch = query.CreateBatchQuery();
-        var fetcher = batch.QueryByPlan(new FetchStreamStatePlan(Guid.NewGuid()));
-        await batch.Execute(TestContext.Current.CancellationToken);
-        (await fetcher).ShouldBeNull();
-    }
-
-    [Fact]
-    public async Task fetch_stream_plan_standalone()
-    {
-        var streamId = await StartQuestStreamAsync();
-
-        await using var query = theStore.QuerySession();
-        var events = await query.QueryByPlanAsync(new FetchStreamPlan(streamId), TestContext.Current.CancellationToken);
-
-        events.Count.ShouldBe(3);
-        events.Select(x => x.Version).ShouldBe([1, 2, 3]);
-        events[0].Data.ShouldBeOfType<QuestStarted>().Name.ShouldBe("Quest 1");
-    }
-
-    [Fact]
-    public async Task fetch_stream_plan_batched()
-    {
-        var streamId = await StartQuestStreamAsync();
-
-        await using var query = theStore.QuerySession();
-        var batch = query.CreateBatchQuery();
-        var fetcher = batch.QueryByPlan(new FetchStreamPlan(streamId));
-        await batch.Execute(TestContext.Current.CancellationToken);
-
-        var events = await fetcher;
-        events.Count.ShouldBe(3);
-        events.Select(x => x.Version).ShouldBe([1, 2, 3]);
-        events.ShouldAllBe(x => x.StreamId == streamId);
-    }
-
-    [Fact]
-    public async Task fetch_stream_plan_honors_the_version_cap()
-    {
-        var streamId = await StartQuestStreamAsync();
-
-        await using var query = theStore.QuerySession();
-
-        // Standalone and batched must apply the filter identically — the batched item composes its own
-        // SQL, so the cap is the thing most likely to drift between the two paths.
-        var standalone = await query.QueryByPlanAsync(new FetchStreamPlan(streamId, version: 2), TestContext.Current.CancellationToken);
-        standalone.Count.ShouldBe(2);
-
-        var batch = query.CreateBatchQuery();
-        var fetcher = batch.QueryByPlan(new FetchStreamPlan(streamId, version: 2));
-        await batch.Execute(TestContext.Current.CancellationToken);
-        (await fetcher).Count.ShouldBe(2);
-    }
+    /* Eight facts retired here when Polecat enrolled StreamQueryPlanCompliance (#556): the
+     * standalone/batched pair for both plans, the version cap, and the two missing-stream cases.
+     * The shared suite carries every one of them as a [Theory] over `batched`, which is a strictly
+     * better shape than the hand-split pairs this file had -- the two routes compose their SQL
+     * separately, and a theory makes it impossible to add a fact to one route and forget the other.
+     *
+     * The two below stay because the suite does NOT carry them, deliberately: `fromVersion` is a
+     * Polecat-only parameter on FetchStreamPlan (the shared FetchStreamAsync contract has only the
+     * inclusive cap the suite pins), and the one-round-trip assertion is about Polecat's batching
+     * behaviour rather than about the plans. `both_plans_resolve_a_string_keyed_stream` in the
+     * class below is the string-identity twin the suite does cover, kept only because it also
+     * exercises Polecat's own DefaultStoreFixture wiring for a string-keyed store.
+     */
 
     [Fact]
     public async Task fetch_stream_plan_honors_from_version()
@@ -124,18 +49,6 @@ public class fetching_stream_query_plans : IntegrationContext
         events[0].Version.ShouldBe(3);
     }
 
-    [Fact]
-    public async Task fetch_stream_plan_yields_an_empty_list_for_a_missing_stream()
-    {
-        await using var query = theStore.QuerySession();
-
-        (await query.QueryByPlanAsync(new FetchStreamPlan(Guid.NewGuid()), TestContext.Current.CancellationToken)).ShouldBeEmpty();
-
-        var batch = query.CreateBatchQuery();
-        var fetcher = batch.QueryByPlan(new FetchStreamPlan(Guid.NewGuid()));
-        await batch.Execute(TestContext.Current.CancellationToken);
-        (await fetcher).ShouldBeEmpty();
-    }
 
     [Fact]
     public async Task both_plans_share_one_round_trip_with_document_loads()
@@ -230,3 +143,4 @@ public class fetching_stream_query_plans_by_string_key : IAsyncLifetime
         events.ShouldAllBe(x => x.StreamKey == streamKey);
     }
 }
+

@@ -6,7 +6,11 @@ using JasperFx.Events.Daemon;
 using JasperFx.Events.Projections;
 using JasperFx.Events.Tags;
 using Microsoft.Data.SqlClient;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Polecat.Batching;
+using Polecat.Events;
+using Polecat.Linq;
 
 namespace Polecat.Tests.Compliance;
 
@@ -22,6 +26,27 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
     public DocumentStore Store => _store;
 
     protected override async Task BuildStoreAsync(ComplianceStoreConfig config)
+    {
+        var options = OptionsFor(config);
+
+        _store = new DocumentStore(options);
+        _disposables.Add(_store);
+
+        // Polecat applies schema changes explicitly rather than lazily -- one of the eight
+        // divergences the compliance seam exists to absorb.
+        await _store.Database.ApplyAllConfiguredChangesToDatabaseAsync().ConfigureAwait(false);
+    }
+
+    /// <summary>
+    ///     Translate the store-neutral configuration into Polecat's own <see cref="StoreOptions" />.
+    /// </summary>
+    /// <remarks>
+    ///     Split out of <see cref="BuildStoreAsync" /> for jasperfx#732: the coordinator suite needs
+    ///     the SAME configuration replayed onto a store built by the documented DI registration
+    ///     rather than by hand, and pointed at the same database and schema so the per-test
+    ///     <see cref="CleanEventDataAsync" /> isolation covers both.
+    /// </remarks>
+    private static StoreOptions OptionsFor(ComplianceStoreConfig config)
     {
         var schemaName = (config.SchemaName ?? "compliance").ToLowerInvariant();
 
@@ -71,12 +96,7 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
 
         config.ApplyTo(new PolecatComplianceRegistrar(options));
 
-        _store = new DocumentStore(options);
-        _disposables.Add(_store);
-
-        // Polecat applies schema changes explicitly rather than lazily -- one of the eight
-        // divergences the compliance seam exists to absorb.
-        await _store.Database.ApplyAllConfiguredChangesToDatabaseAsync().ConfigureAwait(false);
+        return options;
     }
 
     private static string connectionStringFor(ComplianceStoreConfig config)
@@ -199,6 +219,273 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
     /// </summary>
     public override bool SupportsLiveAggregationRegistration => false;
 
+    // ---------------------------------------------------------------------------------------------
+    // Wave 15 (JasperFx 2.64.0). Everything below is a capability the compliance library added a gate
+    // for, defaulting false so a store can enroll the suite across the bump and flip the gate when
+    // the behaviour lands. Polecat already shipped all of them, so the gates go true here and the
+    // seam members are one-line forwards into the surface each suite is actually about.
+    // ---------------------------------------------------------------------------------------------
+
+    /// <summary>
+    ///     jasperfx#764 / #549. Polecat maintains a <c>pc_natural_key_{type}</c> lookup table and
+    ///     routes the FetchForWriting / FetchForExclusiveWriting / FetchLatest triple through it.
+    /// </summary>
+    public override bool SupportsNaturalKeys => true;
+
+    // #364. Both operators are extensions in Polecat.Events over the store's raw-event queryable,
+    // which is why they cannot be reached through any shared interface. The single Where() is the
+    // seam's contract, not a convenience: the HasTag facts next door depend on the predicate staying
+    // in ONE tree.
+    public override bool SupportsAggregateToLinqOperators => true;
+
+    public override Task<T?> AggregateEventsToAsync<T>(IQuerySession session,
+        System.Linq.Expressions.Expression<Func<IEvent, bool>>? filter, T? initialState, CancellationToken token)
+        where T : class
+    {
+        IQueryable<IEvent> queryable = session.Events.QueryAllRawEvents();
+        if (filter != null)
+        {
+            queryable = queryable.Where(filter);
+        }
+
+        return queryable.AggregateToAsync(initialState, token);
+    }
+
+    public override Task<IReadOnlyList<T>> AggregateEventsToManyAsync<T>(IQuerySession session,
+        System.Linq.Expressions.Expression<Func<IEvent, bool>>? filter, CancellationToken token)
+        where T : class
+    {
+        IQueryable<IEvent> queryable = session.Events.QueryAllRawEvents();
+        if (filter != null)
+        {
+            queryable = queryable.Where(filter);
+        }
+
+        return queryable.AggregateToManyAsync<T>(token);
+    }
+
+    // The DCB HasTag LINQ marker. HasTagFilter has to invoke Polecat's OWN extension rather than
+    // hand-roll an equivalent lambda: HasTagParser matches on the method's declaring type, so an
+    // expression built any other way carries the wrong MethodInfo and is never recognized. Building
+    // the expression deliberately does not validate the tag type -- an unregistered tag throws at
+    // query translation, which is the behaviour has_tag_for_an_unregistered_tag_type_throws pins.
+    public override bool SupportsHasTagLinqPredicates => true;
+
+    public override async Task<IReadOnlyList<IEvent>> QueryRawEventsAsync(IQuerySession session,
+        System.Linq.Expressions.Expression<Func<IEvent, bool>> filter, CancellationToken token)
+        => await session.Events.QueryAllRawEvents().Where(filter).ToListAsync(token).ConfigureAwait(false);
+
+    public override System.Linq.Expressions.Expression<Func<IEvent, bool>> HasTagFilter<TTag>(TTag value)
+        => e => e.HasTag(value);
+
+    // #370 (parity with marten#5053). Polecat ships FetchStreamStatePlan and FetchStreamPlan, both
+    // implementing IQueryPlan<T> AND IBatchQueryPlan<T>, so one plan instance serves both routes --
+    // which is exactly what the suite's [Theory(batched)] parameter exists to tell apart.
+    public override bool SupportsStreamQueryPlans => true;
+
+    public override async Task<StreamState?> FetchStreamStateByPlanAsync(
+        IQuerySession session, object streamIdentity, bool batched, CancellationToken token)
+    {
+        var plan = streamIdentity switch
+        {
+            Guid streamId => new FetchStreamStatePlan(streamId),
+            string streamKey => new FetchStreamStatePlan(streamKey),
+            _ => throw new ArgumentOutOfRangeException(nameof(streamIdentity),
+                $"Polecat streams are identified by Guid or string, not {streamIdentity.GetType().FullName}")
+        };
+
+        if (!batched)
+        {
+            return await session.QueryByPlanAsync(plan, token).ConfigureAwait(false);
+        }
+
+        var batch = session.CreateBatchQuery();
+        var task = batch.QueryByPlan(plan);
+        await batch.Execute(token).ConfigureAwait(false);
+
+        return await task.ConfigureAwait(false);
+    }
+
+    public override async Task<IReadOnlyList<IEvent>> FetchStreamByPlanAsync(
+        IQuerySession session, object streamIdentity, long version, bool batched, CancellationToken token)
+    {
+        var plan = streamIdentity switch
+        {
+            Guid streamId => new FetchStreamPlan(streamId, version),
+            string streamKey => new FetchStreamPlan(streamKey, version),
+            _ => throw new ArgumentOutOfRangeException(nameof(streamIdentity),
+                $"Polecat streams are identified by Guid or string, not {streamIdentity.GetType().FullName}")
+        };
+
+        if (!batched)
+        {
+            return await session.QueryByPlanAsync(plan, token).ConfigureAwait(false);
+        }
+
+        var batch = session.CreateBatchQuery();
+        var task = batch.QueryByPlan(plan);
+        await batch.Execute(token).ConfigureAwait(false);
+
+        return await task.ConfigureAwait(false);
+    }
+
+    // #318. UnArchiveStream is genuinely Polecat-only -- Marten has no equivalent, which is why the
+    // gate defaults false and the operation is off the shared IEventStoreOperations. Like
+    // ArchiveStream it takes effect on SaveChanges rather than immediately.
+    public override bool SupportsUnarchiveStream => true;
+
+    public override void UnArchiveStream(IDocumentSession session, object streamIdentity)
+    {
+        switch (streamIdentity)
+        {
+            case Guid streamId:
+                session.Events.UnArchiveStream(streamId);
+                break;
+            case string streamKey:
+                session.Events.UnArchiveStream(streamKey);
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(streamIdentity),
+                    $"Polecat streams are identified by Guid or string, not {streamIdentity.GetType().FullName}");
+        }
+    }
+
+    // jasperfx#763 / #420. Polecat has a real message outbox (StoreOptions.MessageOutbox, defaulting
+    // to NulloMessageOutbox) that the projection batch vends from, so the outbox facts run rather
+    // than skip.
+    public override bool SupportsMessageOutbox => true;
+
+    /// <summary>
+    ///     SQL Server READ COMMITTED SNAPSHOT is NOT on by default, so a second session probing a row
+    ///     the open write transaction is mid-way through writing takes a shared lock and blocks until
+    ///     that transaction commits -- and the transaction is being held open by the very hook doing
+    ///     the probing. That is a deadlock, not a slow test, so the gate stays false.
+    /// </summary>
+    /// <remarks>
+    ///     The suite is explicit that skipping costs one fact and guessing wrong hangs the suite.
+    ///     Polecat's own commit-hook ordering is covered by the un-probed fact next to it, which is
+    ///     not gated. Revisit if the compliance store is ever built with RCSI enabled.
+    /// </remarks>
+    public override bool SupportsCommitVisibilityProbe => false;
+
+    // The declared allow list has to survive the hop into Polecat's own SubscriptionBase wrapper --
+    // see the registrar's Subscribe, which replays each type onto ISubscriptionOptions.IncludeType.
+    public override bool SupportsSubscriptionEventFilters => true;
+
+    // jasperfx#769. Polecat subclasses the shared harness as Polecat.Events.TestSupport
+    // .ProjectionScenario and exposes it on Advanced.EventProjectionScenario.
+    public override bool SupportsProjectionScenario => true;
+
+    /// <remarks>
+    ///     A FORWARD into Polecat's own documented entry point, deliberately not a re-implementation.
+    ///     The three lines behind EventProjectionScenario (construct, configure, ExecuteAsync) are
+    ///     trivial to inline here, and inlining them would pass the whole suite while Polecat's
+    ///     advertised entry point was missing or wired to the wrong store. The route is under test as
+    ///     much as the harness is.
+    /// </remarks>
+    public override Task RunProjectionScenarioAsync(
+        Action<JasperFx.Events.TestSupport.ProjectionScenario<IDocumentSession, IQuerySession>> configure,
+        CancellationToken token)
+        => _store.Advanced.EventProjectionScenario(scenario => configure(scenario), token);
+
+    /// <remarks>
+    ///     For the one fact the run entry point structurally cannot reach: a scenario's steps are
+    ///     consumed by its first run, so proving a second ExecuteAsync fails loudly rather than
+    ///     passing as a silent no-op needs a handle on the instance, and the entry point constructs
+    ///     one and throws it away.
+    /// </remarks>
+    public override JasperFx.Events.TestSupport.ProjectionScenario<IDocumentSession, IQuerySession>
+        CreateProjectionScenario() => new Polecat.Events.TestSupport.ProjectionScenario(_store);
+
+    /// <summary>
+    ///     jasperfx#732. Build and START a host registering Polecat the way the docs say to, so the
+    ///     suite can observe whether the documented DI registration actually produces a reachable
+    ///     <see cref="IProjectionCoordinator" />. Every other daemon suite drives a daemon this
+    ///     fixture built by hand, which can never see that gap -- fisher#138 shipped exactly it and
+    ///     passed all 37 suites while it did.
+    /// </summary>
+    /// <remarks>
+    ///     <c>AddProjectionCoordinator</c> rather than <c>AddAsyncDaemon</c>, and the two are
+    ///     mutually exclusive: only the coordinator registers
+    ///     <see cref="IProjectionCoordinator" />, so a host built on the daemon path would fail the
+    ///     first fact on a GetRequiredService throw. Solo mode because the suite runs one node and
+    ///     HotCold would have it race itself for the shard locks.
+    /// </remarks>
+    protected override async Task<IComplianceCoordinatorHost<IDocumentSession>> StartCoordinatorHostAsync(
+        ComplianceStoreConfig config, bool includeAncillaryStore)
+    {
+        var builder = Host.CreateApplicationBuilder();
+        builder.Services.AddLogging();
+
+        // The same options the fixture's own store was built from -- same database, same schema --
+        // so CleanEventDataAsync between tests covers the hosted store too.
+        builder.Services.AddPolecat(OptionsFor(config))
+            .AddProjectionCoordinator(DaemonMode.Solo);
+
+        if (includeAncillaryStore)
+        {
+            var ancillary = OptionsFor(config);
+            ancillary.DatabaseSchemaName = ancillary.DatabaseSchemaName + "_ancillary";
+
+            builder.Services.AddPolecatStore<IComplianceAncillaryStore>(_ => ancillary);
+            builder.Services.AddPolecat(OptionsFor(config))
+                .AddProjectionCoordinator<IComplianceAncillaryStore>(DaemonMode.Solo);
+        }
+
+        var host = builder.Build();
+        await host.StartAsync(Cancellation).ConfigureAwait(false);
+
+        return new PolecatCoordinatorHost(host);
+    }
+
+    /// <summary>
+    ///     Polecat supports ancillary stores through <c>AddPolecatStore&lt;T&gt;</c>, and
+    ///     <c>AddProjectionCoordinator&lt;T&gt;</c> gives each one its own marker-typed coordinator.
+    /// </summary>
+    public override bool SupportsAncillaryCoordinators => true;
+
+    /// <remarks>
+    ///     The marker-typed registration lands on Polecat's OWN
+    ///     <c>Polecat.Events.Daemon.Coordination.IProjectionCoordinator&lt;T&gt;</c> only -- unlike
+    ///     the non-generic case there is no forwarder onto the JasperFx base interface, so resolving
+    ///     the shared closed generic here would be a DI failure rather than an assertion failure.
+    /// </remarks>
+    public override IProjectionCoordinator AncillaryCoordinatorFrom(IServiceProvider services)
+        => services.GetRequiredService<
+            Polecat.Events.Daemon.Coordination.IProjectionCoordinator<IComplianceAncillaryStore>>();
+
+    /// <summary>
+    ///     Marker for the ancillary store the coordinator suite registers. A fixture-local type
+    ///     because every product constrains ancillary markers to its own store interface, so only a
+    ///     consumer can name one.
+    /// </summary>
+    public interface IComplianceAncillaryStore : IDocumentStore;
+
+    internal class PolecatCoordinatorHost : IComplianceCoordinatorHost<IDocumentSession>
+    {
+        private readonly IHost _host;
+
+        public PolecatCoordinatorHost(IHost host)
+        {
+            _host = host;
+        }
+
+        public IServiceProvider Services => _host.Services;
+
+        public IDocumentSession OpenSession()
+            => _host.Services.GetRequiredService<IDocumentStore>().LightweightSession();
+
+        public async ValueTask DisposeAsync()
+        {
+            // StopAsync before Dispose, deliberately: IHost.Dispose does NOT stop a started host, so
+            // disposing alone leaks the coordinator's daemon agents into the next test -- which on a
+            // shared SQL Server means they go on holding shard locks and polling a schema the next
+            // test is tearing down.
+            await _host.StopAsync().ConfigureAwait(false);
+            _host.Dispose();
+        }
+    }
+
     public override async ValueTask DisposeAsync()
     {
         foreach (var disposable in _disposables)
@@ -282,8 +569,30 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
         // Wave 8: the name is pinned to ComplianceSubscription.SubscriptionName rather than left to
         // default, because the products disagree on whether an unnamed subscription takes its short
         // or full type name and daemon progression is keyed on it.
+        //
+        // Wave 15 / jasperfx#768 adds the second half. A declared event allow list has to survive a
+        // hop no shared code can make for it: Subscribe(ISubscription) wraps the subscription in
+        // Polecat's own SubscriptionBase, and the daemon reads filters off the WRAPPER, which copies
+        // none across. Replaying each type onto ISubscriptionOptions.IncludeType is the whole of it,
+        // and is what SupportsSubscriptionEventFilters attests to.
         public void Subscribe(ComplianceSubscription subscription)
-            => _options.Projections.Subscribe(subscription, x => x.Name = ComplianceSubscription.SubscriptionName);
+            => _options.Projections.Subscribe(subscription, x =>
+            {
+                x.Name = ComplianceSubscription.SubscriptionName;
+
+                foreach (var eventType in subscription.IncludedEventTypes)
+                {
+                    x.IncludeType(eventType);
+                }
+            });
+
+        // jasperfx#763. Polecat spells the outbox as a single settable property on the event store
+        // options, which the projection batch asks for a batch from once per update. The suite's
+        // RecordingMessageOutbox has to be the instance the store actually resolves -- that is how
+        // it counts publishes at all, and a nonzero count is the fact that separates "implemented"
+        // from "silently dropped on the floor" (#420).
+        public void UseMessageOutbox(RecordingMessageOutbox outbox)
+            => _options.Events.MessageOutbox = outbox;
 
         // Wave 13 / jasperfx#725: composites. The seam member carries a throwing default because a
         // composite cannot be constructed by a suite -- PolecatCompositeProjection's constructor is
