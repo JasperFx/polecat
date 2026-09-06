@@ -257,6 +257,10 @@ public class sqlserver_descriptor_builder_tests : OneOffConfigurationsContext
     [Fact]
     public async Task numeric_descriptor_honours_an_explicit_revision_on_insert()
     {
+        await using var bootstrap = theStore.LightweightSession();
+        bootstrap.Store(new RevisionedDoc { Name = "seed" }); // force table creation
+        await bootstrap.SaveChangesAsync(TestContext.Current.CancellationToken);
+
         var descriptor = descriptorFor<RevisionedDoc>();
 
         await using var raw = theStore.LightweightSession();
