@@ -109,7 +109,7 @@ public class daemon_multi_tenancy_by_database_tests : IClassFixture<TenantDataba
     {
         using var store = CreateStore();
 
-        Should.Throw<DefaultTenantUsageDisabledException>(() => store.LightweightSession());
+        Should.Throw<Polecat.Exceptions.DefaultTenantUsageDisabledException>(() => store.LightweightSession());
     }
 
     /// <summary>
@@ -120,7 +120,7 @@ public class daemon_multi_tenancy_by_database_tests : IClassFixture<TenantDataba
     {
         using var store = CreateStore();
 
-        await Should.ThrowAsync<DefaultTenantUsageDisabledException>(async () =>
+        await Should.ThrowAsync<Polecat.Exceptions.DefaultTenantUsageDisabledException>(async () =>
         {
             await store.BuildProjectionDaemonAsync();
         });

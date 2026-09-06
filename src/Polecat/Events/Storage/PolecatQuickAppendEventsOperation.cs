@@ -345,7 +345,7 @@ internal sealed class PolecatQuickAppendEventsOperation
             if (sql is { Number: 2627 })
             {
                 var id = Stream.Key is not null ? (object)Stream.Key : Stream.Id;
-                transformed = new ExistingStreamIdCollisionException(id);
+                transformed = new Polecat.Exceptions.ExistingStreamIdCollisionException(id);
                 return true;
             }
         }

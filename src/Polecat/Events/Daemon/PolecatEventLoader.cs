@@ -224,7 +224,7 @@ internal class PolecatEventLoader : IEventLoader
                 // paused by an unregistered event type reports UnknownEventType with the offending
                 // sequence rather than classifying as Other with no detail. The daemon does not sniff
                 // exception type names — the exception has to declare its own kind.
-                throw new UnknownEventTypeException(dotNetTypeName, seqId);
+                throw new Polecat.Exceptions.UnknownEventTypeException(dotNetTypeName, seqId);
             }
 
             object data;
@@ -243,7 +243,7 @@ internal class PolecatEventLoader : IEventLoader
                 // #368 / jasperfx#565: report the store's type alias (the `type` column) rather than the
                 // assembly-qualified dotnet_type, matching what ShardFailure.Event.EventTypeName carries
                 // everywhere else and what a client-side consumer can act on.
-                throw new EventDeserializationFailureException(seqId, typeName, ex);
+                throw new Polecat.Exceptions.EventDeserializationFailureException(seqId, typeName, ex);
             }
 
             var mapping = _events.EventMappingFor(resolvedType);

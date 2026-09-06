@@ -432,7 +432,7 @@ public class event_metadata_tests : OneOffConfigurationsContext
         await using var session2 = theStore.LightweightSession();
         session2.Events.StartStream(streamId, new QuestStarted("Duplicate"));
 
-        await Should.ThrowAsync<ExistingStreamIdCollisionException>(
+        await Should.ThrowAsync<Polecat.Exceptions.ExistingStreamIdCollisionException>(
             session2.SaveChangesAsync(TestContext.Current.CancellationToken));
     }
 

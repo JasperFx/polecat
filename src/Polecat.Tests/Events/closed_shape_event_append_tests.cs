@@ -107,7 +107,7 @@ public class closed_shape_event_append_tests : IntegrationContext
         await using var second = theStore.LightweightSession();
         second.Events.StartStream(streamId, new QuestStarted("Second"));
 
-        await Should.ThrowAsync<ExistingStreamIdCollisionException>(async () =>
+        await Should.ThrowAsync<Polecat.Exceptions.ExistingStreamIdCollisionException>(async () =>
             await second.SaveChangesAsync());
     }
 

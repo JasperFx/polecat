@@ -116,6 +116,6 @@ internal class NaturalKeyProjection : IInlineProjection<IDocumentSession>
 
         sessionBase.WorkTracker.Add(
             new NaturalKeyUpsertOperation(_qualifiedTableName, unwrapped, streamId, _isGuidStream,
-                _isConjoined, tenantId));
+                _definition.AggregateType, _isConjoined, tenantId));
     }
 }

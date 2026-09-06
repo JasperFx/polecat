@@ -1,5 +1,3 @@
-using JasperFx.Events.Daemon;
-
 namespace Polecat.Exceptions;
 
 /// <summary>
@@ -7,50 +5,27 @@ namespace Polecat.Exceptions;
 ///     deployment.
 /// </summary>
 /// <remarks>
-///     #368 / jasperfx#565: kept deliberately distinct from
-///     <see cref="ShardFailureCategory.EventSerialization" />. An alias that resolves to nothing is
-///     normally a missing registration or a rollback past the event type's introduction — a deployment
-///     fix, not a data fix — so an operator responds to it differently.
+///     <para>
+///         #368 / jasperfx#565: kept deliberately distinct from
+///         <see cref="JasperFx.Events.Daemon.ShardFailureCategory.EventSerialization" />. An alias
+///         that resolves to nothing is normally a missing registration or a rollback past the event
+///         type's introduction — a deployment fix, not a data fix — so an operator responds to it
+///         differently.
+///     </para>
+///     <para>
+///         jasperfx#751 lifted the whole shape, <see cref="JasperFx.Events.Daemon.IEventFailureContext" />
+///         implementation included, into <see cref="JasperFx.Events.UnknownEventTypeException" />.
+///         Polecat keeps the name in its own namespace so existing <c>catch</c> sites go on
+///         compiling, and derives from the shared type so a store-agnostic caller catches it too.
+///     </para>
 /// </remarks>
-public class UnknownEventTypeException : Exception, IEventFailureContext
+public class UnknownEventTypeException : JasperFx.Events.UnknownEventTypeException
 {
-    /// <summary>
-    ///     The sequence reported when the throw site had no <c>pc_events</c> row in hand.
-    ///     <see cref="IEventFailureContext.Sequence" /> is non-nullable by contract, so a sentinel is
-    ///     unavoidable.
-    /// </summary>
-    public const long UnknownSequence = -1;
-
-    public UnknownEventTypeException(string? eventTypeName)
-        : this(eventTypeName, UnknownSequence)
+    public UnknownEventTypeException(string? eventTypeName) : base(eventTypeName)
     {
     }
 
-    public UnknownEventTypeException(string? eventTypeName, long sequence)
-        : base(
-            $"Unknown event type name alias '{eventTypeName}'. You may need to register this event type through StoreOptions.Events.AddEventType(type)")
+    public UnknownEventTypeException(string? eventTypeName, long sequence) : base(eventTypeName, sequence)
     {
-        EventTypeName = eventTypeName;
-        Sequence = sequence;
     }
-
-    /// <summary>
-    ///     Store-wide <c>seq_id</c> of the offending row, or <see cref="UnknownSequence" /> when the throw
-    ///     site had no row.
-    /// </summary>
-    public long Sequence { get; }
-
-    /// <summary>
-    ///     The unresolvable type name from the row.
-    /// </summary>
-    public string? EventTypeName { get; }
-
-    public ShardFailureCategory Category => ShardFailureCategory.UnknownEventType;
-
-    // The type never resolved, so no event was ever materialized to read these from.
-    Guid? IEventFailureContext.EventId => null;
-    Guid? IEventFailureContext.StreamId => null;
-    string? IEventFailureContext.StreamKey => null;
-    string? IEventFailureContext.TenantId => null;
-    long? IEventFailureContext.Version => null;
 }
