@@ -35,15 +35,26 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
     private readonly DocumentProviderRegistry _providers;
     private readonly DocumentTableEnsurer _tableEnsurer;
 
+    /// <summary>
+    ///     polecat#548: the tenant every implicit <c>tenant_id</c> filter is built from. Normally the
+    ///     driving session's own tenant; a ForTenant() view passes its override tenant so a LINQ query
+    ///     through it is scoped the same way its by-id loads are.
+    /// </summary>
+    private readonly string? _tenantOverride;
+
     public PolecatLinqQueryProvider(
         QuerySession session,
         DocumentProviderRegistry providers,
-        DocumentTableEnsurer tableEnsurer)
+        DocumentTableEnsurer tableEnsurer,
+        string? tenantOverride = null)
     {
         _session = session;
         _providers = providers;
         _tableEnsurer = tableEnsurer;
+        _tenantOverride = tenantOverride;
     }
+
+    private string TenantIdForFilter => _tenantOverride ?? _session.TenantId;
 
     // #234: document tenancy is global (DocumentMapping.TenancyStyle mirrors Events.TenancyStyle),
     // and only conjoined tables carry a tenant_id column. Every implicit tenant filter — for list,
@@ -159,7 +170,7 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
             }
             else
             {
-                parser.Statement.Wheres.Add(new ComparisonFilter("tenant_id", "=", _session.TenantId));
+                parser.Statement.Wheres.Add(new ComparisonFilter("tenant_id", "=", TenantIdForFilter));
             }
         }
 
@@ -219,7 +230,7 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
             }
             else
             {
-                parser.Statement.Wheres.Add(new ComparisonFilter("tenant_id", "=", _session.TenantId));
+                parser.Statement.Wheres.Add(new ComparisonFilter("tenant_id", "=", TenantIdForFilter));
             }
         }
 
@@ -292,7 +303,7 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
             }
             else
             {
-                parser.Statement.Wheres.Add(new ComparisonFilter("tenant_id", "=", _session.TenantId));
+                parser.Statement.Wheres.Add(new ComparisonFilter("tenant_id", "=", TenantIdForFilter));
             }
         }
 
@@ -394,7 +405,7 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
             }
             else
             {
-                parser.Statement.Wheres.Add(new ComparisonFilter("tenant_id", "=", _session.TenantId));
+                parser.Statement.Wheres.Add(new ComparisonFilter("tenant_id", "=", TenantIdForFilter));
             }
         }
 
@@ -550,7 +561,7 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
             else
             {
                 parser.Statement.Wheres.Add(
-                    new ComparisonFilter("tenant_id", "=", _session.TenantId));
+                    new ComparisonFilter("tenant_id", "=", TenantIdForFilter));
             }
         }
 
@@ -664,7 +675,7 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
             }
             else
             {
-                parser.Statement.Wheres.Add(new ComparisonFilter("tenant_id", "=", _session.TenantId));
+                parser.Statement.Wheres.Add(new ComparisonFilter("tenant_id", "=", TenantIdForFilter));
             }
         }
 
@@ -779,8 +790,8 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
             }
             else
             {
-                joinStatement.OuterWheres.Add(new ComparisonFilter("outer_t.tenant_id", "=", _session.TenantId));
-                joinStatement.InnerWheres.Add(new ComparisonFilter("inner_t.tenant_id", "=", _session.TenantId));
+                joinStatement.OuterWheres.Add(new ComparisonFilter("outer_t.tenant_id", "=", TenantIdForFilter));
+                joinStatement.InnerWheres.Add(new ComparisonFilter("inner_t.tenant_id", "=", TenantIdForFilter));
             }
         }
 

@@ -16,11 +16,20 @@ namespace Polecat.Internal;
 internal sealed class TenantScopedStorageSession : IStorageSession
 {
     private readonly IStorageSession _inner;
+    private readonly bool _shareIdentityState;
+    private Dictionary<Type, object>? _itemMap;
+    private IVersionTracker? _versions;
 
-    public TenantScopedStorageSession(IStorageSession inner, string tenantId)
+    /// <param name="shareIdentityState">
+    ///     True to alias the parent's identity map and version tracker (correct when this scope's
+    ///     documents are the parent's very same rows — single-tenant storage); false to keep this
+    ///     tenant's own, which conjoined storage requires. See the type remarks.
+    /// </param>
+    public TenantScopedStorageSession(IStorageSession inner, string tenantId, bool shareIdentityState = true)
     {
         _inner = inner;
         TenantId = tenantId;
+        _shareIdentityState = shareIdentityState;
     }
 
     public string TenantId { get; }
@@ -56,18 +65,40 @@ internal sealed class TenantScopedStorageSession : IStorageSession
 
     public IStorageSerializer Serializer => _inner.Serializer;
     public IStorageDatabase Database => _inner.Database;
-    public IVersionTracker Versions => _inner.Versions;
+    public IVersionTracker Versions => _shareIdentityState
+        ? _inner.Versions
+        : _versions ??= new PolecatVersionTracker();
+
     public IList<IChangeTracker> ChangeTrackers => _inner.ChangeTrackers;
-    public Dictionary<Type, object> ItemMap => _inner.ItemMap;
+
+    public Dictionary<Type, object> ItemMap => _shareIdentityState
+        ? _inner.ItemMap
+        : _itemMap ??= new Dictionary<Type, object>();
     public ConcurrencyChecks Concurrency => _inner.Concurrency;
 
     public IDocumentStorage StorageFor(Type documentType) => _inner.StorageFor(documentType);
 
     public IDocumentStorage<T> StorageFor<T>() where T : notnull => _inner.StorageFor<T>();
 
-    public void MarkAsAddedForStorage(object id, object document) => _inner.MarkAsAddedForStorage(id, document);
+    // polecat#548 — these are the hooks into the session's *bespoke* identity map
+    // (IdentityMapDocumentSession._identityMap), which is separate from the closed-shape ItemMap
+    // above and equally tenant-blind. Forwarding them while this scope is isolated would put this
+    // tenant's document into the parent's map under a bare id, so the parent's next load of that id
+    // would be answered with another tenant's document — marten#4801 by a second route.
+    //
+    // Dropping them when isolated is correct rather than merely safe: a nested tenant view's reads
+    // go through QuerySession's explicit-tenant path, which never consults a bespoke identity map,
+    // so there is no cache for these to populate on this side either.
 
-    public void MarkAsDocumentLoaded(object id, object document) => _inner.MarkAsDocumentLoaded(id, document);
+    public void MarkAsAddedForStorage(object id, object document)
+    {
+        if (_shareIdentityState) _inner.MarkAsAddedForStorage(id, document);
+    }
+
+    public void MarkAsDocumentLoaded(object id, object document)
+    {
+        if (_shareIdentityState) _inner.MarkAsDocumentLoaded(id, document);
+    }
 
     public Task<DbDataReader> ExecuteReaderAsync(DbCommand command, CancellationToken token = default)
         => _inner.ExecuteReaderAsync(command, token);

@@ -212,13 +212,13 @@ internal partial class QuerySession : IQuerySession, JasperFx.Events.IEventTenan
     // ── Existence check operations ──────────────────────────────────────
 
     public Task<bool> CheckExistsAsync<T>(Guid id, CancellationToken token = default) where T : class
-        => CheckExistsInternalAsync<T>(id, token);
+        => CheckExistsInternalAsync<T>(id, TenantId, token);
 
     public Task<bool> CheckExistsAsync<T>(string id, CancellationToken token = default) where T : class
-        => CheckExistsInternalAsync<T>(id, token);
+        => CheckExistsInternalAsync<T>(id, TenantId, token);
 
     public Task<bool> CheckExistsAsync<T>(int id, CancellationToken token = default) where T : class
-        => CheckExistsInternalAsync<T>(id, token);
+        => CheckExistsInternalAsync<T>(id, TenantId, token);
 
     /// <summary>
     ///     #219: ensure the event store schema exists on the fly before an event read/write.
@@ -227,9 +227,18 @@ internal partial class QuerySession : IQuerySession, JasperFx.Events.IEventTenan
         => _tableEnsurer.EnsureEventStoreSchemaAsync(token);
 
     public Task<bool> CheckExistsAsync<T>(long id, CancellationToken token = default) where T : class
-        => CheckExistsInternalAsync<T>(id, token);
+        => CheckExistsInternalAsync<T>(id, TenantId, token);
 
-    private async Task<bool> CheckExistsInternalAsync<T>(object id, CancellationToken token) where T : class
+    /// <summary>
+    ///     polecat#548: existence check against an explicit tenant. A ForTenant() view must not
+    ///     answer this from the parent session's tenant — see NestedTenantSession.
+    /// </summary>
+    internal Task<bool> CheckExistsForTenantAsync<T>(object id, string tenantId, CancellationToken token)
+        where T : class
+        => CheckExistsInternalAsync<T>(id, tenantId, token);
+
+    private async Task<bool> CheckExistsInternalAsync<T>(object id, string tenantId, CancellationToken token)
+        where T : class
     {
         assertNotDisposed();
         var provider = _providers.GetProvider<T>();
@@ -245,7 +254,7 @@ internal partial class QuerySession : IQuerySession, JasperFx.Events.IEventTenan
         var tenantFilter = provider.Mapping.TenancyStyle == TenancyStyle.Conjoined ? " AND tenant_id = @tenant_id" : "";
         cmd.CommandText = $"SELECT CAST(CASE WHEN EXISTS(SELECT 1 FROM {provider.Mapping.QualifiedTableName} WHERE id = @id{tenantFilter}{softDeleteFilter}) THEN 1 ELSE 0 END AS BIT);";
         cmd.Parameters.AddIdParameter("@id", id);
-        if (provider.Mapping.TenancyStyle == TenancyStyle.Conjoined) cmd.Parameters.AddVarChar("@tenant_id", TenantId);
+        if (provider.Mapping.TenancyStyle == TenancyStyle.Conjoined) cmd.Parameters.AddVarChar("@tenant_id", tenantId);
 
         Logger.OnBeforeExecute(cmd.CommandText);
         try
@@ -328,6 +337,49 @@ internal partial class QuerySession : IQuerySession, JasperFx.Events.IEventTenan
         return await LoadManyInternalAsync<T>(ids.Cast<object>().ToList(), token);
     }
 
+    /// <summary>
+    ///     polecat#548: by-id load against an explicit tenant, for ForTenant() views. Routes through
+    ///     the closed-shape storage's explicit-tenant overload, which binds the given tenant to the
+    ///     SELECT and bypasses the session's identity-map flavor logic — so a cross-tenant read
+    ///     cannot be answered out of (or poison) the parent session's tenant-blind ItemMap, which is
+    ///     the collision marten#4801 fixed on the Marten side.
+    /// </summary>
+    /// <param name="state">
+    ///     The storage session the read's identity-map/version bookkeeping runs against — the
+    ///     ForTenant view's own tenant scope, so a cross-tenant read cannot answer from, or write
+    ///     into, the parent's tenant-blind ItemMap (marten#4801).
+    /// </param>
+    internal async Task<T?> LoadForTenantAsync<T>(object id, string tenantId,
+        Weasel.Storage.IStorageSession state, CancellationToken token)
+        where T : notnull
+    {
+        assertNotDisposed();
+        var provider = _providers.GetProvider<T>();
+        await _tableEnsurer.EnsureTableAsync(provider, token);
+
+        var storage = (Polecat.Storage.ClosedShape.IPolecatObjectStorage<T>)
+            ((Weasel.Storage.IStorageSession)this).StorageFor<T>();
+        return await storage.LoadByObjectIdAsync(id, state, tenantId, token);
+    }
+
+    /// <summary>
+    ///     polecat#548: batched by-id load against an explicit tenant. See <see cref="LoadForTenantAsync{T}" />.
+    /// </summary>
+    internal async Task<IReadOnlyList<T>> LoadManyForTenantAsync<T>(
+        List<object> ids, string tenantId, Weasel.Storage.IStorageSession state, CancellationToken token)
+        where T : class
+    {
+        assertNotDisposed();
+        if (ids.Count == 0) return [];
+
+        var provider = _providers.GetProvider<T>();
+        await _tableEnsurer.EnsureTableAsync(provider, token);
+
+        var storage = (Polecat.Storage.ClosedShape.IPolecatObjectStorage<T>)
+            ((Weasel.Storage.IStorageSession)this).StorageFor<T>();
+        return await storage.LoadManyByObjectIdsAsync(ids, state, tenantId, token);
+    }
+
     protected virtual async Task<IReadOnlyList<T>> LoadManyInternalAsync<T>(
         List<object> ids, CancellationToken token) where T : class
     {
@@ -350,6 +402,18 @@ internal partial class QuerySession : IQuerySession, JasperFx.Events.IEventTenan
         return new PolecatLinqQueryable<T>(provider);
     }
 
+    /// <summary>
+    ///     polecat#548: LINQ scoped to an explicit tenant, for ForTenant() views. The implicit
+    ///     tenant_id filter the provider adds to every conjoined query is built from this tenant
+    ///     rather than the session's own.
+    /// </summary>
+    internal IPolecatQueryable<T> QueryForTenant<T>(string tenantId) where T : notnull
+    {
+        assertNotDisposed();
+        var provider = new PolecatLinqQueryProvider(this, _providers, _tableEnsurer, tenantId);
+        return new PolecatLinqQueryable<T>(provider);
+    }
+
     public IBatchedQuery CreateBatchQuery()
     {
         assertNotDisposed();
@@ -362,18 +426,26 @@ internal partial class QuerySession : IQuerySession, JasperFx.Events.IEventTenan
     }
 
     public Task<string?> LoadJsonAsync<T>(Guid id, CancellationToken token = default) where T : class
-        => LoadJsonInternalAsync<T>(id, token);
+        => LoadJsonInternalAsync<T>(id, TenantId, token);
 
     public Task<string?> LoadJsonAsync<T>(string id, CancellationToken token = default) where T : class
-        => LoadJsonInternalAsync<T>(id, token);
+        => LoadJsonInternalAsync<T>(id, TenantId, token);
 
     public Task<string?> LoadJsonAsync<T>(int id, CancellationToken token = default) where T : class
-        => LoadJsonInternalAsync<T>(id, token);
+        => LoadJsonInternalAsync<T>(id, TenantId, token);
 
     public Task<string?> LoadJsonAsync<T>(long id, CancellationToken token = default) where T : class
-        => LoadJsonInternalAsync<T>(id, token);
+        => LoadJsonInternalAsync<T>(id, TenantId, token);
 
-    private async Task<string?> LoadJsonInternalAsync<T>(object id, CancellationToken token) where T : class
+    /// <summary>
+    ///     polecat#548: raw-JSON load against an explicit tenant, for ForTenant() views.
+    /// </summary>
+    internal Task<string?> LoadJsonForTenantAsync<T>(object id, string tenantId, CancellationToken token)
+        where T : class
+        => LoadJsonInternalAsync<T>(id, tenantId, token);
+
+    private async Task<string?> LoadJsonInternalAsync<T>(object id, string tenantId, CancellationToken token)
+        where T : class
     {
         assertNotDisposed();
         var provider = _providers.GetProvider<T>();
@@ -389,7 +461,7 @@ internal partial class QuerySession : IQuerySession, JasperFx.Events.IEventTenan
         var tenantFilter = provider.Mapping.TenancyStyle == TenancyStyle.Conjoined ? " AND tenant_id = @tenant_id" : "";
         cmd.CommandText = $"SELECT data FROM {provider.Mapping.QualifiedTableName} WHERE id = @id{tenantFilter}{softDeleteFilter};";
         cmd.Parameters.AddIdParameter("@id", id);
-        if (provider.Mapping.TenancyStyle == TenancyStyle.Conjoined) cmd.Parameters.AddVarChar("@tenant_id", TenantId);
+        if (provider.Mapping.TenancyStyle == TenancyStyle.Conjoined) cmd.Parameters.AddVarChar("@tenant_id", tenantId);
 
         Logger.OnBeforeExecute(cmd.CommandText);
         try
