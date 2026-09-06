@@ -194,6 +194,17 @@ paths. Upcasting (#561) is the one thing that must be consulted *before* it; see
 its SQL**, so any read-time reinterpretation of a row has to widen that filter too or the row is
 gone before hydration ever runs.
 
+That allow list is built from the event types a projection *declares*, so **an event type the
+FRAMEWORK writes is invisible to it** — no projection has an `Apply` for `Compacted<T>` or
+`Archived`, so neither reaches `IncludedEventTypes` from user code. `PolecatEventLoader`
+.`FrameworkMarkerTypes` is the one place that adds them back (#557), and it widens the allow-list
+*set* rather than either predicate on purpose: the pushed-down parameter array is taken from that
+set, so one addition covers both the SQL `IN` clause and the client-side fallback that carries an
+allow list too large to push down. A fix applied to only one of those paths produces a bug that
+appears solely on stores with more than 2000 event types. Note the asymmetry in what going missing
+costs: a dropped `Archived` loses an archival, but a dropped `Compacted<T>` loses the stream's whole
+pre-compaction history, because compaction *deletes* the events the marker replaces.
+
 ### Writing tests that survive being run in parallel processes
 
 The suite is a candidate for being run across several worker processes at once (Bobcat's supervisor
