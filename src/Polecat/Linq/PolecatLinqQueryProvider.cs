@@ -111,7 +111,8 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
         var provider = _providers.GetProvider(documentType);
 
         var memberFactory = new MemberFactory(_session.Options, provider.Mapping);
-        var parser = new LinqQueryParser(memberFactory, provider.Mapping.QualifiedTableName);
+        var parser = new LinqQueryParser(memberFactory, provider.Mapping.QualifiedTableName,
+            SoftDeleteTarget.For(provider.Mapping));
         parser.Parse(expression);
 
         ApplySingleValueMode(parser);
@@ -150,7 +151,8 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
         await _tableEnsurer.EnsureTableAsync(provider, token);
 
         var memberFactory = new MemberFactory(_session.Options, provider.Mapping);
-        var parser = new LinqQueryParser(memberFactory, provider.Mapping.QualifiedTableName);
+        var parser = new LinqQueryParser(memberFactory, provider.Mapping.QualifiedTableName,
+            SoftDeleteTarget.For(provider.Mapping));
         parser.Parse(expression);
 
         // Choose the streamed columns. A whole-document query streams the raw `data` column. A
@@ -215,7 +217,8 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
         await _tableEnsurer.EnsureTableAsync(provider, token);
 
         var memberFactory = new MemberFactory(_session.Options, provider.Mapping);
-        var parser = new LinqQueryParser(memberFactory, provider.Mapping.QualifiedTableName);
+        var parser = new LinqQueryParser(memberFactory, provider.Mapping.QualifiedTableName,
+            SoftDeleteTarget.For(provider.Mapping));
         parser.Parse(expression);
 
         // Read the persisted JSON and the version column together — one round trip, no reserialize.
@@ -284,7 +287,8 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
         await _tableEnsurer.EnsureTableAsync(provider, token);
 
         var memberFactory = new MemberFactory(_session.Options, provider.Mapping);
-        var parser = new LinqQueryParser(memberFactory, provider.Mapping.QualifiedTableName);
+        var parser = new LinqQueryParser(memberFactory, provider.Mapping.QualifiedTableName,
+            SoftDeleteTarget.For(provider.Mapping));
         parser.Parse(expression);
 
         // Ride the total-rows window column alongside the raw data column so the total comes back
@@ -372,7 +376,8 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
         await _tableEnsurer.EnsureTableAsync(provider, token);
 
         var memberFactory = new MemberFactory(_session.Options, provider.Mapping);
-        var parser = new LinqQueryParser(memberFactory, provider.Mapping.QualifiedTableName);
+        var parser = new LinqQueryParser(memberFactory, provider.Mapping.QualifiedTableName,
+            SoftDeleteTarget.For(provider.Mapping));
         parser.Parse(expression);
 
         var orderBy = parser.OrderByMembers;
@@ -519,7 +524,8 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
         await _tableEnsurer.EnsureTableAsync(provider, token);
 
         var memberFactory = new MemberFactory(_session.Options, provider.Mapping);
-        var parser = new LinqQueryParser(memberFactory, provider.Mapping.QualifiedTableName);
+        var parser = new LinqQueryParser(memberFactory, provider.Mapping.QualifiedTableName,
+            SoftDeleteTarget.For(provider.Mapping));
         parser.Parse(expression);
 
         // Route to GroupJoin execution if detected
