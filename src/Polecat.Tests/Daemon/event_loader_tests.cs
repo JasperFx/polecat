@@ -149,12 +149,138 @@ public class event_loader_tests : IntegrationContext
         failure.Event.EventTypeName.ShouldBe(alias);
     }
 
-    private async Task CorruptDotNetTypeAsync(long seqId, string dotNetType)
+    // ---- #550: the event-type allow-list is applied in SQL, not after hydration ----
+
+    /// <summary>
+    ///     The discriminating fact for pushing the filter into SQL. The run of non-matching events is
+    ///     longer than the batch size, so <c>TOP(@batchSize)</c> used to fill the page entirely with rows
+    ///     the client-side filter then discarded: the page came back empty, failed
+    ///     <c>CalculateCeiling</c>'s "did not fill the batch" test, and claimed the high-water mark as its
+    ///     ceiling after looking at only the first three rows of the range. The <c>QuestStarted</c> above
+    ///     them was stepped over and never delivered — a silently skipped event, not merely a slow one.
+    ///     With the filter in SQL the query scans the whole range for matches, finds it, and the ceiling
+    ///     it claims is honest.
+    /// </summary>
+    [Fact]
+    public async Task a_matching_event_beyond_a_run_of_filtered_events_is_still_delivered()
+    {
+        await AppendAsync(Enumerable.Range(0, 10)
+            .Select(object (i) => new MembersJoined(i + 1, $"Town {i}", [$"Member {i}"]))
+            .ToArray());
+        await AppendAsync(new QuestStarted("Beyond the run"));
+
+        var highWater = await GetHighestSeqIdAsync();
+
+        var page = await CreateFilteredLoader()
+            .LoadAsync(CreateRequest(0, highWater, batchSize: 3), TestContext.Current.CancellationToken);
+
+        page.Count.ShouldBe(1);
+        page.Single().Data.ShouldBeOfType<QuestStarted>();
+
+        // Everything up to the high-water mark was scanned for matches, so the whole non-matching run is
+        // behind the floor after a single page and the shard cannot stall on it.
+        page.Ceiling.ShouldBe(highWater);
+    }
+
+    /// <summary>
+    ///     The other half of the ceiling contract under a SQL-side filter: a page that fills its batch
+    ///     with matching events claims only as far as its last row, and the following request picks up
+    ///     from there and finishes the range.
+    /// </summary>
+    [Fact]
+    public async Task a_full_page_of_matching_events_reports_the_last_matched_sequence()
+    {
+        await AppendAsync(
+            new QuestStarted("one"), new MembersJoined(1, "A", ["a"]),
+            new QuestStarted("two"), new MembersJoined(2, "B", ["b"]),
+            new QuestStarted("three"), new MembersJoined(3, "C", ["c"]));
+
+        var seqIds = await GetAllSeqIdsAsync();
+        var highWater = seqIds.Last();
+
+        var page = await CreateFilteredLoader()
+            .LoadAsync(CreateRequest(0, highWater, batchSize: 2), TestContext.Current.CancellationToken);
+
+        page.Select(x => x.Sequence).ShouldBe([seqIds[0], seqIds[2]]);
+        page.Ceiling.ShouldBe(seqIds[2]);
+
+        var next = await CreateFilteredLoader()
+            .LoadAsync(CreateRequest(page.Ceiling, highWater, batchSize: 2),
+                TestContext.Current.CancellationToken);
+
+        next.Select(x => x.Sequence).ShouldBe([seqIds[4]]);
+        next.Ceiling.ShouldBe(highWater);
+    }
+
+    /// <summary>
+    ///     A regression guard on the shape of the pushed-down predicate. A row whose <c>dotnet_type</c>
+    ///     does not resolve fails a shard that wants it (the unfiltered control below), and must stay
+    ///     excluded for a shard that does not — the SQL filter has to reject an unrecognised
+    ///     <c>dotnet_type</c>, not wave it through. This already held before the push-down, because the
+    ///     client-side check also ran ahead of type resolution, so it does <em>not</em> discriminate the
+    ///     change; it pins behaviour the new <c>IN</c> clause could quietly break.
+    /// </summary>
+    [Fact]
+    public async Task a_filtered_load_still_excludes_an_unresolvable_event_of_another_type()
+    {
+        await AppendAsync(new QuestStarted("Keep me"), new MembersJoined(1, "Town", ["Discard me"]));
+
+        var seqIds = await GetAllSeqIdsAsync();
+        var highWater = seqIds.Last();
+        await CorruptDotNetTypeAsync(highWater, "Nope.NotARealEventType, Nope");
+
+        await Should.ThrowAsync<UnknownEventTypeException>(async () => await CreateLoader()
+            .LoadAsync(CreateRequest(0, highWater, batchSize: 100), TestContext.Current.CancellationToken));
+
+        var page = await CreateFilteredLoader()
+            .LoadAsync(CreateRequest(0, highWater, batchSize: 100), TestContext.Current.CancellationToken);
+
+        page.Count.ShouldBe(1);
+        page.Single().Data.ShouldBeOfType<QuestStarted>();
+        page.Ceiling.ShouldBe(highWater);
+    }
+
+    /// <summary>
+    ///     The <c>dotnet_type is null</c> disjunct in the pushed-down filter, which exists to preserve
+    ///     behaviour exactly. The client-side check only ever excluded a row that <em>had</em> a
+    ///     dotnet_type, so a null one reached hydration and failed there. Drop the disjunct and a
+    ///     filtered shard would instead step over such a row in silence — a different, worse answer than
+    ///     the loud one this store has always given.
+    /// </summary>
+    [Fact]
+    public async Task a_null_dotnet_type_still_reaches_hydration_under_a_filtered_load()
+    {
+        await AppendAsync(new QuestStarted("Keep me"), new MembersJoined(1, "Town", ["No type at all"]));
+
+        var seqIds = await GetAllSeqIdsAsync();
+        var highWater = seqIds.Last();
+        await CorruptDotNetTypeAsync(highWater, null);
+
+        await Should.ThrowAsync<UnknownEventTypeException>(async () => await CreateFilteredLoader()
+            .LoadAsync(CreateRequest(0, highWater, batchSize: 100), TestContext.Current.CancellationToken));
+    }
+
+    private PolecatEventLoader CreateFilteredLoader()
+    {
+        var filtering = new EventFilterable();
+        filtering.IncludeType<QuestStarted>();
+
+        return new PolecatEventLoader(theStore.Database.Events, theStore.Options,
+            theStore.Options.ConnectionString, filtering);
+    }
+
+    private async Task AppendAsync(params object[] events)
+    {
+        theSession.Events.StartStream(Guid.NewGuid(), events);
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
+    }
+
+    private async Task CorruptDotNetTypeAsync(long seqId, string? dotNetType)
     {
         await using var conn = await OpenConnectionAsync();
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = "UPDATE [dbo].[pc_events] SET dotnet_type = @type WHERE seq_id = @seq;";
-        cmd.Parameters.AddWithValue("@type", dotNetType);
+        cmd.Parameters.AddWithValue("@type", (object?)dotNetType ?? DBNull.Value);
         cmd.Parameters.AddWithValue("@seq", seqId);
         await cmd.ExecuteNonQueryAsync();
     }
