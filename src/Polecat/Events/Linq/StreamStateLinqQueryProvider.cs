@@ -79,7 +79,10 @@ internal class StreamStateLinqQueryProvider : IPolecatAsyncQueryProvider,
 
     public async Task<TResult> ExecuteAsync<TResult>(Expression expression, CancellationToken token)
     {
-        var parser = new LinqQueryParser(_memberFactory, _events.StreamsTableName);
+        // gh-558: the streams table has no is_deleted column either. An archived stream is a
+        // different thing from a soft-deleted document and is not what these operators name.
+        var parser = new LinqQueryParser(_memberFactory, _events.StreamsTableName,
+            SoftDeleteTarget.NeverSoftDeleted("The stream state table"));
         parser.Parse(expression);
 
         ApplySingleValueMode(parser);

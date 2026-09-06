@@ -18,6 +18,7 @@ namespace Polecat.Linq.Parsing;
 internal class LinqQueryParser : ExpressionVisitor
 {
     private readonly IMemberResolver _memberFactory;
+    private readonly SoftDeleteTarget _softDeleteTarget;
     private readonly WhereClauseParser _whereParser;
 
     public Statement Statement { get; }
@@ -91,6 +92,17 @@ internal class LinqQueryParser : ExpressionVisitor
     public DateTimeOffset? DeletedBeforeTimestamp { get; private set; }
 
     /// <summary>
+    ///     The name of the soft-delete operator the chain used, or null where it used none.
+    /// </summary>
+    /// <remarks>
+    ///     gh-558. Recorded so that <see cref="Parse" /> can refuse one against a target with no
+    ///     deletion state, rather than letting it fall through to "no filter" and an unfiltered
+    ///     query. Set from the declaring type rather than the operator name — see
+    ///     <see cref="VisitMethodCall" />.
+    /// </remarks>
+    public string? SoftDeleteOperator { get; private set; }
+
+    /// <summary>
     ///     If ModifiedSince() was called, the timestamp to filter by.
     /// </summary>
     public DateTimeOffset? ModifiedSinceTimestamp { get; private set; }
@@ -117,9 +129,11 @@ internal class LinqQueryParser : ExpressionVisitor
     public TimeSpan? NonStaleDataTimeout { get; private set; }
 
     public LinqQueryParser(IMemberResolver memberFactory, string fromTable,
+        SoftDeleteTarget softDeleteTarget,
         IReadOnlyList<Methods.IMethodCallParser>? additionalMethodParsers = null)
     {
         _memberFactory = memberFactory;
+        _softDeleteTarget = softDeleteTarget;
         _whereParser = new WhereClauseParser(memberFactory, additionalMethodParsers);
         Statement = new Statement { FromTable = fromTable };
     }
@@ -127,6 +141,37 @@ internal class LinqQueryParser : ExpressionVisitor
     public void Parse(Expression expression)
     {
         Visit(expression);
+        AssertSoftDeleteOperatorIsLegal();
+    }
+
+    /// <summary>
+    ///     gh-558: refuse a soft-delete operator applied to a target with no deletion state.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         Run once per parse, after the whole chain has been walked, so it fires for every query
+    ///         shape and every provider that builds a statement — the six execution paths in
+    ///         <c>PolecatLinqQueryProvider</c> plus the two event-store providers. The alternative,
+    ///         asserting beside each of the six places that append the <c>is_deleted</c> predicate,
+    ///         leaves a seventh execution path free to forget.
+    ///     </para>
+    ///     <para>
+    ///         Refused rather than ignored because the ignored form is the worse failure: the query
+    ///         succeeds, returns plausible rows, and the caller's filter did nothing.
+    ///         <c>MaybeDeleted()</c> is refused alongside the other three even though "include the
+    ///         deleted ones too" is arguably satisfied by a table that has none — writing it at all
+    ///         says the author believes the type is soft-deleted, and that belief is the bug. Marten
+    ///         and Fisher both refuse all four.
+    ///     </para>
+    /// </remarks>
+    private void AssertSoftDeleteOperatorIsLegal()
+    {
+        if (SoftDeleteOperator is null || _softDeleteTarget.IsSoftDeleted) return;
+
+        throw new BadLinqExpressionException(
+            $"{_softDeleteTarget.Description} is not configured for soft deletes, so {SoftDeleteOperator}() "
+            + "has no is_deleted column to filter on. The call is refused rather than silently ignored, "
+            + $"which would return every row. {_softDeleteTarget.Remedy}");
     }
 
     protected override Expression VisitMethodCall(MethodCallExpression node)
@@ -143,6 +188,16 @@ internal class LinqQueryParser : ExpressionVisitor
         if (node.Arguments.Count > 0)
         {
             Visit(node.Arguments[0]);
+        }
+
+        // gh-558: every method declared on SoftDeletedExtensions is a soft-delete operator by
+        // construction, so the gate keys on the declaring type rather than on the four names in the
+        // switch below. A fifth operator added to that class is caught here without this file being
+        // touched, which is the point -- the check cannot be forgotten because nothing has to
+        // remember it.
+        if (node.Method.DeclaringType == typeof(SoftDeletedExtensions))
+        {
+            SoftDeleteOperator = node.Method.Name;
         }
 
         switch (node.Method.Name)
