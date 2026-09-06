@@ -389,8 +389,9 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
                    $"OUTPUT {OutputColumn(mode)};";
         }
 
-        // UPDATE branch. Numeric: version SET-CASE + guard use the four trailing ? slots the
-        // shared numeric upsert binds after the client loop (all four carry the raw revision).
+        // UPDATE branch. Numeric GUARDED: version SET-CASE + guard use the four trailing ? slots
+        // the shared numeric upsert binds after the client loop (all four carry the raw revision).
+        // Numeric UNGUARDED (Overwrite): SET-CASE only, two slots -- see #565 at the guard below.
         var updateAssignments = new List<string> { "data = s.data" };
         if (numeric)
         {
@@ -418,13 +419,34 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
             // without having loaded it is a concurrency violation by design.
             guard = " AND t.guid_version = ?";
         }
-        else if (numeric)
+        else if (guarded && numeric)
         {
             // #559, strictly-greater: auto (? = 0) always wins; an explicit revision is accepted
             // only when it EXCEEDS the stored one, which is what lets it jump non-contiguously
             // (3 -> 10) and what makes re-storing at the loaded revision a concurrency failure.
-            // The shared numeric ops always bind the four trailing slots, so the shape is
-            // constant whether guarded or not.
+            //
+            // #565: gated on `guarded`. This arm used to fire for the UNGUARDED statement too, on
+            // the belief that "the shared numeric ops always bind the four trailing slots". They do
+            // not: NumericClosedShapeUpsertOperation binds four (SET-CASE 2 + guard 2), but
+            // NumericClosedShapeOverwriteOperation binds only the two SET-CASE slots, because
+            // Overwrite is by definition upsert WITHOUT the guard. So OverwriteSql emitted four ?
+            // against two bound values.
+            //
+            // The symptom was not the ADO parameter-count error you would expect, which is why
+            // nothing caught it. Slots are positional, and the guard is emitted BEFORE the SET-CASE
+            // in the statement, so the two values Overwrite binds landed on the guard and the
+            // SET-CASE was left holding the placeholders. A surplus slot does not merely add a
+            // stray predicate -- it MISALIGNS every trailing slot after it, and the bound values
+            // end up in the wrong expression:
+            //
+            //   WHEN MATCHED AND (@p5 = 0 OR t.version < @p6)          <- got the revision
+            //     THEN UPDATE SET version = CASE WHEN @p7 = 0 ... @p8  <- got DBNull
+            //
+            // So overwriting a row at revision 50 with revision 5 evaluated (5 = 0 OR 50 < 5),
+            // false, and WHEN MATCHED did nothing; WHEN NOT MATCHED could not fire because the ON
+            // clause had matched. Zero rows, no OUTPUT row. Overwrite has no missing-row exception
+            // path -- that is what makes it Overwrite -- so the write was silently discarded and
+            // the caller's document kept the stale revision.
             guard = " AND (? = 0 OR t.version < ?)";
         }
 

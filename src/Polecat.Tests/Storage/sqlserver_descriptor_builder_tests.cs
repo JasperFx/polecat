@@ -1,3 +1,4 @@
+using System.Data;
 using System.Data.Common;
 using Microsoft.Data.SqlClient;
 using OperationRole = Weasel.Core.OperationRole;
@@ -247,6 +248,169 @@ public class sqlserver_descriptor_builder_tests : OneOffConfigurationsContext
             doc, doc.Id, session.TenantId, descriptor, OperationRole.Upsert, revisions) { Revision = 0 };
         await executeAsync(resume, session);
         doc.Version.ShouldBe(11);
+    }
+
+    /// <summary>
+    ///     #565's general form: for every concurrency mode and every write shape, the statement's
+    ///     <c>?</c> slots and the operation's bound values agree.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///     The specific defect was one arm of the descriptor emitting guard slots for an unguarded
+    ///     statement, but the class of bug is wider: the SQL is built here and the values are bound
+    ///     over in <c>Weasel.Storage</c>, and nothing made the two agree except a reader keeping the
+    ///     count in their head. #565 asked for a check across every combination rather than only the
+    ///     shapes in use, because a shape nobody exercises is precisely where it hides.
+    ///     </para>
+    ///     <para>
+    ///     Asserting on the count directly would mean restating each expected number here and
+    ///     keeping those in step by hand, which is the same failure one level up. This asserts the
+    ///     invariant instead: after <c>ConfigureCommand</c>, no parameter slot is left unbound. An
+    ///     unbound slot has a null <c>Value</c>; a slot deliberately bound to nothing carries
+    ///     <c>DBNull.Value</c>, so the two are distinguishable.
+    ///     </para>
+    ///     <para>
+    ///     Worth knowing what the original failure actually looked like, since it was not what the
+    ///     issue predicted. Not an ADO parameter-count error: slots are positional and the guard is
+    ///     emitted before the SET-CASE, so the two values Overwrite binds landed on the GUARD and
+    ///     the SET-CASE kept the placeholders. A surplus slot misaligns every trailing slot after
+    ///     it. Overwriting a row at revision 50 with revision 5 evaluated
+    ///     <c>(5 = 0 OR 50 &lt; 5)</c>, false, so WHEN MATCHED did nothing and WHEN NOT MATCHED
+    ///     could not fire because the ON clause had matched -- zero rows, no OUTPUT row, and no
+    ///     missing-row exception path on Overwrite. The write was silently discarded. That is why
+    ///     this asserts on binding rather than on an expected throw.
+    ///     </para>
+    /// </remarks>
+    [Theory]
+    [InlineData(typeof(Target))]          // ConcurrencyMode.Off
+    [InlineData(typeof(VersionedDoc))]    // ConcurrencyMode.Optimistic
+    [InlineData(typeof(RevisionedDoc))]   // ConcurrencyMode.Numeric
+    [InlineData(typeof(LongVersionedDoc))]
+    [InlineData(typeof(SoftDeletedWithInterface))]
+    public async Task every_write_shape_binds_every_slot_it_emits(Type documentType)
+    {
+        await (Task)GetType()
+            .GetMethod(nameof(assertEveryWriteShapeBindsEverySlot),
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+            .MakeGenericMethod(documentType)
+            .Invoke(this, [])!;
+    }
+
+    private async Task assertEveryWriteShapeBindsEverySlot<TDoc>() where TDoc : notnull, new()
+    {
+        await using var bootstrap = theStore.LightweightSession();
+        bootstrap.Store(new TDoc());
+        await bootstrap.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        await using var raw = theStore.LightweightSession();
+        var session = (IStorageSession)raw;
+
+        var document = new TDoc();
+        typeof(TDoc).GetProperty("Id")!.SetValue(document, Guid.NewGuid());
+
+        var docStorage = (IDocumentStorage<TDoc, Guid>)session.StorageFor<TDoc>();
+
+        var shapes = new (string Name, Func<Weasel.Storage.IStorageOperation> Build)[]
+        {
+            ("Insert", () => docStorage.Insert(document, session, session.TenantId)),
+            ("Update", () => docStorage.Update(document, session, session.TenantId)),
+            ("Upsert", () => docStorage.Upsert(document, session, session.TenantId)),
+            ("Overwrite", () => docStorage.Overwrite(document, session, session.TenantId))
+        };
+
+        foreach (var (name, build) in shapes)
+        {
+            var builder = new BatchBuilder { TenantId = session.TenantId };
+            build().ConfigureCommand(builder, session);
+            var batch = builder.Compile();
+
+            foreach (var command in batch.BatchCommands)
+            {
+                // BatchBuilder seeds every slot it creates from the SQL with
+                // AppendParameter<object>(DBNull.Value, SqlDbType.NVarChar) -- so an unbound slot is
+                // NOT a null Value, it is that placeholder pair still sitting there untouched. Every
+                // real bind in these write paths either writes a non-DBNull value or calls
+                // SetParameterType, so the pair surviving both is the signature of a slot the
+                // statement emitted and the operation never filled.
+                var unbound = command.Parameters
+                    .Cast<SqlParameter>()
+                    .Select((p, i) => (Index: i, p.ParameterName, p.Value, p.SqlDbType))
+                    .Where(x => x.Value is DBNull && x.SqlDbType == SqlDbType.NVarChar)
+                    .ToArray();
+
+                unbound.ShouldBeEmpty(
+                    $"{typeof(TDoc).Name} {name}: the statement emits parameter slots the operation " +
+                    $"never binds, at index/name {string.Join(", ", unbound.Select(u => $"{u.Index}:{u.ParameterName}"))}. " +
+                    "An unbound slot does not raise -- it goes to the server as NULL, which in a " +
+                    "guard predicate is NULL rather than false and quietly matches nothing. " +
+                    $"SQL: {command.CommandText}");
+            }
+        }
+    }
+
+    /// <summary>
+    ///     #565: the numeric OVERWRITE path, which nothing exercised before this test.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///     Overwrite is "upsert without the concurrency guard", so it is built with
+    ///     <c>guarded: false</c> and <c>NumericClosedShapeOverwriteOperation</c> binds only the two
+    ///     SET-CASE slots. The descriptor's <c>else if (numeric)</c> arm was not gated on
+    ///     <c>guarded</c>, so <c>OverwriteSql</c> still emitted the guard's two trailing slots and
+    ///     the statement carried four <c>?</c> against two bound values.
+    ///     </para>
+    ///     <para>
+    ///     The behaviour under test is the point of Overwrite: it wins unconditionally. A stored
+    ///     revision far above the one being written must NOT raise, which is exactly what the
+    ///     stray guard would have done had the slots lined up.
+    ///     </para>
+    /// </remarks>
+    [Fact]
+    public async Task numeric_descriptor_overwrite_wins_regardless_of_the_stored_revision()
+    {
+        await using var bootstrap = theStore.LightweightSession();
+        bootstrap.Store(new RevisionedDoc { Name = "seed" });
+        await bootstrap.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        var descriptor = descriptorFor<RevisionedDoc>();
+
+        await using var raw = theStore.LightweightSession();
+        var session = (IStorageSession)raw;
+
+        var doc = new RevisionedDoc { Id = Guid.NewGuid(), Name = "r1" };
+        var revisions = new Dictionary<Guid, long>();
+
+        // Land the row at a high revision through the guarded path.
+        var seed = new NumericClosedShapeUpsertOperation<RevisionedDoc, Guid>(
+            doc, doc.Id, session.TenantId, descriptor, OperationRole.Upsert, revisions) { Revision = 50 };
+        await executeAsync(seed, session);
+        doc.Version.ShouldBe(50);
+
+        // An upsert BELOW the stored revision is a concurrency failure -- established by
+        // numeric_descriptor_auto_increments_and_guards_revisions, restated here only so the
+        // contrast with Overwrite on the very next line is unambiguous.
+        var guardedStale = new NumericClosedShapeUpsertOperation<RevisionedDoc, Guid>(
+            doc, doc.Id, session.TenantId, descriptor, OperationRole.Upsert, revisions) { Revision = 5 };
+        await Should.ThrowAsync<JasperFx.ConcurrencyException>(() => executeAsync(guardedStale, session));
+
+        // The same write through Overwrite succeeds and lands at exactly 5.
+        doc.Name = "overwritten";
+        var overwrite = new NumericClosedShapeOverwriteOperation<RevisionedDoc, Guid>(
+            doc, doc.Id, session.TenantId, descriptor, revisions) { Revision = 5 };
+        await executeAsync(overwrite, session);
+        doc.Version.ShouldBe(5);
+        revisions[doc.Id].ShouldBe(5);
+
+        var reloaded = await loadViaSharedSelectorAsync(descriptor, doc.Id, session);
+        reloaded.ShouldNotBeNull();
+        reloaded.Name.ShouldBe("overwritten");
+        reloaded.Version.ShouldBe(5);
+
+        // Auto (Revision = 0) through Overwrite still increments from what is stored.
+        var auto = new NumericClosedShapeOverwriteOperation<RevisionedDoc, Guid>(
+            doc, doc.Id, session.TenantId, descriptor, revisions) { Revision = 0 };
+        await executeAsync(auto, session);
+        doc.Version.ShouldBe(6);
     }
 
     /// <summary>
