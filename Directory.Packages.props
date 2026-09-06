@@ -363,15 +363,59 @@
              the streams table as a real IQueryable<StreamState> executed through the shared
              JasperFx.Events.Documents terminators — plus the StreamState.CompactedVersion
              compaction watermark, the StreamStateQueryCompliance suite (and a tenancy fact on the
-             conjoined suite), and the stream-query CLI command. -->
-        <PackageVersion Include="JasperFx" Version="2.64.0" />
-        <PackageVersion Include="JasperFx.Events" Version="2.64.0" />
+             conjoined suite), and the stream-query CLI command.
+
+             JasperFx 2.66.0 (from 2.64.0, spanning 2.65.0): a pure bug-fix bump. No new API, no new
+             suite, no production change here — the pin is the whole diff, and what it buys is that
+             every red compliance fact on this store goes green. Measured on the bump rather than
+             assumed: 8 red at 2.64.0, 0 red at 2.66.0, and the full Polecat.Tests suite is green at
+             2530 tests.
+
+             Four of the eight were suite bugs and four were product bugs, and they arrive across the
+             two releases:
+
+             2.65.0 — jasperfx#780, the suite half. Three facts.
+             projection_side_effect_compliance's two rebuild facts asked the daemon for
+             nameof(ComplianceWatchtowerProjection), which silently assumed a store names a projection
+             after the PROJECTION type; Polecat, like Marten, names it after the aggregated DOCUMENT
+             type, so both failed "No registered projection matches the name
+             'ComplianceWatchtowerProjection'. Available names are 'ComplianceWatchtower'". Neither
+             convention is wrong, which is exactly why a shared suite must not depend on either — the
+             projection now pins its own Name. And
+             aggregate_to_linq_operator_compliance.can_aggregate_with_initial_state_asynchronously
+             asserted a merge of creator output into supplied state that no store performs; the
+             over-tight assertion was dropped.
+
+             2.66.0 — jasperfx#784 (gh-778), the product half. Two facts, both
+             stream_archiving_compliance: capturing_an_archived_event_archives_a_string_identified_
+             stream and capturing_an_archived_event_through_an_async_snapshot_archives_the_stream,
+             each failing "state.IsArchived should be True but was False". An Archived event the
+             aggregate applies nothing for did not archive its stream, ON ANY STORE. Archived carries
+             no state, so an aggregate has no reason to declare an Apply for it, which left it out of
+             the projection's AllEventTypes — so AppliesTo answered false and ApplyInline's opening
+             streams.Where(x => AppliesTo(...)) screened the whole stream out before reading anything,
+             while the async shard's own filter never delivered the event into a slice at all.
+             jasperfx#780 closed the innermost of three gates and changed nothing on any store, which
+             is what sent #784 after the two outside it.
+
+             2.66.0 — jasperfx#788 (gh-787), a suite bug. Three facts, all upcasting_compliance.
+             The raw-JSON fact reached the stored body with a case-sensitive GetProperty("CartId").
+             Property casing is a store-serializer decision — Marten's default PropertyNamingPolicy
+             is null, Polecat's and Fisher's is camelCase — so the fact passed on Marten and threw
+             KeyNotFoundException here. The live-aggregation and daemon facts append a coupon event
+             and went down with it; the daemon one surfaced as a shard that recorded no progress.
+
+             Worth recording for the next reader: Fisher was the store that ran these suites first
+             and filed both #784 and #788. Polecat inherits both fixes without having had to
+             diagnose either, which is the whole argument for the shared suites. -->
+        <PackageVersion Include="JasperFx" Version="2.66.0" />
+        <PackageVersion Include="JasperFx.Events" Version="2.66.0" />
         <!--
              The shared cross-store event sourcing compliance suites. Source-only package: the
              suites compile inside Polecat.Tests so JasperFx's aggregate source generator binds
              Polecat's own session types.
         -->
-        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="2.64.0" />
+        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="2.66.0" />
         <!-- Pin the sibling JasperFx packages for parity with Marten 9's matrix
              even though Polecat doesn't currently reference them directly —
              keeps the lockstep matrix coherent when transitive resolution
@@ -379,7 +423,7 @@
              RuntimeCompiler 5.x line is the active continuation of the 4.x
              lineage; do not pin against the parallel stale 2.0.x series. -->
         <PackageVersion Include="JasperFx.RuntimeCompiler" Version="5.0.0" />
-        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.64.0" />
+        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.66.0" />
         <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
@@ -543,7 +587,7 @@
         <PackageVersion Include="Vogen" Version="7.0.0" />
 
         <!-- Source generators (matched to JasperFx.Events above) -->
-        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.64.0" />
+        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.66.0" />
 
         <!-- Build automation -->
         <PackageVersion Include="Nuke.Common" Version="9.0.4" />
