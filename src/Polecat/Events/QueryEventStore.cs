@@ -36,6 +36,21 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
         _options = options;
     }
 
+    /// <remarks>
+    ///     ⚠️ <b>Upcasting deliberately does not apply here</b> (#561). This overload is the one read
+    ///     path that never builds an <see cref="IEvent" /> envelope: it filters on
+    ///     <typeparamref name="T" />'s own event type name and deserializes the bare <c>data</c>
+    ///     column straight to <typeparamref name="T" />, so there is no stored-name-to-new-type
+    ///     decision for a transformation to make — by naming <typeparamref name="T" /> the caller has
+    ///     already made it.
+    ///     <para>
+    ///     What that means in practice: rows written under an OLDER schema of
+    ///     <typeparamref name="T" />'s own name are read here as raw <typeparamref name="T" /> with
+    ///     no transformation, where <c>QueryAllRawEvents()</c> would upcast them. Use
+    ///     <c>QueryAllRawEvents()</c> when a store has upcasters registered and the query has to see
+    ///     post-migration payloads.
+    ///     </para>
+    /// </remarks>
     public IPolecatQueryable<T> QueryRawEventDataOnly<T>() where T : class
     {
         _events.AddEventType(typeof(T));
@@ -351,7 +366,8 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
         {
             while (await reader.ReadAsync(token))
             {
-                var @event = PcEventsRowReader.ReadEventAsGuid(reader, ctx, slots, ref cache);
+                var @event = await PcEventsRowReader
+                    .ReadEventAsGuidAsync(reader, ctx, slots, ref cache, token).ConfigureAwait(false);
                 if (@event != null) results.Add(@event);
             }
         }
@@ -359,7 +375,8 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
         {
             while (await reader.ReadAsync(token))
             {
-                var @event = PcEventsRowReader.ReadEventAsString(reader, ctx, slots, ref cache);
+                var @event = await PcEventsRowReader
+                    .ReadEventAsStringAsync(reader, ctx, slots, ref cache, token).ConfigureAwait(false);
                 if (@event != null) results.Add(@event);
             }
         }

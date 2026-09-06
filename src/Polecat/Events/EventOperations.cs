@@ -1174,11 +1174,27 @@ internal class EventOperations : QueryEventStore, IEventOperations
             var isArchived = reader.GetBoolean(9);
             var bdata = reader.IsDBNull(10) ? null : reader.GetFieldValue<byte[]>(10); // #388
 
-            var resolvedType = _events.ResolveEventType(dotNetTypeName);
-            if (resolvedType == null) continue;
+            object data;
+            IEventType mapping;
 
-            var data = _events.DeserializeEventData(resolvedType, json, bdata, _sessionBase.Serializer);
-            var mapping = _events.EventMappingFor(resolvedType);
+            // #561 / jasperfx#752: upcast FIRST, so the dotnet_type hint below cannot shadow a
+            // registered transformation (marten#4680). See EventGraph.TryFindUpcast.
+            if (_events.TryFindUpcast(typeName, bdata, out var transformation))
+            {
+                data = await _events
+                    .UpcastAsync(transformation, json, _sessionBase.Serializer, cancellation)
+                    .ConfigureAwait(false);
+                mapping = _events.EventMappingFor(transformation.EventType);
+            }
+            else
+            {
+                var resolvedType = _events.ResolveEventType(dotNetTypeName);
+                if (resolvedType == null) continue;
+
+                data = _events.DeserializeEventData(resolvedType, json, bdata, _sessionBase.Serializer);
+                mapping = _events.EventMappingFor(resolvedType);
+            }
+
             var @event = mapping.Wrap(data);
 
             @event.Id = eventId;
@@ -1391,11 +1407,27 @@ internal class EventOperations : QueryEventStore, IEventOperations
         var isArchived = reader.GetBoolean(9);
         var bdata = reader.IsDBNull(10) ? null : reader.GetFieldValue<byte[]>(10); // #388
 
-        var resolvedType = eventGraph.ResolveEventType(dotNetTypeName);
-        if (resolvedType == null) return null;
+        object data;
+        IEventType mapping;
 
-        var data = eventGraph.DeserializeEventData(resolvedType, json, bdata, serializer);
-        var mapping = eventGraph.EventMappingFor(resolvedType);
+        // #561 / jasperfx#752: upcast FIRST -- see EventGraph.TryFindUpcast. This one is the
+        // BATCHED DCB read, whose result is materialized synchronously inside the batch's own
+        // reader walk, so an async-only registration correctly throws here rather than being
+        // silently downgraded.
+        if (eventGraph.TryFindUpcast(typeName, bdata, out var transformation))
+        {
+            data = eventGraph.Upcast(transformation, json, serializer);
+            mapping = eventGraph.EventMappingFor(transformation.EventType);
+        }
+        else
+        {
+            var resolvedType = eventGraph.ResolveEventType(dotNetTypeName);
+            if (resolvedType == null) return null;
+
+            data = eventGraph.DeserializeEventData(resolvedType, json, bdata, serializer);
+            mapping = eventGraph.EventMappingFor(resolvedType);
+        }
+
         var @event = mapping.Wrap(data);
 
         @event.Id = eventId;

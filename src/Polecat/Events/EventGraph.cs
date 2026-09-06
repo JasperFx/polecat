@@ -7,6 +7,7 @@ using JasperFx.Events;
 using JasperFx.Events.Aggregation;
 using JasperFx.Events.Projections;
 using JasperFx.Events.Tags;
+using JasperFx.Events.Upcasting;
 using Polecat.Events.Schema;
 using Polecat.Projections;
 using Polecat.Serialization;
@@ -706,6 +707,93 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
     ///     being non-null is the on-row discriminator, so JSON rows written before the feature was
     ///     switched on keep deserializing through <paramref name="serializer" /> unchanged.
     /// </summary>
+    /// <summary>
+    ///     Resolve the upcast transformation registered for a stored event type name, if any. This is
+    ///     the call every Polecat hydration path makes BEFORE default deserialization.
+    /// </summary>
+    /// <param name="eventTypeName">The stored <c>pc_events.type</c> alias.</param>
+    /// <param name="bdata">
+    ///     The row's <c>bdata</c> column. Non-null means the row was written by an
+    ///     <see cref="IEventBinarySerializer" /> (#388), and upcasting deliberately does not apply:
+    ///     the shared <c>IUpcastPayload</c> is a JSON contract — <c>As&lt;T&gt;</c> and
+    ///     <c>AsJsonDocument</c> both presuppose a JSON body — so a binary row has nothing an upcast
+    ///     transformation can read. Such a row keeps its ordinary binary read path.
+    /// </param>
+    /// <remarks>
+    ///     <para>
+    ///         <b>The marten#4680 authority rule lives here, and in Polecat it is structural rather
+    ///         than a guard.</b> A registered transformation is the authoritative interpretation of
+    ///         its SOURCE event type name: once this returns true, the caller must not consult
+    ///         <see cref="ResolveEventType" /> at all. That matters because Polecat resolves an
+    ///         event's CLR type from the stored <c>dotnet_type</c> hint, so appending the OLD CLR type
+    ///         typed into the very store that carries the upcaster writes a row whose hint points
+    ///         straight back at the old type — and a read that consulted the hint first would hand
+    ///         back the old type and leave the upcaster silently doing nothing, for exactly the rows
+    ///         most likely to exist during a migration.
+    ///     </para>
+    ///     <para>
+    ///         Marten needs an explicit <c>!mapping.IsUpcastTarget</c> condition on its alt-mapping
+    ///         swap for the same reason. Polecat has no alt-mapping swap, so ordering the check first
+    ///         is the whole of it — which is why every hydration path must ask THIS method rather than
+    ///         reaching for the registry itself.
+    ///     </para>
+    ///     <para>
+    ///         <see cref="UpcastingRegistry.HasAny" /> short-circuits first so a store with no
+    ///         upcasters registered — the overwhelming majority — pays one boolean field read per row
+    ///         and keeps its unmodified hydration path.
+    ///     </para>
+    /// </remarks>
+    internal bool TryFindUpcast(string? eventTypeName, byte[]? bdata,
+        [NotNullWhen(true)] out UpcastTransformation? transformation)
+    {
+        if (bdata is not null || !Upcasters.HasAny || eventTypeName is null)
+        {
+            transformation = null;
+            return false;
+        }
+
+        return Upcasters.TryFindTransformation(eventTypeName, out transformation);
+    }
+
+    /// <summary>
+    ///     Run a transformation over a stored JSON payload on a synchronous read path. An async-only
+    ///     registration throws <see cref="UpcastingException" /> from here, by contract.
+    /// </summary>
+    internal object Upcast(UpcastTransformation transformation, string json, ISerializer serializer)
+        => transformation.Upcast(new Upcasting.PolecatUpcastPayload(json, serializer));
+
+    /// <summary>
+    ///     Run a transformation over a stored JSON payload on an asynchronous read path.
+    /// </summary>
+    /// <remarks>
+    ///     Every Polecat read that a consumer awaits must come through here rather than
+    ///     <see cref="Upcast" />: a store that routed its async reads through the synchronous delegate
+    ///     would make an async-only registration unreachable, which the contract turns into an
+    ///     <see cref="UpcastingException" /> rather than a silent fallback precisely so the mistake is
+    ///     loud.
+    /// </remarks>
+    internal ValueTask<object> UpcastAsync(UpcastTransformation transformation, string json,
+        ISerializer serializer, CancellationToken token)
+        => transformation.UpcastAsync(new Upcasting.PolecatUpcastPayload(json, serializer), token);
+
+    /// <summary>
+    ///     Pre-register the TARGET event type of every registered transformation.
+    /// </summary>
+    /// <remarks>
+    ///     Called once at <see cref="DocumentStore" /> construction. Without it the new event type is
+    ///     unknown to the store until something appends one, so an upcast row read before any append
+    ///     of the new type would have no mapping to wrap its payload in. The SOURCE name deliberately
+    ///     is not registered as an event type: it is a name in the database, not a type this
+    ///     deployment appends, and after a raw-JSON upcast the old CLR type may not exist at all.
+    /// </remarks>
+    internal void RegisterUpcastTargetTypes()
+    {
+        foreach (var transformation in Upcasters.AllTransformations)
+        {
+            AddEventType(transformation.EventType);
+        }
+    }
+
     internal object DeserializeEventData(Type resolvedType, string json, byte[]? bdata, ISerializer serializer)
     {
         if (bdata is null) return serializer.FromJson(resolvedType, json);

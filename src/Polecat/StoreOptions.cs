@@ -4,6 +4,7 @@ using JasperFx.Events;
 using JasperFx.Events.Daemon;
 using JasperFx.Events.Fetching;
 using JasperFx.Events.Tags;
+using JasperFx.Events.Upcasting;
 using Polly;
 using Polecat.Events;
 using Polecat.Internal;
@@ -605,6 +606,115 @@ public class EventStoreOptions : IEventStoreInstrumentation
     public void AddMaskingRuleForProtectedInformation<T>(Func<T, T> func) where T : notnull
     {
         EventGraph!.AddMaskingRuleForProtectedInformation(func);
+    }
+
+    /// <summary>
+    ///     #561 / jasperfx#752: the event upcasting registry — how an event stored under an older
+    ///     schema is transformed on READ into the current CLR event type, so aggregations,
+    ///     projections and subscriptions only ever see the new type.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         The registry itself is shared (<c>JasperFx.Events.Upcasting.UpcastingRegistry</c>, hung
+    ///         off the shared <c>EventRegistry</c>), so a consumer compiling one body of source against
+    ///         several stores writes ONE upcaster. The <c>Upcast</c> methods below are the Polecat
+    ///         spelling of Marten's <c>StoreOptions.Events.Upcast(...)</c> family and forward straight
+    ///         into it.
+    ///     </para>
+    ///     <para>
+    ///         Registration is <b>last-wins per stored event type name</b>, and a registered
+    ///         transformation is the <b>authoritative</b> interpretation of that name on read — the
+    ///         stored <c>dotnet_type</c> hint does not override it (marten#4680). See
+    ///         <c>PcEventsRowReader</c>.
+    ///     </para>
+    /// </remarks>
+    public UpcastingRegistry Upcasters => EventGraph!.Upcasters;
+
+    /// <summary>
+    ///     Upcast an event stored under <typeparamref name="TOldEvent" />'s conventional event type
+    ///     name into <typeparamref name="TEvent" />, deserializing the stored payload as the old CLR
+    ///     type first.
+    /// </summary>
+    public EventStoreOptions Upcast<TOldEvent, TEvent>(Func<TOldEvent, TEvent> upcast)
+        where TOldEvent : notnull where TEvent : notnull
+    {
+        Upcasters.Upcast(upcast);
+        return this;
+    }
+
+    /// <summary>
+    ///     Upcast an event stored under an explicit event type name into <typeparamref name="TEvent" />,
+    ///     deserializing the stored payload as <typeparamref name="TOldEvent" /> first.
+    /// </summary>
+    public EventStoreOptions Upcast<TOldEvent, TEvent>(string eventTypeName, Func<TOldEvent, TEvent> upcast)
+        where TOldEvent : notnull where TEvent : notnull
+    {
+        Upcasters.Upcast(eventTypeName, upcast);
+        return this;
+    }
+
+    /// <summary>
+    ///     Async-only typed upcast. Usable only on Polecat's asynchronous read paths; the synchronous
+    ///     ones throw <see cref="UpcastingException" />.
+    /// </summary>
+    /// <remarks>
+    ///     Prefer the synchronous overloads. An async transformation runs once per stored event, so it
+    ///     invites N+1 behaviour on a long stream.
+    /// </remarks>
+    public EventStoreOptions Upcast<TOldEvent, TEvent>(Func<TOldEvent, CancellationToken, Task<TEvent>> upcastAsync)
+        where TOldEvent : notnull where TEvent : notnull
+    {
+        Upcasters.Upcast(upcastAsync);
+        return this;
+    }
+
+    /// <inheritdoc cref="Upcast{TOldEvent,TEvent}(Func{TOldEvent,CancellationToken,Task{TEvent}})" />
+    public EventStoreOptions Upcast<TOldEvent, TEvent>(string eventTypeName,
+        Func<TOldEvent, CancellationToken, Task<TEvent>> upcastAsync)
+        where TOldEvent : notnull where TEvent : notnull
+    {
+        Upcasters.Upcast(eventTypeName, upcastAsync);
+        return this;
+    }
+
+    /// <summary>
+    ///     Raw System.Text.Json upcast for the stored event type name matching
+    ///     <typeparamref name="TEvent" />'s conventional name — the "same name, older JSON schema"
+    ///     case, and the one that lets the old CLR type be deleted from the codebase entirely.
+    /// </summary>
+    public EventStoreOptions Upcast<TEvent>(Func<JsonDocument, TEvent> upcast) where TEvent : notnull
+    {
+        Upcasters.Upcast(upcast);
+        return this;
+    }
+
+    /// <summary>
+    ///     Raw System.Text.Json upcast claiming an explicit stored event type name.
+    /// </summary>
+    public EventStoreOptions Upcast<TEvent>(string eventTypeName, Func<JsonDocument, TEvent> upcast)
+        where TEvent : notnull
+    {
+        Upcasters.Upcast(eventTypeName, upcast);
+        return this;
+    }
+
+    /// <summary>
+    ///     Register one or more class-based upcasters. Derive from the shared bases in
+    ///     <c>JasperFx.Events.Upcasting</c> / <c>JasperFx.Events.Upcasting.SystemTextJson</c>.
+    /// </summary>
+    public EventStoreOptions Upcast(params IEventUpcaster[] upcasters)
+    {
+        Upcasters.Upcast(upcasters);
+        return this;
+    }
+
+    /// <summary>
+    ///     Register a class-based upcaster by type.
+    /// </summary>
+    public EventStoreOptions Upcast<TUpcaster>() where TUpcaster : IEventUpcaster, new()
+    {
+        Upcasters.Upcast<TUpcaster>();
+        return this;
     }
 
     /// <summary>

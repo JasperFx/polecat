@@ -89,7 +89,8 @@ internal class FetchStreamBatchItem : IBatchQueryItem
         {
             while (await reader.ReadAsync(token).ConfigureAwait(false))
             {
-                var @event = PcEventsRowReader.ReadEventAsGuid(reader, ctx, slots, ref cache);
+                var @event = await PcEventsRowReader
+                    .ReadEventAsGuidAsync(reader, ctx, slots, ref cache, token).ConfigureAwait(false);
                 if (@event != null) results.Add(@event);
             }
         }
@@ -97,7 +98,8 @@ internal class FetchStreamBatchItem : IBatchQueryItem
         {
             while (await reader.ReadAsync(token).ConfigureAwait(false))
             {
-                var @event = PcEventsRowReader.ReadEventAsString(reader, ctx, slots, ref cache);
+                var @event = await PcEventsRowReader
+                    .ReadEventAsStringAsync(reader, ctx, slots, ref cache, token).ConfigureAwait(false);
                 if (@event != null) results.Add(@event);
             }
         }

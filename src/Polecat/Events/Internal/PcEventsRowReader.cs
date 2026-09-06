@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using JasperFx.Descriptors;
 using JasperFx.Events;
+using JasperFx.Events.Upcasting;
 using Polecat.Metadata;
 
 namespace Polecat.Events.Internal;
@@ -147,6 +148,126 @@ internal static class PcEventsRowReader
     }
 
     /// <summary>
+    ///     Asynchronous twin of <see cref="ReadEventAsGuid" />, for read paths a consumer awaits.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         #561 / jasperfx#752. The ONLY thing this changes is which half of an upcast
+    ///         transformation runs: an async-only registration is unreachable from
+    ///         <see cref="UpcastTransformation.Upcast" /> and throws <c>UpcastingException</c> by
+    ///         contract, so every Polecat read a consumer awaits has to come through here or that
+    ///         registration shape is simply unusable. Nothing else about the row read is async —
+    ///         the JSON is already a materialized string by this point.
+    ///     </para>
+    ///     <para>
+    ///         Deliberately NOT an <c>async</c> method: it takes <paramref name="cache" /> by
+    ///         reference, which an async method cannot, and the fast path must stay allocation-free.
+    ///         The upcast branch — rare, and absent entirely in a store with no upcasters — hands off
+    ///         to a real async method; everything else returns the synchronous result already
+    ///         completed.
+    ///     </para>
+    /// </remarks>
+    internal static ValueTask<IEvent?> ReadEventAsGuidAsync(
+        DbDataReader reader,
+        EventHydrationContext ctx,
+        MetadataSlots slots,
+        ref EventTypeCache cache,
+        CancellationToken token)
+    {
+        if (TryBeginAsyncUpcast(reader, ctx, out var transformation))
+        {
+            return UpcastEventAsync(reader, ctx, slots, transformation, streamKey: null, token);
+        }
+
+        return new ValueTask<IEvent?>(ReadEventAsGuid(reader, ctx, slots, ref cache));
+    }
+
+    /// <summary>
+    ///     Asynchronous twin of <see cref="ReadEventAsString" />. See
+    ///     <see cref="ReadEventAsGuidAsync" />.
+    /// </summary>
+    internal static ValueTask<IEvent?> ReadEventAsStringAsync(
+        DbDataReader reader,
+        EventHydrationContext ctx,
+        MetadataSlots slots,
+        ref EventTypeCache cache,
+        CancellationToken token)
+    {
+        if (TryBeginAsyncUpcast(reader, ctx, out var transformation))
+        {
+            return UpcastEventAsync(reader, ctx, slots, transformation, ctx.StreamId.ToString(), token);
+        }
+
+        return new ValueTask<IEvent?>(ReadEventAsString(reader, ctx, slots, ref cache));
+    }
+
+    /// <summary>
+    ///     Peek at the row's stored event type name and the <c>bdata</c> discriminator to decide
+    ///     whether this row needs the async upcast branch. Both columns are cheap, fixed-ordinal
+    ///     reads and are read again by whichever path runs.
+    /// </summary>
+    private static bool TryBeginAsyncUpcast(DbDataReader reader, EventHydrationContext ctx,
+        [NotNullWhen(true)] out UpcastTransformation? transformation)
+    {
+        // Short-circuits on HasAny inside TryFindUpcast, so a store with no upcasters does not even
+        // read the columns in the common case.
+        if (!ctx.EventGraph.Upcasters.HasAny)
+        {
+            transformation = null;
+            return false;
+        }
+
+        var typeName = reader.GetString(5);
+        var bdata = reader.IsDBNull(10) ? null : reader.GetFieldValue<byte[]>(10);
+
+        return ctx.EventGraph.TryFindUpcast(typeName, bdata, out transformation);
+    }
+
+    /// <summary>
+    ///     Hydrate one row through an upcast transformation's ASYNC delegate.
+    /// </summary>
+    private static async ValueTask<IEvent?> UpcastEventAsync(
+        DbDataReader reader,
+        EventHydrationContext ctx,
+        MetadataSlots slots,
+        UpcastTransformation transformation,
+        string? streamKey,
+        CancellationToken token)
+    {
+        var seqId = reader.GetInt64(0);
+        var eventId = reader.GetGuid(1);
+        var eventVersion = reader.GetInt64(3);
+        var json = reader.GetString(4);
+        var typeName = reader.GetString(5);
+        var eventTimestamp = reader.GetFieldValue<DateTimeOffset>(6);
+        var tenantId = reader.IsDBNull(7) ? ctx.DefaultTenantId : reader.GetString(7);
+        var dotNetTypeName = reader.IsDBNull(8) ? null : reader.GetString(8);
+        var isArchived = reader.GetBoolean(9);
+
+        var data = await ctx.EventGraph
+            .UpcastAsync(transformation, json, ctx.Serializer, token).ConfigureAwait(false);
+
+        var mapping = ctx.EventGraph.EventMappingFor(transformation.EventType);
+        var @event = mapping.Wrap(data);
+
+        ApplyRowMetadata(@event, reader, ctx, slots,
+            eventId, seqId, eventVersion, eventTimestamp, tenantId, typeName, dotNetTypeName, isArchived);
+
+        // The two StreamIdentity specializations differ only here, and the caller has already told
+        // us which one it is by whether it passed a key.
+        if (streamKey == null)
+        {
+            @event.StreamId = ctx.StreamId is Guid g ? g : Guid.Empty;
+        }
+        else
+        {
+            @event.StreamKey = streamKey;
+        }
+
+        return @event;
+    }
+
+    /// <summary>
     ///     Shared body of <see cref="ReadEventAsGuid"/> /
     ///     <see cref="ReadEventAsString"/>. Reads every field EXCEPT
     ///     <c>StreamId</c> / <c>StreamKey</c>; the specialized wrappers
@@ -173,17 +294,56 @@ internal static class PcEventsRowReader
         // hot loop — a store with no binary events pays one IsDBNull per row.
         var bdata = reader.IsDBNull(10) ? null : reader.GetFieldValue<byte[]>(10);
 
-        var resolvedType = ctx.EventGraph.ResolveEventType(dotNetTypeName);
-        if (resolvedType == null) return null;
+        object data;
+        IEventType mapping;
 
-        // Per-batch single-slot type→mapping cache. For streams with
-        // repeated event types (the common shape of an aggregate stream)
-        // this collapses N dictionary lookups into 1 per distinct type.
-        var mapping = cache.LookupOrAdd(ctx.EventGraph, resolvedType);
+        // #561 / jasperfx#752. The upcast check comes FIRST, and that ordering is the marten#4680
+        // authority rule: a registered transformation is the authoritative reading of the stored
+        // event type name, so the dotnet_type hint below must never get a chance to shadow it. See
+        // EventGraph.TryFindUpcast.
+        if (ctx.EventGraph.TryFindUpcast(typeName, bdata, out var transformation))
+        {
+            data = ctx.EventGraph.Upcast(transformation, json, ctx.Serializer);
+            mapping = ctx.EventGraph.EventMappingFor(transformation.EventType);
+        }
+        else
+        {
+            var resolvedType = ctx.EventGraph.ResolveEventType(dotNetTypeName);
+            if (resolvedType == null) return null;
 
-        var data = ctx.EventGraph.DeserializeEventData(resolvedType, json, bdata, ctx.Serializer);
+            // Per-batch single-slot type→mapping cache. For streams with
+            // repeated event types (the common shape of an aggregate stream)
+            // this collapses N dictionary lookups into 1 per distinct type.
+            mapping = cache.LookupOrAdd(ctx.EventGraph, resolvedType);
+
+            data = ctx.EventGraph.DeserializeEventData(resolvedType, json, bdata, ctx.Serializer);
+        }
+
         var @event = mapping.Wrap(data);
+        ApplyRowMetadata(@event, reader, ctx, slots,
+            eventId, seqId, eventVersion, eventTimestamp, tenantId, typeName, dotNetTypeName, isArchived);
 
+        return @event;
+    }
+
+    /// <summary>
+    ///     Stamp every non-payload field of a hydrated event from the row the reader is positioned
+    ///     on. Shared by the ordinary read and the async upcast read so the two cannot drift.
+    /// </summary>
+    private static void ApplyRowMetadata(
+        IEvent @event,
+        DbDataReader reader,
+        EventHydrationContext ctx,
+        MetadataSlots slots,
+        Guid eventId,
+        long seqId,
+        long eventVersion,
+        DateTimeOffset eventTimestamp,
+        string tenantId,
+        string typeName,
+        string? dotNetTypeName,
+        bool isArchived)
+    {
         @event.Id = eventId;
         @event.Sequence = seqId;
         @event.Version = eventVersion;
@@ -219,8 +379,6 @@ internal static class PcEventsRowReader
                 ? null
                 : reader.GetString(slots.UserNameIdx);
         }
-
-        return @event;
     }
 
     /// <summary>
