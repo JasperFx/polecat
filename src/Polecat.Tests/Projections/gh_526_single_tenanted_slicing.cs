@@ -76,6 +76,11 @@ public class gh_526_single_tenanted_slicing : IAsyncLifetime
             opts.DatabaseSchemaName = Schema;
             opts.AutoCreateSchemaObjects = AutoCreate.All;
 
+            // Azure SQL Edge -- the `edge` CI leg -- has no native `json` type, so a store that
+            // hard-codes one fails at schema creation rather than at any assertion. Every other
+            // store-building site in this suite reads the same flag.
+            opts.UseNativeJsonType = ConnectionSource.SupportsNativeJson;
+
             // No conjoined event tenancy: the store stays single-tenanted, which is the whole
             // precondition under test.
             opts.Projections.Snapshot<Gh526Tally>(SnapshotLifecycle.Async);
