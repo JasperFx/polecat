@@ -20,3 +20,21 @@ global using ComplianceStringPartyProjectionBase =
 global using ComplianceMultiStreamProjectionBase =
     Polecat.Projections.MultiStreamProjection<
         JasperFx.Events.ComplianceTests.ComplianceDepartment, string>;
+
+// Wave 15 / jasperfx#754. The two AggregateToManyCompliance projections, both Guid-identified:
+// ComplianceBalanceProjection routes by Identity<T>(), ComplianceMemberLoyaltyProjection by a custom
+// IJasperFxAggregateGrouper that reads reference data off the ComplianceQuerySession alias above.
+global using ComplianceBalanceProjectionBase =
+    Polecat.Projections.MultiStreamProjection<
+        JasperFx.Events.ComplianceTests.ComplianceBalance, System.Guid>;
+
+global using ComplianceMemberLoyaltyProjectionBase =
+    Polecat.Projections.MultiStreamProjection<
+        JasperFx.Events.ComplianceTests.ComplianceMemberLoyalty, System.Guid>;
+
+// jasperfx#763. ProjectionSideEffectCompliance's projection overrides RaiseSideEffects, which is
+// declared on the shared JasperFxAggregationProjectionBase but closed over each product's own
+// session pair -- hence the alias rather than a portable base name.
+global using ComplianceWatchtowerProjectionBase =
+    Polecat.Projections.SingleStreamProjection<
+        JasperFx.Events.ComplianceTests.ComplianceWatchtower, System.Guid>;

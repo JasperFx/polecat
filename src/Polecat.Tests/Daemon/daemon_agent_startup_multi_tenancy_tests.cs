@@ -125,7 +125,7 @@ public class daemon_agent_startup_multi_tenancy_tests : IClassFixture<AgentStart
         var store = (DocumentStore)host.Services.GetRequiredService<IDocumentStore>();
 
         store.Options.DefaultTenantUsageEnabled.ShouldBeFalse();
-        Should.Throw<DefaultTenantUsageDisabledException>(() => store.LightweightSession());
+        Should.Throw<Polecat.Exceptions.DefaultTenantUsageDisabledException>(() => store.LightweightSession());
 
         await host.StopAsync(TestContext.Current.CancellationToken);
     }
@@ -314,7 +314,7 @@ public class daemon_agent_startup_multi_tenancy_tests : IClassFixture<AgentStart
 
         store.Options.DefaultTenantUsageEnabled.ShouldBeFalse();
 
-        await Should.ThrowAsync<DefaultTenantUsageDisabledException>(async () =>
+        await Should.ThrowAsync<Polecat.Exceptions.DefaultTenantUsageDisabledException>(async () =>
         {
             await store.BuildProjectionDaemonAsync();
         });

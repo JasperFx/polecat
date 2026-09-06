@@ -28,6 +28,19 @@ public class ProjectionScenario: JasperFx.Events.TestSupport.ProjectionScenario<
     protected override bool HasAnyAsyncProjections => _store.Options.Projections.HasAnyAsyncProjections();
 
     /// <summary>
+    ///     Hand the harness this store's daemon settings so it can borrow
+    ///     <c>DaemonSettings.Wakeup</c> for the duration of the run (marten#5195).
+    /// </summary>
+    /// <remarks>
+    ///     Opting in matters more on Polecat than on Marten. Polecat has no LISTEN/NOTIFY, so without
+    ///     a wakeup the high-water agent pays the full polling interval at every batch boundary and a
+    ///     scenario with a handful of commit-and-wait rounds spends most of its 30 second budget
+    ///     asleep. The base restores whatever was there before and never displaces a wakeup the store
+    ///     already had, so this is safe to answer unconditionally.
+    /// </remarks>
+    protected override DaemonSettings? DaemonSettings => _store.Options.DaemonSettings;
+
+    /// <summary>
     ///     Wipe the event store, then exactly the document types the registered projections own —
     ///     not every table in the schema, which would take out documents a scenario deliberately
     ///     seeded beforehand.

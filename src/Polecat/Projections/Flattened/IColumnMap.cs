@@ -76,7 +76,15 @@ internal class DecrementMemberMap : IColumnMap
     public bool RequiresInput => true;
 
     public string UpdateExpression(string paramName) => $"[{ColumnName}] = target.[{ColumnName}] - {paramName}";
-    public string InsertExpression(string paramName) => paramName;
+
+    // #553 / jasperfx#773. The INSERT branch applies the event to an implicit ZERO row, so a
+    // decrement landing on a row that does not exist yet must go NEGATIVE: a first event carrying
+    // Quantity = 5 leaves the column at -5. Polecat used to insert the bare parameter, which made a
+    // decrement raise the column -- the one form of this bug that never looks wrong in the SQL.
+    // `-@p1` inside WHEN NOT MATCHED THEN INSERT ... VALUES is valid T-SQL, so no dialect hook is
+    // needed. The asymmetry with IncrementMemberMap above (bare parameter) is intended: both read as
+    // "apply this event to an implicit zero row".
+    public string InsertExpression(string paramName) => "-" + paramName;
 }
 
 /// <summary>

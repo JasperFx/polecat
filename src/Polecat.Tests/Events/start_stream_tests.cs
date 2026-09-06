@@ -155,7 +155,7 @@ public class start_stream_tests : IntegrationContext
         session2.Events.StartStream(streamId,
             new QuestStarted("Duplicate"));
 
-        await Should.ThrowAsync<ExistingStreamIdCollisionException>(
+        await Should.ThrowAsync<Polecat.Exceptions.ExistingStreamIdCollisionException>(
             session2.SaveChangesAsync(TestContext.Current.CancellationToken));
     }
 

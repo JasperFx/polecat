@@ -1,6 +1,7 @@
 using JasperFx.Events.Daemon;
 using JasperFx.Events.Projections;
 using Polecat;
+using Polecat.Services;
 using Polecat.Subscriptions;
 
 namespace JasperFx.Events.ComplianceTests;
@@ -36,8 +37,49 @@ public partial class ComplianceSubscription : ISubscription
         CancellationToken cancellationToken)
     {
         Record(page.Events);
-        // Polecat already ships a public no-op listener for subscriptions that need no commit
-        // hooks, so there is nothing to hand-roll here.
-        return Task.FromResult<IChangeListener>(NullChangeListener.Instance);
+
+        // Wave 15 / jasperfx#768. The session the daemon hands over is the guarantee that
+        // distinguishes a subscription from a webhook: its writes land in the batch's transaction
+        // alongside the progression row, so they are exactly-once against Polecat's own database and
+        // a subscription cannot advance past a range whose writes were rolled back. The suite pins
+        // that by loading one note per delivered event -- a store that hands out a session it never
+        // commits passes every delivery fact and loses these silently. The Store call is the half
+        // that cannot be shared, because IDocumentOperations is Polecat's own type.
+        foreach (var note in NotesFor(page))
+        {
+            operations.Store(note);
+        }
+
+        // NullChangeListener would satisfy the signature and lose the other half of the same
+        // guarantee: the listener contract is not "it ran" but "it ran AFTER the commit", and only a
+        // real listener can report that.
+        return Task.FromResult<IChangeListener>(new ComplianceSubscriptionListener(this));
     }
+}
+
+/// <summary>
+///     The change listener Polecat's <see cref="ComplianceSubscription" /> returns.
+/// </summary>
+/// <remarks>
+///     A separate type rather than the subscription itself, because Polecat's
+///     <see cref="IChangeListener" /> takes <c>(IDocumentSession, IChangeSet, CancellationToken)</c>
+///     while Marten's and Fisher's differ -- which is why the library asks each consumer to declare
+///     its own and only shares <c>RecordCommitAsync</c>. Only the after-commit hook records: the
+///     suite's probe reads committed state, and the before-commit hook runs inside the transaction
+///     that has not committed yet.
+/// </remarks>
+internal sealed class ComplianceSubscriptionListener : IChangeListener
+{
+    private readonly ComplianceSubscription _subscription;
+
+    public ComplianceSubscriptionListener(ComplianceSubscription subscription)
+    {
+        _subscription = subscription;
+    }
+
+    public Task AfterCommitAsync(IDocumentSession session, IChangeSet commit, CancellationToken token)
+        => _subscription.RecordCommitAsync();
+
+    public Task BeforeCommitAsync(IDocumentSession session, IChangeSet commit, CancellationToken token)
+        => Task.CompletedTask;
 }

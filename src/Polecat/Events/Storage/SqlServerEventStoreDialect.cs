@@ -239,7 +239,7 @@ internal sealed class SqlServerEventStoreDialect : IEventStoreSqlDialect
         if (sql is { Number: 2627 })
         {
             var id = stream.Key is not null ? (object)stream.Key : stream.Id;
-            return new ExistingStreamIdCollisionException(id);
+            return new Polecat.Exceptions.ExistingStreamIdCollisionException(id);
         }
 
         return null;

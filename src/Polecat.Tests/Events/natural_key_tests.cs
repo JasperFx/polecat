@@ -124,34 +124,6 @@ public class natural_key_inline_guid_tests : OneOffConfigurationsContext
     }
 
     [Fact]
-    public async Task fetch_for_writing_and_append_events_by_natural_key()
-    {
-        await ConfigureAndApply();
-
-        var streamId = Guid.NewGuid();
-        var orderNumber = new OrderNumber("ORD-002");
-
-        await using var session1 = theStore.LightweightSession();
-        session1.Events.StartStream(streamId,
-            new NkOrderCreated(orderNumber, "Bob"));
-        await session1.SaveChangesAsync(TestContext.Current.CancellationToken);
-
-        await using var session2 = theStore.LightweightSession();
-        var stream = await session2.Events.FetchForWriting<OrderAggregate, OrderNumber>(orderNumber, TestContext.Current.CancellationToken);
-        stream.AppendOne(new NkOrderItemAdded("Gadget", 19.99m));
-        stream.AppendOne(new NkOrderCompleted());
-        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
-
-        await using var session3 = theStore.LightweightSession();
-        var verify = await session3.Events.FetchForWriting<OrderAggregate, OrderNumber>(orderNumber, TestContext.Current.CancellationToken);
-
-        verify.Aggregate.ShouldNotBeNull();
-        verify.Aggregate!.TotalAmount.ShouldBe(19.99m);
-        verify.Aggregate.IsComplete.ShouldBeTrue();
-        verify.StartingVersion.ShouldBe(3);
-    }
-
-    [Fact]
     public async Task fetch_latest_by_natural_key()
     {
         await ConfigureAndApply();
@@ -175,94 +147,6 @@ public class natural_key_inline_guid_tests : OneOffConfigurationsContext
         aggregate!.OrderNum.ShouldBe(orderNumber);
         aggregate.CustomerName.ShouldBe("Charlie");
         aggregate.TotalAmount.ShouldBe(5.50m);
-    }
-
-    [Fact]
-    public async Task fetch_latest_returns_null_for_nonexistent_natural_key()
-    {
-        await ConfigureAndApply();
-
-        var orderNumber = new OrderNumber("ORD-NO-SUCH-KEY");
-
-        await using var session = theStore.LightweightSession();
-        var aggregate = await session.Events.FetchLatest<OrderAggregate, OrderNumber>(orderNumber, TestContext.Current.CancellationToken);
-
-        aggregate.ShouldBeNull();
-    }
-
-    [Fact]
-    public async Task fetch_for_exclusive_writing_by_natural_key()
-    {
-        await ConfigureAndApply();
-
-        var streamId = Guid.NewGuid();
-        var orderNumber = new OrderNumber("ORD-004");
-
-        await using var session1 = theStore.LightweightSession();
-        session1.Events.StartStream(streamId,
-            new NkOrderCreated(orderNumber, "Dana"),
-            new NkOrderItemAdded("Thingamajig", 12.00m));
-        await session1.SaveChangesAsync(TestContext.Current.CancellationToken);
-
-        await using var session2 = theStore.LightweightSession();
-        var stream = await session2.Events.FetchForExclusiveWriting<OrderAggregate, OrderNumber>(orderNumber, TestContext.Current.CancellationToken);
-
-        stream.Aggregate.ShouldNotBeNull();
-        stream.Aggregate!.OrderNum.ShouldBe(orderNumber);
-        stream.Aggregate.CustomerName.ShouldBe("Dana");
-        stream.StartingVersion.ShouldBe(2);
-
-        stream.AppendOne(new NkOrderCompleted());
-        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
-
-        await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
-        events.Count.ShouldBe(3);
-    }
-
-    [Fact]
-    public async Task natural_key_is_mutable_fetch_after_change()
-    {
-        await ConfigureAndApply();
-
-        var streamId = Guid.NewGuid();
-        var originalKey = new OrderNumber("ORD-OLD");
-        var newKey = new OrderNumber("ORD-NEW");
-
-        // Create stream with original key
-        await using var session1 = theStore.LightweightSession();
-        session1.Events.StartStream(streamId,
-            new NkOrderCreated(originalKey, "Eve"));
-        await session1.SaveChangesAsync(TestContext.Current.CancellationToken);
-
-        // Change the natural key
-        await using var session2 = theStore.LightweightSession();
-        var stream = await session2.Events.FetchForWriting<OrderAggregate, OrderNumber>(originalKey, TestContext.Current.CancellationToken);
-        stream.AppendOne(new NkOrderNumberChanged(newKey));
-        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
-
-        // Fetch by new key should work
-        {
-            await using var session3 = theStore.LightweightSession();
-            var byNewKey = await session3.Events.FetchForWriting<OrderAggregate, OrderNumber>(newKey, TestContext.Current.CancellationToken);
-
-            byNewKey.Aggregate.ShouldNotBeNull();
-            byNewKey.Aggregate!.OrderNum.ShouldBe(newKey);
-            byNewKey.Aggregate.CustomerName.ShouldBe("Eve");
-            byNewKey.Id.ShouldBe(streamId);
-        }
-
-        // #435 / marten#5041: the superseded key no longer resolves. This block previously asserted the
-        // opposite — "fetch by old key still works because the old mapping row persists" — which pinned
-        // the defect rather than the intent: a stream has exactly one *current* natural key, and leaving
-        // the old row behind meant the retired alias resolved forever while permanently occupying its
-        // slot in pc_natural_key_X's primary key, so no other stream could ever claim it.
-        {
-            await using var session4 = theStore.LightweightSession();
-            await Should.ThrowAsync<InvalidOperationException>(
-                session4.Events.FetchForWriting<OrderAggregate, OrderNumber>(originalKey,
-                    TestContext.Current.CancellationToken));
-        }
     }
 
     [Fact]
@@ -383,60 +267,35 @@ public class natural_key_string_identity_tests : OneOffConfigurationsContext
         await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync();
     }
 
-    [Fact]
-    public async Task string_identity_fetch_for_writing_by_natural_key()
-    {
-        await ConfigureAndApply();
-
-        var streamKey = "order-stream-str-001";
-        var orderNumber = new OrderNumber("ORD-STR-001");
-
-        await using var session1 = theStore.LightweightSession();
-        session1.Events.StartStream(streamKey,
-            new NkOrderCreated(orderNumber, "Hank"),
-            new NkOrderItemAdded("String Widget", 7.50m));
-        await session1.SaveChangesAsync(TestContext.Current.CancellationToken);
-
-        await using var session2 = theStore.LightweightSession();
-        var stream = await session2.Events.FetchForWriting<OrderAggregate, OrderNumber>(orderNumber, TestContext.Current.CancellationToken);
-
-        stream.Aggregate.ShouldNotBeNull();
-        stream.Aggregate!.OrderNum.ShouldBe(orderNumber);
-        stream.Aggregate.CustomerName.ShouldBe("Hank");
-        stream.Aggregate.TotalAmount.ShouldBe(7.50m);
-        stream.StartingVersion.ShouldBe(2);
-
-        // Append and save via natural key
-        stream.AppendOne(new NkOrderCompleted());
-        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
-
-        await using var query = theStore.QuerySession();
-        var events = await query.Events.FetchStreamAsync(streamKey, token: TestContext.Current.CancellationToken);
-        events.Count.ShouldBe(3);
-    }
-
-    [Fact]
-    public async Task string_identity_fetch_latest_by_natural_key()
-    {
-        await ConfigureAndApply();
-
-        var streamKey = "order-stream-str-002";
-        var orderNumber = new OrderNumber("ORD-STR-002");
-
-        await using var session1 = theStore.LightweightSession();
-        session1.Events.StartStream(streamKey,
-            new NkOrderCreated(orderNumber, "Irene"),
-            new NkOrderItemAdded("String Gadget", 30.00m));
-        await session1.SaveChangesAsync(TestContext.Current.CancellationToken);
-
-        await using var session2 = theStore.LightweightSession();
-        var aggregate = await session2.Events.FetchLatest<OrderAggregate, OrderNumber>(orderNumber, TestContext.Current.CancellationToken);
-
-        aggregate.ShouldNotBeNull();
-        aggregate!.OrderNum.ShouldBe(orderNumber);
-        aggregate.CustomerName.ShouldBe("Irene");
-        aggregate.TotalAmount.ShouldBe(30.00m);
-    }
 }
 
 #endregion
+
+/* Six facts were retired from this file when Polecat enrolled NaturalKeyCompliance (#556): the
+ * append-after-fetch round trip, the FetchLatest miss, exclusive writing, key mutation, and the two
+ * string-identity fetches. The shared suite carries all six under the same names, plus the archive,
+ * clean, conjoined-tenancy and rebuild facts this file never had.
+ *
+ * What stays, and why none of it is duplication for its own sake:
+ *
+ *   fetch_for_writing_existing_stream_by_natural_key
+ *   fetch_latest_by_natural_key   -- both ARE in the suite, and both stay because they carry the
+ *                                    docs snippets mdsnippets pulls into the natural-key docs. A
+ *                                    compiling, executing sample earns its one duplicate copy.
+ *
+ *   fetch_for_writing_new_stream_by_natural_key
+ *                                 -- the MISS case, which the suite deliberately excludes because
+ *                                    the products disagree: Marten returns a null aggregate at
+ *                                    version 0, Polecat throws (NaturalKeyFetchPlanner). Polecat's
+ *                                    answer is a product decision and needs a product test.
+ *
+ *   natural_key_with_primitive_string_type
+ *                                 -- overlaps the suite's primitive-key fact, kept because it also
+ *                                    asserts the lookup ROW, which no shared contract can reach.
+ *
+ *   live_fetch_for_writing_by_natural_key
+ *   live_fetch_latest_by_natural_key
+ *                                 -- the Live lifecycle pair. The suite covers Inline and Async
+ *                                    only; Live is the third registration Polecat supports and
+ *                                    nothing shared pins it.
+ */

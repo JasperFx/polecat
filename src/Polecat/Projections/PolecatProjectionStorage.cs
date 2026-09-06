@@ -211,8 +211,32 @@ internal class PolecatProjectionStorage<TDoc, TId> : IProjectionStorage<TDoc, TI
         Store(aggregate);
     }
 
+    /// <summary>
+    ///     Archive the stream a single-stream projection owns, because the slice it just folded
+    ///     carried an <see cref="Archived" /> event.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         The decision is made for us: <c>JasperFxSingleStreamProjectionBase.maybeArchiveStream</c>
+    ///         is shared code, and it has already checked that the scope is single-stream and that
+    ///         this projection actually owns the stream (marten#4093 — sibling projections inside a
+    ///         composite must not fire phantom archivals). This method is only the storage half.
+    ///     </para>
+    ///     <para>
+    ///         It was a silent no-op until the wave 15 compliance adoption (#556), which is the exact
+    ///         failure mode the shared suites exist to catch: the shared half called it correctly on
+    ///         every append, Polecat dropped it with no error and no log, and every other suite went
+    ///         on passing. Three
+    ///         <c>StreamArchivingCompliance.capturing_an_archived_event_*</c> facts are what found it.
+    ///     </para>
+    ///     <para>
+    ///         The slice id is unwrapped first: a strong-typed id reaches SQL as its inner value, and
+    ///         the stream columns are <c>uniqueidentifier</c> / <c>varchar</c>, never the wrapper.
+    ///     </para>
+    /// </remarks>
     public void ArchiveStream(TId sliceId, string tenantId)
     {
-        // Stream archiving not supported yet
+        _session.WorkTracker.Add(new SetStreamArchivedOperation(
+            _session.Options.EventGraph, UnwrapId(sliceId), tenantId, archived: true));
     }
 }

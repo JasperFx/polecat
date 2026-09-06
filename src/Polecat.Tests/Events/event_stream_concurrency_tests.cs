@@ -125,7 +125,7 @@ public class event_stream_concurrency_tests : IntegrationContext
         await using var session2 = theStore.LightweightSession();
         session2.Events.StartStream(streamId, new QuestStarted("Duplicate"));
 
-        await Should.ThrowAsync<ExistingStreamIdCollisionException>(session2.SaveChangesAsync(TestContext.Current.CancellationToken));
+        await Should.ThrowAsync<Polecat.Exceptions.ExistingStreamIdCollisionException>(session2.SaveChangesAsync(TestContext.Current.CancellationToken));
     }
 
     // ===== Append multiple events in order =====
