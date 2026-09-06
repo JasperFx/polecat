@@ -341,10 +341,15 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
         {
             if (column == "rev0")
             {
-                // Bespoke parity: INSERT always starts at revision 1 regardless of the
-                // doc-carried value (the expectation only applies to existing rows).
+                // #559: an explicit revision is HONOURED on insert — the row lands at exactly the
+                // revision the caller named, and auto (0) starts at 1. Marten spells this
+                // "CASE WHEN ? = 0 THEN 1 ELSE ? END" and Fisher's NumericRevision.InsertValueSql
+                // is the same; here the two ? slots are already in flight as the rev0/rev1 source
+                // columns, so the CASE reads them off the USING row rather than claiming two more
+                // parameter slots the shared insert/upsert operations would never bind. rev1 stays
+                // skipped below for that reason: it is a second parameter slot, not a target column.
                 insertColumns.Add("version");
-                insertValues.Add("1");
+                insertValues.Add("CASE WHEN s.rev0 = 0 THEN 1 ELSE s.rev1 END");
             }
             else if (column != "rev1")
             {
@@ -389,10 +394,11 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
         var updateAssignments = new List<string> { "data = s.data" };
         if (numeric)
         {
-            // POLECAT numeric semantics (deliberate divergence from Marten's explicit-greater
-            // rule): the doc-carried revision is an EQUALITY expectation and version always
-            // auto-increments. Explicit path sets ? + 1 to match the bespoke pipeline.
-            updateAssignments.Add("version = CASE WHEN ? = 0 THEN t.version + 1 ELSE ? + 1 END");
+            // #559: an explicit revision is the TARGET version, so the explicit branch assigns it
+            // verbatim — incrementing it again would overshoot the revision the caller asked for.
+            // Auto (? = 0) still increments whatever is stored. Same pair as Marten's
+            // "CASE WHEN ? = 0 THEN {version} + 1 ELSE ? END" and Fisher's NumericRevision.
+            updateAssignments.Add("version = CASE WHEN ? = 0 THEN t.version + 1 ELSE ? END");
         }
         else
         {
@@ -414,10 +420,12 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
         }
         else if (numeric)
         {
-            // Equality expectation (Polecat parity): auto (? = 0) always wins; an explicit
-            // revision must MATCH the current version. The shared numeric ops always bind the
-            // four trailing slots, so the shape is constant whether guarded or not.
-            guard = " AND (? = 0 OR t.version = ?)";
+            // #559, strictly-greater: auto (? = 0) always wins; an explicit revision is accepted
+            // only when it EXCEEDS the stored one, which is what lets it jump non-contiguously
+            // (3 -> 10) and what makes re-storing at the loaded revision a concurrency failure.
+            // The shared numeric ops always bind the four trailing slots, so the shape is
+            // constant whether guarded or not.
+            guard = " AND (? = 0 OR t.version < ?)";
         }
 
         return $"MERGE {table} WITH (HOLDLOCK) AS t " +
@@ -504,8 +512,11 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
         }
 
         var updateAssignments = new List<string> { "data = s.data" };
+        // #559: the same strictly-greater pair as BuildMergeSql's update branch. Fixing only the
+        // upsert would leave this statement — every Update()/UpdateRevision() that routes here —
+        // on the old equality contract, which is the divergence the ruling removed.
         updateAssignments.Add(numeric
-            ? "version = CASE WHEN s.rev0 = 0 THEN t.version + 1 ELSE s.rev1 + 1 END"
+            ? "version = CASE WHEN s.rev0 = 0 THEN t.version + 1 ELSE s.rev1 END"
             : "version = t.version + 1");
         updateAssignments.AddRange(binders
             .Where(b => !b.IsServerSide && b.ColumnName != "tenant_id" && !ReferenceEquals(b, revisionBinder))
@@ -516,7 +527,7 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
         var guard = mode switch
         {
             ConcurrencyMode.Optimistic => " AND t.guid_version = ?",
-            ConcurrencyMode.Numeric => " AND (? = 0 OR t.version = ?)",
+            ConcurrencyMode.Numeric => " AND (? = 0 OR t.version < ?)",
             _ => string.Empty
         };
 

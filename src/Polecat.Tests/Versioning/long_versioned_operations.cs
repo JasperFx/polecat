@@ -48,8 +48,11 @@ public class long_versioned_operations : IntegrationContext
         loaded.ShouldNotBeNull();
         loaded.Version.ShouldBe(1L);
 
+        // #559: Store passes the document's own Version as the TARGET revision, which must be
+        // strictly greater than what is stored — so a loaded document moves forward by naming the
+        // next revision rather than by handing back the one it arrived with.
         loaded.Name = "v2";
-        session2.Store(loaded);
+        session2.UpdateRevision(loaded, loaded.Version + 1);
         await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
         loaded.Version.ShouldBe(2L);
     }
@@ -91,12 +94,13 @@ public class long_versioned_operations : IntegrationContext
         loaded2.ShouldNotBeNull();
 
         loaded1.Name = "updated-by-session1";
-        session1.Store(loaded1);
+        session1.UpdateRevision(loaded1, loaded1.Version + 1);
         await session1.SaveChangesAsync(TestContext.Current.CancellationToken);
         loaded1.Version.ShouldBe(2L);
 
+        // Its target (2) no longer exceeds the stored 2 (#559).
         loaded2.Name = "updated-by-session2";
-        session2.Store(loaded2);
+        session2.UpdateRevision(loaded2, loaded2.Version + 1);
 
         await Should.ThrowAsync<ConcurrencyException>(async () =>
         {
@@ -116,7 +120,7 @@ public class long_versioned_operations : IntegrationContext
         var loaded = await session2.LoadAsync<LongVersionedDoc>(doc.Id, TestContext.Current.CancellationToken);
         loaded.ShouldNotBeNull();
         loaded.Name = "updated";
-        session2.UpdateRevision(loaded, 1L); // explicitly set expected revision via the long overload
+        session2.UpdateRevision(loaded, 2L); // #559: the TARGET revision, via the long overload
         await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
         loaded.Version.ShouldBe(2L);
     }
@@ -149,9 +153,9 @@ public class long_versioned_operations : IntegrationContext
         loaded.ShouldNotBeNull();
         loaded.Version.ShouldBe(bigVersion);
 
-        // Storing with the big expected revision succeeds and increments past the Int32 range.
+        // Naming the next big revision succeeds and increments past the Int32 range.
         loaded.Name = "big-updated";
-        session2.Store(loaded);
+        session2.UpdateRevision(loaded, loaded.Version + 1);
         await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
         loaded.Version.ShouldBe(bigVersion + 1);
 
@@ -164,12 +168,12 @@ public class long_versioned_operations : IntegrationContext
         l2.ShouldNotBeNull();
 
         l1.Name = "s1";
-        s1.Store(l1);
+        s1.UpdateRevision(l1, l1.Version + 1);
         await s1.SaveChangesAsync(TestContext.Current.CancellationToken);
         l1.Version.ShouldBe(bigVersion + 2);
 
         l2.Name = "s2";
-        s2.Store(l2);
+        s2.UpdateRevision(l2, l2.Version + 1);
         await Should.ThrowAsync<ConcurrencyException>(async () => await s2.SaveChangesAsync());
     }
 }

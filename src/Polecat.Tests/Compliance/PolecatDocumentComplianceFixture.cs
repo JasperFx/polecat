@@ -121,6 +121,13 @@ public class PolecatDocumentComplianceFixture : DocumentStorageComplianceFixture
     ///     <see cref="IDocumentStore" /> implements <see cref="IDocumentSessionFactory" /> directly —
     ///     there is no adapter here, which is the point of #443.
     /// </summary>
+    /// <summary>
+    ///     #559 / jasperfx#785: Polecat implements numeric revisions — a document implementing
+    ///     <see cref="IRevisioned" /> gets <c>ConcurrencyMode.Numeric</c> on its mapping, and since
+    ///     #559 the strictly-greater guard the suite pins.
+    /// </summary>
+    public override bool SupportsNumericRevisions => true;
+
     public override IDocumentSessionFactory Sessions =>
         _store ?? throw new InvalidOperationException("The store has not been configured yet.");
 

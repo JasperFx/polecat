@@ -222,23 +222,60 @@ public class sqlserver_descriptor_builder_tests : OneOffConfigurationsContext
         await executeAsync(second, session);
         doc.Version.ShouldBe(2);
 
-        // POLECAT numeric semantics (#273 E2c): the explicit revision is an EQUALITY
-        // expectation against the current version (bespoke-pipeline parity), and version
-        // always auto-increments — unlike Marten's explicit-greater rule.
+        // #559 / jasperfx#785: an explicit revision is the TARGET version and must be strictly
+        // greater than what is stored. Below the stored revision is the unambiguous stale write.
         var stale = new NumericClosedShapeUpsertOperation<RevisionedDoc, Guid>(
             doc, doc.Id, session.TenantId, descriptor, OperationRole.Upsert, revisions) { Revision = 1 };
         await Should.ThrowAsync<JasperFx.ConcurrencyException>(() => executeAsync(stale, session));
 
-        // A jump past the current version is also a mismatch
+        // Equal is not greater — re-storing at the revision just loaded is a concurrency failure,
+        // which is the sharp edge the ruling deliberately keeps.
+        var equal = new NumericClosedShapeUpsertOperation<RevisionedDoc, Guid>(
+            doc, doc.Id, session.TenantId, descriptor, OperationRole.Upsert, revisions) { Revision = 2 };
+        await Should.ThrowAsync<JasperFx.ConcurrencyException>(() => executeAsync(equal, session));
+
+        // A non-contiguous jump is accepted and lands at EXACTLY the revision named — the explicit
+        // branch assigns the caller's value rather than incrementing past it.
         var jump = new NumericClosedShapeUpsertOperation<RevisionedDoc, Guid>(
             doc, doc.Id, session.TenantId, descriptor, OperationRole.Upsert, revisions) { Revision = 10 };
-        await Should.ThrowAsync<JasperFx.ConcurrencyException>(() => executeAsync(jump, session));
+        await executeAsync(jump, session);
+        doc.Version.ShouldBe(10);
+        revisions[doc.Id].ShouldBe(10);
 
-        // Matching the current version succeeds and increments
-        var match = new NumericClosedShapeUpsertOperation<RevisionedDoc, Guid>(
-            doc, doc.Id, session.TenantId, descriptor, OperationRole.Upsert, revisions) { Revision = 2 };
-        await executeAsync(match, session);
-        doc.Version.ShouldBe(3);
+        // Auto still wins and resumes counting from what is stored, not from what the caller knew.
+        var resume = new NumericClosedShapeUpsertOperation<RevisionedDoc, Guid>(
+            doc, doc.Id, session.TenantId, descriptor, OperationRole.Upsert, revisions) { Revision = 0 };
+        await executeAsync(resume, session);
+        doc.Version.ShouldBe(11);
+    }
+
+    /// <summary>
+    ///     #559 site 3: the INSERT branch honours an explicit revision rather than discarding it in
+    ///     favour of 1. The row lands at exactly the revision the caller named, and the
+    ///     strictly-greater guard then applies from there.
+    /// </summary>
+    [Fact]
+    public async Task numeric_descriptor_honours_an_explicit_revision_on_insert()
+    {
+        var descriptor = descriptorFor<RevisionedDoc>();
+
+        await using var raw = theStore.LightweightSession();
+        var session = (IStorageSession)raw;
+
+        var doc = new RevisionedDoc { Id = Guid.NewGuid(), Name = "imported" };
+        var revisions = new Dictionary<Guid, long>();
+
+        var seeded = new NumericClosedShapeUpsertOperation<RevisionedDoc, Guid>(
+            doc, doc.Id, session.TenantId, descriptor, OperationRole.Upsert, revisions) { Revision = 7 };
+        await executeAsync(seeded, session);
+        doc.Version.ShouldBe(7);
+        revisions[doc.Id].ShouldBe(7);
+
+        // It really wrote 7 — the store counts on from it rather than from 1.
+        var next = new NumericClosedShapeUpsertOperation<RevisionedDoc, Guid>(
+            doc, doc.Id, session.TenantId, descriptor, OperationRole.Upsert, revisions) { Revision = 0 };
+        await executeAsync(next, session);
+        doc.Version.ShouldBe(8);
     }
 
     [Fact]

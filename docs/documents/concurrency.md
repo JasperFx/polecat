@@ -52,25 +52,48 @@ public class Order : IRevisioned
 }
 ```
 
-Usage:
+A supplied revision is the **target version** — the revision the document is being asked to *become* —
+and it is accepted only when it is **strictly greater** than the revision currently stored. A revision
+of `0` means "auto": increment whatever is stored, whatever that is.
 
 ```cs
 var order = await session.LoadAsync<Order>(orderId);
 // order.Version == 1 (after first save)
 
 order.Description = "Updated";
-session.Store(order);
+session.UpdateRevision(order, order.Version + 1);   // target revision 2
 await session.SaveChangesAsync();
 // order.Version == 2
 ```
 
-### UpdateRevision
+::: warning
+`Store(order)` passes the document's own `Version` as the target revision, so re-storing a document
+still carrying the revision it was loaded at raises a `ConcurrencyException` — the loaded value is
+equal to what is stored, and equal is not greater. Either name the next revision with
+`UpdateRevision(order, order.Version + 1)`, or set `order.Version = 0` to take the auto path.
+:::
 
-Explicitly set the expected revision:
+An explicit revision may also **jump**, which is what lets a caller adopt a revision decided somewhere
+else — an upstream version, a stream version, an imported record:
 
 ```cs
-session.UpdateRevision(order, expectedRevision: 3);
+session.UpdateRevision(order, 10);   // from 3 straight to 10
+await session.SaveChangesAsync();
+// order.Version == 10 — exactly the revision named, not 11
 ```
+
+### Explicit revisions on insert
+
+A brand-new document carrying a non-zero `Version` is stored at **exactly** that revision rather than
+normalised to 1, and the strictly-greater guard then applies from there:
+
+```cs
+session.Insert(new Order { Id = id, Version = 7, Description = "Imported" });
+await session.SaveChangesAsync();
+// the row lands at revision 7; the next auto store lands at 8
+```
+
+Leave `Version` at its default `0` to start a document at revision 1.
 
 ## Long Numeric Revisions (ILongVersioned)
 
@@ -91,7 +114,7 @@ Usage mirrors `IRevisioned`, with a `long` overload of `UpdateRevision` for expl
 ```cs
 var view = await session.LoadAsync<CustomerOrderHistory>(id);
 view.Description = "Updated";
-session.UpdateRevision(view, expectedRevision: 4_000_000_000L);
+session.UpdateRevision(view, 4_000_000_000L);   // the TARGET revision, above whatever is stored
 await session.SaveChangesAsync();
 ```
 
