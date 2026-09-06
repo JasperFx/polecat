@@ -23,6 +23,11 @@ namespace Polecat.Tests.Compliance;
  * so the mixed-tenancy precondition cannot be constructed through the shared surface. The suite
  * detects that and skips rather than passing vacuously. Enrollment still arms the assertion
  * should the append path ever start preserving per-event tenant ids.
+ *
+ * gh-529: because that fact skips, enrollment alone left the gh-526 fix with no assertion behind
+ * it in this repository. Projections/gh_526_single_tenanted_slicing.cs is the local coverage --
+ * same behaviour, precondition written with SQL below the layer that normalizes it. If the skip
+ * above ever turns into a real run, the local pair becomes redundant and can go.
  */
 
 public class composite_projection_compliance
