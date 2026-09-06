@@ -674,13 +674,10 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             // Apply inline projections — projected document ops are queued into _workTracker
             if (_inlineProjections.Length > 0 && _workTracker.Streams.Count > 0)
             {
-                // Pre-create document tables for projected types that projections may query
-                var projectedDocTypes = Options.Projections.All
-                    .Where(x => x.Lifecycle == ProjectionLifecycle.Inline)
-                    .SelectMany(x => x.PublishedTypes())
-                    .Distinct()
-                    .Select(t => _providers.GetProvider(t));
-                await _tableEnsurer.EnsureTablesAsync(projectedDocTypes, token);
+                // Pre-create document tables for projected types that projections may query. #548: this
+                // set comes entirely from configuration, so it is computed once per store and cached
+                // rather than re-derived from Projections.All on every save.
+                await _tableEnsurer.EnsureTablesAsync(Options.Projections.InlineProjectedProviders, token);
 
                 var streams = _workTracker.Streams.ToList();
                 foreach (var projection in _inlineProjections)
