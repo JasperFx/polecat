@@ -16,7 +16,7 @@ namespace Polecat.Tests.Versioning;
 ///     from the UPDATE itself (<c>RETURNING</c>), so a filtered-out update returns nothing.
 ///
 ///     Polecat's equivalent is the guarded MERGE built by SqlServerDocumentStorageDescriptorBuilder:
-///     <c>WHEN MATCHED AND (? = 0 OR t.version = ?) THEN UPDATE … OUTPUT inserted.version</c>. OUTPUT
+///     <c>WHEN MATCHED AND (? = 0 OR t.version &lt; ?) THEN UPDATE … OUTPUT inserted.version</c>. OUTPUT
 ///     is MERGE's RETURNING — it only emits a row for a row the MERGE actually acted on — so the
 ///     structure carries the fix by construction. These tests exercise that claim with genuine
 ///     concurrency rather than asserting on SQL shape: the invariant under test is that N racing
@@ -36,7 +36,8 @@ public class concurrent_revision_write_loss_tests : IntegrationContext
     }
 
     /// <summary>
-    ///     Two sessions load the same revision-1 document and both call UpdateRevision(doc, 1).
+    ///     Two sessions load the same revision-1 document and both call UpdateRevision(doc, 2) —
+    ///     under the #559 strictly-greater rule the target version is named, not the loaded one.
     ///     Exactly one may win. The loser must throw — not report success over a write that never
     ///     landed. The discriminating assertion is the pairing: the winner's name must be the one in
     ///     the database. A silent write-loss shows up as "both succeeded" with only one name stored.
@@ -61,8 +62,8 @@ public class concurrent_revision_write_loss_tests : IntegrationContext
 
         d1.Name = "writer-1";
         d2.Name = "writer-2";
-        s1.UpdateRevision(d1, 1);
-        s2.UpdateRevision(d2, 1);
+        s1.UpdateRevision(d1, 2);
+        s2.UpdateRevision(d2, 2);
 
         // Genuinely concurrent: both flushes are in flight at once.
         var r1 = SaveOutcomeAsync(s1, "writer-1");
@@ -115,7 +116,7 @@ public class concurrent_revision_write_loss_tests : IntegrationContext
                 var doc = await session.LoadAsync<RevisionedDoc>(id, TestContext.Current.CancellationToken);
                 doc.ShouldNotBeNull();
                 doc.Name = name;
-                session.UpdateRevision(doc, 1);
+                session.UpdateRevision(doc, 2);
 
                 tasks.Add(Task.Run(async () =>
                 {

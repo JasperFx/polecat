@@ -42,8 +42,13 @@ public class revisioned_operations : IntegrationContext
         doc.Version.ShouldBe(1);
     }
 
+    /// <summary>
+    ///     #559: <c>Store</c> passes the document's own <c>Version</c> as the target revision, and the
+    ///     target must be strictly greater than what is stored — so re-storing a document at the
+    ///     revision it was loaded at is a concurrency failure, not an increment.
+    /// </summary>
     [Fact]
-    public async Task store_existing_document_increments_version()
+    public async Task store_existing_document_at_the_loaded_revision_is_refused()
     {
         var doc = new RevisionedDoc { Id = Guid.NewGuid(), Name = "v1" };
 
@@ -58,8 +63,93 @@ public class revisioned_operations : IntegrationContext
 
         loaded.Name = "v2";
         session2.Store(loaded);
+
+        await Should.ThrowAsync<ConcurrencyException>(async () =>
+        {
+            await session2.SaveChangesAsync();
+        });
+    }
+
+    /// <summary>
+    ///     #559: the two supported ways to move a loaded document forward — name the revision it is
+    ///     going to (<c>doc.Version + 1</c>), or hand back <c>Version = 0</c> and let the store
+    ///     increment whatever it has.
+    /// </summary>
+    [Fact]
+    public async Task store_existing_document_moves_forward_by_naming_the_next_revision()
+    {
+        var doc = new RevisionedDoc { Id = Guid.NewGuid(), Name = "v1" };
+
+        theSession.Store(doc);
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        await using var session2 = theStore.LightweightSession();
+        var loaded = await session2.LoadAsync<RevisionedDoc>(doc.Id, TestContext.Current.CancellationToken);
+        loaded.ShouldNotBeNull();
+        loaded.Name = "v2";
+        session2.UpdateRevision(loaded, loaded.Version + 1);
         await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
         loaded.Version.ShouldBe(2);
+
+        await using var session3 = theStore.LightweightSession();
+        var again = await session3.LoadAsync<RevisionedDoc>(doc.Id, TestContext.Current.CancellationToken);
+        again.ShouldNotBeNull();
+        again.Name = "v3";
+        again.Version = 0; // the auto escape hatch
+        session3.Store(again);
+        await session3.SaveChangesAsync(TestContext.Current.CancellationToken);
+        again.Version.ShouldBe(3);
+    }
+
+    /// <summary>
+    ///     #559: an explicit revision may skip ahead, and the row lands at exactly the revision named
+    ///     rather than one past it.
+    /// </summary>
+    [Fact]
+    public async Task explicit_revision_may_jump_and_lands_exactly()
+    {
+        var doc = new RevisionedDoc { Id = Guid.NewGuid(), Name = "v1" };
+
+        theSession.Store(doc);
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        await using var session2 = theStore.LightweightSession();
+        var loaded = await session2.LoadAsync<RevisionedDoc>(doc.Id, TestContext.Current.CancellationToken);
+        loaded.ShouldNotBeNull();
+        loaded.Name = "imported";
+        session2.UpdateRevision(loaded, 10);
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
+        loaded.Version.ShouldBe(10);
+
+        await using var query = theStore.QuerySession();
+        var stored = await query.LoadAsync<RevisionedDoc>(doc.Id, TestContext.Current.CancellationToken);
+        stored.ShouldNotBeNull();
+        stored.Version.ShouldBe(10);
+    }
+
+    /// <summary>
+    ///     #559 site 3: an explicit revision on a brand-new document is honoured rather than
+    ///     normalised to 1, and the store counts on from it.
+    /// </summary>
+    [Fact]
+    public async Task insert_honours_an_explicit_revision()
+    {
+        var doc = new RevisionedDoc { Id = Guid.NewGuid(), Name = "imported", Version = 7 };
+
+        theSession.Insert(doc);
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
+        doc.Version.ShouldBe(7);
+
+        await using var session2 = theStore.LightweightSession();
+        var loaded = await session2.LoadAsync<RevisionedDoc>(doc.Id, TestContext.Current.CancellationToken);
+        loaded.ShouldNotBeNull();
+        loaded.Version.ShouldBe(7);
+
+        loaded.Name = "moved on";
+        loaded.Version = 0;
+        session2.Store(loaded);
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
+        loaded.Version.ShouldBe(8);
     }
 
     [Fact]
@@ -109,15 +199,16 @@ public class revisioned_operations : IntegrationContext
         var loaded2 = await session2.LoadAsync<RevisionedDoc>(doc.Id, TestContext.Current.CancellationToken);
         loaded2.ShouldNotBeNull();
 
-        // First session saves successfully
+        // First session saves successfully by naming the revision it is moving to (#559)
         loaded1.Name = "updated-by-session1";
-        session1.Store(loaded1);
+        session1.UpdateRevision(loaded1, loaded1.Version + 1);
         await session1.SaveChangesAsync(TestContext.Current.CancellationToken);
         loaded1.Version.ShouldBe(2);
 
-        // Second session tries to save with stale version (1) — should fail
+        // Second session tries to save against the revision it loaded (1) — 1 is not greater than
+        // the stored 2, so it is refused
         loaded2.Name = "updated-by-session2";
-        session2.Store(loaded2);
+        session2.UpdateRevision(loaded2, loaded2.Version + 1);
 
         await Should.ThrowAsync<ConcurrencyException>(async () =>
         {
@@ -139,6 +230,7 @@ public class revisioned_operations : IntegrationContext
         loaded.Version.ShouldBe(1);
 
         loaded.Name = "updated";
+        loaded.Version = 2; // #559: name the target revision, which must exceed the stored 1
         session2.Update(loaded);
         await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
         loaded.Version.ShouldBe(2);
@@ -163,11 +255,13 @@ public class revisioned_operations : IntegrationContext
 
         // First update succeeds
         l1.Name = "s1-update";
+        l1.Version += 1;
         s1.Update(l1);
         await s1.SaveChangesAsync(TestContext.Current.CancellationToken);
 
-        // Second update fails with stale version
+        // Second update fails: its target revision (2) no longer exceeds the stored 2
         l2.Name = "s2-update";
+        l2.Version += 1;
         s2.Update(l2);
 
         await Should.ThrowAsync<ConcurrencyException>(async () =>
@@ -188,7 +282,7 @@ public class revisioned_operations : IntegrationContext
         var loaded = await session2.LoadAsync<RevisionedDoc>(doc.Id, TestContext.Current.CancellationToken);
         loaded.ShouldNotBeNull();
         loaded.Name = "updated";
-        session2.UpdateRevision(loaded, 1); // explicitly set expected revision
+        session2.UpdateRevision(loaded, 2); // #559: the TARGET revision, strictly greater than 1
         await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
         loaded.Version.ShouldBe(2);
     }
@@ -206,6 +300,7 @@ public class revisioned_operations : IntegrationContext
         var loaded = await session2.LoadAsync<RevisionedDoc>(doc.Id, TestContext.Current.CancellationToken);
         loaded.ShouldNotBeNull();
         loaded.Name = "updated";
+        loaded.Version = 0; // #559: auto, rather than re-storing at the loaded revision
         session2.Store(loaded);
         await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 

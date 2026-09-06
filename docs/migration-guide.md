@@ -144,6 +144,56 @@ public string CorrelationId { get; set; } = string.Empty;
 
 [#140](https://github.com/JasperFx/polecat/issues/140). The lifted `JasperFx.DocumentAlreadyExistsException` keeps Polecat's `DocumentType` (Type) and `Id` properties and the `(Type, object)` ctor, so the duplicate-key `catch` path is a near-no-op rebind. But the thrown **`Message`** now uses Marten's FullName-based format — `"Document already exists {FullName}: {id}"` (was `"A document of type '{Name}' with id '{id}' already exists."`). If you assert on or parse `.Message`, update the expectation; assertions on `.DocumentType` / `.Id` are unaffected.
 
+#### Numeric revisions are now strictly-greater, and honoured on insert
+
+[#559](https://github.com/JasperFx/polecat/issues/559), settled by the maintainer ruling on
+[jasperfx#785](https://github.com/JasperFx/jasperfx/issues/785). Polecat previously read an explicit
+numeric revision as an **equality expectation** — the supplied value had to *match* the stored
+revision, and the row then auto-incremented past it — and discarded an explicit revision entirely on
+insert. Both are now Marten's and Fisher's rule: an explicit revision is the **target version**,
+accepted only when it is **strictly greater** than what is stored, and stored verbatim. A revision of
+`0` still means "auto". This affects every document implementing `IRevisioned` or `ILongVersioned`,
+and it breaks in two different ways.
+
+**The update path breaks loudly.** The natural read-modify-write spelling now throws:
+
+```csharp
+// before (Polecat 3.x / early 4.x): the loaded revision was an equality expectation
+session.UpdateRevision(doc, doc.Version);        // now throws ConcurrencyException
+
+// after: name the revision the document is moving TO
+session.UpdateRevision(doc, doc.Version + 1);
+```
+
+`Store(doc)` passes the document's own `Version` as the target revision, so `Store` on a document
+still carrying the revision it was loaded at throws for the same reason. Set `doc.Version = 0` before
+storing to take the auto path instead. In exchange, an explicit revision may now **jump** (3 → 10)
+and lands at exactly the value named rather than one past it — which is what lets a caller adopt a
+revision decided upstream.
+
+**The insert path breaks silently, and this is the one to search your code for.** A document built
+with a non-zero `Version` and inserted was previously normalised to revision 1. It is now stored at
+that revision:
+
+```csharp
+session.Insert(new Order { Id = id, Version = 7 });
+// before: the row landed at revision 1
+// after:  the row lands at revision 7
+```
+
+Nothing throws at the call site. The failure surfaces later, when an `UpdateRevision` computed
+against an assumed revision of 1 is refused. The escape hatch is to set `Version = 0` on any document
+you are inserting and expecting the store to number for you — which is what a freshly constructed
+document does by default, so only code that populates `Version` before a first write is affected.
+
+::: warning
+**Negative revisions changed as a side effect.** Polecat's hard-coded insert value used to swallow a
+negative `Version` into 1; the new `CASE` stores it verbatim, after which the strictly-greater guard
+refuses every write below it. No store range-checks a negative revision and the shared compliance
+suite deliberately leaves the case unpinned — treat a negative `Version` as unsupported rather than
+as a behavior to rely on.
+:::
+
 ### Event-sourcing API changes
 
 #### Projections and self-aggregating documents must be `partial`

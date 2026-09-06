@@ -59,3 +59,14 @@ public class polecat_document_delete_compliance
 
 public class polecat_document_query_compliance
     : DocumentQueryCompliance<PolecatDocumentComplianceFixture>;
+
+/*
+ * #559 / jasperfx#785 -- numeric revision semantics. Enrolled as part of adopting the ruled
+ * strictly-greater contract: an explicit revision is the version the caller is asking the document
+ * to BECOME, accepted only when it exceeds what is stored, and honoured verbatim on insert. Polecat
+ * previously read it as an equality expectation and always auto-incremented, and hard-coded the
+ * insert to 1; the suite is what holds all three SQL sites to the same rule.
+ */
+
+public class polecat_numeric_revision_compliance
+    : NumericRevisionCompliance<PolecatDocumentComplianceFixture>;
