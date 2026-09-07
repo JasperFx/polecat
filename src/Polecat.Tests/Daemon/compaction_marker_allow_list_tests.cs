@@ -206,18 +206,59 @@ public class compaction_marker_allow_list_tests : OneOffConfigurationsContext
     /// <summary>
     ///     The registered form of the projection the daemon would hand the loader: a real
     ///     <see cref="IAggregateProjection" /> over <see cref="QuestParty" />, with
-    ///     <c>IncludedEventTypes</c> filled from its conventional methods exactly as registration does.
-    ///     Notably absent from that list, and the whole point: <c>Compacted&lt;QuestParty&gt;</c>.
+    ///     <c>IncludedEventTypes</c> filled from its conventional methods exactly as registration does
+    ///     — and then the compaction marker taken back out, which is what every test below is written
+    ///     against.
     /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         The marker used to be absent from that list on its own, and the absence was the whole
+    ///         premise: #557 is about the daemon loader's allow list admitting a type the projection
+    ///         never declares. JasperFx 2.66.1 (jasperfx#796) closed the same gap one level up, by
+    ///         appending <c>Compacted&lt;TDoc&gt;</c> to a single-stream projection's event types in
+    ///         <c>JasperFxSingleStreamProjectionBase.determineEventTypes()</c> for every store at once.
+    ///     </para>
+    ///     <para>
+    ///         So the premise no longer holds by default — and taking it at face value would quietly
+    ///         retire this suite, because every test here would then pass on the <em>upstream</em> fix
+    ///         while saying nothing about Polecat's. Stripping the marker back out keeps the loader's
+    ///         own allow list under test, which is the belt to jasperfx#796's braces and the thing that
+    ///         still has to work for a projection type the upstream rule does not reach.
+    ///         <see cref="the_upstream_event_type_list_now_carries_the_marker_too" /> pins the new
+    ///         upstream half.
+    ///     </para>
+    /// </remarks>
     private static SingleStreamProjection<QuestParty, Guid> SnapshotProjection()
     {
         var projection = new SingleStreamProjection<QuestParty, Guid>();
         projection.AssembleAndAssertValidity();
 
+        projection.IncludedEventTypes.Remove(typeof(Compacted<QuestParty>));
+
         projection.IncludedEventTypes.ShouldNotBeEmpty();
         projection.IncludedEventTypes.ShouldNotContain(typeof(Compacted<QuestParty>));
 
         return projection;
+    }
+
+    /// <summary>
+    ///     The other half of the same guarantee, now that JasperFx 2.66.1 supplies it: a single-stream
+    ///     projection's declared event types carry the compaction marker — and the archival marker —
+    ///     without the store doing anything. jasperfx#796.
+    /// </summary>
+    [Fact]
+    public void the_upstream_event_type_list_now_carries_the_marker_too()
+    {
+        var projection = new SingleStreamProjection<QuestParty, Guid>();
+        projection.AssembleAndAssertValidity();
+
+        projection.IncludedEventTypes.ShouldContain(typeof(Compacted<QuestParty>));
+        projection.IncludedEventTypes.ShouldContain(typeof(Archived));
+
+        // and exactly once each: the append used to be re-applied on every evaluation, past the base's
+        // own Distinct(), and reached the generated SQL as a repeated IN member
+        projection.IncludedEventTypes.Count(x => x == typeof(Compacted<QuestParty>)).ShouldBe(1);
+        projection.IncludedEventTypes.Count(x => x == typeof(Archived)).ShouldBe(1);
     }
 
     /// <summary>
