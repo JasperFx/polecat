@@ -4,7 +4,18 @@
         <TargetFrameworks>net9.0;net10.0</TargetFrameworks>
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
-        <Version>5.22.0</Version>
+        <!--
+          Kept in step with the released line by hand. This is NOT what decides a package's version:
+          publish.yml derives that from the tag name (v5.25.0 -> 5.25.0) and passes it to `dotnet
+          pack` as -p:Version, so this property is overridden on every tagged publish and cannot
+          make a release wrong. What it does set is the assembly and file version of a LOCAL build,
+          and anything reading Assembly.GetName().Version at runtime — including Polecat's own
+          EventStoreUsage descriptor, which reports the store's version to CritterWatch.
+          It had drifted two releases behind (5.22.0 while 5.24.0 shipped) precisely because nothing
+          in the publish path reads it, so a stale value is invisible until someone asks a running
+          store what version it is.
+        -->
+        <Version>5.25.0</Version>
         <LangVersion>latest</LangVersion>
         <Authors>Jeremy D. Miller</Authors>
         <PackageIcon>logo.png</PackageIcon>
