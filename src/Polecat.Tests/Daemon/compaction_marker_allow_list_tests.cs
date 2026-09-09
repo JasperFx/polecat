@@ -10,13 +10,10 @@ using Polecat.Tests.Projections;
 namespace Polecat.Tests.Daemon;
 
 /// <summary>
-///     #557 / #568 — a filtered async shard has to see <see cref="Compacted{T}" /> for a stream it
-///     owns. #557 fixed that store-locally, by widening the daemon loader's <c>dotnet_type</c> allow
-///     list past the event types the projection declares an <c>Apply</c>/<c>Create</c> for.
-///     jasperfx#796 (JasperFx 2.66.1) then closed the same gap one level up, appending the marker to
-///     a single-stream projection's own event types in
-///     <c>JasperFxSingleStreamProjectionBase.determineEventTypes()</c> for every store at once, and
-///     #568 removed the store-local patch as redundant.
+///     #557 — the daemon loader's <c>dotnet_type</c> allow list is built from the event types a
+///     projection declares an <c>Apply</c>/<c>Create</c> for, and <see cref="Compacted{T}" /> is not one
+///     of them. Nothing upstream in JasperFx adds it for the store, so before the fix a projection with
+///     a declared event list never saw the compaction marker for a stream it owns.
 /// </summary>
 /// <remarks>
 ///     <para>
@@ -29,18 +26,8 @@ namespace Polecat.Tests.Daemon;
 ///     <para>
 ///         <see cref="a_filtered_and_an_unfiltered_load_agree_on_a_compacted_stream" /> is the
 ///         statement of the bug: two loads over one stream, folded by the same aggregator, disagreeing
-///         about what the stream means. It holds for a different REASON after #568 than before it, and
-///         that is the point of keeping it — the ruling outlives whichever layer enforces it.
-///     </para>
-///     <para>
-///         The rest are not made redundant by the upstream fix either. What jasperfx#796 guarantees is
-///         that the marker reaches <c>IncludedEventTypes</c>;
-///         <see cref="the_upstream_event_type_list_now_carries_the_marker_too" /> is the pin for that,
-///         and everything else here depends on it. What it says nothing about is what Polecat's loader
-///         then DOES with that list — and there are two answers, because #550's push-down bows out
-///         above SQL Server's parameter ceiling and hands the filtering to a client-side check. Both
-///         are Polecat's own code, nothing else pins them, and a marker dropped by either one fails
-///         exactly as silently as it did before #557.
+///         about what the stream means. The rest pin the two filtering paths (#550's SQL push-down and
+///         the retained client-side fallback) and the end-to-end daemon consequence.
 ///     </para>
 /// </remarks>
 public class compaction_marker_allow_list_tests : OneOffConfigurationsContext
@@ -107,9 +94,9 @@ public class compaction_marker_allow_list_tests : OneOffConfigurationsContext
     ///     with very many event types still broken, and nothing else in the suite would say so.
     /// </summary>
     /// <remarks>
-    ///     The pushed-down parameter array is taken FROM the allow-list set rather than built beside
-    ///     it, which is what keeps the two paths agreeing about which types are admitted. This test is
-    ///     what stops that being refactored apart.
+    ///     The fix is applied to the allow-list SET, from which the pushed-down parameter array is
+    ///     taken, which is what makes one addition cover both paths. This test is what stops that being
+    ///     refactored apart.
     /// </remarks>
     [Fact]
     public async Task the_marker_survives_the_client_side_fallback_filter()
@@ -162,12 +149,10 @@ public class compaction_marker_allow_list_tests : OneOffConfigurationsContext
     }
 
     /// <summary>
-    ///     The sibling marker, and the reason this is about a CATEGORY rather than one type.
-    ///     <see cref="Archived" /> reaches a single-stream projection's declared event types from
-    ///     JasperFx 2.65.0 (jasperfx#784), a release ahead of <see cref="Compacted{T}" /> — which is
-    ///     why #557's local patch admitted it redundantly, and why #568 dropped both halves at once
-    ///     rather than only the one the newer release covered. It is
-    ///     pinned here because if the upstream behaviour ever goes away the failure mode is the same
+    ///     The sibling marker, and the reason the fix admits a CATEGORY rather than one type.
+    ///     <see cref="Archived" /> reaches a single-stream projection's declared event types on its own
+    ///     from JasperFx 2.65.0 (jasperfx#784), so this passed before the fix as well — it is here to
+    ///     pin that, because if the upstream behaviour ever goes away the failure mode is the same
     ///     silent one: an async shard that never folds the marker never calls
     ///     <c>PolecatProjectionStorage.ArchiveStream</c>, and the stream is never archived.
     /// </summary>
@@ -221,22 +206,33 @@ public class compaction_marker_allow_list_tests : OneOffConfigurationsContext
     /// <summary>
     ///     The registered form of the projection the daemon would hand the loader: a real
     ///     <see cref="IAggregateProjection" /> over <see cref="QuestParty" />, with
-    ///     <c>IncludedEventTypes</c> filled from its conventional methods exactly as registration does.
+    ///     <c>IncludedEventTypes</c> filled from its conventional methods exactly as registration does
+    ///     — and then the compaction marker taken back out, which is what every test below is written
+    ///     against.
     /// </summary>
     /// <remarks>
     ///     <para>
-    ///         The list carries <see cref="Compacted{T}" /> because JasperFx 2.66.1 puts it there —
-    ///         jasperfx#796, in <c>JasperFxSingleStreamProjectionBase.determineEventTypes()</c>. That
-    ///         used not to be true, and #557's fix was Polecat adding the marker to the loader's allow
-    ///         list itself; #568 deleted that patch once the upstream rule covered exactly the same
-    ///         scope. The assertion below is the seam: if the marker ever stops arriving, every test in
-    ///         this class fails HERE, naming the cause, rather than further down where the symptom is a
-    ///         wrongly-folded aggregate.
+    ///         The marker used to be absent from that list on its own, and the absence was the whole
+    ///         premise: #557 is about the daemon loader's allow list admitting a type the projection
+    ///         never declares. JasperFx 2.66.1 (jasperfx#796) closed the same gap one level up, by
+    ///         appending <c>Compacted&lt;TDoc&gt;</c> to a single-stream projection's event types in
+    ///         <c>JasperFxSingleStreamProjectionBase.determineEventTypes()</c> for every store at once.
     ///     </para>
     ///     <para>
-    ///         What the tests below still say, with the marker supplied rather than patched in, is that
-    ///         Polecat's own filtering does not drop it again — separately on each of the two paths
-    ///         #550 can take. That is store-local code and the upstream fix does not reach it.
+    ///         So the premise no longer holds by default — and taking it at face value would quietly
+    ///         retire this suite, because every test here would then pass on the <em>upstream</em> fix
+    ///         while saying nothing about Polecat's. Stripping the marker back out keeps the loader's
+    ///         own allow list under test, which is the belt to jasperfx#796's braces and the thing that
+    ///         still has to work for a projection type the upstream rule does not reach.
+    ///         <see cref="the_upstream_event_type_list_now_carries_the_marker_too" /> pins the new
+    ///         upstream half.
+    ///     </para>
+    ///     <para>
+    ///         #568 asked for the opposite — drop the local patch now that the upstream one covers
+    ///         it — and was resolved the other way: the patch is kept as belt and braces, so this
+    ///         helper is kept with it. The two decisions are the same decision. If the loader's
+    ///         patch is ever retired after all, this strip goes with it and the guard below
+    ///         inverts to <c>ShouldContain</c>.
     ///     </para>
     /// </remarks>
     private static SingleStreamProjection<QuestParty, Guid> SnapshotProjection()
@@ -244,7 +240,10 @@ public class compaction_marker_allow_list_tests : OneOffConfigurationsContext
         var projection = new SingleStreamProjection<QuestParty, Guid>();
         projection.AssembleAndAssertValidity();
 
-        projection.IncludedEventTypes.ShouldContain(typeof(Compacted<QuestParty>));
+        projection.IncludedEventTypes.Remove(typeof(Compacted<QuestParty>));
+
+        projection.IncludedEventTypes.ShouldNotBeEmpty();
+        projection.IncludedEventTypes.ShouldNotContain(typeof(Compacted<QuestParty>));
 
         return projection;
     }
