@@ -1,6 +1,9 @@
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Diagnostics.Metrics;
+using System.Reflection;
 using JasperFx;
+using JasperFx.Core.Reflection;
 using JasperFx.Descriptors;
 using JasperFx.Events;
 using JasperFx.Events.Daemon;
@@ -203,14 +206,119 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
         return (IReadOnlyEventStore)session.Events;
     }
 
+    /// <summary>
+    ///     #572: the UNTYPED compaction entry point, whose whole contract is "resolve the aggregate
+    ///     type from stream state" — the only form available to a caller holding a runtime
+    ///     <see cref="Type" /> rather than a compile-time <c>T</c>. Polecat had the typed execution
+    ///     (<see cref="Events.Protected.StreamCompactingExecution.ExecuteAsync{T}" />) complete and
+    ///     this stubbed out, which left a store that could SELECT the streams a compaction policy
+    ///     wants — <c>QueryStreamStates()</c>, jasperfx#740 / #534 — and then act on none of them.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         Mirrors Marten's pair on <c>DocumentStore.EventStore</c>: read the stream's
+    ///         <see cref="StreamState.AggregateType" />, close the typed overload over it, run it on
+    ///         a session this method owns. The one place it does NOT mirror Marten is the commit —
+    ///         <c>CompactStreamAsync&lt;T&gt;</c> queues its replace/delete/watermark operations onto
+    ///         the session's work tracker and leaves the commit to the caller, which is right for a
+    ///         session-level API and wrong for a store-level one. This method opened the session, so
+    ///         it saves; without that the whole call is a no-op that reports success.
+    ///     </para>
+    ///     <para>
+    ///         The identity guard runs BEFORE the state read. A mismatched overload would otherwise
+    ///         match no row and surface as "stream not found", which points the caller at their data
+    ///         instead of at their configuration — the same failure marten#5244 fixed on the typed
+    ///         path and that <c>stream_compacting_identity_mismatch_tests</c> pins.
+    ///     </para>
+    ///     <para>
+    ///         Scoped to the default tenant, because <see cref="IEventStore" /> gives this overload
+    ///         nowhere to name one — same as Marten. On a conjoined store a stream belonging to some
+    ///         other tenant is not visible to the session this opens and is reported as missing; reach
+    ///         it through a tenant session and <c>CompactStreamAsync&lt;T&gt;</c> instead.
+    ///     </para>
+    /// </remarks>
     Task IEventStore.CompactStreamAsync(Guid streamId, CancellationToken token)
     {
-        throw new NotSupportedException("Stream compaction is not yet supported in Polecat.");
+        Events.EnsureAsGuidStorage();
+        return compactStreamAsync(streamId, token);
     }
 
+    /// <inheritdoc cref="IEventStore.CompactStreamAsync(Guid, CancellationToken)" />
     Task IEventStore.CompactStreamAsync(string streamKey, CancellationToken token)
     {
-        throw new NotSupportedException("Stream compaction is not yet supported in Polecat.");
+        ArgumentException.ThrowIfNullOrEmpty(streamKey);
+        Events.EnsureAsStringStorage();
+        return compactStreamAsync(streamKey, token);
+    }
+
+    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+        Justification = "Closes CompactStreamAsync<T> over an aggregate type read from pc_streams, which was registered by the projection that wrote the stream and is therefore already rooted.")]
+    [UnconditionalSuppressMessage("Trimming", "IL2060:MakeGenericMethod",
+        Justification = "See above — the type argument is a registered aggregate type resolved through EventGraph.TryResolveAggregateType.")]
+    private async Task compactStreamAsync(object streamIdentity, CancellationToken token)
+    {
+        await using var session = LightweightSession();
+
+        var state = streamIdentity is Guid streamId
+            ? await session.Events.FetchStreamStateAsync(streamId, token).ConfigureAwait(false)
+            : await session.Events.FetchStreamStateAsync((string)streamIdentity, token).ConfigureAwait(false);
+
+        if (state == null)
+        {
+            throw new InvalidOperationException(
+                $"Cannot compact stream '{streamIdentity}': no such stream in this event store.");
+        }
+
+        // TryResolveAggregateType returns null for an alias this deployment does not know, and the
+        // column itself is null for a stream started without an aggregate type. Both land here, and
+        // the difference matters to the caller: one is a missing registration, the other is a stream
+        // that never named a type to resolve.
+        if (state.AggregateType == null)
+        {
+            throw new InvalidOperationException(
+                $"Cannot compact stream '{streamIdentity}': the stream has no aggregate type recorded on " +
+                $"{Events.StreamsTableName}, or its recorded type is not registered with this store. The untyped " +
+                $"{nameof(IEventStore.CompactStreamAsync)} resolves the aggregate from stream state — start the " +
+                "stream with StartStream<T>(), or call CompactStreamAsync<T> with the type named explicitly.");
+        }
+
+        if (state.AggregateType.IsValueType)
+        {
+            throw new InvalidOperationException(
+                $"Cannot compact stream '{streamIdentity}': aggregate type '{state.AggregateType.FullNameInCode()}' " +
+                "is a value type, and stream compacting requires a reference type.");
+        }
+
+        var method = CompactStreamMethod(streamIdentity.GetType()).MakeGenericMethod(state.AggregateType);
+        await ((Task)method.Invoke(session.Events, [streamIdentity, null])!).ConfigureAwait(false);
+
+        // The typed overload only QUEUES the replace, the deletes and the compaction watermark. This
+        // method owns the session, so nothing else is going to commit them.
+        await session.SaveChangesAsync(token).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    ///     The open generic <c>IEventStoreOperations.CompactStreamAsync&lt;T&gt;</c> whose first
+    ///     parameter is <paramref name="identityType" />.
+    /// </summary>
+    /// <remarks>
+    ///     Matched by walking the declared methods rather than through
+    ///     <c>GetMethod(name, Type[])</c>: overload resolution by parameter type cannot name the
+    ///     second parameter of a generic method definition, whose type
+    ///     (<c>Action&lt;StreamCompactingRequest&lt;T&gt;&gt;</c>) mentions the very type parameter
+    ///     being resolved. The first parameter — Guid or string — separates the two overloads on its
+    ///     own.
+    /// </remarks>
+    private static MethodInfo CompactStreamMethod(Type identityType)
+    {
+        return typeof(IEventStoreOperations)
+                   .GetMethods(BindingFlags.Public | BindingFlags.Instance)
+                   .SingleOrDefault(m => m.Name == nameof(IEventStoreOperations.CompactStreamAsync)
+                                         && m.IsGenericMethodDefinition
+                                         && m.GetParameters() is [var first, _]
+                                         && first.ParameterType == identityType)
+               ?? throw new InvalidOperationException(
+                   $"Could not find {nameof(IEventStoreOperations)}.{nameof(IEventStoreOperations.CompactStreamAsync)}<T>({identityType.Name}, ...).");
     }
 
     async Task<EventStoreUsage?> IEventStore.TryCreateUsage(CancellationToken token)
