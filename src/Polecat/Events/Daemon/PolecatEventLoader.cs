@@ -1,6 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
 using JasperFx.Events;
-using JasperFx.Events.Aggregation;
 using JasperFx.Events.Daemon;
 using JasperFx.Events.Projections;
 using Microsoft.Data.SqlClient;
@@ -72,7 +71,23 @@ internal class PolecatEventLoader : IEventLoader
         // reads only that tenant's bounded sequence range, not the whole store. Null = store-global.
         _tenantFilter = tenantFilter;
 
-        // Build an allow list of dotnet_type names from the included event types
+        // Build an allow list of dotnet_type names from the included event types.
+        //
+        // #568: this list is taken AS GIVEN — the framework's own markers are no longer added on top
+        // of it here. #557 patched Compacted<T> and Archived in locally because a projection declares
+        // no Apply/Create for either and they were therefore absent from IncludedEventTypes;
+        // jasperfx#784 and jasperfx#796 (JasperFx 2.65.0 / 2.66.1) append both in
+        // JasperFxSingleStreamProjectionBase.determineEventTypes() instead, for every store at once.
+        // Polecat's SingleStreamProjection<TDoc, TId> derives from that base and every registration
+        // path here closes over it, so the upstream rule covers the whole scope the patch did, and
+        // re-adding the markers below would be dead weight against the same HashSet.
+        //
+        // Why the markers have to reach the list at all, in case this is ever tempting to "simplify":
+        // CompactStreamAsync DELETES the events it folds and leaves Compacted<T> in their place, so
+        // the marker is not an extra event beside the history — it IS the history. A shard that
+        // filters it out folds only what was appended after compaction and persists an aggregate
+        // missing everything before it, with no error and no log line.
+        // compaction_marker_allow_list_tests pins both halves.
         if (filtering?.IncludedEventTypes is { Count: > 0 } includedTypes)
         {
             _allowedDotNetTypes = new HashSet<string>(StringComparer.Ordinal);
@@ -80,16 +95,6 @@ internal class PolecatEventLoader : IEventLoader
             {
                 var mapping = events.EventMappingFor(type);
                 _allowedDotNetTypes.Add(mapping.DotNetTypeName);
-            }
-
-            // #557: and the framework's own markers, which a projection never declares a handler for
-            // and which are therefore absent from IncludedEventTypes. Widening the SET here rather
-            // than either predicate is deliberate: _pushedDownTypeNames is taken from it just below,
-            // so one addition covers BOTH the SQL push-down and the client-side fallback that carries
-            // an allow list too large to push down.
-            foreach (var markerType in FrameworkMarkerTypes(filtering))
-            {
-                _allowedDotNetTypes.Add(events.EventMappingFor(markerType).DotNetTypeName);
             }
 
             if (_allowedDotNetTypes.Count <= MaximumPushedDownTypeNames)
@@ -111,65 +116,6 @@ internal class PolecatEventLoader : IEventLoader
         }
 
         _commandText = BuildCommandText();
-    }
-
-    /// <summary>
-    ///     #557: the event types the FRAMEWORK writes into a stream, which no projection declares an
-    ///     <c>Apply</c>/<c>Create</c> method for and which therefore never reach
-    ///     <see cref="EventFilterable.IncludedEventTypes" /> on their own. A declared allow list is a
-    ///     statement about the projection's <em>domain</em> events; silently reading it as a statement
-    ///     about the whole stream is what makes a filtered shard diverge from an unfiltered one.
-    ///     Mirrors Marten's <c>DocumentStore.EventStore.buildEventLoaderFilters</c>, which patches
-    ///     around the same gap store-locally. jasperfx#796 proposes moving it up into
-    ///     <c>determineEventTypes()</c> beside <c>Archived</c>, where every store — Fisher's loader has
-    ///     the identical omission today — would get it for free; delete this when that lands.
-    /// </summary>
-    /// <remarks>
-    ///     <para>
-    ///         <see cref="Compacted{T}" /> is the one that bites. <c>CompactStreamAsync</c> folds a
-    ///         stream's history into a snapshot, DELETES the folded events and leaves the marker in
-    ///         their place — so the marker is not an extra event beside the history, it <em>is</em> the
-    ///         history. <c>Compacted&lt;T&gt;.MaybeFastForward</c> is what restarts a fold from that
-    ///         snapshot. Filter the marker out and the events it replaced are not filtered too, they are
-    ///         gone from the store entirely: the shard folds only what was appended after compaction
-    ///         and reports an aggregate missing everything before it, with no error anywhere.
-    ///     </para>
-    ///     <para>
-    ///         <see cref="Archived" /> is belt and braces. jasperfx#784 appends it to a single-stream
-    ///         projection's <c>determineEventTypes()</c>, so on JasperFx 2.65.0+ it already arrives in
-    ///         <c>IncludedEventTypes</c> and this add is a no-op against the same <c>HashSet</c>. It is
-    ///         here because Marten adds it unconditionally too, and because the consequence of it going
-    ///         missing is the same silent class of bug: an async single-stream shard that folds an
-    ///         <c>Archived</c> event is what calls
-    ///         <c>PolecatProjectionStorage.ArchiveStream</c>, so a shard that never sees the marker
-    ///         never archives the stream.
-    ///     </para>
-    ///     <para>
-    ///         Deliberately NOT here: <c>Tombstone</c> (a sequence-gap filler no projection folds),
-    ///         and <c>Deleted</c>/<c>Updated</c>, which are synthetic composite-projection events that
-    ///         are never persisted to <c>pc_events</c> and so can never be filtered out of a load.
-    ///     </para>
-    /// </remarks>
-    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
-        Justification = "Compacted<T> is closed over the projection's aggregate type, which is already rooted by the projection registration itself.")]
-    [UnconditionalSuppressMessage("Trimming", "IL2055:MakeGenericType",
-        Justification = "Compacted<T> has no constraints and its type argument is the registered aggregate type.")]
-    private static IEnumerable<Type> FrameworkMarkerTypes(EventFilterable filtering)
-    {
-        // Scoped to a SINGLE-STREAM aggregate projection, and only there. Both markers are facts
-        // about one stream's own history: Compacted<T> replaces that stream's events, and
-        // maybeArchiveStream returns immediately for any other scope. A subscription or an
-        // EventProjection has no aggregate type to close Compacted<T> over and no fold for either
-        // marker to act on, and widening a MULTI-stream shard's filter would hand it events it has
-        // nothing to do with — the same line jasperfx#784 drew when it put Archived into
-        // determineEventTypes.
-        if (filtering is not IAggregateProjection { Scope: AggregationScope.SingleStream } aggregateProjection)
-        {
-            yield break;
-        }
-
-        yield return typeof(Archived);
-        yield return typeof(Compacted<>).MakeGenericType(aggregateProjection.AggregateType);
     }
 
     /// <summary>
