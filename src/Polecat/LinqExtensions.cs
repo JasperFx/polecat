@@ -57,6 +57,27 @@ public static class LinqExtensions
             "IEvent.HasTag<TTag>() is a marker method for LINQ event queries and cannot be invoked directly. Use it inside session.Events.QueryAllRawEvents().Where(...).");
     }
 
+    /// <summary>
+    ///     The lossy sibling of <see cref="HasTag{TTag}" />: matches events carrying the given tag whose
+    ///     value, <em>rendered as a string</em>, equals <paramref name="value" /> case-insensitively.
+    ///     Backs <c>EventQuery.TagValues</c> (jasperfx#801 / polecat#575), whose name/value dictionary
+    ///     form cannot carry a typed value.
+    ///     This is a marker method recognized by the LINQ provider and cannot be invoked directly.
+    /// </summary>
+    /// <remarks>
+    ///     Deliberately NOT expressed as <c>HasTag&lt;TTag&gt;</c> with the string parsed into
+    ///     <typeparamref name="TTag" />. The two comparisons genuinely differ: typed equality on a Guid
+    ///     tag distinguishes nothing between <c>"A1B2…"</c> and <c>"a1b2…"</c> only because Guid parsing
+    ///     normalizes, while an <c>int</c> tag would reject <c>"007"</c> that string comparison accepts,
+    ///     and a string tag is case-sensitive under typed equality and case-insensitive here. The lossy
+    ///     form's contract is the string form, so it compares the string form.
+    /// </remarks>
+    public static bool HasTagValue<TTag>(this IEvent e, string value) where TTag : notnull
+    {
+        throw new NotSupportedException(
+            "IEvent.HasTagValue<TTag>() is a marker method for LINQ event queries and cannot be invoked directly. Use it inside session.Events.QueryAllRawEvents().Where(...).");
+    }
+
     private static readonly MethodInfo AnyTenantMethodInfo =
         typeof(LinqExtensions).GetMethod(nameof(AnyTenant))!;
 

@@ -103,7 +103,7 @@ internal class EventLinqQueryProvider : IPolecatAsyncQueryProvider
             // event query is refused rather than ignored, exactly as it is over a hard-delete
             // document type.
             SoftDeleteTarget.NeverSoftDeleted("The event store"),
-            _isAllEvents ? [new HasTagParser(_events)] : null);
+            _isAllEvents ? [new HasTagParser(_events), new HasTagValueParser(_events)] : null);
         parser.Parse(expression);
 
         ApplySingleValueMode(parser);

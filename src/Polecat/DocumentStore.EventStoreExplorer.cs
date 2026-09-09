@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json;
 using JasperFx.Descriptors;
 using JasperFx.Events;
+using JasperFx.Events.Tags;
 using JasperFx.Events.Daemon;
 using JasperFx.Events.Projections;
 using Microsoft.Data.SqlClient;
@@ -227,15 +228,13 @@ public partial class DocumentStore
         var idx = 0;
         foreach (var (tagName, tagValue) in tags)
         {
-            var registration = registered.FirstOrDefault(r =>
-                string.Equals(r.TagType.Name, tagName, StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(r.TableSuffix, tagName, StringComparison.OrdinalIgnoreCase));
-            if (registration == null)
-            {
-                throw new ArgumentException(
-                    $"Tag type '{tagName}' is not registered on this event store. Registered tag types: {string.Join(", ", registered.Select(t => t.TagType.Name))}",
-                    nameof(tags));
-            }
+            // #575: resolved through the shared matcher rather than an inline copy of it. Polecat's
+            // behaviour here — CLR simple name OR registered table suffix, case-insensitively — is
+            // what jasperfx#801 standardized on, but Marten's copy of this same overload matched the
+            // CLR name only and compared values case-sensitively, and the divergence survived because
+            // the dictionary overload has no compliance coverage. Sharing the matcher is what stops
+            // the two drifting apart again, here and in ApplyTagValues.
+            var registration = registered.RequireByTagName(tagName, nameof(tags));
 
             if (idx > 0) sb.Append(" AND ");
 
