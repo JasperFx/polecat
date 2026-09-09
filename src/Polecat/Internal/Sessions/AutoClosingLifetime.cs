@@ -57,6 +57,22 @@ internal class AutoClosingLifetime : IConnectionLifetime
         }
     }
 
+    /// <summary>
+    ///     The batch counterpart of <see cref="ExecuteReaderAsync(SqlCommand, CancellationToken)" />,
+    ///     and the one place the two genuinely differ: Microsoft.Data.SqlClient honours
+    ///     <see cref="CommandBehavior.CloseConnection" /> for a <see cref="SqlCommand" /> reader and
+    ///     silently ignores it for a <see cref="SqlBatch" /> one.
+    /// </summary>
+    /// <remarks>
+    ///     This method used to pass the flag and rely on it, exactly as the command overload does, so
+    ///     every batch-executed read leaked its pooled connection — the reader was disposed, the
+    ///     connection was not, and it never went back to the pool. Nearly every read on a query session
+    ///     runs through a batch (document and event LINQ, batched queries, session loads), so a process
+    ///     hit the pool ceiling in proportion to how many queries it had issued, and failed on whichever
+    ///     query crossed it with "Timeout expired. The timeout period elapsed prior to obtaining a
+    ///     connection from the pool" — an error naming neither the leak nor the query that caused it.
+    ///     <see cref="ConnectionClosingDataReader" /> supplies the missing behaviour explicitly.
+    /// </remarks>
     public async Task<DbDataReader> ExecuteReaderAsync(SqlBatch batch, CancellationToken token)
     {
         var conn = _connectionFactory.Create();
@@ -65,7 +81,8 @@ internal class AutoClosingLifetime : IConnectionLifetime
             await conn.OpenAsync(token);
             batch.Connection = conn;
             batch.Timeout = CommandTimeout;
-            return await batch.ExecuteReaderAsync(CommandBehavior.CloseConnection, token);
+            var reader = await batch.ExecuteReaderAsync(token);
+            return new ConnectionClosingDataReader(reader, conn);
         }
         catch
         {

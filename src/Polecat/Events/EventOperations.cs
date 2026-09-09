@@ -19,6 +19,7 @@ using Polecat.Internal.Operations;
 using Polecat.Projections;
 using Polecat.Serialization;
 using Weasel.SqlServer;
+using Polecat.Internal.Sessions;
 
 namespace Polecat.Events;
 
@@ -1158,7 +1159,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
 
         var results = new List<IEvent>();
         await using var dbReader = await _sessionBase.ExecuteReaderAsync(cmd, cancellation);
-        var reader = (SqlDataReader)dbReader;
+        var reader = dbReader.AsSqlDataReader();
 
         while (await reader.ReadAsync(cancellation))
         {
@@ -1394,7 +1395,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
     internal static IEvent? ReadEventFromReader(DbDataReader reader, ISerializer serializer, EventGraph eventGraph)
     {
         var eventOptions = eventGraph.EventOptions;
-        var sqlReader = (SqlDataReader)reader;
+        var sqlReader = reader.AsSqlDataReader();
 
         var seqId = reader.GetInt64(0);
         var eventId = reader.GetGuid(1);

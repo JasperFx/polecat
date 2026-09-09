@@ -1,6 +1,7 @@
 using JasperFx.Events;
 using Microsoft.Data.SqlClient;
 using Polecat.Internal;
+using Polecat.Internal.Sessions;
 
 namespace Polecat.Events.Fetching;
 
@@ -55,7 +56,7 @@ internal static class NaturalKeyFetchPlanner
         object? streamId = null;
         bool streamExists = false;
 
-        await using (var reader = (SqlDataReader)await session.ExecuteReaderAsync(cmd, cancellation))
+        await using (var reader = (await session.ExecuteReaderAsync(cmd, cancellation)).AsSqlDataReader())
         {
             if (await reader.ReadAsync(cancellation))
             {
