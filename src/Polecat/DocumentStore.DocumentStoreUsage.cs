@@ -58,28 +58,11 @@ public partial class DocumentStore : IDocumentStoreUsageSource
         //      (e.g. SingleStreamProjection<TDoc, TId>) — most Polecat
         //      services rely on this path rather than Schema.For<T>().
         var migrator = new SqlServerMigrator();
-        var seenDocumentTypes = new HashSet<Type>();
-
-        foreach (var expr in Options.Schema.Expressions)
-        {
-            var exprType = expr.GetType();
-            if (!exprType.IsGenericType) continue;
-
-            var documentType = exprType.GetGenericArguments()[0];
-            if (seenDocumentTypes.Add(documentType))
-            {
-                // Triggers the GetOrAdd path — provider lands in the registry.
-                Options.Providers.GetProvider(documentType);
-            }
-        }
-
-        foreach (var aggregate in Options.Projections.All.OfType<JasperFx.Events.Aggregation.IAggregateProjection>())
-        {
-            if (seenDocumentTypes.Add(aggregate.AggregateType))
-            {
-                Options.Providers.GetProvider(aggregate.AggregateType);
-            }
-        }
+        // #573: shared with PolecatDatabase.BuildFeatureSchemas, which needs the same set for DDL.
+        // This used to be a local walk over IAggregateProjection.AggregateType, which missed every
+        // other type a projection publishes and had no exclusion for documents whose storage is not
+        // Polecat's — so the console could describe a pc_doc_ table the migration would never create.
+        Internal.ConfiguredDocumentProviders.MaterializeConfigured(Options);
 
         foreach (var provider in Options.Providers.AllProviders.OrderBy(p => p.Mapping.Alias))
         {
