@@ -78,9 +78,14 @@ var factory = new MtpWorkerFactory(executable)
 // one: an emptied filter after a rename must not read as a pass.
 var filter = ArgValue("--filter");
 
+// The previous run's measured costs, when a CI step (or a developer) has fetched them. Null
+// degrades to exactly today's behaviour: balance the lanes by counting tests.
+var knownDurations = Durations.Read(ArgValue("--durations-in"));
+
 var supervisor = new Supervisor(factory)
 {
     MaxParallelWorkers = workers,
+    KnownTestDurations = knownDurations,
     TestFilter = filter is null
         ? null
         : test => test.DisplayName.Contains(filter, StringComparison.OrdinalIgnoreCase),
@@ -136,6 +141,14 @@ TrxWriter.Write(results, trxPath, Path.GetFullPath(executable), startedAt);
 TrxWriter.VerifyRoundTrip(trxPath, results.Tests.Count);
 
 Console.WriteLine($"TRX written: {trxPath} ({results.Tests.Count} result(s))");
+
+// This run's costs, for the next run's balancer. Written unconditionally when asked for, even on
+// a red run: a failing test still measured something, and the balancer wants typical cost rather
+// than only the cost of runs that happened to pass.
+if (ArgValue("--durations-out") is { } durationsOut)
+{
+    Durations.Write(results, durationsOut);
+}
 
 // The supervisor's own verdict, not a recount: it already knows what an indeterminate, a
 // stall-managed outcome and a spent retry budget each mean for the run.
