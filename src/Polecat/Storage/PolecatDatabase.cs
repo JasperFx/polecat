@@ -103,10 +103,19 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
             new EventStoreFeatureSchema(_events, naturalKeys)
         };
 
-        // Document tables + HiLo (if any providers are registered)
-        if (_options.Providers != null && _options.Providers.AllProviders.Any())
+        // #573: force the providers the CONFIGURATION implies before asking whether there are any.
+        // Providers are materialized lazily on first GetProvider<T>(), so a process that configured a
+        // store and never used it — which is exactly what `db-ef-migration add` is — saw an empty
+        // registry and declared no document tables at all. The generated migration carried the event
+        // store and nothing else, while Marten's equivalent carried the projection's document table.
+        if (_options.Providers != null)
         {
-            schemas.Add(new DocumentFeatureSchema(_options));
+            Internal.ConfiguredDocumentProviders.MaterializeConfigured(_options);
+
+            if (_options.Providers.AllProviders.Any())
+            {
+                schemas.Add(new DocumentFeatureSchema(_options));
+            }
         }
 
         if (_options.ExtendedSchemaObjects.Count > 0)
