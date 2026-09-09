@@ -17,3 +17,10 @@ jobs:
     with:
       TEST_PROJECT_PATH: src/Polecat.Tests/Polecat.Tests.csproj
       STORAGE_TYPE: ${{ matrix.storage_type }}
+      # Polecat.Tests is the workflow's critical path by an order of magnitude — ~40 minutes for
+      # `default` and ~26 for `edge`, against ~2 for every other job in the matrix — so this job's
+      # wall clock IS the PR feedback loop. 4 is the tuned local figure; the runner clamps to
+      # ProcessorCount / 2, which is 2 on a 4-vCPU hosted runner that is also hosting SQL Server.
+      # Asking for more than a runner can carry does not fail politely: an oversubscribed fleet
+      # kills the runner itself ("The runner has received a shutdown signal").
+      TEST_WORKERS: 4
