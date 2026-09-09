@@ -197,6 +197,11 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
             queryable = ApplyTagConditions(queryable, query.TagConditions);
         }
 
+        if (query.TagValues.Count > 0)
+        {
+            queryable = ApplyTagValues(queryable, query.TagValues);
+        }
+
         var pageNumber = query.PageNumber <= 0 ? 1 : query.PageNumber;
         var pageSize = query.PageSize <= 0 ? 25 : query.PageSize;
         var offset = (pageNumber - 1) * pageSize;
@@ -232,7 +237,8 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
                         | EventQueryFilters.TenantId
                         | EventQueryFilters.TimestampWindow
                         | EventQueryFilters.SequenceWindow
-                        | EventQueryFilters.TagConditions;
+                        | EventQueryFilters.TagConditions
+                        | EventQueryFilters.TagValues;
 
         var options = _events.EventOptions;
         if (options.EnableCorrelationId) supported |= EventQueryFilters.CorrelationId;
@@ -292,6 +298,53 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
         }
 
         return queryable.Where(Expression.Lambda<Func<IEvent, bool>>(body!, e));
+    }
+
+    private static readonly MethodInfo _hasTagValueMethod =
+        typeof(LinqExtensions).GetMethod(nameof(LinqExtensions.HasTagValue))!;
+
+    /// <summary>
+    ///     #575 / jasperfx#801: the lossy name/value tag filter, ANDed with itself and with every other
+    ///     filter on the query — the opposite combinator from <see cref="ApplyTagConditions" />, whose
+    ///     conditions OR. An event matches when it carries <em>every</em> named tag at the given value.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         Deliberately not implemented by delegating to <see cref="ApplyTagConditions" />. Beyond the
+    ///         combinator, the two differ in what they compare: a condition carries a typed value, an
+    ///         entry here carries the string form. Routing one through the other would have to invent a
+    ///         typed value by parsing, which changes the answer for any tag type whose parse is not a
+    ///         round trip.
+    ///     </para>
+    ///     <para>
+    ///         Names resolve through the shared <c>RequireByTagName</c> so every store accepts the same
+    ///         spellings — the CLR simple name or the registered table suffix, case-insensitively — and
+    ///         refuses an unknown one loudly. "That tag type does not exist here" and "no event carries
+    ///         that tag" must not read alike to a caller filtering events, so an unknown name is an
+    ///         <see cref="ArgumentException" /> naming what is registered rather than an empty page.
+    ///     </para>
+    /// </remarks>
+    private IQueryable<IEvent> ApplyTagValues(IQueryable<IEvent> queryable,
+        IReadOnlyDictionary<string, string> tagValues)
+    {
+        var registered = _events.TagTypes;
+
+        foreach (var (tagName, tagValue) in tagValues)
+        {
+            var registration = registered.RequireByTagName(tagName, nameof(EventQuery.TagValues));
+
+            var e = Expression.Parameter(typeof(IEvent), "e");
+            var call = Expression.Call(
+                _hasTagValueMethod.MakeGenericMethod(registration.TagType),
+                e,
+                Expression.Constant(tagValue, typeof(string)));
+
+            // A separate Where() per entry rather than one AndAlso chain: each becomes its own
+            // correlated sub-select, which is what keeps a doubly-tagged event counted once.
+            queryable = queryable.Where(Expression.Lambda<Func<IEvent, bool>>(call, e));
+        }
+
+        return queryable;
     }
 
     public async Task<IReadOnlyList<IEvent>> FetchStreamAsync(Guid streamId, long version = 0,

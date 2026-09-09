@@ -56,6 +56,62 @@ internal class HasTagParser : IMethodCallParser
 }
 
 /// <summary>
+///     Compiles <see cref="LinqExtensions.HasTagValue{TTag}" /> — the lossy name/value tag match behind
+///     <c>EventQuery.TagValues</c> (jasperfx#801 / polecat#575) — into the same correlated
+///     <c>seq_id IN (SELECT …)</c> shape <see cref="HasTagParser" /> emits, differing only in the
+///     comparison: the stored value is rendered to <c>nvarchar</c> and compared case-insensitively,
+///     because the caller supplied a string and there is no typed value to compare.
+/// </summary>
+/// <remarks>
+///     A sub-select rather than a join, for the same reason the DCB path uses one: an event carrying
+///     the tag twice must read back once, or <c>PagedEvents.TotalCount</c> counts condition hits
+///     instead of distinct events and paging walks a longer list than it reports.
+/// </remarks>
+internal class HasTagValueParser : IMethodCallParser
+{
+    private readonly EventGraph _events;
+
+    public HasTagValueParser(EventGraph events)
+    {
+        _events = events;
+    }
+
+    public bool Matches(MethodCallExpression expression)
+    {
+        return expression.Method.Name == nameof(LinqExtensions.HasTagValue)
+               && expression.Method.DeclaringType == typeof(LinqExtensions);
+    }
+
+    public ISqlFragment Parse(IMemberResolver memberFactory, MethodCallExpression expression)
+    {
+        var tagType = expression.Method.GetGenericArguments()[0];
+        var value = WhereClauseParser.ExtractValue(expression.Arguments[^1]) as string
+                    ?? throw new ArgumentException("HasTagValue() requires a non-null tag value.",
+                        nameof(expression));
+
+        var registration = _events.FindTagType(tagType)
+                           ?? throw new InvalidOperationException(
+                               $"Tag type '{tagType.Name}' is not registered. Call RegisterTagType<{tagType.Name}>() first.");
+
+        var tagTable = _events.TagTableName(registration);
+
+        // Same tenancy correlation as HasTagParser: under conjoined tenancy a tag value is unique only
+        // per tenant, so without this a value shared across tenants leaks rows into a tenant-scoped read.
+        var correlation = _events.TenancyStyle == JasperFx.MultiTenancy.TenancyStyle.Conjoined
+            ? " AND pt.tenant_id = [pc_events].[tenant_id]"
+            : string.Empty;
+
+        // CONVERT before LOWER so a non-string value column (uniqueidentifier, int, datetimeoffset)
+        // is compared on the same rendering the caller typed. LOWER on both sides rather than relying
+        // on the database collation, which a deployment can set case-sensitive.
+        return new HasTagFilter(
+            $"seq_id IN (SELECT pt.seq_id FROM {tagTable} pt WHERE LOWER(CONVERT(nvarchar(4000), pt.value)) = LOWER(",
+            value,
+            $"){correlation})");
+    }
+}
+
+/// <summary>
 ///     WHERE fragment with a single bound parameter spliced between two literal SQL segments.
 /// </summary>
 internal class HasTagFilter : ISqlFragment
