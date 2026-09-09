@@ -3,6 +3,7 @@ using System.Diagnostics.CodeAnalysis;
 using JasperFx.Events;
 using Microsoft.Data.SqlClient;
 using Polecat.Serialization;
+using Polecat.Internal.Sessions;
 
 namespace Polecat.Events.Linq;
 
@@ -29,7 +30,7 @@ internal class EventListHandler
     public async Task<IReadOnlyList<IEvent>> HandleAsync(DbDataReader reader, CancellationToken token)
     {
         var results = new List<IEvent>();
-        var sqlReader = (SqlDataReader)reader;
+        var sqlReader = reader.AsSqlDataReader();
 
         while (await sqlReader.ReadAsync(token))
         {
