@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The supervised test runner. Not part of the solution's product or test graph: it is a build
+    tool, so it deliberately opts out of the repo-wide test conventions in Directory.Build.props
+    (xUnit analyzers, MTP runner, TFM matrix) and pins its own dependencies rather than taking
+    them from Directory.Packages.props.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!--
+      net9.0, not net10.0, and deliberately: the CI job installs the 9.0.x SDK and runs the test
+      host out of bin/Release/net9.0, so a net10.0 runner would not start on the machine that has
+      to run it. Bobcat.Supervisor ships both TFMs, so this costs nothing.
+    -->
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+    <IsPackable>false</IsPackable>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Bobcat.Supervisor" Version="0.16.0" />
+    <PackageReference Include="Microsoft.Data.SqlClient" Version="7.0.0" />
+  </ItemGroup>
+
+</Project>

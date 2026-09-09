@@ -10,6 +10,15 @@ on:
         required: false
         type: string
         default: "default"
+      # Worker processes for the supervised runner. 1 keeps the historical behaviour exactly:
+      # a single MTP host, TRX report, dorny/test-reporter. Above 1 the run goes through
+      # build/SupervisedTests, which partitions by test class and gives each worker its own
+      # catalog. Opt-in per caller so a suite that has not been checked for parallel-readiness
+      # cannot be parallelised by accident.
+      TEST_WORKERS:
+        required: false
+        type: number
+        default: 1
       # TEST_FILTERS is gone. It defaulted to "Category!=Flaky" and no caller ever overrode it,
       # but there is not a single [Trait] attribute anywhere in the repo — so the filter matched
       # every test and had never excluded anything. Under Microsoft Testing Platform the equivalent
@@ -80,11 +89,31 @@ jobs:
       # The TRX lands in <project>/bin/Release/net9.0/TestResults/, which the reporter's
       # **/TestResults/*.trx glob already matches.
       - name: Test
+        if: ${{ inputs.TEST_WORKERS == 1 }}
         run: |
           PROJECT_DIR=$(dirname "${{ env.TEST_PROJECT_PATH }}")
           ASSEMBLY=$(basename "${{ env.TEST_PROJECT_PATH }}" .csproj)
           "$PROJECT_DIR/bin/Release/net9.0/$ASSEMBLY" --report-trx --report-trx-filename test-results.trx
 
+      # The supervised path. Drives the same executable over Microsoft.Testing.Platform's server
+      # mode across TEST_WORKERS processes, partitioning by test CLASS and giving each worker its
+      # own catalog via POLECAT_TESTING_DATABASE. See build/SupervisedTests/Program.cs.
+      #
+      # A supervised run produces no TRX on its own — each worker executes a slice and none of
+      # them knows the whole run — so the runner writes one itself, into the same TestResults/
+      # directory the single-process path uses. The reporter step below is shared and unchanged.
+      - name: Test (supervised)
+        if: ${{ inputs.TEST_WORKERS != 1 }}
+        run: |
+          PROJECT_DIR=$(dirname "${{ env.TEST_PROJECT_PATH }}")
+          ASSEMBLY=$(basename "${{ env.TEST_PROJECT_PATH }}" .csproj)
+          dotnet run --project build/SupervisedTests/SupervisedTests.csproj -c Release -- \
+            --executable "$PROJECT_DIR/bin/Release/net9.0/$ASSEMBLY" \
+            --workers ${{ inputs.TEST_WORKERS }}
+
+      # Runs for BOTH paths. The supervised runner writes an equivalent TRX to the same
+      # TestResults/ directory (build/SupervisedTests/TrxWriter.cs), so reporting is identical
+      # whichever path produced it — same artifact, same annotations on the PR.
       - name: Report results
         uses: dorny/test-reporter@v3
         if: ${{ !cancelled() }}
