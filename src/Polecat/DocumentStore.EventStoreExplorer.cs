@@ -32,14 +32,34 @@ public partial class DocumentStore
     Task<IReadOnlyList<StreamSummary>> IEventStore.GetRecentStreamsAsync(int count, CancellationToken ct)
         => ((IEventStore)this).GetRecentStreamsAsync(count, null, ct);
 
+    // #584 / jasperfx#810 — the database dimension. Reads the listing from ONE database rather than
+    // from whichever database the store's default session resolves. A tool enumerates AllDatabases()
+    // and calls this per database, so every row it renders is attributable to the database it came
+    // from. On a single-database store this is the same read as the store-global overload; the
+    // argument is simply the store's one database.
+    Task<IReadOnlyList<StreamSummary>> IEventStore.GetRecentStreamsAsync(
+        IEventDatabase database, int count, string? tenantId, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(database);
+        return recentStreamsAsync(RequirePolecatDatabase(database), count, tenantId, ct);
+    }
+
     // #782 / jasperfx#503 — tenant-scoped recent-streams listing. On a conjoined multi-tenant
     // Polecat store the pc_streams rows carry a tenant_id column, so a non-null tenantId bounds
     // the listing with a tenant_id predicate. Null preserves the store-global listing across
-    // every tenant (today's behaviour). Database-per-tenant scoping (StaticMultiple /
-    // DynamicMultiple) is a separate, broader gap — the tenant-less explorer reads themselves do
-    // not yet resolve per-database — so it is not attempted here.
-    async Task<IReadOnlyList<StreamSummary>> IEventStore.GetRecentStreamsAsync(
+    // every tenant within a database. The database axis is independent and is handled by the
+    // IEventDatabase overload above (#584); the tenant_id predicate here applies on top of whichever
+    // database ends up being opened.
+    Task<IReadOnlyList<StreamSummary>> IEventStore.GetRecentStreamsAsync(
         int count, string? tenantId, CancellationToken ct)
+        // #584 — on a multi-database store a store-global listing is a fan-out, not one database's
+        // rows. See FanOutRecentStreamsAsync for why this one read merges where its siblings refuse.
+        => IsSingleDatabase
+            ? recentStreamsAsync(null, count, tenantId, ct)
+            : FanOutRecentStreamsAsync(count, tenantId, ct);
+
+    private async Task<IReadOnlyList<StreamSummary>> recentStreamsAsync(
+        PolecatDatabase? database, int count, string? tenantId, CancellationToken ct)
     {
         if (count <= 0) return Array.Empty<StreamSummary>();
 
@@ -47,7 +67,7 @@ public partial class DocumentStore
 
         // #148: run through a QuerySession so the command is covered by
         // Options.ResiliencePipeline (Polly) like the rest of the read path.
-        await using var session = (Internal.QuerySession)QuerySession();
+        await using var session = ExplorerSession(database);
         await using var cmd = new SqlCommand();
         // #57: share the column projection + row read with FetchStreamStateAsync
         // and GetStreamMetadataAsync via PcStreamsRowReader so all three sites
@@ -73,13 +93,33 @@ public partial class DocumentStore
     IAsyncEnumerable<EventRecord> IEventStore.ReadStreamAsync(string streamId, CancellationToken ct)
         => ((IEventStore)this).ReadStreamAsync(streamId, null, ct);
 
+    // #584 / jasperfx#810 — the database dimension matters more here than for a listing: the same
+    // stream id can exist in several databases, each with its own version sequence, so "which
+    // database" is part of the stream's identity rather than a filter over one answer.
+    IAsyncEnumerable<EventRecord> IEventStore.ReadStreamAsync(
+        IEventDatabase database, string streamId, string? tenantId, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(database);
+        return readStreamAsync(RequirePolecatDatabase(database), streamId, tenantId, ct);
+    }
+
     // #782 / jasperfx#503 — tenant-scoped stream read. On a conjoined multi-tenant Polecat
     // store the same stream id can exist under two tenants; the tenant-less overload reads
     // across every tenant and returns their ambiguous union. A non-null tenantId filters the
-    // read to that tenant's rows via a tenant_id predicate. Null preserves the store-global
-    // read. (See the GetRecentStreamsAsync note on the database-per-tenant boundary.)
-    async IAsyncEnumerable<EventRecord> IEventStore.ReadStreamAsync(
-        string streamId, string? tenantId, [EnumeratorCancellation] CancellationToken ct)
+    // read to that tenant's rows via a tenant_id predicate. Null preserves the read across every
+    // tenant in the database. The database axis is the IEventDatabase overload above (#584).
+    IAsyncEnumerable<EventRecord> IEventStore.ReadStreamAsync(
+        string streamId, string? tenantId, CancellationToken ct)
+    {
+        // #584 — concatenating one stream id's events out of several databases would interleave two
+        // independent version sequences into something that reads as a single stream and is not.
+        RequireSingleDatabase(nameof(IEventStore.ReadStreamAsync));
+        return readStreamAsync(null, streamId, tenantId, ct);
+    }
+
+    private async IAsyncEnumerable<EventRecord> readStreamAsync(
+        PolecatDatabase? database, string streamId, string? tenantId,
+        [EnumeratorCancellation] CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrEmpty(streamId);
 
@@ -91,7 +131,7 @@ public partial class DocumentStore
         // #148: run through a QuerySession so the command is covered by
         // Options.ResiliencePipeline (Polly). The session is kept alive for the
         // duration of the enumeration via await using.
-        await using var session = (Internal.QuerySession)QuerySession();
+        await using var session = ExplorerSession(database);
         await using var cmd = new SqlCommand();
 
         // #57 pc_events half: share the column projection + row hydration
@@ -128,8 +168,34 @@ public partial class DocumentStore
         }
     }
 
-    async Task<StreamMetadata?> IEventStore.GetStreamMetadataAsync(
+    Task<StreamMetadata?> IEventStore.GetStreamMetadataAsync(
         string streamId, CancellationToken ct)
+    {
+        // #584 — this read returns ONE row. On a multi-database store two databases can each hold a
+        // stream with this id, and there is no answer that names both.
+        RequireSingleDatabase(nameof(IEventStore.GetStreamMetadataAsync));
+        return streamMetadataAsync(null, streamId, ct);
+    }
+
+    // #584 / jasperfx#810 — the database dimension. A null answer from this overload means "no such
+    // stream in THIS database" rather than "no such stream", which is exactly the distinction the
+    // store-global read cannot make once there is more than one database.
+    Task<StreamMetadata?> IEventStore.GetStreamMetadataAsync(
+        IEventDatabase database, string streamId, string? tenantId, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(database);
+        if (tenantId != null)
+        {
+            throw new NotSupportedException(
+                "Tenant-scoped GetStreamMetadataAsync is not implemented on Polecat. Pass a null tenantId " +
+                "to read the stream from the database without a tenant predicate.");
+        }
+
+        return streamMetadataAsync(RequirePolecatDatabase(database), streamId, ct);
+    }
+
+    private async Task<StreamMetadata?> streamMetadataAsync(
+        PolecatDatabase? database, string streamId, CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrEmpty(streamId);
 
@@ -139,7 +205,7 @@ public partial class DocumentStore
 
         // #148: run through a QuerySession so the command is covered by
         // Options.ResiliencePipeline (Polly).
-        await using var session = (Internal.QuerySession)QuerySession();
+        await using var session = ExplorerSession(database);
         await using var cmd = new SqlCommand();
         // #57: share the pc_streams column projection + row read with the
         // other two stream-reading sites via PcStreamsRowReader. The JOIN'd
@@ -184,15 +250,30 @@ public partial class DocumentStore
     ///     single tenant with an <c>e.tenant_id</c> predicate on pc_events, AND-combining a <c>seq_id</c>
     ///     sub-select per requested tag (matching the Marten companion's shape).
     ///     <para>
-    ///     Scope here is the conjoined single-database <c>tenant_id</c>-predicate path only. A null
-    ///     <paramref name="tenantId"/> delegates to the tenant-less overload — still a NotSupportedException,
-    ///     because store-global DCB tag queries are a separate, pre-existing Polecat gap. Database-per-tenant
-    ///     explorer scoping is likewise a pre-existing Polecat gap (the stream-read explorer methods don't
-    ///     open a per-database session either); when that lands, this method grows the same
-    ///     FindOrCreateDatabase branch its Marten counterpart already uses.
+    ///     A null <paramref name="tenantId"/> delegates to the tenant-less overload — still a
+    ///     NotSupportedException, because store-global DCB tag queries are a separate, pre-existing Polecat
+    ///     gap. The DATABASE axis is independent of this one and is now closed (#584): the IEventDatabase
+    ///     overload picks the database, and the <c>e.tenant_id</c> predicate below applies within it.
     ///     </para>
     /// </summary>
-    async IAsyncEnumerable<EventRecord> IEventStore.QueryByTagsAsync(
+    // #584 / jasperfx#810 — the database dimension. Tag values are not unique across databases, so
+    // a store-global tag query on a sharded store would answer from one database and show no sign of
+    // it. This overload names the database; the tenant predicate below is the independent second
+    // axis, and both apply.
+    IAsyncEnumerable<EventRecord> IEventStore.QueryByTagsAsync(
+        IEventDatabase database, IReadOnlyDictionary<string, string> tags, string? tenantId,
+        CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(database);
+        return queryByTagsAsync(RequirePolecatDatabase(database), tags, tenantId, ct);
+    }
+
+    IAsyncEnumerable<EventRecord> IEventStore.QueryByTagsAsync(
+        IReadOnlyDictionary<string, string> tags, string? tenantId, CancellationToken ct)
+        => queryByTagsAsync(null, tags, tenantId, ct);
+
+    private async IAsyncEnumerable<EventRecord> queryByTagsAsync(
+        PolecatDatabase? database,
         IReadOnlyDictionary<string, string> tags,
         string? tenantId,
         [EnumeratorCancellation] CancellationToken ct)
@@ -334,31 +415,59 @@ public partial class DocumentStore
         return new AggregateAtVersion(aggregateType.FullName ?? aggregateTypeName, stateJson, resolvedVersion, eventsApplied);
     }
 
-    async Task<IReadOnlyList<ProjectionStatus>> IEventStore.GetProjectionStatusesAsync(CancellationToken ct)
+    Task<IReadOnlyList<ProjectionStatus>> IEventStore.GetProjectionStatusesAsync(CancellationToken ct)
+    {
+        // #584 — progression rows live in the database whose events they track. Merging them across
+        // databases would collapse N rows named "MyProjection:All" into one, so a store-global
+        // snapshot on a sharded store describes one database and reads as the whole store's.
+        RequireSingleDatabase(nameof(IEventStore.GetProjectionStatusesAsync));
+        return projectionStatusesAsync(SingleDatabase, tenantId: null, ct);
+    }
+
+    // #584 / jasperfx#810 — the database dimension, and the counterpart to the per-cell lag that
+    // IEventDatabase.FetchProjectionLagAsync already reports one database at a time.
+    Task<IReadOnlyList<ProjectionStatus>> IEventStore.GetProjectionStatusesAsync(
+        IEventDatabase database, string? tenantId, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(database);
+
+        // The TENANT dimension of this read is a separate, still-open gap, and it is deeper than a
+        // predicate: Polecat encodes the tenant in the shard NAME under per-tenant partitioning, so a
+        // tenant-filtered progression read returns tenant-suffixed row names while the status loop
+        // below builds its shard list from the untenanted registrations — nothing would match. The
+        // HighWaterMark row carries no tenant suffix either, so it would be filtered out and the high
+        // water mark would read 0. Every shard would come back "0 of 0" and look perfectly healthy,
+        // which is the failure mode this issue exists to stop. The base interface already refuses a
+        // non-null tenant here, and keeping that refusal is the honest answer until the shard-name
+        // axis is done properly.
+        if (tenantId != null)
+        {
+            throw new NotSupportedException(
+                "Per-tenant GetProjectionStatusesAsync is not implemented on Polecat. Pass a null tenantId " +
+                "for the whole database's projection statuses.");
+        }
+
+        return projectionStatusesAsync(RequirePolecatDatabase(database), tenantId: null, ct);
+    }
+
+    private async Task<IReadOnlyList<ProjectionStatus>> projectionStatusesAsync(
+        PolecatDatabase database, string? tenantId, CancellationToken ct)
     {
         // Pull progression rows so we can attach processed sequence numbers to each shard
         var progress = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
         long highWater = 0;
 
-        // #148: run through a QuerySession so the command is covered by
-        // Options.ResiliencePipeline (Polly).
-        await using (var session = (Internal.QuerySession)QuerySession())
+        // AllProjectionProgress runs inside Options.ResiliencePipeline the same way the session-bound
+        // explorer reads do, and it is already per-database -- which is the whole point here.
+        foreach (var state in await database.AllProjectionProgress(tenantId, ct))
         {
-            await using var cmd = new SqlCommand();
-            cmd.CommandText = $"SELECT name, last_seq_id FROM {Events.ProgressionTableName};";
-            await using var reader = await session.ExecuteReaderAsync(cmd, ct);
-            while (await reader.ReadAsync(ct))
+            if (string.Equals(state.ShardName, "HighWaterMark", StringComparison.OrdinalIgnoreCase))
             {
-                var name = reader.GetString(0);
-                var seq = reader.GetInt64(1);
-                if (string.Equals(name, "HighWaterMark", StringComparison.OrdinalIgnoreCase))
-                {
-                    highWater = seq;
-                }
-                else
-                {
-                    progress[name] = seq;
-                }
+                highWater = state.Sequence;
+            }
+            else
+            {
+                progress[state.ShardName] = state.Sequence;
             }
         }
 
@@ -390,6 +499,96 @@ public partial class DocumentStore
         }
 
         return statuses;
+    }
+
+    // ---- #584 / jasperfx#810: the database dimension of the explorer reads ----
+    //
+    // Every explorer read below used to open the store's default session, which on a store with more
+    // than one database silently picks whichever database that session resolves. The result is
+    // indistinguishable from a complete answer — a console over 512 shard databases lists recent
+    // streams from one of them and says nothing about the other 511 (CritterWatch#1231).
+    //
+    // The fix has two halves, and they are independent axes:
+    //   * the database-scoped overloads open the database they are GIVEN, so a tool enumerates
+    //     AllDatabases() and attributes each answer to the database it came from; and
+    //   * the store-global overloads stop answering from one database. Each either fans out (the
+    //     recent-streams listing, where merging is well defined) or refuses and names the database
+    //     overload. Answering from one database is the one option ruled out.
+    //
+    // The tenant predicate is the OTHER axis and is unchanged: Polecat already applies tenant_id
+    // wherever events are conjoined, and it applies on top of whichever database is opened.
+
+    private bool IsSingleDatabase => (Options.Tenancy?.Cardinality ?? DatabaseCardinality.Single)
+        == DatabaseCardinality.Single;
+
+    /// <summary>
+    ///     The store's one database, for the store-global reads that are only reachable when there is
+    ///     exactly one. Callers must have passed <see cref="RequireSingleDatabase" /> first.
+    /// </summary>
+    private PolecatDatabase SingleDatabase =>
+        Options.Tenancy?.AllDatabases() is { Count: > 0 } databases
+            ? databases[0]
+            : throw new InvalidOperationException(
+                "This Polecat store has no database configured, so the event store explorer has nothing to read.");
+
+    private void RequireSingleDatabase(string member)
+    {
+        if (IsSingleDatabase) return;
+
+        throw new NotSupportedException(
+            $"Store-global {member} is not supported on this Polecat store, whose DatabaseCardinality is " +
+            $"{Options.Tenancy!.Cardinality}. It would answer from whichever database the default session " +
+            "resolved, and the result would be indistinguishable from a complete answer. Enumerate " +
+            $"IEventStore.AllDatabases() and call the IEventDatabase overload of {member} per database " +
+            "instead (jasperfx#810, polecat#584).");
+    }
+
+    private static PolecatDatabase RequirePolecatDatabase(IEventDatabase database) =>
+        database as PolecatDatabase
+        ?? throw new ArgumentException(
+            $"Expected a Polecat database but got '{database.GetType().FullName}'. The database-scoped event " +
+            "store explorer reads only accept databases this store produced through AllDatabases().",
+            nameof(database));
+
+    /// <summary>
+    ///     Opens the session an explorer read runs on: the database it was given, or the store's
+    ///     default routing when it was given none.
+    /// </summary>
+    private Internal.QuerySession ExplorerSession(PolecatDatabase? database) =>
+        (Internal.QuerySession)(database == null
+            ? QuerySession()
+            : QuerySession(SessionOptions.ForDatabase(database)));
+
+    /// <summary>
+    ///     The store-global recent-streams listing on a multi-database store. This is the one explorer
+    ///     read whose store-global answer stays meaningful across databases: "the N most recently
+    ///     updated streams" is well defined over a union, because <see cref="StreamSummary" /> carries
+    ///     the LastUpdatedAt the merge orders on. Its siblings refuse instead — a stream's events, a
+    ///     stream's metadata and a database's projection progression are each scoped to one database
+    ///     by nature, and merging them would fabricate a stream or a shard that does not exist.
+    ///     <para>
+    ///     Each database is capped at <paramref name="count" /> because no database can contribute more
+    ///     than that to the top <paramref name="count" /> overall, so the cap costs nothing and bounds
+    ///     the fan-out.
+    ///     </para>
+    /// </summary>
+    private async Task<IReadOnlyList<StreamSummary>> FanOutRecentStreamsAsync(
+        int count, string? tenantId, CancellationToken ct)
+    {
+        if (count <= 0) return Array.Empty<StreamSummary>();
+
+        var databases = await ((IEventStore)this).AllDatabases();
+
+        var merged = new List<StreamSummary>(capacity: count * Math.Max(databases.Count, 1));
+        foreach (var database in databases)
+        {
+            merged.AddRange(await recentStreamsAsync(RequirePolecatDatabase(database), count, tenantId, ct));
+        }
+
+        return merged
+            .OrderByDescending(x => x.LastUpdatedAt)
+            .Take(count)
+            .ToList();
     }
 
     // #373: one answer to "what type is this alias". This used to be a second, near-identical copy of the
