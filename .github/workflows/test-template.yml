@@ -102,6 +102,22 @@ jobs:
       # A supervised run produces no TRX on its own — each worker executes a slice and none of
       # them knows the whole run — so the runner writes one itself, into the same TestResults/
       # directory the single-process path uses. The reporter step below is shared and unchanged.
+      # Last main run's per-test durations, so lanes are balanced by measured cost rather than by
+      # counting tests. Best-effort by design: `continue-on-error` plus the runner treating a
+      # missing file as "balance by count" means a first run on a new branch, a pruned artifact or
+      # a download hiccup costs the balancing hint and nothing else.
+      - name: Fetch previous test durations
+        if: ${{ inputs.TEST_WORKERS != 1 }}
+        continue-on-error: true
+        run: |
+          gh run download --repo "$GITHUB_REPOSITORY" \
+            --name "durations-${{ inputs.STORAGE_TYPE }}" \
+            --dir previous-durations \
+            $(gh run list --repo "$GITHUB_REPOSITORY" --workflow polecat.yml --branch main \
+                --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+        env:
+          GH_TOKEN: ${{ github.token }}
+
       - name: Test (supervised)
         if: ${{ inputs.TEST_WORKERS != 1 }}
         run: |
@@ -109,7 +125,21 @@ jobs:
           ASSEMBLY=$(basename "${{ env.TEST_PROJECT_PATH }}" .csproj)
           dotnet run --project build/SupervisedTests/SupervisedTests.csproj -c Release -- \
             --executable "$PROJECT_DIR/bin/Release/net9.0/$ASSEMBLY" \
-            --workers ${{ inputs.TEST_WORKERS }}
+            --workers ${{ inputs.TEST_WORKERS }} \
+            --durations-in previous-durations \
+            --durations-out durations/durations.json
+
+      # Published from main only. A PR's durations describe a tree that is about to stop existing,
+      # and every PR overwriting the shared hint would make the balancer track whichever branch
+      # last ran rather than the trunk everything is measured against.
+      - name: Publish test durations
+        if: ${{ inputs.TEST_WORKERS != 1 && github.ref == 'refs/heads/main' && !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: durations-${{ inputs.STORAGE_TYPE }}
+          path: durations/durations.json
+          retention-days: 30
+          if-no-files-found: warn
 
       # Runs for BOTH paths. The supervised runner writes an equivalent TRX to the same
       # TestResults/ directory (build/SupervisedTests/TrxWriter.cs), so reporting is identical
