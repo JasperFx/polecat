@@ -126,6 +126,11 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
         return schemas.ToArray();
     }
 
+    /// <summary>
+    ///     #583 — the descriptor JasperFx's <c>db-list</c> renders, and the shape monitoring tools key on.
+    ///     Mirrors <c>MartenDatabase.Describe()</c> field for field; the two properties below were the
+    ///     ones Polecat left at their defaults, and both of them show up in <c>db-list</c> output.
+    /// </summary>
     public override DatabaseDescriptor Describe()
     {
         var builder = new SqlConnectionStringBuilder(_connectionString);
@@ -134,6 +139,19 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
             Engine = SqlServerProvider.EngineName,
             ServerName = builder.DataSource ?? string.Empty,
             DatabaseName = builder.InitialCatalog ?? string.Empty,
+
+            // Without this, DatabaseDescriptor.SubjectUri keeps its "database://unknown" default and
+            // db-list reports a Polecat store as belonging to nothing, where the equivalent Marten
+            // app reports "marten://store". Static rather than per-store, matching
+            // MartenDatabase.Describe(): the SystemPart's own subject is what distinguishes ancillary
+            // stores in the resource model (see PolecatSystemPart<T>).
+            SubjectUri = PolecatSystemPart.PolecatStoreUri,
+
+            // DatabaseUri() is {engine}://{server}/{database}/{schema} with the empty parts dropped, so
+            // leaving this unset rendered "sqlserver://localhost/" — no schema, while the Wolverine
+            // database sitting next to it in the same table rendered "sqlserver://localhost/dbo".
+            SchemaOrNamespace = _options.DatabaseSchemaName,
+
             Subject = GetType().FullNameInCode(),
             Identifier = Identifier
         };
