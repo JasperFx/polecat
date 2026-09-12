@@ -211,7 +211,7 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
 
         return new DocumentStorageDescriptor<TDoc, TId>(
             identification,
-            serializer: Serialization.StorageSerializerAdapter.For(options.Serializer),
+            serializer: Weasel.Storage.StorageSerializerAdapter.For(options.Serializer),
             dialect: SqlServerStorageDialect<TId>.Instance,
             clientSideWriteBinders: clientSide,
             writeBinders: writeArray,

@@ -575,9 +575,9 @@
              StorageOperationExecution.Configure), so 9.27.1 is a FLOOR, not a preference — the nine
              queued_sql_command_tests are the proof it holds, and five of them fail against 9.27.0
              once the local guard is gone. -->
-        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.29.0" />
-        <PackageVersion Include="Weasel.SqlServer" Version="9.29.0" />
-        <PackageVersion Include="Weasel.Storage" Version="9.29.0" />
+        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.32.0" />
+        <PackageVersion Include="Weasel.SqlServer" Version="9.32.0" />
+        <PackageVersion Include="Weasel.Storage" Version="9.32.0" />
 
         <!-- Strongly typed IDs. Both generators are test-only: they prove Polecat's value-type id
              support against the two libraries Marten's ValueTypeTests exercise. StronglyTypedId emits
