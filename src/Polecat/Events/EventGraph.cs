@@ -310,7 +310,7 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
     private object BuildClosedShapeEventStorage()
     {
         var dialect = new Storage.SqlServerEventStoreDialect();
-        var serializer = Serialization.StorageSerializerAdapter.For(Serializer);
+        var serializer = Weasel.Storage.StorageSerializerAdapter.For(Serializer);
         return StreamIdentity == StreamIdentity.AsGuid
             ? Weasel.Storage.EventStorageBuilder.Build<Guid>(dialect, AppendMode, this, serializer)
             : Weasel.Storage.EventStorageBuilder.Build<string>(dialect, AppendMode, this, serializer);
