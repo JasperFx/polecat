@@ -6,7 +6,7 @@
         <Nullable>enable</Nullable>
         <!--
           Kept in step with the released line by hand. This is NOT what decides a package's version:
-          publish.yml derives that from the tag name (v5.25.0 -> 5.25.0) and passes it to `dotnet
+          publish.yml derives that from the tag name (v5.26.0 -> 5.26.0) and passes it to `dotnet
           pack` as -p:Version, so this property is overridden on every tagged publish and cannot
           make a release wrong. What it does set is the assembly and file version of a LOCAL build,
           and anything reading Assembly.GetName().Version at runtime — including Polecat's own
@@ -15,7 +15,7 @@
           in the publish path reads it, so a stale value is invisible until someone asks a running
           store what version it is.
         -->
-        <Version>5.25.0</Version>
+        <Version>5.26.0</Version>
         <LangVersion>latest</LangVersion>
         <Authors>Jeremy D. Miller</Authors>
         <PackageIcon>logo.png</PackageIcon>

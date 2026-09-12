@@ -351,6 +351,29 @@
              (b) weasel#538/#542 — AssertPatchingIsValid lets a rebuildable Invalid delta through,
              in Weasel.Core.SchemaMigration and ISchemaObject. Core, so every provider sees it.
 
+             Weasel 9.32.0 (#585, from 9.29.0, spanning 9.29.1 / 9.30.0 / 9.31.0 / 9.31.1 / 9.31.2).
+             The one that changes behaviour Polecat can observe is 9.31.0 (weasel#580):
+             AssertStreamVersionOperation treated "no row came back" as an unconditional version
+             conflict, so AlwaysEnforceConsistency against a stream that does not exist threw
+             "expected 0 but was 0" — the guard firing where expectation and reality agree. A missing
+             row means version 0. Root-caused from marten#5345 and fixed in Weasel precisely because
+             the operation is shared with Polecat, so this bump is how Polecat gets it.
+             9.29.1 teaches the schema differ to detect a WIDENED character column, so an
+             nvarchar length increase is a real delta instead of comparing equal.
+             9.31.1 (weasel#583/#584) publishes the managed partition registries as swapped snapshots
+             rather than mutating them in place — that is the registry Polecat's tenant partitioning
+             reads.
+             9.30.0 is mostly lifts out of the per-store copies (a generic ITransactionParticipant,
+             the flat-table projection DSL, a dialect-neutral EventLoaderBase, MasterTableTenancy into
+             Weasel.Core.MultiTenancy), and ONE of them costs an adoption: weasel#555/#559 lifted
+             StorageSerializerAdapter out of Polecat's and Fisher's byte-identical copies into
+             Weasel.Storage. Polecat's local Polecat.Serialization copy then collided with it (CS0104
+             at the one unqualified call site), so #585 deleted the local type and repointed three
+             call sites. Polecat's ISerializer already derives from Weasel.Core.ISerializer, which is
+             what the lifted adapter takes; the local type was internal, so no public API moved.
+             9.32.0 itself (weasel#590/#591) exposes a document's mapped version member and lets the
+             enum in-fragments be told the stored name. Polecat uses neither yet.
+
              JasperFx 2.62.0 (#532, jasperfx#737): the broadened EventQuery — multi-type
              union via CombinedEventTypeNames(), inclusive timestamp and sequence windows, folded
              EventTagQuerySpec tag conditions, EventQueryFilters + AssertFiltersAreSupported (the
@@ -407,7 +430,30 @@
 
              Worth recording for the next reader: Fisher was the store that ran these suites first
              and filed both #784 and #788. Polecat inherits both fixes without having had to
-             diagnose either, which is the whole argument for the shared suites. -->
+             diagnose either, which is the whole argument for the shared suites.
+
+             JasperFx 2.68.0 (#586, from 2.67.0). One release, and Polecat consumes the headline of
+             it: jasperfx#810 (abstraction half in jasperfx#817) gave the IEventStore explorer reads a
+             DATABASE dimension — GetRecentStreamsAsync, ReadStreamAsync, GetStreamMetadataAsync,
+             QueryByTagsAsync and GetProjectionStatusesAsync each gain an IEventDatabase overload
+             alongside the tenant-scoped one. They are default interface members that delegate on a
+             Single-cardinality store and throw on a multi-database one, so nothing broke at compile
+             time and the bump alone would have been silent. polecat#584 is the store half: Polecat
+             now implements all five against the supplied database via SessionOptions.ForDatabase,
+             and its store-global reads stop answering from whichever database the default session
+             resolved — GetRecentStreamsAsync fans out and merges, the rest refuse and name the
+             database overload.
+             EventStoreExplorerCompliance (already enrolled, wave 5) gained four database-scoped arms
+             in jasperfx#817, but they self-skip unless the store reports exactly one database, so all
+             they pin is that the database overload AGREES with the store-global read. The
+             multi-database arm is Polecat-local — see database_scoped_explorer_reads_tests.
+             Also in 2.68.0 and NOT consumed here: jasperfx#815/#816 (RegisteredShardNames() — the
+             generic IEventStore<TOperations, TQuerySession> already satisfies it from AllShards(), so
+             Polecat needed no change) and jasperfx#811/#812 + #813/#814, the store-neutral vector
+             contracts and their Microsoft.Extensions.AI adapter, which Polecat does not implement.
+             Note 2.67.0 arrived in #531 without an entry here; its contents are jasperfx#800-#808
+             (compaction refusal naming, the event-query tags option, ANDed tag filters, partial
+             EventModelDescriptor round-trip). -->
         <PackageVersion Include="JasperFx" Version="2.68.0" />
         <PackageVersion Include="JasperFx.Events" Version="2.68.0" />
         <!--
