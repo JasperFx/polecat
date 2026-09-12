@@ -424,6 +424,46 @@ public partial class DocumentStore
         return projectionStatusesAsync(SingleDatabase, tenantId: null, ct);
     }
 
+    /// <summary>
+    ///     #589 — the tenant dimension, which used to refuse.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         The argument means one of two things depending on how the store is tenanted, exactly as
+    ///         it does for <c>BuildProjectionDaemonAsync</c>, and the difference is not cosmetic.
+    ///     </para>
+    ///     <list type="bullet">
+    ///     <item>
+    ///         <b>One database</b> (conjoined tenancy with per-tenant event partitioning): the tenant
+    ///         lives inside that database and its shards carry the trailing
+    ///         <c>{Proj}:{ShardKey}:{tenant}</c> suffix, so the progression lookup must be made under
+    ///         the tenant-bearing identity.
+    ///     </item>
+    ///     <item>
+    ///         <b>Database-per-tenant</b>: the tenant names a physical database whose shards are NOT
+    ///         suffixed — each database runs its own daemon over the same shard identities — so the
+    ///         tenant selects where to read, and nothing else.
+    ///     </item>
+    ///     </list>
+    /// </remarks>
+    Task<IReadOnlyList<ProjectionStatus>> IEventStore.GetProjectionStatusesAsync(
+        string? tenantId, CancellationToken ct)
+    {
+        if (tenantId == null)
+        {
+            RequireSingleDatabase(nameof(IEventStore.GetProjectionStatusesAsync));
+            return projectionStatusesAsync(SingleDatabase, tenantId: null, ct);
+        }
+
+        // On a multi-database store the tenant resolves to the database it lives in; on a single
+        // database store there is only one place to read and the tenant narrows the shard identities.
+        var database = IsSingleDatabase
+            ? SingleDatabase
+            : Options.Tenancy!.GetDatabase(tenantId);
+
+        return projectionStatusesAsync(database, tenantId, ct);
+    }
+
     // #584 / jasperfx#810 — the database dimension, and the counterpart to the per-cell lag that
     // IEventDatabase.FetchProjectionLagAsync already reports one database at a time.
     Task<IReadOnlyList<ProjectionStatus>> IEventStore.GetProjectionStatusesAsync(
@@ -431,45 +471,53 @@ public partial class DocumentStore
     {
         ArgumentNullException.ThrowIfNull(database);
 
-        // The TENANT dimension of this read is a separate, still-open gap, and it is deeper than a
-        // predicate: Polecat encodes the tenant in the shard NAME under per-tenant partitioning, so a
-        // tenant-filtered progression read returns tenant-suffixed row names while the status loop
-        // below builds its shard list from the untenanted registrations — nothing would match. The
-        // HighWaterMark row carries no tenant suffix either, so it would be filtered out and the high
-        // water mark would read 0. Every shard would come back "0 of 0" and look perfectly healthy,
-        // which is the failure mode this issue exists to stop. The base interface already refuses a
-        // non-null tenant here, and keeping that refusal is the honest answer until the shard-name
-        // axis is done properly.
-        if (tenantId != null)
-        {
-            throw new NotSupportedException(
-                "Per-tenant GetProjectionStatusesAsync is not implemented on Polecat. Pass a null tenantId " +
-                "for the whole database's projection statuses.");
-        }
-
-        return projectionStatusesAsync(RequirePolecatDatabase(database), tenantId: null, ct);
+        // #589: the tenant axis used to refuse here. It now composes the tenant-bearing shard identity
+        // rather than filtering rows and hoping they line up with the untenanted registrations — see
+        // projectionStatusesAsync.
+        return projectionStatusesAsync(RequirePolecatDatabase(database), tenantId, ct);
     }
+
+    /// <summary>
+    ///     #589 — no daemon in this process was asked about these shards, so their runtime state is not
+    ///     something this read can report.
+    /// </summary>
+    /// <remarks>
+    ///     Deliberately not <c>"Stopped"</c>, which is what this method used to answer for every shard
+    ///     unconditionally. <see cref="ShardStatus.State" /> is a fact about the RUNNING DAEMON, and
+    ///     pc_event_progression does not know it — so "Stopped" was not a partial answer but a wrong
+    ///     one, indistinguishable from a daemon that really had stopped, and it is the reading an
+    ///     operator acts on. Marten answers "Unknown" here for the same reason. Reporting the real
+    ///     state, as Fisher does, needs a daemon accessor that does not CREATE a daemon as a side
+    ///     effect of being asked — Polecat's AllDaemonsAsync() builds one per database — so it is a
+    ///     follow-up rather than something to improvise inside a defect fix. See polecat#589,
+    ///     jasperfx#818.
+    /// </remarks>
+    private const string UnknownShardState = "Unknown";
 
     private async Task<IReadOnlyList<ProjectionStatus>> projectionStatusesAsync(
         PolecatDatabase database, string? tenantId, CancellationToken ct)
     {
-        // Pull progression rows so we can attach processed sequence numbers to each shard
+        // #589: the shard identities carry the tenant ONLY when the tenant lives inside this database.
+        // Under database-per-tenant each database runs its own daemon over the same unsuffixed
+        // identities, so there the tenant has already done its work by selecting the database.
+        var shardsAreTenantScoped = tenantId != null && IsSingleDatabase;
+
         var progress = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
-        long highWater = 0;
 
         // AllProjectionProgress runs inside Options.ResiliencePipeline the same way the session-bound
         // explorer reads do, and it is already per-database -- which is the whole point here.
-        foreach (var state in await database.AllProjectionProgress(tenantId, ct))
+        foreach (var state in await database.AllProjectionProgress(
+                     shardsAreTenantScoped ? tenantId : null, ct))
         {
-            if (string.Equals(state.ShardName, "HighWaterMark", StringComparison.OrdinalIgnoreCase))
-            {
-                highWater = state.Sequence;
-            }
-            else
+            // The high-water row is not a shard's progress, and it is no longer where
+            // EventStoreSequence comes from either — see headSequenceAsync.
+            if (!string.Equals(state.ShardName, ShardState.HighWaterMark, StringComparison.OrdinalIgnoreCase))
             {
                 progress[state.ShardName] = state.Sequence;
             }
         }
+
+        var head = await headSequenceAsync(database, ct);
 
         // #200: drive off the registered projection sources (not
         // AllProjectionNames(), which quote-wraps each name for SQL-list
@@ -481,24 +529,54 @@ public partial class DocumentStore
             var shards = source.Shards()
                 .Select(shard =>
                 {
-                    var shardName = shard.Name.Identity;
-                    progress.TryGetValue(shardName, out var processed);
-                    return new ShardStatus(shardName, "Stopped", processed, highWater, Error: null!);
+                    // #589: COMPOSE the tenant-bearing identity from the registration rather than
+                    // filtering rows and hoping the two spellings meet. The registrations are
+                    // untenanted, the rows are suffixed, and matching them by string was the defect.
+                    var effectiveName = shardsAreTenantScoped
+                        ? ShardName.Compose(shard.Name.Name, shard.Name.ShardKey, tenantId, shard.Name.Version)
+                        : shard.Name;
+
+                    progress.TryGetValue(effectiveName.Identity, out var processed);
+                    return new ShardStatus(effectiveName.Identity, UnknownShardState, processed, head, Error: null!);
                 })
                 .ToList();
 
-            if (shards.Count == 0)
-            {
-                shards = new List<ShardStatus>
-                {
-                    new(source.Name, source.Lifecycle.ToString(), 0, highWater, Error: null!)
-                };
-            }
-
+            // #589: a projection with no shards reports an EMPTY shard list. It used to be given a
+            // synthesised shard whose State slot held source.Lifecycle.ToString(), which made that
+            // field mean a daemon state on some rows and a lifecycle on others with nothing telling a
+            // consumer which it was holding. ProjectionStatus.Lifecycle already says why the list is
+            // empty, so a console can render "Inline — no shards" without inferring anything.
             statuses.Add(new ProjectionStatus(source.Name, source.Lifecycle.ToString(), shards));
         }
 
         return statuses;
+    }
+
+    /// <summary>
+    ///     #589 — the head of the event store, from <c>MAX(seq_id)</c> rather than from the persisted
+    ///     high-water progression row.
+    /// </summary>
+    /// <remarks>
+    ///     The two agree on a store whose daemon is current, and they differ exactly when it matters:
+    ///     the row is WHERE THE DAEMON GOT TO, and a daemon that is not running leaves it behind.
+    ///     Reporting it as <see cref="ShardStatus.EventStoreSequence" /> made every shard on a stopped
+    ///     daemon look caught up — the opposite of what a projections page is opened to find out.
+    ///     Marten and Fisher both read the head this way.
+    /// </remarks>
+    private static async Task<long> headSequenceAsync(PolecatDatabase database, CancellationToken ct)
+    {
+        try
+        {
+            return await database.FetchHighestEventSequenceNumber(ct);
+        }
+        catch (Exception)
+        {
+            // The likeliest reason this fails is that the event schema does not exist yet, which is
+            // precisely when a console is most likely to be pointed at the store. Failing the whole
+            // page over one number answers nothing at all — the same judgement TryCreateUsage makes
+            // about the same read.
+            return 0;
+        }
     }
 
     // ---- #584 / jasperfx#810: the database dimension of the explorer reads ----
