@@ -103,6 +103,33 @@ public class PolecatDocumentComplianceFixture : DocumentStorageComplianceFixture
             options.CommitListeners.Add(listener);
         }
 
+        // #592 / jasperfx#819: the Guid optimistic-concurrency declaration, replayed as a CHECK
+        // rather than as a setting.
+        //
+        // The suite declares it twice -- ComplianceShipment implements IVersioned AND the config
+        // calls UseOptimisticConcurrency<T>() -- because the stores disagree about whether the
+        // marker is itself the opt-in or merely supplies the member to guard on. On Polecat the
+        // marker IS the opt-in: DocumentMapping.UseOptimisticConcurrency is get-only and set from
+        // IVersioned during construction, and there is no fluent DSL to turn it on separately. So
+        // there is nothing here to replay onto the store.
+        //
+        // Asserting instead of no-oping, deliberately. A silent no-op reads identically whether the
+        // marker still drives the guard or someone made it opt-in and every fact in the suite went
+        // red for a reason a fixture could have named. This fails at build time with the type in the
+        // message.
+        foreach (var type in config.OptimisticConcurrencyTypes)
+        {
+            if (!new Polecat.Storage.DocumentMapping(type, options).UseOptimisticConcurrency)
+            {
+                throw new InvalidOperationException(
+                    $"The compliance configuration declared Guid optimistic concurrency for {type.FullName}, "
+                    + "and Polecat's mapping did not turn it on. Polecat derives the guard from the IVersioned "
+                    + "marker alone (DocumentMapping.UseOptimisticConcurrency is get-only), so either the type "
+                    + "no longer implements IVersioned or that derivation has changed and this fixture needs a "
+                    + "real opt-in to replay.");
+            }
+        }
+
         _store = new DocumentStore(options);
 
         // Polecat applies schema changes explicitly rather than lazily, and the suite's very first
@@ -127,6 +154,13 @@ public class PolecatDocumentComplianceFixture : DocumentStorageComplianceFixture
     ///     #559 the strictly-greater guard the suite pins.
     /// </summary>
     public override bool SupportsNumericRevisions => true;
+
+    /// <summary>
+    ///     #592 / jasperfx#819: Polecat implements Guid optimistic concurrency — a document
+    ///     implementing <see cref="IVersioned" /> gets <c>ConcurrencyMode.Optimistic</c> on its
+    ///     mapping, a <c>guid_version</c> column, and a guarded MERGE.
+    /// </summary>
+    public override bool SupportsOptimisticConcurrency => true;
 
     public override IDocumentSessionFactory Sessions =>
         _store ?? throw new InvalidOperationException("The store has not been configured yet.");

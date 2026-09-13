@@ -33,6 +33,14 @@ internal interface IPolecatObjectWriteStorage
     /// <summary>Id assignment + session bookkeeping (identity-map add for that flavor).</summary>
     void StoreObject(IStorageSession session, object document);
 
+    /// <summary>
+    ///     #592 — the same, seeding the Guid concurrency guard with the caller's expected version.
+    ///     The object-typed twin of <c>IDocumentStorage&lt;T&gt;.Store(session, document, version)</c>,
+    ///     so a versioned document written through <c>StoreObjects</c> is guarded the same way one
+    ///     written through <c>Store&lt;T&gt;</c> is.
+    /// </summary>
+    void StoreObject(IStorageSession session, object document, Guid? version);
+
     Weasel.Storage.IStorageOperation UpsertObject(object document, IStorageSession session, string tenantId);
 
     /// <summary>Session-free upsert for the projection paths (no version-tracker reads).</summary>
@@ -685,6 +693,9 @@ internal abstract class PolecatDocumentStorage<TDoc, TId>
     }
 
     public void StoreObject(IStorageSession session, object document) => Store(session, (TDoc)document);
+
+    public void StoreObject(IStorageSession session, object document, Guid? version)
+        => Store(session, (TDoc)document, version);
 
     public Weasel.Storage.IStorageOperation UpsertObject(object document, IStorageSession session, string tenantId)
         => Upsert((TDoc)document, session, tenantId);

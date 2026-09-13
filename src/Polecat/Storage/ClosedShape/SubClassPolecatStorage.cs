@@ -251,6 +251,9 @@ internal sealed class SubClassPolecatStorage<T, TRoot, TId>
 
     public void StoreObject(IStorageSession session, object document) => ParentBridge.StoreObject(session, document);
 
+    public void StoreObject(IStorageSession session, object document, Guid? version)
+        => ParentBridge.StoreObject(session, document, version);
+
     public Weasel.Storage.IStorageOperation UpsertObject(object document, IStorageSession session, string tenantId)
         => ParentBridge.UpsertObject(document, session, tenantId);
 

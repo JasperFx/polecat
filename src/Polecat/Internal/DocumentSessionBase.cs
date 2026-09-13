@@ -304,7 +304,8 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         Weasel.Storage.IStorageSession session = tenantScope ?? (Weasel.Storage.IStorageSession)this;
         var storage = (Weasel.Storage.IDocumentStorage<T>)session.StorageFor<T>();
 
-        storage.Store(session, document); // id assignment + identity-map/version bookkeeping
+        // id assignment + identity-map/version bookkeeping
+        StoreForConcurrency(storage, session, document);
 
         var op = kind switch
         {
@@ -328,11 +329,60 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         Weasel.Storage.IStorageSession session = tenantScope ?? (Weasel.Storage.IStorageSession)this;
         var storage = (Polecat.Storage.ClosedShape.IPolecatObjectWriteStorage)session.StorageFor(document.GetType());
 
-        storage.StoreObject(session, document);
+        // #592: the same version seeding Store<T> does, through the object bridge.
+        if (document is IVersioned objectVersioned && objectVersioned.Version != Guid.Empty)
+        {
+            storage.StoreObject(session, document, objectVersioned.Version);
+        }
+        else
+        {
+            storage.StoreObject(session, document);
+        }
+
         var op = storage.UpsertObject(document, session, session.TenantId);
         CaptureExpectedRevision(op, document);
 
         return new Operations.ClosedShapeOperationAdapter(op, session, document, provider.Mapping.GetId(document));
+    }
+
+    /// <summary>
+    ///     #592 — seed the concurrency guard from the DOCUMENT's own version, not only from what this
+    ///     session happens to have read.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         Polecat's Guid optimistic concurrency used to work only inside one session. The guarded
+    ///         MERGE binds its expected version out of <c>IStorageSession.Versions</c>, and that
+    ///         tracker is written by the SELECT — so a document loaded in one session and stored
+    ///         through another had no entry, the guard bound <c>DBNull</c>, the matched branch never
+    ///         fired, and the write came back as a <c>ConcurrencyException</c>. Every time, on an
+    ///         unmodified row. That refused stale writes correctly and refused legitimate ones too,
+    ///         which is exactly the request-per-session workflow the feature exists for.
+    ///     </para>
+    ///     <para>
+    ///         A non-empty <see cref="IVersioned.Version" /> on the instance is the caller's
+    ///         expectation, so it seeds the tracker. <see cref="Guid.Empty" /> means "never stored",
+    ///         which must stay unseeded: the INSERT branch has no version to guard on. Mirrors
+    ///         Marten's <c>DocumentSessionBase.storeEntity</c>, and the same shape as fisher#245 and
+    ///         marten#5372 — the same field, found three times independently, which is why
+    ///         jasperfx#819 built a shared suite for it.
+    ///     </para>
+    ///     <para>
+    ///         Numeric revisions are NOT handled here. They travel on the operation itself through
+    ///         <see cref="CaptureExpectedRevision" />, which already reads the document rather than
+    ///         the session.
+    ///     </para>
+    /// </remarks>
+    private static void StoreForConcurrency<T>(Weasel.Storage.IDocumentStorage<T> storage,
+        Weasel.Storage.IStorageSession session, T document) where T : notnull
+    {
+        if (document is IVersioned versioned && versioned.Version != Guid.Empty)
+        {
+            storage.Store(session, document, versioned.Version);
+            return;
+        }
+
+        storage.Store(session, document);
     }
 
     // Numeric revisions: the doc-carried version is the equality expectation (0 = new/auto),
