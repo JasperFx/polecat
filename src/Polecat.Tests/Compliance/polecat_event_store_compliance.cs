@@ -70,3 +70,19 @@ public class polecat_document_query_compliance
 
 public class polecat_numeric_revision_compliance
     : NumericRevisionCompliance<PolecatDocumentComplianceFixture>;
+
+/*
+ * #592 / jasperfx#819 -- Guid optimistic concurrency, the document-concurrency suite that did not
+ * exist for ANY store before 2.69.0. The whole shared coverage of document concurrency was
+ * NumericRevisionCompliance above; grepping the 2.68.0 suites for IVersioned returned nothing.
+ *
+ * Two stores shipped the same field broken in two different ways and neither was caught by anything
+ * shared -- fisher#245 (the guard fed from the session's own version tracker, so a document loaded
+ * in one session and stored through another failed its guard EVERY time) and marten#5372 (a mapped
+ * version member invisible to the session, so the upsert bound DBNull into its guard). Fisher passed
+ * all fifty enrolled suites throughout. Polecat's behaviour here was simply unverified, which is the
+ * point of enrolling.
+ */
+
+public class polecat_guid_optimistic_concurrency_compliance
+    : GuidOptimisticConcurrencyCompliance<PolecatDocumentComplianceFixture>;
