@@ -17,8 +17,17 @@ public static class PolecatServiceCollectionExtensions
     /// <summary>
     ///     Add Polecat with inline configuration.
     /// </summary>
+    /// <param name="eventModelName">
+    ///     The Event Model these projections contribute slices to. Defaults to
+    ///     <c>ProjectionEventModelSource.DefaultModelName</c>, which is right when the application
+    ///     never named a model of its own. <b>A host that calls <c>AddEventModel("Something", …)</c>
+    ///     has to pass the same name here</b>: slices merge by model name, so leaving it assembles
+    ///     TWO models — the host's and this one — which surfaces as "expected exactly one assembled
+    ///     model" and names neither Polecat nor the line that caused it. The store cannot infer it,
+    ///     because <c>AddEventModel</c> may not have been called yet when this runs (fisher#271).
+    /// </param>
     public static PolecatConfigurationExpression AddPolecat(
-        this IServiceCollection services, Action<StoreOptions> configure)
+        this IServiceCollection services, Action<StoreOptions> configure, string? eventModelName = null)
     {
         // The StoreOptions is built here rather than inside the resolution factory so that
         // AddPolecat(StoreOptions) below can inspect the configured tenancy while the container is
@@ -28,25 +37,43 @@ public static class PolecatServiceCollectionExtensions
         var options = new StoreOptions();
         configure(options);
 
-        return services.AddPolecat(options);
+        return services.AddPolecat(options, eventModelName);
     }
 
     /// <summary>
     ///     Add Polecat with just a connection string.
     /// </summary>
+    /// <param name="eventModelName">
+    ///     The Event Model these projections contribute slices to. Defaults to
+    ///     <c>ProjectionEventModelSource.DefaultModelName</c>, which is right when the application
+    ///     never named a model of its own. <b>A host that calls <c>AddEventModel("Something", …)</c>
+    ///     has to pass the same name here</b>: slices merge by model name, so leaving it assembles
+    ///     TWO models — the host's and this one — which surfaces as "expected exactly one assembled
+    ///     model" and names neither Polecat nor the line that caused it. The store cannot infer it,
+    ///     because <c>AddEventModel</c> may not have been called yet when this runs (fisher#271).
+    /// </param>
     public static PolecatConfigurationExpression AddPolecat(
-        this IServiceCollection services, string connectionString)
+        this IServiceCollection services, string connectionString, string? eventModelName = null)
     {
-        return services.AddPolecat(opts => opts.ConnectionString = connectionString);
+        return services.AddPolecat(opts => opts.ConnectionString = connectionString, eventModelName);
     }
 
     /// <summary>
     ///     Add Polecat with a pre-built StoreOptions.
     /// </summary>
+    /// <param name="eventModelName">
+    ///     The Event Model these projections contribute slices to. Defaults to
+    ///     <c>ProjectionEventModelSource.DefaultModelName</c>, which is right when the application
+    ///     never named a model of its own. <b>A host that calls <c>AddEventModel("Something", …)</c>
+    ///     has to pass the same name here</b>: slices merge by model name, so leaving it assembles
+    ///     TWO models — the host's and this one — which surfaces as "expected exactly one assembled
+    ///     model" and names neither Polecat nor the line that caused it. The store cannot infer it,
+    ///     because <c>AddEventModel</c> may not have been called yet when this runs (fisher#271).
+    /// </param>
     public static PolecatConfigurationExpression AddPolecat(
-        this IServiceCollection services, StoreOptions options)
+        this IServiceCollection services, StoreOptions options, string? eventModelName = null)
     {
-        var expression = services.AddPolecat(_ => options);
+        var expression = services.AddPolecat(_ => options, eventModelName);
 
         // #377 / jasperfx#413: when the configured tenancy is a dynamic source (today only
         // MasterTableTenancy), also register it as IDynamicTenantSource<string> so store-agnostic
@@ -82,8 +109,18 @@ public static class PolecatServiceCollectionExtensions
     ///         (IDynamicTenantSource&lt;string&gt;)((DocumentStore)sp.GetRequiredService&lt;IDocumentStore&gt;()).Options.Tenancy!);
     ///     </code>
     /// </remarks>
+    /// <param name="eventModelName">
+    ///     The Event Model these projections contribute slices to. Defaults to
+    ///     <c>ProjectionEventModelSource.DefaultModelName</c>, which is right when the application
+    ///     never named a model of its own. <b>A host that calls <c>AddEventModel("Something", …)</c>
+    ///     has to pass the same name here</b>: slices merge by model name, so leaving it assembles
+    ///     TWO models — the host's and this one — which surfaces as "expected exactly one assembled
+    ///     model" and names neither Polecat nor the line that caused it. The store cannot infer it,
+    ///     because <c>AddEventModel</c> may not have been called yet when this runs (fisher#271).
+    /// </param>
     public static PolecatConfigurationExpression AddPolecat(
-        this IServiceCollection services, Func<IServiceProvider, StoreOptions> optionSource)
+        this IServiceCollection services, Func<IServiceProvider, StoreOptions> optionSource,
+        string? eventModelName = null)
     {
         // #177: register IEventStoreInstrumentation so external tooling (CritterWatch)
         // can resolve it from the container, flip ExtendedProgressionEnabled BEFORE
@@ -168,7 +205,8 @@ public static class PolecatServiceCollectionExtensions
         // registered store into the primary's registration and then again into the ancillary's own.
         // Naming this store keeps each registration describing the store it belongs to. Nothing here
         // resolves at registration time -- the lambda runs when the model is assembled.
-        services.AddProjectionEventModelSource(sp => [(JasperFx.Events.IEventStore)sp.GetRequiredService<IDocumentStore>()]);
+        services.AddProjectionEventModelSource(
+            sp => [(JasperFx.Events.IEventStore)sp.GetRequiredService<IDocumentStore>()], eventModelName);
 
         // Default session factory: lightweight sessions
         services.TryAddSingleton<ISessionFactory>(sp =>
