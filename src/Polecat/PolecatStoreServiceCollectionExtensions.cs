@@ -1,5 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using JasperFx.Events;
+using JasperFx.Events.EventModeling;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Polecat.Internal;
@@ -91,6 +92,18 @@ public static class PolecatStoreServiceCollectionExtensions
             sp.GetRequiredService<T>());
         services.AddSingleton<JasperFx.Documents.IDocumentStoreDiagnostics>(sp =>
             (JasperFx.Documents.IDocumentStoreDiagnostics)sp.GetRequiredService<T>());
+
+        // #594 / jasperfx#825: an ancillary store's projections are View slices too, and its own
+        // registration is the only place that knows the marker type they hang off.
+        //
+        // Not covered by AddPolecat's registration even in a host that calls both: this store is
+        // registered under T, and AddPolecat names IDocumentStore. Nor by the parameterless
+        // ProjectionEventModelSource, since AddPolecatStore<T> deliberately does not add T to the
+        // GetServices<IEventStore>() list -- that list is the primary store's.
+        //
+        // The slices merge with the primary's by document-type NAME, so two stores projecting the
+        // same document type contribute one slice rather than two stickies saying the same thing.
+        services.AddProjectionEventModelSource(sp => [(JasperFx.Events.IEventStore)sp.GetRequiredService<T>()]);
 
         // #501: and the db-apply / db-assert / db-dump half, so an ancillary store's databases are
         // migrated by those commands too. Marten registers IDatabaseSource for its ancillary stores

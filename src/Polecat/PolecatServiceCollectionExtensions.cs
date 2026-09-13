@@ -1,5 +1,6 @@
 using JasperFx.CommandLine.Descriptions;
 using JasperFx.Events;
+using JasperFx.Events.EventModeling;
 using JasperFx.MultiTenancy;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -153,6 +154,21 @@ public static class PolecatServiceCollectionExtensions
             (JasperFx.Events.IEventStore)sp.GetRequiredService<IDocumentStore>());
         services.AddSingleton<JasperFx.Documents.IDocumentStoreDiagnostics>(sp =>
             (JasperFx.Documents.IDocumentStoreDiagnostics)sp.GetRequiredService<IDocumentStore>());
+
+        // #594 / jasperfx#825 -- the store-derived Event Model rung. One SlicePattern.View slice per
+        // registered projection: the document it produces, the projection type, and every event its
+        // Apply / Create / Evolve methods take.
+        //
+        // Bobcat declares slices and Wolverine derives them from its chains, but nothing derived them
+        // from the STORE -- so a View slice appeared on an Event Model canvas only when a human had
+        // written one down, even though the store knows the whole role set exactly.
+        //
+        // The resolver overload rather than the parameterless one, deliberately: the default reads
+        // GetServices<IEventStore>(), which on a host with an ancillary store would sweep up every
+        // registered store into the primary's registration and then again into the ancillary's own.
+        // Naming this store keeps each registration describing the store it belongs to. Nothing here
+        // resolves at registration time -- the lambda runs when the model is assembled.
+        services.AddProjectionEventModelSource(sp => [(JasperFx.Events.IEventStore)sp.GetRequiredService<IDocumentStore>()]);
 
         // Default session factory: lightweight sessions
         services.TryAddSingleton<ISessionFactory>(sp =>
