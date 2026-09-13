@@ -3,6 +3,7 @@ using JasperFx.Events.EventModeling;
 using JasperFx.Events.Projections;
 using Microsoft.Extensions.DependencyInjection;
 using Polecat.Tests.Harness;
+using Shouldly;
 
 namespace Polecat.Tests.Events;
 
@@ -91,6 +92,64 @@ public class event_model_source_registration_tests
     {
         var models = await EventModelDiscovery.AssembleAsync(provider, token);
         return models.SelectMany(x => x.Slices).ToList();
+    }
+
+    [Fact]
+    public async Task the_store_contributes_to_the_model_the_host_names()
+    {
+        // gh-615: EventModelDiscovery groups descriptors by model NAME before merging slices, so a
+        // store left on the default while the host calls its model something else assembles a second
+        // canvas — the host's declarations on one, the store's derived View slices on the other, and
+        // neither carrying both halves. Nothing in the resulting error names the store registration,
+        // which is what made the sibling store's instance hard to trace.
+        var token = TestContext.Current.CancellationToken;
+
+        var services = new ServiceCollection();
+        services.AddPolecat(ConfigureMain, "Stoat");
+
+        await using var provider = services.BuildServiceProvider();
+
+        var models = await EventModelDiscovery.AssembleAsync(provider, token);
+
+        models.ShouldHaveSingleItem().Name.ShouldBe("Stoat");
+    }
+
+    [Fact]
+    public async Task an_unnamed_model_still_gets_the_default()
+    {
+        // Null has to keep today's behaviour exactly, or this fix breaks every host that never named
+        // a model.
+        var token = TestContext.Current.CancellationToken;
+
+        var services = new ServiceCollection();
+        services.AddPolecat(ConfigureMain);
+
+        await using var provider = services.BuildServiceProvider();
+
+        var models = await EventModelDiscovery.AssembleAsync(provider, token);
+
+        models.ShouldHaveSingleItem().Name.ShouldBe(ProjectionEventModelSource.DefaultModelName);
+    }
+
+    [Fact]
+    public async Task a_named_primary_and_a_named_ancillary_assemble_as_one_model()
+    {
+        // The comment on the ancillary registration promises the two stores' slices merge rather than
+        // duplicating. That promise is silently conditional on both naming the same model, which is
+        // exactly the condition gh-615 broke.
+        var token = TestContext.Current.CancellationToken;
+
+        var services = new ServiceCollection();
+        services.AddPolecat(ConfigureMain, "Stoat");
+        services.AddPolecatStore<IEventModelAncillaryStore>(ConfigureAncillary, "Stoat");
+
+        await using var provider = services.BuildServiceProvider();
+
+        var models = await EventModelDiscovery.AssembleAsync(provider, token);
+
+        var model = models.ShouldHaveSingleItem();
+        model.Name.ShouldBe("Stoat");
+        model.Slices.Count.ShouldBe(2);
     }
 
     [Fact]
