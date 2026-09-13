@@ -18,8 +18,12 @@ public static class PolecatStoreServiceCollectionExtensions
     ///     Add a secondary IDocumentStore service to the container using only
     ///     an interface "T" that should directly inherit from IDocumentStore.
     /// </summary>
+    /// <param name="eventModelName">
+    ///     The Event Model these projections contribute slices to — see the same parameter on
+    ///     <c>AddPolecat</c> (fisher#271).
+    /// </param>
     public static PolecatStoreExpression<T> AddPolecatStore<T>(
-        this IServiceCollection services, Action<StoreOptions> configure)
+        this IServiceCollection services, Action<StoreOptions> configure, string? eventModelName = null)
         where T : class, IDocumentStore
     {
         return services.AddPolecatStore<T>(sp =>
@@ -27,21 +31,28 @@ public static class PolecatStoreServiceCollectionExtensions
             var options = new StoreOptions();
             configure(options);
             return options;
-        });
+        }, eventModelName);
     }
 
     /// <summary>
     ///     Add a secondary IDocumentStore service to the container using only
     ///     an interface "T" that should directly inherit from IDocumentStore.
     /// </summary>
+    /// <param name="eventModelName">
+    ///     The Event Model these projections contribute slices to — see the same parameter on
+    ///     <c>AddPolecat</c> (fisher#271).
+    /// </param>
     public static PolecatStoreExpression<T> AddPolecatStore<T>(
-        this IServiceCollection services, Func<IServiceProvider, StoreOptions> optionSource)
+        this IServiceCollection services, Func<IServiceProvider, StoreOptions> optionSource,
+        string? eventModelName = null)
         where T : class, IDocumentStore
     {
         // #177: register IEventStoreInstrumentation alongside the per-T IConfigurePolecat<T>
         // chain so external tooling can resolve every store's instrumentation through
         // GetServices<IEventStoreInstrumentation>() and toggle them in one pass. Mirrors
         // SetEventStoreInstrumentation<T> wiring in Marten's AddMartenStore<T>.
+        PolecatServiceCollectionExtensions.AssertEventModelName(eventModelName);
+
         var instrument = new SetEventStoreInstrumentation<T>();
         services.AddSingleton<IConfigurePolecat<T>>(instrument);
         services.AddSingleton<IEventStoreInstrumentation>(instrument);
@@ -103,7 +114,8 @@ public static class PolecatStoreServiceCollectionExtensions
         //
         // The slices merge with the primary's by document-type NAME, so two stores projecting the
         // same document type contribute one slice rather than two stickies saying the same thing.
-        services.AddProjectionEventModelSource(sp => [(JasperFx.Events.IEventStore)sp.GetRequiredService<T>()]);
+        services.AddProjectionEventModelSource(
+            sp => [(JasperFx.Events.IEventStore)sp.GetRequiredService<T>()], eventModelName);
 
         // #501: and the db-apply / db-assert / db-dump half, so an ancillary store's databases are
         // migrated by those commands too. Marten registers IDatabaseSource for its ancillary stores
