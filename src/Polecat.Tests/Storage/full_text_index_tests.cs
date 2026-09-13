@@ -27,6 +27,16 @@ public class full_text_index_tests: OneOffConfigurationsContext
 
     private async Task<List<(string Member, string Term, int Pos)>> tokensForAsync(Guid id)
     {
+        // Provision the way a real reader does. The token table is created with the document table,
+        // lazily on first use of the type — so a test that re-declares an index and then reads the
+        // table without touching the store would find nothing there, where an actual search would
+        // have ensured it first.
+        await using (var session = theStore.QuerySession())
+        {
+            await ((Polecat.Internal.QuerySession)session)
+                .EnsureDocumentTableAsync(typeof(Article), TestContext.Current.CancellationToken);
+        }
+
         var mapping = theStore.Options.Providers.GetProvider(typeof(Article)).Mapping;
         var table = FullTextIndex.TableNameFor(mapping);
 

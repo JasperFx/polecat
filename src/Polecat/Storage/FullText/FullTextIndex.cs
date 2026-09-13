@@ -59,6 +59,32 @@ public class FullTextIndex
     /// </remarks>
     internal const string Punctuation = "!\"#$%&()*+,-./:;<=>?@[\\]^_{|}~'";
 
+    /// <summary>
+    ///     Tokenize a search string the same way the trigger tokenizes a document: lowercase, split on
+    ///     whitespace and on <see cref="Punctuation" />, empties dropped.
+    /// </summary>
+    /// <remarks>
+    ///     <b>This and the T-SQL in <c>TokenizeClause</c> have to agree, and nothing but a test makes
+    ///     them.</b> They are two implementations of one rule — a query tokenized differently from the
+    ///     document it should match produces no error, just an empty result, which is the quiet
+    ///     failure this whole design is most exposed to. <c>the_query_tokenizer_matches_the_stored_one</c>
+    ///     pins them together.
+    /// </remarks>
+    internal static string[] Tokenize(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return [];
+
+        var buffer = text.ToCharArray();
+        for (var i = 0; i < buffer.Length; i++)
+        {
+            if (Punctuation.Contains(buffer[i])) buffer[i] = ' ';
+        }
+
+        return new string(buffer)
+            .ToLowerInvariant()
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries);
+    }
+
     internal FullTextIndex(string jsonPath, MemberInfo[]? memberChain)
     {
         JsonPath = jsonPath;
@@ -209,14 +235,20 @@ public class FullTextIndex
     /// </summary>
     private string TokenizeClause(string alias)
     {
+        // The replacement is rendered from C# rather than computed in SQL. TRANSLATE demands its
+        // second and third arguments be the same LENGTH, and deriving that in T-SQL is a trap from
+        // both ends: LEN ignores trailing spaces, and DATALENGTH counts bytes — so the /2 that is
+        // right for an N-prefixed literal is wrong for the plain one SqlEscaping.Literal emits, and
+        // the failure is Msg 9828 at write time, inside the trigger, where it is least expected.
         var punct = SqlEscaping.Literal(Punctuation);
+        var spaces = SqlEscaping.Literal(new string(' ', Punctuation.Length));
 
         return $"""
                 CROSS APPLY STRING_SPLIT(
                     LOWER(TRANSLATE(
                         CAST(JSON_VALUE({alias}.data, '{JsonPath}') AS nvarchar(max)),
                         {punct},
-                        REPLICATE(N' ', DATALENGTH({punct})/2))), N' ', 1) s
+                        {spaces})), N' ', 1) s
                 WHERE LEN(s.value) > 0
                 """;
     }

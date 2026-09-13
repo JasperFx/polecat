@@ -21,6 +21,14 @@ internal class MemberFactory : IMemberResolver
     private readonly DocumentMapping _mapping;
     private readonly bool _useReturning;
 
+    /// <summary>
+    ///     The mapping these members belong to. Exposed because a method-call parser sometimes needs
+    ///     more than the member — the full-text operators need the document table and its tenancy to
+    ///     address the token table beside it — and <see cref="IMemberResolver" /> deliberately carries
+    ///     only member resolution.
+    /// </summary>
+    internal DocumentMapping Mapping => _mapping;
+
     public MemberFactory(StoreOptions options, DocumentMapping mapping)
     {
         _enumStorage = options.Serializer.EnumStorage;

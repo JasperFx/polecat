@@ -383,10 +383,12 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
 
         if (insertOnly)
         {
-            return $"MERGE {table} WITH (HOLDLOCK) AS t " +
+            var insertOnlyOut = OutputParts(mapping, mode);
+            return insertOnlyOut.Prologue +
+                   $"MERGE {table} WITH (HOLDLOCK) AS t " +
                    $"USING {usingClause} ON {onClause} " +
                    $"{insertClause} " +
-                   $"OUTPUT {OutputColumn(mode)};";
+                   insertOnlyOut.Output + insertOnlyOut.Epilogue;
         }
 
         // UPDATE branch. Numeric GUARDED: version SET-CASE + guard use the four trailing ? slots
@@ -450,11 +452,13 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
             guard = " AND (? = 0 OR t.version < ?)";
         }
 
-        return $"MERGE {table} WITH (HOLDLOCK) AS t " +
+        var mergeOut = OutputParts(mapping, mode);
+        return mergeOut.Prologue +
+               $"MERGE {table} WITH (HOLDLOCK) AS t " +
                $"USING {usingClause} ON {onClause} " +
                $"WHEN MATCHED{guard} THEN UPDATE SET {string.Join(", ", updateAssignments)} " +
                $"{insertClause} " +
-               $"OUTPUT {OutputColumn(mode)};";
+               mergeOut.Output + mergeOut.Epilogue;
     }
 
     /// <summary>
@@ -553,11 +557,63 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
             _ => string.Empty
         };
 
-        return $"MERGE {table} WITH (HOLDLOCK) AS t " +
+        var updateOut = OutputParts(mapping, mode);
+        return updateOut.Prologue +
+               $"MERGE {table} WITH (HOLDLOCK) AS t " +
                $"USING {usingClause} ON {onClause} " +
                $"WHEN MATCHED{guard} THEN UPDATE SET {string.Join(", ", updateAssignments)} " +
-               $"OUTPUT {OutputColumn(mode)};";
+               updateOut.Output + updateOut.Epilogue;
     }
+
+    /// <summary>
+    ///     The three pieces of the OUTPUT clause: what goes before the statement, the clause itself,
+    ///     and what follows it.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         <b>A bare <c>OUTPUT</c> and a trigger cannot coexist</b> — SQL Server refuses the write
+    ///         outright: "The target table of the DML statement cannot have any enabled triggers if
+    ///         the statement contains an OUTPUT clause without INTO clause." gh-611's full-text index
+    ///         is maintained by a trigger, so a document type that declares one has to route its
+    ///         OUTPUT through a table variable and select from it afterwards.
+    ///     </para>
+    ///     <para>
+    ///         <b>Only types that declare a full-text index pay for it.</b> Everything else emits the
+    ///         bare form exactly as before, so the hot path is unchanged for every store that does not
+    ///         use full-text search. The result set the caller reads is the same shape either way,
+    ///         which is what keeps the absent-row-means-conflict signal intact: a MERGE that matches
+    ///         nothing writes nothing into the table variable, so the trailing SELECT returns no rows.
+    ///     </para>
+    /// </remarks>
+    private static (string Prologue, string Output, string Epilogue) OutputParts(
+        DocumentMapping mapping, ConcurrencyMode mode)
+    {
+        var column = OutputColumn(mode);
+        if (mapping.FullTextIndexes.Count == 0)
+        {
+            return (string.Empty, $"OUTPUT {column};", string.Empty);
+        }
+
+        return ($"DECLARE @pc_output TABLE (value {OutputColumnType(mapping, mode)}); ",
+            $"OUTPUT {column} INTO @pc_output;",
+            " SELECT value FROM @pc_output;");
+    }
+
+    /// <summary>
+    ///     The table variable's column type, which has to match the OUTPUT column exactly — and for
+    ///     the id case that means the INNER type of a strongly-typed id, the same rule #296/#302
+    ///     settled for the document table itself.
+    /// </summary>
+    private static string OutputColumnType(DocumentMapping mapping, ConcurrencyMode mode)
+        => mode switch
+        {
+            ConcurrencyMode.Optimistic => "uniqueidentifier",
+            ConcurrencyMode.Numeric => "bigint",
+            _ => mapping.InnerIdType == typeof(Guid) ? "uniqueidentifier"
+                : mapping.InnerIdType == typeof(int) ? "int"
+                : mapping.InnerIdType == typeof(long) ? "bigint"
+                : "varchar(250)"
+        };
 
     private static string OutputColumn(ConcurrencyMode mode)
         => mode switch

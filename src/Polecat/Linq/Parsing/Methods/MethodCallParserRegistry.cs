@@ -18,6 +18,7 @@ internal static class MethodCallParserRegistry
         new StringToUpper(),
         new StringTrim(),
         new IsOneOf(),
+        new FullTextSearchMethods(),
         new EnumerableContains(),
         new IsEmpty(),
         new ObjectEquals()
