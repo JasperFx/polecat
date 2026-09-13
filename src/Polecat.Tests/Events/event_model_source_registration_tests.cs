@@ -121,15 +121,29 @@ public class event_model_source_registration_tests
         consumed.ShouldContain(nameof(LedgerCredited));
         consumed.ShouldContain(nameof(LedgerClosed));
 
-        // Plus the two framework markers, which is shared JasperFx behaviour rather than anything
-        // Polecat adds: JasperFxSingleStreamProjectionBase.determineEventTypes appends Archived and
-        // Compacted<TDoc> to a single-stream projection's AllEventTypes (jasperfx#778 / #796), because
-        // an aggregate has no reason to declare an Apply for either and every store composes its
-        // async loader's allow list from that set. Asserted rather than filtered out: this is what
-        // Marten and Fisher report too, and a test that quietly trimmed them would hide a real change
-        // if the set ever stopped carrying them.
-        consumed.ShouldContain(typeof(JasperFx.Events.Archived).Name);
-        consumed.ShouldContain(typeof(JasperFx.Events.Compacted<LedgerBalance>).Name);
+        // And NOT the two stream lifecycle markers -- inverted from #594, which asserted the
+        // pre-fix set against 2.69.0. jasperfx#829/#830 filters them in
+        // ProjectionEventModelSource.ToSlice.
+        //
+        // JasperFxSingleStreamProjectionBase.determineEventTypes still appends Archived and
+        // Compacted<TDoc> to every non-empty apply set (jasperfx#778 / #796), so this projection's
+        // AllEventTypes genuinely carries five types -- correct about what the projection HANDLES.
+        // A View slice is a narrower question: these render as stickies for events the application
+        // never wrote and no command slice emits, so they link to nothing on a canvas. Filtered in
+        // the source rather than in the reader that fills AppliedEvents, because the same reader
+        // feeds AggregateDescriptor.AppliedEvents and a monitoring console asking "what does this
+        // projection handle" wants both.
+        //
+        // Still asserted rather than dropped, and now in the other direction: the whole content of
+        // this pair of lines is which of the two questions the slice answers, and a test that simply
+        // stopped mentioning the markers would go quiet if the filter were ever lost.
+        consumed.ShouldNotContain(typeof(JasperFx.Events.Archived).Name);
+        consumed.ShouldNotContain(typeof(JasperFx.Events.Compacted<LedgerBalance>).Name);
+
+        // The consequence, stated plainly: exactly the events the aggregate declares an Apply or
+        // Create for.
+        consumed.OrderBy(x => x)
+            .ShouldBe([nameof(LedgerClosed), nameof(LedgerCredited), nameof(LedgerOpened)]);
     }
 
     [Fact]
