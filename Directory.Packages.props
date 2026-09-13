@@ -453,15 +453,33 @@
              contracts and their Microsoft.Extensions.AI adapter, which Polecat does not implement.
              Note 2.67.0 arrived in #531 without an entry here; its contents are jasperfx#800-#808
              (compaction refusal naming, the event-query tags option, ANDed tag filters, partial
-             EventModelDescriptor round-trip). -->
-        <PackageVersion Include="JasperFx" Version="2.68.0" />
-        <PackageVersion Include="JasperFx.Events" Version="2.68.0" />
+             EventModelDescriptor round-trip).
+
+             JasperFx 2.69.0 (from 2.68.0). A compliance-heavy release: four new suites and one new
+             registration helper, and every one of them is the upstream half of an open Polecat issue.
+             (a) jasperfx#818/#820 — ProjectionStatusCompliance, nine facts on GetProjectionStatusesAsync,
+             plus the ShardStatusState vocabulary (Running / Paused / Stopped / Unknown as string
+             constants, because State is a string on a record that serializes to consumers) and
+             IComplianceCoordinatorHost.EventStore. polecat#591.
+             (b) jasperfx#819/#821 — GuidOptimisticConcurrencyCompliance, the document-concurrency
+             suite that did not exist for ANY store, plus DocumentComplianceConfig.OptimisticConcurrencyTypes
+             and UseOptimisticConcurrency<T>(). polecat#592.
+             (c) jasperfx#810/#822 — DatabasePerTenantExplorerCompliance and
+             ShardedTenancyExplorerCompliance, the multi-database arms of the explorer reads whose
+             abstraction half arrived in 2.68.0, plus the SupportsMultipleDatabases /
+             DatabaseForTenantAsync / AssignTenantToDatabase fixture seam. polecat#593.
+             (d) jasperfx#825/#826 — ProjectionEventModelSource and AddProjectionEventModelSource,
+             the store-derived Event Model rung. polecat#594.
+             NumericRevisionCompliance was refactored onto a generic base in the same release;
+             existing enrollments compile unchanged. -->
+        <PackageVersion Include="JasperFx" Version="2.69.0" />
+        <PackageVersion Include="JasperFx.Events" Version="2.69.0" />
         <!--
              The shared cross-store event sourcing compliance suites. Source-only package: the
              suites compile inside Polecat.Tests so JasperFx's aggregate source generator binds
              Polecat's own session types.
         -->
-        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="2.68.0" />
+        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="2.69.0" />
         <!-- Pin the sibling JasperFx packages for parity with Marten 9's matrix
              even though Polecat doesn't currently reference them directly —
              keeps the lockstep matrix coherent when transitive resolution
@@ -469,7 +487,7 @@
              RuntimeCompiler 5.x line is the active continuation of the 4.x
              lineage; do not pin against the parallel stale 2.0.x series. -->
         <PackageVersion Include="JasperFx.RuntimeCompiler" Version="5.0.0" />
-        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.68.0" />
+        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.69.0" />
         <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
@@ -633,7 +651,7 @@
         <PackageVersion Include="Vogen" Version="7.0.0" />
 
         <!-- Source generators (matched to JasperFx.Events above) -->
-        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.68.0" />
+        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.69.0" />
 
         <!-- Build automation -->
         <PackageVersion Include="Nuke.Common" Version="9.0.4" />
