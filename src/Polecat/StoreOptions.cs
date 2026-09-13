@@ -84,6 +84,49 @@ public class StoreOptions
     /// </summary>
     public string StoreName { get; set; } = "Main";
 
+    private string? _eventModelName;
+
+    /// <summary>
+    ///     The Event Model this store's derived slices contribute to. Null — the default — means the
+    ///     shared default model, so a host that never names a model is unaffected.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         <c>EventModelDiscovery.Assemble</c> groups descriptors by model NAME before merging
+    ///         slices, so this has to match what the host's other sources call it. A host that calls
+    ///         <c>AddEventModel("Something", …)</c> while a store keeps the default assembles TWO
+    ///         models — the host's declarations on one, the store's derived View slices on the other,
+    ///         and neither canvas carrying both halves (gh-615).
+    ///     </para>
+    ///     <para>
+    ///         <b>On the options rather than as a parameter to <c>AddPolecat</c> (gh-618).</b> It is a
+    ///         property of the store, it is reachable from every configuration path including
+    ///         <c>IConfigurePolecat</c>, and it keeps Polecat, Marten and Fisher configured the same
+    ///         way. It is also read when the model is assembled rather than captured at registration,
+    ///         so a later configuration pass that sets it still wins.
+    ///     </para>
+    /// </remarks>
+    /// <exception cref="ArgumentException">
+    ///     The name is empty or whitespace. An empty string is a legal model name, so accepting one
+    ///     would reproduce gh-615 with a blank where the name should be — null is how you ask for the
+    ///     default.
+    /// </exception>
+    public string? EventModelName
+    {
+        get => _eventModelName;
+        set
+        {
+            if (value is not null && string.IsNullOrWhiteSpace(value))
+            {
+                throw new ArgumentException(
+                    "An Event Model name cannot be empty or whitespace. Leave it null to contribute to "
+                    + "the default model.", nameof(value));
+            }
+
+            _eventModelName = value;
+        }
+    }
+
     /// <summary>
     ///     Whether Polecat should attempt to create or update database schema objects at runtime.
     ///     Defaults to CreateOrUpdate for development convenience.

@@ -105,7 +105,26 @@ public class event_model_source_registration_tests
         var token = TestContext.Current.CancellationToken;
 
         var services = new ServiceCollection();
-        services.AddPolecat(ConfigureMain, "Stoat");
+        services.AddPolecat(opts => { ConfigureMain(opts); opts.EventModelName = "Stoat"; });
+
+        await using var provider = services.BuildServiceProvider();
+
+        var models = await EventModelDiscovery.AssembleAsync(provider, token);
+
+        models.ShouldHaveSingleItem().Name.ShouldBe("Stoat");
+    }
+
+    [Fact]
+    public async Task the_name_is_read_when_the_model_is_assembled_not_at_registration()
+    {
+        // gh-618's reason for moving this onto the options: a name captured at registration time
+        // cannot see a later configuration pass. Here the name is set by an IConfigurePolecat that
+        // runs after AddPolecat has already returned.
+        var token = TestContext.Current.CancellationToken;
+
+        var services = new ServiceCollection();
+        services.AddPolecat(ConfigureMain);
+        services.ConfigurePolecat(opts => opts.EventModelName = "Stoat");
 
         await using var provider = services.BuildServiceProvider();
 
@@ -140,8 +159,12 @@ public class event_model_source_registration_tests
         var token = TestContext.Current.CancellationToken;
 
         var services = new ServiceCollection();
-        services.AddPolecat(ConfigureMain, "Stoat");
-        services.AddPolecatStore<IEventModelAncillaryStore>(ConfigureAncillary, "Stoat");
+        services.AddPolecat(opts => { ConfigureMain(opts); opts.EventModelName = "Stoat"; });
+        services.AddPolecatStore<IEventModelAncillaryStore>(opts =>
+        {
+            ConfigureAncillary(opts);
+            opts.EventModelName = "Stoat";
+        });
 
         await using var provider = services.BuildServiceProvider();
 
