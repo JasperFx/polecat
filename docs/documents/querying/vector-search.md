@@ -101,3 +101,9 @@ The search runs as its own statement instead.
 | A query vector whose length is not the declared `dimensions` | SQL Server would reject every row, one at a time |
 | Declaring a member that cannot hold a vector, such as a `string` | Caught when the store is configured, not when the first search returns nothing |
 | Declaring the same member twice, or a dimension count under one | Same |
+
+## Combining with keyword search
+
+Vector search finds meaning near what you asked; [full text search](/documents/querying/full-text-search)
+finds the words you actually typed. [Hybrid search](/documents/querying/hybrid-search) fuses both
+rankings, which usually beats either alone.
