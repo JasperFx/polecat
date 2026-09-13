@@ -15,7 +15,7 @@
           in the publish path reads it, so a stale value is invisible until someone asks a running
           store what version it is.
         -->
-        <Version>5.26.0</Version>
+        <Version>5.27.0</Version>
         <LangVersion>latest</LangVersion>
         <Authors>Jeremy D. Miller</Authors>
         <PackageIcon>logo.png</PackageIcon>
