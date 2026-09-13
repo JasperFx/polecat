@@ -262,6 +262,12 @@ internal class DocumentMapping
     public List<VectorIndex> VectorIndexes { get; } = new();
 
     /// <summary>
+    ///     Members declared full-text searchable. See <see cref="FullText.FullTextIndex" /> for why
+    ///     this is an index Polecat owns rather than SQL Server's own engine.
+    /// </summary>
+    public List<FullText.FullTextIndex> FullTextIndexes { get; } = new();
+
+    /// <summary>
     ///     #243: document metadata configuration (opt-in columns + member mappings), populated from
     ///     metadata attributes and the <c>Schema.For&lt;T&gt;().Metadata(...)</c> DSL.
     /// </summary>
