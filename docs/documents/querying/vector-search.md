@@ -1,5 +1,11 @@
 # Vector Search
 
+::: warning Requires SQL Server 2025 or later
+The `VECTOR` type arrived in SQL Server 2025. Azure SQL Edge and earlier versions do not have it, and
+declaring a vector index against one fails when the schema is applied, naming the member and this
+requirement.
+:::
+
 Polecat searches documents by embedding similarity over a member you declare. Store the vector the
 way you store anything else, as a `float[]` on the document, and declare it:
 

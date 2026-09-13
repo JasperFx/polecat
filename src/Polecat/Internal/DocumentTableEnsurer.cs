@@ -139,7 +139,21 @@ internal class DocumentTableEnsurer
                 {
                     await using var vectorCmd = conn.CreateCommand();
                     vectorCmd.CommandText = statement;
-                    await vectorCmd.ExecuteNonQueryAsync(token);
+                    try
+                    {
+                        await vectorCmd.ExecuteNonQueryAsync(token);
+                    }
+                    catch (SqlException e) when (e.Message.Contains("VECTOR", StringComparison.OrdinalIgnoreCase))
+                    {
+                        // Azure SQL Edge and anything before SQL Server 2025 have no VECTOR type, and
+                        // the server's own answer — "Type VECTOR is not a defined system type" — names
+                        // neither Polecat nor the line of configuration that asked for it.
+                        throw new InvalidOperationException(
+                            $"'{provider.Mapping.DocumentType.Name}.{vectorIndex.MemberName}' is declared as a "
+                            + "vector, but this SQL Server instance has no VECTOR type. Vector search needs "
+                            + "SQL Server 2025 or later; Azure SQL Edge does not have it. Remove the "
+                            + "VectorIndex(...) declaration or move to an instance that supports it.", e);
+                    }
                 }
             }
 
