@@ -132,6 +132,17 @@ internal class DocumentTableEnsurer
                 }
             }
 
+            // Persisted computed VECTOR(n) columns. No index follows one — see VectorIndex.
+            foreach (var vectorIndex in provider.Mapping.VectorIndexes)
+            {
+                foreach (var statement in vectorIndex.ToDdlStatements(provider.Mapping))
+                {
+                    await using var vectorCmd = conn.CreateCommand();
+                    vectorCmd.CommandText = statement;
+                    await vectorCmd.ExecuteNonQueryAsync(token);
+                }
+            }
+
             // Native SQL Server 2025 JSON indexes (CREATE JSON INDEX) on the json data column.
             foreach (var jsonIndex in provider.Mapping.JsonIndexes)
             {

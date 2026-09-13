@@ -140,6 +140,22 @@ internal class DocumentProviderRegistry
                 }
             }
 
+            // Apply vector indexes
+            var vectorIndexesField = exprType.GetField("VectorIndexes", BindingFlags.NonPublic | BindingFlags.Instance);
+            if (vectorIndexesField?.GetValue(expr) is IEnumerable<Storage.VectorIndex> vectorIndexes)
+            {
+                foreach (var vectorIndex in vectorIndexes)
+                {
+                    // #510's rule again: the path was rendered with the CamelCase default in
+                    // DocumentMappingExpression, which holds no StoreOptions. A vector column built
+                    // from the wrong key is SQL NULL for every row, so the search returns nothing
+                    // rather than failing — which is exactly how the equivalent defect presents in
+                    // Marten.PgVector (marten#5399).
+                    vectorIndex.ApplyNamingPolicy(mapping.StoreOptions);
+                    mapping.VectorIndexes.Add(vectorIndex);
+                }
+            }
+
             // Apply foreign keys
             var fkField = exprType.GetField("ForeignKeys", BindingFlags.NonPublic | BindingFlags.Instance);
             if (fkField?.GetValue(expr) is IEnumerable<Storage.DocumentForeignKey> foreignKeys)

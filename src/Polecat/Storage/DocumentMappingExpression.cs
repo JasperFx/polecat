@@ -1,5 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
+using JasperFx.Core.Reflection;
+using JasperFx.Events.Vectors;
 using Weasel.Core.Partitioning;
 using Weasel.SqlServer.Tables.Partitioning;
 
@@ -17,6 +19,7 @@ public class DocumentMappingExpression<T>
     internal readonly List<(Type SubClass, string? Alias)> SubClasses = new();
     internal readonly List<DocumentIndex> Indexes = new();
     internal readonly List<JsonIndex> JsonIndexes = new();
+    internal readonly List<VectorIndex> VectorIndexes = new();
     internal readonly List<DocumentForeignKey> ForeignKeys = new();
     internal DocumentPartitioning? Partitioning;
     internal readonly Metadata.DocumentMetadataConfig MetadataConfig = new();
@@ -121,6 +124,83 @@ public class DocumentMappingExpression<T>
         }
 
         return index;
+    }
+
+    /// <summary>
+    ///     Declare a member of the document as an embedding, stored as a persisted computed
+    ///     <c>VECTOR(n)</c> column over the JSON so <c>VectorSearchAsync</c> can order by similarity.
+    ///     The API shape is Marten.PgVector's and the types are the store-neutral ones from
+    ///     <c>JasperFx.Events.Vectors</c>, so application code reads the same against either store.
+    /// </summary>
+    /// <remarks>
+    ///     The column is computed rather than written, so the write path is untouched and declaring
+    ///     one on a type that already has rows makes every one of them searchable with no backfill.
+    ///     See <see cref="Storage.VectorIndex" /> for why it uses <c>JSON_QUERY</c> where every other
+    ///     computed column here uses <c>JSON_VALUE</c>, and why no index follows it.
+    /// </remarks>
+    public DocumentMappingExpression<T> VectorIndex(Expression<Func<T, object?>> expression,
+        int dimensions, DistanceFunction distance = DistanceFunction.Cosine)
+    {
+        ArgumentNullException.ThrowIfNull(expression);
+        if (dimensions < 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(dimensions), dimensions,
+                $"'{typeof(T).Name}' needs a positive dimension count for its embedding.");
+        }
+
+        var chains = DocumentIndex.ResolveMemberChains(expression);
+        if (chains.Length != 1)
+        {
+            throw new ArgumentException(
+                "A vector index covers exactly one member — an embedding is a single value, so a "
+                + "composite declaration has nothing to mean.", nameof(expression));
+        }
+
+        var chain = chains[0];
+        var memberType = chain[^1].GetMemberType();
+        if (!IsVectorType(memberType))
+        {
+            throw new InvalidOperationException(
+                $"'{typeof(T).Name}.{string.Join(".", chain.Select(x => x.Name))}' is a "
+                + $"{memberType?.Name ?? "?"}, which cannot hold an embedding. Declare a vector index "
+                + "on a float[] or an equivalent sequence of floats.");
+        }
+
+        var index = new VectorIndex(DocumentIndex.MemberChainToJsonPath(chain), chain, dimensions, distance);
+
+        if (VectorIndexes.Any(x => x.MemberName == index.MemberName))
+        {
+            throw new InvalidOperationException(
+                $"'{typeof(T).Name}.{index.MemberName}' already carries a vector index.");
+        }
+
+        VectorIndexes.Add(index);
+        return this;
+    }
+
+    /// <summary>
+    ///     Whether a member can hold an embedding. Deliberately generous about the sequence type and
+    ///     strict about the element: the column is built from the JSON array, so what matters is that
+    ///     the member serializes as an array of numbers.
+    /// </summary>
+    private static bool IsVectorType(Type? type)
+    {
+        if (type == null) return false;
+        if (type == typeof(float[]) || type == typeof(double[])) return true;
+        if (type == typeof(ReadOnlyMemory<float>) || type == typeof(Memory<float>)) return true;
+
+        if (type.IsGenericType)
+        {
+            var definition = type.GetGenericTypeDefinition();
+            var element = type.GetGenericArguments()[0];
+            if (element != typeof(float) && element != typeof(double)) return false;
+
+            return definition == typeof(List<>) || definition == typeof(IReadOnlyList<>)
+                || definition == typeof(IList<>) || definition == typeof(IEnumerable<>)
+                || definition == typeof(ICollection<>) || definition == typeof(IReadOnlyCollection<>);
+        }
+
+        return false;
     }
 
     /// <summary>

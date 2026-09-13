@@ -444,7 +444,7 @@ public class DocumentIndex
         return chain.ToArray();
     }
 
-    private static string MemberChainToJsonPath(MemberInfo[] chain)
+    internal static string MemberChainToJsonPath(MemberInfo[] chain)
         => "$." + string.Join(".", chain.Select(SerializedName));
 
     /// <summary>
