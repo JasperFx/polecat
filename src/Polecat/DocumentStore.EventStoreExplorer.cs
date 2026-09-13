@@ -55,9 +55,16 @@ public partial class DocumentStore
         int count, string? tenantId, CancellationToken ct)
         // #584 — on a multi-database store a store-global listing is a fan-out, not one database's
         // rows. See FanOutRecentStreamsAsync for why this one read merges where its siblings refuse.
-        => IsSingleDatabase
-            ? recentStreamsAsync(null, count, tenantId, ct)
-            : FanOutRecentStreamsAsync(count, tenantId, ct);
+        //
+        // #593 — but only when the read really IS store-global. A tenant names the database it lives
+        // in, so a tenant-scoped listing goes to that one database and keeps the tenant_id predicate
+        // on top of it. Fanning out for a named tenant would open every database in the pool to find
+        // rows that can only be in one of them.
+        => tenantId == null
+            ? IsSingleDatabase
+                ? recentStreamsAsync(null, count, tenantId, ct)
+                : FanOutRecentStreamsAsync(count, null, ct)
+            : recentStreamsAsync(DatabaseForTenant(tenantId), count, tenantId, ct);
 
     private async Task<IReadOnlyList<StreamSummary>> recentStreamsAsync(
         PolecatDatabase? database, int count, string? tenantId, CancellationToken ct)
@@ -112,10 +119,19 @@ public partial class DocumentStore
     IAsyncEnumerable<EventRecord> IEventStore.ReadStreamAsync(
         string streamId, string? tenantId, CancellationToken ct)
     {
+        // #593 — a tenant names the database it lives in, so a tenant-scoped read is not the
+        // ambiguous cross-database read the refusal below exists for. It resolves to one database
+        // and keeps the tenant_id predicate: under conjoined tenancy the identity of a stream is
+        // (tenant, id), not id alone, so both axes apply.
+        if (tenantId != null)
+        {
+            return readStreamAsync(DatabaseForTenant(tenantId), streamId, tenantId, ct);
+        }
+
         // #584 — concatenating one stream id's events out of several databases would interleave two
         // independent version sequences into something that reads as a single stream and is not.
         RequireSingleDatabase(nameof(IEventStore.ReadStreamAsync));
-        return readStreamAsync(null, streamId, tenantId, ct);
+        return readStreamAsync(null, streamId, null, ct);
     }
 
     private async IAsyncEnumerable<EventRecord> readStreamAsync(
@@ -171,11 +187,30 @@ public partial class DocumentStore
 
     Task<StreamMetadata?> IEventStore.GetStreamMetadataAsync(
         string streamId, CancellationToken ct)
+        => ((IEventStore)this).GetStreamMetadataAsync(streamId, null, ct);
+
+    /// <summary>
+    ///     #593 — the tenant dimension of the metadata read, which used to refuse.
+    /// </summary>
+    /// <remarks>
+    ///     Both axes apply and they are independent. The tenant selects the database it lives in
+    ///     (a no-op on a single-database store), and the <c>tenant_id</c> predicate selects its rows
+    ///     within that database — which matters because sharded tenancy co-locates many tenants in
+    ///     each database, so "the tenant's database" is not "the tenant's data". Deciding from
+    ///     cardinality alone, as Marten does, drops the predicate exactly there (marten#5383 §2).
+    /// </remarks>
+    Task<StreamMetadata?> IEventStore.GetStreamMetadataAsync(
+        string streamId, string? tenantId, CancellationToken ct)
     {
+        if (tenantId != null)
+        {
+            return streamMetadataAsync(DatabaseForTenant(tenantId), streamId, tenantId, ct);
+        }
+
         // #584 — this read returns ONE row. On a multi-database store two databases can each hold a
         // stream with this id, and there is no answer that names both.
         RequireSingleDatabase(nameof(IEventStore.GetStreamMetadataAsync));
-        return streamMetadataAsync(null, streamId, ct);
+        return streamMetadataAsync(null, streamId, null, ct);
     }
 
     // #584 / jasperfx#810 — the database dimension. A null answer from this overload means "no such
@@ -185,18 +220,14 @@ public partial class DocumentStore
         IEventDatabase database, string streamId, string? tenantId, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(database);
-        if (tenantId != null)
-        {
-            throw new NotSupportedException(
-                "Tenant-scoped GetStreamMetadataAsync is not implemented on Polecat. Pass a null tenantId " +
-                "to read the stream from the database without a tenant predicate.");
-        }
 
-        return streamMetadataAsync(RequirePolecatDatabase(database), streamId, ct);
+        // #593: the tenant axis used to refuse here. Naming the database does not turn the tenant
+        // predicate off -- the database says where to look, the tenant says which rows.
+        return streamMetadataAsync(RequirePolecatDatabase(database), streamId, tenantId, ct);
     }
 
     private async Task<StreamMetadata?> streamMetadataAsync(
-        PolecatDatabase? database, string streamId, CancellationToken ct)
+        PolecatDatabase? database, string streamId, string? tenantId, CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrEmpty(streamId);
 
@@ -213,15 +244,20 @@ public partial class DocumentStore
         // first_event_at column is appended after the canonical projection
         // (index 8, following jasperfx#740's compacted_version at 7) and
         // threaded into ReadStreamMetadata explicitly.
+        // #593: under conjoined tenancy pc_streams holds one row per (tenant, id), so without this
+        // predicate a tenant-scoped read returns whichever of them the scan reached first -- a
+        // plausible, complete-looking answer about the wrong tenant.
+        var tenantFilter = tenantId == null ? "" : "\n              AND s.tenant_id = @tenant_id";
         cmd.CommandText = $"""
             SELECT {PcStreamsRowReader.SelectColumnsWithAlias("s")},
                    MIN(e.timestamp) AS first_event_at
             FROM {Events.StreamsTableName} s
             LEFT JOIN {Events.EventsTableName} e ON e.stream_id = s.id AND e.tenant_id = s.tenant_id
-            WHERE s.id = @id
+            WHERE s.id = @id{tenantFilter}
             GROUP BY s.id, s.type, s.version, s.created, s.timestamp, s.tenant_id, s.is_archived, s.compacted_version;
             """;
         cmd.Parameters.AddIdParameter("@id", resolvedStreamId);
+        if (tenantId != null) cmd.Parameters.AddVarChar("@tenant_id", tenantId);
 
         await using var reader = await session.ExecuteReaderAsync(cmd, ct);
         if (!await reader.ReadAsync(ct))
@@ -271,7 +307,9 @@ public partial class DocumentStore
 
     IAsyncEnumerable<EventRecord> IEventStore.QueryByTagsAsync(
         IReadOnlyDictionary<string, string> tags, string? tenantId, CancellationToken ct)
-        => queryByTagsAsync(null, tags, tenantId, ct);
+        // #593: a named tenant selects the database it lives in, exactly as it does for the stream
+        // reads. Null stays on the default routing and reaches the store-global refusal below.
+        => queryByTagsAsync(tenantId == null ? null : DatabaseForTenant(tenantId), tags, tenantId, ct);
 
     private async IAsyncEnumerable<EventRecord> queryByTagsAsync(
         PolecatDatabase? database,
@@ -679,6 +717,25 @@ public partial class DocumentStore
             ? databases[0]
             : throw new InvalidOperationException(
                 "This Polecat store has no database configured, so the event store explorer has nothing to read.");
+
+    /// <summary>
+    ///     #593 — the database a tenant's data lives in, or null to leave the read on the store's
+    ///     default routing.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         Null on a single-database store, deliberately: there is one place to read and
+    ///         <see cref="ExplorerSession" /> already opens it. That keeps every single-database
+    ///         store on exactly the session it used before this change.
+    ///     </para>
+    ///     <para>
+    ///         The tenant is the <em>database</em> axis. It is not the row filter, and resolving it
+    ///         here never removes one: the <c>tenant_id</c> predicate is passed separately and applies
+    ///         on top, because a sharded store co-locates many tenants in each database.
+    ///     </para>
+    /// </remarks>
+    private PolecatDatabase? DatabaseForTenant(string tenantId)
+        => IsSingleDatabase ? null : Options.Tenancy!.GetDatabase(tenantId);
 
     private void RequireSingleDatabase(string member)
     {

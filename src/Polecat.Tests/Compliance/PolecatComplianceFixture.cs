@@ -27,6 +27,10 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
 
     protected override async Task BuildStoreAsync(ComplianceStoreConfig config)
     {
+        // #593 / jasperfx#810: the multi-database arms want REAL databases, and they have to exist
+        // before the store's tenancy is pointed at them.
+        await CreateTenantDatabasesAsync(config).ConfigureAwait(false);
+
         var options = OptionsFor(config);
 
         _store = new DocumentStore(options);
@@ -34,8 +38,54 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
 
         // Polecat applies schema changes explicitly rather than lazily -- one of the eight
         // divergences the compliance seam exists to absorb.
-        await _store.Database.ApplyAllConfiguredChangesToDatabaseAsync().ConfigureAwait(false);
+        //
+        // #593: and once per DATABASE, not once. A tenant database left unprovisioned fails on its
+        // first write with a missing-table error, which reads as a suite bug rather than as the
+        // fixture never having migrated it. Mirrors PolecatActivator's own loop.
+        foreach (var database in await DatabasesAsync().ConfigureAwait(false))
+        {
+            await database.ApplyAllConfiguredChangesToDatabaseAsync().ConfigureAwait(false);
+        }
     }
+
+    /// <summary>
+    ///     #593 — the physical databases behind <see cref="ComplianceStoreConfig.TenantDatabases" />.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         The config carries LOGICAL names and this fixture owns the physical ones, which is what
+    ///         lets the same suite run on every store. Distinct logical names map to distinct
+    ///         databases and equal names to the same one — the only thing a suite assumes.
+    ///     </para>
+    ///     <para>
+    ///         Scoped per CLAUDE.md. A database a test creates is a SIBLING of the worker's own
+    ///         catalog rather than a child of it, so giving each parallel worker its own catalog does
+    ///         not isolate these — a hardcoded "compliance_shard_one" would be one database every
+    ///         worker on the box raced to create and drop.
+    ///     </para>
+    /// </remarks>
+    private static string PhysicalDatabaseFor(string logicalName) => ConnectionSource.Scoped(logicalName);
+
+    private static async Task CreateTenantDatabasesAsync(ComplianceStoreConfig config)
+    {
+        if (config.TenantDatabases.Count == 0) return;
+
+        await using var conn = new SqlConnection(ConnectionSource.MasterConnectionString);
+        await conn.OpenAsync().ConfigureAwait(false);
+
+        foreach (var logical in config.TenantDatabases.Values.Distinct())
+        {
+            var database = PhysicalDatabaseFor(logical);
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = $"IF DB_ID('{database}') IS NULL CREATE DATABASE [{database}];";
+            await cmd.ExecuteNonQueryAsync().ConfigureAwait(false);
+        }
+    }
+
+    private async Task<IReadOnlyList<Polecat.Storage.PolecatDatabase>> DatabasesAsync()
+        => _store.Options.Tenancy is { } tenancy
+            ? await tenancy.BuildDatabasesAsync(CancellationToken.None).ConfigureAwait(false)
+            : [_store.Database];
 
     /// <summary>
     ///     Translate the store-neutral configuration into Polecat's own <see cref="StoreOptions" />.
@@ -92,6 +142,21 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
         if (config.ConjoinedEventTenancy)
         {
             options.Events.TenancyStyle = TenancyStyle.Conjoined;
+        }
+
+        // #593 / jasperfx#810: the tenant-to-database map, which is what makes the store
+        // multi-database at all. Two distinct logical names is database-per-tenant; two tenants
+        // sharing one, alongside ConjoinedEventTenancy above, is sharded tenancy -- and those are the
+        // two arms, on genuinely independent axes.
+        if (config.TenantDatabases.Count > 0)
+        {
+            options.MultiTenantedDatabases(tenancy =>
+            {
+                foreach (var (tenantId, logical) in config.TenantDatabases)
+                {
+                    tenancy.AddTenant(tenantId, ConnectionSource.ConnectionStringFor(PhysicalDatabaseFor(logical)));
+                }
+            });
         }
 
         config.ApplyTo(new PolecatComplianceRegistrar(options));
@@ -450,6 +515,28 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
     ///     <c>AddProjectionCoordinator&lt;T&gt;</c> gives each one its own marker-typed coordinator.
     /// </summary>
     public override bool SupportsAncillaryCoordinators => true;
+
+    /// <summary>
+    ///     #593 / jasperfx#810 — this fixture creates and drops real SQL Server databases, so the
+    ///     multi-database explorer arms can run against a store whose cardinality is genuinely not
+    ///     <c>Single</c>.
+    /// </summary>
+    /// <remarks>
+    ///     Saying true is a commitment to both halves, and the second one is the load-bearing part:
+    ///     the <see cref="ComplianceStoreConfig.TenantDatabases" /> replay in <c>OptionsFor</c>. A
+    ///     fixture that said true and replayed nothing would not skip — the isolation facts pass
+    ///     <em>vacuously</em> against a single-database store, which is what the arms' precondition
+    ///     fact exists to catch.
+    /// </remarks>
+    public override bool SupportsMultipleDatabases => true;
+
+    /// <remarks>
+    ///     Straight through Polecat's own tenancy rather than by matching
+    ///     <see cref="IEventDatabase.Identifier" /> against the config's logical name — the logical
+    ///     name is this fixture's private business and the identifier is the store's.
+    /// </remarks>
+    public override ValueTask<IEventDatabase> DatabaseForTenantAsync(string tenantId)
+        => ValueTask.FromResult<IEventDatabase>(_store.Options.Tenancy!.GetDatabase(tenantId));
 
     /// <remarks>
     ///     The marker-typed registration lands on Polecat's OWN
