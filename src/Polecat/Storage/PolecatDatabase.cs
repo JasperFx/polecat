@@ -763,24 +763,64 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
         await ApplyAllConfiguredChangesToDatabaseAsync(ct: token);
     }
 
+    /// <summary>
+    ///     Wait until every registered async projection shard and subscription has caught up to the
+    ///     event sequence as of the moment this is called. Intended for test automation.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         #602: the expected shard set comes from the configuration, never from whatever rows
+    ///         happen to be in <c>pc_event_progression</c> at the moment of the poll. A shard only gets
+    ///         a progression row once it commits its first batch, so a store with more than one async
+    ///         projection spends a window — milliseconds on an idle box, far longer under load —
+    ///         where one shard has reported at the high-water mark and the other has written nothing
+    ///         at all. Gating on "some row exists and every row present is caught up" is satisfied by
+    ///         that window, so the wait returned while a projection had not run, and the caller's very
+    ///         next read saw a document that was never written. That is the shape of the flake in
+    ///         <c>rebuilding_one_projection_leaves_another_alone</c>, whose store registers two async
+    ///         snapshots over the same events.
+    ///     </para>
+    ///     <para>
+    ///         A configured shard is matched to its row by <b>store-global identity</b> — the row's
+    ///         key with any tenant suffix stripped. Under per-tenant partitioning one configured
+    ///         shard writes a row per tenant (<c>Name:All:tenant</c>), so comparing the raw keys
+    ///         would never match; and a bare <c>count >= expected</c> comparison (Marten's shape)
+    ///         would let two rows for one tenanted shard stand in for a second shard that never ran,
+    ///         which is the same defect this fixes.
+    ///     </para>
+    /// </remarks>
     public async Task WaitForNonStaleProjectionDataAsync(TimeSpan timeout)
     {
+        // Async projections AND subscriptions — AllShards() is exactly both, and both have to be
+        // caught up before a caller may act on what the daemon has done. A subscription writes no
+        // queryable document, but callers wait on this to know a subscription has seen a range
+        // (subscription_under_coordinator_tests registers a subscription and nothing else), so
+        // dropping them would make the wait return before that subscription ran at all.
+        var expected = _options.Projections.AllShards()
+            .Select(x => x.Name.ForTenant(null).Identity)
+            .Distinct()
+            .ToList();
+
+        // Nothing runs asynchronously, so there is nothing that could be stale.
+        if (expected.Count == 0) return;
+
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var highWater = 0L;
+        IReadOnlyList<ShardState> projectionProgress = [];
 
         while (stopwatch.Elapsed < timeout)
         {
-            var highWater = await FetchHighestEventSequenceNumber(CancellationToken.None);
+            highWater = await FetchHighestEventSequenceNumber(CancellationToken.None);
             if (highWater == 0) return;
 
             var progress = await AllProjectionProgress(CancellationToken.None);
 
             // Filter out the HighWaterMark entry — only check actual projection shards
-            var projectionProgress = progress
-                .Where(p => p.ShardName != "HighWaterMark")
+            projectionProgress = progress
+                .Where(p => p.ShardName != ShardState.HighWaterMark)
                 .ToList();
 
-            // All projection shards must be caught up to the high water mark
-            if (projectionProgress.Count > 0 && projectionProgress.All(p => p.Sequence >= highWater))
+            if (AllShardsAreCaughtUp(expected, projectionProgress, highWater))
             {
                 return;
             }
@@ -789,7 +829,61 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
         }
 
         throw new TimeoutException(
-            $"Timed out after {timeout} waiting for projection data to become non-stale.");
+            $"Timed out after {timeout} waiting for projection data to become non-stale. "
+            + $"High water mark is {highWater}. "
+            + $"Shards not caught up: {DescribeLaggingShards(expected, projectionProgress, highWater)}.");
+    }
+
+    private static bool AllShardsAreCaughtUp(
+        IReadOnlyList<string> expected,
+        IReadOnlyList<ShardState> projectionProgress,
+        long highWater)
+    {
+        // Every row that IS present has to be caught up, including rows for shards that are no longer
+        // configured — that was the original check and it stays.
+        if (projectionProgress.Any(p => p.Sequence < highWater)) return false;
+
+        // ...and every CONFIGURED shard has to have a row at all.
+        return expected.All(identity => projectionProgress.Any(p => Matches(p, identity)));
+    }
+
+    /// <summary>
+    ///     Does this progression row belong to the configured shard with <paramref name="identity" />?
+    /// </summary>
+    /// <remarks>
+    ///     The comparison is on the <em>store-global identity string</em> — the row's own key with any
+    ///     tenant suffix stripped — and deliberately not on the parsed shard's fields. A
+    ///     <c>CompositeProjection</c> carries <c>Version = 0</c> on its <see cref="ShardName" /> while
+    ///     persisting the unversioned identity <c>Name:All</c>, which parses back as version 1: a
+    ///     field-by-field comparison therefore never matches a composite's own shard, and the wait
+    ///     hangs for its full timeout on a store whose projection is caught up. Identity is what keys
+    ///     the row, so identity is what to compare.
+    /// </remarks>
+    private static bool Matches(ShardState state, string identity)
+        => ShardName.TryParse(state.ShardName, out var parsed)
+           && parsed?.ForTenant(null).Identity == identity;
+
+    /// <summary>
+    ///     The diagnostic the old timeout message could not give: which shards are behind, and which
+    ///     have never reported at all. A wait that times out is nearly always one shard, and naming it
+    ///     is the difference between a one-line CI failure and a bisect.
+    /// </summary>
+    private static string DescribeLaggingShards(
+        IReadOnlyList<string> expected,
+        IReadOnlyList<ShardState> projectionProgress,
+        long highWater)
+    {
+        var behind = projectionProgress
+            .Where(p => p.Sequence < highWater)
+            .Select(p => $"{p.ShardName}@{p.Sequence}");
+
+        var missing = expected
+            .Where(identity => !projectionProgress.Any(p => Matches(p, identity)))
+            .Select(identity => $"{identity} (no progress recorded)");
+
+        var all = behind.Concat(missing).ToArray();
+
+        return all.Length == 0 ? "none" : string.Join(", ", all);
     }
 
     internal PolecatProjectionDaemon StartProjectionDaemon(DocumentStore store, ILoggerFactory loggerFactory)
