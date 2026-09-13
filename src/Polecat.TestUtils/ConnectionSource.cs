@@ -50,6 +50,7 @@ public static class ConnectionSource
     public static string Scoped(string name) => $"{DatabaseName}_{name}";
 
     private static bool? _supportsNativeJson;
+    private static bool? _supportsVector;
 
     /// <summary>
     ///     Detects whether the connected SQL Server instance supports the native json data type
@@ -71,6 +72,32 @@ public static class ConnectionSource
         conn.Open();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = "SELECT COUNT(*) FROM sys.types WHERE name = 'json'";
+        var result = cmd.ExecuteScalar();
+        return result != null && (int)result > 0;
+    }
+
+    /// <summary>
+    ///     Detects whether the connected instance has the <c>VECTOR</c> type (SQL Server 2025+).
+    ///     Returns false for Azure SQL Edge and older versions, exactly as
+    ///     <see cref="SupportsNativeJson" /> does — the CI matrix runs an `edge` lane that has
+    ///     neither.
+    /// </summary>
+    public static bool SupportsVector
+    {
+        get
+        {
+            if (_supportsVector.HasValue) return _supportsVector.Value;
+            _supportsVector = DetectVectorSupport();
+            return _supportsVector.Value;
+        }
+    }
+
+    private static bool DetectVectorSupport()
+    {
+        using var conn = new SqlConnection(ConnectionString);
+        conn.Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT COUNT(*) FROM sys.types WHERE name = 'vector'";
         var result = cmd.ExecuteScalar();
         return result != null && (int)result > 0;
     }

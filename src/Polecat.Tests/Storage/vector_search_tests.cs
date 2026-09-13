@@ -36,8 +36,20 @@ public class vector_search_tests: OneOffConfigurationsContext
     private static readonly Guid FarEast = Guid.NewGuid();
     private static readonly Guid Blank = Guid.NewGuid();
 
+    /// <summary>
+    ///     The CI matrix runs an `edge` lane against Azure SQL Edge, which has neither the native
+    ///     json type nor VECTOR — so every fact that reaches the database has to say so rather than
+    ///     fail with "Type VECTOR is not a defined system type". The same shape
+    ///     <c>ConnectionSource.SupportsNativeJson</c> already has.
+    /// </summary>
+    private static void requiresVectorSupport()
+        => Assert.SkipUnless(ConnectionSource.SupportsVector,
+            "This SQL Server build has no VECTOR type (Azure SQL Edge, or pre-2025).");
+
     private async Task<IDocumentStore> aStoreWithPassages()
     {
+        requiresVectorSupport();
+
         ConfigureStore(opts =>
         {
             opts.Schema.For<Passage>().VectorIndex(x => x.Embedding, 3);
@@ -178,6 +190,8 @@ public class vector_search_tests: OneOffConfigurationsContext
     [Fact]
     public async Task declaring_a_vector_on_a_type_that_already_has_rows_needs_no_backfill()
     {
+        requiresVectorSupport();
+
         // The payoff of a computed column over a written one. The rows below are stored by a store
         // that has never heard of a vector index; adding the declaration runs one ALTER TABLE and
         // every existing row is searchable at once, because SQL Server computes a PERSISTED column
