@@ -128,6 +128,8 @@ public static class PolecatServiceCollectionExtensions
         // same instance also enters the IConfigurePolecat chain below, which copies
         // the toggle into options.Events.EnableExtendedProgressionTracking on build.
         // Mirrors Marten's SetEventStoreInstrumentation wiring (jasperfx#424).
+        AssertEventModelName(eventModelName);
+
         var instrument = new SetEventStoreInstrumentation();
         services.AddSingleton<IConfigurePolecat>(instrument);
         services.AddSingleton<IEventStoreInstrumentation>(instrument);
@@ -224,6 +226,28 @@ public static class PolecatServiceCollectionExtensions
         PolecatConfigurationExpression.EnsureActivatorIsRegistered(services);
 
         return new PolecatConfigurationExpression(services);
+    }
+
+    /// <summary>
+    ///     Refuse an empty or whitespace Event Model name by name, before anything is registered
+    ///     (fisher#271, marten#5405).
+    /// </summary>
+    /// <remarks>
+    ///     An empty string is a perfectly legal model name, and it reproduces the exact bug the
+    ///     parameter exists to prevent -- two assembled models -- with a blank where the name should
+    ///     be, which is harder to trace than "EventModel". Null is the documented way to say "the
+    ///     default model", so only a non-null blank is an error. Both registration methods add
+    ///     several singletons before they reach the model source, so the refusal comes first and
+    ///     leaves the IServiceCollection untouched.
+    /// </remarks>
+    internal static void AssertEventModelName(string? eventModelName)
+    {
+        if (eventModelName is not null && string.IsNullOrWhiteSpace(eventModelName))
+        {
+            throw new ArgumentException(
+                "The Event Model name cannot be empty or whitespace. Pass null (or omit the argument) to contribute to the default model.",
+                nameof(eventModelName));
+        }
     }
 }
 

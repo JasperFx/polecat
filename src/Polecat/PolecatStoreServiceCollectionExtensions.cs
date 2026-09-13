@@ -51,6 +51,8 @@ public static class PolecatStoreServiceCollectionExtensions
         // chain so external tooling can resolve every store's instrumentation through
         // GetServices<IEventStoreInstrumentation>() and toggle them in one pass. Mirrors
         // SetEventStoreInstrumentation<T> wiring in Marten's AddMartenStore<T>.
+        PolecatServiceCollectionExtensions.AssertEventModelName(eventModelName);
+
         var instrument = new SetEventStoreInstrumentation<T>();
         services.AddSingleton<IConfigurePolecat<T>>(instrument);
         services.AddSingleton<IEventStoreInstrumentation>(instrument);
