@@ -95,6 +95,7 @@ const config: UserConfig<DefaultTheme.Config> = {
                 { text: 'Paging', link: '/documents/querying/linq/paging' },
                 { text: 'Querying for Raw JSON', link: '/documents/querying/query-json' },
                 { text: 'Batched Queries', link: '/documents/querying/batched-queries' },
+                { text: 'Vector Search', link: '/documents/querying/vector-search' },
               ]
             },
             { text: 'Multi-Tenanted Documents', link: '/documents/multi-tenancy' },
