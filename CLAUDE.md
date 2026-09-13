@@ -138,16 +138,31 @@ Event sourcing behavior that Polecat and Marten both have belongs in
 `JasperFx.Events.ComplianceTests` (source-only package; the suites compile into `Polecat.Tests` so
 JasperFx's aggregate source generator binds Polecat's session types). Enroll a suite with an empty
 subclass in `Compliance/polecat_event_store_compliance.cs`, implement whatever seam it needs on
-`PolecatComplianceFixture`, and delete the Polecat-local copy. **50 suites are enrolled across
-fifteen waves** — the enrollment files are `Compliance/polecat_event_store_compliance*.cs`, one per
-wave, and the fixture's `Supports…` overrides are the map of what Polecat has opted into.
+`PolecatComplianceFixture`, and delete the Polecat-local copy. **55 suites are enrolled across
+eighteen waves** — the enrollment files are `Compliance/polecat_event_store_compliance*.cs`, mostly
+one per wave, and the fixture's `Supports…` overrides are the map of what Polecat has opted into.
+
+That count goes stale every time a wave lands, so recompute it rather than trusting the number
+above:
+
+```
+grep -cE '^\s*: [A-Za-z]+Compliance<' src/Polecat.Tests/Compliance/polecat_event_store_compliance*.cs
+```
+
+Note the "one file per wave" rule has an exception: a **document** suite is sometimes enrolled in the
+base `polecat_event_store_compliance.cs` beside the other document suites rather than in a wave file
+of its own, because its fixture is `PolecatDocumentComplianceFixture` and it shares nothing with the
+event-sourcing wave it arrived in. `GuidOptimisticConcurrencyCompliance` (#592) is the current
+example.
 
 **A `Supports…` flag that is false is a claim, and it needs a reason in a comment.** Most recent
 gates default false so a store can enroll a suite across a package bump and flip the gate when the
 behavior lands — so "false" means either "not built yet" or "deliberate divergence", and only a
-comment tells the two apart. Polecat leaves exactly one false today:
-`SupportsCommitVisibilityProbe`, because SQL Server does not run READ COMMITTED SNAPSHOT by default
-and the probe would deadlock against the commit hook holding the transaction open.
+comment tells the two apart. Polecat leaves exactly two false today, and both are deliberate
+divergences rather than gaps: `SupportsCommitVisibilityProbe`, because SQL Server does not run READ
+COMMITTED SNAPSHOT by default and the probe would deadlock against the commit hook holding the
+transaction open; and `SupportsLiveAggregationRegistration`, because Polecat derives live aggregators
+automatically from self-aggregating types and there is no explicit registration call to make.
 
 **Enrolling a suite is the first time it has ever run.** JasperFx enrolls only the document suites,
 so an event-sourcing suite arrives compile-checked and design-reasoned but never executed. Wave 15
@@ -155,6 +170,15 @@ so an event-sourcing suite arrives compile-checked and design-reasoned but never
 maintainer had already ruled on (#549, #553) and three nobody knew about, including two seams that
 were silently stubbed empty. Budget for that, and read a failure as evidence before reading it as a
 suite bug. When it *is* a suite bug, fix it upstream rather than weakening the assertion locally.
+
+Wave 17/18 (#591–#594, JasperFx 2.69.0) is the second worked example, and it sharpens the rule: a
+suite that is **brand new upstream** — one no store has ever run — is higher-yield still.
+`GuidOptimisticConcurrencyCompliance` was the first shared coverage of Guid document concurrency for
+*any* store, and three of its five facts failed immediately. Polecat's guard was fed from the
+session's own version tracker, so a document loaded in one session and stored through another was
+refused **every time**, on an unmodified row. The same field had already broken this way in Fisher
+(fisher#245) and Marten (marten#5372), found independently each time — a capability every store is
+assumed to share, with nothing shared holding any of them to it, is exactly where these live.
 
 To iterate on a suite before the JasperFx release, build against a working copy instead of the
 package:
