@@ -482,6 +482,19 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
         public IDocumentSession OpenSession()
             => _host.Services.GetRequiredService<IDocumentStore>().LightweightSession();
 
+        /// <summary>
+        ///     #591 / jasperfx#818 — the HOSTED store as IEventStore, which is the one store in the
+        ///     suite set with a genuinely discoverable running daemon.
+        /// </summary>
+        /// <remarks>
+        ///     Deliberately not the fixture's own store instance. The fixture builds its store by hand
+        ///     and registers no coordinator, so asking it what state its shards are in can only ever
+        ///     answer "no daemon here to ask" — which is a real case worth pinning, and the reason the
+        ///     daemon-visible half of the ruling needs this store instead.
+        /// </remarks>
+        public JasperFx.Events.IEventStore EventStore
+            => (JasperFx.Events.IEventStore)_host.Services.GetRequiredService<IDocumentStore>();
+
         public async ValueTask DisposeAsync()
         {
             // StopAsync before Dispose, deliberately: IHost.Dispose does NOT stop a started host, so

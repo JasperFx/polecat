@@ -52,6 +52,12 @@ internal class ProjectionCoordinator : ProjectionCoordinatorBase, IProjectionCoo
         _store = store;
         _options = store.Options;
         _loggerFactory = loggerFactory ?? NullLoggerFactory.Instance;
+
+        // #591: hand the store a way back to its coordinator. GetProjectionStatusesAsync reports
+        // ShardStatus.State from the running daemon when one is reachable, and the store has no
+        // container to resolve a coordinator from -- but the coordinator is always constructed with
+        // the store it coordinates, so the reference travels in this direction instead.
+        store.AttachCoordinator(this);
     }
 
     protected override IProjectionDaemon ResolveDaemon(IProjectionSet set)

@@ -10,6 +10,7 @@ using JasperFx.Events.Daemon;
 using JasperFx.Events.Projections;
 using Microsoft.Data.SqlClient;
 using Polecat.Events;
+using Polecat.Events.Daemon;
 using Polecat.Events.Internal;
 using Polecat.Storage;
 
@@ -478,21 +479,82 @@ public partial class DocumentStore
     }
 
     /// <summary>
-    ///     #589 — no daemon in this process was asked about these shards, so their runtime state is not
+    ///     #589 / #591 — no daemon was reachable from this store, so these shards' runtime state is not
     ///     something this read can report.
     /// </summary>
     /// <remarks>
-    ///     Deliberately not <c>"Stopped"</c>, which is what this method used to answer for every shard
-    ///     unconditionally. <see cref="ShardStatus.State" /> is a fact about the RUNNING DAEMON, and
-    ///     pc_event_progression does not know it — so "Stopped" was not a partial answer but a wrong
-    ///     one, indistinguishable from a daemon that really had stopped, and it is the reading an
-    ///     operator acts on. Marten answers "Unknown" here for the same reason. Reporting the real
-    ///     state, as Fisher does, needs a daemon accessor that does not CREATE a daemon as a side
-    ///     effect of being asked — Polecat's AllDaemonsAsync() builds one per database — so it is a
-    ///     follow-up rather than something to improvise inside a defect fix. See polecat#589,
-    ///     jasperfx#818.
+    ///     <para>
+    ///         Deliberately not <c>Stopped</c>, which is what this method used to answer for every shard
+    ///         unconditionally. <see cref="ShardStatus.State" /> is a fact about the RUNNING DAEMON, and
+    ///         pc_event_progression does not know it — so "Stopped" was not a partial answer but a wrong
+    ///         one, indistinguishable from a daemon that really had stopped, and it is the reading an
+    ///         operator acts on.
+    ///     </para>
+    ///     <para>
+    ///         #591 narrows it to what it actually means. Where a coordinator IS reachable the state now
+    ///         comes from the daemon it is running (see <see cref="shardStatesAsync" />), so
+    ///         <c>Unknown</c> no longer covers "we never looked" — it is the answer for the cases where
+    ///         there genuinely is nothing to ask: <c>DaemonMode.ExternallyManaged</c>, a monitoring
+    ///         console in another process, a hand-built store. See jasperfx#818.
+    ///     </para>
     /// </remarks>
-    private const string UnknownShardState = "Unknown";
+    private const string UnknownShardState = ShardStatusState.Unknown;
+
+    /// <summary>
+    ///     #591 — the running daemon's answer for each shard in this database, keyed by
+    ///     <see cref="ShardName.Identity" />. Empty when no daemon is reachable.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         Read through <see cref="JasperFx.Events.Daemon.IProjectionCoordinator.AllDaemonsAsync" />
+    ///         and never through <c>DaemonForDatabase</c>: this is a diagnostics read and must not change
+    ///         what is running. <c>DaemonForDatabase</c> is contractually allowed to go looking and START
+    ///         a daemon, and a projections page that starts one by being opened is a monitoring tool with
+    ///         a side effect on the system it monitors. jasperfx#818 pins that separately.
+    ///     </para>
+    ///     <para>
+    ///         Filtered to the daemon serving the database being read. Shard identities are NOT unique
+    ///         across databases on a sharded store — every database runs its own <c>MyProjection:All</c> —
+    ///         so folding every daemon's agents into one map would let one database answer for another.
+    ///     </para>
+    /// </remarks>
+    private static async Task<Dictionary<string, string>> shardStatesAsync(
+        JasperFx.Events.Daemon.IProjectionCoordinator? coordinator, PolecatDatabase database)
+    {
+        var states = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (coordinator == null) return states;
+
+        IReadOnlyList<IProjectionDaemon> daemons;
+        try
+        {
+            daemons = await coordinator.AllDaemonsAsync().ConfigureAwait(false);
+        }
+        catch (Exception)
+        {
+            // Same judgement headSequenceAsync makes: a projections page that cannot reach a daemon
+            // still has progression rows and a head to render, and Unknown is already the defined
+            // answer for "no daemon to ask".
+            return states;
+        }
+
+        foreach (var daemon in daemons)
+        {
+            // Polecat's coordinator only ever builds PolecatProjectionDaemon, which carries the
+            // database it serves.
+            if (daemon is not PolecatProjectionDaemon polecatDaemon) continue;
+            if (!string.Equals(polecatDaemon.Database.Identifier, database.Identifier, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            foreach (var agent in polecatDaemon.CurrentAgents())
+            {
+                states[agent.Name.Identity] = ShardStatusState.From(agent.Status);
+            }
+        }
+
+        return states;
+    }
 
     private async Task<IReadOnlyList<ProjectionStatus>> projectionStatusesAsync(
         PolecatDatabase database, string? tenantId, CancellationToken ct)
@@ -519,6 +581,9 @@ public partial class DocumentStore
 
         var head = await headSequenceAsync(database, ct);
 
+        // #591: the running daemon's answer, where one is reachable at all.
+        var shardStates = await shardStatesAsync(Coordinator, database);
+
         // #200: drive off the registered projection sources (not
         // AllProjectionNames(), which quote-wraps each name for SQL-list
         // display). Each source exposes its real Lifecycle and ShardNames,
@@ -537,7 +602,13 @@ public partial class DocumentStore
                         : shard.Name;
 
                     progress.TryGetValue(effectiveName.Identity, out var processed);
-                    return new ShardStatus(effectiveName.Identity, UnknownShardState, processed, head, Error: null!);
+
+                    // #591: what the daemon says, or Unknown when there is no daemon to ask. A shard
+                    // the daemon has no agent for is Unknown rather than Stopped for the same reason
+                    // -- this store never heard the daemon say anything about it.
+                    var state = shardStates.GetValueOrDefault(effectiveName.Identity, UnknownShardState);
+
+                    return new ShardStatus(effectiveName.Identity, state, processed, head, Error: null!);
                 })
                 .ToList();
 

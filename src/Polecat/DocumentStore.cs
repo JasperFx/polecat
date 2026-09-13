@@ -97,6 +97,34 @@ public partial class DocumentStore : IDocumentStore
 
     internal IInlineProjection<IDocumentSession>[] InlineProjections => _inlineProjections.Value;
 
+    /// <summary>
+    ///     #591 — the projection coordinator built over THIS store, if the host registered one.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         Set by <c>Polecat.Events.Daemon.Coordination.ProjectionCoordinator</c>'s constructor,
+    ///         which already receives the store it coordinates. The store cannot go the other way and
+    ///         resolve a coordinator out of DI — it has no container, and an ancillary store's
+    ///         coordinator is registered under a marker-typed interface only its own registration
+    ///         knows the name of.
+    ///     </para>
+    ///     <para>
+    ///         It exists for exactly one read: <c>GetProjectionStatusesAsync</c> reports
+    ///         <see cref="JasperFx.Descriptors.ShardStatus.State" /> from the running daemon when one
+    ///         is reachable, and <c>Unknown</c> when none is. Null here is the second case, and it is
+    ///         a real operational situation rather than a gap — <c>DaemonMode.ExternallyManaged</c>, a
+    ///         monitoring console in another process, and a hand-built store all land on it.
+    ///     </para>
+    /// </remarks>
+    internal JasperFx.Events.Daemon.IProjectionCoordinator? Coordinator { get; private set; }
+
+    /// <summary>
+    ///     #591 — attach the coordinator that was built over this store. Called once, from the
+    ///     coordinator's own constructor.
+    /// </summary>
+    internal void AttachCoordinator(JasperFx.Events.Daemon.IProjectionCoordinator coordinator)
+        => Coordinator = coordinator;
+
     internal DocumentProvider GetProvider(Type documentType) => _providers.GetProvider(documentType);
 
     /// <summary>
