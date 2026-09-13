@@ -153,6 +153,16 @@ internal abstract class PolecatDocumentStorage<TDoc, TId>
     private string? _bulkVersionCheckedSql;
 
     protected readonly DocumentMapping _mapping;
+
+    /// <summary>
+    ///     The table-variable column type for the bulk OUTPUT stream — the INNER type of a
+    ///     strongly-typed id, matching the document table's own id column (#296/#302).
+    /// </summary>
+    private string BulkOutputIdType()
+        => _mapping.InnerIdType == typeof(Guid) ? "uniqueidentifier"
+            : _mapping.InnerIdType == typeof(int) ? "int"
+            : _mapping.InnerIdType == typeof(long) ? "bigint"
+            : "varchar(250)";
     protected readonly DocumentStorageDescriptor<TDoc, TId> _descriptor;
     private readonly string _loaderSql;
     private readonly string _loadManySql;
@@ -502,7 +512,18 @@ internal abstract class PolecatDocumentStorage<TDoc, TId>
             $"USING {usingClause} ON {on} " +
             $"WHEN MATCHED AND t.version = s.expected_version THEN UPDATE SET {string.Join(", ", setList)} " +
             $"WHEN NOT MATCHED THEN INSERT ({string.Join(", ", insertCols)}) VALUES ({string.Join(", ", insertVals)}) " +
-            $"OUTPUT inserted.id;";
+            $"OUTPUT inserted.id{(_mapping.FullTextIndexes.Count == 0 ? ";" : " INTO @pc_output;")}";
+
+        // gh-611: a trigger on the table forbids a bare OUTPUT, so a full-text-indexed type routes
+        // the id stream through a table variable. Same result shape, so the caller's
+        // absent-row-means-conflict reading is unchanged.
+        if (_mapping.FullTextIndexes.Count > 0)
+        {
+            _bulkVersionCheckedSql =
+                $"DECLARE @pc_output TABLE (value {BulkOutputIdType()}); " + _bulkVersionCheckedSql
+                + " SELECT value FROM @pc_output;";
+        }
+
         return _bulkVersionCheckedSql;
     }
 

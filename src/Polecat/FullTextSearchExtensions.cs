@@ -1,0 +1,226 @@
+using System.Linq.Expressions;
+using System.Reflection;
+using Polecat.Internal;
+using Polecat.Storage;
+using Polecat.Storage.FullText;
+
+namespace Polecat;
+
+/// <summary>
+///     Ranked full-text search over a member declared with
+///     <c>Schema.For&lt;T&gt;().FullTextIndex(...)</c>, scored with Okapi BM25.
+/// </summary>
+/// <remarks>
+///     <para>
+///         <b>Separate from the LINQ operators on purpose.</b> <c>Where(x =&gt; x.Body.PlainTextSearch(...))</c>
+///         answers which documents match; this answers how well, which a <c>Where</c> has nowhere to
+///         put. A ranked search is also what a hybrid search fuses (gh-612), so the scored overload
+///         exists for the same reason <c>VectorSearchWithScoresAsync</c> does.
+///     </para>
+///     <para>
+///         <b>BM25 needs no extra schema.</b> Every input is derivable from the token rows already
+///         stored: term frequency is a count per document and term, document length a count per
+///         document, document frequency a distinct count per term, and the corpus size and average
+///         length are aggregates over those. The cost is that a query computes them — there is no
+///         maintained statistics table, so ranking reads the whole token table for the member. That is
+///         the right first trade: correct before fast, and a materialized statistics table is a
+///         change this can absorb later without moving the API.
+///     </para>
+///     <para>
+///         <b>Scores are comparable within one result set and not between two.</b> BM25's IDF term
+///         depends on the corpus, so a document's score moves as other documents are written. Use it
+///         to order, or as a relative floor within a search — not as a stored measure of relevance.
+///     </para>
+/// </remarks>
+public static class FullTextSearchExtensions
+{
+    /// <summary>Okapi BM25's term-frequency saturation. 1.2 is the conventional default.</summary>
+    private const double K1 = 1.2;
+
+    /// <summary>Okapi BM25's length normalization. 0.75 is the conventional default.</summary>
+    private const double B = 0.75;
+
+    /// <summary>
+    ///     The <paramref name="limit" /> documents matching <paramref name="text" /> best, most
+    ///     relevant first.
+    /// </summary>
+    public static async Task<IReadOnlyList<T>> FullTextSearchAsync<T>(
+        this IQuerySession session,
+        Expression<Func<T, object?>> member,
+        string text,
+        int limit = 10,
+        CancellationToken token = default) where T : notnull
+    {
+        var built = await BuildAsync(session, member, text, limit, token).ConfigureAwait(false);
+        if (built is null) return [];
+
+        return await session.AdvancedSql.QueryAsync<T>(built.Value.Sql, token, built.Value.Parameters)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    ///     The same search, each document paired with its BM25 score — larger is more relevant — for a
+    ///     relevance floor, or for fusing with a vector ranking.
+    /// </summary>
+    public static async Task<IReadOnlyList<FullTextMatch<T>>> FullTextSearchWithScoresAsync<T>(
+        this IQuerySession session,
+        Expression<Func<T, object?>> member,
+        string text,
+        int limit = 10,
+        CancellationToken token = default) where T : notnull
+    {
+        var built = await BuildAsync(session, member, text, limit, token).ConfigureAwait(false);
+        if (built is null) return [];
+
+        var rows = await session.AdvancedSql.QueryAsync<T, double>(built.Value.Sql, token, built.Value.Parameters)
+            .ConfigureAwait(false);
+
+        return rows.Select(row => new FullTextMatch<T>(row.Item1, row.Item2)).ToList();
+    }
+
+    private static async Task<(string Sql, object[] Parameters)?> BuildAsync<T>(
+        IQuerySession session,
+        Expression<Func<T, object?>> member,
+        string text,
+        int limit,
+        CancellationToken token) where T : notnull
+    {
+        ArgumentNullException.ThrowIfNull(member);
+        ArgumentNullException.ThrowIfNull(text);
+        if (limit < 1) throw new ArgumentOutOfRangeException(nameof(limit), limit, "limit must be at least 1");
+
+        // The token table has to exist before a statement names it — the same reason the vector search
+        // ensures its table first. A store whose first act is a search would otherwise meet "Invalid
+        // object name".
+        await ((QuerySession)session).EnsureDocumentTableAsync(typeof(T), token).ConfigureAwait(false);
+
+        var mapping = ((QuerySession)session).Providers.GetProvider(typeof(T)).Mapping;
+        var chain = ChainOf(member);
+        var name = string.Join(".", chain.Select(x => x.Name));
+
+        var index = mapping.FullTextIndexes.FirstOrDefault(x => x.MemberName == name)
+                    ?? throw new InvalidOperationException(
+                        mapping.FullTextIndexes.Count == 0
+                            ? $"'{typeof(T).Name}' declares no full-text index, so there is nothing to "
+                              + $"search. Declare one with "
+                              + $"Schema.For<{typeof(T).Name}>().FullTextIndex(x => x.{name})."
+                            : $"'{typeof(T).Name}.{name}' is not a declared full-text member. Declared: "
+                              + string.Join(", ", mapping.FullTextIndexes.Select(x => x.MemberName)) + ".");
+
+        var terms = FullTextIndex.Tokenize(text);
+
+        // No terms is not an error and not everything — it is no match, the same answer the LINQ
+        // operator gives for an empty search.
+        if (terms.Length == 0) return null;
+
+        var ftTable = SqlEscaping.QualifiedName(mapping.DatabaseSchemaName, FullTextIndex.TableNameFor(mapping));
+        var docTable = mapping.QualifiedTableName;
+        var conjoined = mapping.TenancyStyle == TenancyStyle.Conjoined;
+
+        // IAdvancedSql replaces each '?' with @p0, @p1, ... in the order they appear in the TEXT, so
+        // this list is built in exactly the order the placeholders below are written.
+        var parameters = new List<object>();
+        var termList = string.Join(", ", terms.Select(_ => "?"));
+        var tenantFilter = conjoined ? " AND tenant_id = ?" : string.Empty;
+
+        void AddMemberScope()
+        {
+            parameters.Add(index.MemberName);
+            parameters.AddRange(terms);
+            if (conjoined) parameters.Add(session.TenantId);
+        }
+
+        // lens: member, [tenant]
+        parameters.Add(index.MemberName);
+        if (conjoined) parameters.Add(session.TenantId);
+
+        var sql =
+            $"""
+             WITH lens AS (
+                 SELECT doc_id, COUNT(*) AS dl FROM {ftTable}
+                 WHERE member = ?{tenantFilter}
+                 GROUP BY doc_id
+             ),
+             stats AS (SELECT COUNT(*) AS n, AVG(CAST(dl AS float)) AS avgdl FROM lens),
+             tf AS (
+                 SELECT doc_id, term, COUNT(*) AS tf FROM {ftTable}
+                 WHERE member = ? AND term IN ({termList}){tenantFilter}
+                 GROUP BY doc_id, term
+             ),
+             df AS (
+                 SELECT term, COUNT(DISTINCT doc_id) AS df FROM {ftTable}
+                 WHERE member = ? AND term IN ({termList}){tenantFilter}
+                 GROUP BY term
+             ),
+             scored AS (
+                 SELECT tf.doc_id,
+                        SUM(LOG(1.0 + ((s.n - df.df + 0.5) / (df.df + 0.5)))
+                            * ((tf.tf * (? + 1.0))
+                               / (tf.tf + ? * (1.0 - ? + ? * (l.dl / s.avgdl))))) AS score
+                 FROM tf
+                 INNER JOIN df ON df.term = tf.term
+                 INNER JOIN lens l ON l.doc_id = tf.doc_id
+                 CROSS JOIN stats s
+                 GROUP BY tf.doc_id
+             )
+             SELECT TOP(?) d.id, d.data, scored.score
+             FROM scored INNER JOIN {docTable} d ON d.id = scored.doc_id
+             {DocFilters(mapping, conjoined)}
+             ORDER BY scored.score DESC
+             """;
+
+        AddMemberScope();  // tf
+        AddMemberScope();  // df
+        parameters.Add(K1);
+        parameters.Add(K1);
+        parameters.Add(B);
+        parameters.Add(B);
+        parameters.Add(limit);
+        if (conjoined) parameters.Add(session.TenantId);
+
+        return (sql, parameters.ToArray());
+    }
+
+    /// <summary>
+    ///     Filters on the document table itself. Soft-deleted rows keep their tokens — the trigger
+    ///     sees an UPDATE, not a DELETE — so they have to be excluded here or a deleted document would
+    ///     come back from a search.
+    /// </summary>
+    private static string DocFilters(DocumentMapping mapping, bool conjoined)
+    {
+        var wheres = new List<string>();
+        if (mapping.DeleteStyle == DeleteStyle.SoftDelete) wheres.Add("d.is_deleted = 0");
+        if (conjoined) wheres.Add("d.tenant_id = ?");
+
+        return wheres.Count == 0 ? string.Empty : "WHERE " + string.Join(" AND ", wheres);
+    }
+
+    /// <summary>The member chain of <c>x =&gt; x.A.B</c>, unwrapping the boxing convert.</summary>
+    private static MemberInfo[] ChainOf<T>(Expression<Func<T, object?>> member)
+    {
+        var body = member.Body;
+        while (body is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } unary)
+        {
+            body = unary.Operand;
+        }
+
+        var chain = new List<MemberInfo>();
+        while (body is MemberExpression access)
+        {
+            chain.Insert(0, access.Member);
+            body = access.Expression!;
+        }
+
+        if (chain.Count == 0 || body is not ParameterExpression)
+        {
+            throw new ArgumentException(
+                "The full-text member must be a plain member access on the document, like x => x.Body.",
+                nameof(member));
+        }
+
+        return chain.ToArray();
+    }
+}
+
+/// <summary>A document and its BM25 score. Larger is more relevant.</summary>
+public sealed record FullTextMatch<T>(T Document, double Score);

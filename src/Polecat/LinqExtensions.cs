@@ -18,6 +18,35 @@ public static class LinqExtensions
     ///     Tests whether a property value matches any of the supplied values.
     ///     Translated to SQL IN clause.
     /// </summary>
+    /// <summary>
+    ///     Full-text search over a member declared with
+    ///     <c>Schema.For&lt;T&gt;().FullTextIndex(...)</c>: every term in
+    ///     <paramref name="searchTerm" /> has to appear in the member, in any order.
+    /// </summary>
+    /// <remarks>
+    ///     Mirrors Marten's operator of the same name. The <c>regConfig</c> overloads Marten offers are
+    ///     deliberately absent — a PostgreSQL text-search configuration has no counterpart against an
+    ///     index Polecat tokenizes itself, and an overload that took one and ignored it would be worse
+    ///     than its absence. Only callable inside a LINQ <c>Where</c>.
+    /// </remarks>
+    public static bool PlainTextSearch(this string member, string searchTerm)
+        => throw new NotSupportedException(
+            "PlainTextSearch() is a LINQ marker and only has meaning inside a Where() against a "
+            + "Polecat document query.");
+
+    /// <summary>
+    ///     Full-text search for the terms of <paramref name="searchTerm" /> appearing in order and
+    ///     adjacent to each other.
+    /// </summary>
+    /// <remarks>
+    ///     Mirrors Marten's operator of the same name, and is what the token positions gh-611 stores
+    ///     are for. Only callable inside a LINQ <c>Where</c>.
+    /// </remarks>
+    public static bool PhraseSearch(this string member, string searchTerm)
+        => throw new NotSupportedException(
+            "PhraseSearch() is a LINQ marker and only has meaning inside a Where() against a "
+            + "Polecat document query.");
+
     public static bool IsOneOf<T>(this T value, params T[] matches) => matches.Contains(value);
 
     /// <summary>

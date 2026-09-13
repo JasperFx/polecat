@@ -156,6 +156,19 @@ internal class DocumentProviderRegistry
                 }
             }
 
+            // Apply full-text indexes
+            var fullTextField = exprType.GetField("FullTextIndexes", BindingFlags.NonPublic | BindingFlags.Instance);
+            if (fullTextField?.GetValue(expr) is IEnumerable<Storage.FullText.FullTextIndex> fullTextIndexes)
+            {
+                foreach (var fullTextIndex in fullTextIndexes)
+                {
+                    // #510's rule once more: an index tokenized from the wrong JSON key reads NULL
+                    // for every row, so the search answers empty rather than failing.
+                    fullTextIndex.ApplyNamingPolicy(mapping.StoreOptions);
+                    mapping.FullTextIndexes.Add(fullTextIndex);
+                }
+            }
+
             // Apply foreign keys
             var fkField = exprType.GetField("ForeignKeys", BindingFlags.NonPublic | BindingFlags.Instance);
             if (fkField?.GetValue(expr) is IEnumerable<Storage.DocumentForeignKey> foreignKeys)

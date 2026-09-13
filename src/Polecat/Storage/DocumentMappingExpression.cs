@@ -20,6 +20,7 @@ public class DocumentMappingExpression<T>
     internal readonly List<DocumentIndex> Indexes = new();
     internal readonly List<JsonIndex> JsonIndexes = new();
     internal readonly List<VectorIndex> VectorIndexes = new();
+    internal readonly List<FullText.FullTextIndex> FullTextIndexes = new();
     internal readonly List<DocumentForeignKey> ForeignKeys = new();
     internal DocumentPartitioning? Partitioning;
     internal readonly Metadata.DocumentMetadataConfig MetadataConfig = new();
@@ -175,6 +176,62 @@ public class DocumentMappingExpression<T>
         }
 
         VectorIndexes.Add(index);
+        return this;
+    }
+
+    /// <summary>
+    ///     Declare one or more members full-text searchable, reachable from LINQ through
+    ///     <c>PlainTextSearch</c> and its siblings.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         Mirrors Marten's <c>FullTextIndex(params Expression&lt;Func&lt;T, object?&gt;&gt;[])</c>,
+    ///         minus the <c>regConfig</c> overloads: a PostgreSQL text-search configuration has no
+    ///         counterpart against an index Polecat tokenizes itself, and an overload that accepted
+    ///         one and ignored it would be worse than its absence.
+    ///     </para>
+    ///     <para>
+    ///         Declaring this on a type that already holds documents backfills them — see
+    ///         <see cref="FullText.FullTextIndex" />, where the reason that is not optional is
+    ///         written down.
+    ///     </para>
+    /// </remarks>
+    public DocumentMappingExpression<T> FullTextIndex(params Expression<Func<T, object?>>[] expressions)
+    {
+        ArgumentNullException.ThrowIfNull(expressions);
+        if (expressions.Length == 0)
+        {
+            throw new ArgumentException(
+                "A full-text index covers at least one member. Name the members whose text should be "
+                + "searchable.", nameof(expressions));
+        }
+
+        foreach (var expression in expressions)
+        {
+            var chains = DocumentIndex.ResolveMemberChains(expression);
+            foreach (var chain in chains)
+            {
+                var memberType = chain[^1].GetMemberType();
+                if (memberType != typeof(string))
+                {
+                    throw new InvalidOperationException(
+                        $"'{typeof(T).Name}.{string.Join(".", chain.Select(x => x.Name))}' is a "
+                        + $"{memberType?.Name ?? "?"}, which has no text to index. Declare a full-text "
+                        + "index on a string member.");
+                }
+
+                var index = new FullText.FullTextIndex(DocumentIndex.MemberChainToJsonPath(chain), chain);
+
+                if (FullTextIndexes.Any(x => x.MemberName == index.MemberName))
+                {
+                    throw new InvalidOperationException(
+                        $"'{typeof(T).Name}.{index.MemberName}' already carries a full-text index.");
+                }
+
+                FullTextIndexes.Add(index);
+            }
+        }
+
         return this;
     }
 

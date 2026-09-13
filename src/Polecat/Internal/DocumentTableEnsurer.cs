@@ -178,6 +178,17 @@ internal class DocumentTableEnsurer
                 }
             }
 
+            // Polecat-owned full-text index: token table, its index, the maintaining trigger, and
+            // the backfill for rows that predate the declaration. Rendered over the whole collection
+            // because one trigger serves the table — see FullTextIndex.ToDdlStatements.
+            foreach (var statement in Storage.FullText.FullTextIndex.ToDdlStatements(
+                         provider.Mapping, provider.Mapping.FullTextIndexes))
+            {
+                await using var ftCmd = conn.CreateCommand();
+                ftCmd.CommandText = statement;
+                await ftCmd.ExecuteNonQueryAsync(token);
+            }
+
             // Native SQL Server 2025 JSON indexes (CREATE JSON INDEX) on the json data column.
             foreach (var jsonIndex in provider.Mapping.JsonIndexes)
             {
