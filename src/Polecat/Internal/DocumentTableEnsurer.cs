@@ -14,6 +14,26 @@ namespace Polecat.Internal;
 /// </summary>
 internal class DocumentTableEnsurer
 {
+    /// <summary>
+    ///     SQL Server error 243, "Type %ls is not a defined system type." — what an instance without
+    ///     the VECTOR type answers when a schema declares one.
+    /// </summary>
+    private const int UndefinedSystemType = 243;
+
+    /// <summary>
+    ///     Whether this failure means the instance has no VECTOR type, as opposed to any other way
+    ///     the ALTER TABLE that adds a vector column can fail.
+    /// </summary>
+    /// <remarks>
+    ///     Keyed on the error NUMBER on purpose. The first cut of this guard asked whether the
+    ///     message contained "VECTOR", which over-matched: the computed column is named
+    ///     <c>vec_&lt;member&gt;</c>, so a member called <c>Vector</c> yields <c>vec_vector</c>, and
+    ///     any failure quoting that column name — a duplicate column, a permissions problem — was
+    ///     reported to the user as a missing type on an instance that has one. The number is also
+    ///     locale-proof, where a message-text rule is not.
+    /// </remarks>
+    internal static bool IsMissingVectorType(SqlException e) => e.Number == UndefinedSystemType;
+
     private readonly ConcurrentDictionary<Type, bool> _ensured = new();
     private readonly ConcurrentDictionary<Type, bool> _fksEnsured = new();
     private readonly SemaphoreSlim _semaphore = new(1, 1);
@@ -143,11 +163,12 @@ internal class DocumentTableEnsurer
                     {
                         await vectorCmd.ExecuteNonQueryAsync(token);
                     }
-                    catch (SqlException e) when (e.Message.Contains("VECTOR", StringComparison.OrdinalIgnoreCase))
+                    catch (SqlException e) when (IsMissingVectorType(e))
                     {
                         // Azure SQL Edge and anything before SQL Server 2025 have no VECTOR type, and
                         // the server's own answer — "Type VECTOR is not a defined system type" — names
                         // neither Polecat nor the line of configuration that asked for it.
+                        // See IsMissingVectorType for why this keys on the number, not the message.
                         throw new InvalidOperationException(
                             $"'{provider.Mapping.DocumentType.Name}.{vectorIndex.MemberName}' is declared as a "
                             + "vector, but this SQL Server instance has no VECTOR type. Vector search needs "
