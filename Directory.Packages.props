@@ -471,15 +471,43 @@
              (d) jasperfx#825/#826 — ProjectionEventModelSource and AddProjectionEventModelSource,
              the store-derived Event Model rung. polecat#594.
              NumericRevisionCompliance was refactored onto a generic base in the same release;
-             existing enrollments compile unchanged. -->
-        <PackageVersion Include="JasperFx" Version="2.69.0" />
-        <PackageVersion Include="JasperFx.Events" Version="2.69.0" />
+             existing enrollments compile unchanged.
+
+             JasperFx 2.69.1 (from 2.69.0). A two-commit patch release, and NEITHER half is inert
+             here — both are upstream fixes for defects Polecat's own #591-#594 work surfaced the
+             same day.
+             (a) jasperfx#827/#828 — JasperFxSubscriptionBase's two BuildExecution overloads
+             disagreed about what they passed as SubscriptionExecution's `storage`: the ILogger one
+             passed the store (correct), the explicit-interface ILoggerFactory one passed the
+             DATABASE. SubscriptionExecution casts storage to ISubscriptionRunner<T>, which an
+             IEventDatabase never implements, so it threw ArgumentOutOfRangeException. Since
+             JasperFxAsyncDaemon.buildAgentForShard calls the second overload, **a subscription
+             registered in an app using AddProjectionCoordinator could never start** — on every
+             store, since the rename in jasperfx commit 87fa883. Nothing caught it because every
+             subscription compliance suite drives a daemon the fixture built by hand, which takes the
+             other overload; it surfaced as a logged agent-start failure while running
+             ProjectionStatusCompliance (#591), whose coordinator host registers a subscription.
+             Polecat's own subscription tests all go through WaitForProjectionAsync — also the
+             working overload — so the coordinator path had no coverage here either. This bump adds
+             it: see subscription_under_coordinator_tests.
+             (b) jasperfx#829/#830 — ProjectionEventModelSource.ToSlice now filters Archived and
+             Compacted<T> out of a View slice's ConsumedEvents.
+             JasperFxSingleStreamProjectionBase.determineEventTypes concatenates both onto every
+             non-empty apply set whether or not the aggregate declares an Apply, which is correct
+             about what the projection HANDLES and is not what an Event Model canvas means by the
+             events a read model consumes — they render as stickies for events no command slice
+             emits, linking to nothing. Filtered in the source rather than in the reader that fills
+             AppliedEvents, deliberately: the same reader feeds AggregateDescriptor.AppliedEvents and
+             a monitoring console wants both. #594's test asserted the pre-fix set, so it inverts
+             here. Found independently while wiring the same source into Fisher. -->
+        <PackageVersion Include="JasperFx" Version="2.69.1" />
+        <PackageVersion Include="JasperFx.Events" Version="2.69.1" />
         <!--
              The shared cross-store event sourcing compliance suites. Source-only package: the
              suites compile inside Polecat.Tests so JasperFx's aggregate source generator binds
              Polecat's own session types.
         -->
-        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="2.69.0" />
+        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="2.69.1" />
         <!-- Pin the sibling JasperFx packages for parity with Marten 9's matrix
              even though Polecat doesn't currently reference them directly —
              keeps the lockstep matrix coherent when transitive resolution
@@ -487,7 +515,7 @@
              RuntimeCompiler 5.x line is the active continuation of the 4.x
              lineage; do not pin against the parallel stale 2.0.x series. -->
         <PackageVersion Include="JasperFx.RuntimeCompiler" Version="5.0.0" />
-        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.69.0" />
+        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.69.1" />
         <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
@@ -651,7 +679,7 @@
         <PackageVersion Include="Vogen" Version="7.0.0" />
 
         <!-- Source generators (matched to JasperFx.Events above) -->
-        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.69.0" />
+        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.69.1" />
 
         <!-- Build automation -->
         <PackageVersion Include="Nuke.Common" Version="9.0.4" />
