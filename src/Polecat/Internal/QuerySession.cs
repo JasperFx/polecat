@@ -226,6 +226,16 @@ internal partial class QuerySession : IQuerySession, JasperFx.Events.IEventTenan
     internal Task EnsureEventStoreSchemaAsync(CancellationToken token)
         => _tableEnsurer.EnsureEventStoreSchemaAsync(token);
 
+    /// <summary>
+    ///     Provision a document's table on demand for a read that does not go through LINQ or the
+    ///     storage path — today that is vector search, which composes its own statement over the
+    ///     persisted computed column and so would otherwise meet "Invalid column name" on a store
+    ///     whose first act is a search. Honours AutoCreate.None exactly as every other caller does,
+    ///     because the ensurer checks it rather than this method.
+    /// </summary>
+    internal Task EnsureDocumentTableAsync(Type documentType, CancellationToken token)
+        => _tableEnsurer.EnsureTableAsync(_providers.GetProvider(documentType), token);
+
     public Task<bool> CheckExistsAsync<T>(long id, CancellationToken token = default) where T : class
         => CheckExistsInternalAsync<T>(id, TenantId, token);
 

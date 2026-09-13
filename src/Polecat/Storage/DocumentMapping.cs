@@ -256,6 +256,12 @@ internal class DocumentMapping
     public List<JsonIndex> JsonIndexes { get; } = new();
 
     /// <summary>
+    ///     Embedding members declared with <c>Schema.For&lt;T&gt;().VectorIndex(...)</c>, each a
+    ///     persisted computed <c>VECTOR(n)</c> column over the JSON. See <see cref="VectorIndex" />.
+    /// </summary>
+    public List<VectorIndex> VectorIndexes { get; } = new();
+
+    /// <summary>
     ///     #243: document metadata configuration (opt-in columns + member mappings), populated from
     ///     metadata attributes and the <c>Schema.For&lt;T&gt;().Metadata(...)</c> DSL.
     /// </summary>
