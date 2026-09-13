@@ -499,15 +499,33 @@
              emits, linking to nothing. Filtered in the source rather than in the reader that fills
              AppliedEvents, deliberately: the same reader feeds AggregateDescriptor.AppliedEvents and
              a monitoring console wants both. #594's test asserted the pre-fix set, so it inverts
-             here. Found independently while wiring the same source into Fisher. -->
-        <PackageVersion Include="JasperFx" Version="2.69.1" />
-        <PackageVersion Include="JasperFx.Events" Version="2.69.1" />
+             here. Found independently while wiring the same source into Fisher.
+             2.69.1 -> 2.69.3 carries two things Polecat consumes and one it does not.
+             (a) jasperfx#836 — EventModelSliceDescriptor.Origin attributes each slice to the source
+             that contributed it, or for the store-derived rung to the store's own
+             EventStoreUsage.SubjectUri. It is attribution, not a merge key: Name stays the only one.
+             What it buys here is that ProjectionEventModelSource's dedupe no longer drops a
+             duplicate document name in SILENCE when the origins differ — two stores each projecting
+             an AuditEntry now leave a SourceDisagreement hotspot naming both, where previously one
+             vanished without trace. That is the one merge in the system that used to be quiet.
+             The same commit asks a store registering its own source to mint a distinct subject per
+             store; Polecat's already were distinct and are re-shaped here to the documented
+             event-model://projections/{store} form.
+             (b) jasperfx#837 — EventModelSetDescriptor pairs a service with every model it hosts,
+             because a service can legitimately host more than one. Polecat does not consume it
+             directly, but it is the reasoning behind gh-623 in this same PR: if one service is not
+             one model, then the store's DEFAULT still has to agree with the service's name, since
+             that is what every other contributor defaults to.
+             (c) 2.69.2's gh-832 and gh-831 are Bobcat step-ordering and a Fisher doc correction —
+             nothing Polecat reads. -->
+        <PackageVersion Include="JasperFx" Version="2.69.3" />
+        <PackageVersion Include="JasperFx.Events" Version="2.69.3" />
         <!--
              The shared cross-store event sourcing compliance suites. Source-only package: the
              suites compile inside Polecat.Tests so JasperFx's aggregate source generator binds
              Polecat's own session types.
         -->
-        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="2.69.1" />
+        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="2.69.3" />
         <!-- Pin the sibling JasperFx packages for parity with Marten 9's matrix
              even though Polecat doesn't currently reference them directly —
              keeps the lockstep matrix coherent when transitive resolution
@@ -515,7 +533,7 @@
              RuntimeCompiler 5.x line is the active continuation of the 4.x
              lineage; do not pin against the parallel stale 2.0.x series. -->
         <PackageVersion Include="JasperFx.RuntimeCompiler" Version="5.0.0" />
-        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.69.1" />
+        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.69.3" />
         <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
@@ -679,7 +697,7 @@
         <PackageVersion Include="Vogen" Version="7.0.0" />
 
         <!-- Source generators (matched to JasperFx.Events above) -->
-        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.69.1" />
+        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.69.3" />
 
         <!-- Build automation -->
         <PackageVersion Include="Nuke.Common" Version="9.0.4" />

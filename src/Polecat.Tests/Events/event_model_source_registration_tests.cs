@@ -1,3 +1,4 @@
+using JasperFx;
 using JasperFx.Events;
 using JasperFx.Events.EventModeling;
 using JasperFx.Events.Projections;
@@ -134,10 +135,48 @@ public class event_model_source_registration_tests
     }
 
     [Fact]
-    public async Task an_unnamed_model_still_gets_the_default()
+    public async Task an_unnamed_store_defaults_to_the_service_name()
     {
-        // Null has to keep today's behaviour exactly, or this fix breaks every host that never named
-        // a model.
+        // gh-623: "EventModel" is the one default guaranteed to be wrong for every host, and it was
+        // the whole cause of gh-615. Every other contributor already defaults to something
+        // meaningful — Wolverine's chains and HTTP use the service name — so a store that does not
+        // makes the commonest host of all assemble two models out of the box.
+        var token = TestContext.Current.CancellationToken;
+
+        var services = new ServiceCollection();
+        services.AddJasperFx(opts => opts.ServiceName = "Ledgers");
+        services.AddPolecat(ConfigureMain);
+
+        await using var provider = services.BuildServiceProvider();
+
+        var models = await EventModelDiscovery.AssembleAsync(provider, token);
+
+        models.ShouldHaveSingleItem().Name.ShouldBe("Ledgers");
+    }
+
+    [Fact]
+    public async Task an_explicit_name_still_beats_the_service_name()
+    {
+        // What a modular monolith needs: a module's store really is its own bounded context, so an
+        // explicit name has to win over the service it happens to be hosted in.
+        var token = TestContext.Current.CancellationToken;
+
+        var services = new ServiceCollection();
+        services.AddJasperFx(opts => opts.ServiceName = "Ledgers");
+        services.AddPolecat(opts => { ConfigureMain(opts); opts.EventModelName = "Stoat"; });
+
+        await using var provider = services.BuildServiceProvider();
+
+        var models = await EventModelDiscovery.AssembleAsync(provider, token);
+
+        models.ShouldHaveSingleItem().Name.ShouldBe("Stoat");
+    }
+
+    [Fact]
+    public async Task with_no_jasperfx_options_at_all_the_literal_survives()
+    {
+        // The last resort, and only that: a host with no JasperFxOptions registered has no service
+        // name to borrow, so the shared literal is all that is left.
         var token = TestContext.Current.CancellationToken;
 
         var services = new ServiceCollection();

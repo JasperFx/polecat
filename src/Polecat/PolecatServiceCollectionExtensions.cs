@@ -171,7 +171,7 @@ public static class PolecatServiceCollectionExtensions
         // resolves at registration time -- the lambda runs when the model is assembled.
         services.AddEventModelSource(new Internal.PolecatProjectionEventModelSource(
             sp => sp.GetRequiredService<IDocumentStore>(),
-            new Uri("event-model://polecat/primary")));
+            new Uri("event-model://projections/polecat")));
 
         // Default session factory: lightweight sessions
         services.TryAddSingleton<ISessionFactory>(sp =>

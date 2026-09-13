@@ -106,7 +106,7 @@ public static class PolecatStoreServiceCollectionExtensions
         // same document type contribute one slice rather than two stickies saying the same thing.
         services.AddEventModelSource(new Internal.PolecatProjectionEventModelSource(
             sp => sp.GetRequiredService<T>(),
-            new Uri($"event-model://polecat/{typeof(T).Name}")));
+            new Uri($"event-model://projections/polecat/{typeof(T).Name}")));
 
         // #501: and the db-apply / db-assert / db-dump half, so an ancillary store's databases are
         // migrated by those commands too. Marten registers IDatabaseSource for its ancillary stores
