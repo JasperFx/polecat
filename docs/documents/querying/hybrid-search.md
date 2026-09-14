@@ -73,6 +73,14 @@ surface. Reading only `limit` from each leg would never see it. A depth below `l
 short — Polecat's other full-text reach stays on `Query<T>()`, where a malformed query fails only the
 thing you asked for rather than both legs of a fused search.
 
+The two do not rank alike. `Plain` reads the text leg through
+[`FullTextSearchAsync`](/documents/querying/full-text-search#ranking), so it arrives in BM25 order.
+`Phrase` has no ranking of its own — a document contains the phrase or it does not — so that leg is a
+LINQ `PhraseSearch` read in whatever order the database returns, cut at `CandidateDepth`. Its ranks
+carry no relevance, so rank fusion over it is weaker: the fused order leans on the vector leg, and
+when more documents contain the phrase than `CandidateDepth`, which of them are read is not decided by
+relevance either.
+
 ## Which member is searched
 
 Polecat's full-text operators address a **member**, following Marten. The portable overload above
@@ -91,8 +99,18 @@ var results = await session.HybridSearchWithScoresAsync<TwoTexts>(
 The portable overload refuses rather than guessing, and names the declared members so the fix is
 obvious.
 
+The explicit two-member overload exists only as `HybridSearchWithScoresAsync`. There is no
+`HybridSearchAsync` that names both members, so select `m => m.Document` when you want only the
+documents.
+
 ## What applies without being restated
 
 Both legs read through the ordinary search paths, so conjoined tenancy, soft deletes and the existing
 refusals all behave exactly as they do for a plain full-text or vector search. Ties break
 deterministically, so paging a fused result is stable between runs.
+
+## In the other stores
+
+Fisher: [Hybrid Search](https://fisher.jasperfx.net/documents/querying/hybrid-search), the shape this
+page mirrors. Marten: the two legs are [Full Text Searching](https://martendb.io/documents/full-text)
+and [Marten.PgVector](https://martendb.io/documents/pgvector).

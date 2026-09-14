@@ -52,6 +52,25 @@ var orders = await ordersTask;
 
 See [Batched Queries](/documents/querying/batched-queries) for more details.
 
+## Full Text, Vector and Hybrid Search
+
+Search by words, by meaning, or by both:
+
+```cs
+var byWords = await session.Query<Article>()
+    .Where(x => x.Body.PlainTextSearch("quick brown fox"))
+    .ToListAsync();
+
+var byMeaning = await session.VectorSearchAsync<Passage>(x => x.Embedding, queryVector, limit: 5);
+
+var byBoth = await session.HybridSearchAsync<Passage>(
+    x => x.Embedding, "quarterly revenue", queryVector, limit: 10);
+```
+
+See [Full Text Search](/documents/querying/full-text-search),
+[Vector Search](/documents/querying/vector-search) and
+[Hybrid Search](/documents/querying/hybrid-search) for more details.
+
 ## SQL Preview
 
 Preview the generated SQL for any LINQ query:

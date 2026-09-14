@@ -7,7 +7,8 @@ requirement.
 :::
 
 Polecat searches documents by embedding similarity over a member you declare. Store the vector the
-way you store anything else, as a `float[]` on the document, and declare it:
+way you store anything else, as a member on the document — a `float[]` is the usual choice, and
+[others are accepted](#member-types) — and declare it:
 
 ```csharp
 opts.Schema.For<Passage>().VectorIndex(x => x.Embedding, dimensions: 768);
@@ -24,9 +25,74 @@ The API shape is Marten.PgVector's, and the types are the store-neutral ones fro
 `VectorMatch<T>` for a scored result. Application code written against one Critter Stack store reads
 the same against the others.
 
-Polecat never calls a model. Computing the embedding is yours, and
-`JasperFx.Events.MicrosoftExtensionsAI` adapts any Microsoft.Extensions.AI generator (OpenAI, Azure
-OpenAI, Ollama, ONNX) to `IEmbeddingProvider` so you do not write one by hand.
+## End to end
+
+**Polecat never calls a model.** It stores the vector you hand it and orders by distance to the
+vector you search with; producing both is your code. The contract for that code is
+`IEmbeddingProvider` from `JasperFx.Events.Vectors`, which arrives with Polecat's own `JasperFx.Events`
+dependency. If your model is already a Microsoft.Extensions.AI generator (OpenAI, Azure OpenAI,
+Ollama, ONNX), the `JasperFx.Events.MicrosoftExtensionsAI` package adapts it so you do not write a
+provider by hand:
+
+```csharp
+using JasperFx.Events.MicrosoftExtensionsAI;
+using JasperFx.Events.Vectors;
+
+IEmbeddingGenerator<string, Embedding<float>> generator = /* from your M.E.AI provider package */;
+
+IEmbeddingProvider embeddings = generator.AsEmbeddingProvider(dimensions: 768);
+```
+
+`dimensions` may be left out when the generator publishes a default dimension count in its metadata.
+Passed explicitly it always wins, and either way it has to match the count the index declares.
+
+Declare the index, embed the text before you store the document, and embed the search text with the
+same provider:
+
+```csharp
+public class Passage
+{
+    public Guid Id { get; set; }
+    public string Text { get; set; } = string.Empty;
+    public float[]? Embedding { get; set; }
+}
+
+builder.Services.AddPolecat(options =>
+{
+    options.Connection("...");
+    options.Schema.For<Passage>().VectorIndex(x => x.Embedding, dimensions: 768);
+});
+
+// Writing: embed first, then store the vector on the document like any other member.
+var text = "Revenue rose on subscription renewals.";
+var vector = await embeddings.GenerateEmbeddingAsync(text);
+
+session.Store(new Passage { Id = Guid.NewGuid(), Text = text, Embedding = vector.ToArray() });
+await session.SaveChangesAsync();
+
+// Searching: embed the question with the same model, then search.
+var queryVector = await embeddings.GenerateEmbeddingAsync("how did sales do this quarter?");
+var nearest = await querySession.VectorSearchAsync<Passage>(x => x.Embedding, queryVector, limit: 5);
+```
+
+Call the model **before** `SaveChangesAsync`, not from inside the unit of work — it is a network round
+trip, and nothing about it needs a transaction open. `GenerateEmbeddingAsync` is the one-text
+convenience over `GenerateEmbeddingsAsync`, which takes a batch; models charge per call, so embed a
+batch of documents in one call.
+
+## Member types
+
+The column is built from the JSON array the member serializes to, so any member that serializes as an
+array of numbers is accepted:
+
+- `float[]` or `double[]`
+- `ReadOnlyMemory<float>` or `Memory<float>`
+- `List<T>`, `IList<T>`, `IReadOnlyList<T>`, `ICollection<T>`, `IReadOnlyCollection<T>` or
+  `IEnumerable<T>` of `float` or `double`
+
+Anything else, including a `string` or a `ReadOnlyMemory<double>`, is refused when the store is
+configured. The query vector is always a `ReadOnlyMemory<float>`, which a `float[]` converts to
+implicitly.
 
 ## Scores
 
@@ -90,7 +156,13 @@ supports one that permits writes.
 clauses are rendered as plain text, so the ordering cannot be expressed through `IQueryable` today.
 The search runs as its own statement instead.
 
-**No hybrid search**, because Polecat has no full-text search to fuse with yet.
+**No vector projection.** Nothing in Polecat embeds documents or events for you as they are written.
+Fisher and Marten.PgVector each ship an event-sourced vector projection that calls an
+`IEmbeddingProvider` from the async daemon and maintains the embeddings; Polecat has no counterpart
+today, so the embedding is computed by your code before the document is stored, as
+[above](#end-to-end).
+
+Hybrid search, by contrast, *is* supported: see [Hybrid Search](/documents/querying/hybrid-search).
 
 ## What is refused
 
@@ -107,3 +179,9 @@ The search runs as its own statement instead.
 Vector search finds meaning near what you asked; [full text search](/documents/querying/full-text-search)
 finds the words you actually typed. [Hybrid search](/documents/querying/hybrid-search) fuses both
 rankings, which usually beats either alone.
+
+## In the other stores
+
+Fisher: [Vector Search](https://fisher.jasperfx.net/documents/querying/vector-search), over SQLite.
+Marten: [Marten.PgVector](https://martendb.io/documents/pgvector), over PostgreSQL's pgvector — which
+also has the vector projection Polecat lacks.
