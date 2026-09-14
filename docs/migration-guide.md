@@ -1,5 +1,101 @@
 # Migration Guide
 
+## Key Changes in 5.30.0
+
+Polecat 5.30 adopts the shared vector and hybrid search surface from `JasperFx.Events.Vectors`
+(JasperFx 2.70.0, [polecat#633](https://github.com/JasperFx/polecat/issues/633)). Most of it is a
+type moving house and is source-compatible. Two things are not.
+
+### `HybridTextStyle.Phrase` removed
+
+`HybridSearchOptions`, `HybridMatch<T>` and `HybridTextStyle` are now the shared types in
+`JasperFx.Events.Vectors` rather than Polecat's own. The shared `HybridTextStyle` has exactly two
+members — `PlainText` and `WebStyle` — and Polecat's third, `Phrase`, is **removed** rather than
+renamed.
+
+```csharp
+// before (Polecat 5.29)
+options: new HybridSearchOptions(TextStyle: HybridTextStyle.Phrase)
+
+// after (Polecat 5.30) — phrase search moves to Query<T>()
+var matches = await session.Query<Passage>()
+    .Where(x => x.Body.PhraseSearch("fox in the snow"))
+    .ToListAsync();
+```
+
+This is a removal on purpose, not an oversight. Both shared members are safe to hand a search box's
+raw contents, and that is the property the short list exists to keep: a malformed query in one leg of
+a **fused** search fails the whole call, where the same query through `Query<T>()` fails only the
+thing the caller asked for. `PhraseSearch` itself is untouched.
+
+There is also nothing lost in ranking. The phrase leg never carried a relevance order of its own — a
+document contains the phrase or it does not — so fusing it leaned the fused order onto the vector leg,
+and when more documents contained the phrase than `CandidateDepth`, which of them were read was not
+decided by relevance either.
+
+`PlainText` and `WebStyle` keep their names, their meanings and their behaviour. `Distance` still
+defaults to `null`, meaning "the metric the index declared" — Polecat's default was already the one
+the shared type took.
+
+### `filter` is a new parameter BEFORE `token`
+
+`VectorSearchAsync`, `VectorSearchWithScoresAsync`, `HybridSearchAsync`,
+`HybridSearchWithScoresAsync`, `FullTextSearchAsync` and `FullTextSearchWithScoresAsync` all gained an
+optional `filter` immediately before the cancellation token, matching the shared
+`IDocumentSearchOperations` signatures. A call that passed the token **positionally** no longer
+compiles:
+
+```csharp
+// before
+await session.VectorSearchWithScoresAsync<Passage>(x => x.Embedding, q, 4, DistanceFunction.L2, token);
+
+// after — name it
+await session.VectorSearchWithScoresAsync<Passage>(x => x.Embedding, q, 4, DistanceFunction.L2, token: token);
+```
+
+The break is a compile error at every affected call site, never a silent behaviour change. Calls that
+already named `token:` are unaffected.
+
+See [Vector Search](/documents/querying/vector-search#filtering) for what the filter does and why it
+is applied before the limit.
+
+### Vector projections take the shared map
+
+`VectorProjection<TDoc, TId>.Configure` now receives the shared `VectorProjectionMap<TId>` instead of
+Polecat's `VectorProjectionMap<TDoc, TId>`:
+
+```csharp
+// before
+protected override void Configure(VectorProjectionMap<PageVector, string> map)
+
+// after
+protected override void Configure(VectorProjectionMap<string> map)
+```
+
+The mapping calls inside are unchanged, and so is the content hash — still lowercase hex SHA-256 of
+the UTF-8 text, verified byte-for-byte against the previous spelling before the swap, so **no stored
+document is re-embedded** by this upgrade. The new `MapFromAggregate` is documented in
+[Vector Projections](/events/projections/vector-projections).
+
+Vector projections were introduced in 5.29, so the affected surface is one release old.
+
+### Hand-written projections start being validated
+
+`ProjectionGraph.AssertValidity` now unwraps the `ProjectionWrapper` that a bare `IProjection` is
+registered through before looking for `IValidatedProjection<T>`. A hand-written `IProjection` in your
+application that implements `IValidatedProjection<StoreOptions>` was never being asked; it is now. If
+it reports a problem, the store refuses to build.
+
+That is the fix working rather than a regression — but it can surface a configuration error that was
+quietly passing before this upgrade, which is worth knowing before a deploy.
+
+### New: store-neutral search
+
+`JasperFx.Events.Documents.IDocumentReadOperations` gained a `Search` accessor carrying vector and
+hybrid search, so a library written against the store-agnostic contract can reach them without naming
+Polecat. The member has a throwing default, so this is purely additive. See
+[Store-Neutral Search](/documents/querying/store-neutral-search).
+
 ## Key Changes in 4.0.0
 
 Polecat 4.0 ships in lockstep with [Marten 9.0](https://martendb.io) and [JasperFx 2.0](https://github.com/JasperFx/jasperfx/issues/215) as part of the [Critter Stack 2026](https://github.com/JasperFx/jasperfx/issues/217) release wave. The 4.0 line builds on the same JasperFx 2.0 / JasperFx.Events 2.0 / Weasel 9.0 release-candidate matrix that Marten 9 consumes — this is the consolidation cycle, not a rewrite. Most upgrades are pin bumps; the breaking surface is small and localized, and the bulk of the rc-line dedup work is source-compatible for typical applications (see [rc dedup-wave relocations](#rc-dedup-wave-relocations)).

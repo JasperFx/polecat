@@ -67,9 +67,14 @@ var byBoth = await session.HybridSearchAsync<Passage>(
     x => x.Embedding, "quarterly revenue", queryVector, limit: 10);
 ```
 
+All three take an optional `filter`, applied before the limit so the result is the top-k of the
+filtered set rather than the filtered remains of the top-k.
+
 See [Full Text Search](/documents/querying/full-text-search),
 [Vector Search](/documents/querying/vector-search) and
-[Hybrid Search](/documents/querying/hybrid-search) for more details.
+[Hybrid Search](/documents/querying/hybrid-search) for more details, and
+[Store-Neutral Search](/documents/querying/store-neutral-search) to reach the last two from code that
+does not name Polecat.
 
 ## SQL Preview
 

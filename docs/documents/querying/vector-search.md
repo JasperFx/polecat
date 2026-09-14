@@ -120,6 +120,56 @@ var byMagnitude = await session.VectorSearchAsync<Passage>(
     x => x.Embedding, queryVector, limit: 5, distance: DistanceFunction.L2);
 ```
 
+## Filtering
+
+Both search calls take an optional `filter`, an ordinary LINQ predicate:
+
+```csharp
+var nearest = await session.VectorSearchAsync<Passage>(
+    x => x.Embedding, queryVector, limit: 5,
+    filter: x => x.Tenant == "acme" && x.PublishedOn > cutoff);
+```
+
+::: tip The filter runs BEFORE the limit, and that is the whole point
+You get the top-k of the *filtered set*, not the filtered remains of the top-k. Applied the other way
+round, a selective filter over a `limit: 5` search returns one or two documents instead of five, and
+the ones it returns are not the five best matches that satisfy it.
+:::
+
+**It supports and refuses exactly what `Query<T>().Where(...)` does**, because it *is* that — the
+predicate goes through the same parser, so a member the LINQ provider cannot translate is refused
+here with the LINQ provider's own message, and a LINQ operator added tomorrow reaches vector search
+the day it lands. There is no second dialect to learn or to drift.
+
+The store's own implicit predicates still apply: conjoined tenancy, soft deletes, and the
+`embedding IS NOT NULL` this search always adds. The filter is *in addition to* those, never instead
+of them.
+
+::: tip No recall caveat here
+A store backed by an approximate index has to warn that a selective filter can return fewer than
+`limit` rows, because the filter is applied to whatever the index scan produced and that scan has a
+bound of its own (pgvector's `hnsw.ef_search`, default 40). Polecat has no such bound —
+`VECTOR_DISTANCE` over a persisted computed column is an exact scan, and the predicate goes into the
+same `WHERE`. The result is exactly the filtered top-k.
+:::
+
+The same `filter` is on [hybrid search](/documents/querying/hybrid-search), where it is applied to
+**both** legs, and on [full text search](/documents/querying/full-text-search).
+
+## Reaching it without naming Polecat
+
+`VectorSearchAsync` is an extension method on Polecat's own `IQuerySession`, so code written against
+the store-agnostic `JasperFx.Events.Documents.IDocumentReadOperations` could not call it at all. The
+`Search` accessor closes that:
+
+```csharp
+IDocumentReadOperations reads = session;
+
+var nearest = await reads.Search.VectorSearchAsync<Passage>(x => x.Embedding, queryVector, limit: 5);
+```
+
+See [Store-Neutral Search](/documents/querying/store-neutral-search).
+
 ## How it works, and why the column is computed
 
 Declaring a vector adds one persisted computed column over the document body:
@@ -143,26 +193,37 @@ existing rows.
 scalar form cannot carry an embedding at all.
 :::
 
-## What is not supported yet
+## The one real limit: no approximate index
 
-**No approximate index.** SQL Server will not build a `NONCLUSTERED` index over a vector column, and
-`CREATE VECTOR INDEX` on current builds is the legacy DiskANN form: it requires `PREVIEW_FEATURES`, at
-least 100 rows, and **makes the table read only**, which is not a trade a document table can make. So
-this is exact k-nearest-neighbour over a scan. That is fine at thousands of rows and fine-to-slow at
-millions, and `VectorSearchAsync` is the seam an approximate index would slot behind once the engine
-supports one that permits writes.
+SQL Server will not build a `NONCLUSTERED` index over a vector column, and `CREATE VECTOR INDEX` on
+current builds is the legacy DiskANN form: it requires `PREVIEW_FEATURES`, at least 100 rows, and
+**makes the table read only**, which is not a trade a document table can make. So this is exact
+k-nearest-neighbour over a scan. That is fine at thousands of rows and fine-to-slow at millions, and
+`VectorSearchAsync` is the seam an approximate index would slot behind once the engine supports one
+that permits writes.
 
-**Not reachable from LINQ.** A vector distance carries a bound parameter, and Polecat's `ORDER BY`
-clauses are rendered as plain text, so the ordering cannot be expressed through `IQueryable` today.
-The search runs as its own statement instead.
+That exact scan is also what makes the [filter](#filtering) exactly right rather than approximately
+right, so the trade is not all one way.
 
-**No vector projection.** Nothing in Polecat embeds documents or events for you as they are written.
-Fisher and Marten.PgVector each ship an event-sourced vector projection that calls an
-`IEmbeddingProvider` from the async daemon and maintains the embeddings; Polecat has no counterpart
-today, so the embedding is computed by your code before the document is stored, as
-[above](#end-to-end).
+## What is no longer missing
 
-Hybrid search, by contrast, *is* supported: see [Hybrid Search](/documents/querying/hybrid-search).
+Vector search composes with LINQ through `OrderByVectorDistance`, so an ordering can be combined with
+ordinary filters, paging and projections:
+
+```csharp
+var nearest = await session.Query<Passage>()
+    .Where(x => x.Team == "red")
+    .OrderByVectorDistance(x => x.Embedding, queryVector)
+    .Take(5)
+    .ToListAsync();
+```
+
+`VectorSearchAsync` stays, and the two are not redundant: it is the whole search in one call and
+returns scores, where the LINQ form composes.
+
+Embeddings can also be produced for you from an event stream — see
+[Vector Projections](/events/projections/vector-projections). Hybrid search is likewise supported:
+see [Hybrid Search](/documents/querying/hybrid-search).
 
 ## What is refused
 
@@ -173,6 +234,7 @@ Hybrid search, by contrast, *is* supported: see [Hybrid Search](/documents/query
 | A query vector whose length is not the declared `dimensions` | SQL Server would reject every row, one at a time |
 | Declaring a member that cannot hold a vector, such as a `string` | Caught when the store is configured, not when the first search returns nothing |
 | Declaring the same member twice, or a dimension count under one | Same |
+| A `filter` the LINQ provider cannot translate | With the LINQ provider's own message — one parser, so one set of rules |
 
 ## Combining with keyword search
 
@@ -183,5 +245,9 @@ rankings, which usually beats either alone.
 ## In the other stores
 
 Fisher: [Vector Search](https://fisher.jasperfx.net/documents/querying/vector-search), over SQLite.
-Marten: [Marten.PgVector](https://martendb.io/documents/pgvector), over PostgreSQL's pgvector — which
-also has the vector projection Polecat lacks.
+Marten: [Marten.PgVector](https://martendb.io/documents/pgvector), over PostgreSQL's pgvector.
+
+`DistanceFunction`, `VectorMatch<T>`, `IEmbeddingProvider` and the `filter` argument are the shared
+`JasperFx.Events.Vectors` types on all three, so the same call reads the same everywhere. What
+differs is the index: pgvector has approximate ones and documents its recall caveats, Polecat scans
+exactly.

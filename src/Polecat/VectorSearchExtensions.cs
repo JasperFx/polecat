@@ -1,9 +1,14 @@
 using System.Linq.Expressions;
 using System.Reflection;
 using JasperFx.Events.Vectors;
+using Microsoft.Data.SqlClient;
 using Polecat.Internal;
+using Polecat.Linq.Members;
+using Polecat.Linq.Parsing;
+using Polecat.Linq.SqlGeneration;
 using Polecat.Schema;
 using Polecat.Storage;
+using Weasel.SqlServer;
 
 namespace Polecat;
 
@@ -14,14 +19,11 @@ namespace Polecat;
 /// </summary>
 /// <remarks>
 ///     <para>
-///         <b>Run through <see cref="IAdvancedSql" /> rather than through LINQ, and that is a
-///         decision rather than a shortcut.</b> A statement's <c>Wheres</c> are composable
-///         <c>ISqlFragment</c>s that can bind parameters; its <c>OrderBys</c> are bare strings
-///         appended verbatim. A vector ordering key is
-///         <c>VECTOR_DISTANCE('cosine', col, @query)</c> — it has a parameter in it, so there is no
-///         way to express it from an ordering position today. Making <c>OrderBys</c> carry fragments
-///         is worth doing and is its own piece of work; it is not a prerequisite for this, and Fisher
-///         reached the same conclusion from the same constraint.
+///         <b>Built as one statement through a <see cref="BatchBuilder" />.</b> A vector ordering key
+///         is <c>VECTOR_DISTANCE('cosine', col, @query)</c> — it has a parameter in it — and since
+///         #633 the WHERE can carry a caller's <c>filter</c> as well, which is an
+///         <see cref="ISqlFragment" /> that binds parameters of its own. Neither can be expressed as a
+///         '?'-placeholder string, so this no longer runs through <see cref="IAdvancedSql" />.
 ///     </para>
 ///     <para>
 ///         The query vector is bound as its text form and cast server-side, which is what
@@ -35,12 +37,18 @@ public static class VectorSearchExtensions
     ///     The <paramref name="limit" /> documents nearest to <paramref name="query" /> under the
     ///     declaration's distance (or <paramref name="distance" /> when given), nearest first.
     /// </summary>
+    /// <param name="filter">
+    ///     An optional predicate, applied BEFORE <paramref name="limit" /> — so the result is the
+    ///     top-k of the filtered set rather than the filtered remains of the top-k. See
+    ///     <see cref="IDocumentSearchOperations.VectorSearchWithScoresAsync{T}" />.
+    /// </param>
     public static async Task<IReadOnlyList<T>> VectorSearchAsync<T>(
         this IQuerySession session,
         Expression<Func<T, object?>> member,
         ReadOnlyMemory<float> query,
         int limit = 10,
         DistanceFunction? distance = null,
+        Expression<Func<T, bool>>? filter = null,
         CancellationToken token = default) where T : notnull
     {
         // The table has to exist before a statement names its computed column. Raw SQL is not on
@@ -50,72 +58,119 @@ public static class VectorSearchExtensions
         // its LINQ reads in fisher#74.
         await session.EnsureVectorTableAsync<T>(token).ConfigureAwait(false);
 
-        var (sql, parameters) = Build(session, member, query, limit, distance);
-        return await session.AdvancedSql.QueryAsync<T>(sql, token, parameters).ConfigureAwait(false);
+        var batch = Build(session, member, query, limit, distance, filter);
+        return await ((QuerySession)session).QueryByBatchAsync<T>(batch, token).ConfigureAwait(false);
     }
 
     /// <summary>
     ///     The same search, each document paired with its distance — smaller is closer under every
     ///     metric — for a similarity floor, or for fusing with a keyword ranking.
     /// </summary>
+    /// <inheritdoc cref="VectorSearchAsync{T}" />
     public static async Task<IReadOnlyList<VectorMatch<T>>> VectorSearchWithScoresAsync<T>(
         this IQuerySession session,
         Expression<Func<T, object?>> member,
         ReadOnlyMemory<float> query,
         int limit = 10,
         DistanceFunction? distance = null,
+        Expression<Func<T, bool>>? filter = null,
         CancellationToken token = default) where T : notnull
     {
         await session.EnsureVectorTableAsync<T>(token).ConfigureAwait(false);
 
-        var (sql, parameters) = Build(session, member, query, limit, distance);
-        var rows = await session.AdvancedSql.QueryAsync<T, double>(sql, token, parameters).ConfigureAwait(false);
+        var batch = Build(session, member, query, limit, distance, filter);
+        var rows = await ((QuerySession)session).QueryByBatchAsync<T, double>(batch, token)
+            .ConfigureAwait(false);
         return rows.Select(row => new VectorMatch<T>(row.Item1, row.Item2)).ToList();
     }
 
     private static Task EnsureVectorTableAsync<T>(this IQuerySession session, CancellationToken token)
         => ((QuerySession)session).EnsureDocumentTableAsync(typeof(T), token);
 
-    private static (string Sql, object[] Parameters) Build<T>(
+    private static SqlBatch Build<T>(
         IQuerySession session,
         Expression<Func<T, object?>> member,
         ReadOnlyMemory<float> query,
         int limit,
-        DistanceFunction? distance) where T : notnull
+        DistanceFunction? distance,
+        Expression<Func<T, bool>>? filter) where T : notnull
     {
         ArgumentNullException.ThrowIfNull(member);
         if (limit < 1) throw new ArgumentOutOfRangeException(nameof(limit), limit, "limit must be at least 1");
 
-        var mapping = ((QuerySession)session).Providers.GetProvider(typeof(T)).Mapping;
+        var concrete = (QuerySession)session;
+        var mapping = concrete.Providers.GetProvider(typeof(T)).Mapping;
         var index = ResolveIndex<T>(session, member, query);
 
-        var table = mapping.QualifiedTableName;
         var column = SqlEscaping.QuoteIdentifier(index.ColumnName);
         var metric = VectorIndex.MetricName(distance ?? index.Distance);
-        var score = $"VECTOR_DISTANCE('{metric}', d.{column}, CAST(? AS VECTOR({index.Dimensions})))";
 
-        var wheres = new List<string> { $"d.{column} IS NOT NULL" };
-        if (mapping.DeleteStyle == DeleteStyle.SoftDelete) wheres.Add("d.is_deleted = 0");
-        if (mapping.TenancyStyle == TenancyStyle.Conjoined) wheres.Add("d.tenant_id = ?");
+        var batch = new SqlBatch();
+        var builder = new BatchBuilder(batch);
 
-        // IAdvancedSql replaces each '?' with @p0, @p1, ... in the order they appear in the TEXT, so
-        // the parameter array below has to be in that same order: limit, query vector, tenant.
-        var sql =
-            $"SELECT TOP(?) d.id, d.data, {score} AS distance FROM {table} d "
-            + $"WHERE {string.Join(" AND ", wheres)} ORDER BY distance";
+        // TOP as a literal, exactly as Statement renders a LINQ Take(), so the only parameters in the
+        // statement are the query vector, the tenant and whatever the filter binds.
+        builder.Append($"SELECT TOP({limit}) id, data, VECTOR_DISTANCE('{metric}', {column}, CAST(");
+        builder.AppendParameter(ToVectorLiteral(query.Span));
+        builder.Append($" AS VECTOR({index.Dimensions}))) AS distance FROM {mapping.QualifiedTableName}");
 
-        var parameters = mapping.TenancyStyle == TenancyStyle.Conjoined
-            ? [limit, ToVectorLiteral(query.Span), session.TenantId]
-            : new object[] { limit, ToVectorLiteral(query.Span) };
+        // ⚠️ No table alias, deliberately. A filter fragment comes out of the same where-parsing that
+        // backs Query<T>().Where(...), which renders its column references UNQUALIFIED because a LINQ
+        // statement selects from the table unaliased. Aliasing here would leave the composed halves
+        // spelling the same column two ways.
+        builder.Append($" WHERE {column} IS NOT NULL");
 
-        return (sql, parameters);
+        if (mapping.DeleteStyle == DeleteStyle.SoftDelete)
+        {
+            builder.Append(" AND is_deleted = 0");
+        }
+
+        if (mapping.TenancyStyle == TenancyStyle.Conjoined)
+        {
+            builder.Append(" AND tenant_id = ");
+            builder.AppendParameter(session.TenantId);
+        }
+
+        if (filter is not null)
+        {
+            builder.Append(" AND (");
+            ParseFilter(concrete, mapping, filter).Apply(builder);
+            builder.Append(')');
+        }
+
+        builder.Append(" ORDER BY distance");
+        builder.Compile();
+
+        return batch;
     }
 
     /// <summary>
-    ///     The query vector in the text form <c>CAST(... AS VECTOR(n))</c> accepts. Invariant
-    ///     formatting on purpose: a culture that writes a decimal comma produces a JSON array SQL
-    ///     Server rejects, and only on the machines that use one.
+    ///     Turn a caller's <c>filter</c> into a WHERE fragment through the SAME parser that backs
+    ///     <c>Query&lt;T&gt;().Where(...)</c>.
     /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         Reusing the parser rather than writing a second one is the whole design of the filter
+    ///         (jasperfx#843): the predicate supports and refuses exactly what LINQ does, down to the
+    ///         message, and a new LINQ operator reaches vector search the day it lands. A private
+    ///         translator would be a second dialect that drifts.
+    ///     </para>
+    ///     <para>
+    ///         ⚠️ <b>The filter is applied in the same statement, before <c>TOP</c>.</b> On Polecat
+    ///         that is exactly the filtered top-k with no recall caveat at all —
+    ///         <c>VECTOR_DISTANCE</c> over a persisted computed column is an exact scan with no
+    ///         approximate index bounding what the filter sees. A store with an ANN index has to
+    ///         document that a selective filter can return fewer than <c>limit</c> rows; this one does
+    ///         not.
+    ///     </para>
+    /// </remarks>
+    private static ISqlFragment ParseFilter<T>(
+        QuerySession session, DocumentMapping mapping, Expression<Func<T, bool>> filter) where T : notnull
+    {
+        var memberFactory = new MemberFactory(session.Options, mapping);
+        return new WhereClauseParser(memberFactory).Parse(filter.Body);
+    }
+
     /// <summary>
     ///     The vector declaration <paramref name="member" /> names, with every refusal this search
     ///     makes applied.
@@ -155,6 +210,11 @@ public static class VectorSearchExtensions
         return index;
     }
 
+    /// <summary>
+    ///     The query vector in the text form <c>CAST(... AS VECTOR(n))</c> accepts. Invariant
+    ///     formatting on purpose: a culture that writes a decimal comma produces a JSON array SQL
+    ///     Server rejects, and only on the machines that use one.
+    /// </summary>
     internal static string ToVectorLiteral(ReadOnlySpan<float> vector)
     {
         var builder = new System.Text.StringBuilder(vector.Length * 8 + 2);

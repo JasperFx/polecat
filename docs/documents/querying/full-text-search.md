@@ -105,6 +105,21 @@ Ranking derives its statistics from the token rows at query time rather than fro
 statistics table, so a ranked search reads the token table for that member. This is correct before
 it is fast; a large corpus with tight latency requirements is a reason to measure.
 
+### Filtering a ranked search
+
+Both ranked calls take an optional `filter`, the same LINQ predicate
+[vector search](/documents/querying/vector-search#filtering) takes:
+
+```csharp
+var best = await session.FullTextSearchAsync<Article>(
+    x => x.Body, "fox", limit: 10, filter: x => x.Team == "red");
+```
+
+It is applied **before** the limit, so you get the best `limit` of the filtered set rather than the
+filtered remains of the best `limit` — the same reason it matters there. A `Where` on the LINQ
+operator is still the right tool when you do not need the ranking; this exists so a ranked search can
+be scoped without losing its ordering.
+
 ## Several members
 
 `FullTextIndex` takes more than one member, and each is searched independently:

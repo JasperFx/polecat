@@ -1,8 +1,13 @@
 using System.Linq.Expressions;
 using System.Reflection;
+using Microsoft.Data.SqlClient;
 using Polecat.Internal;
+using Polecat.Linq.Members;
+using Polecat.Linq.Parsing;
+using Polecat.Linq.SqlGeneration;
 using Polecat.Storage;
 using Polecat.Storage.FullText;
+using Weasel.SqlServer;
 
 namespace Polecat;
 
@@ -44,45 +49,54 @@ public static class FullTextSearchExtensions
     ///     The <paramref name="limit" /> documents matching <paramref name="text" /> best, most
     ///     relevant first.
     /// </summary>
+    /// <param name="filter">
+    ///     An optional predicate, applied BEFORE <paramref name="limit" /> — so the result is the best
+    ///     <paramref name="limit" /> of the filtered set rather than the filtered remains of the best
+    ///     <paramref name="limit" /> (#633). It supports and refuses exactly what
+    ///     <c>Query&lt;T&gt;().Where(...)</c> does, because it is parsed by the same parser.
+    /// </param>
     public static async Task<IReadOnlyList<T>> FullTextSearchAsync<T>(
         this IQuerySession session,
         Expression<Func<T, object?>> member,
         string text,
         int limit = 10,
+        Expression<Func<T, bool>>? filter = null,
         CancellationToken token = default) where T : notnull
     {
-        var built = await BuildAsync(session, member, text, limit, token).ConfigureAwait(false);
+        var built = await BuildAsync(session, member, text, limit, filter, token).ConfigureAwait(false);
         if (built is null) return [];
 
-        return await session.AdvancedSql.QueryAsync<T>(built.Value.Sql, token, built.Value.Parameters)
-            .ConfigureAwait(false);
+        return await ((QuerySession)session).QueryByBatchAsync<T>(built, token).ConfigureAwait(false);
     }
 
     /// <summary>
     ///     The same search, each document paired with its BM25 score — larger is more relevant — for a
     ///     relevance floor, or for fusing with a vector ranking.
     /// </summary>
+    /// <inheritdoc cref="FullTextSearchAsync{T}" />
     public static async Task<IReadOnlyList<FullTextMatch<T>>> FullTextSearchWithScoresAsync<T>(
         this IQuerySession session,
         Expression<Func<T, object?>> member,
         string text,
         int limit = 10,
+        Expression<Func<T, bool>>? filter = null,
         CancellationToken token = default) where T : notnull
     {
-        var built = await BuildAsync(session, member, text, limit, token).ConfigureAwait(false);
+        var built = await BuildAsync(session, member, text, limit, filter, token).ConfigureAwait(false);
         if (built is null) return [];
 
-        var rows = await session.AdvancedSql.QueryAsync<T, double>(built.Value.Sql, token, built.Value.Parameters)
+        var rows = await ((QuerySession)session).QueryByBatchAsync<T, double>(built, token)
             .ConfigureAwait(false);
 
         return rows.Select(row => new FullTextMatch<T>(row.Item1, row.Item2)).ToList();
     }
 
-    private static async Task<(string Sql, object[] Parameters)?> BuildAsync<T>(
+    private static async Task<SqlBatch?> BuildAsync<T>(
         IQuerySession session,
         Expression<Func<T, object?>> member,
         string text,
         int limit,
+        Expression<Func<T, bool>>? filter,
         CancellationToken token) where T : notnull
     {
         ArgumentNullException.ThrowIfNull(member);
@@ -165,8 +179,7 @@ public static class FullTextSearchExtensions
              )
              SELECT TOP(?) d.id, d.data, scored.score
              FROM scored INNER JOIN {docTable} d ON d.id = scored.doc_id
-             {DocFilters(mapping, conjoined)}
-             ORDER BY scored.score DESC
+             {DocFilters(mapping, conjoined, filter is not null)}
              """;
 
         AddMemberScope();  // tf
@@ -178,7 +191,37 @@ public static class FullTextSearchExtensions
         parameters.Add(limit);
         if (conjoined) parameters.Add(session.TenantId);
 
-        return (sql, parameters.ToArray());
+        // ⚠️ Built through a BatchBuilder rather than IAdvancedSql's '?' route (#633). A caller's
+        // filter is an ISqlFragment that binds parameters of its own, and IAdvancedSql numbers
+        // parameters by counting '?' characters in the TEXT — so a fragment has no way to take part.
+        // AppendWithParameters keeps the '?' spelling above exactly as it was, then the fragment
+        // continues from the same parameter counter.
+        var batch = new SqlBatch();
+        var builder = new BatchBuilder(batch);
+        var bound = builder.AppendWithParameters(sql, '?');
+        for (var i = 0; i < parameters.Count; i++)
+        {
+            bound[i].Value = parameters[i] ?? DBNull.Value;
+
+            // ⚠️ AppendWithParameters hands back parameters typed as the provider's STRING type — it
+            // only knows the placeholder, not the value. Assigning Value does not undo that, so an
+            // nvarchar '50' reaches TOP(@p) and SQL Server refuses the whole statement. Resetting lets
+            // the type be inferred from the value the way IAdvancedSql's own parameters always were.
+            bound[i].ResetSqlDbType();
+        }
+
+        if (filter is not null)
+        {
+            builder.Append(" AND (");
+            var memberFactory = new MemberFactory(((QuerySession)session).Options, mapping);
+            new WhereClauseParser(memberFactory).Parse(filter.Body).Apply(builder);
+            builder.Append(')');
+        }
+
+        builder.Append(" ORDER BY scored.score DESC");
+        builder.Compile();
+
+        return batch;
     }
 
     /// <summary>
@@ -186,13 +229,20 @@ public static class FullTextSearchExtensions
     ///     sees an UPDATE, not a DELETE — so they have to be excluded here or a deleted document would
     ///     come back from a search.
     /// </summary>
-    private static string DocFilters(DocumentMapping mapping, bool conjoined)
+    /// <remarks>
+    ///     <c>WHERE 1=1</c> appears only when a caller's filter is going to be appended and there is
+    ///     nothing else to hang it off — the alternative is deciding between <c>WHERE</c> and
+    ///     <c>AND</c> at the append site, in two places.
+    /// </remarks>
+    private static string DocFilters(DocumentMapping mapping, bool conjoined, bool hasFilter)
     {
         var wheres = new List<string>();
         if (mapping.DeleteStyle == DeleteStyle.SoftDelete) wheres.Add("d.is_deleted = 0");
         if (conjoined) wheres.Add("d.tenant_id = ?");
 
-        return wheres.Count == 0 ? string.Empty : "WHERE " + string.Join(" AND ", wheres);
+        if (wheres.Count > 0) return "WHERE " + string.Join(" AND ", wheres);
+
+        return hasFilter ? "WHERE 1=1" : string.Empty;
     }
 
     /// <summary>The member chain of <c>x =&gt; x.A.B</c>, unwrapping the boxing convert.</summary>

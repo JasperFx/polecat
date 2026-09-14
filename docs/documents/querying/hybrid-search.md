@@ -17,7 +17,9 @@ var results = await session.HybridSearchAsync<Passage>(
     x => x.Embedding, "quarterly revenue", queryVector, limit: 10);
 ```
 
-The shape matches Fisher's, so application code ports between the stores.
+`HybridSearchOptions`, `HybridMatch<T>` and `HybridTextStyle` all come from
+`JasperFx.Events.Vectors` and are shared with Marten and Fisher, so this call reads the same against
+any of the three.
 
 ::: warning Requires SQL Server 2025 or later
 The vector leg needs the `VECTOR` type, which arrived in SQL Server 2025. See
@@ -68,20 +70,44 @@ surface. Reading only `limit` from each leg would never see it. A depth below `l
 
 **`Distance`** overrides the vector index's declared metric for this search.
 
-**`TextStyle`** picks the operator the text leg uses: `PlainText` (every term, any order),
-`WebStyle` (a search box's raw contents — quoted phrases, `-exclusions`, `or`), or `Phrase` (adjacent
-and in order). `PlainText` and `WebStyle` are named and behave as Marten names them, so a hybrid call
-written against one store compiles and behaves against the other; `Phrase` is Polecat's own. Both are safe to hand a search box's raw contents, which is why the list is
-short — Polecat's other full-text reach stays on `Query<T>()`, where a malformed query fails only the
-thing you asked for rather than both legs of a fused search.
+**`Distance: null`** — the default — means "the metric the vector index declared", which is almost
+always what a caller wants: an index built for one metric does not answer another one well. This was
+the reason to share the options type rather than copy it. Marten's own copy defaulted it to `Cosine`,
+so an index declared `L2` was searched by cosine there while Polecat and Fisher searched by L2 — the
+same code, three stores, different answers, and nothing reported an error.
 
-The two do not rank alike. `Plain` reads the text leg through
+**`TextStyle`** picks the operator the text leg uses, and there are exactly two:
+
+| | |
+| :--- | :--- |
+| `PlainText` (default) | Every term, in any order, with no query syntax at all |
+| `WebStyle` | A search box's raw contents — `"quoted phrases"`, a leading `-` to exclude, a bare `or` between alternatives |
+
+**Both are safe to hand a search box's raw contents, and that is why the list is short.** A store's
+raw query syntax can be malformed, and a malformed query in one leg of a fused search fails the
+*whole* call — where in a plain `Where(x => x.Body.PlainTextSearch(...))` it fails only the thing you
+asked for. Polecat's other full-text reach stays on `Query<T>()` for that reason.
+
+::: warning `HybridTextStyle.Phrase` was removed in Polecat 5.30
+It has no counterpart in the shared enum and deliberately did not get one. Phrase search itself is
+untouched — it is reachable, as it always was, through `Query<T>()`:
+
+```csharp
+var matches = await session.Query<Passage>()
+    .Where(x => x.Body.PhraseSearch("fox in the snow"))
+    .ToListAsync();
+```
+
+That is also the better place for it. The phrase leg never carried a ranking of its own — a document
+contains the phrase or it does not — so fusing it weakened the fused order rather than improving it,
+and when more documents contained the phrase than `CandidateDepth`, which of them were read was not
+decided by relevance either. See the [migration guide](/migration-guide).
+:::
+
+The two remaining styles do not rank alike. `PlainText` reads the text leg through
 [`FullTextSearchAsync`](/documents/querying/full-text-search#ranking), so it arrives in BM25 order.
-`Phrase` has no ranking of its own — a document contains the phrase or it does not — so that leg is a
-LINQ `PhraseSearch` read in whatever order the database returns, cut at `CandidateDepth`. Its ranks
-carry no relevance, so rank fusion over it is weaker: the fused order leans on the vector leg, and
-when more documents contain the phrase than `CandidateDepth`, which of them are read is not decided by
-relevance either.
+`WebStyle` has no ranking of its own, so that leg reads through the LINQ operator in whatever order
+the database returns, cut at `CandidateDepth`.
 
 ## Which member is searched
 
@@ -105,6 +131,41 @@ The explicit two-member overload exists only as `HybridSearchWithScoresAsync`. T
 `HybridSearchAsync` that names both members, so select `m => m.Document` when you want only the
 documents.
 
+## Filtering
+
+```csharp
+var results = await session.HybridSearchAsync<Passage>(
+    x => x.Embedding, "quarterly revenue", queryVector, limit: 10,
+    filter: x => x.Team == "red");
+```
+
+::: tip The filter reaches BOTH legs, before each leg's candidate depth
+Filtering only after the fusion would let rows you are about to discard consume the candidate depth,
+so the fused order would be a ranking of a set that includes them. Filtering only one leg would be
+worse still: the excluded document arrives through the other leg anyway.
+:::
+
+It is the same predicate, and the same parser, as
+[vector search's](/documents/querying/vector-search#filtering) — so it supports and refuses exactly
+what `Query<T>().Where(...)` does.
+
+## The fusion is shared
+
+The reciprocal rank fusion itself is `JasperFx.Events.Vectors.ReciprocalRankFusion`, public and
+usable on its own over any number of ranked lists:
+
+```csharp
+IReadOnlyList<HybridMatch<Passage>> fused =
+    ReciprocalRankFusion.Fuse([textRanking, vectorRanking], x => x.Id, limit: 10);
+```
+
+It fuses on the **key you give it** rather than on document identity, which is what makes it useful
+beyond the call above: a snapshot document carrying the full-text index and a separate embedding
+document — exactly the shape a [vector projection](/events/projections/vector-projections) writes —
+are two different tables that share an id, and `HybridSearchAsync` searches one type. Rank the two
+yourself, fuse on the id, and the scoring is the same one this page describes rather than a fourth
+private copy.
+
 ## What applies without being restated
 
 Both legs read through the ordinary search paths, so conjoined tenancy, soft deletes and the existing
@@ -116,3 +177,8 @@ deterministically, so paging a fused result is stable between runs.
 Fisher: [Hybrid Search](https://fisher.jasperfx.net/documents/querying/hybrid-search), the shape this
 page mirrors. Marten: the two legs are [Full Text Searching](https://martendb.io/documents/full-text)
 and [Marten.PgVector](https://martendb.io/documents/pgvector).
+
+The options record, the match type, the text-style enum and the fusion are one set of types in
+`JasperFx.Events.Vectors` on all three stores, so a defaulting decision is made once rather than three
+times. Reaching hybrid search without naming a store at all is
+[Store-Neutral Search](/documents/querying/store-neutral-search).

@@ -239,40 +239,4 @@ public class PolecatProjectionOptions
     ///     </para>
     /// </remarks>
     internal DocumentProvider[] InlineProjectedProviders => _inlineProjectedProviders.Value;
-
-    /// <summary>
-    ///     Refuses a <see cref="Vectors.VectorProjection{TDoc,TId}" /> registered anything but Async.
-    /// </summary>
-    /// <remarks>
-    ///     <para>
-    ///         Embedding is a metered network round trip, and an Inline projection runs inside the
-    ///         caller's <c>SaveChangesAsync</c> — so a slow or unavailable provider stalls every
-    ///         writer's transaction rather than one shard. Fisher documents async-only and does not
-    ///         enforce it (fisher#287); this refuses when the store is BUILT, which is the last moment
-    ///         before the mistake costs anything.
-    ///     </para>
-    ///     <para>
-    ///         ⚠️ Polecat's own pass rather than <c>IValidatedProjection</c>, because a bare
-    ///         <c>IProjection</c> is wrapped in a <c>ProjectionWrapper</c> that does not forward
-    ///         validation, so the interface is never asked (jasperfx#845). See
-    ///         <see cref="Vectors.IVectorProjection" />.
-    ///     </para>
-    /// </remarks>
-    internal void AssertVectorProjectionsAreAsync()
-    {
-        foreach (var source in All)
-        {
-            if (source.Lifecycle == JasperFx.Events.Projections.ProjectionLifecycle.Async) continue;
-
-            var inner = (source as JasperFx.Events.Projections.ProjectionWrapper<IDocumentSession, IQuerySession>)?.Inner;
-            if (inner is not Vectors.IVectorProjection vector) continue;
-
-            throw new InvalidOperationException(
-                $"'{vector.DescribeSelf()}' is registered {source.Lifecycle}, but a vector projection is "
-                + "asynchronous only. Embedding is a metered network call, and Inline would put it "
-                + "inside every caller's SaveChangesAsync where a slow or unavailable provider stalls "
-                + "the transaction. Register it with ProjectionLifecycle.Async.");
-        }
-    }
 }
-
