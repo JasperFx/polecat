@@ -520,15 +520,45 @@
              one model, then the store's DEFAULT still has to agree with the service's name, since
              that is what every other contributor defaults to.
              (c) 2.69.2's gh-832 and gh-831 are Bobcat step-ordering and a Fisher doc correction —
-             nothing Polecat reads. -->
-        <PackageVersion Include="JasperFx" Version="2.69.3" />
-        <PackageVersion Include="JasperFx.Events" Version="2.69.3" />
+             nothing Polecat reads.
+
+             JasperFx 2.70.0 (jasperfx#846, polecat#633) — the shared vector/hybrid search surface,
+             and the release this bump exists for. Polecat consumes all five pieces:
+             (a) jasperfx#840 — HybridSearchOptions / HybridMatch<T> / HybridTextStyle move into
+             JasperFx.Events.Vectors. Polecat's own copies are deleted. ⚠️ The shared enum has two
+             members, PlainText and WebStyle; Polecat's third, Phrase, has no shared counterpart and
+             is REMOVED rather than renamed. Phrase search stays reachable through
+             Query<T>().Where(x => x.Body.PhraseSearch(...)), where a malformed query fails only that
+             call instead of both legs of a fused search. Breaking — see docs/migration-guide.md.
+             (b) jasperfx#844 — ReciprocalRankFusion.Fuse replaces Polecat's private fusion. The
+             shared one fuses BY KEY across legs that need not be the same document type, which the
+             local copy could not express.
+             (c) jasperfx#842/#843 — IDocumentSearchOperations, reached through the new
+             IDocumentReadOperations.Search accessor (throwing default, so this is additive), and a
+             `filter` predicate on both search signatures. Polecat's own extension methods take the
+             same filter, so their signatures gain a parameter BEFORE `token` — source-breaking for a
+             caller that passed the token positionally.
+             (d) jasperfx#841 — VectorProjectionMap<TId> and VectorEmbeddingPlan<TId> are now the
+             store-independent body of a vector projection. Polecat's local VectorProjectionMap<TDoc,
+             TId> is deleted and gh-628's fold/hash/skip/batch logic comes from the shared core. The
+             content hash spelling was compared before the swap and is byte-identical
+             (Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(text)))), so no stored
+             document is re-embedded by this bump.
+             (e) jasperfx#845 — ProjectionGraph.AssertValidity unwraps ProjectionWrapper before
+             OfType<IValidatedProjection<T>>(), so a bare IProjection that implements the interface is
+             finally asked. Polecat's IVectorProjection marker and its private validation pass are
+             deleted in favour of IValidatedProjection<StoreOptions>.
+             ⚠️ The same fix means a hand-written IProjection in a Polecat APPLICATION that
+             implemented IValidatedProjection<StoreOptions> starts being asked on this bump, which can
+             surface configuration errors that were silently passing before. -->
+        <PackageVersion Include="JasperFx" Version="2.70.0" />
+        <PackageVersion Include="JasperFx.Events" Version="2.70.0" />
         <!--
              The shared cross-store event sourcing compliance suites. Source-only package: the
              suites compile inside Polecat.Tests so JasperFx's aggregate source generator binds
              Polecat's own session types.
         -->
-        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="2.69.3" />
+        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="2.70.0" />
         <!-- Pin the sibling JasperFx packages for parity with Marten 9's matrix
              even though Polecat doesn't currently reference them directly —
              keeps the lockstep matrix coherent when transitive resolution
@@ -536,7 +566,7 @@
              RuntimeCompiler 5.x line is the active continuation of the 4.x
              lineage; do not pin against the parallel stale 2.0.x series. -->
         <PackageVersion Include="JasperFx.RuntimeCompiler" Version="5.0.0" />
-        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.69.3" />
+        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.70.0" />
         <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
@@ -700,7 +730,7 @@
         <PackageVersion Include="Vogen" Version="7.0.0" />
 
         <!-- Source generators (matched to JasperFx.Events above) -->
-        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.69.3" />
+        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.70.0" />
 
         <!-- Build automation -->
         <PackageVersion Include="Nuke.Common" Version="9.0.4" />

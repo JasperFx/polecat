@@ -1,6 +1,7 @@
 using JasperFx.Events;
 using JasperFx.Events.Projections;
 using JasperFx.Events.Vectors;
+using Polecat.Projections;
 using Polecat.Projections.Vectors;
 using Polecat.Tests.Harness;
 
@@ -36,7 +37,7 @@ public class CountingProvider: IEmbeddingProvider
 
 public class PageVectorProjection(IEmbeddingProvider provider): VectorProjection<PageVector, string>(provider)
 {
-    protected override void Configure(VectorProjectionMap<PageVector, string> map)
+    protected override void Configure(VectorProjectionMap<string> map)
     {
         map.Map<PageWritten>(e => e.Data.Text, e => e.Data.PageId);
         map.Delete<PageRemoved>(e => e.Data.PageId);
@@ -228,6 +229,58 @@ public class vector_projection_tests: OneOffConfigurationsContext
         ex.Message.ShouldContain("asynchronous only");
     }
 
+    /// <summary>
+    ///     ⚠️ #633: the content hash is PERSISTED, so adopting the shared
+    ///     <c>VectorEmbeddingPlan.HashOf</c> had to leave the spelling exactly where gh-628 left it —
+    ///     lowercase hex SHA-256 of the UTF-8 text. A different spelling re-embeds every stored
+    ///     document once, which is a real bill against a metered provider rather than a cosmetic
+    ///     difference.
+    /// </summary>
+    [Fact]
+    public void the_content_hash_is_lowercase_hex_sha256_of_the_utf8_text()
+    {
+        // Written out rather than recomputed, so the fact FAILS if the spelling ever moves instead of
+        // moving with it.
+        VectorEmbeddingPlan<string>.HashOf("points east")
+            .ShouldBe("29e1028bfc8df26dd37cb73c1d219c0b7841fbe29892489eb988e8c8fe8c1c47");
+    }
+
+    /// <summary>
+    ///     A row whose stored hash was written by gh-628's private hashing is still recognised as
+    ///     unchanged after the swap to the shared one — the proof that the bump re-embeds nothing.
+    /// </summary>
+    [Fact]
+    public async Task a_row_hashed_before_the_swap_is_still_unchanged()
+    {
+        var projection = aProjection();
+        var token = TestContext.Current.CancellationToken;
+
+        await using (var session = theStore.LightweightSession())
+        {
+            // Exactly what gh-628 wrote: Convert.ToHexStringLower(SHA256.HashData(UTF8(content))).
+            session.Store(new PageVector
+            {
+                Id = "p9",
+                Content = "points east",
+                ContentHash = Convert.ToHexStringLower(
+                    System.Security.Cryptography.SHA256.HashData(
+                        System.Text.Encoding.UTF8.GetBytes("points east"))),
+                Embedding = [1, 0, 0]
+            });
+            await session.SaveChangesAsync(token);
+        }
+
+        var before = _provider.Calls;
+
+        await using (var session = theStore.LightweightSession())
+        {
+            await projection.ApplyAsync(session, [Event(new PageWritten("p9", "points east"))], token);
+            await session.SaveChangesAsync(token);
+        }
+
+        _provider.Calls.ShouldBe(before);
+    }
+
     /// <summary>A projection that maps nothing would read every page and write nothing.</summary>
     [Fact]
     public void a_projection_that_maps_nothing_is_refused()
@@ -239,7 +292,46 @@ public class vector_projection_tests: OneOffConfigurationsContext
 
 public class EmptyProjection(IEmbeddingProvider provider): VectorProjection<PageVector, string>(provider)
 {
-    protected override void Configure(VectorProjectionMap<PageVector, string> map)
+    protected override void Configure(VectorProjectionMap<string> map)
     {
+    }
+}
+
+/// <summary>A bare projection that carries configuration checks of its own.</summary>
+public class ComplainingProjection: IProjection, IValidatedProjection<StoreOptions>
+{
+    public const string Complaint = "this projection is not configured the way it needs to be";
+
+    public IEnumerable<string> ValidateConfiguration(StoreOptions options) => [Complaint];
+
+    public Task ApplyAsync(IDocumentSession operations, IReadOnlyList<IEvent> events,
+        CancellationToken cancellation) => Task.CompletedTask;
+}
+
+/// <summary>
+///     ⚠️ #633 / jasperfx#845: a BARE <see cref="IProjection" /> is registered through a
+///     <c>ProjectionWrapper</c>, and <c>ProjectionGraph.AssertValidity</c> used to run
+///     <c>OfType&lt;IValidatedProjection&lt;T&gt;&gt;()</c> over the wrappers — so a projection
+///     carrying its own configuration checks was never asked, in silence.
+/// </summary>
+/// <remarks>
+///     This is why Polecat carried a private <c>IVectorProjection</c> marker and a validation pass of
+///     its own until this issue. It is also the one behaviour change a Polecat APPLICATION can notice
+///     on the 2.70.0 bump: a hand-written projection that implemented the interface starts being
+///     asked, which can surface a configuration error that was quietly passing before.
+/// </remarks>
+public class bare_projection_validation_tests
+{
+    [Fact]
+    public void a_bare_projection_is_asked_to_validate_itself()
+    {
+        var ex = Should.Throw<Exception>(() => DocumentStore.For(opts =>
+        {
+            opts.Connection(ConnectionSource.ConnectionString);
+            opts.DatabaseSchemaName = "bare_projection_validation";
+            opts.Projections.Add(new ComplainingProjection(), ProjectionLifecycle.Async);
+        }));
+
+        ex.Message.ShouldContain(ComplainingProjection.Complaint);
     }
 }

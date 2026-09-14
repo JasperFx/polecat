@@ -140,13 +140,13 @@ public class vector_search_tests: OneOffConfigurationsContext
 
         // Euclidean does not ignore magnitude: far-east is now far.
         var l2 = await session.VectorSearchWithScoresAsync<Passage>(x => x.Embedding, query, 4,
-            DistanceFunction.L2, token);
+            DistanceFunction.L2, token: token);
         l2[0].Document.Id.ShouldBe(East);
         l2.Single(m => m.Document.Id == FarEast).Distance.ShouldBe(4, 1e-5);
 
         // Dot comes back negated, so it is still a distance: far-east is the best match.
         var dot = await session.VectorSearchWithScoresAsync<Passage>(x => x.Embedding, query, 4,
-            DistanceFunction.InnerProduct, token);
+            DistanceFunction.InnerProduct, token: token);
         dot[0].Document.Id.ShouldBe(FarEast);
         dot[0].Distance.ShouldBe(-5, 1e-5);
     }
@@ -213,6 +213,89 @@ public class vector_search_tests: OneOffConfigurationsContext
             1, token: token);
 
         nearest.Single().Id.ShouldBe(before);
+    }
+
+    // ---- the filter (#633 / jasperfx#843) -------------------------------------------------------
+
+    /// <summary>
+    ///     ⚠️ <b>The filter is applied BEFORE the limit, so the result is the top-k of the filtered
+    ///     set rather than the filtered remains of the top-k.</b> With the filter applied afterwards
+    ///     this returns one row, not two — which is the bug the ordering exists to prevent.
+    /// </summary>
+    [Fact]
+    public async Task the_filter_runs_before_the_limit()
+    {
+        var store = await aStoreWithPassages();
+        await using var session = store.QuerySession();
+        var token = TestContext.Current.CancellationToken;
+
+        // Unfiltered, the two nearest to [1,0,0] are East and FarEast (cosine ignores magnitude).
+        var unfiltered = await session.VectorSearchAsync<Passage>(x => x.Embedding, new float[] { 1, 0, 0 },
+            2, token: token);
+        unfiltered.Select(x => x.Id).ShouldBe([East, FarEast], true);
+
+        // Excluding East leaves FarEast first and Between second — TWO rows, because the filter is in
+        // the WHERE rather than applied to what the limit already returned.
+        var filtered = await session.VectorSearchAsync<Passage>(x => x.Embedding, new float[] { 1, 0, 0 },
+            2, filter: x => x.Text != "points east", token: token);
+
+        filtered.Count.ShouldBe(2);
+        filtered.Select(x => x.Id).ShouldBe([FarEast, Between]);
+    }
+
+    /// <summary>
+    ///     The predicate is parsed by the same parser that backs <c>Query&lt;T&gt;().Where(...)</c>, so
+    ///     anything LINQ supports reaches vector search — including the operators that are not plain
+    ///     equality.
+    /// </summary>
+    [Fact]
+    public async Task the_filter_supports_what_linq_supports()
+    {
+        var store = await aStoreWithPassages();
+        await using var session = store.QuerySession();
+        var token = TestContext.Current.CancellationToken;
+
+        var startsWith = await session.VectorSearchAsync<Passage>(x => x.Embedding, new float[] { 1, 0, 0 },
+            10, filter: x => x.Text.StartsWith("points"), token: token);
+        startsWith.Select(x => x.Id).ShouldBe([East, North], true);
+
+        var contains = await session.VectorSearchWithScoresAsync<Passage>(x => x.Embedding,
+            new float[] { 1, 0, 0 }, 10,
+            filter: x => x.Text.Contains("direction") || x.Text == "between", token: token);
+        contains.Select(x => x.Document.Id).ShouldBe([FarEast, Between]);
+    }
+
+    /// <summary>
+    ///     The store's own implicit predicates are in ADDITION to the filter, not instead of it — a
+    ///     document with no embedding stays out however permissive the filter is.
+    /// </summary>
+    [Fact]
+    public async Task the_filter_does_not_replace_the_search_own_predicates()
+    {
+        var store = await aStoreWithPassages();
+        await using var session = store.QuerySession();
+
+        var all = await session.VectorSearchAsync<Passage>(x => x.Embedding, new float[] { 0, 0, 1 },
+            10, filter: x => x.Text != "nothing at all", token: TestContext.Current.CancellationToken);
+
+        all.Select(x => x.Id).ShouldNotContain(Blank);
+        all.Count.ShouldBe(4);
+    }
+
+    /// <summary>
+    ///     A predicate LINQ refuses is refused here, with LINQ's own message — because there is one
+    ///     parser rather than a second dialect for search.
+    /// </summary>
+    [Fact]
+    public async Task the_filter_refuses_what_linq_refuses()
+    {
+        var store = await aStoreWithPassages();
+        await using var session = store.QuerySession();
+
+        await Should.ThrowAsync<NotSupportedException>(() =>
+            session.VectorSearchAsync<Passage>(x => x.Embedding, new float[] { 1, 0, 0 }, 10,
+                filter: x => x.Text.GetHashCode() == 3,
+                token: TestContext.Current.CancellationToken));
     }
 
     [Fact]

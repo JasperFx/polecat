@@ -98,6 +98,7 @@ const config: UserConfig<DefaultTheme.Config> = {
                 { text: 'Full Text Search', link: '/documents/querying/full-text-search' },
                 { text: 'Vector Search', link: '/documents/querying/vector-search' },
                 { text: 'Hybrid Search', link: '/documents/querying/hybrid-search' },
+                { text: 'Store-Neutral Search', link: '/documents/querying/store-neutral-search' },
               ]
             },
             { text: 'Multi-Tenanted Documents', link: '/documents/multi-tenancy' },

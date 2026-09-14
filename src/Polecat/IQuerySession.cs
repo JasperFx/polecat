@@ -225,6 +225,23 @@ public interface IQuerySession : IAsyncDisposable, IDocumentReadOperations
     IQueryable<T> IDocumentReadOperations.Query<T>() => Query<T>();
 
     /// <summary>
+    ///     #633 / jasperfx#842: the store-neutral vector and hybrid search contract, so a consumer
+    ///     holding this session as <see cref="IDocumentReadOperations" /> can ask for the nearest
+    ///     documents by embedding without naming a Polecat type.
+    /// </summary>
+    /// <remarks>
+    ///     ⚠️ <b>An ACCESSOR rather than members on this interface, and that is deliberate.</b>
+    ///     Polecat's search extension methods are already named <c>VectorSearchWithScoresAsync</c> and
+    ///     <c>HybridSearchWithScoresAsync</c>; declaring members of those names here would make the
+    ///     instance member beat the extension at every existing call site, silently and against a
+    ///     different implementation. The contract member carries a <em>throwing</em> default, so
+    ///     leaving this out compiles and fails at runtime — one implementation here covers every
+    ///     session type, exactly as <see cref="IDocumentReadOperations.Events" /> above does.
+    /// </remarks>
+    JasperFx.Events.Vectors.IDocumentSearchOperations IDocumentReadOperations.Search
+        => new Internal.PolecatSearchOperations(this);
+
+    /// <summary>
     ///     Create a batch query to execute multiple Load/Query operations in a single roundtrip.
     /// </summary>
     IBatchedQuery CreateBatchQuery();

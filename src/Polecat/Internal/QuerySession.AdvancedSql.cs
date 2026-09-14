@@ -214,4 +214,65 @@ internal partial class QuerySession : IAdvancedSql
         if (value is T typed) return typed;
         return (T)Convert.ChangeType(value, typeof(T));
     }
+
+    // ── Pre-built batches ───────────────────────────────────────────────
+
+    /// <summary>
+    ///     Read a statement that was composed with a <see cref="Weasel.SqlServer.BatchBuilder" />
+    ///     rather than from a '?'-placeholder string, materializing each row as a document.
+    /// </summary>
+    /// <remarks>
+    ///     ⚠️ <b>The placeholder route cannot carry a composed fragment</b> (#633). The
+    ///     <c>IAdvancedSql</c> overloads number their parameters by counting '?' characters in the
+    ///     TEXT, so anything that binds its own parameters — an <c>ISqlFragment</c> produced by the
+    ///     same where-parsing that backs <c>Query&lt;T&gt;().Where(...)</c> — has no way to take part.
+    ///     These two overloads share the reading half with <c>IAdvancedSql</c> and differ only in
+    ///     where the statement came from. The batch is disposed here, so a caller hands off ownership.
+    /// </remarks>
+    internal async Task<IReadOnlyList<T>> QueryByBatchAsync<T>(SqlBatch batch, CancellationToken token)
+    {
+        var reader1 = AdvancedSqlResultReader.ForType(typeof(T), Serializer, _providers);
+
+        await using var owned = batch;
+        var text = DescribeBatch(owned);
+
+        Logger.OnBeforeExecute(text);
+        await using var dbReader = await ExecuteReaderAsync(owned, token);
+
+        var list = new List<T>();
+        while (await dbReader.ReadAsync(token))
+        {
+            list.Add(CastResult<T>(reader1.ReadValue(dbReader, 0)));
+        }
+
+        Logger.LogSuccess(text);
+        return list;
+    }
+
+    /// <inheritdoc cref="QueryByBatchAsync{T}" />
+    internal async Task<IReadOnlyList<(T1, T2)>> QueryByBatchAsync<T1, T2>(SqlBatch batch, CancellationToken token)
+    {
+        var reader1 = AdvancedSqlResultReader.ForType(typeof(T1), Serializer, _providers);
+        var reader2 = AdvancedSqlResultReader.ForType(typeof(T2), Serializer, _providers);
+
+        await using var owned = batch;
+        var text = DescribeBatch(owned);
+
+        Logger.OnBeforeExecute(text);
+        await using var dbReader = await ExecuteReaderAsync(owned, token);
+
+        var list = new List<(T1, T2)>();
+        while (await dbReader.ReadAsync(token))
+        {
+            var v1 = CastResult<T1>(reader1.ReadValue(dbReader, 0));
+            var v2 = CastResult<T2>(reader2.ReadValue(dbReader, reader1.ColumnCount));
+            list.Add((v1, v2));
+        }
+
+        Logger.LogSuccess(text);
+        return list;
+    }
+
+    private static string DescribeBatch(SqlBatch batch)
+        => batch.BatchCommands.Count == 0 ? string.Empty : batch.BatchCommands[0].CommandText;
 }

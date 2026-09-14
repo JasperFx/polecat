@@ -1,3 +1,5 @@
+using JasperFx.Events.Vectors;
+using Polecat.Linq;
 using Polecat.Tests.Harness;
 using Shouldly;
 using Xunit;
@@ -93,18 +95,33 @@ public class hybrid_search_tests: OneOffConfigurationsContext
         scored.Select(x => x.Score).ShouldBe(scored.Select(x => x.Score).OrderByDescending(x => x));
     }
 
+    /// <summary>
+    ///     ⚠️ #633: <c>HybridTextStyle.Phrase</c> is GONE from the hybrid surface, and this is the
+    ///     replacement it points callers at. The shared enum is deliberately two members, both safe to
+    ///     hand a search box's raw contents, because a malformed query in one leg fails the WHOLE fused
+    ///     call. Phrase search itself is untouched — it stays on <c>Query&lt;T&gt;()</c>, where a bad
+    ///     query fails only the thing the caller asked for.
+    /// </summary>
     [Fact]
-    public async Task a_phrase_leg_fuses_the_same_way()
+    public async Task phrase_search_stays_reachable_through_query()
     {
         var store = await aStoreWithPassagesAsync();
         await using var session = store.QuerySession();
 
-        var fused = await session.HybridSearchAsync<Passage>(
-            x => x.Embedding, "fox in the snow", new float[] { 0, 0, 1 },
-            options: new HybridSearchOptions(TextStyle: HybridTextStyle.Phrase),
-            token: TestContext.Current.CancellationToken);
+        var matches = await session.Query<Passage>()
+            .Where(x => x.Body.PhraseSearch("fox in the snow"))
+            .ToListAsync(TestContext.Current.CancellationToken);
 
-        fused[0].Id.ShouldBe(BothLegs);
+        matches.Select(x => x.Id).ShouldBe([BothLegs]);
+    }
+
+    /// <summary>
+    ///     The shared enum has exactly the two members that are safe to hand raw input, on every store.
+    /// </summary>
+    [Fact]
+    public void the_hybrid_text_styles_are_the_two_portable_ones()
+    {
+        Enum.GetNames<HybridTextStyle>().ShouldBe(["PlainText", "WebStyle"]);
     }
 
     [Fact]
@@ -143,6 +160,49 @@ public class hybrid_search_tests: OneOffConfigurationsContext
         // which is the fusion working, not a filter leaking.
         fused.ShouldNotBeEmpty();
         fused.Select(x => x.Id).ShouldContain(TextOnly);
+    }
+
+    /// <summary>
+    ///     ⚠️ #633 / jasperfx#843: the filter is applied to BOTH legs, before each leg's candidate
+    ///     depth. A filter on one leg only would fuse a ranking of a set the caller is about to
+    ///     discard half of.
+    /// </summary>
+    [Fact]
+    public async Task the_filter_applies_to_both_legs()
+    {
+        var store = await aStoreWithPassagesAsync();
+        await using var session = store.QuerySession();
+        var token = TestContext.Current.CancellationToken;
+
+        // Unfiltered, all three documents come back and BothLegs wins.
+        var unfiltered = await session.HybridSearchAsync<Passage>(
+            x => x.Embedding, "fox", new float[] { 0, 0, 1 }, token: token);
+        unfiltered.Count.ShouldBe(3);
+
+        // The text leg found BothLegs and TextOnly; the vector leg found BothLegs and VectorOnly. If
+        // the filter reached only one leg, the excluded document would still arrive through the other.
+        var filtered = await session.HybridSearchAsync<Passage>(
+            x => x.Embedding, "fox", new float[] { 0, 0, 1 },
+            filter: x => x.Body != "a fox in the snow", token: token);
+
+        filtered.Select(x => x.Id).ShouldNotContain(BothLegs);
+        filtered.Select(x => x.Id).ShouldBe([TextOnly, VectorOnly], true);
+    }
+
+    /// <summary>The same, on the WebStyle leg, which reads through LINQ rather than through BM25.</summary>
+    [Fact]
+    public async Task the_filter_applies_to_the_web_style_leg_too()
+    {
+        var store = await aStoreWithPassagesAsync();
+        await using var session = store.QuerySession();
+
+        var filtered = await session.HybridSearchAsync<Passage>(
+            x => x.Embedding, "fox", new float[] { 0, 0, 1 },
+            options: new HybridSearchOptions(TextStyle: HybridTextStyle.WebStyle),
+            filter: x => x.Body != "a fox in the snow",
+            token: TestContext.Current.CancellationToken);
+
+        filtered.Select(x => x.Id).ShouldNotContain(BothLegs);
     }
 
     [Fact]
