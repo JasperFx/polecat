@@ -71,6 +71,11 @@ public partial class DocumentStore : IDocumentStore
         // Initialize projection graph - builds async shard registry
         options.Projections.AssertValidity(options);
 
+        // gh-628: a vector projection is asynchronous only, refused here rather than on its first
+        // event. Polecat's own pass because a bare IProjection cannot reach JasperFx's -- see
+        // IVectorProjection for why.
+        options.Projections.AssertVectorProjectionsAreAsync();
+
         _inlineProjections = new Lazy<IInlineProjection<IDocumentSession>[]>(
             () => options.Projections.BuildInlineProjections());
 
