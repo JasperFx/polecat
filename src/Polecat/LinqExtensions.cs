@@ -1,3 +1,6 @@
+using Polecat.Linq.SqlGeneration;
+using Polecat.Linq;
+using JasperFx.Events.Vectors;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using System.Reflection;
@@ -123,6 +126,75 @@ public static class LinqExtensions
         throw new NotSupportedException(
             "IEvent.HasTagValue<TTag>() is a marker method for LINQ event queries and cannot be invoked directly. Use it inside session.Events.QueryAllRawEvents().Where(...).");
     }
+
+    /// <summary>
+    ///     Order a LINQ query by distance from <paramref name="query" />, nearest first — so a vector
+    ///     ordering can be COMPOSED with ordinary filters, paging and projections.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         <b>This is what widening <c>Statement.OrderBys</c> to fragments bought.</b> An ordering
+    ///         key used to be text appended verbatim, and a vector distance has the query vector inside
+    ///         it, so it could not be expressed from an ordering position at all — which is why
+    ///         <c>VectorSearchAsync</c> is written against raw SQL.
+    ///     </para>
+    ///     <para>
+    ///         <c>VectorSearchAsync</c> stays, and the two are not redundant: it is the whole search in
+    ///         one call and returns scores. This composes, so
+    ///         <c>Query&lt;T&gt;().Where(x =&gt; x.Team == "red").OrderByVectorDistance(...).Take(5)</c>
+    ///         is expressible, which raw SQL is not.
+    ///     </para>
+    ///     <para>
+    ///         ⚠️ Refused by name, before any SQL runs, for a type with no declared vector index, a
+    ///         member that is not the declared one, or a query vector of another length — the SAME
+    ///         refusals <c>VectorSearchAsync</c> makes, because both call one resolver.
+    ///     </para>
+    /// </remarks>
+    public static IQueryable<T> OrderByVectorDistance<T>(
+        this IQueryable<T> queryable,
+        Expression<Func<T, object?>> member,
+        ReadOnlyMemory<float> query,
+        DistanceFunction? distance = null) where T : notnull
+    {
+        ArgumentNullException.ThrowIfNull(queryable);
+
+        if (queryable.Provider is not PolecatLinqQueryProvider provider)
+        {
+            throw new NotSupportedException(
+                "OrderByVectorDistance is only meaningful over a Polecat session's Query<T>().");
+        }
+
+        // Validated HERE rather than in the parser, because the refusals need the document's mapping
+        // and this is the last place that can reach a session. A bad call therefore throws at the call
+        // site rather than when the query is finally enumerated.
+        var index = VectorSearchExtensions.ResolveIndex(provider.Session, member, query);
+        var ordering = new OrderByClause(new VectorDistanceOrdering(index, query, distance), false, null);
+
+        // The tree carries the BUILT ordering rather than the arguments that produced it, because the
+        // parser cannot rebuild it: resolving the declaration needs the document's mapping and the
+        // parser has only a member resolver. A marker of its own rather than reusing this method's
+        // signature, so the expression's arity matches what the parser reads.
+        return queryable.Provider.CreateQuery<T>(
+            Expression.Call(
+                null,
+                OrderedByVectorDistanceMethodInfo.MakeGenericMethod(typeof(T)),
+                queryable.Expression,
+                Expression.Constant(ordering)));
+    }
+
+    private static readonly MethodInfo OrderedByVectorDistanceMethodInfo =
+        typeof(LinqExtensions).GetMethod(nameof(OrderedByVectorDistance),
+            BindingFlags.Public | BindingFlags.Static)!;
+
+    /// <summary>
+    ///     Marker carrying a built vector ordering into the query tree. Public only because
+    ///     <see cref="Expression.Call(Expression, MethodInfo, Expression[])" /> needs to find it;
+    ///     calling it directly is meaningless.
+    /// </summary>
+    public static IQueryable<T> OrderedByVectorDistance<T>(this IQueryable<T> queryable, object ordering)
+        where T : notnull
+        => throw new NotSupportedException(
+            "OrderedByVectorDistance is a marker for LINQ translation. Use OrderByVectorDistance(...).");
 
     private static readonly MethodInfo AnyTenantMethodInfo =
         typeof(LinqExtensions).GetMethod(nameof(AnyTenant))!;

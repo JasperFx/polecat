@@ -86,26 +86,8 @@ public static class VectorSearchExtensions
         ArgumentNullException.ThrowIfNull(member);
         if (limit < 1) throw new ArgumentOutOfRangeException(nameof(limit), limit, "limit must be at least 1");
 
-        // The concrete session, as every other extension over this seam does: the provider registry
-        // and the store options are internal, and this needs the mapping's vector declarations.
         var mapping = ((QuerySession)session).Providers.GetProvider(typeof(T)).Mapping;
-        var chain = ChainOf(member);
-        var name = string.Join(".", chain.Select(x => x.Name));
-
-        var index = mapping.VectorIndexes.FirstOrDefault(x => x.MemberName == name)
-                    ?? throw new InvalidOperationException(
-                        mapping.VectorIndexes.Count == 0
-                            ? $"'{typeof(T).Name}' declares no vector index, so there is nothing to search. "
-                              + $"Declare one with Schema.For<{typeof(T).Name}>().VectorIndex(x => x.{name}, dimensions)."
-                            : $"'{typeof(T).Name}.{name}' is not a declared vector member. Declared: "
-                              + string.Join(", ", mapping.VectorIndexes.Select(x => x.MemberName)) + ".");
-
-        if (query.Length != index.Dimensions)
-        {
-            throw new ArgumentException(
-                $"The query vector has {query.Length} dimensions but '{typeof(T).Name}.{index.MemberName}' "
-                + $"was declared with {index.Dimensions}.", nameof(query));
-        }
+        var index = ResolveIndex<T>(session, member, query);
 
         var table = mapping.QualifiedTableName;
         var column = SqlEscaping.QuoteIdentifier(index.ColumnName);
@@ -134,6 +116,45 @@ public static class VectorSearchExtensions
     ///     formatting on purpose: a culture that writes a decimal comma produces a JSON array SQL
     ///     Server rejects, and only on the machines that use one.
     /// </summary>
+    /// <summary>
+    ///     The vector declaration <paramref name="member" /> names, with every refusal this search
+    ///     makes applied.
+    /// </summary>
+    /// <remarks>
+    ///     Shared with the LINQ <c>OrderByVectorDistance</c> operator deliberately. A search with no
+    ///     declared index, on a member that is not the declared one, or with a query vector of another
+    ///     length is refused by NAME before any SQL runs — and two copies of those refusals would be two
+    ///     chances for one path to stop making them.
+    /// </remarks>
+    internal static VectorIndex ResolveIndex<T>(
+        IQuerySession session, Expression<Func<T, object?>> member, ReadOnlyMemory<float> query) where T : notnull
+    {
+        ArgumentNullException.ThrowIfNull(member);
+
+        // The concrete session, as every other extension over this seam does: the provider registry
+        // and the store options are internal, and this needs the mapping's vector declarations.
+        var mapping = ((QuerySession)session).Providers.GetProvider(typeof(T)).Mapping;
+        var chain = ChainOf(member);
+        var name = string.Join(".", chain.Select(x => x.Name));
+
+        var index = mapping.VectorIndexes.FirstOrDefault(x => x.MemberName == name)
+                    ?? throw new InvalidOperationException(
+                        mapping.VectorIndexes.Count == 0
+                            ? $"'{typeof(T).Name}' declares no vector index, so there is nothing to search. "
+                              + $"Declare one with Schema.For<{typeof(T).Name}>().VectorIndex(x => x.{name}, dimensions)."
+                            : $"'{typeof(T).Name}.{name}' is not a declared vector member. Declared: "
+                              + string.Join(", ", mapping.VectorIndexes.Select(x => x.MemberName)) + ".");
+
+        if (query.Length != index.Dimensions)
+        {
+            throw new ArgumentException(
+                $"The query vector has {query.Length} dimensions but '{typeof(T).Name}.{index.MemberName}' "
+                + $"was declared with {index.Dimensions}.", nameof(query));
+        }
+
+        return index;
+    }
+
     internal static string ToVectorLiteral(ReadOnlySpan<float> vector)
     {
         var builder = new System.Text.StringBuilder(vector.Length * 8 + 2);

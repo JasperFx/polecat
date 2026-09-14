@@ -10,7 +10,7 @@ internal class Statement
     public string FromTable { get; set; } = "";
     public string SelectColumns { get; set; } = "data";
     public List<ISqlFragment> Wheres { get; } = [];
-    public List<(string Locator, bool Descending)> OrderBys { get; } = [];
+    public List<OrderByClause> OrderBys { get; } = [];
     public int? Limit { get; set; }
     public int? Offset { get; set; }
     public bool IsExistsWrapper { get; set; }
@@ -168,7 +168,19 @@ internal class Statement
             return "(SELECT NULL)";
         }
 
-        return string.Join(", ", OrderBys.Select(o => o.Descending ? $"{o.Locator} DESC" : o.Locator));
+        // ⚠️ A window function's ordering is rendered into a STRING, so a parameterised term cannot
+        // go here -- there is nowhere to bind it. Refused by name rather than rendered as the fragment's
+        // ToString(), which would be valid-looking SQL naming a parameter that was never added.
+        var parameterised = OrderBys.FirstOrDefault(o => o.Literal is null);
+        if (parameterised is not null)
+        {
+            throw new NotSupportedException(
+                "An ordering that binds a parameter (a vector distance, say) cannot be used inside the "
+                + "window function this query needs. Order by a literal key, or run the search through "
+                + "VectorSearchAsync.");
+        }
+
+        return string.Join(", ", OrderBys.Select(o => o.Descending ? $"{o.Literal} DESC" : o.Literal));
     }
 
     private void AppendWheres(ICommandBuilder builder)
@@ -188,8 +200,7 @@ internal class Statement
         for (var i = 0; i < OrderBys.Count; i++)
         {
             if (i > 0) builder.Append(", ");
-            builder.Append(OrderBys[i].Locator);
-            if (OrderBys[i].Descending) builder.Append(" DESC");
+            OrderBys[i].Apply(builder);
         }
     }
 

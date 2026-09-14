@@ -32,6 +32,13 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
     JasperFx.Events.Documents.IDocumentQueryExecutor
 {
     private readonly QuerySession _session;
+
+    /// <summary>
+    ///     The session this queryable was built from, so an operator that has to validate against the
+    ///     document's MAPPING before it can build its SQL — <c>OrderByVectorDistance</c> is the one —
+    ///     can reach it. Internal: the provider is an implementation detail and this does not widen it.
+    /// </summary>
+    internal QuerySession Session => _session;
     private readonly DocumentProviderRegistry _providers;
     private readonly DocumentTableEnsurer _tableEnsurer;
 
@@ -1203,8 +1210,7 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
                 // Reverse the ordering and take 1
                 for (var i = 0; i < statement.OrderBys.Count; i++)
                 {
-                    var (locator, desc) = statement.OrderBys[i];
-                    statement.OrderBys[i] = (locator, !desc);
+                    statement.OrderBys[i] = statement.OrderBys[i].Reversed();
                 }
                 statement.Limit = 1;
                 break;

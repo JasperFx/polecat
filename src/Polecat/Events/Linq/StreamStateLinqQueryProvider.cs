@@ -108,7 +108,11 @@ internal class StreamStateLinqQueryProvider : IPolecatAsyncQueryProvider,
         // refuses a column named twice in ORDER BY. Deduping by locator (first occurrence wins) is
         // semantically identity: ordering twice by the same column cannot change the order.
         var seenOrderBys = new HashSet<string>();
-        parser.Statement.OrderBys.RemoveAll(orderBy => !seenOrderBys.Add(orderBy.Item1));
+        // Keyed on the literal text, which every ordering here has: this provider orders by stream
+        // columns, never by a parameterised key. A fragment ordering would dedupe to its identity
+        // instead, which is why the key is the literal rather than ToString().
+        parser.Statement.OrderBys.RemoveAll(
+            orderBy => orderBy.Literal is not null && !seenOrderBys.Add(orderBy.Literal));
 
         var isScalar = parser.ValueMode is SingleValueMode.Count or SingleValueMode.LongCount
             or SingleValueMode.Any;
@@ -210,8 +214,7 @@ internal class StreamStateLinqQueryProvider : IPolecatAsyncQueryProvider,
             case SingleValueMode.LastOrDefault:
                 for (var i = 0; i < statement.OrderBys.Count; i++)
                 {
-                    var (locator, desc) = statement.OrderBys[i];
-                    statement.OrderBys[i] = (locator, !desc);
+                    statement.OrderBys[i] = statement.OrderBys[i].Reversed();
                 }
 
                 statement.Limit = 1;
