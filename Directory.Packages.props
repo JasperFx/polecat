@@ -450,7 +450,10 @@
              Also in 2.68.0 and NOT consumed here: jasperfx#815/#816 (RegisteredShardNames() — the
              generic IEventStore<TOperations, TQuerySession> already satisfies it from AllShards(), so
              Polecat needed no change) and jasperfx#811/#812 + #813/#814, the store-neutral vector
-             contracts and their Microsoft.Extensions.AI adapter, which Polecat does not implement.
+             contracts and their Microsoft.Extensions.AI adapter. Polecat took up the contracts later:
+             gh-605's vector search speaks DistanceFunction and VectorMatch<T>, and gh-612's hybrid
+             search builds on it. The adapter stays an application-side package Polecat does not
+             reference — Polecat never calls an embedding model itself.
              Note 2.67.0 arrived in #531 without an entry here; its contents are jasperfx#800-#808
              (compaction refusal naming, the event-query tags option, ANDed tag filters, partial
              EventModelDescriptor round-trip).
