@@ -147,7 +147,14 @@ public class PolecatDocumentComplianceFixture : DocumentStorageComplianceFixture
         // built here would be a different object from the one the store ends up using. The generic
         // dance is what the shared declaration costs for carrying a member NAME -- it holds a Type,
         // so it has no type parameter to write a lambda against.
-        DeclareSearchIndexes(options, config);
+        //
+        // ⚠️ Skipped entirely on a server without the VECTOR type. The declaration is not inert there:
+        // it is what makes the ensurer emit a computed VECTOR(n) column, so declaring it would fail
+        // the SCHEMA MIGRATION for every suite sharing this fixture, not just the search facts.
+        if (ConnectionSource.SupportsVector)
+        {
+            DeclareSearchIndexes(options, config);
+        }
 
         _store = new DocumentStore(options);
 
@@ -187,17 +194,39 @@ public class PolecatDocumentComplianceFixture : DocumentStorageComplianceFixture
     ///     <see cref="IDocumentReadOperations.Search" />.
     /// </summary>
     /// <remarks>
-    ///     Polecat's vector search is an EXACT scan over the persisted computed <c>VECTOR(n)</c>
-    ///     column rather than an approximate index, so the filter facts jasperfx#843 warns
-    ///     approximate stores about cost nothing here: there is no candidate bound for a filtered row
-    ///     to fall outside of. Passing those says nothing about a store where they are hard.
+    ///     <para>
+    ///         ⚠️ <b>Gated on the SERVER rather than hard-coded true, because the CI matrix runs a lane
+    ///         where this capability does not exist.</b> The <c>VECTOR</c> type arrived in SQL Server
+    ///         2025; the `edge` lane is Azure SQL Edge and has neither it nor the native <c>json</c>
+    ///         type. Flipped unconditionally, all eleven facts fail there during fixture setup rather
+    ///         than at the assertion -- <c>ApplyAllConfiguredChangesToDatabaseAsync</c> is what raises
+    ///         "Type VECTOR is not a defined system type", so the error is about DDL and names neither
+    ///         the lane nor the capability.
+    ///     </para>
+    ///     <para>
+    ///         A capability flag reading false is exactly the right answer for a server that cannot do
+    ///         the thing: the suite SKIPS, which is a true statement about that lane, where a failure
+    ///         would be a false one about Polecat.
+    ///     </para>
+    ///     <para>
+    ///         Polecat's vector search is an EXACT scan over the persisted computed <c>VECTOR(n)</c>
+    ///         column rather than an approximate index, so the filter facts jasperfx#843 warns
+    ///         approximate stores about cost nothing here: there is no candidate bound for a filtered
+    ///         row to fall outside of. Passing those says nothing about a store where they are hard.
+    ///     </para>
     /// </remarks>
-    public override bool SupportsVectorSearch => true;
+    public override bool SupportsVectorSearch => ConnectionSource.SupportsVector;
 
     /// <summary>
     ///     Hybrid search — the full-text leg and the vector leg fused by reciprocal rank fusion.
     /// </summary>
-    public override bool SupportsHybridSearch => true;
+    /// <remarks>
+    ///     Gated on the same detection as <see cref="SupportsVectorSearch" /> and not on the full-text
+    ///     half, which needs nothing from the server: Polecat tokenizes its own full-text index rather
+    ///     than using SQL Server's full-text engine. A fused search still needs both legs, so the
+    ///     vector half is what decides this.
+    /// </remarks>
+    public override bool SupportsHybridSearch => ConnectionSource.SupportsVector;
 
     public override IDocumentSessionFactory Sessions =>
         _store ?? throw new InvalidOperationException("The store has not been configured yet.");
