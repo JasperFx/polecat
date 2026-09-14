@@ -1,7 +1,9 @@
+using System.Linq.Expressions;
 using JasperFx;
 using JasperFx.Events.ComplianceTests;
 using JasperFx.Events.Documents;
 using Microsoft.Data.SqlClient;
+using Polecat.Storage;
 using Polecat.TestUtils;
 
 namespace Polecat.Tests.Compliance;
@@ -130,6 +132,23 @@ public class PolecatDocumentComplianceFixture : DocumentStorageComplianceFixture
             }
         }
 
+        // jasperfx#842 / #843: the vector and full-text indexes DocumentSearchCompliance declares.
+        //
+        // ⚠️ Neither is optional and neither degrades gracefully. A vector search reads a DECLARED
+        // index -- on Polecat the declaration is what creates the persisted computed VECTOR(n)
+        // column the ORDER BY reads -- so a fixture that flipped SupportsVectorSearch and dropped
+        // this fails every fact in the suite rather than skipping them. Same for the full-text
+        // index and the text leg of a hybrid search.
+        //
+        // Through Schema.For<T>() by reflection rather than onto a DocumentMapping directly, and
+        // that is the point rather than a shortcut around a missing non-generic route: the
+        // declarations only reach a mapping through DocumentProviderRegistry, which reads them off
+        // the expression objects Schema.For<T>() parks in SchemaConfiguration.Expressions. A mapping
+        // built here would be a different object from the one the store ends up using. The generic
+        // dance is what the shared declaration costs for carrying a member NAME -- it holds a Type,
+        // so it has no type parameter to write a lambda against.
+        DeclareSearchIndexes(options, config);
+
         _store = new DocumentStore(options);
 
         // Polecat applies schema changes explicitly rather than lazily, and the suite's very first
@@ -162,6 +181,24 @@ public class PolecatDocumentComplianceFixture : DocumentStorageComplianceFixture
     /// </summary>
     public override bool SupportsOptimisticConcurrency => true;
 
+    /// <summary>
+    ///     #633 / jasperfx#842: Polecat implements
+    ///     <see cref="JasperFx.Events.Vectors.IDocumentSearchOperations" />, reached through
+    ///     <see cref="IDocumentReadOperations.Search" />.
+    /// </summary>
+    /// <remarks>
+    ///     Polecat's vector search is an EXACT scan over the persisted computed <c>VECTOR(n)</c>
+    ///     column rather than an approximate index, so the filter facts jasperfx#843 warns
+    ///     approximate stores about cost nothing here: there is no candidate bound for a filtered row
+    ///     to fall outside of. Passing those says nothing about a store where they are hard.
+    /// </remarks>
+    public override bool SupportsVectorSearch => true;
+
+    /// <summary>
+    ///     Hybrid search — the full-text leg and the vector leg fused by reciprocal rank fusion.
+    /// </summary>
+    public override bool SupportsHybridSearch => true;
+
     public override IDocumentSessionFactory Sessions =>
         _store ?? throw new InvalidOperationException("The store has not been configured yet.");
 
@@ -178,4 +215,77 @@ public class PolecatDocumentComplianceFixture : DocumentStorageComplianceFixture
         _store = null;
         return default;
     }
+
+    /// <summary>
+    ///     Replay the suite's declared vector and full-text indexes onto the store's own fluent
+    ///     configuration.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         The shared declarations carry a <see cref="Type" /> and a member NAME, because a record
+    ///         has no type parameter to write <c>x =&gt; x.Embedding</c> against. Polecat's DSL takes
+    ///         the lambda, so the name is turned back into one here and the call is made through
+    ///         <c>Schema.For&lt;T&gt;()</c> by reflection.
+    ///     </para>
+    ///     <para>
+    ///         ⚠️ <b>The metric travels with the declaration.</b> An index built for one distance does
+    ///         not answer another one well, and a fixture that dropped
+    ///         <see cref="VectorIndexDeclaration.Distance" /> would be declaring something other than
+    ///         what the suite asked for.
+    ///     </para>
+    /// </remarks>
+    private static void DeclareSearchIndexes(StoreOptions options, DocumentComplianceConfig config)
+    {
+        foreach (var declaration in config.VectorIndexes)
+        {
+            var expression = ExpressionFor(declaration.DocumentType, declaration.MemberName);
+
+            Invoke(options, declaration.DocumentType, "VectorIndex",
+                [expression, declaration.Dimensions, declaration.Distance]);
+        }
+
+        foreach (var declaration in config.FullTextIndexes)
+        {
+            // The DSL is params Expression<Func<T, object?>>[], so the array is ONE argument.
+            var expressions = Array.CreateInstance(
+                typeof(Expression<>).MakeGenericType(
+                    typeof(Func<,>).MakeGenericType(declaration.DocumentType, typeof(object))),
+                declaration.MemberNames.Length);
+
+            for (var i = 0; i < declaration.MemberNames.Length; i++)
+            {
+                expressions.SetValue(
+                    ExpressionFor(declaration.DocumentType, declaration.MemberNames[i]), i);
+            }
+
+            Invoke(options, declaration.DocumentType, "FullTextIndex", [expressions]);
+        }
+    }
+
+    private static void Invoke(StoreOptions options, Type documentType, string method, object?[] arguments)
+    {
+        var expression = typeof(SchemaConfiguration)
+            .GetMethod(nameof(SchemaConfiguration.For))!
+            .MakeGenericMethod(documentType)
+            .Invoke(options.Schema, null)!;
+
+        expression.GetType().GetMethod(method)!.Invoke(expression, arguments);
+    }
+
+    /// <summary>
+    ///     <c>x =&gt; (object)x.Member</c>, built from a member name.
+    /// </summary>
+    private static LambdaExpression ExpressionFor(Type documentType, string memberName)
+    {
+        var parameter = Expression.Parameter(documentType, "x");
+
+        // Convert to object because the DSL's parameter is Expression<Func<T, object?>> — a value
+        // type member would not otherwise be assignable, and the store's member resolution unwraps
+        // the conversion.
+        var body = Expression.Convert(Expression.PropertyOrField(parameter, memberName), typeof(object));
+
+        return Expression.Lambda(
+            typeof(Func<,>).MakeGenericType(documentType, typeof(object)), body, parameter);
+    }
+
 }

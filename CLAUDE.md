@@ -138,7 +138,7 @@ Event sourcing behavior that Polecat and Marten both have belongs in
 `JasperFx.Events.ComplianceTests` (source-only package; the suites compile into `Polecat.Tests` so
 JasperFx's aggregate source generator binds Polecat's session types). Enroll a suite with an empty
 subclass in `Compliance/polecat_event_store_compliance.cs`, implement whatever seam it needs on
-`PolecatComplianceFixture`, and delete the Polecat-local copy. **55 suites are enrolled across
+`PolecatComplianceFixture`, and delete the Polecat-local copy. **56 suites are enrolled across
 eighteen waves** — the enrollment files are `Compliance/polecat_event_store_compliance*.cs`, mostly
 one per wave, and the fixture's `Supports…` overrides are the map of what Polecat has opted into.
 
