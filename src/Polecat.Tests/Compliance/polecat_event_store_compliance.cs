@@ -86,3 +86,31 @@ public class polecat_numeric_revision_compliance
 
 public class polecat_guid_optimistic_concurrency_compliance
     : GuidOptimisticConcurrencyCompliance<PolecatDocumentComplianceFixture>;
+
+/*
+ * jasperfx#842 / #843 -- the shared SEARCH suite, and the first time those facts have run against
+ * Polecat's engine rather than against a design argument. Polecat implements
+ * IDocumentSearchOperations already (#633), so this is enrollment rather than a feature.
+ *
+ * Both halves are enrolled. The fixture flips SupportsVectorSearch and SupportsHybridSearch, and it
+ * has to replay DocumentComplianceConfig.VectorIndexes and FullTextIndexes as well -- a vector
+ * search reads a DECLARED index, which on Polecat is what creates the persisted computed VECTOR(n)
+ * column the ORDER BY reads, so a fixture that flipped the flags and dropped the replay fails every
+ * fact rather than skipping them.
+ *
+ * ⚠️ The filter facts (jasperfx#843) are the cheap ones here and that is worth saying out loud.
+ * They assert that a predicate excluding every globally-nearest row still returns the full limit,
+ * which an exact scan gives for free and an approximate index does not -- pgvector applies the
+ * predicate after an index scan bounded by hnsw.ef_search. Polecat scans the computed column
+ * exactly, so there is no candidate bound for a filtered row to fall outside of. Passing these says
+ * nothing about Marten, where they are the hard ones.
+ *
+ * The suite is deliberately NOT a relevance suite. What it holds is nearest-first, that the score is
+ * a DISTANCE on the vector side and the OPPOSITE on the hybrid side, that the store's implicit
+ * predicates (tenancy, soft delete, hierarchy) apply as they do to Query<T>(), and that a filter
+ * narrows BEFORE the limit. Polecat's own tests own the tokenizer and the BM25 constants, which
+ * nothing shared could state.
+ */
+
+public class polecat_document_search_compliance
+    : DocumentSearchCompliance<PolecatDocumentComplianceFixture>;

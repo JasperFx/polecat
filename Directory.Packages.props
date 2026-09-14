@@ -550,15 +550,31 @@
              deleted in favour of IValidatedProjection<StoreOptions>.
              ⚠️ The same fix means a hand-written IProjection in a Polecat APPLICATION that
              implemented IValidatedProjection<StoreOptions> starts being asked on this bump, which can
-             surface configuration errors that were silently passing before. -->
-        <PackageVersion Include="JasperFx" Version="2.70.0" />
-        <PackageVersion Include="JasperFx.Events" Version="2.70.0" />
+             surface configuration errors that were silently passing before.
+
+             JasperFx 2.71.0 (from 2.70.0, spanning 2.70.1). Three things Polecat consumes:
+             (a) DocumentSearchCompliance, the shared search suite (jasperfx#842/#843), enrolled in
+             the document compliance file. Polecat already implements IDocumentSearchOperations, so
+             this is enrollment rather than a feature — and it is the first time those facts have run
+             against Polecat's engine rather than against a design argument.
+             (b) jasperfx#847 — ProjectionExecution.buildBatchAsync disposed a null batch in its
+             catch block, so a NullReferenceException REPLACED the projection's real exception on
+             every batch-construction failure. Anything debugging a projection failure on 2.70.0 was
+             chasing a masked error.
+             (c) jasperfx#795 — BadLinqExpressionException lifted into the JasperFx namespace, so a
+             store-agnostic caller can catch "I cannot answer this correctly" without naming a store;
+             and jasperfx#790, the daemon race in the shared compliance suites. The race is the one
+             polecat#556 records — VisibleAtCommit should be True but was null, roughly one failure in
+             a thousand tests and never in isolation — so a clean full-suite run on this bump is what
+             confirms it, not the bump itself. -->
+        <PackageVersion Include="JasperFx" Version="2.71.1" />
+        <PackageVersion Include="JasperFx.Events" Version="2.71.1" />
         <!--
              The shared cross-store event sourcing compliance suites. Source-only package: the
              suites compile inside Polecat.Tests so JasperFx's aggregate source generator binds
              Polecat's own session types.
         -->
-        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="2.70.0" />
+        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="2.71.1" />
         <!-- Pin the sibling JasperFx packages for parity with Marten 9's matrix
              even though Polecat doesn't currently reference them directly —
              keeps the lockstep matrix coherent when transitive resolution
@@ -566,7 +582,7 @@
              RuntimeCompiler 5.x line is the active continuation of the 4.x
              lineage; do not pin against the parallel stale 2.0.x series. -->
         <PackageVersion Include="JasperFx.RuntimeCompiler" Version="5.0.0" />
-        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.70.0" />
+        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.71.1" />
         <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
@@ -730,7 +746,7 @@
         <PackageVersion Include="Vogen" Version="7.0.0" />
 
         <!-- Source generators (matched to JasperFx.Events above) -->
-        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.70.0" />
+        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.71.1" />
 
         <!-- Build automation -->
         <PackageVersion Include="Nuke.Common" Version="9.0.4" />
