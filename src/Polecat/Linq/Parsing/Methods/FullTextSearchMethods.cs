@@ -145,6 +145,13 @@ internal class FullTextFilter: ISqlFragment
 
         // A phrase is the terms in order and adjacent, which is what the stored position is for: join
         // the token table to itself once per following term, each pinned to pos + 1 of the one before.
+        //
+        // ⚠️ Every self-join carries the tenant too (#625). Pinning only f0 to the session's tenant --
+        // which the WHERE below does -- leaves f1..fn free to match ANY tenant's rows, because a
+        // document id is only unique per tenant under conjoined tenancy. Two tenants holding doc 1
+        // with bodies "quick fox" and "lazy brown" then match the phrase "quick brown" for either of
+        // them: f0 is one tenant's "quick" at pos 1 and f1 is the other's "brown" at pos 2. The
+        // caller gets back a document that does not contain the phrase it asked for, with no error.
         if (clause.Phrase)
         {
             for (var i = 1; i < clause.Terms.Length; i++)
@@ -152,6 +159,11 @@ internal class FullTextFilter: ISqlFragment
                 builder.Append(" INNER JOIN ");
                 builder.Append(ftTable);
                 builder.Append($" f{i} ON f{i}.doc_id = f0.doc_id AND f{i}.member = f0.member AND f{i}.pos = f0.pos + {i}");
+
+                if (conjoined)
+                {
+                    builder.Append($" AND f{i}.tenant_id = f0.tenant_id");
+                }
             }
         }
 

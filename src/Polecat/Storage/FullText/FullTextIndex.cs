@@ -150,6 +150,7 @@ public class FullTextIndex
         var triggerName = SqlEscaping.QualifiedName(mapping.DatabaseSchemaName, "tr_" + TableNameFor(mapping));
         var idType = IdColumnType(mapping);
         var tenant = TenantColumn(mapping);
+        var deletedTenant = DeletedTenantPredicate(mapping);
 
         var statements = new List<string>
         {
@@ -187,7 +188,7 @@ public class FullTextIndex
              AS
              BEGIN
                  SET NOCOUNT ON;
-                 DELETE ft FROM {ftTable} ft INNER JOIN deleted d ON ft.doc_id = d.id;
+                 DELETE ft FROM {ftTable} ft INNER JOIN deleted d ON ft.doc_id = d.id{deletedTenant};
                  INSERT INTO {ftTable} (doc_id, tenant_id, member, term, pos)
              {legs}
              END
@@ -202,7 +203,8 @@ public class FullTextIndex
              FROM {docTable} i
              {x.TokenizeClause("i")}
              AND NOT EXISTS (SELECT 1 FROM {ftTable} ft
-                             WHERE ft.doc_id = i.id AND ft.member = {SqlEscaping.Literal(x.MemberName)});
+                             WHERE ft.doc_id = i.id AND ft.tenant_id = {tenant}
+                               AND ft.member = {SqlEscaping.Literal(x.MemberName)});
              """));
 
         return statements.ToArray();
@@ -226,6 +228,30 @@ public class FullTextIndex
     /// </summary>
     private static string TenantColumn(DocumentMapping mapping) =>
         mapping.TenancyStyle == TenancyStyle.Conjoined ? "i.tenant_id" : "'*DEFAULT*'";
+
+    /// <summary>
+    ///     The extra join term the maintenance trigger's DELETE needs so it removes only the written
+    ///     tenant's tokens (#625).
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         ⚠️ <b>Without it, an ordinary write in one tenant silently unindexes another tenant's
+    ///         document.</b> A document id is only unique PER TENANT under conjoined tenancy, so
+    ///         <c>ft.doc_id = d.id</c> alone matches every tenant holding that id: the trigger deletes
+    ///         all of their token rows and then re-inserts from <c>inserted</c>, which carries only the
+    ///         rows actually written. The other tenant's document disappears from every full-text path
+    ///         with no error, and stays gone until it is next written.
+    ///     </para>
+    ///     <para>
+    ///         Empty for a single-tenant store, and that is required rather than an optimisation:
+    ///         #234 left the <c>tenant_id</c> column off non-conjoined document tables entirely, so
+    ///         <c>d.tenant_id</c> would not resolve. Those tables store the <c>'*DEFAULT*'</c> literal
+    ///         in the token table, where an id is unique on its own, so there is nothing to
+    ///         disambiguate.
+    ///     </para>
+    /// </remarks>
+    private static string DeletedTenantPredicate(DocumentMapping mapping) =>
+        mapping.TenancyStyle == TenancyStyle.Conjoined ? " AND ft.tenant_id = d.tenant_id" : "";
 
     /// <summary>
     ///     <c>CROSS APPLY STRING_SPLIT(...)</c> over the member's text, lowercased and with
