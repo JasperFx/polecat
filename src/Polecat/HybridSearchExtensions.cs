@@ -28,24 +28,35 @@ public sealed record HybridSearchOptions(
     int K = 60,
     int? CandidateDepth = null,
     DistanceFunction? Distance = null,
-    HybridTextStyle TextStyle = HybridTextStyle.Plain);
+    HybridTextStyle TextStyle = HybridTextStyle.PlainText);
 
 /// <summary>
 ///     Which full-text operator the text leg uses.
 /// </summary>
 /// <remarks>
 ///     <b>Both members are safe to hand a search box's raw contents, and that is why the list is
-///     short.</b> Polecat's other full-text reach — addressing a specific member, or a syntax with
+///     short.</b> <see cref="PlainText" /> is named as Marten names it so the same call compiles
+///     against either store (gh-627); <see cref="Phrase" /> is Polecat's own. Polecat's other full-text reach — addressing a specific member, or a syntax with
 ///     operators in it — stays on <c>Query&lt;T&gt;()</c>, where a malformed query fails the one
 ///     thing the caller asked for rather than failing both legs of a fused search. Fisher draws the
 ///     same line for the same reason.
 /// </remarks>
 public enum HybridTextStyle
 {
-    /// <summary>Every term must appear, in any order. The sensible default for a search box.</summary>
-    Plain,
+    /// <summary>
+    ///     Every term must appear, in any order. The sensible default for a search box, and the one
+    ///     member guaranteed to mean the same thing on every Critter Stack store.
+    /// </summary>
+    PlainText,
 
-    /// <summary>The terms adjacent and in order.</summary>
+    /// <summary>
+    ///     The terms adjacent and in order.
+    /// </summary>
+    /// <remarks>
+    ///     <b>Polecat-specific.</b> Marten's enum has <c>WebStyle</c> in this position instead, which
+    ///     Polecat has no operator for yet, and Marten has no phrase style. Code that must read the
+    ///     same against both stores should stay on <see cref="PlainText" /> (gh-627).
+    /// </remarks>
     Phrase
 }
 
@@ -194,7 +205,7 @@ public static class HybridSearchExtensions
     }
 
     /// <summary>
-    ///     The text leg, ordered. <see cref="HybridTextStyle.Plain" /> goes through
+    ///     The text leg, ordered. <see cref="HybridTextStyle.PlainText" /> goes through
     ///     <c>FullTextSearchAsync</c> so the ordering is BM25 relevance; a phrase has no useful
     ///     ranking of its own — a document either contains the phrase or does not — so it reads
     ///     through the LINQ operator and takes source order.
