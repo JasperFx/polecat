@@ -138,6 +138,35 @@ A search whose text has no terms — empty, whitespace, or punctuation alone —
 rather than all of them. A search box the user has not typed into should not return the entire
 table, and Marten's `plainto_tsquery('')` behaves the same way.
 
+## Conjoined multi-tenancy
+
+Every full-text path is tenant-scoped, and so is the index behind it. A document id is only unique
+*per tenant* under conjoined tenancy — the document table puts `tenant_id` in its primary key —
+so the token table carries the tenant too, and each of `PlainTextSearch`, `PhraseSearch`,
+`WebStyleSearch`, `FullTextSearchWithScoresAsync` and the text leg of a hybrid search sees only
+the session tenant's documents.
+
+The token table is maintained by a trigger and backfilled when the index is declared, and both
+are keyed on `(doc_id, tenant_id)` rather than on `doc_id` alone. They were not always, and
+[#625](https://github.com/JasperFx/polecat/issues/625) had three consequences worth knowing if
+you are upgrading across it:
+
+* `PhraseSearch` could assemble a phrase from **two tenants'** documents, returning a document that
+  does not contain the phrase.
+* An ordinary write in one tenant **deleted another tenant's tokens**, dropping that document
+  out of every full-text path until it was next written.
+* Declaring the index over existing rows could skip a tenant whose id was already indexed by
+  another.
+
+::: tip
+Upgrading repairs itself. The trigger is `CREATE OR ALTER` and the backfill runs whenever
+storage is ensured, so the corrected trigger replaces the old one and the corrected backfill
+restores the tokens the old one destroyed. Nothing has to be rebuilt by hand.
+:::
+
+A single-tenant store is unaffected — its document table has no `tenant_id` column at all, and
+an id is a complete key on its own.
+
 ## Combining with vector search
 
 Full-text search and [vector search](/documents/querying/vector-search) answer different questions:
