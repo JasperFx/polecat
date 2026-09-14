@@ -371,8 +371,7 @@ internal class EventLinqQueryProvider : IPolecatAsyncQueryProvider
             case SingleValueMode.LastOrDefault:
                 for (var i = 0; i < statement.OrderBys.Count; i++)
                 {
-                    var (locator, desc) = statement.OrderBys[i];
-                    statement.OrderBys[i] = (locator, !desc);
+                    statement.OrderBys[i] = statement.OrderBys[i].Reversed();
                 }
                 statement.Limit = 1;
                 break;

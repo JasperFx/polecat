@@ -302,6 +302,10 @@ internal class LinqQueryParser : ExpressionVisitor
             case "AnyTenant" when node.Method.DeclaringType == typeof(LinqExtensions):
                 IsAnyTenant = true;
                 break;
+            case "OrderedByVectorDistance" when node.Method.DeclaringType == typeof(LinqExtensions):
+                HandleOrderByVectorDistance(node);
+                break;
+
             case "TenantIsOneOf" when node.Method.DeclaringType == typeof(LinqExtensions):
                 HandleTenantIsOneOf(node);
                 break;
@@ -604,6 +608,27 @@ internal class LinqQueryParser : ExpressionVisitor
 
             AggregationMember = _memberFactory.ResolveMember(memberExpr);
         }
+    }
+
+    /// <summary>
+    ///     A vector ordering arrives already built — see <c>LinqExtensions.OrderByVectorDistance</c> for
+    ///     why the tree carries the clause rather than the arguments that made it.
+    /// </summary>
+    /// <remarks>
+    ///     It REPLACES any earlier ordering rather than appending, which is what
+    ///     <c>OrderBy</c>-then-<c>OrderBy</c> means in LINQ: a second ordering key is a
+    ///     <c>ThenBy</c>, and this operator has no ThenBy form.
+    /// </remarks>
+    private void HandleOrderByVectorDistance(MethodCallExpression node)
+    {
+        if (WhereClauseParser.ExtractValue(node.Arguments[1]) is not OrderByClause ordering)
+        {
+            throw new NotSupportedException(
+                "OrderedByVectorDistance expects a prepared ordering; call OrderByVectorDistance(...).");
+        }
+
+        Statement.OrderBys.Clear();
+        Statement.OrderBys.Add(ordering);
     }
 
     private void HandleTenantIsOneOf(MethodCallExpression node)
