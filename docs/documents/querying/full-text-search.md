@@ -25,6 +25,28 @@ var exact = await session.Query<Article>()
 
 Both names mirror Marten's, so the same query reads the same against either store.
 
+`WebStyleSearch` takes a search box's raw contents, so you can hand it whatever the user typed:
+
+```csharp
+var hits = await session.Query<Article>()
+    .Where(x => x.Body.WebStyleSearch("\"quick brown\" fox -turtle"))
+    .ToListAsync();
+```
+
+- bare words are **required**
+- `"quoted text"` is a **phrase**
+- a leading `-` **excludes**
+- a bare `or` separates **alternatives**
+
+It mirrors Marten's operator, which uses PostgreSQL's `websearch_to_tsquery`. Two differences are
+worth knowing: Polecat does not stem (see below), and `or` splits at the top level — `a b or c` is
+`(a AND b) OR (c)`, where PostgreSQL binds it as `a AND (b OR c)`. The simpler rule is the one that
+can be explained to someone typing into a box; if you need real boolean precedence, compose
+`PlainTextSearch` and `PhraseSearch` with C#'s own `&&` and `||`, where the precedence is the
+language's rather than ours.
+
+A query of nothing but exclusions matches nothing — "not this" is not a search.
+
 ## This is Polecat's own index, not SQL Server's full-text engine
 
 Worth knowing up front, because it sets expectations that nothing else will.

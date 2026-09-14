@@ -28,25 +28,41 @@ public sealed record HybridSearchOptions(
     int K = 60,
     int? CandidateDepth = null,
     DistanceFunction? Distance = null,
-    HybridTextStyle TextStyle = HybridTextStyle.Plain);
+    HybridTextStyle TextStyle = HybridTextStyle.PlainText);
 
 /// <summary>
 ///     Which full-text operator the text leg uses.
 /// </summary>
 /// <remarks>
 ///     <b>Both members are safe to hand a search box's raw contents, and that is why the list is
-///     short.</b> Polecat's other full-text reach — addressing a specific member, or a syntax with
+///     short.</b> <see cref="PlainText" /> is named as Marten names it so the same call compiles
+///     against either store (gh-627); <see cref="Phrase" /> is Polecat's own. Polecat's other full-text reach — addressing a specific member, or a syntax with
 ///     operators in it — stays on <c>Query&lt;T&gt;()</c>, where a malformed query fails the one
 ///     thing the caller asked for rather than failing both legs of a fused search. Fisher draws the
 ///     same line for the same reason.
 /// </remarks>
 public enum HybridTextStyle
 {
-    /// <summary>Every term must appear, in any order. The sensible default for a search box.</summary>
-    Plain,
+    /// <summary>
+    ///     Every term must appear, in any order. The sensible default for a search box, and the one
+    ///     member guaranteed to mean the same thing on every Critter Stack store.
+    /// </summary>
+    PlainText,
 
-    /// <summary>The terms adjacent and in order.</summary>
-    Phrase
+    /// <summary>
+    ///     The terms adjacent and in order.
+    /// </summary>
+    /// <remarks>
+    ///     <b>Polecat-specific.</b> Marten has no phrase style, so code that must read the same
+    ///     against both stores should stay on <see cref="PlainText" /> or <see cref="WebStyle" />.
+    /// </remarks>
+    Phrase,
+
+    /// <summary>
+    ///     A search box's raw contents: bare words required, <c>"quoted text"</c> a phrase, a leading
+    ///     <c>-</c> excluding, and a bare <c>or</c> separating alternatives.
+    /// </summary>
+    WebStyle
 }
 
 /// <summary>A document and its fused score. Larger is better.</summary>
@@ -194,16 +210,16 @@ public static class HybridSearchExtensions
     }
 
     /// <summary>
-    ///     The text leg, ordered. <see cref="HybridTextStyle.Plain" /> goes through
-    ///     <c>FullTextSearchAsync</c> so the ordering is BM25 relevance; a phrase has no useful
-    ///     ranking of its own — a document either contains the phrase or does not — so it reads
-    ///     through the LINQ operator and takes source order.
+    ///     The text leg, ordered. <see cref="HybridTextStyle.PlainText" /> goes through
+    ///     <c>FullTextSearchAsync</c> so the ordering is BM25 relevance; the other two styles have no
+    ///     useful ranking of their own — a document either satisfies the phrase or the web-style
+    ///     query or it does not — so they read through the LINQ operator and take source order.
     /// </summary>
     private static async Task<IReadOnlyList<T>> TextLegAsync<T>(
         IQuerySession session, string textMemberName, string text, HybridTextStyle style, int depth,
         CancellationToken token) where T : notnull
     {
-        if (style == HybridTextStyle.Phrase)
+        if (style is HybridTextStyle.Phrase or HybridTextStyle.WebStyle)
         {
             // x => x.<member>.PhraseSearch(text), built rather than written, because the member is
             // only known by name here. The parser sees the same MethodCallExpression it would from a
@@ -217,7 +233,9 @@ public static class HybridSearchExtensions
 
             var call = Expression.Call(
                 typeof(LinqExtensions),
-                nameof(LinqExtensions.PhraseSearch),
+                style == HybridTextStyle.WebStyle
+                    ? nameof(LinqExtensions.WebStyleSearch)
+                    : nameof(LinqExtensions.PhraseSearch),
                 null,
                 access,
                 Expression.Constant(text));

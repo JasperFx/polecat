@@ -108,6 +108,44 @@ public class hybrid_search_tests: OneOffConfigurationsContext
     }
 
     [Fact]
+    public async Task the_portable_default_is_plain_text()
+    {
+        // gh-627: the member is PlainText, spelled as Marten spells it, so the same call compiles
+        // against either store. It is also the default, so a caller who names no style gets the
+        // portable one.
+        new HybridSearchOptions().TextStyle.ShouldBe(HybridTextStyle.PlainText);
+
+        var store = await aStoreWithPassagesAsync();
+        await using var session = store.QuerySession();
+
+        var explicitly = await session.HybridSearchAsync<Passage>(
+            x => x.Embedding, "fox", new float[] { 0, 0, 1 },
+            options: new HybridSearchOptions(TextStyle: HybridTextStyle.PlainText),
+            token: TestContext.Current.CancellationToken);
+
+        explicitly[0].Id.ShouldBe(BothLegs);
+    }
+
+    [Fact]
+    public async Task a_web_style_leg_fuses_the_same_way()
+    {
+        // gh-627: the enum now matches Marten's — PlainText and WebStyle mean the same thing on both
+        // stores, so a hybrid call written against one compiles and behaves against the other.
+        var store = await aStoreWithPassagesAsync();
+        await using var session = store.QuerySession();
+
+        var fused = await session.HybridSearchAsync<Passage>(
+            x => x.Embedding, "fox -turtle", new float[] { 0, 0, 1 },
+            options: new HybridSearchOptions(TextStyle: HybridTextStyle.WebStyle),
+            token: TestContext.Current.CancellationToken);
+
+        // BothLegs carries "turtle" so the text leg excludes it, but the vector leg still finds it —
+        // which is the fusion working, not a filter leaking.
+        fused.ShouldNotBeEmpty();
+        fused.Select(x => x.Id).ShouldContain(TextOnly);
+    }
+
+    [Fact]
     public async Task candidate_depth_below_limit_is_refused_with_the_reason()
     {
         var store = await aStoreWithPassagesAsync();

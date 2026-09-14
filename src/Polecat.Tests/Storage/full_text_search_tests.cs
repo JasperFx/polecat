@@ -76,6 +76,50 @@ public class full_text_search_tests: OneOffConfigurationsContext
     }
 
     [Fact]
+    public async Task web_style_search_handles_quotes_exclusions_and_or()
+    {
+        var store = await aStoreWithArticlesAsync();
+        await using var session = store.QuerySession();
+        var token = TestContext.Current.CancellationToken;
+
+        // Bare words are required, like PlainTextSearch.
+        var bare = await session.Query<Article>()
+            .Where(x => x.Body.WebStyleSearch("fox")).ToListAsync(token);
+        bare.Select(x => x.Id).OrderBy(x => x).ShouldBe(new[] { Fox, Both }.OrderBy(x => x));
+
+        // A quoted run is a phrase — the terms adjacent and in order.
+        var phrase = await session.Query<Article>()
+            .Where(x => x.Body.WebStyleSearch("\"quick brown fox\"")).ToListAsync(token);
+        phrase.Single().Id.ShouldBe(Fox);
+
+        // A leading - excludes. Both documents carry "fox"; only one also carries "turtle".
+        var excluded = await session.Query<Article>()
+            .Where(x => x.Body.WebStyleSearch("fox -turtle")).ToListAsync(token);
+        excluded.Single().Id.ShouldBe(Fox);
+
+        // `or` separates alternatives.
+        var either = await session.Query<Article>()
+            .Where(x => x.Body.WebStyleSearch("turtle or dog")).ToListAsync(token);
+        either.Select(x => x.Id).OrderBy(x => x)
+            .ShouldBe(new[] { Fox, Turtle, Both }.OrderBy(x => x));
+    }
+
+    [Fact]
+    public async Task a_web_style_query_of_nothing_but_exclusions_matches_nothing()
+    {
+        // "Not this" is not a search. The alternative — every document that happens to lack the term
+        // — is a surprising amount of data back from a search box containing one word.
+        var store = await aStoreWithArticlesAsync();
+        await using var session = store.QuerySession();
+
+        var results = await session.Query<Article>()
+            .Where(x => x.Body.WebStyleSearch("-turtle"))
+            .ToListAsync(TestContext.Current.CancellationToken);
+
+        results.ShouldBeEmpty();
+    }
+
+    [Fact]
     public async Task an_empty_search_matches_nothing_rather_than_everything()
     {
         var store = await aStoreWithArticlesAsync();

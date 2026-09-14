@@ -52,7 +52,7 @@ var results = await session.HybridSearchAsync<Passage>(
         K: 60,
         CandidateDepth: 100,
         Distance: DistanceFunction.Cosine,
-        TextStyle: HybridTextStyle.Plain));
+        TextStyle: HybridTextStyle.PlainText));
 ```
 
 **`K`** is RRF's smoothing constant, conventionally 60. Larger flattens the difference between ranks;
@@ -68,8 +68,10 @@ surface. Reading only `limit` from each leg would never see it. A depth below `l
 
 **`Distance`** overrides the vector index's declared metric for this search.
 
-**`TextStyle`** picks the operator the text leg uses: `Plain` (every term, any order) or `Phrase`
-(adjacent and in order). Both are safe to hand a search box's raw contents, which is why the list is
+**`TextStyle`** picks the operator the text leg uses: `PlainText` (every term, any order),
+`WebStyle` (a search box's raw contents — quoted phrases, `-exclusions`, `or`), or `Phrase` (adjacent
+and in order). `PlainText` and `WebStyle` are named and behave as Marten names them, so a hybrid call
+written against one store compiles and behaves against the other; `Phrase` is Polecat's own. Both are safe to hand a search box's raw contents, which is why the list is
 short — Polecat's other full-text reach stays on `Query<T>()`, where a malformed query fails only the
 thing you asked for rather than both legs of a fused search.
 
