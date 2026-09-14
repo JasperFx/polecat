@@ -70,6 +70,9 @@ Larger is more relevant. A document mentioning a term three times in a short bod
 mentioning it once in a long one — term frequency up, length normalization down, which is what BM25
 is for.
 
+The two BM25 parameters are the conventional defaults, and they are fixed: `k1 = 1.2` for
+term-frequency saturation and `b = 0.75` for length normalization. There is no option to tune them.
+
 ::: tip Scores compare within one result set, not between two
 BM25's inverse-document-frequency term depends on the corpus, so a document's score moves as other
 documents are written. Use it to order results, or as a relative floor inside one search. Do not
@@ -103,3 +106,9 @@ table, and Marten's `plainto_tsquery('')` behaves the same way.
 Full-text search and [vector search](/documents/querying/vector-search) answer different questions:
 one finds the words you asked for, the other finds meaning near what you asked for.
 [Hybrid search](/documents/querying/hybrid-search) fuses both.
+
+## In the other stores
+
+Fisher: [Full Text Search](https://fisher.jasperfx.net/documents/querying/linq/full-text), over
+SQLite's FTS5. Marten: [Full Text Searching](https://martendb.io/documents/full-text), over
+PostgreSQL's `tsvector`.
