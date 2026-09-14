@@ -130,6 +130,7 @@ const config: UserConfig<DefaultTheme.Config> = {
                 { text: 'Single Stream Projections', link: '/events/projections/single-stream-projections' },
                 { text: 'Multi Stream Projections', link: '/events/projections/multi-stream-projections' },
                 { text: 'Event Projections', link: '/events/projections/event-projections' },
+                { text: 'Vector Projections', link: '/events/projections/vector-projections' },
                 { text: 'Live Aggregations', link: '/events/projections/live-aggregates' },
                 { text: 'Inline Projections', link: '/events/projections/inline' },
                 { text: 'Flat Table Projections', link: '/events/projections/flat' },
