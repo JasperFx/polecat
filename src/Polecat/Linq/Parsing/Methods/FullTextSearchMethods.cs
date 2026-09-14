@@ -9,15 +9,16 @@ using Weasel.SqlServer;
 namespace Polecat.Linq.Parsing.Methods;
 
 /// <summary>
-///     Parses the full-text operators — <c>PlainTextSearch</c> and <c>PhraseSearch</c> — into an
-///     <c>EXISTS</c> against the token table gh-611 maintains beside the document table.
+///     Parses the full-text operators — <c>PlainTextSearch</c>, <c>PhraseSearch</c> and
+///     <c>WebStyleSearch</c> — into <c>EXISTS</c> clauses against the token table gh-611 maintains
+///     beside the document table.
 /// </summary>
 internal class FullTextSearchMethods: IMethodCallParser
 {
     public bool Matches(MethodCallExpression expression)
     {
         return expression.Method.DeclaringType == typeof(LinqExtensions)
-            && expression.Method.Name is "PlainTextSearch" or "PhraseSearch";
+            && expression.Method.Name is "PlainTextSearch" or "PhraseSearch" or "WebStyleSearch";
     }
 
     public ISqlFragment Parse(IMemberResolver memberFactory, MethodCallExpression expression)
@@ -51,10 +52,16 @@ internal class FullTextSearchMethods: IMethodCallParser
                               + "member. Declared: "
                               + string.Join(", ", mapping.FullTextIndexes.Select(x => x.MemberName)) + ".");
 
-        var searchTerm = WhereClauseParser.ExtractValue(expression.Arguments[1]) as string;
-        var terms = FullTextIndex.Tokenize(searchTerm ?? string.Empty);
+        var searchTerm = WhereClauseParser.ExtractValue(expression.Arguments[1]) as string ?? string.Empty;
 
-        return new FullTextFilter(mapping, index, terms, expression.Method.Name == "PhraseSearch");
+        var query = expression.Method.Name switch
+        {
+            "PhraseSearch" => FullTextQuery.Phrase(searchTerm),
+            "WebStyleSearch" => FullTextQuery.WebStyle(searchTerm),
+            _ => FullTextQuery.Plain(searchTerm)
+        };
+
+        return new FullTextFilter(mapping, index, query);
     }
 
     private static string MemberNameOf(MemberExpression expression)
@@ -79,27 +86,25 @@ internal class FullTextSearchMethods: IMethodCallParser
 }
 
 /// <summary>
-///     <c>EXISTS</c> against the token table. One per term for a plain search — every term has to be
-///     present — or one self-joined chain on consecutive positions for a phrase.
+///     Renders a <see cref="FullTextQuery" /> as <c>EXISTS</c> clauses against the token table: OR
+///     between groups, AND within one, and <c>NOT EXISTS</c> for an exclusion.
 /// </summary>
 internal class FullTextFilter: ISqlFragment
 {
     private readonly DocumentMapping _mapping;
     private readonly FullTextIndex _index;
-    private readonly string[] _terms;
-    private readonly bool _phrase;
+    private readonly FullTextQuery _query;
 
-    public FullTextFilter(DocumentMapping mapping, FullTextIndex index, string[] terms, bool phrase)
+    public FullTextFilter(DocumentMapping mapping, FullTextIndex index, FullTextQuery query)
     {
         _mapping = mapping;
         _index = index;
-        _terms = terms;
-        _phrase = phrase;
+        _query = query;
     }
 
     public void Apply(ICommandBuilder builder)
     {
-        if (_terms.Length == 0)
+        if (_query.IsEmpty)
         {
             // An empty search matches nothing rather than everything. Marten's plainto_tsquery('')
             // behaves the same way, and the alternative — a search box the user has not typed into
@@ -112,59 +117,48 @@ internal class FullTextFilter: ISqlFragment
         var ftTable = SqlEscaping.QualifiedName(_mapping.DatabaseSchemaName, FullTextIndex.TableNameFor(_mapping));
         var conjoined = _mapping.TenancyStyle == TenancyStyle.Conjoined;
 
-        if (_phrase)
-        {
-            AppendPhrase(builder, docTable, ftTable, conjoined);
-            return;
-        }
-
         builder.Append("(");
-        for (var i = 0; i < _terms.Length; i++)
+        for (var g = 0; g < _query.OrGroups.Count; g++)
         {
-            if (i > 0) builder.Append(" AND ");
-            builder.Append("EXISTS (SELECT 1 FROM ");
-            builder.Append(ftTable);
-            builder.Append(" ft WHERE ft.doc_id = ");
-            builder.Append(docTable);
-            builder.Append(".id");
-            if (conjoined)
+            if (g > 0) builder.Append(" OR ");
+            builder.Append("(");
+
+            var group = _query.OrGroups[g];
+            for (var c = 0; c < group.Count; c++)
             {
-                builder.Append(" AND ft.tenant_id = ");
-                builder.Append(docTable);
-                builder.Append(".tenant_id");
+                if (c > 0) builder.Append(" AND ");
+                AppendClause(builder, group[c], docTable, ftTable, conjoined);
             }
 
-            builder.Append(" AND ft.member = ");
-            builder.AppendParameter(_index.MemberName);
-            builder.Append(" AND ft.term = ");
-            builder.AppendParameter(_terms[i]);
             builder.Append(")");
         }
 
         builder.Append(")");
     }
 
-    /// <summary>
-    ///     A phrase is the terms in order and adjacent, which is what the stored position is for: join
-    ///     the token table to itself once per following term, each pinned to <c>pos + 1</c> of the one
-    ///     before it.
-    /// </summary>
-    private void AppendPhrase(ICommandBuilder builder, string docTable, string ftTable, bool conjoined)
+    private void AppendClause(ICommandBuilder builder, FullTextClause clause, string docTable, string ftTable,
+        bool conjoined)
     {
-        builder.Append("EXISTS (SELECT 1 FROM ");
+        builder.Append(clause.Negated ? "NOT EXISTS (SELECT 1 FROM " : "EXISTS (SELECT 1 FROM ");
         builder.Append(ftTable);
         builder.Append(" f0");
 
-        for (var i = 1; i < _terms.Length; i++)
+        // A phrase is the terms in order and adjacent, which is what the stored position is for: join
+        // the token table to itself once per following term, each pinned to pos + 1 of the one before.
+        if (clause.Phrase)
         {
-            builder.Append(" INNER JOIN ");
-            builder.Append(ftTable);
-            builder.Append($" f{i} ON f{i}.doc_id = f0.doc_id AND f{i}.member = f0.member AND f{i}.pos = f0.pos + {i}");
+            for (var i = 1; i < clause.Terms.Length; i++)
+            {
+                builder.Append(" INNER JOIN ");
+                builder.Append(ftTable);
+                builder.Append($" f{i} ON f{i}.doc_id = f0.doc_id AND f{i}.member = f0.member AND f{i}.pos = f0.pos + {i}");
+            }
         }
 
         builder.Append(" WHERE f0.doc_id = ");
         builder.Append(docTable);
         builder.Append(".id");
+
         if (conjoined)
         {
             builder.Append(" AND f0.tenant_id = ");
@@ -175,10 +169,20 @@ internal class FullTextFilter: ISqlFragment
         builder.Append(" AND f0.member = ");
         builder.AppendParameter(_index.MemberName);
 
-        for (var i = 0; i < _terms.Length; i++)
+        if (clause.Phrase)
         {
-            builder.Append($" AND f{i}.term = ");
-            builder.AppendParameter(_terms[i]);
+            for (var i = 0; i < clause.Terms.Length; i++)
+            {
+                builder.Append($" AND f{i}.term = ");
+                builder.AppendParameter(clause.Terms[i]);
+            }
+        }
+        else
+        {
+            // A non-phrase clause carries exactly one term; several bare words are several clauses,
+            // so that each is independently required (or independently excluded).
+            builder.Append(" AND f0.term = ");
+            builder.AppendParameter(clause.Terms[0]);
         }
 
         builder.Append(")");

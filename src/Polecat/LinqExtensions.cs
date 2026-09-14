@@ -47,6 +47,23 @@ public static class LinqExtensions
             "PhraseSearch() is a LINQ marker and only has meaning inside a Where() against a "
             + "Polecat document query.");
 
+    /// <summary>
+    ///     Full-text search taking a search box's raw contents: bare words are required,
+    ///     <c>"quoted text"</c> is a phrase, a leading <c>-</c> excludes, and a bare <c>or</c>
+    ///     separates alternatives.
+    /// </summary>
+    /// <remarks>
+    ///     Mirrors Marten's operator of the same name, which uses PostgreSQL's
+    ///     <c>websearch_to_tsquery</c>. Two differences are worth knowing: Polecat does not stem, and
+    ///     <c>or</c> splits at the top level — <c>a b or c</c> is <c>(a AND b) OR (c)</c> where
+    ///     PostgreSQL binds it as <c>a AND (b OR c)</c>. See <c>FullTextQuery.WebStyle</c> for why.
+    ///     Only callable inside a LINQ <c>Where</c>.
+    /// </remarks>
+    public static bool WebStyleSearch(this string member, string searchTerm)
+        => throw new NotSupportedException(
+            "WebStyleSearch() is a LINQ marker and only has meaning inside a Where() against a "
+            + "Polecat document query.");
+
     public static bool IsOneOf<T>(this T value, params T[] matches) => matches.Contains(value);
 
     /// <summary>

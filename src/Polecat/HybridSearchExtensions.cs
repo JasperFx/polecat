@@ -53,11 +53,16 @@ public enum HybridTextStyle
     ///     The terms adjacent and in order.
     /// </summary>
     /// <remarks>
-    ///     <b>Polecat-specific.</b> Marten's enum has <c>WebStyle</c> in this position instead, which
-    ///     Polecat has no operator for yet, and Marten has no phrase style. Code that must read the
-    ///     same against both stores should stay on <see cref="PlainText" /> (gh-627).
+    ///     <b>Polecat-specific.</b> Marten has no phrase style, so code that must read the same
+    ///     against both stores should stay on <see cref="PlainText" /> or <see cref="WebStyle" />.
     /// </remarks>
-    Phrase
+    Phrase,
+
+    /// <summary>
+    ///     A search box's raw contents: bare words required, <c>"quoted text"</c> a phrase, a leading
+    ///     <c>-</c> excluding, and a bare <c>or</c> separating alternatives.
+    /// </summary>
+    WebStyle
 }
 
 /// <summary>A document and its fused score. Larger is better.</summary>
@@ -206,15 +211,15 @@ public static class HybridSearchExtensions
 
     /// <summary>
     ///     The text leg, ordered. <see cref="HybridTextStyle.PlainText" /> goes through
-    ///     <c>FullTextSearchAsync</c> so the ordering is BM25 relevance; a phrase has no useful
-    ///     ranking of its own — a document either contains the phrase or does not — so it reads
-    ///     through the LINQ operator and takes source order.
+    ///     <c>FullTextSearchAsync</c> so the ordering is BM25 relevance; the other two styles have no
+    ///     useful ranking of their own — a document either satisfies the phrase or the web-style
+    ///     query or it does not — so they read through the LINQ operator and take source order.
     /// </summary>
     private static async Task<IReadOnlyList<T>> TextLegAsync<T>(
         IQuerySession session, string textMemberName, string text, HybridTextStyle style, int depth,
         CancellationToken token) where T : notnull
     {
-        if (style == HybridTextStyle.Phrase)
+        if (style is HybridTextStyle.Phrase or HybridTextStyle.WebStyle)
         {
             // x => x.<member>.PhraseSearch(text), built rather than written, because the member is
             // only known by name here. The parser sees the same MethodCallExpression it would from a
@@ -228,7 +233,9 @@ public static class HybridSearchExtensions
 
             var call = Expression.Call(
                 typeof(LinqExtensions),
-                nameof(LinqExtensions.PhraseSearch),
+                style == HybridTextStyle.WebStyle
+                    ? nameof(LinqExtensions.WebStyleSearch)
+                    : nameof(LinqExtensions.PhraseSearch),
                 null,
                 access,
                 Expression.Constant(text));
