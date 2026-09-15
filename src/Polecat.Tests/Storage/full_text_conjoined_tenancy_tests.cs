@@ -9,7 +9,7 @@ namespace Polecat.Tests.Storage;
 
 /// <summary>
 ///     gh-625: the full-text index under conjoined tenancy, where a document id is only unique
-///     <em>per tenant</em>.
+///     <em>per tenant</em>. gh-630 added <c>PrefixSearch</c> to the operators held to the rule.
 /// </summary>
 /// <remarks>
 ///     <para>
@@ -298,6 +298,59 @@ public class full_text_conjoined_tenancy_tests: OneOffConfigurationsContext
             x => x.Body, "fox", 10, token: TestContext.Current.CancellationToken);
 
         hits.Select(x => x.Document.Body).ShouldBe(["red fox"]);
+    }
+
+    /// <summary>
+    ///     gh-630's new operator, held to the same tenancy rule as the ones gh-625 fixed.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         <b>A prefix is wider than a term, which is why this is worth its own fact.</b> A leak
+    ///         through <c>PlainTextSearch</c> needs two tenants to share a document id AND a whole
+    ///         term; through <c>PrefixSearch</c> it is enough that they share the id and a few opening
+    ///         letters, so the same defect surfaces far more often and over a far wider blast radius.
+    ///     </para>
+    ///     <para>
+    ///         ⚠️ <b>Red's body must NOT match and Blue's must, and the first draft of this test had
+    ///         them BOTH matching — which made it pass with the tenant predicate deleted.</b> The
+    ///         EXISTS subquery is what carries the tenant; the outer query is tenant-filtered no matter
+    ///         what, so a corpus where both tenants match returns the session tenant's document either
+    ///         way and proves nothing. The shape that can actually fail is the gh-625 §1 shape: the
+    ///         session tenant's document does not contain the term, the OTHER tenant's does, and an
+    ///         untenanted EXISTS hands back a document that does not contain what was asked for.
+    ///     </para>
+    /// </remarks>
+    [Fact]
+    public async Task prefix_search_does_not_match_on_another_tenants_tokens()
+    {
+        var store = aConjoinedStore();
+
+        // Only Blue carries a term starting "fo". Same id, so an id-only EXISTS reaches it from Red.
+        await writeAsync(store, "Red", SharedId, "red heron");
+        await writeAsync(store, "Blue", SharedId, "blue fox");
+
+        await using var red = store.QuerySession(new SessionOptions { TenantId = "Red" });
+
+        var leaked = await red.Query<Article>()
+            .Where(x => x.Body.PrefixSearch("fo"))
+            .ToListAsync(TestContext.Current.CancellationToken);
+
+        leaked.ShouldBeEmpty();
+
+        // Positive controls, so this is not passing because the operator stopped working: Red finds
+        // its own term by prefix, and Blue does find the term Red could not.
+        var own = await red.Query<Article>()
+            .Where(x => x.Body.PrefixSearch("her"))
+            .ToListAsync(TestContext.Current.CancellationToken);
+
+        own.Select(x => x.Body).ShouldBe(["red heron"]);
+
+        await using var blue = store.QuerySession(new SessionOptions { TenantId = "Blue" });
+        var blueHits = await blue.Query<Article>()
+            .Where(x => x.Body.PrefixSearch("fo"))
+            .ToListAsync(TestContext.Current.CancellationToken);
+
+        blueHits.Select(x => x.Body).ShouldBe(["blue fox"]);
     }
 
     /// <summary>

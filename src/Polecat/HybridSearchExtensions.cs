@@ -213,7 +213,12 @@ public static class HybridSearchExtensions
         }
 
         var member = MemberExpressionFor<T>(textMemberName);
-        return await session.FullTextSearchAsync(member, text, depth, filter, token).ConfigureAwait(false);
+        // Named arguments from here on: FullTextSearchAsync grew a FullTextSearchOptions between
+        // `limit` and `filter` (gh-630), matching HybridSearchAsync's own shape. The text leg scores
+        // with the BM25 defaults — see the remarks on FullTextSearchOptions for why a hybrid search
+        // cannot carry its own.
+        return await session.FullTextSearchAsync(member, text, limit: depth, filter: filter, token: token)
+            .ConfigureAwait(false);
     }
 
     private static string NameOf<T>(Expression<Func<T, object?>> member)

@@ -47,6 +47,32 @@ language's rather than ours.
 
 A query of nothing but exclusions matches nothing — "not this" is not a search.
 
+`PrefixSearch` matches from the **start** of a term, which is what a search-as-you-type box wants —
+the last word a user has typed is a prefix of what they mean, not a word:
+
+```csharp
+var suggestions = await session.Query<Article>()
+    .Where(x => x.Body.PrefixSearch("qui"))   // finds "quick"
+    .ToListAsync();
+```
+
+Each word is a prefix and **all of them are required**, so `PrefixSearch("qui bro")` wants a document
+with a term starting `qui` and another starting `bro`. This mirrors Marten's operator of the same
+name, which appends PostgreSQL's `:*` to each word of a `to_tsquery`. A whole term is a prefix of
+itself, so `PrefixSearch` is a superset of `PlainTextSearch`.
+
+::: warning From the start of a term, not anywhere inside one
+`PrefixSearch("uic")` does not find `quick`. The token table stores whole terms, so a substring
+search against it is not a slow query — it is an empty result that looks like an answer. Marten
+reaches that capability through a separate ngram index and Fisher through a trigram tokenizer;
+Polecat has neither yet.
+:::
+
+An empty or all-punctuation prefix matches nothing rather than everything, the same answer
+`PlainTextSearch` gives an empty search — a search box on first render should not return the whole
+table. That also disposes of LIKE pattern syntax: `%`, `_` and `[` are punctuation to the tokenizer,
+so they are stripped before the prefix is ever compared and cannot act as wildcards.
+
 ## This is Polecat's own index, not SQL Server's full-text engine
 
 Worth knowing up front, because it sets expectations that nothing else will.
@@ -92,8 +118,38 @@ Larger is more relevant. A document mentioning a term three times in a short bod
 mentioning it once in a long one — term frequency up, length normalization down, which is what BM25
 is for.
 
-The two BM25 parameters are the conventional defaults, and they are fixed: `k1 = 1.2` for
-term-frequency saturation and `b = 0.75` for length normalization. There is no option to tune them.
+### Tuning BM25
+
+The two BM25 parameters default to the conventional values — `k1 = 1.2` for term-frequency saturation
+and `b = 0.75` for length normalization — and both ranked calls take a `FullTextSearchOptions` to
+change them:
+
+```csharp
+// A title field: short by nature, so do not penalize length at all.
+var titles = await session.FullTextSearchAsync<Article>(
+    x => x.Title, "fox", options: new FullTextSearchOptions(B: 0));
+
+// Ignore term frequency entirely — a document's score becomes the sum of its terms' IDF.
+var idfOnly = await session.FullTextSearchAsync<Article>(
+    x => x.Body, "fox", options: new FullTextSearchOptions(K1: 0));
+```
+
+`k1` must not be negative and `b` must be within `[0, 1]`; anything else is refused at construction
+with an `ArgumentOutOfRangeException` naming the parameter, rather than silently producing a ranking
+that looks plausible and is not. `k1 = 0` and `b = 0` are both legal and both meaningful.
+
+They are per call rather than per index on purpose: one corpus is often queried two ways, and binding
+the constants to the index would force a second index to say so. They bind as SQL parameters, so a
+different `k1` reuses the same query plan.
+
+::: warning Scores from different options are not comparable
+This is on top of BM25 scores already not being comparable across corpora. A relevance floor tuned
+against the defaults is meaningless against `b = 0`. Ordering within one result set is what these are
+safe for.
+:::
+
+A [hybrid search](/documents/querying/hybrid-search) scores its text leg with the defaults.
+`HybridSearchOptions` is shared across the Critter Stack and cannot carry Polecat-only constants.
 
 ::: tip Scores compare within one result set, not between two
 BM25's inverse-document-frequency term depends on the corpus, so a document's score moves as other
@@ -143,8 +199,8 @@ table, and Marten's `plainto_tsquery('')` behaves the same way.
 Every full-text path is tenant-scoped, and so is the index behind it. A document id is only unique
 *per tenant* under conjoined tenancy — the document table puts `tenant_id` in its primary key —
 so the token table carries the tenant too, and each of `PlainTextSearch`, `PhraseSearch`,
-`WebStyleSearch`, `FullTextSearchWithScoresAsync` and the text leg of a hybrid search sees only
-the session tenant's documents.
+`PrefixSearch`, `WebStyleSearch`, `FullTextSearchWithScoresAsync` and the text leg of a hybrid search
+sees only the session tenant's documents.
 
 The token table is maintained by a trigger and backfilled when the index is declared, and both
 are keyed on `(doc_id, tenant_id)` rather than on `doc_id` alone. They were not always, and

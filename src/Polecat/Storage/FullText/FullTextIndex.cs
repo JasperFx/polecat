@@ -52,10 +52,22 @@ public class FullTextIndex
     ///     space before splitting, so <c>"quick,brown"</c> is two terms rather than one.
     /// </summary>
     /// <remarks>
-    ///     Kept as one string because <c>TRANSLATE</c> takes a from/to pair of EQUAL length — a
-    ///     mismatch is Msg 9828 at schema time, and <c>LEN</c> cannot be used to measure it because
-    ///     <c>LEN</c> ignores trailing spaces. The replacement is built with
-    ///     <c>REPLICATE(N' ', DATALENGTH(@p)/2)</c> for that reason.
+    ///     <para>
+    ///         Kept as one string because <c>TRANSLATE</c> takes a from/to pair of EQUAL length — a
+    ///         mismatch is Msg 9828 at schema time, and <c>LEN</c> cannot be used to measure it because
+    ///         <c>LEN</c> ignores trailing spaces. The replacement is built with
+    ///         <c>REPLICATE(N' ', DATALENGTH(@p)/2)</c> for that reason.
+    ///     </para>
+    ///     <para>
+    ///         ⚠️ <b><c>%</c>, <c>_</c>, <c>[</c> and <c>]</c> are load-bearing here, beyond being
+    ///         punctuation.</b> <c>PrefixSearch</c> renders a <c>LIKE</c>, and it escapes nothing
+    ///         because this list guarantees no term — searched or stored — can carry a LIKE
+    ///         metacharacter. Drop one of them from this string and a one-character search becomes
+    ///         <c>term LIKE '%%'</c>, which returns the entire table rather than erroring.
+    ///         <c>tokenize_strips_the_like_metacharacters</c> and
+    ///         <c>prefix_search_cannot_smuggle_a_like_wildcard</c> both fail if you do; add escaping
+    ///         in <c>FullTextFilter.AppendClause</c> before widening this.
+    ///     </para>
     /// </remarks>
     internal const string Punctuation = "!\"#$%&()*+,-./:;<=>?@[\\]^_{|}~'";
 

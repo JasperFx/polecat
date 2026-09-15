@@ -59,6 +59,32 @@ already named `token:` are unaffected.
 See [Vector Search](/documents/querying/vector-search#filtering) for what the filter does and why it
 is applied before the limit.
 
+### `options` is a new parameter on the ranked full-text calls
+
+`FullTextSearchAsync` and `FullTextSearchWithScoresAsync` gained an optional `FullTextSearchOptions`
+**between `limit` and `filter`**, carrying the BM25 `k1` and `b`
+([polecat#630](https://github.com/JasperFx/polecat/issues/630)). The position matches
+`HybridSearchAsync`, whose `options` sits in the same place, so the two families read alike.
+
+A call that passed `filter` or `token` **positionally** no longer compiles:
+
+```csharp
+// before
+await session.FullTextSearchAsync<Article>(x => x.Body, "fox", 10, x => x.Team == "red", token);
+
+// after — name them
+await session.FullTextSearchAsync<Article>(x => x.Body, "fox", 10, filter: x => x.Team == "red", token: token);
+```
+
+As with the `filter` change above, the break is a compile error at every affected call site and never
+a silent behaviour change. Calls that already named `filter:` and `token:` are unaffected, and the
+defaults are the constants 5.29 hard-coded, so omitting `options` changes no ranking.
+
+### `PrefixSearch` is new
+
+A LINQ operator, so nothing existing changes. See
+[Full Text Search](/documents/querying/full-text-search) for what it matches and what it does not.
+
 ### Vector projections take the shared map
 
 `VectorProjection<TDoc, TId>.Configure` now receives the shared `VectorProjectionMap<TId>` instead of
