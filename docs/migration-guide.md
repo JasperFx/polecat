@@ -59,26 +59,35 @@ already named `token:` are unaffected.
 See [Vector Search](/documents/querying/vector-search#filtering) for what the filter does and why it
 is applied before the limit.
 
-### `options` is a new parameter on the ranked full-text calls
+### BM25 `k1` and `b` are configurable — additively, with nothing to change
 
-`FullTextSearchAsync` and `FullTextSearchWithScoresAsync` gained an optional `FullTextSearchOptions`
-**between `limit` and `filter`**, carrying the BM25 `k1` and `b`
-([polecat#630](https://github.com/JasperFx/polecat/issues/630)). The position matches
-`HybridSearchAsync`, whose `options` sits in the same place, so the two families read alike.
-
-A call that passed `filter` or `token` **positionally** no longer compiles:
+`FullTextSearchAsync` and `FullTextSearchWithScoresAsync` can now take a `FullTextSearchOptions`
+carrying the BM25 `k1` and `b` ([polecat#630](https://github.com/JasperFx/polecat/issues/630)).
+**Nothing existing changes**: the options arrive through a new overload and the signatures 5.29 shipped
+are untouched, so every existing call still compiles *and* still binds — no rebuild required.
 
 ```csharp
-// before
+// unchanged, still binds to the original signature
 await session.FullTextSearchAsync<Article>(x => x.Body, "fox", 10, x => x.Team == "red", token);
 
-// after — name them
-await session.FullTextSearchAsync<Article>(x => x.Body, "fox", 10, filter: x => x.Team == "red", token: token);
+// new — b = 0 turns length normalization off, so a long document no longer pays for its length
+await session.FullTextSearchAsync<Article>(x => x.Body, "fox", new FullTextSearchOptions(B: 0.0));
 ```
 
-As with the `filter` change above, the break is a compile error at every affected call site and never
-a silent behaviour change. Calls that already named `filter:` and `token:` are unaffected, and the
-defaults are the constants 5.29 hard-coded, so omitting `options` changes no ranking.
+::: tip
+**An overload rather than an optional parameter, deliberately.** Adding an optional parameter to an
+existing public method is a *binary* break as well as a source one: optional arguments are resolved at
+the call site, so a caller's IL hard-codes the full signature and any assembly compiled against 5.29
+that is not recompiled throws `MissingMethodException` — while its source still compiles, which is
+what makes it quiet. It bites hardest through a prebuilt integration sitting between an application
+and Polecat.
+
+`options` is *required* on the new overload for a second reason: were it optional, the two would be
+ambiguous for every call that omits it.
+:::
+
+The defaults are the constants 5.29 hard-coded (`k1` 1.2, `b` 0.75), so omitting options changes no
+ranking.
 
 ### `PrefixSearch` is new
 

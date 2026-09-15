@@ -49,12 +49,43 @@ public static class FullTextSearchExtensions
     ///     <paramref name="limit" /> (#633). It supports and refuses exactly what
     ///     <c>Query&lt;T&gt;().Where(...)</c> does, because it is parsed by the same parser.
     /// </param>
-    public static async Task<IReadOnlyList<T>> FullTextSearchAsync<T>(
+    public static Task<IReadOnlyList<T>> FullTextSearchAsync<T>(
         this IQuerySession session,
         Expression<Func<T, object?>> member,
         string text,
         int limit = 10,
-        FullTextSearchOptions? options = null,
+        Expression<Func<T, bool>>? filter = null,
+        CancellationToken token = default) where T : notnull
+        => FullTextSearchAsync(session, member, text, FullTextSearchOptions.Default, limit, filter, token);
+
+    /// <summary>
+    ///     The same search with explicit BM25 parameters (#630).
+    /// </summary>
+    /// <remarks>
+    ///     ⚠️ <b>An OVERLOAD rather than an optional parameter on the signature above, and
+    ///     <paramref name="options" /> is REQUIRED here for two separate reasons.</b>
+    ///     <para>
+    ///         Adding an optional parameter to an existing public method is a <b>binary</b> break, not
+    ///         merely a source one: optional arguments are resolved at the CALL SITE, so a caller's IL
+    ///         hard-codes the full signature and any assembly compiled against an earlier Polecat that
+    ///         is not recompiled throws <c>MissingMethodException</c> — while its source still
+    ///         compiles, which is what makes it quiet. It bites where you cannot see it: a prebuilt
+    ///         integration sitting between an application and Polecat. Marten states the same rule.
+    ///     </para>
+    ///     <para>
+    ///         And <paramref name="options" /> cannot itself be optional, or the two overloads would be
+    ///         AMBIGUOUS for every call that omits it — <c>FullTextSearchAsync(x =&gt; x.Body, "fox")</c>
+    ///         would match both with all optionals omitted. Required, and positioned before the
+    ///         optionals C# requires to come last, it is exactly the calls that pass options that bind
+    ///         here and every existing call shape that still binds above.
+    ///     </para>
+    /// </remarks>
+    public static async Task<IReadOnlyList<T>> FullTextSearchAsync<T>(
+        this IQuerySession session,
+        Expression<Func<T, object?>> member,
+        string text,
+        FullTextSearchOptions options,
+        int limit = 10,
         Expression<Func<T, bool>>? filter = null,
         CancellationToken token = default) where T : notnull
     {
@@ -69,12 +100,24 @@ public static class FullTextSearchExtensions
     ///     relevance floor, or for fusing with a vector ranking.
     /// </summary>
     /// <inheritdoc cref="FullTextSearchAsync{T}" />
-    public static async Task<IReadOnlyList<FullTextMatch<T>>> FullTextSearchWithScoresAsync<T>(
+    public static Task<IReadOnlyList<FullTextMatch<T>>> FullTextSearchWithScoresAsync<T>(
         this IQuerySession session,
         Expression<Func<T, object?>> member,
         string text,
         int limit = 10,
-        FullTextSearchOptions? options = null,
+        Expression<Func<T, bool>>? filter = null,
+        CancellationToken token = default) where T : notnull
+        => FullTextSearchWithScoresAsync(session, member, text, FullTextSearchOptions.Default, limit, filter,
+            token);
+
+    /// <inheritdoc cref="FullTextSearchAsync{T}(IQuerySession, Expression{Func{T, object}}, string, FullTextSearchOptions, int, Expression{Func{T, bool}}, CancellationToken)" />
+    /// <summary>The scored search with explicit BM25 parameters (#630).</summary>
+    public static async Task<IReadOnlyList<FullTextMatch<T>>> FullTextSearchWithScoresAsync<T>(
+        this IQuerySession session,
+        Expression<Func<T, object?>> member,
+        string text,
+        FullTextSearchOptions options,
+        int limit = 10,
         Expression<Func<T, bool>>? filter = null,
         CancellationToken token = default) where T : notnull
     {
@@ -338,6 +381,15 @@ public sealed record FullTextSearchOptions
     ///     greater length. <c>0</c> turns it off, so a long document with the same term frequency ties
     ///     a short one; <c>1</c> is full normalization. Must be within <c>[0, 1]</c>.
     /// </param>
+    /// <summary>
+    ///     The BM25 parameters gh-611 shipped with, and what the overloads that take no options use.
+    /// </summary>
+    /// <remarks>
+    ///     A single shared instance rather than a fresh one per call: the record is immutable and its
+    ///     values are the defaults, so every caller that names no options is asking the same question.
+    /// </remarks>
+    public static readonly FullTextSearchOptions Default = new();
+
     public FullTextSearchOptions(double K1 = DefaultK1, double B = DefaultB)
     {
         this.K1 = K1;
