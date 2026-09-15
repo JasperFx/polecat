@@ -152,6 +152,17 @@ public static class HybridSearchExtensions
         // copy means a store cannot quietly stop making one.
         var depth = options.ResolveCandidateDepth(limit);
 
+        // ⚠️ REFUSED rather than ignored (#640, jasperfx#854). Polecat's full-text ranking addresses a
+        // single member, so there is no second column to weigh and nothing here could honour a weight.
+        // Ignoring it is the one option that is actually dangerous: a caller who weighted their title
+        // column and silently got an unweighted ranking has no way to find out, because the search
+        // still returns plausible documents in a plausible order. That is the same failure shape as
+        // the Distance default the shared record was created to fix.
+        options.AssertColumnWeightsAreNotSupported(
+            "Polecat",
+            "Its full-text ranking addresses a single member, so there is no second column to weigh. "
+            + "Fisher is the store that honours per-column weights.");
+
         var textLeg = await TextLegAsync(session, textMemberName, text, options.TextStyle, depth, filter, token)
             .ConfigureAwait(false);
         var vectorLeg = await session

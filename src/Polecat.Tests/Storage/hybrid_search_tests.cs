@@ -278,4 +278,46 @@ public class hybrid_search_tests: OneOffConfigurationsContext
 
         explicitly.ShouldNotBeNull();
     }
+
+    /// <summary>
+    ///     ⚠️ #640 / jasperfx#854: <c>ColumnWeights</c> is REFUSED here rather than ignored.
+    /// </summary>
+    /// <remarks>
+    ///     Polecat's full-text ranking addresses a single member, so there is no second column to
+    ///     weigh and nothing could honour a weight. Ignoring it is the dangerous option: a caller who
+    ///     weighted their title column and silently got an unweighted ranking has no way to find out,
+    ///     because the search still returns plausible documents in a plausible order. That is the same
+    ///     failure shape as the <c>Distance</c> default the shared options record was created to fix.
+    /// </remarks>
+    [Fact]
+    public async Task column_weights_are_refused_by_name_rather_than_ignored()
+    {
+        var store = await aStoreWithPassagesAsync();
+        await using var session = store.QuerySession();
+        var token = TestContext.Current.CancellationToken;
+
+        var ex = await Should.ThrowAsync<NotSupportedException>(async () =>
+            await session.HybridSearchAsync<Passage>(
+                x => x.Embedding, "fox", new float[] { 0, 0, 1 },
+                options: new HybridSearchOptions(ColumnWeights: [3.0, 1.0]), token: token));
+
+        ex.Message.ShouldContain("Polecat");
+        ex.Message.ShouldContain("ColumnWeights");
+        ex.Message.ShouldContain("Fisher");
+    }
+
+    /// <summary>The default is untouched — only a NON-NULL value is refused.</summary>
+    [Fact]
+    public async Task the_default_of_no_column_weights_is_unaffected()
+    {
+        var store = await aStoreWithPassagesAsync();
+        await using var session = store.QuerySession();
+
+        var fused = await session.HybridSearchAsync<Passage>(
+            x => x.Embedding, "fox", new float[] { 0, 0, 1 },
+            options: new HybridSearchOptions(K: 30),
+            token: TestContext.Current.CancellationToken);
+
+        fused.Count.ShouldBe(3);
+    }
 }
