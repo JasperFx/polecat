@@ -1,12 +1,16 @@
 namespace Polecat.Storage.FullText;
 
 /// <summary>
-///     One requirement on a document: a term, a phrase, or the absence of either.
+///     One requirement on a document: a term, a term prefix, a phrase, or the absence of any of them.
 /// </summary>
 /// <param name="Terms">The tokenized terms. More than one only for a phrase.</param>
 /// <param name="Phrase">Whether the terms must appear adjacent and in order.</param>
 /// <param name="Negated">Whether the document must NOT satisfy this clause.</param>
-internal sealed record FullTextClause(string[] Terms, bool Phrase, bool Negated);
+/// <param name="Prefix">
+///     Whether the single term matches from the START of a stored term rather than the whole of it.
+///     Mutually exclusive with <paramref name="Phrase" /> — every construction site sets at most one.
+/// </param>
+internal sealed record FullTextClause(string[] Terms, bool Phrase, bool Negated, bool Prefix = false);
 
 /// <summary>
 ///     A parsed full-text query: OR over groups, AND within a group. Every operator — plain, phrase
@@ -22,6 +26,34 @@ internal sealed record FullTextQuery(IReadOnlyList<IReadOnlyList<FullTextClause>
     {
         var clauses = FullTextIndex.Tokenize(text)
             .Select(t => new FullTextClause([t], false, false))
+            .ToList();
+
+        return new FullTextQuery(clauses.Count == 0 ? [] : [clauses]);
+    }
+
+    /// <summary>
+    ///     Every term matches from the start of a stored term: <c>"qui"</c> finds <c>"quick"</c>.
+    ///     Several words are several independent prefix requirements, all of which must be met.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         Mirrors Marten's operator of the same name, which appends PostgreSQL's <c>:*</c> to each
+    ///         word of a <c>to_tsquery</c>, so "each word is a prefix, and all of them are required"
+    ///         means the same thing on both stores.
+    ///     </para>
+    ///     <para>
+    ///         <b>The prefix goes through the ordinary tokenizer, which is what makes it comparable to
+    ///         the stored terms at all.</b> A prefix lowercased differently, or split differently, is a
+    ///         prefix of nothing — and that failure is an empty result rather than an error, the same
+    ///         quiet shape the whole index is most exposed to. It also means an empty or
+    ///         all-punctuation prefix tokenizes to nothing and matches nothing, which is deliberately
+    ///         the same answer <c>PlainTextSearch</c> gives for an empty search rather than "everything".
+    ///     </para>
+    /// </remarks>
+    internal static FullTextQuery Prefix(string text)
+    {
+        var clauses = FullTextIndex.Tokenize(text)
+            .Select(t => new FullTextClause([t], false, false, true))
             .ToList();
 
         return new FullTextQuery(clauses.Count == 0 ? [] : [clauses]);

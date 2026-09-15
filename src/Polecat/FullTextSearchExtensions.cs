@@ -39,12 +39,6 @@ namespace Polecat;
 /// </remarks>
 public static class FullTextSearchExtensions
 {
-    /// <summary>Okapi BM25's term-frequency saturation. 1.2 is the conventional default.</summary>
-    private const double K1 = 1.2;
-
-    /// <summary>Okapi BM25's length normalization. 0.75 is the conventional default.</summary>
-    private const double B = 0.75;
-
     /// <summary>
     ///     The <paramref name="limit" /> documents matching <paramref name="text" /> best, most
     ///     relevant first.
@@ -55,15 +49,47 @@ public static class FullTextSearchExtensions
     ///     <paramref name="limit" /> (#633). It supports and refuses exactly what
     ///     <c>Query&lt;T&gt;().Where(...)</c> does, because it is parsed by the same parser.
     /// </param>
-    public static async Task<IReadOnlyList<T>> FullTextSearchAsync<T>(
+    public static Task<IReadOnlyList<T>> FullTextSearchAsync<T>(
         this IQuerySession session,
         Expression<Func<T, object?>> member,
         string text,
         int limit = 10,
         Expression<Func<T, bool>>? filter = null,
         CancellationToken token = default) where T : notnull
+        => FullTextSearchAsync(session, member, text, FullTextSearchOptions.Default, limit, filter, token);
+
+    /// <summary>
+    ///     The same search with explicit BM25 parameters (#630).
+    /// </summary>
+    /// <remarks>
+    ///     ⚠️ <b>An OVERLOAD rather than an optional parameter on the signature above, and
+    ///     <paramref name="options" /> is REQUIRED here for two separate reasons.</b>
+    ///     <para>
+    ///         Adding an optional parameter to an existing public method is a <b>binary</b> break, not
+    ///         merely a source one: optional arguments are resolved at the CALL SITE, so a caller's IL
+    ///         hard-codes the full signature and any assembly compiled against an earlier Polecat that
+    ///         is not recompiled throws <c>MissingMethodException</c> — while its source still
+    ///         compiles, which is what makes it quiet. It bites where you cannot see it: a prebuilt
+    ///         integration sitting between an application and Polecat. Marten states the same rule.
+    ///     </para>
+    ///     <para>
+    ///         And <paramref name="options" /> cannot itself be optional, or the two overloads would be
+    ///         AMBIGUOUS for every call that omits it — <c>FullTextSearchAsync(x =&gt; x.Body, "fox")</c>
+    ///         would match both with all optionals omitted. Required, and positioned before the
+    ///         optionals C# requires to come last, it is exactly the calls that pass options that bind
+    ///         here and every existing call shape that still binds above.
+    ///     </para>
+    /// </remarks>
+    public static async Task<IReadOnlyList<T>> FullTextSearchAsync<T>(
+        this IQuerySession session,
+        Expression<Func<T, object?>> member,
+        string text,
+        FullTextSearchOptions options,
+        int limit = 10,
+        Expression<Func<T, bool>>? filter = null,
+        CancellationToken token = default) where T : notnull
     {
-        var built = await BuildAsync(session, member, text, limit, filter, token).ConfigureAwait(false);
+        var built = await BuildAsync(session, member, text, limit, options, filter, token).ConfigureAwait(false);
         if (built is null) return [];
 
         return await ((QuerySession)session).QueryByBatchAsync<T>(built, token).ConfigureAwait(false);
@@ -74,15 +100,28 @@ public static class FullTextSearchExtensions
     ///     relevance floor, or for fusing with a vector ranking.
     /// </summary>
     /// <inheritdoc cref="FullTextSearchAsync{T}" />
-    public static async Task<IReadOnlyList<FullTextMatch<T>>> FullTextSearchWithScoresAsync<T>(
+    public static Task<IReadOnlyList<FullTextMatch<T>>> FullTextSearchWithScoresAsync<T>(
         this IQuerySession session,
         Expression<Func<T, object?>> member,
         string text,
         int limit = 10,
         Expression<Func<T, bool>>? filter = null,
         CancellationToken token = default) where T : notnull
+        => FullTextSearchWithScoresAsync(session, member, text, FullTextSearchOptions.Default, limit, filter,
+            token);
+
+    /// <inheritdoc cref="FullTextSearchAsync{T}(IQuerySession, Expression{Func{T, object}}, string, FullTextSearchOptions, int, Expression{Func{T, bool}}, CancellationToken)" />
+    /// <summary>The scored search with explicit BM25 parameters (#630).</summary>
+    public static async Task<IReadOnlyList<FullTextMatch<T>>> FullTextSearchWithScoresAsync<T>(
+        this IQuerySession session,
+        Expression<Func<T, object?>> member,
+        string text,
+        FullTextSearchOptions options,
+        int limit = 10,
+        Expression<Func<T, bool>>? filter = null,
+        CancellationToken token = default) where T : notnull
     {
-        var built = await BuildAsync(session, member, text, limit, filter, token).ConfigureAwait(false);
+        var built = await BuildAsync(session, member, text, limit, options, filter, token).ConfigureAwait(false);
         if (built is null) return [];
 
         var rows = await ((QuerySession)session).QueryByBatchAsync<T, double>(built, token)
@@ -96,12 +135,17 @@ public static class FullTextSearchExtensions
         Expression<Func<T, object?>> member,
         string text,
         int limit,
+        FullTextSearchOptions? options,
         Expression<Func<T, bool>>? filter,
         CancellationToken token) where T : notnull
     {
         ArgumentNullException.ThrowIfNull(member);
         ArgumentNullException.ThrowIfNull(text);
         if (limit < 1) throw new ArgumentOutOfRangeException(nameof(limit), limit, "limit must be at least 1");
+
+        // Already validated — FullTextSearchOptions refuses an out-of-range k1 or b at construction,
+        // so a bad value fails at the caller's own `new` with its own stack rather than here.
+        options ??= new FullTextSearchOptions();
 
         // The token table has to exist before a statement names it — the same reason the vector search
         // ensures its table first. A store whose first act is a search would otherwise meet "Invalid
@@ -184,10 +228,10 @@ public static class FullTextSearchExtensions
 
         AddMemberScope();  // tf
         AddMemberScope();  // df
-        parameters.Add(K1);
-        parameters.Add(K1);
-        parameters.Add(B);
-        parameters.Add(B);
+        parameters.Add(options.K1);
+        parameters.Add(options.K1);
+        parameters.Add(options.B);
+        parameters.Add(options.B);
         parameters.Add(limit);
         if (conjoined) parameters.Add(session.TenantId);
 
@@ -274,3 +318,110 @@ public static class FullTextSearchExtensions
 
 /// <summary>A document and its BM25 score. Larger is more relevant.</summary>
 public sealed record FullTextMatch<T>(T Document, double Score);
+
+/// <summary>
+///     The Okapi BM25 tuning constants used by <see cref="FullTextSearchExtensions.FullTextSearchAsync{T}" />
+///     and its scored sibling. The defaults are the conventional ones and are what every call used
+///     before this type existed (gh-611), so omitting it changes nothing.
+/// </summary>
+/// <remarks>
+///     <para>
+///         <b>Per call rather than per index, and that is the point of it.</b> One corpus is often
+///         queried two ways — a title field wants very little length normalization, a body field wants
+///         the default — and binding the constants to the index would force a second index to express
+///         that. They are bound as SQL parameters, so a different <c>k1</c> reuses the same query plan.
+///     </para>
+///     <para>
+///         ⚠️ <b>Scores computed with different options are not comparable with each other</b>, on top
+///         of BM25 scores already not being comparable across corpora. A relevance floor tuned against
+///         the defaults is meaningless against <c>b = 0</c>. Ordering within one result set is what
+///         these are safe for.
+///     </para>
+///     <para>
+///         <b>Deliberately not carried by <c>HybridSearchOptions</c>.</b> That type is shared across
+///         the Critter Stack from <c>JasperFx.Events.Vectors</c> (#633) and Polecat does not get to add
+///         members to it — and gh-640 settled that a shared option Polecat cannot honor is refused by
+///         name rather than ignored. A hybrid search therefore scores its text leg with the defaults.
+///     </para>
+/// </remarks>
+public sealed record FullTextSearchOptions
+{
+    /// <summary>The conventional BM25 term-frequency saturation, and what gh-611 hard-coded.</summary>
+    public const double DefaultK1 = 1.2;
+
+    /// <summary>The conventional BM25 length normalization, and what gh-611 hard-coded.</summary>
+    public const double DefaultB = 0.75;
+
+    private readonly double _k1 = DefaultK1;
+    private readonly double _b = DefaultB;
+
+    /// <summary>
+    ///     Construct a set of BM25 constants. Both are optional and both default to the conventional
+    ///     value, so <c>new FullTextSearchOptions(B: 0)</c> changes only length normalization.
+    /// </summary>
+    /// <remarks>
+    ///     ⚠️ <b>An ORDINARY constructor rather than a positional record, and the difference is not
+    ///     cosmetic.</b> A positional record whose parameter has a hand-written property of the same
+    ///     name does NOT assign that property — the compiler stops synthesizing one and warns CS8907
+    ///     rather than erroring, so the backing fields keep their default <c>0</c>. Written that way
+    ///     first, this type silently produced <c>k1 = 0, b = 0</c> for every caller, which is not a
+    ///     crash: BM25 simply collapses to IDF, every document carrying a term ties every other, and
+    ///     the ranking quietly stops ranking. Three existing gh-611 facts caught it. Validation has to
+    ///     live in the <c>init</c> accessors (see <see cref="K1" />), so the assignment has to be
+    ///     explicit and this is what makes it so.
+    /// </remarks>
+    /// <param name="K1">
+    ///     Term-frequency saturation: how much the second and third occurrence of a term in a document
+    ///     add over the first. <c>0</c> is legal and means "ignore term frequency entirely" — a
+    ///     document's score becomes the sum of its matched terms' IDF. Must not be negative, NaN or
+    ///     infinite.
+    /// </param>
+    /// <param name="B">
+    ///     Length normalization: how much a long document is penalized for saying the same thing at
+    ///     greater length. <c>0</c> turns it off, so a long document with the same term frequency ties
+    ///     a short one; <c>1</c> is full normalization. Must be within <c>[0, 1]</c>.
+    /// </param>
+    /// <summary>
+    ///     The BM25 parameters gh-611 shipped with, and what the overloads that take no options use.
+    /// </summary>
+    /// <remarks>
+    ///     A single shared instance rather than a fresh one per call: the record is immutable and its
+    ///     values are the defaults, so every caller that names no options is asking the same question.
+    /// </remarks>
+    public static readonly FullTextSearchOptions Default = new();
+
+    public FullTextSearchOptions(double K1 = DefaultK1, double B = DefaultB)
+    {
+        this.K1 = K1;
+        this.B = B;
+    }
+
+    /// <inheritdoc cref="FullTextSearchOptions(double, double)" />
+    /// <remarks>
+    ///     ⚠️ Validated in the <c>init</c> accessor rather than in the constructor on purpose. A
+    ///     record's <c>with</c> expression runs the compiler-generated copy constructor, which does
+    ///     NOT re-run the one above — so constructor validation alone would let
+    ///     <c>options with { B = 4 }</c> through, and BM25 would return a nonsense ranking rather than
+    ///     refuse.
+    /// </remarks>
+    public double K1
+    {
+        get => _k1;
+        init => _k1 = value is >= 0 and <= double.MaxValue
+            ? value
+            : throw new ArgumentOutOfRangeException(nameof(K1), value,
+                "BM25's k1 is a term-frequency saturation and cannot be negative, NaN or infinite. "
+                + $"Use 0 to ignore term frequency entirely, or omit it for the conventional {DefaultK1}.");
+    }
+
+    /// <inheritdoc cref="K1" />
+    public double B
+    {
+        get => _b;
+        init => _b = value is >= 0 and <= 1
+            ? value
+            : throw new ArgumentOutOfRangeException(nameof(B), value,
+                "BM25's b is a length normalization and has to be within [0, 1]. Use 0 to turn length "
+                + $"normalization off, 1 for full normalization, or omit it for the conventional {DefaultB}.");
+    }
+}

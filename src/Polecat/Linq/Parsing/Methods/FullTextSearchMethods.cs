@@ -9,16 +9,17 @@ using Weasel.SqlServer;
 namespace Polecat.Linq.Parsing.Methods;
 
 /// <summary>
-///     Parses the full-text operators — <c>PlainTextSearch</c>, <c>PhraseSearch</c> and
-///     <c>WebStyleSearch</c> — into <c>EXISTS</c> clauses against the token table gh-611 maintains
-///     beside the document table.
+///     Parses the full-text operators — <c>PlainTextSearch</c>, <c>PhraseSearch</c>,
+///     <c>PrefixSearch</c> and <c>WebStyleSearch</c> — into <c>EXISTS</c> clauses against the token
+///     table gh-611 maintains beside the document table.
 /// </summary>
 internal class FullTextSearchMethods: IMethodCallParser
 {
     public bool Matches(MethodCallExpression expression)
     {
         return expression.Method.DeclaringType == typeof(LinqExtensions)
-            && expression.Method.Name is "PlainTextSearch" or "PhraseSearch" or "WebStyleSearch";
+            && expression.Method.Name is "PlainTextSearch" or "PhraseSearch" or "PrefixSearch"
+                or "WebStyleSearch";
     }
 
     public ISqlFragment Parse(IMemberResolver memberFactory, MethodCallExpression expression)
@@ -57,6 +58,7 @@ internal class FullTextSearchMethods: IMethodCallParser
         var query = expression.Method.Name switch
         {
             "PhraseSearch" => FullTextQuery.Phrase(searchTerm),
+            "PrefixSearch" => FullTextQuery.Prefix(searchTerm),
             "WebStyleSearch" => FullTextQuery.WebStyle(searchTerm),
             _ => FullTextQuery.Plain(searchTerm)
         };
@@ -188,6 +190,25 @@ internal class FullTextFilter: ISqlFragment
                 builder.Append($" AND f{i}.term = ");
                 builder.AppendParameter(clause.Terms[i]);
             }
+        }
+        else if (clause.Prefix)
+        {
+            // ⚠️ The '%' is appended to the PARAMETER VALUE rather than concatenated in SQL, and that
+            // is a plan decision rather than a style one. `term LIKE @p` lets SQL Server compute a
+            // seek range from the variable at run time against ix_pc_ft_*_term, whose leading column
+            // is `term`; `term LIKE @p + '%'` is a LIKE against an expression, which it will not turn
+            // into a seek — so a search-as-you-type box would scan the whole token table on every
+            // keystroke.
+            //
+            // ⚠️ Nothing escapes LIKE's metacharacters here, and the reason is that they cannot reach
+            // this line: '%', '_', '[' and ']' are all in FullTextIndex.Punctuation, so Tokenize maps
+            // every one of them to a space before splitting and no term — searched or stored — can
+            // contain one. `prefix_search_cannot_smuggle_a_like_wildcard` pins that, and
+            // `tokenize_strips_the_like_metacharacters` pins the property it rests on. Widen the
+            // tokenizer to keep any of those characters and this becomes a wildcard injection, so the
+            // two facts have to move together.
+            builder.Append(" AND f0.term LIKE ");
+            builder.AppendParameter(clause.Terms[0] + "%");
         }
         else
         {

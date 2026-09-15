@@ -51,6 +51,34 @@ public static class LinqExtensions
             + "Polecat document query.");
 
     /// <summary>
+    ///     Full-text search where every word of <paramref name="searchTerm" /> matches from the
+    ///     <em>start</em> of a term: <c>PrefixSearch("qui")</c> finds a document containing
+    ///     <c>quick</c>. All of the words are required, as with <see cref="PlainTextSearch" />.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         Mirrors Marten's operator of the same name, which appends PostgreSQL's <c>:*</c> to each
+    ///         word of a <c>to_tsquery</c>. This is the operator a search-as-you-type box wants — the
+    ///         last word a user has typed is a prefix of what they mean, not a word.
+    ///     </para>
+    ///     <para>
+    ///         <b>It matches from the start of a term only.</b> <c>PrefixSearch("uic")</c> does not
+    ///         find <c>quick</c>: the token table stores whole terms, and a substring match against it
+    ///         is not a slow query but an empty result. Marten reaches that capability through a
+    ///         separate ngram index and Fisher through a trigram tokenizer; Polecat has neither yet.
+    ///     </para>
+    ///     <para>
+    ///         An empty or all-punctuation prefix matches nothing rather than everything, the same
+    ///         answer <see cref="PlainTextSearch" /> gives an empty search. Only callable inside a LINQ
+    ///         <c>Where</c>.
+    ///     </para>
+    /// </remarks>
+    public static bool PrefixSearch(this string member, string searchTerm)
+        => throw new NotSupportedException(
+            "PrefixSearch() is a LINQ marker and only has meaning inside a Where() against a "
+            + "Polecat document query.");
+
+    /// <summary>
     ///     Full-text search taking a search box's raw contents: bare words are required,
     ///     <c>"quoted text"</c> is a phrase, a leading <c>-</c> excludes, and a bare <c>or</c>
     ///     separates alternatives.
