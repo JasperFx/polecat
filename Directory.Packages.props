@@ -757,10 +757,51 @@
              This bump is what lets polecat#522 remove Polecat's own guard (the empty Append in
              StorageOperationExecution.Configure), so 9.27.1 is a FLOOR, not a preference — the nine
              queued_sql_command_tests are the proof it holds, and five of them fail against 9.27.0
-             once the local guard is gone. -->
-        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.32.0" />
-        <PackageVersion Include="Weasel.SqlServer" Version="9.32.0" />
-        <PackageVersion Include="Weasel.Storage" Version="9.32.0" />
+             once the local guard is gone.
+
+             Weasel 9.33.0 (from 9.32.0). Nine commits, and unusually for a Weasel bump most of them
+             are on paths Polecat drives. Grouped by what this bump actually changes here:
+
+             INHERITED, no Polecat change needed:
+             weasel#595/#603 — a numeric-revision ConcurrencyException always carries the
+             UpdateRevision hint. Polecat's revisioned documents go through Weasel.Storage's
+             Numeric*Operation types, so the better message arrives for free.
+             weasel#598/#606 — InsufficientDatabasePrivilegeException replaces a leaked SQLSTATE
+             when the migration user cannot create a schema or table. SQL Server has detection, so
+             Polecat's startup DDL raises the named type now.
+             weasel#601/#609 — the assert path (AssertDatabaseMatchesConfigurationAsync) always
+             throws DatabaseValidationException, including for drift that cannot be applied, which
+             previously came out as a SchemaMigrationException from the patch derivation.
+             weasel#600/#608 — IMigrationLogger.DestructiveChange warns once per object before the
+             migrator's only data-destroying branch (the Invalid delta's DROP + CREATE under
+             AutoCreate.All). Default interface implementation, and Polecat has no IMigrationLogger
+             of its own, so the warning lands on the console via DefaultMigrationLogger.
+             weasel#602/#610 — six message defects, of which the TimedLock timeout and the
+             identifier-validation wording are reachable from Polecat.
+
+             NOT automatic, and the reason this bump has follow-up work:
+             weasel#599/#607 — SqlServerGlobalLock is the FIRST IGlobalLock<SqlConnection> to exist.
+             Until now SQL Server had no implementation of the seam at all, so
+             ApplyAllConfiguredChangesToDatabaseAsync ran under the nullo lock and two replicas
+             starting together both applied migrations. The lock is a PARAMETER to that method
+             rather than something the database supplies, and the overload Polecat calls passes
+             NulloGlobalList — so Polecat does NOT get it by bumping, it has to pass one.
+             Contention (-1 timeout, -2 cancelled, -3 deadlock victim) is now an AttainLockResult
+             failure that ResourceMigrationFailureMode rules on, and -999 (malformed request) still
+             throws GlobalLockUnavailableException, which derives from InvalidOperationException so
+             the PostgreSQL-shaped catch keeps working.
+
+             INERT:
+             weasel#594 (the delta decides an index needs a concurrent build) is PostgreSQL-only.
+             weasel#596/#604 — the per-event append exception-transform hook is for the RICH append
+             path: the Quick paths read the current version in-session and raise their own conflict,
+             so Weasel's own remark says a Quick dialect normally leaves the closure unset. Polecat
+             is QuickAppend-only and SqlServerEventStoreDialect.BuildRichDescriptor throws, so there
+             is nothing here to install. Recorded because "new hook on a base class Polecat's append
+             operation derives from" reads like adoption work until you check which path it serves. -->
+        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.33.0" />
+        <PackageVersion Include="Weasel.SqlServer" Version="9.33.0" />
+        <PackageVersion Include="Weasel.Storage" Version="9.33.0" />
 
         <!-- Strongly typed IDs. Both generators are test-only: they prove Polecat's value-type id
              support against the two libraries Marten's ValueTypeTests exercise. StronglyTypedId emits
