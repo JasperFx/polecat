@@ -43,7 +43,7 @@ public class linq_refusal_type_tests : OneOffConfigurationsContext
 
         ex.Message.ShouldContain("SequenceEqual");
         ex.Message.ShouldContain("StartsWith");
-        ex.Message.ShouldContain("MatchesSql");
+        ex.Message.ShouldContain("AdvancedSql");
     }
 
     [Fact]
@@ -59,7 +59,7 @@ public class linq_refusal_type_tests : OneOffConfigurationsContext
 
         ex.ShouldBeAssignableTo<JasperFx.BadLinqExpressionException>();
         ex.Message.ShouldContain("Polecat cannot translate");
-        ex.Message.ShouldContain("MatchesSql");
+        ex.Message.ShouldContain("AdvancedSql");
     }
 
     [Fact]
@@ -75,6 +75,89 @@ public class linq_refusal_type_tests : OneOffConfigurationsContext
 
         ex.Message.ShouldContain("GroupBy key");
         ex.Message.ShouldContain("composite key");
+    }
+
+    /// <summary>
+    ///     #663. An operator with no case in the parser's switch used to fall through and be silently
+    ///     ignored, which is worse than a refusal: every one of these returned rows that looked like
+    ///     an answer. Measured against three rows before the fix — <c>Order()</c> came back
+    ///     unordered, <c>OrderBy(...).Reverse()</c> came back ascending, <c>SkipWhile</c> returned
+    ///     all three, and <c>Except(itself)</c> returned all three where it should have returned
+    ///     none.
+    /// </summary>
+    [Theory]
+    [InlineData("Order")]
+    [InlineData("OrderDescending")]
+    [InlineData("Reverse")]
+    [InlineData("TakeWhile")]
+    [InlineData("SkipWhile")]
+    [InlineData("Concat")]
+    [InlineData("Union")]
+    [InlineData("Except")]
+    [InlineData("DefaultIfEmpty")]
+    [InlineData("Join")]
+    public async Task an_untranslatable_operator_is_refused_rather_than_ignored(string op)
+    {
+        await using var query = await aSeededSessionAsync();
+        var token = TestContext.Current.CancellationToken;
+        var source = query.Query<LinqTarget>();
+
+        var chained = op switch
+        {
+            "Order" => source.Order(),
+            "OrderDescending" => source.OrderDescending(),
+            "Reverse" => source.OrderBy(x => x.Age).Reverse(),
+            "TakeWhile" => source.TakeWhile(x => x.Age < 3),
+            "SkipWhile" => source.SkipWhile(x => x.Age < 3),
+            "Concat" => source.Concat(query.Query<LinqTarget>()),
+            "Union" => source.Union(query.Query<LinqTarget>()),
+            "Except" => source.Except(query.Query<LinqTarget>()),
+            "DefaultIfEmpty" => source.DefaultIfEmpty()!,
+            "Join" => source.Join(query.Query<LinqTarget>(), x => x.Id, y => y.Id, (x, y) => x),
+            _ => throw new ArgumentOutOfRangeException(nameof(op))
+        };
+
+        var ex = await Should.ThrowAsync<BadLinqExpressionException>(() => chained.ToListAsync(token));
+
+        ex.Message.ShouldContain($"'{op}'");
+        ex.Message.ShouldContain("refused rather than ignored");
+
+        // The message lists what DOES translate, so the caller is not sent to the source.
+        ex.Message.ShouldContain("OrderByDescending");
+        ex.Message.ShouldContain("GroupJoin(...).SelectMany(...)");
+        ex.Message.ShouldContain("AdvancedSql");
+    }
+
+    /// <summary>
+    ///     The other side of the same guard: an operator that really is a no-op on a Polecat query
+    ///     must keep working, or the refusal breaks queries that were correct.
+    /// </summary>
+    [Fact]
+    public async Task an_operator_that_genuinely_does_nothing_is_still_allowed()
+    {
+        await using var query = await aSeededSessionAsync();
+        var token = TestContext.Current.CancellationToken;
+
+        (await query.Query<LinqTarget>().AsQueryable().ToListAsync(token)).ShouldNotBeEmpty();
+        (await query.Query<LinqTarget>().Cast<LinqTarget>().ToListAsync(token)).ShouldNotBeEmpty();
+        (await query.Query<LinqTarget>().OfType<LinqTarget>().ToListAsync(token)).ShouldNotBeEmpty();
+    }
+
+    /// <summary>
+    ///     A NARROWING OfType is a filter, not a no-op, and Polecat has no OfType translation at all
+    ///     — document subclasses are queried through <c>Query&lt;TSubClass&gt;()</c>. Ignoring it
+    ///     returns the parent's rows dressed as a subclass query.
+    /// </summary>
+    [Fact]
+    public async Task a_narrowing_of_type_is_refused()
+    {
+        await using var query = await aSeededSessionAsync();
+
+        var ex = await Should.ThrowAsync<BadLinqExpressionException>(() =>
+            query.Query<LinqTarget>().OfType<LinqTargetSpecial>()
+                .ToListAsync(TestContext.Current.CancellationToken));
+
+        ex.Message.ShouldContain("'OfType'");
     }
 
     /// <summary>

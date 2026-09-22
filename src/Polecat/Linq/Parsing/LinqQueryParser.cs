@@ -336,9 +336,66 @@ internal class LinqQueryParser : ExpressionVisitor
             case "QueryForNonStaleData" when node.Method.DeclaringType == typeof(NonStaleDataExtensions):
                 HandleQueryForNonStaleData(node);
                 break;
+
+            // #663: an operator with no case above used to fall straight through and be SILENTLY
+            // IGNORED — the query ran, returned plausible rows, and the operator the caller wrote
+            // did nothing. Measured against three rows: .Order() and .OrderDescending() came back
+            // unordered, OrderBy(...).Reverse() came back in exactly the wrong direction, TakeWhile
+            // and SkipWhile returned every row, and .Except(itself) returned all three where it
+            // should have returned none. A filter that silently matches nothing hands the caller
+            // MORE data than they asked for, which is the same failure AssertSoftDeleteOperatorIsLegal
+            // exists to prevent — that reasoning was just never applied past one extension class.
+            default:
+                AssertOperatorIsTranslatable(node);
+                break;
         }
 
         return node;
+    }
+
+    /// <summary>
+    ///     Operators that legitimately do nothing to a Polecat query, so ignoring them is the right
+    ///     answer rather than an accident.
+    /// </summary>
+    /// <remarks>
+    ///     <c>Cast</c> and <c>OfType</c> are only inert when the type argument IS the element type.
+    ///     Narrowing either one is a filter, and Polecat has no <c>OfType</c> support at all —
+    ///     document subclasses are queried through <c>Query&lt;TSubClass&gt;()</c> — so a narrowing
+    ///     call is exactly the silently-ignored filter this guard exists to catch.
+    /// </remarks>
+    private static bool IsInertOperator(MethodCallExpression node)
+    {
+        switch (node.Method.Name)
+        {
+            case "AsQueryable":
+                return true;
+
+            case "Cast":
+            case "OfType":
+                var target = node.Method.GetGenericArguments().FirstOrDefault();
+                var source = node.Arguments[0].Type.GetGenericArguments().FirstOrDefault();
+                return target != null && target == source;
+
+            default:
+                return false;
+        }
+    }
+
+    private static void AssertOperatorIsTranslatable(MethodCallExpression node)
+    {
+        if (IsInertOperator(node)) return;
+
+        throw new BadLinqExpressionException(
+            $"Polecat cannot translate the '{node.Method.Name}' operator to SQL. It is refused rather "
+            + "than ignored, because ignoring it returns rows that look like an answer and are not. "
+            + "Supported operators are Where, Select, OrderBy, OrderByDescending, ThenBy, "
+            + "ThenByDescending, Take, Skip, Distinct, DistinctBy, GroupBy, First, FirstOrDefault, "
+            + "Single, SingleOrDefault, Last, LastOrDefault, Count, LongCount, Any, Sum, Min, Max and "
+            + "Average, plus GroupJoin(...).SelectMany(...) for joins and Polecat's own AnyTenant, "
+            + "TenantIsOneOf, MaybeDeleted, IsDeleted, DeletedSince, DeletedBefore, ModifiedSince, "
+            + "ModifiedBefore, CreatedSince, CreatedBefore, QueryForNonStaleData and "
+            + "OrderByVectorDistance. Materialize the query with ToListAsync() and finish the work in "
+            + "memory, or run it as raw SQL through session.AdvancedSql.QueryAsync<T>(...).");
     }
 
     private void HandleGroupJoin(MethodCallExpression node)
