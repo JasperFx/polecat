@@ -90,11 +90,30 @@ public class MasterTableTenancy : ITenancy, IDynamicTenantSource<string>
         if (_cache.TryGetValue(tenantId, out var cached)) return cached;
 
         // It is deliberately important *not* to silently swallow the lookup here — an unknown or
-        // disabled tenant must surface as UnknownTenantIdException, same as SeparateDatabaseTenancy.
-        var connectionString = LookupConnectionStringAsync(tenantId).GetAwaiter().GetResult()
-            ?? throw new UnknownTenantIdException(tenantId);
+        // disabled tenant must refuse the session, same as SeparateDatabaseTenancy. #655: the two
+        // are now told apart, because they call for different actions.
+        var lookup = LookupTenantAsync(tenantId).GetAwaiter().GetResult();
+        if (lookup.ConnectionString is null) throw RefusalFor(tenantId, lookup.Status);
 
-        return _cache.GetOrAdd(tenantId, id => CreateEntry(id, connectionString));
+        return _cache.GetOrAdd(tenantId, id => CreateEntry(id, lookup.ConnectionString));
+    }
+
+    /// <summary>
+    ///     The refusal for a tenant this tenancy will not open a session for.
+    /// </summary>
+    /// <remarks>
+    ///     #655 / jasperfx#875. A missing row and a disabled row both used to raise
+    ///     <see cref="UnknownTenantIdException" />, so the operator who had just run CritterWatch's
+    ///     <c>disable_tenant</c> — or the on-call engineer after them — read "Unknown tenant id
+    ///     'acme'" about a tenant that was still registered and had been turned off on purpose.
+    ///     <see cref="DisabledTenantException" /> derives from <see cref="UnknownTenantIdException" />,
+    ///     so nothing that catches the old type stops catching; the message just stops being wrong.
+    /// </remarks>
+    private static UnknownTenantIdException RefusalFor(string tenantId, TenantLookupStatus status)
+    {
+        return status == TenantLookupStatus.Disabled
+            ? new DisabledTenantException(tenantId)
+            : new UnknownTenantIdException(tenantId);
     }
 
     private Entry CreateEntry(string tenantId, string connectionString)
@@ -272,17 +291,18 @@ public class MasterTableTenancy : ITenancy, IDynamicTenantSource<string>
 
     /// <summary>
     ///     Resolve the connection string for a tenant. Throws <see cref="UnknownTenantIdException" />
-    ///     for an unknown or disabled tenant, matching the behavior of opening a session for it.
+    ///     for an unknown tenant and the more specific <see cref="DisabledTenantException" /> for a
+    ///     registered-but-disabled one, matching the behavior of opening a session for it.
     /// </summary>
     async ValueTask<string> ITenantedSource<string>.FindAsync(string tenantId)
     {
-        var connectionString = await LookupConnectionStringAsync(tenantId).ConfigureAwait(false);
-        if (string.IsNullOrEmpty(connectionString))
+        var lookup = await LookupTenantAsync(tenantId).ConfigureAwait(false);
+        if (string.IsNullOrEmpty(lookup.ConnectionString))
         {
-            throw new UnknownTenantIdException(tenantId);
+            throw RefusalFor(tenantId, lookup.Status);
         }
 
-        return connectionString;
+        return lookup.ConnectionString;
     }
 
     /// <summary>
@@ -343,7 +363,31 @@ public class MasterTableTenancy : ITenancy, IDynamicTenantSource<string>
 
     #endregion
 
-    private async Task<string?> LookupConnectionStringAsync(string tenantId, CancellationToken token = default)
+    private enum TenantLookupStatus
+    {
+        /// <summary>No row in the registry for this tenant id.</summary>
+        Unknown,
+
+        /// <summary>A row exists and <c>is_disabled = 1</c>.</summary>
+        Disabled,
+
+        /// <summary>A row exists and is routable.</summary>
+        Enabled
+    }
+
+    /// <summary>
+    ///     The registry row for a tenant, or the reason there is nothing to route to.
+    /// </summary>
+    /// <remarks>
+    ///     #655: this used to be a <c>string?</c> from a query filtered on <c>is_disabled = 0</c>,
+    ///     which collapsed "no such tenant" and "that tenant is switched off" into the same null. The
+    ///     filter moves out of the SQL and into the caller so the refusal can say which it was.
+    ///     <see cref="ConnectionString" /> stays null unless the tenant is routable, so a caller that
+    ///     only null-checks cannot accidentally route to a disabled tenant.
+    /// </remarks>
+    private readonly record struct TenantLookup(TenantLookupStatus Status, string? ConnectionString);
+
+    private async Task<TenantLookup> LookupTenantAsync(string tenantId, CancellationToken token = default)
     {
         await EnsureMasterTableAsync(token).ConfigureAwait(false);
 
@@ -355,10 +399,21 @@ public class MasterTableTenancy : ITenancy, IDynamicTenantSource<string>
 
             await using var cmd = conn.CreateCommand();
             cmd.CommandText =
-                $"SELECT connection_string FROM {table} WHERE tenant_id = @id AND is_disabled = 0;";
+                $"SELECT connection_string, is_disabled FROM {table} WHERE tenant_id = @id;";
             cmd.Parameters.AddWithValue("@id", tenantId);
 
-            return await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false) as string;
+            await using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+            if (!await reader.ReadAsync(ct).ConfigureAwait(false))
+            {
+                return new TenantLookup(TenantLookupStatus.Unknown, null);
+            }
+
+            if (reader.GetBoolean(1))
+            {
+                return new TenantLookup(TenantLookupStatus.Disabled, null);
+            }
+
+            return new TenantLookup(TenantLookupStatus.Enabled, reader.GetString(0));
         }, (_masterConnectionString, QualifiedTableName, tenantId), token).ConfigureAwait(false);
     }
 

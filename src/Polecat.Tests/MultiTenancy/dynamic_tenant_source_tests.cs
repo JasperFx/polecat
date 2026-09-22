@@ -118,7 +118,15 @@ public class dynamic_tenant_source_tests : IAsyncLifetime
             await source.DisableTenantAsync(TenantA);
 
             (await source.AllDisabledAsync()).ShouldContain(TenantA);
-            await Should.ThrowAsync<UnknownTenantIdException>(async () => await source.FindAsync(TenantA));
+
+            // #655: a disabled tenant is refused by NAME rather than reported as unknown — the row
+            // is still there, and the operator who turned it off needs to read that back. The
+            // derived type means an existing catch (UnknownTenantIdException) still catches.
+            var disabled = await Should.ThrowAsync<DisabledTenantException>(
+                async () => await source.FindAsync(TenantA));
+            disabled.ShouldBeAssignableTo<UnknownTenantIdException>();
+            disabled.Message.ShouldContain("disabled");
+            disabled.Message.ShouldContain(TenantA);
 
             await source.EnableTenantAsync(TenantA);
 
