@@ -157,6 +157,7 @@ const config: UserConfig<DefaultTheme.Config> = {
           text: 'Testing',
           collapsed: true,
           items: [
+            { text: 'Unit Testing Event Handlers', link: '/testing/unit-testing-event-handlers' },
             { text: 'Integration Testing', link: '/testing/integration' },
           ]
         },

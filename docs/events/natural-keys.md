@@ -168,7 +168,7 @@ For read-only access, you can use `FetchLatest` with a natural key:
 // Read-only access by natural key
 var aggregate = await session2.Events.FetchLatest<OrderAggregate, OrderNumber>(orderNumber, TestContext.Current.CancellationToken);
 ```
-<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.Tests/Events/natural_key_tests.cs#L169-L172' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_fetch_latest_by_natural_key' title='Start of snippet'>anchor</a></sup>
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.Tests/Events/natural_key_tests.cs#L141-L144' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_fetch_latest_by_natural_key' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 ## Mutability
