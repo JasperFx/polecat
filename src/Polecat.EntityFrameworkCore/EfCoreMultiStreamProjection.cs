@@ -54,40 +54,57 @@ public abstract class EfCoreMultiStreamProjection<
         IReadOnlyList<IEvent> events,
         CancellationToken cancellation)
     {
-        TDbContext? dbContext = null;
-
-        // Try to extract DbContext from EfCoreProjectionStorage
+        // The projection's own storage already owns a DbContext for this tenant and batch, and the
+        // participant registered alongside it owns its disposal (#650).
         if (identitySetter is EfCoreProjectionStorage<TDoc, TId, TDbContext> efStorage)
         {
-            dbContext = efStorage.DbContext;
+            return ValueTask.FromResult(Apply(snapshot, identity, events, efStorage.DbContext));
         }
 
-        // Create new DbContext if not available
-        if (dbContext == null && _connectionString != null)
-        {
-            var (ctx, placeholder) = EfCoreDbContextFactory.Create<TDbContext>(_connectionString);
-            dbContext = ctx;
-
-            if (session is ITransactionParticipantRegistrar registrar)
-            {
-                registrar.AddTransactionParticipant(
-                    new DbContextTransactionParticipant<TDbContext>(dbContext, placeholder));
-            }
-        }
-
-        if (dbContext == null)
+        if (_connectionString == null)
         {
             return base.DetermineActionAsync(session, snapshot, identity, identitySetter, events, cancellation);
         }
 
+        var (dbContext, placeholder) = EfCoreDbContextFactory.Create<TDbContext>(_connectionString);
+
+        if (session is ITransactionParticipantRegistrar registrar)
+        {
+            registrar.AddTransactionParticipant(
+                new DbContextTransactionParticipant<TDbContext>(dbContext, placeholder));
+
+            return ValueTask.FromResult(Apply(snapshot, identity, events, dbContext));
+        }
+
+        // #650: see the single-stream twin — a plain IQuerySession is not a registrar, so nothing
+        // would have owned either object on this route.
+        return DisposeAfterApplying(snapshot, identity, events, dbContext, placeholder);
+    }
+
+    private (TDoc?, ActionType) Apply(TDoc? snapshot, TId identity, IReadOnlyList<IEvent> events,
+        TDbContext dbContext)
+    {
         var current = snapshot;
         foreach (var @event in events)
         {
             current = ApplyEvent(current, identity, @event, dbContext);
         }
 
-        var action = current == null ? ActionType.Delete : ActionType.Store;
-        return ValueTask.FromResult((current, action));
+        return (current, current == null ? ActionType.Delete : ActionType.Store);
+    }
+
+    private async ValueTask<(TDoc?, ActionType)> DisposeAfterApplying(TDoc? snapshot, TId identity,
+        IReadOnlyList<IEvent> events, TDbContext dbContext, SqlConnection placeholder)
+    {
+        try
+        {
+            return Apply(snapshot, identity, events, dbContext);
+        }
+        finally
+        {
+            await dbContext.DisposeAsync();
+            await placeholder.DisposeAsync();
+        }
     }
 
     internal void SetConnectionString(string connectionString)

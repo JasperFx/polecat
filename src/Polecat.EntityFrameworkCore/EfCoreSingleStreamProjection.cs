@@ -52,43 +52,63 @@ public abstract class EfCoreSingleStreamProjection<
         IReadOnlyList<IEvent> events,
         CancellationToken cancellation)
     {
-        TDbContext? dbContext = null;
-
-        // Try to extract DbContext from EfCoreProjectionStorage
+        // The projection's own storage already owns a DbContext for this tenant and batch, and the
+        // participant registered alongside it owns its disposal (#650).
         if (identitySetter is EfCoreProjectionStorage<TDoc, Guid, TDbContext> efStorage)
         {
-            dbContext = efStorage.DbContext;
+            return ValueTask.FromResult(Apply(snapshot, identity, events, session, efStorage.DbContext));
         }
 
-        // Create new DbContext if not available (e.g., live aggregation)
-        if (dbContext == null && _connectionString != null)
-        {
-            var (ctx, placeholder) = EfCoreDbContextFactory.Create<TDbContext>(_connectionString);
-            dbContext = ctx;
-
-            // Register participant so DbContext flushes in same transaction
-            if (session is ITransactionParticipantRegistrar registrar)
-            {
-                registrar.AddTransactionParticipant(
-                    new DbContextTransactionParticipant<TDbContext>(dbContext, placeholder));
-            }
-        }
-
-        if (dbContext == null)
+        if (_connectionString == null)
         {
             // Fallback: use base class conventional methods
             return base.DetermineActionAsync(session, snapshot, identity, identitySetter, events, cancellation);
         }
 
-        // Apply events through the DbContext-aware method
+        // No EF-backed storage arrived, so build a DbContext just for this call. Live aggregation
+        // takes this route on every AggregateStreamAsync.
+        var (dbContext, placeholder) = EfCoreDbContextFactory.Create<TDbContext>(_connectionString);
+
+        // Register participant so DbContext flushes in same transaction — and so something owns it.
+        if (session is ITransactionParticipantRegistrar registrar)
+        {
+            registrar.AddTransactionParticipant(
+                new DbContextTransactionParticipant<TDbContext>(dbContext, placeholder));
+
+            return ValueTask.FromResult(Apply(snapshot, identity, events, session, dbContext));
+        }
+
+        // #650: a plain IQuerySession is NOT an ITransactionParticipantRegistrar, which is exactly
+        // what the live-aggregation path passes — so on that route the participant above would have
+        // had no owner and nothing would ever have disposed either object. We created them here, so
+        // we dispose them here.
+        return DisposeAfterApplying(snapshot, identity, events, session, dbContext, placeholder);
+    }
+
+    private (TDoc?, ActionType) Apply(TDoc? snapshot, Guid identity, IReadOnlyList<IEvent> events,
+        IQuerySession session, TDbContext dbContext)
+    {
         var current = snapshot;
         foreach (var @event in events)
         {
             current = ApplyEvent(current, identity, @event, dbContext, session);
         }
 
-        var action = current == null ? ActionType.Delete : ActionType.Store;
-        return ValueTask.FromResult((current, action));
+        return (current, current == null ? ActionType.Delete : ActionType.Store);
+    }
+
+    private async ValueTask<(TDoc?, ActionType)> DisposeAfterApplying(TDoc? snapshot, Guid identity,
+        IReadOnlyList<IEvent> events, IQuerySession session, TDbContext dbContext, SqlConnection placeholder)
+    {
+        try
+        {
+            return Apply(snapshot, identity, events, session, dbContext);
+        }
+        finally
+        {
+            await dbContext.DisposeAsync();
+            await placeholder.DisposeAsync();
+        }
     }
 
     internal void SetConnectionString(string connectionString)
