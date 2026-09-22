@@ -568,19 +568,29 @@
              a thousand tests and never in isolation — so a clean full-suite run on this bump is what
              confirms it, not the bump itself.
 
-             JasperFx 2.74.0 (from 2.72.0, spanning 2.73.0/2.73.1/2.73.2). Taken for ONE type, and
-             the rest of the release is inert here:
+             JasperFx 2.74.0 (from 2.72.0, spanning 2.73.0/2.73.1/2.73.2). Taken for TWO lifted
+             exception types, one per open Polecat issue:
              (a) jasperfx#871/#878 — ArchivedStreamException, lifted from the three unrelated
              per-store types that expressed the same refusal (Marten's generic
              InvalidStreamOperationException, Polecat's InvalidStreamException, Fisher's already
              correctly-named one). Fisher's shape is canonical: named for the condition, carrying the
              id, and naming UnArchiveStream as the way back. polecat#654 adopts it; Polecat's own
              InvalidStreamException is obsoleted, archiving having been its only use.
-             Also in 2.74.0 and NOT consumed here: jasperfx#875/#882 (DisabledTenantException — that
-             is polecat#655), jasperfx#879 (canonical stream exception messages name a remedy, which
-             Polecat inherits for free through the #651 subclasses), jasperfx#880/#881/#883/#884
-             (AutoCreate XML comments, StaticTenantSource's refusal message, the tenant-id casing
-             doc, and RuntimeCompiler's exception hierarchy). -->
+             ⚠️ This half is NOT optional on this bump. StreamArchivingCompliance's
+             appending_to_an_archived_stream_is_rejected tightened in the same release, from an
+             unpinned ThrowAsync<Exception> to the store's nominated archived-stream type — so
+             taking 2.74.0 without the #654 product change turns an enrolled suite red. polecat#655
+             found that out the hard way, on a branch that carried only this bump.
+             (b) jasperfx#875/#882 — DisabledTenantException, lifted out of Fisher and deriving from
+             UnknownTenantIdException on purpose, so a store can start throwing it without breaking
+             any caller that catches the old type. polecat#655 adopts it in MasterTableTenancy, where
+             a missing pc_tenants row and a DISABLED one both reported "Unknown tenant id".
+             Also in 2.74.0 and NOT consumed here: jasperfx#879 (canonical stream exception messages
+             name a remedy, which Polecat inherits for free through the #651 subclasses — the
+             NonExistentStreamException and ExistingStreamIdCollisionException wordings change on
+             this bump without a line of Polecat moving), jasperfx#880/#881/#883/#884 (AutoCreate XML
+             comments, StaticTenantSource's refusal message, the tenant-id casing doc, and
+             RuntimeCompiler's exception hierarchy). -->
         <PackageVersion Include="JasperFx" Version="2.74.0" />
         <PackageVersion Include="JasperFx.Events" Version="2.74.0" />
         <!--

@@ -195,8 +195,13 @@ Notes:
 - `AddDatabaseRecordAsync` records the mapping and re-enables a previously-disabled tenant; it does
   **not** create the tenant database — provision that separately (the connection string must point at
   an existing database).
-- Disabled or unknown tenants raise `UnknownTenantIdException` when a session is opened for them,
-  exactly like static separate-database tenancy.
+- An **unknown** tenant raises `UnknownTenantIdException` when a session is opened for it, exactly
+  like static separate-database tenancy. A **disabled** tenant raises the more specific
+  `JasperFx.MultiTenancy.DisabledTenantException`, whose message says the tenant is registered but
+  switched off and that its data is untouched — so an operator who just ran `DisableTenantAsync` does
+  not read "Unknown tenant id" about a tenant that is plainly still there. `DisabledTenantException`
+  derives from `UnknownTenantIdException`, so an existing `catch (UnknownTenantIdException)` keeps
+  catching both.
 - All master-table access flows through `StoreOptions.ResiliencePipeline`.
 
 This is the Polecat (SQL Server) equivalent of Marten's `MultiTenantedDatabasesViaMasterTable` /
@@ -219,8 +224,8 @@ var cardinality = source.Cardinality;
 // Add a tenant with a caller-supplied connection string
 await source.AddTenantAsync("tenant-a", "Server=localhost;Database=tenant_a;...");
 
-// Resolve a tenant's connection string; throws UnknownTenantIdException for an
-// unknown *or* disabled tenant
+// Resolve a tenant's connection string; throws UnknownTenantIdException for an unknown
+// tenant, or DisabledTenantException (which derives from it) for a disabled one
 var connectionString = await source.FindAsync("tenant-a");
 
 // Soft delete / restore

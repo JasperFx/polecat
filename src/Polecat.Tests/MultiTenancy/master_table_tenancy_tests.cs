@@ -267,10 +267,15 @@ public class master_table_tenancy_tests : IAsyncLifetime
             await tenancy.DisableTenantAsync(TenantA, TestContext.Current.CancellationToken);
 
             (await tenancy.AllDisabledAsync(TestContext.Current.CancellationToken)).ShouldContain(TenantA);
-            await Should.ThrowAsync<UnknownTenantIdException>(async () =>
+
+            // #655: opening a session for a disabled tenant refuses with DisabledTenantException, not
+            // the "Unknown tenant id" it used to report about a tenant that is plainly still known.
+            var disabled = await Should.ThrowAsync<DisabledTenantException>(async () =>
             {
                 await using var _ = store.LightweightSession(new SessionOptions { TenantId = TenantA });
             });
+            disabled.Message.ShouldContain("disabled");
+            disabled.TenantId.ShouldBe(TenantA);
 
             await tenancy.EnableTenantAsync(TenantA, TestContext.Current.CancellationToken);
 
