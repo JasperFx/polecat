@@ -40,7 +40,9 @@ public class stream_compacting_identity_mismatch_tests
         var ex = await Should.ThrowAsync<InvalidOperationException>(
             () => session.Events.CompactStreamAsync<QuestParty>(Guid.NewGuid()));
 
-        ex.Message.ShouldContain("identify streams with strings");
+        // #653: the fact alone is not enough — the message has to name the setting and the way out.
+        ex.Message.ShouldContain("StreamIdentity.AsString");
+        ex.Message.ShouldContain("string stream key overloads");
     }
 
     [Fact]
@@ -53,6 +55,7 @@ public class stream_compacting_identity_mismatch_tests
         var ex = await Should.ThrowAsync<InvalidOperationException>(
             () => session.Events.CompactStreamAsync<QuestParty>("some-stream-key"));
 
-        ex.Message.ShouldContain("identify streams with Guids");
+        ex.Message.ShouldContain("StreamIdentity.AsGuid");
+        ex.Message.ShouldContain("Guid stream id overloads");
     }
 }

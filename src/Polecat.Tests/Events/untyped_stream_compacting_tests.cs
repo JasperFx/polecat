@@ -232,13 +232,15 @@ public class untyped_stream_compacting_tests
 
         var byKey = await Should.ThrowAsync<InvalidOperationException>(
             () => ((IEventStore)guidStore).CompactStreamAsync("some-key", TestContext.Current.CancellationToken));
-        byKey.Message.ShouldContain("identify streams with Guids");
+        byKey.Message.ShouldContain("StreamIdentity.AsGuid");
+        byKey.Message.ShouldContain("Guid stream id overloads");
 
         using var stringStore = CreateStore(StreamIdentity.AsString, "compact_untyped_mix_str");
 
         var byId = await Should.ThrowAsync<InvalidOperationException>(
             () => ((IEventStore)stringStore).CompactStreamAsync(Guid.NewGuid(), TestContext.Current.CancellationToken));
-        byId.Message.ShouldContain("identify streams with strings");
+        byId.Message.ShouldContain("StreamIdentity.AsString");
+        byId.Message.ShouldContain("string stream key overloads");
     }
 }
 
