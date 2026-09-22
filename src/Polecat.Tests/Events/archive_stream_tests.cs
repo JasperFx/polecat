@@ -89,12 +89,18 @@ public class archive_stream_tests : IntegrationContext
         await using var session2 = theStore.LightweightSession();
         session2.Events.Append(streamId, new MembersJoined(2, "Cave", ["Bilbo"]));
 
-        var ex = await Should.ThrowAsync<InvalidStreamException>(async () =>
+        var ex = await Should.ThrowAsync<ArchivedStreamException>(async () =>
         {
             await session2.SaveChangesAsync();
         });
 
         ex.Message.ShouldContain("archived");
+
+        // #654: the refusal names the way back rather than only the reason, and it is catchable as
+        // the lifted type so store-agnostic code needs one catch across Marten/Polecat/Fisher.
+        ex.Message.ShouldContain("UnArchiveStream");
+        ex.ShouldBeAssignableTo<JasperFx.Events.ArchivedStreamException>();
+        ex.Id.ShouldBe(streamId);
     }
 
     [Fact]

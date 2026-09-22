@@ -313,7 +313,7 @@ public class closed_shape_event_append_tests : IntegrationContext
         await using var appendSession = theStore.LightweightSession();
         appendSession.Events.Append(streamId, new MembersJoined(2, "Cave", ["Bilbo"]));
 
-        var ex = await Should.ThrowAsync<InvalidStreamException>(async () =>
+        var ex = await Should.ThrowAsync<Polecat.Exceptions.ArchivedStreamException>(async () =>
             await appendSession.SaveChangesAsync());
         ex.Message.ShouldContain("archived");
     }

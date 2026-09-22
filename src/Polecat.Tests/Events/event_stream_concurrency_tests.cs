@@ -59,7 +59,7 @@ public class event_stream_concurrency_tests : IntegrationContext
         await using var session3 = theStore.LightweightSession();
         session3.Events.Append(streamId, new MembersJoined(2, "Somewhere", ["Charlie"]));
 
-        await Should.ThrowAsync<InvalidStreamException>(session3.SaveChangesAsync(TestContext.Current.CancellationToken));
+        await Should.ThrowAsync<Polecat.Exceptions.ArchivedStreamException>(session3.SaveChangesAsync(TestContext.Current.CancellationToken));
     }
 
     // ===== Unarchive then append =====

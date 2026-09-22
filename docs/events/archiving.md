@@ -17,11 +17,21 @@ When a stream is archived:
 
 - `FetchStreamAsync` excludes the archived stream
 - The async daemon's event loader skips archived events
-- Attempting to append to an archived stream throws `InvalidStreamException`
+- Attempting to append to an archived stream throws `ArchivedStreamException`
+
+The append refusal is raised at `SaveChangesAsync()`, when Polecat reads the stream's state, and it
+names the way back:
+
+> Event stream 'a1b2…' is archived and cannot be appended to. Call UnArchiveStream to reopen it, or
+> start a new stream.
+
+`Polecat.Exceptions.ArchivedStreamException` derives from `JasperFx.Events.ArchivedStreamException`,
+so store-agnostic code can catch the shared type. (It replaces
+`InvalidStreamException`, which is now obsolete and never thrown.)
 
 ## Unarchiving a Stream
 
-Restore an archived stream:
+Restore an archived stream — this is what the refusal above points you at:
 
 ```cs
 session.Events.UnArchiveStream(streamId);
