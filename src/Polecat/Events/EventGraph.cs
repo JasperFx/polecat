@@ -343,17 +343,23 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
 
     /// <summary>
     ///     Guard for identity-sensitive entry points that take a Guid stream id (marten#5244's
-    ///     Polecat twin — same messages as Marten's EnsureAsGuidStorage/EnsureAsStringStorage).
-    ///     Downstream code branches on the store's configured <see cref="StreamIdentity" /> rather
-    ///     than on which overload the caller used, so a mismatched overload otherwise either
-    ///     silently matches nothing or fails with an error naming nothing actionable.
+    ///     Polecat twin). Downstream code branches on the store's configured
+    ///     <see cref="StreamIdentity" /> rather than on which overload the caller used, so a
+    ///     mismatched overload otherwise either silently matches nothing or fails with an error
+    ///     naming nothing actionable.
     /// </summary>
+    /// <remarks>
+    ///     #653: the message names the setting that decides this and both ways out — use the other
+    ///     overload, or reconfigure the store — because the fact on its own ("configured to identify
+    ///     streams with strings") left the caller to go find which setting controls it. Fisher's
+    ///     wording is the model.
+    /// </remarks>
     internal void EnsureAsGuidStorage()
     {
         if (StreamIdentity == StreamIdentity.AsString)
         {
             throw new InvalidOperationException(
-                "This Polecat event store is configured to identify streams with strings");
+                "This Polecat event store is configured for string stream identity (opts.Events.StreamIdentity = StreamIdentity.AsString). Use the string stream key overloads, or set opts.Events.StreamIdentity = StreamIdentity.AsGuid if streams should be keyed by Guid.");
         }
     }
 
@@ -366,7 +372,7 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
         if (StreamIdentity == StreamIdentity.AsGuid)
         {
             throw new InvalidOperationException(
-                "This Polecat event store is configured to identify streams with Guids");
+                "This Polecat event store is configured for Guid stream identity (opts.Events.StreamIdentity = StreamIdentity.AsGuid). Use the Guid stream id overloads, or set opts.Events.StreamIdentity = StreamIdentity.AsString if streams should be keyed by string.");
         }
     }
 
