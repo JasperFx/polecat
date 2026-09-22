@@ -34,3 +34,12 @@ public class Address
     public string City { get; set; } = string.Empty;
     public string State { get; set; } = string.Empty;
 }
+
+/// <summary>
+///     #663: exists only so a NARROWING OfType&lt;&gt; can be written against a mapped document type.
+///     Polecat has no OfType translation — subclasses are queried through Query&lt;TSubClass&gt;() —
+///     so narrowing is a filter the provider would otherwise ignore.
+/// </summary>
+public class LinqTargetSpecial : LinqTarget
+{
+}

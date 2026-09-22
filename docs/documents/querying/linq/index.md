@@ -81,8 +81,17 @@ query that returns plausible but wrong rows. The message names what *is* accepte
 and the ways through are:
 
 - rewrite the condition over document members, which is what translates;
-- express it as raw SQL with `MatchesSql(...)`;
+- run it as raw SQL through `session.AdvancedSql.QueryAsync<T>(...)`;
 - materialize the query and finish the work in memory with LINQ-to-Objects.
+
+An **operator** Polecat cannot translate is refused the same way. `Order()`, `OrderDescending()`,
+`Reverse()`, `TakeWhile()`, `SkipWhile()`, `Union()`, `Concat()`, `Except()`, `Join()` and
+`DefaultIfEmpty()` are not translated, and a query carrying one is rejected rather than run without
+it — ignoring an ordering gives you rows in an arbitrary order that look sorted, and ignoring a
+filter gives you *more* rows than you asked for. Both read as answers. `Cast<T>()`, `OfType<T>()`
+(when `T` is the element type) and `AsQueryable()` are genuine no-ops and are allowed through; a
+*narrowing* `OfType<TSubClass>()` is refused, because document subclasses are queried with
+`Query<TSubClass>()`.
 
 A plain `NotSupportedException` means something else, and is deliberately kept distinct: an
 unsupported *API* rather than an untranslatable expression. Synchronous execution

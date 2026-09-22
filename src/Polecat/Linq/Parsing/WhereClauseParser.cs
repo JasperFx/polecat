@@ -50,9 +50,9 @@ internal class WhereClauseParser
                 $"Polecat cannot translate '{expression}' to a SQL WHERE clause ({expression.NodeType}, "
                 + $"{expression.GetType().Name}). A predicate is built from member comparisons "
                 + "(x.Name == \"Bob\"), && and || over those, !, a boolean member, and the supported method "
-                + $"calls ({MethodCallParserRegistry.SupportedCalls}). To go outside that, write the "
-                + "condition as raw SQL with MatchesSql(...), or materialize the query and filter the "
-                + "results in memory.")
+                + $"calls ({MethodCallParserRegistry.SupportedCalls}). To go outside that, run the "
+                + "query as raw SQL through session.AdvancedSql.QueryAsync<T>(...), or materialize it and "
+                + "filter the results in memory.")
         };
     }
 
@@ -71,8 +71,8 @@ internal class WhereClauseParser
             ?? throw new BadLinqExpressionException(
                 $"Polecat cannot translate '{expression.Method.DeclaringType?.Name}.{expression.Method.Name}' "
                 + $"to SQL in a WHERE clause. Supported calls are {MethodCallParserRegistry.SupportedCalls}. "
-                + "Otherwise express the condition with MatchesSql(...), or materialize the query and "
-                + "filter in memory.");
+                + "Otherwise run the query as raw SQL through session.AdvancedSql.QueryAsync<T>(...), or "
+                + "materialize it and filter in memory.");
 
         return parser.Parse(_memberFactory, expression);
     }
@@ -94,8 +94,9 @@ internal class WhereClauseParser
 
         throw new BadLinqExpressionException(
             $"Polecat cannot translate the binary operator '{binary.NodeType}' to SQL, in '{binary}'. "
-            + "Supported operators are ==, !=, <, <=, >, >=, && and ||. Use MatchesSql(...) for anything "
-            + "else, or materialize the query and filter in memory.");
+            + "Supported operators are ==, !=, <, <=, >, >=, && and ||. For anything else run the query "
+            + "as raw SQL through session.AdvancedSql.QueryAsync<T>(...), or materialize it and filter in "
+            + "memory.");
     }
 
     private ISqlFragment ParseComparison(BinaryExpression binary, string op)
@@ -157,7 +158,8 @@ internal class WhereClauseParser
         throw new BadLinqExpressionException(
             $"Polecat cannot translate the comparison '{binary}' to SQL: neither side resolves to a "
             + "document member compared against a constant. Compare a member to a value "
-            + "(x.Age > 30), or use MatchesSql(...).");
+            + "(x.Age > 30), or run the query as raw SQL through "
+            + "session.AdvancedSql.QueryAsync<T>(...).");
     }
 
     private bool TryParseMethodTransform(Expression methodSide, Expression valueSide, string op,
