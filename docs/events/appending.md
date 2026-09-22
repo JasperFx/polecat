@@ -78,6 +78,31 @@ stream.AppendOne(new MembersJoined("Gondor", ["Faramir"]));
 await session.SaveChangesAsync();
 ```
 
+### When the Lock Cannot Be Taken
+
+`FetchForExclusiveWriting` and `AppendExclusive` hold a lock on the `pc_streams` row until the
+transaction completes, so two callers contending for the same stream — or for two streams in
+opposite order — can lose the lock. SQL Server raises a lock timeout (error 1222) or names one
+transaction the deadlock victim (error 1205), and Polecat translates either into
+`Polecat.Exceptions.StreamLockedException`, which derives from `JasperFx.Events.StreamLockedException`
+and carries the underlying `SqlException` as its `InnerException`.
+
+**Polecat does not retry this for you, and the count is zero, not five.** SqlClient's configurable
+retry is attached to the *connection*, where it governs `Open()` only; command execution is retried
+only through `SqlCommand.RetryLogicProvider`, which Polecat never sets. Nor would a command-level
+retry be correct: by the time 1205 is raised the transaction is already rolled back, so the only
+meaningful retry is a replay of the whole unit of work.
+
+Retry at the application layer instead. Under Wolverine, that is a failure policy on the exception:
+
+```cs
+opts.OnException<JasperFx.Events.StreamLockedException>()
+    .RetryWithCooldown(50.Milliseconds(), 100.Milliseconds(), 250.Milliseconds());
+```
+
+The message is re-handled from the top, so the exclusive read happens again against the state the
+winning transaction left behind.
+
 ## Enforcing Consistency Without Appending Events
 
 In some command handling scenarios, your business logic may evaluate the current aggregate state and decide that no new events need to be emitted. By default, if no events are appended to the stream returned by `FetchForWriting()`, Polecat will not perform any concurrency check when `SaveChangesAsync()` is called. This means that if another process has modified the stream between your fetch and save, you won't know about it.

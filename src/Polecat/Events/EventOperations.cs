@@ -417,7 +417,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
         }
         catch (Exception e) when (IsLockFailure(e))
         {
-            throw new Exceptions.StreamLockedException(streamId, e.InnerException);
+            throw new Exceptions.StreamLockedException(streamId, FindLockFailure(e));
         }
     }
 
@@ -435,7 +435,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
         }
         catch (Exception e) when (IsLockFailure(e))
         {
-            throw new Exceptions.StreamLockedException(streamKey, e.InnerException);
+            throw new Exceptions.StreamLockedException(streamKey, FindLockFailure(e));
         }
     }
 
@@ -464,7 +464,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
         }
         catch (Exception e) when (IsLockFailure(e))
         {
-            throw new Exceptions.StreamLockedException(streamId, e.InnerException);
+            throw new Exceptions.StreamLockedException(streamId, FindLockFailure(e));
         }
 
         if (version == 0)
@@ -475,10 +475,35 @@ internal class EventOperations : QueryEventStore, IEventOperations
         return version;
     }
 
+    /// <summary>
+    ///     SQL Server lock timeout (1222) or deadlock victim (1205), wherever it sits in the
+    ///     exception chain.
+    /// </summary>
+    /// <remarks>
+    ///     #652: this used to look only at <c>e.InnerException</c>, and the exclusive append path
+    ///     hands it an UNWRAPPED <see cref="SqlException" /> — Polly rethrows what the command threw
+    ///     and Polecat's default pipeline adds no strategy at all. So every real 1205 walked straight
+    ///     past the guard and surfaced as a bare <c>SqlException</c>, which is neither what the docs
+    ///     promise nor anything a Wolverine <c>OnException&lt;StreamLockedException&gt;</c> policy can
+    ///     match. Walking the chain covers both shapes: the direct throw, and a wrapper added by a
+    ///     caller-supplied resilience pipeline.
+    /// </remarks>
+    private static SqlException? FindLockFailure(Exception e)
+    {
+        for (var current = e; current != null; current = current.InnerException)
+        {
+            if (current is SqlException { Number: 1222 or 1205 } sql)
+            {
+                return sql;
+            }
+        }
+
+        return null;
+    }
+
     private static bool IsLockFailure(Exception e)
     {
-        // SQL Server lock timeout or deadlock errors
-        return e.InnerException is SqlException { Number: 1222 or 1205 };
+        return FindLockFailure(e) != null;
     }
 
     // #318: archive / un-archive / tombstone now flow through the shared Weasel.Storage.EventStorage<TId>
@@ -607,7 +632,21 @@ internal class EventOperations : QueryEventStore, IEventOperations
             cmd.Parameters.AddIdParameter("@id", streamId);
             cmd.Parameters.AddVarChar("@tenant_id", _tenantId);
 
-            var result = await _sessionBase.ExecuteScalarAsync(cmd, cancellation);
+            object? result;
+            try
+            {
+                result = await _sessionBase.ExecuteScalarAsync(cmd, cancellation);
+            }
+            // #652: the UPDLOCK/HOLDLOCK read is the one statement here that can lose a deadlock or
+            // time out waiting on a lock, and this path had no guard at all — so
+            // FetchForExclusiveWriting raised a bare SqlException where AppendExclusive raised
+            // StreamLockedException, for the identical cause. Only the exclusive read is
+            // reinterpreted; an unlocked read cannot be a lock failure.
+            catch (Exception e) when (forExclusive && IsLockFailure(e))
+            {
+                throw new Exceptions.StreamLockedException(streamId, FindLockFailure(e));
+            }
+
             if (result != null && result != DBNull.Value)
             {
                 version = (long)result;
