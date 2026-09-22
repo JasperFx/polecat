@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Weasel.SqlServer;
 
 namespace Polecat.Internal;
 
@@ -46,7 +47,8 @@ internal class PolecatActivator : IHostedService
 
             foreach (var database in tenantDatabases)
             {
-                await database.ApplyAllConfiguredChangesToDatabaseAsync(ct: cancellationToken);
+                await database.ApplyAllConfiguredChangesToDatabaseAsync(
+                    BuildMigrationLock(), ct: cancellationToken);
             }
 
             // #386: roll every configured rolling-window RANGE partition forward and retire the aged
@@ -64,6 +66,44 @@ internal class PolecatActivator : IHostedService
         {
             await initialData.Populate(_store, cancellationToken);
         }
+    }
+
+    /// <summary>
+    ///     The <c>sp_getapplock</c> lock a startup migration holds while it applies.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///     #664 / weasel#599. Until Weasel 9.33.0 there was no <c>IGlobalLock&lt;SqlConnection&gt;</c>
+    ///     at all, so this call passed Weasel's nullo lock and two replicas starting together both
+    ///     introspected the catalog, both derived a patch from the same state, and both ran DDL.
+    ///     Polecat does not opt into <c>Migrator.UseSchemaFingerprinting</c>, so there is no stamp
+    ///     short-circuit either — the race was on every deploy, not only the first.
+    ///     </para>
+    ///     <para>
+    ///     Application locks are scoped to the CURRENT DATABASE, and the apply opens its own
+    ///     connection per tenant database, so per-database isolation falls out for free: one tenant's
+    ///     migration must not block another's, and it does not. What does not fall out is two Polecat
+    ///     stores inside one database under different schemas — the ancillary-store pattern, and every
+    ///     test in this repo — so the resource name is the schema.
+    ///     </para>
+    ///     <para>
+    ///     The timeout is <see cref="StoreOptions.StartupMigrationLockTimeout" /> rather than
+    ///     Weasel's 1000ms default, because contention is not retried and the loser would otherwise
+    ///     abort startup after one second of waiting on a migration that takes longer than that. See
+    ///     that property for the whole reasoning.
+    ///     </para>
+    /// </remarks>
+    private SqlServerGlobalLock BuildMigrationLock()
+    {
+        var timeout = _store.Options.StartupMigrationLockTimeout;
+        var timeoutMs = (int)Math.Clamp(timeout.TotalMilliseconds, 0, int.MaxValue);
+
+        // The schema and nothing else. sp_getapplock resources are database-scoped and the apply
+        // opens its own connection per tenant database, so the tenant dimension is already
+        // separate; naming the database as well would be redundant, and naming it via
+        // PolecatDatabase.Identifier would be wrong — that is the constant "Polecat" for a
+        // single-database store, so two stores sharing one database would share one lock.
+        return new SqlServerGlobalLock($"polecat:migrate:{_store.Options.DatabaseSchemaName}", timeoutMs);
     }
 
     public Task StopAsync(CancellationToken cancellationToken)
