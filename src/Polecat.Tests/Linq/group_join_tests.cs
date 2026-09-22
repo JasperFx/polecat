@@ -308,7 +308,7 @@ public class group_join_tests : OneOffConfigurationsContext
 
         await using var query = theStore.QuerySession();
 
-        await Should.ThrowAsync<NotSupportedException>(async () =>
+        await Should.ThrowAsync<BadLinqExpressionException>(async () =>
         {
             await query.Query<JoinCustomer>()
                 .GroupJoin(query.Query<JoinOrder>(),

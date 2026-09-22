@@ -59,7 +59,7 @@ public class stream_state_query_refusals
 
         // AggregateType.Name reaches THROUGH a translatable member into one Polecat has no column
         // for — the realistic near-miss of the supported typeof-equality form.
-        var ex = await Should.ThrowAsync<NotSupportedException>(
+        var ex = await Should.ThrowAsync<Polecat.Linq.BadLinqExpressionException>(
             () => streams.Where(x => x.AggregateType!.Name == "Whatever")
                 .ToListAsync(TestContext.Current.CancellationToken));
 

@@ -427,6 +427,6 @@ internal class EventLinqQueryProvider : IPolecatAsyncQueryProvider
             }
         }
 
-        throw new NotSupportedException($"Cannot determine element type from: {expression.Type}");
+        throw new Polecat.Linq.BadLinqExpressionException($"Cannot determine the element type from: {expression.Type}");
     }
 }

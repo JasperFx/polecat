@@ -35,7 +35,7 @@ internal class StringIsNullOrEmpty : IMethodCallParser
                 $"({member.RawLocator} IS NULL OR {member.RawLocator} = '')");
         }
 
-        throw new NotSupportedException(
+        throw new BadLinqExpressionException(
             $"string.{expression.Method.Name} requires a member expression argument.");
     }
 }

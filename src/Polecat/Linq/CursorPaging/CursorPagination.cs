@@ -152,7 +152,7 @@ internal static class CursorPagination
         if (target == typeof(DateTimeOffset)) return slot.GetDateTimeOffset();
         if (target == typeof(DateTime)) return slot.GetDateTime();
 
-        throw new NotSupportedException(
+        throw new BadLinqExpressionException(
             $"Keyset (cursor) pagination does not support an ordering key of type '{memberType.Name}'. " +
             "Order by primitive/Guid/DateTime(Offset) keys with the document identity as the terminal key.");
     }

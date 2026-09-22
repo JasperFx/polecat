@@ -292,7 +292,7 @@ public class vector_search_tests: OneOffConfigurationsContext
         var store = await aStoreWithPassages();
         await using var session = store.QuerySession();
 
-        await Should.ThrowAsync<NotSupportedException>(() =>
+        await Should.ThrowAsync<Polecat.Linq.BadLinqExpressionException>(() =>
             session.VectorSearchAsync<Passage>(x => x.Embedding, new float[] { 1, 0, 0 }, 10,
                 filter: x => x.Text.GetHashCode() == 3,
                 token: TestContext.Current.CancellationToken));
