@@ -1040,7 +1040,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
 
                 if (archived)
                 {
-                    throw new Exceptions.InvalidStreamException(streamId, "Cannot append to an archived stream.");
+                    throw new Exceptions.ArchivedStreamException(streamId);
                 }
 
                 if (stream.ExpectedVersionOnServer.HasValue && currentVersion != stream.ExpectedVersionOnServer.Value)
@@ -1105,7 +1105,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
 
             if (archived)
             {
-                throw new Exceptions.InvalidStreamException(streamId, "Cannot append to an archived stream.");
+                throw new Exceptions.ArchivedStreamException(streamId);
             }
 
             AssignEventMetadataForClosedShape(stream, currentVersion);

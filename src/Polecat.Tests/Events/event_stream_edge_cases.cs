@@ -67,7 +67,7 @@ public class event_stream_edge_cases : IntegrationContext
         await using var appendSession = theStore.LightweightSession();
         appendSession.Events.Append(streamId, new MembersJoined(1, "Cave", ["X"]));
 
-        var ex = await Should.ThrowAsync<InvalidStreamException>(async () =>
+        var ex = await Should.ThrowAsync<ArchivedStreamException>(async () =>
         {
             await appendSession.SaveChangesAsync();
         });

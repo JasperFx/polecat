@@ -131,7 +131,7 @@ public class batched_stream_state_read_tests : IntegrationContext
         session.Events.Append(healthy, new MembersJoined(2, "Town", ["A"]));
         session.Events.Append(archived, new MembersJoined(2, "Town", ["B"]));
 
-        await Should.ThrowAsync<InvalidStreamException>(async () =>
+        await Should.ThrowAsync<Polecat.Exceptions.ArchivedStreamException>(async () =>
         {
             await session.SaveChangesAsync(TestContext.Current.CancellationToken);
         });
