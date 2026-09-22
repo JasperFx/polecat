@@ -266,6 +266,54 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         _transactionParticipants.Add(participant);
     }
 
+    /// <summary>
+    ///     Drain the transaction participants, then dispose the session itself.
+    /// </summary>
+    /// <remarks>
+    ///     #650: a participant may own resources whose lifetime is the session's — Polecat.EntityFrameworkCore's
+    ///     <c>DbContextTransactionParticipant</c> owns the <c>DbContext</c> an EF Core projection's storage was
+    ///     built around, and nothing disposed it on any path. <c>ITransactionParticipant</c> declares no disposal
+    ///     contract, so this only reaches the ones that opt into <see cref="IAsyncDisposable" />; the rest are
+    ///     untouched.
+    ///     <para>
+    ///     Here rather than in the async daemon's batch because participants hang off the SESSION, and the
+    ///     session is what both callers dispose: <c>PolecatProjectionBatch.DisposeAsync</c> disposes its sessions
+    ///     (success and failure alike), and an inline projection's session is disposed by whoever opened it. One
+    ///     hook covers both, where a batch-only hook would have left the inline path leaking.
+    ///     </para>
+    ///     <para>
+    ///     Draining is idempotent through <see cref="QuerySession.DisposeAsync" />'s own disposed guard, and a
+    ///     throw from one participant must not strand the others, so each is disposed independently.
+    ///     </para>
+    /// </remarks>
+    public override async ValueTask DisposeAsync()
+    {
+        List<Exception>? failures = null;
+
+        foreach (var participant in _transactionParticipants)
+        {
+            if (participant is not IAsyncDisposable disposable) continue;
+
+            try
+            {
+                await disposable.DisposeAsync();
+            }
+            catch (Exception e)
+            {
+                (failures ??= []).Add(e);
+            }
+        }
+
+        _transactionParticipants.Clear();
+
+        await base.DisposeAsync();
+
+        if (failures is not null)
+        {
+            throw failures.Count == 1 ? failures[0] : new AggregateException(failures);
+        }
+    }
+
     internal async Task BeginTransactionAsync(CancellationToken token)
     {
         if (_transactional.Transaction != null) return;
