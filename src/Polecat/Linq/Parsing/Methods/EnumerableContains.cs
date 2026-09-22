@@ -123,13 +123,16 @@ internal class EnumerableContains : IMethodCallParser
 
         var stripped = StripConvert(memberExpr);
         if (stripped is not MemberExpression me)
-            throw new NotSupportedException($"Contains requires a member expression");
+            throw new BadLinqExpressionException(
+                $"Contains() requires a member expression, got: {stripped}");
 
         var member = memberFactory.ResolveMember(me);
         var values = ExtractListValue(listExpr);
 
         if (values is not IEnumerable enumerable)
-            throw new NotSupportedException($"Contains source must be enumerable");
+            throw new BadLinqExpressionException(
+                "Polecat cannot translate this Contains(): the source has to be an enumerable known "
+                + "before the query runs — an array, a collection, or a variable holding one.");
 
         var list = new List<object?>();
         foreach (var item in enumerable) list.Add(item);

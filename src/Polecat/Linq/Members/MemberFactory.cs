@@ -189,7 +189,9 @@ internal class MemberFactory : IMemberResolver
         {
             PropertyInfo p => p.PropertyType,
             FieldInfo f => f.FieldType,
-            _ => throw new NotSupportedException($"Unsupported member type: {member.MemberType}")
+            _ => throw new BadLinqExpressionException(
+                $"Polecat cannot translate the member '{member.Name}': a translatable member is a "
+                + $"property or a field, not a {member.MemberType}.")
         };
     }
 

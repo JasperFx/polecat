@@ -69,3 +69,22 @@ The LINQ provider supports:
 - Nested property access
 
 See [Supported LINQ Operators](/documents/querying/linq/operators) for a complete list.
+
+## When a Query Cannot Be Translated
+
+A query Polecat cannot turn into SQL is **refused**, with `Polecat.Linq.BadLinqExpressionException`.
+That type derives from `JasperFx.BadLinqExpressionException`, so store-agnostic code can catch the
+shared type and have it work on Polecat and Fisher alike.
+
+The refusal is a correctness guarantee rather than an inconvenience: the alternative to throwing is a
+query that returns plausible but wrong rows. The message names what *is* accepted in that position,
+and the ways through are:
+
+- rewrite the condition over document members, which is what translates;
+- express it as raw SQL with `MatchesSql(...)`;
+- materialize the query and finish the work in memory with LINQ-to-Objects.
+
+A plain `NotSupportedException` means something else, and is deliberately kept distinct: an
+unsupported *API* rather than an untranslatable expression. Synchronous execution
+(`ToList()`/`foreach` over a `Query<T>()`) and calling a marker method such as `PlainTextSearch`
+outside a query are the two you are likely to meet.

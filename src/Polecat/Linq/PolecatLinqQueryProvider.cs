@@ -650,7 +650,7 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
         }
         else
         {
-            throw new NotSupportedException(
+            throw new BadLinqExpressionException(
                 "GroupBy must be followed by a Select() projection.");
         }
 
@@ -903,8 +903,9 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
         var resultSelector = joinData.SelectManyResultSelector;
         if (resultSelector == null)
         {
-            throw new NotSupportedException(
-                "GroupJoin without SelectMany is not supported. Use GroupJoin(...).SelectMany(...).");
+            throw new BadLinqExpressionException(
+                "Polecat cannot translate a GroupJoin without a following SelectMany. Write "
+                + "GroupJoin(...).SelectMany(...), which is the shape a LEFT JOIN is expressed in.");
         }
 
         var rewrittenSelector = JoinResultSelectorRewriter.Rewrite(
@@ -1121,8 +1122,9 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
             return member.TypedLocator;
         }
 
-        throw new NotSupportedException(
-            $"Join key selector must be a member expression, got: {keyBody.NodeType}");
+        throw new BadLinqExpressionException(
+            $"Polecat cannot translate the join key selector '{keyBody}' to SQL ({keyBody.NodeType}). "
+            + "Join on a member of each side, e.g. o => o.CustomerId.");
     }
 
     [RequiresDynamicCode("Closes Func<,,> + JoinListHandler<,,> over outer/inner/result types via Type.MakeGenericType.")]
@@ -1430,8 +1432,8 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
         {
             MethodCallExpression method => FindDocumentType(method.Arguments[0]),
             ConstantExpression { Value: IQueryable queryable } => queryable.ElementType,
-            _ => throw new NotSupportedException(
-                $"Cannot determine document type from expression: {expression.NodeType}")
+            _ => throw new BadLinqExpressionException(
+                $"Cannot determine the document type from expression: {expression.NodeType}")
         };
     }
 
@@ -1446,7 +1448,7 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
             }
         }
 
-        throw new NotSupportedException($"Cannot determine element type from: {expression.Type}");
+        throw new BadLinqExpressionException($"Cannot determine the element type from: {expression.Type}");
     }
 
     private static void ApplyModifiedFilters(LinqQueryParser parser)

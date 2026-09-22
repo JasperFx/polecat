@@ -9,7 +9,7 @@ namespace Polecat.Events.Linq;
 ///     <c>pc_streams</c> table, for <see cref="QueryEventStore.QueryStreamStates"/> (jasperfx#740).
 ///     Every public get member of <see cref="StreamState"/> translates; anything else — a member of
 ///     a nested object like <c>AggregateType.Name</c> included — throws a
-///     <see cref="NotSupportedException"/> naming the member, never silently matching all rows
+///     <see cref="Polecat.Linq.BadLinqExpressionException"/> naming the member, never silently matching all rows
 ///     (an ignored predicate returns unfiltered streams that read as filtered, the jasperfx#737
 ///     failure mode the whole surface refuses).
 /// </summary>
@@ -38,7 +38,7 @@ internal class StreamStateMemberFactory : IMemberResolver
             nameof(StreamState.IsArchived) => new QueryableMember("is_archived", "is_archived", typeof(bool)),
             nameof(StreamState.CompactedVersion) =>
                 new QueryableMember("compacted_version", "compacted_version", typeof(long)),
-            _ => throw new NotSupportedException(
+            _ => throw new Polecat.Linq.BadLinqExpressionException(
                 $"Polecat cannot translate the member '{expression.Member.DeclaringType?.Name}.{expression.Member.Name}' " +
                 $"in a stream state query. Translatable members are the public properties of {nameof(StreamState)}: " +
                 $"{nameof(StreamState.Id)}, {nameof(StreamState.Key)}, {nameof(StreamState.Version)}, " +
@@ -75,7 +75,7 @@ internal class StreamStateMemberFactory : IMemberResolver
                 null => null,
                 Type aggregateType => _events.AggregateAliasFor(aggregateType),
                 string alias => alias,
-                _ => throw new NotSupportedException(
+                _ => throw new Polecat.Linq.BadLinqExpressionException(
                     $"{nameof(StreamState)}.{nameof(StreamState.AggregateType)} can only be compared against a " +
                     $"CLR Type (x.AggregateType == typeof(X)) or null, not {value.GetType().FullName}.")
             };

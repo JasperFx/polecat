@@ -126,7 +126,7 @@ public class distinct_by_operator : OneOffConfigurationsContext
         await using var query = theStore.QuerySession();
 
         // "Doubled" is a computed expression, not a member of the document — cannot translate.
-        var ex = await Should.ThrowAsync<NotSupportedException>(async () =>
+        var ex = await Should.ThrowAsync<BadLinqExpressionException>(async () =>
             await query.Query<LinqTarget>()
                 .Select(x => new { Doubled = x.Age * 2 })
                 .DistinctBy(x => x.Doubled)

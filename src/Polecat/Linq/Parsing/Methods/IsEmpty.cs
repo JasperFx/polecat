@@ -27,7 +27,7 @@ internal class IsEmpty : IMethodCallParser
                 $"(SELECT COUNT(*) FROM OPENJSON(data, '{jsonPath}')) = 0");
         }
 
-        throw new NotSupportedException($"IsEmpty requires a member expression, got: {memberExpr}");
+        throw new BadLinqExpressionException($"IsEmpty() requires a member expression, got: {memberExpr}");
     }
 
     private static string ExtractJsonPath(string rawLocator)

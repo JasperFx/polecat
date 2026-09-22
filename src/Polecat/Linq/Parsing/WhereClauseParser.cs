@@ -46,8 +46,13 @@ internal class WhereClauseParser
             ConstantExpression { Value: bool boolValue } => boolValue
                 ? new WhereFragment("1=1")
                 : new WhereFragment("1=0"),
-            _ => throw new NotSupportedException(
-                $"Unsupported expression type in WHERE clause: {expression.NodeType} ({expression.GetType().Name})")
+            _ => throw new BadLinqExpressionException(
+                $"Polecat cannot translate '{expression}' to a SQL WHERE clause ({expression.NodeType}, "
+                + $"{expression.GetType().Name}). A predicate is built from member comparisons "
+                + "(x.Name == \"Bob\"), && and || over those, !, a boolean member, and the supported method "
+                + $"calls ({MethodCallParserRegistry.SupportedCalls}). To go outside that, write the "
+                + "condition as raw SQL with MatchesSql(...), or materialize the query and filter the "
+                + "results in memory.")
         };
     }
 
@@ -63,8 +68,11 @@ internal class WhereClauseParser
         }
 
         var parser = MethodCallParserRegistry.FindParser(expression)
-            ?? throw new NotSupportedException(
-                $"Unsupported method call in WHERE clause: {expression.Method.DeclaringType?.Name}.{expression.Method.Name}");
+            ?? throw new BadLinqExpressionException(
+                $"Polecat cannot translate '{expression.Method.DeclaringType?.Name}.{expression.Method.Name}' "
+                + $"to SQL in a WHERE clause. Supported calls are {MethodCallParserRegistry.SupportedCalls}. "
+                + "Otherwise express the condition with MatchesSql(...), or materialize the query and "
+                + "filter in memory.");
 
         return parser.Parse(_memberFactory, expression);
     }
@@ -84,7 +92,10 @@ internal class WhereClauseParser
             return ParseComparison(binary, op);
         }
 
-        throw new NotSupportedException($"Unsupported binary operator: {binary.NodeType} in expression: {binary}");
+        throw new BadLinqExpressionException(
+            $"Polecat cannot translate the binary operator '{binary.NodeType}' to SQL, in '{binary}'. "
+            + "Supported operators are ==, !=, <, <=, >, >=, && and ||. Use MatchesSql(...) for anything "
+            + "else, or materialize the query and filter in memory.");
     }
 
     private ISqlFragment ParseComparison(BinaryExpression binary, string op)
@@ -143,8 +154,10 @@ internal class WhereClauseParser
             return BuildComparisonFilter(member!, value, op);
         }
 
-        throw new NotSupportedException(
-            $"Cannot resolve comparison: {binary}");
+        throw new BadLinqExpressionException(
+            $"Polecat cannot translate the comparison '{binary}' to SQL: neither side resolves to a "
+            + "document member compared against a constant. Compare a member to a value "
+            + "(x.Age > 30), or use MatchesSql(...).");
     }
 
     private bool TryParseMethodTransform(Expression methodSide, Expression valueSide, string op,

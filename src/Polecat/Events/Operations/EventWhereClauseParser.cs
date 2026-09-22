@@ -47,8 +47,10 @@ internal class EventWhereClauseParser
             UnaryExpression { NodeType: ExpressionType.Not } unary => ParseNot(unary),
             UnaryExpression { NodeType: ExpressionType.Convert } unary => Parse(unary.Operand),
             MemberExpression member when IsBooleanEventMember(member) => ParseBooleanMember(member, true),
-            _ => throw new NotSupportedException(
-                $"Unsupported expression type in event WHERE clause: {expression.NodeType} ({expression.GetType().Name})")
+            _ => throw new Polecat.Linq.BadLinqExpressionException(
+                $"Polecat cannot translate '{expression}' to a SQL WHERE clause over the event table "
+                + $"({expression.NodeType}, {expression.GetType().Name}). An event predicate is built from "
+                + "comparisons of IEvent metadata members, && and || over those, !, and a boolean member.")
         };
     }
 
@@ -65,7 +67,9 @@ internal class EventWhereClauseParser
             return ParseComparison(binary, op);
         }
 
-        throw new NotSupportedException($"Unsupported binary operator in event WHERE: {binary.NodeType}");
+        throw new Polecat.Linq.BadLinqExpressionException(
+            $"Polecat cannot translate the binary operator '{binary.NodeType}' in an event WHERE clause. "
+            + "Supported operators are ==, !=, <, <=, >, >=, && and ||.");
     }
 
     private ISqlFragment ParseComparison(BinaryExpression binary, string op)
@@ -81,7 +85,9 @@ internal class EventWhereClauseParser
             return BuildComparisonFilter(member!, value, op);
         }
 
-        throw new NotSupportedException($"Cannot resolve event comparison: {binary}");
+        throw new Polecat.Linq.BadLinqExpressionException(
+            $"Polecat cannot translate the event comparison '{binary}': neither side resolves to an "
+            + "IEvent metadata member compared against a constant.");
     }
 
     private ISqlFragment BuildComparisonFilter(IQueryableMember member, object? value, string op)
@@ -139,8 +145,9 @@ internal class EventWhereClauseParser
 
         if (!EventColumns.TryGetValue(propName, out var mapping))
         {
-            throw new NotSupportedException(
-                $"IEvent property '{propName}' is not supported in event WHERE clauses.");
+            throw new Polecat.Linq.BadLinqExpressionException(
+                $"Polecat cannot translate the IEvent property '{propName}' in an event WHERE clause. "
+                + $"Translatable properties are {string.Join(", ", EventColumns.Keys)}.");
         }
 
         var (column, sqlType, clrType) = mapping;

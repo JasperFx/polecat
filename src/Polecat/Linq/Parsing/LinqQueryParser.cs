@@ -449,7 +449,9 @@ internal class LinqQueryParser : ExpressionVisitor
         }
 
         var memberExpr = body as MemberExpression
-            ?? throw new NotSupportedException($"OrderBy requires a member expression, got: {body}");
+            ?? throw new BadLinqExpressionException(
+                $"Polecat cannot translate the OrderBy key '{body}' to SQL. Order by a document member "
+                + "(x => x.Name) or by the scalar a preceding Select(...) projected.");
 
         var member = _memberFactory.ResolveMember(memberExpr);
         Statement.OrderBys.Add((member.TypedLocator, descending));
@@ -522,8 +524,9 @@ internal class LinqQueryParser : ExpressionVisitor
     {
         if (keyBody is not MemberExpression memberExpr)
         {
-            throw new NotSupportedException(
-                $"DistinctBy() requires a member key selector (e.g. x => x.GroupId), got: {keyBody}");
+            throw new BadLinqExpressionException(
+                $"Polecat cannot translate the DistinctBy() key '{keyBody}' to SQL. Pass a member key "
+                + "selector, e.g. x => x.GroupId.");
         }
 
         // Called directly on the document collection: resolve the member access as-is.
@@ -531,14 +534,15 @@ internal class LinqQueryParser : ExpressionVisitor
         {
             if (IsDocumentMember(memberExpr)) return memberExpr;
 
-            throw new NotSupportedException(
-                $"DistinctBy() could not translate the key selector: {keyBody}");
+            throw new BadLinqExpressionException(
+                $"Polecat cannot translate the DistinctBy() key selector '{keyBody}' to SQL: it does not "
+                + "resolve to a member of the queried document.");
         }
 
         // Called after a Select(...) projection: map the projected member name back to the
         // underlying document member expression the projection assigned it from.
         return MapProjectedMemberToDocument(memberExpr.Member.Name)
-               ?? throw new NotSupportedException(
+               ?? throw new BadLinqExpressionException(
                    $"DistinctBy() key '{memberExpr.Member.Name}' must reference a member of the preceding " +
                    "Select(...) projection (anonymous type or object initializer).");
     }
@@ -603,8 +607,9 @@ internal class LinqQueryParser : ExpressionVisitor
         {
             var lambda = GetLambda(node.Arguments[1]);
             var memberExpr = StripConvert(lambda.Body) as MemberExpression
-                ?? throw new NotSupportedException(
-                    $"{mode} requires a member expression selector, got: {lambda.Body}");
+                ?? throw new BadLinqExpressionException(
+                    $"Polecat cannot translate the {mode}() selector '{lambda.Body}' to SQL. Aggregate over "
+                    + "a document member, e.g. Sum(x => x.Amount).");
 
             AggregationMember = _memberFactory.ResolveMember(memberExpr);
         }
@@ -623,7 +628,7 @@ internal class LinqQueryParser : ExpressionVisitor
     {
         if (WhereClauseParser.ExtractValue(node.Arguments[1]) is not OrderByClause ordering)
         {
-            throw new NotSupportedException(
+            throw new BadLinqExpressionException(
                 "OrderedByVectorDistance expects a prepared ordering; call OrderByVectorDistance(...).");
         }
 
@@ -642,7 +647,7 @@ internal class LinqQueryParser : ExpressionVisitor
         }
         else
         {
-            throw new NotSupportedException("TenantIsOneOf requires string[] tenant IDs");
+            throw new BadLinqExpressionException("TenantIsOneOf requires string[] tenant IDs");
         }
     }
 

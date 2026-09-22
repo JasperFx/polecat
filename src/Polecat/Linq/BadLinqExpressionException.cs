@@ -1,10 +1,17 @@
 namespace Polecat.Linq;
 
 /// <summary>
-///     Thrown when a LINQ expression cannot be translated to a valid SQL Server query — for example,
-///     attempting to stream a client-side-fallback projection as raw JSON, which would silently
-///     return incorrect results.
+///     Thrown when a LINQ expression cannot be translated to a valid SQL Server query — an
+///     untranslatable predicate shape, an unsupported method call, a GroupBy key or projection the
+///     provider has no SQL for, or a guard like streaming a client-side-fallback projection as raw
+///     JSON, which would silently return incorrect results.
 /// </summary>
+/// <remarks>
+///     #656: this is the type for every refusal the TRANSLATOR makes. A plain
+///     <see cref="NotSupportedException" /> is reserved for an unsupported <i>API</i> — synchronous
+///     execution, a marker method invoked in memory, <c>ToSql</c> on a queryable that is not
+///     Polecat's — where no claim is being made about whether the query could have been translated.
+/// </remarks>
 /// <remarks>
 ///     <para>
 ///         <b>Derives from <see cref="JasperFx.BadLinqExpressionException" /> as of JasperFx 2.71.0

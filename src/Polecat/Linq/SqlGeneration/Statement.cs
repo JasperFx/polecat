@@ -174,7 +174,7 @@ internal class Statement
         var parameterised = OrderBys.FirstOrDefault(o => o.Literal is null);
         if (parameterised is not null)
         {
-            throw new NotSupportedException(
+            throw new BadLinqExpressionException(
                 "An ordering that binds a parameter (a vector distance, say) cannot be used inside the "
                 + "window function this query needs. Order by a literal key, or run the search through "
                 + "VectorSearchAsync.");

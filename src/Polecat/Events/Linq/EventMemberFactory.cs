@@ -32,8 +32,10 @@ internal class EventMemberFactory : IMemberResolver
 
         if (!EventColumns.TryGetValue(propName, out var mapping))
         {
-            throw new NotSupportedException(
-                $"IEvent property '{propName}' is not supported in event LINQ queries.");
+            throw new Polecat.Linq.BadLinqExpressionException(
+                $"Polecat cannot translate the IEvent property '{propName}' in an event LINQ query. "
+                + $"Translatable properties are {string.Join(", ", EventColumns.Keys)}. To filter on the "
+                + "event body, query the concrete event type instead.");
         }
 
         var (column, clrType) = mapping;

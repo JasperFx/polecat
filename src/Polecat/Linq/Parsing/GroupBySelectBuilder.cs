@@ -68,7 +68,7 @@ internal class GroupBySelectBuilder
             for (var i = 0; i < parameters.Length; i++)
             {
                 var memberExpr = newExpr.Arguments[i] as MemberExpression
-                    ?? throw new NotSupportedException(
+                    ?? throw new BadLinqExpressionException(
                         $"GroupBy composite key member must be a property, got: {newExpr.Arguments[i]}");
                 var member = _memberFactory.ResolveMember(memberExpr);
                 var isString = IsStringType(memberExpr.Type);
@@ -86,7 +86,10 @@ internal class GroupBySelectBuilder
         }
         else
         {
-            throw new NotSupportedException($"Unsupported GroupBy key expression: {body}");
+            throw new BadLinqExpressionException(
+                $"Polecat cannot translate the GroupBy key '{body}' to SQL. Group by a document member "
+                + "(x => x.Status) or by an anonymous type / constructor call over members "
+                + "(x => new { x.Status, x.Color }) for a composite key.");
         }
     }
 
@@ -126,7 +129,10 @@ internal class GroupBySelectBuilder
             return;
         }
 
-        throw new NotSupportedException($"Unsupported GroupBy Select expression: {body}");
+        throw new BadLinqExpressionException(
+            $"Polecat cannot translate the GroupBy projection '{body}' to SQL. Project into an anonymous "
+            + "type, a constructor call, or an object initializer over g.Key and aggregates "
+            + "(g => new { g.Key, Count = g.Count() }).");
     }
 
     private string BuildJsonObject(NewExpression newExpr, ParameterExpression groupingParam)
@@ -179,7 +185,7 @@ internal class GroupBySelectBuilder
         {
             if (_isCompositeKey)
             {
-                throw new NotSupportedException(
+                throw new BadLinqExpressionException(
                     "Cannot select the entire composite GroupBy key directly. Access individual key members like g.Key.Color instead.");
             }
 
@@ -198,8 +204,9 @@ internal class GroupBySelectBuilder
                 return (info.locator, info.isString);
             }
 
-            throw new NotSupportedException(
-                $"Unknown composite key member '{propName}' in GroupBy projection");
+            throw new BadLinqExpressionException(
+                $"Unknown composite key member '{propName}' in GroupBy projection. The composite key's "
+                + $"members are {string.Join(", ", _keyLocators.Keys)}.");
         }
 
         // Aggregate method calls (always numeric)
@@ -209,8 +216,10 @@ internal class GroupBySelectBuilder
             if (sql != null) return (sql, false);
         }
 
-        throw new NotSupportedException(
-            $"Unsupported expression in GroupBy projection: {expr}");
+        throw new BadLinqExpressionException(
+            $"Polecat cannot translate '{expr}' inside a GroupBy projection. A projected value is g.Key "
+            + "(or a member of a composite key), or an aggregate over the group — Count(), Sum(...), "
+            + "Min(...), Max(...), Average().");
     }
 
     private string? ResolveAggregate(MethodCallExpression method, ParameterExpression groupingParam)
@@ -265,8 +274,9 @@ internal class GroupBySelectBuilder
             return ResolveHavingBinary(binary, groupingParam);
         }
 
-        throw new NotSupportedException(
-            $"Unsupported HAVING expression type: {expression.NodeType}");
+        throw new BadLinqExpressionException(
+            $"Polecat cannot translate '{expression.NodeType}' into a HAVING clause. A post-GroupBy Where "
+            + "compares an aggregate or the key against a value, e.g. g => g.Count() > 5.");
     }
 
     private ISqlFragment ResolveHavingBinary(BinaryExpression binary, ParameterExpression groupingParam)
@@ -293,8 +303,9 @@ internal class GroupBySelectBuilder
             ExpressionType.GreaterThanOrEqual => ">=",
             ExpressionType.LessThan => "<",
             ExpressionType.LessThanOrEqual => "<=",
-            _ => throw new NotSupportedException(
-                $"Unsupported comparison in HAVING: {binary.NodeType}")
+            _ => throw new BadLinqExpressionException(
+                $"Polecat cannot translate the comparison '{binary.NodeType}' into a HAVING clause. "
+                + "Supported operators are ==, !=, <, <=, > and >=.")
         };
 
         var leftOperand = ResolveHavingOperand(binary.Left, groupingParam);
@@ -332,8 +343,9 @@ internal class GroupBySelectBuilder
         }
         catch
         {
-            throw new NotSupportedException(
-                $"Unsupported HAVING operand: {expr}");
+            throw new BadLinqExpressionException(
+                $"Polecat cannot translate the HAVING operand '{expr}' to SQL. An operand is an aggregate "
+                + "over the group, the group key, or a constant.");
         }
     }
 

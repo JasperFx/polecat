@@ -26,7 +26,8 @@ internal class IsOneOf : IMethodCallParser
         // Resolve the member
         var stripped = StripConvert(memberExpr);
         if (stripped is not MemberExpression me)
-            throw new NotSupportedException($"IsOneOf/In requires a member expression, got: {stripped}");
+            throw new BadLinqExpressionException(
+                $"IsOneOf()/In() requires a member expression on the left, got: {stripped}");
 
         var member = memberFactory.ResolveMember(me);
         var values = ExtractValues(valuesExpr);
@@ -45,7 +46,9 @@ internal class IsOneOf : IMethodCallParser
             return result;
         }
 
-        throw new NotSupportedException($"Cannot extract values from: {expression}");
+        throw new BadLinqExpressionException(
+            $"Polecat cannot evaluate the IsOneOf()/In() value list '{expression}'. Pass an array, a "
+            + "collection, or a variable holding one — the list has to be known before the query runs.");
     }
 
     private static Expression StripConvert(Expression expression)
