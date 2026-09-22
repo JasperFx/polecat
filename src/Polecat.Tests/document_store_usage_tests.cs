@@ -1,4 +1,5 @@
 using JasperFx;
+using JasperFx.Core.Reflection;
 using JasperFx.Descriptors;
 using JasperFx.Events;
 using Polecat.Tests.Reading;
@@ -158,6 +159,59 @@ public class document_store_usage_tests
 
         eventUsage.ShouldNotBeNull();
         eventUsage.MaxEventSequence.ShouldBeNull();
+    }
+
+    /// <summary>
+    ///     #649. The daemon stamps every <c>ShardState.StoreUri</c> with <c>IEventStore.Subject</c>,
+    ///     and a monitoring tool joins the shard states to the store by that value. Publishing the
+    ///     DATABASE uri as the descriptor's <c>SubjectUri</c> put the two halves in different
+    ///     spellings, and nothing reconciled them — a healthy three-projection Polecat service read
+    ///     as "total=3, tracked=0" with every projection Unknown.
+    /// </summary>
+    [Fact]
+    public async Task event_store_usage_subject_uri_is_the_store_uri_the_daemon_stamps()
+    {
+        await using var store = BuildStore(opts =>
+        {
+            opts.DatabaseSchemaName = "doc_usage";
+            opts.Schema.For<AdvSqlDoc>();
+        });
+
+        var eventUsage = await ((IEventStore)store).TryCreateUsage(CancellationToken.None);
+
+        eventUsage.ShouldNotBeNull();
+        eventUsage.SubjectUri.ShouldBe(((IEventStore)store).Subject);
+        eventUsage.SubjectUri.Scheme.ShouldBe("polecat");
+
+        // And emphatically not the database, which is what it used to be.
+        eventUsage.SubjectUri.ShouldNotBe(store.Database.DatabaseUri);
+    }
+
+    /// <summary>
+    ///     A second defect in the same object, and the reason the fix is the two-argument ctor rather
+    ///     than assigning SubjectUri: DisplayName is DERIVED from the subject uri, so hand-building
+    ///     the descriptor left every store — ancillary ones included — rendering under the default
+    ///     store's "Main" label.
+    /// </summary>
+    [Fact]
+    public async Task event_store_usage_display_name_follows_the_store_name()
+    {
+        await using var store = BuildStore(opts =>
+        {
+            opts.StoreName = "Orders";
+            opts.DatabaseSchemaName = "doc_usage";
+            opts.Schema.For<AdvSqlDoc>();
+        });
+
+        var eventUsage = await ((IEventStore)store).TryCreateUsage(CancellationToken.None);
+
+        eventUsage.ShouldNotBeNull();
+        eventUsage.SubjectUri.ShouldBe(new Uri("polecat://orders"));
+        eventUsage.DisplayName.ShouldBe("orders");
+
+        // Subject and Version keep the values the hand-built descriptor set.
+        eventUsage.Subject.ShouldBe(typeof(DocumentStore).FullNameInCode());
+        eventUsage.Version.ShouldNotBeNullOrEmpty();
     }
 
     [Fact]

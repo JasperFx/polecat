@@ -323,12 +323,21 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
 
     async Task<EventStoreUsage?> IEventStore.TryCreateUsage(CancellationToken token)
     {
-        // Explicitly build — no reflection via base(this)
-        var usage = new EventStoreUsage
+        // #649: SubjectUri has to be the STORE's uri, the same value IEventStore.Subject returns,
+        // because that is what the daemon stamps on every ShardState.StoreUri. Publishing the
+        // DATABASE uri here instead put the descriptor and the shard states in two different
+        // spellings of "which store is this" — polecat://main against
+        // sqlserver://localhost/master/polecat_trips — with nothing joining them. CritterWatch then
+        // read a healthy Polecat service as "total=3, tracked=0", every projection Unknown, and a
+        // console-issued eject resolved against nothing. All silent, on a live fleet.
+        //
+        // The two-argument ctor is what Marten calls and it settles three fields at once, including
+        // one Polecat was never setting: DisplayName is DERIVED from the subject uri's host, so a
+        // hand-built descriptor left it at its "Main" default and an ancillary store rendered under
+        // the default store's label. Subject (the type name) and Version come out identical to the
+        // hand-built values; nothing else moves.
+        var usage = new EventStoreUsage(((IEventStore)this).Subject, this)
         {
-            Subject = "Polecat.DocumentStore",
-            SubjectUri = Database.DatabaseUri,
-            Version = GetType().Assembly.GetName().Version?.ToString()!,
             Database = new DatabaseUsage
             {
                 Cardinality = DatabaseCardinality.Single,
