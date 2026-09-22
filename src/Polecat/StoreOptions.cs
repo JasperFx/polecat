@@ -285,6 +285,36 @@ public class StoreOptions
     internal bool ShouldApplyChangesOnStartup { get; set; }
 
     /// <summary>
+    ///     How long a replica waits for the global migration lock before giving up, when schema
+    ///     changes are applied on startup. Defaults to 30 seconds.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///     #664: startup migrations serialize on a SQL Server application lock so two replicas
+    ///     starting together cannot both introspect the catalog, both derive a patch from the same
+    ///     state, and both run DDL. The right value is "longer than your slowest migration", which
+    ///     only the application knows — hence a knob rather than a constant.
+    ///     </para>
+    ///     <para>
+    ///     ⚠️ The floor matters more than the ceiling. Weasel's
+    ///     <c>SharedLockExtensions.DefaultLockTimeoutMilliseconds</c> is 1000ms, and lock contention
+    ///     is NOT retried: <c>AttainLockResult.ShouldReconnect</c> is true only for
+    ///     <c>DatabaseNotAvailable</c>, so contention gets exactly one attempt and then
+    ///     <see cref="Weasel.Core.Migrations.ResourceMigrationFailureMode.FailFast" /> aborts
+    ///     startup. A second replica waiting out a real migration needs seconds, not one — set
+    ///     this too low and the lock trades a silent DDL race for a crash loop.
+    ///     </para>
+    ///     <para>
+    ///     A replica that still loses after waiting this long is ruled on by
+    ///     <c>PolecatDatabase.ResourceMigrationFailureMode</c> (inherited from Weasel's
+    ///     <c>DatabaseBase</c>, and fed from <c>JasperFxOptions.ActiveProfile</c>):
+    ///     <c>ContinueOnFailures</c> starts it against the schema the winner is applying, and the
+    ///     default <c>FailFast</c> aborts.
+    ///     </para>
+    /// </remarks>
+    public TimeSpan StartupMigrationLockTimeout { get; set; } = TimeSpan.FromSeconds(30);
+
+    /// <summary>
     ///     Internal access to the document provider registry. Set by DocumentStore during construction.
     /// </summary>
     internal DocumentProviderRegistry Providers { get; set; } = null!;
