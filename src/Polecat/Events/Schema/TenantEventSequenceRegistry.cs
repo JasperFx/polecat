@@ -57,7 +57,8 @@ internal sealed class TenantEventSequenceRegistry
         // Ensure the tenant's per-tenant event sequence exists.
         await EnsureSequenceAsync(ordinal, token).ConfigureAwait(false);
 
-        var storage = new TenantStorage(ordinal, $"[{_schemaName}].[pc_events_sequence_{ordinal}]");
+        var storage = new TenantStorage(ordinal,
+            Polecat.Internal.SqlEscaping.QualifiedName(_schemaName, $"pc_events_sequence_{ordinal}"));
         return _cache.GetOrAdd(tenantId, storage);
     }
 

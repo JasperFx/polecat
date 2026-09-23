@@ -514,7 +514,7 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
         for (var i = 0; i < columns.Count; i++)
         {
             if (i > 0) sb.Append(", ");
-            sb.Append('\'').Append(columns[i].JsonKey.Replace("'", "''")).Append("': ");
+            sb.Append('\'').Append(SqlEscaping.LiteralBody(columns[i].JsonKey)).Append("': ");
             sb.Append(columns[i].Locator);
         }
 

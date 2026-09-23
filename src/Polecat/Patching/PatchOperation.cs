@@ -60,7 +60,7 @@ internal class PatchOperation : Polecat.Internal.IStorageOperation
     ///     Doubling embedded single quotes keeps the value as data. The '.' path separators are not
     ///     quote characters, so escaping only single quotes leaves legitimate nested paths intact.
     /// </summary>
-    internal static string EscapePath(string path) => path.Replace("'", "''");
+    internal static string EscapePath(string path) => SqlEscaping.LiteralBody(path);
 
     internal static Action<ICommandBuilder> SetScalar(string jsonPath, object? value)
     {

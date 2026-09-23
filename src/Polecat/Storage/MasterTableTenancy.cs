@@ -462,9 +462,24 @@ public class MasterTableTenancy : ITenancy, IDynamicTenantSource<string>
                 await conn.OpenAsync(ct).ConfigureAwait(false);
 
                 await using var cmd = conn.CreateCommand();
+                // #665: QUOTENAME rather than '[' + @schema + ']'. @schema is bound, but its VALUE
+                // was then concatenated into the EXEC'd batch with no escaping, so a ']' in the name
+                // closed the bracket early inside that nested batch. The source is
+                // StoreOptions.DatabaseSchemaName / the MultiTenantedMasterTable(..., schemaName)
+                // argument — startup configuration, so exploiting it means already owning the
+                // bootstrap — but "a parameter is involved" is not the same as "escaped", and this
+                // was the one place in the repo where those two came apart.
+                //
+                // ⚠️ Via sp_executesql and a variable, NOT EXEC('...' + QUOTENAME(@schema)).
+                // EXEC()'s argument expression accepts only literals and variables — a function call
+                // in it is a syntax error ("Incorrect syntax near 'QUOTENAME'"), which is why the
+                // original had to concatenate the brackets by hand in the first place.
                 cmd.CommandText = $"""
                     IF SCHEMA_ID(@schema) IS NULL
-                        EXEC('CREATE SCHEMA [' + @schema + ']');
+                    BEGIN
+                        DECLARE @createSchema NVARCHAR(MAX) = N'CREATE SCHEMA ' + QUOTENAME(@schema);
+                        EXEC sp_executesql @createSchema;
+                    END
                     IF OBJECT_ID(@qualified, 'U') IS NULL
                         CREATE TABLE {table} (
                             tenant_id NVARCHAR(200) NOT NULL CONSTRAINT pk_pc_tenants PRIMARY KEY,

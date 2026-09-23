@@ -3,6 +3,7 @@ using JasperFx;
 using Weasel.Core;
 using Weasel.Core.SqlGeneration;
 using Weasel.Storage;
+using Polecat.Internal;
 
 namespace Polecat.Storage.ClosedShape;
 
@@ -96,7 +97,7 @@ internal sealed class SubClassPolecatStorage<T, TRoot, TId>
     }
 
     private HardCodedFilter DocTypeFilter()
-        => new($"d.doc_type = '{_alias.Replace("'", "''")}'");
+        => new($"d.doc_type = {SqlEscaping.Literal(_alias)}");
 
     public ISqlFragment ByIdFilter(TId id) => _parent.ByIdFilter(id);
 
@@ -182,7 +183,7 @@ internal sealed class SubClassPolecatStorage<T, TRoot, TId>
 
     public Task TruncateDocumentStorageAsync(IStorageDatabase database, CancellationToken ct = default)
         => database.RunSqlAsync(
-            $"DELETE FROM {_mapping.QualifiedTableName} WHERE doc_type = '{_alias.Replace("'", "''")}'", ct);
+            $"DELETE FROM {_mapping.QualifiedTableName} WHERE doc_type = {SqlEscaping.Literal(_alias)}", ct);
 
     // ---- batched-query read seam (#273 doc-side convergence) ----
     // Delegate the SELECT + id/tenant/soft-delete filters to the root storage, then constrain

@@ -1071,7 +1071,9 @@ internal class EventOperations : QueryEventStore, IEventOperations
         var hasEventTypeFilter = conditions.Any(c => c.EventType != null);
         if (hasEventTypeFilter)
         {
-            sb.Append($" INNER JOIN [{schema}].[pc_events] e ON t0.seq_id = e.seq_id");
+            // #665: through SqlEscaping, like the TagTableName(...) calls elsewhere in this file,
+            // rather than hand-bracketed.
+            sb.Append($" INNER JOIN {Polecat.Internal.SqlEscaping.QualifiedName(schema, "pc_events")} e ON t0.seq_id = e.seq_id");
         }
 
         sb.Append(" WHERE (");
@@ -1137,7 +1139,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
         var selectColumns = Internal.PcEventsRowReader.ComposeSelectColumnsWithAlias(eventOptions, "e");
 
         var sb = new StringBuilder();
-        sb.Append($"SELECT {selectColumns} FROM [{schema}].[pc_events] e");
+        sb.Append($"SELECT {selectColumns} FROM {Polecat.Internal.SqlEscaping.QualifiedName(schema, "pc_events")} e");
 
         // LEFT JOINs to tag tables. The WHERE clause OR-combines the per-condition tag predicates,
         // so an event that carries only one of several queried tag types (the normal DCB case where
@@ -1377,7 +1379,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
         // hand-written copies of the same column list is exactly how that stops being true.
         var selectColumns = Internal.PcEventsRowReader.ComposeSelectColumnsWithAlias(eventOptions, "e");
 
-        builder.Append($"SELECT {selectColumns} FROM [{schema}].[pc_events] e");
+        builder.Append($"SELECT {selectColumns} FROM {Polecat.Internal.SqlEscaping.QualifiedName(schema, "pc_events")} e");
 
         // LEFT JOIN (not INNER) so an event carrying only one of several queried tag types still
         // matches the OR'd WHERE clause below. INNER JOIN would require each event to carry *all*
