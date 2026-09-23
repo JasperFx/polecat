@@ -5,6 +5,13 @@ namespace Polecat.Projections.Flattened;
 /// <summary>
 ///     Describes how a single column participates in a flat table MERGE statement.
 /// </summary>
+/// <remarks>
+///     #665: every <c>UpdateExpression</c> here brackets its column name through
+///     <see cref="SqlEscaping.QuoteIdentifier" />. Six of them used to do it by hand while the
+///     seventh cited #390 and did it properly — config-time names and parameterized values either
+///     way, so this is consistency rather than a fix, but six-one-way-one-the-other in a single file
+///     is what makes the next reader guess which one was deliberate.
+/// </remarks>
 internal interface IColumnMap
 {
     string ColumnName { get; }
@@ -41,7 +48,7 @@ internal class MemberMap : IColumnMap
     public string ColumnName { get; }
     public bool RequiresInput => true;
 
-    public string UpdateExpression(string paramName) => $"[{ColumnName}] = {paramName}";
+    public string UpdateExpression(string paramName) => $"{SqlEscaping.QuoteIdentifier(ColumnName)} = {paramName}";
     public string InsertExpression(string paramName) => paramName;
 }
 
@@ -58,7 +65,7 @@ internal class IncrementMemberMap : IColumnMap
     public string ColumnName { get; }
     public bool RequiresInput => true;
 
-    public string UpdateExpression(string paramName) => $"[{ColumnName}] = target.[{ColumnName}] + {paramName}";
+    public string UpdateExpression(string paramName) => $"{SqlEscaping.QuoteIdentifier(ColumnName)} = target.{SqlEscaping.QuoteIdentifier(ColumnName)} + {paramName}";
     public string InsertExpression(string paramName) => paramName;
 }
 
@@ -75,7 +82,7 @@ internal class DecrementMemberMap : IColumnMap
     public string ColumnName { get; }
     public bool RequiresInput => true;
 
-    public string UpdateExpression(string paramName) => $"[{ColumnName}] = target.[{ColumnName}] - {paramName}";
+    public string UpdateExpression(string paramName) => $"{SqlEscaping.QuoteIdentifier(ColumnName)} = target.{SqlEscaping.QuoteIdentifier(ColumnName)} - {paramName}";
 
     // #553 / jasperfx#773. The INSERT branch applies the event to an implicit ZERO row, so a
     // decrement landing on a row that does not exist yet must go NEGATIVE: a first event carrying
@@ -100,7 +107,7 @@ internal class IncrementMap : IColumnMap
     public string ColumnName { get; }
     public bool RequiresInput => false;
 
-    public string UpdateExpression(string paramName) => $"[{ColumnName}] = target.[{ColumnName}] + 1";
+    public string UpdateExpression(string paramName) => $"{SqlEscaping.QuoteIdentifier(ColumnName)} = target.{SqlEscaping.QuoteIdentifier(ColumnName)} + 1";
     public string InsertExpression(string paramName) => "1";
 }
 
@@ -117,7 +124,7 @@ internal class DecrementMap : IColumnMap
     public string ColumnName { get; }
     public bool RequiresInput => false;
 
-    public string UpdateExpression(string paramName) => $"[{ColumnName}] = target.[{ColumnName}] - 1";
+    public string UpdateExpression(string paramName) => $"{SqlEscaping.QuoteIdentifier(ColumnName)} = target.{SqlEscaping.QuoteIdentifier(ColumnName)} - 1";
     public string InsertExpression(string paramName) => "0";
 }
 
@@ -161,6 +168,6 @@ internal class SetIntValueMap : IColumnMap
     public string ColumnName { get; }
     public bool RequiresInput => false;
 
-    public string UpdateExpression(string paramName) => $"[{ColumnName}] = {_value}";
+    public string UpdateExpression(string paramName) => $"{SqlEscaping.QuoteIdentifier(ColumnName)} = {_value}";
     public string InsertExpression(string paramName) => _value.ToString();
 }

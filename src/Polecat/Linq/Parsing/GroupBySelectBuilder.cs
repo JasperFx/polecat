@@ -5,6 +5,7 @@ using Polecat.Linq.Members;
 using Polecat.Linq.SqlGeneration;
 using Polecat.Serialization;
 using Weasel.SqlServer;
+using Polecat.Internal;
 
 namespace Polecat.Linq.Parsing;
 
@@ -381,7 +382,7 @@ internal class GroupBySelectBuilder
 
     private static string EscapeJsonKey(string key)
     {
-        return key.Replace("'", "''");
+        return SqlEscaping.LiteralBody(key);
     }
 
     private static bool IsStringType(Type type)

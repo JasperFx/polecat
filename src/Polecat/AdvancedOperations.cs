@@ -599,10 +599,17 @@ public class AdvancedOperations
         var events = _store.Events;
         var schema = events.DatabaseSchemaName;
 
+        // #665: hand-bracketed, and the third line is the double-position case SqlEscaping's own
+        // remarks single out — pc_events appears as an IDENTIFIER on line 1 and inside a STRING
+        // LITERAL as IDENT_CURRENT's argument on line 3, so that one needs both escapes, in that
+        // order. The issue's inventory listed the three EventOperations sites and missed these.
+        var eventsTable = Internal.SqlEscaping.QualifiedName(schema, "pc_events");
+        var streamsTable = Internal.SqlEscaping.QualifiedName(schema, "pc_streams");
+
         var sql = $"""
-            SELECT COUNT(*) FROM [{schema}].[pc_events];
-            SELECT COUNT(*) FROM [{schema}].[pc_streams];
-            SELECT ISNULL(IDENT_CURRENT('[{schema}].[pc_events]'), 0);
+            SELECT COUNT(*) FROM {eventsTable};
+            SELECT COUNT(*) FROM {streamsTable};
+            SELECT ISNULL(IDENT_CURRENT({Internal.SqlEscaping.Literal(eventsTable)}), 0);
             """;
 
         var statistics = new Events.EventStoreStatistics();

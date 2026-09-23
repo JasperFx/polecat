@@ -1,3 +1,4 @@
+using System.Data;
 using System.Data.Common;
 using JasperFx;
 using Microsoft.Data.SqlClient;
@@ -306,7 +307,7 @@ internal abstract class PolecatDocumentStorage<TDoc, TId>
         // #234: single-tenant tables have no tenant_id column to filter on.
         if (_mapping.TenancyStyle == TenancyStyle.Conjoined)
         {
-            filters.Add(new HardCodedFilter($"d.tenant_id = '{session.TenantId.Replace("'", "''")}'"));
+            filters.Add(new TenantFilter(session.TenantId));
         }
 
         if (_mapping.DeleteStyle == DeleteStyle.SoftDelete)
@@ -756,6 +757,40 @@ internal sealed class HardCodedFilter : ISqlFragment
     public HardCodedFilter(string sql) => _sql = sql;
 
     public void Apply(Weasel.Core.ICommandBuilder builder) => builder.Append(_sql);
+}
+
+/// <summary>
+///     <c>d.tenant_id = @p0</c>, with the tenant id BOUND rather than interpolated.
+/// </summary>
+/// <remarks>
+///     <para>
+///     #665: this was a <see cref="HardCodedFilter" /> built by hand-doubling quotes —
+///     <c>$"d.tenant_id = '{session.TenantId.Replace("'", "''")}'"</c>. The escaping was correct, and
+///     doubling <c>'</c> is complete for a T-SQL literal, so this was hardening rather than a
+///     vulnerability. It was also the last place in the repo where a value genuinely reachable from
+///     a public API — <c>SessionOptions.TenantId</c>, <c>LightweightSession(tenantId)</c>, commonly a
+///     header or a claim — landed in a quoted literal instead of a parameter, on convention rather
+///     than through <see cref="SqlEscaping" />. One refactor away from being a finding.
+///     </para>
+///     <para>
+///     ⚠️ Bound as <see cref="DbType.AnsiString" />, not the default unicode string. <c>tenant_id</c>
+///     is <c>varchar</c>, and an nvarchar parameter against a varchar column forces a
+///     CONVERT_IMPLICIT and loses the index seek — that is #363, and switching from a varchar
+///     LITERAL to an nvarchar parameter here would have reintroduced it while looking like a pure
+///     safety improvement.
+///     </para>
+/// </remarks>
+internal sealed class TenantFilter : ISqlFragment
+{
+    private readonly string _tenantId;
+
+    public TenantFilter(string tenantId) => _tenantId = tenantId;
+
+    public void Apply(Weasel.Core.ICommandBuilder builder)
+    {
+        builder.Append("d.tenant_id = ");
+        builder.AppendParameter(_tenantId).DbType = DbType.AnsiString;
+    }
 }
 
 /// <summary>AND-combination of filters.</summary>
