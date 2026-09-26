@@ -799,9 +799,9 @@
              is QuickAppend-only and SqlServerEventStoreDialect.BuildRichDescriptor throws, so there
              is nothing here to install. Recorded because "new hook on a base class Polecat's append
              operation derives from" reads like adoption work until you check which path it serves. -->
-        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.33.0" />
-        <PackageVersion Include="Weasel.SqlServer" Version="9.33.0" />
-        <PackageVersion Include="Weasel.Storage" Version="9.33.0" />
+        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.35.0" />
+        <PackageVersion Include="Weasel.SqlServer" Version="9.35.0" />
+        <PackageVersion Include="Weasel.Storage" Version="9.35.0" />
 
         <!-- Strongly typed IDs. Both generators are test-only: they prove Polecat's value-type id
              support against the two libraries Marten's ValueTypeTests exercise. StronglyTypedId emits
