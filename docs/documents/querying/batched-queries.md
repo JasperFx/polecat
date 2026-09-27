@@ -30,6 +30,41 @@ var ordersTask = batch.Query<Order>()
     .ToList();
 ```
 
+### Raw SQL
+
+A raw-SQL read can share the batch's round trip with everything else in it. Parameters are substituted
+for the first occurrences of `?`, in order, and `T` may be a scalar, a JSON-deserializable class or a
+registered document type — the same rules [`IAdvancedSql`](./query-json) applies, because it is the same
+reader:
+
+```cs
+var countTask = batch.Query<int>(
+    "SELECT COUNT(*) FROM dbo.pc_doc_order WHERE JSON_VALUE(data, '$.status') = ?", "Active");
+
+// A document type needs id and data selected, in that order
+var ordersTask = batch.Query<Order>(
+    "SELECT id, data FROM dbo.pc_doc_order WHERE JSON_VALUE(data, '$.status') = ?", "Active");
+```
+
+For SQL that contains a literal `?` of its own — inside a string literal, say — pass an explicit
+placeholder character instead. Only the first `parameters.Length` occurrences of it are substituted:
+
+```cs
+var rows = batch.Query<string>('^',
+    "SELECT 'shipped?' FROM dbo.pc_doc_order WHERE id = ^", orderId);
+```
+
+::: warning
+**Raw SQL is not tenant-scoped**, unlike every other member of `IBatchedQuery`, and no table is ensured
+to exist first. You wrote the SQL, so you own its `tenant_id` filter. This matches `IAdvancedSql` rather
+than the document members, and the asymmetry is deliberate.
+:::
+
+::: tip
+A wrong placeholder count throws from the `Query<T>(sql, ...)` call itself rather than from
+`Execute()`, so the mistake is reported where it was made.
+:::
+
 ## Executing the Batch
 
 ```cs

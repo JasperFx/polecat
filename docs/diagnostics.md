@@ -91,6 +91,34 @@ Save the schema script to a file:
 await store.Advanced.WriteCreationScriptToFileAsync("/path/to/schema.sql");
 ```
 
+### Reads against a schema that is not there
+
+Every diagnostic read of the event-store tables — projection progression, dead-letter counts and rows,
+the highest event sequence, the event-store floor at a timestamp, and
+`Advanced.FetchEventStoreStatistics()` — answers **"no results"** rather than throwing when the storage
+it reads does not exist. Empty, `null` or `0`, depending on the read.
+
+Two situations reach it, and both are ordinary:
+
+* **`AutoCreate.None` against a database where the schema was never applied.** Being in the migration
+  set does not help if nothing ever applies it.
+* **Column drift.** A `pc_event_progression` created before `Events.EnableExtendedProgressionTracking`
+  was turned on has none of the `heartbeat` / `agent_status` / `pause_reason` columns the progression
+  reads select.
+
+This matters most for a monitoring tool polling a fleet: one store in the fan-out throwing would
+otherwise abort the whole poll, and the operator gets an empty page for the shards that *do* have data.
+The decision is made from the database's own error rather than from configuration, because drift is
+invisible to configuration — a store can declare extended tracking, have every table in its migration
+set, and still be pointed at a schema where neither is true.
+
+::: warning
+This applies to diagnostic **reads** only. Writes still throw: silently dropping a progression or
+telemetry write is a worse failure than a read returning nothing. The single exception is
+`DeleteProjectionProgressByShardNameAsync`, whose contract already promises a clean no-op for a row that
+is not there.
+:::
+
 ## Data Cleanup
 
 ### CleanAllDocumentsAsync

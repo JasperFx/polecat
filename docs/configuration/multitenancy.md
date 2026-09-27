@@ -145,6 +145,36 @@ opts.DefaultTenantUsageEnabled = true; // opt back in, after configuring the ten
 This mirrors Marten's `StoreOptions.Advanced.DefaultTenantUsageEnabled`; Polecat has no `Advanced`
 sub-object and carries the setting directly on `StoreOptions`.
 
+### How a Multi-Database Store Describes Itself
+
+Two surfaces report the databases behind a store, and they read the same tenancy:
+
+```cs
+// Every database, as IEventDatabase
+var databases = await ((IEventStore)store).AllDatabases();
+
+// The store-agnostic descriptor monitoring tools and Wolverine read
+var usage = await ((IEventStore)store).TryCreateUsage(CancellationToken.None);
+
+usage.Database.Cardinality;   // StaticMultiple for MultiTenantedDatabases,
+                              // DynamicMultiple for MultiTenantedMasterTable,
+                              // Single otherwise
+usage.Database.Databases;     // one DatabaseDescriptor per tenant database, with its TenantIds
+usage.Database.MainDatabase;  // set only on a single-database store
+```
+
+This matters beyond diagnostics: Wolverine enumerates event-subscription agents from
+`usage.Database.Databases`, so a store that reported itself as single-database would advertise agents
+for the main database only, and nothing would schedule the tenant databases' async projections.
+
+Two details worth knowing:
+
+* `TryCreateUsage()` never throws while describing databases. A **dynamic** tenancy describes itself by
+  reading its master table, so an unreachable control plane reports the right cardinality with an empty
+  database list rather than failing the poll.
+* `EventStoreUsage.MaxEventSequence` is single-valued, so it is only populated on a single-database
+  store. On database-per-tenant it is `null` rather than one arbitrary tenant's number.
+
 ### Dynamic Tenant Management (Master Table Tenancy)
 
 `MultiTenantedDatabases` above is **static** — the full tenant list is fixed when the store is
