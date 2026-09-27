@@ -169,6 +169,21 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
             });
         }
 
+        // jasperfx#893 (2.75.1): the post-commit listeners the suite registered, replayed onto the
+        // store's own collection. The event-store twin of the slot PolecatDocumentComplianceFixture
+        // has carried since #485, and it exists so a fact can assert what a commit REPORTED rather
+        // than only what it stored -- which is the only way to see the jasperfx#886 phantom deletion,
+        // since deleting a row that is not there is a no-op in SQL and leaves the end state identical.
+        //
+        // No adapter, because Polecat's StoreOptions.CommitListeners takes IDocumentCommitListener
+        // directly. ⚠️ Dropping this loop does NOT make the affected facts skip: a listener that was
+        // never registered never fires, which reads exactly like a store that reports nothing -- and
+        // that is the half the new fact's control is there to catch.
+        foreach (var listener in config.CommitListeners)
+        {
+            options.CommitListeners.Add(listener);
+        }
+
         config.ApplyTo(new PolecatComplianceRegistrar(options));
 
         return options;

@@ -172,17 +172,31 @@ maintainer had already ruled on (#549, #553) and three nobody knew about, includ
 were silently stubbed empty. Budget for that, and read a failure as evidence before reading it as a
 suite bug. When it *is* a suite bug, fix it upstream rather than weakening the assertion locally.
 
-Wave 19 (#683, JasperFx 2.75.0) is the sharpest example yet, and it makes a different point: the
-yield is not only in the **new** suite. Enrolling `DocumentConjoinedTenancyCompliance` found that
-Polecat's LINQ provider decided document tenancy from `Options.Events.TenancyStyle` while every other
-read path decided it from the document's own mapping — so a conjoined document in a
-single-tenanted store was correctly scoped on the keyed load path and **completely unscoped on every
-LINQ shape**. But the *same package bump* also dropped six new facts into
-`ConjoinedEventTenancyCompliance`, which Polecat had been enrolled in since wave 8, and one of those
-— a rebuild spread across 200 tenants — found a connection-pool deadlock in the async daemon that had
-nothing to do with the new feature: the projection batch pinned one pooled connection per tenant
-session for the batch's whole life, so a batch spanning more tenants than the pool deadlocked at 101.
-**Read the package diff, not just the new-suite list.**
+Wave 19 (#683, JasperFx 2.75.0 → 2.75.1) is the sharpest example yet, and it makes two further
+points.
+
+**The yield is not only in the NEW suite — read the package diff.** Enrolling
+`DocumentConjoinedTenancyCompliance` found that Polecat's LINQ provider decided document tenancy from
+`Options.Events.TenancyStyle` while every other read path decided it from the document's own mapping
+— so a conjoined document in a single-tenanted store was correctly scoped on the keyed load path and
+**completely unscoped on every LINQ shape**. But the *same package bump* also dropped six new facts
+into `ConjoinedEventTenancyCompliance`, which Polecat had been enrolled in since wave 8, and one of
+those — a rebuild spread across 200 tenants — found a connection-pool deadlock in the async daemon
+with nothing to do with the new feature: the projection batch pinned one pooled connection per tenant
+session for the batch's whole life, so a batch spanning more tenants than `MaxPoolSize` deadlocked at
+101. The cheap way to see all of it is to unzip both `JasperFx.Events.ComplianceTests` nupkgs and
+`diff -rq` their `contentFiles` trees.
+
+**Two suites can contradict each other, and the tell is which fixture gates the fact off.**
+`DocumentConjoinedTenancyCompliance.optimistic_concurrency_is_scoped_to_the_tenant_for_a_shared_id`
+reused the instance it had just stored successfully as its "stale" write — while
+`GuidOptimisticConcurrencyCompliance.a_successful_write_moves_the_instances_own_version_on` *pins*
+that a committed write moves the stored instance's `Version` on, so no conforming store could satisfy
+both. Polecat was the first store ever to run it: jasperfx's own
+`InMemoryDocumentComplianceFixture` leaves `SupportsOptimisticConcurrency` false. Fixed upstream in
+2.75.1 (jasperfx#903), not weakened here. **Before concluding a failing fact is a Polecat bug, check
+whether jasperfx's in-memory fixture actually runs it, and whether an already-green suite pins the
+opposite claim.**
 
 Wave 17/18 (#591–#594, JasperFx 2.69.0) is the earlier worked example, and it sharpens the rule: a
 suite that is **brand new upstream** — one no store has ever run — is higher-yield still.

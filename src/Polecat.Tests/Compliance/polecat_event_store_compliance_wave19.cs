@@ -3,8 +3,8 @@ using JasperFx.Events.ComplianceTests;
 namespace Polecat.Tests.Compliance;
 
 /*
- * Wave 19 -- conjoined tenancy, both halves (JasperFx.Events.ComplianceTests 2.75.0, jasperfx#898 /
- * jasperfx#899; Polecat #681, #682).
+ * Wave 19 -- conjoined tenancy, both halves (JasperFx.Events.ComplianceTests 2.75.0/2.75.1,
+ * jasperfx#898 / jasperfx#899 / jasperfx#903; Polecat #681, #682).
  *
  * One new suite is enrolled here, and it is the smaller part of the wave. The larger part arrives as
  * six new facts on ConjoinedEventTenancyCompliance, which Polecat has been enrolled in since wave 8
@@ -19,6 +19,14 @@ namespace Polecat.Tests.Compliance;
  *     product-typed overload satisfies the generic interface and leaves the CONTRACT member on its
  *     throwing default.
  *   - IEventStore.OpenReadOnlyEventStore(tenantId) (#678), which was the throwing default.
+ *
+ * 2.75.1 is part of this wave rather than a follow-on. Running the new suite for the first time on
+ * ANY store turned up a fact that contradicted an already-green one -- its tenanted-concurrency fact
+ * reused the instance it had just stored successfully as the "stale" write, while
+ * GuidOptimisticConcurrencyCompliance pins that a committed write moves that instance's Version on --
+ * so no conforming store could satisfy both. Fixed upstream in jasperfx#903 rather than weakened
+ * here. 2.75.1 also adds ComplianceStoreConfig.CommitListeners and one more StreamArchiving fact
+ * that asserts what a commit REPORTED; see the replay in PolecatComplianceFixture.
  *
  * The recurring idea across every fact in both suites is worth stating once: they all reuse ONE id
  * across two tenants. Every tenanted fact in the compliance library before this wave used distinct
