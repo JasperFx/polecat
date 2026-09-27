@@ -20,6 +20,22 @@ internal abstract class AdvancedSqlResultReader
     public abstract object? ReadValue(DbDataReader reader, int startColumn);
     public abstract Task<object?> ReadValueAsync(DbDataReader reader, int startColumn, CancellationToken token);
 
+    /// <summary>
+    ///     Coerce a value read by <see cref="ReadValue" /> to the caller's requested type.
+    /// </summary>
+    /// <remarks>
+    ///     #676: one definition, shared by the standalone <c>IAdvancedSql</c> overloads and the batched
+    ///     raw-SQL item. Tries the direct cast first so a document or JSON object — already the right
+    ///     type — passes straight through, and only falls back to <see cref="Convert.ChangeType(object, Type)" />
+    ///     for the scalar widening cases (an <c>int</c> column read into a <c>long</c>, say).
+    /// </remarks>
+    public static T Cast<T>(object? value)
+    {
+        if (value == null) return default!;
+        if (value is T typed) return typed;
+        return (T)Convert.ChangeType(value, typeof(T));
+    }
+
     public static AdvancedSqlResultReader ForType(Type type, ISerializer serializer, DocumentProviderRegistry? providers)
     {
         // Check for scalar types first

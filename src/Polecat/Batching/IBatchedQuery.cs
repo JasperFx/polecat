@@ -56,6 +56,38 @@ public interface IBatchedQuery
     IBatchedQueryable<T> Query<T>() where T : class;
 
     /// <summary>
+    ///     Enlist a raw SQL query in this batch, so it shares the batch's single round trip with the
+    ///     loads, LINQ queries and event fetches around it. Parameters are substituted for the first
+    ///     occurrences of <c>?</c>, in order. <typeparamref name="T" /> may be a scalar, a
+    ///     JSON-deserializable class, or a registered document type — the same rules
+    ///     <see cref="IAdvancedSql.QueryAsync{T}(string, CancellationToken, object[])" /> applies, and
+    ///     the same reader materializes the rows.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         ⚠️ <b>Raw SQL is NOT tenant-scoped</b>, unlike every other member of this interface. The
+    ///         caller wrote the SQL, so the caller owns its <c>tenant_id</c> filter; nothing is appended
+    ///         to it. Nor is any table ensured to exist first, for the same reason — matching
+    ///         <see cref="IAdvancedSql" /> rather than the document members.
+    ///     </para>
+    ///     <para>
+    ///         #676. The gap this closes had a concrete caller: Wolverine's Polecat deduplication paid
+    ///         a round trip of its own for an existence check that could have gone out with the
+    ///         <c>FetchForWriting</c> the handler was already doing — one extra round trip per
+    ///         deduplicated message, on exactly the high-traffic endpoints.
+    ///     </para>
+    /// </remarks>
+    Task<IReadOnlyList<T>> Query<T>(string sql, params object[] parameters);
+
+    /// <summary>
+    ///     <see cref="Query{T}(string, object[])" /> with an explicit placeholder character, for SQL
+    ///     that contains a literal <c>?</c> of its own — a JSON path, say. Only the first
+    ///     <c>parameters.Length</c> occurrences of <paramref name="placeholder" /> are substituted;
+    ///     anything after that is left in the SQL untouched.
+    /// </summary>
+    Task<IReadOnlyList<T>> Query<T>(char placeholder, string sql, params object[] parameters);
+
+    /// <summary>
     ///     Execute a batch query plan (specification pattern).
     /// </summary>
     Task<T> QueryByPlan<T>(IBatchQueryPlan<T> plan);
