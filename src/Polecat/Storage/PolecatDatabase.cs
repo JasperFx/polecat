@@ -159,25 +159,34 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
 
     public async Task<long> ProjectionProgressFor(ShardName name, CancellationToken token = default)
     {
-        // #148: route through Options.ResiliencePipeline like the rest of the
-        // database access. PolecatDatabase owns its own connection (it has no
-        // session), so it wraps the work in the pipeline directly.
-        return await _resilience.ExecuteAsync(static async (state, ct) =>
+        try
         {
-            var (connectionString, progressionTable, identity) = state;
-            await using var conn = new SqlConnection(connectionString);
-            await conn.OpenAsync(ct);
+            // #148: route through Options.ResiliencePipeline like the rest of the
+            // database access. PolecatDatabase owns its own connection (it has no
+            // session), so it wraps the work in the pipeline directly.
+            return await _resilience.ExecuteAsync(static async (state, ct) =>
+            {
+                var (connectionString, progressionTable, identity) = state;
+                await using var conn = new SqlConnection(connectionString);
+                await conn.OpenAsync(ct);
 
-            await using var cmd = conn.CreateCommand();
-            cmd.CommandText = $"""
-                SELECT last_seq_id FROM {progressionTable}
-                WHERE name = @name;
-                """;
-            cmd.Parameters.AddVarChar("@name", identity);
+                await using var cmd = conn.CreateCommand();
+                cmd.CommandText = $"""
+                    SELECT last_seq_id FROM {progressionTable}
+                    WHERE name = @name;
+                    """;
+                cmd.Parameters.AddVarChar("@name", identity);
 
-            var result = await cmd.ExecuteScalarAsync(ct);
-            return result is long seq ? seq : 0;
-        }, (_connectionString, _events.ProgressionTableName, name.Identity), token);
+                var result = await cmd.ExecuteScalarAsync(ct);
+                return result is long seq ? seq : 0;
+            }, (_connectionString, _events.ProgressionTableName, name.Identity), token);
+        }
+        catch (Exception e) when (MissingStorageDetection.IsMissingStorage(e))
+        {
+            // #677: no progression storage means nothing has been observed, which is what a missing row
+            // already reports. See MissingStorageDetection.
+            return 0;
+        }
     }
 
     // #220 (jasperfx#473 / #474, JasperFx.Events 2.16.0): exact-identity progression delete.
@@ -189,17 +198,28 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
     // (CritterWatch #476 "Eject Shard"). A non-existent identity is a clean zero-row no-op.
     public async Task DeleteProjectionProgressByShardNameAsync(string shardIdentity, CancellationToken token = default)
     {
-        await _resilience.ExecuteAsync(static async (state, ct) =>
+        // #677: the ONE write covered by the missing-storage guard, for the reason the comment above
+        // already gives — this method's contract is a clean no-op for a row that is not there, and a
+        // whole missing table is the same answer for the same reason. Every other write still throws:
+        // silently dropping a progression or telemetry write is worse than a read returning nothing.
+        // Marten drew the line in exactly this place (marten#5512).
+        try
         {
-            var (connectionString, progressionTable, identity) = state;
-            await using var conn = new SqlConnection(connectionString);
-            await conn.OpenAsync(ct);
+            await _resilience.ExecuteAsync(static async (state, ct) =>
+            {
+                var (connectionString, progressionTable, identity) = state;
+                await using var conn = new SqlConnection(connectionString);
+                await conn.OpenAsync(ct);
 
-            await using var cmd = conn.CreateCommand();
-            cmd.CommandText = $"DELETE FROM {progressionTable} WHERE name = @identity;";
-            cmd.Parameters.AddVarChar("@identity", identity);
-            await cmd.ExecuteNonQueryAsync(ct);
-        }, (_connectionString, _events.ProgressionTableName, shardIdentity), token);
+                await using var cmd = conn.CreateCommand();
+                cmd.CommandText = $"DELETE FROM {progressionTable} WHERE name = @identity;";
+                cmd.Parameters.AddVarChar("@identity", identity);
+                await cmd.ExecuteNonQueryAsync(ct);
+            }, (_connectionString, _events.ProgressionTableName, shardIdentity), token);
+        }
+        catch (Exception e) when (MissingStorageDetection.IsMissingStorage(e))
+        {
+        }
     }
 
     // marten#5001 / CritterWatch#750: persist the async daemon's extended telemetry (heartbeat,
@@ -366,74 +386,84 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
     public async Task<IReadOnlyList<ShardState>> AllProjectionProgress(string? tenantId,
         CancellationToken token = default)
     {
-        return await _resilience.ExecuteAsync(static async (state, ct) =>
+        try
         {
-            var (connectionString, events, tenant) = state;
-            var list = new List<ShardState>();
-
-            await using var conn = new SqlConnection(connectionString);
-            await conn.OpenAsync(ct);
-
-            await using var cmd = conn.CreateCommand();
-            var columns = events.EnableExtendedProgressionTracking
-                ? "name, last_seq_id, heartbeat, agent_status, pause_reason, running_on_node, warning_behind_threshold, critical_behind_threshold, failure_category, failure_event_sequence, failure_event_type, failure_event_tenant_id"
-                : "name, last_seq_id";
-
-            if (tenant == null)
+            return await _resilience.ExecuteAsync(static async (state, ct) =>
             {
-                cmd.CommandText = $"SELECT {columns} FROM {events.ProgressionTableName};";
-            }
-            else
-            {
-                cmd.CommandText =
-                    $"SELECT {columns} FROM {events.ProgressionTableName} WHERE name LIKE @tenantSuffix ESCAPE '{ProgressionNameFilter.LikeEscapeCharacter}';";
-                cmd.Parameters.AddVarChar("@tenantSuffix",
-                    "%:" + ProgressionNameFilter.EscapeLikePattern(tenant));
-            }
+                var (connectionString, events, tenant) = state;
+                var list = new List<ShardState>();
 
-            await using var reader = await cmd.ExecuteReaderAsync(ct);
-            while (await reader.ReadAsync(ct))
-            {
-                var name = reader.GetString(0);
+                await using var conn = new SqlConnection(connectionString);
+                await conn.OpenAsync(ct);
 
-                // The LIKE above only narrows. Whether a row genuinely belongs to this tenant is decided
-                // structurally, on the parsed ShardName — a tenant id containing a ':' or ending with
-                // another tenant's id would fool any string test (marten#5179).
-                if (tenant != null &&
-                    !(ShardName.TryParse(name, out var parsed) && parsed?.TenantId == tenant))
+                await using var cmd = conn.CreateCommand();
+                var columns = events.EnableExtendedProgressionTracking
+                    ? "name, last_seq_id, heartbeat, agent_status, pause_reason, running_on_node, warning_behind_threshold, critical_behind_threshold, failure_category, failure_event_sequence, failure_event_type, failure_event_tenant_id"
+                    : "name, last_seq_id";
+
+                if (tenant == null)
                 {
-                    continue;
+                    cmd.CommandText = $"SELECT {columns} FROM {events.ProgressionTableName};";
+                }
+                else
+                {
+                    cmd.CommandText =
+                        $"SELECT {columns} FROM {events.ProgressionTableName} WHERE name LIKE @tenantSuffix ESCAPE '{ProgressionNameFilter.LikeEscapeCharacter}';";
+                    cmd.Parameters.AddVarChar("@tenantSuffix",
+                        "%:" + ProgressionNameFilter.EscapeLikePattern(tenant));
                 }
 
-                var seq = reader.GetInt64(1);
-                var shardState = new ShardState(name, seq);
-
-                if (events.EnableExtendedProgressionTracking)
+                await using var reader = await cmd.ExecuteReaderAsync(ct);
+                while (await reader.ReadAsync(ct))
                 {
-                    if (!reader.IsDBNull(2)) shardState.LastHeartbeat = reader.GetDateTimeOffset(2);
-                    if (!reader.IsDBNull(3)) shardState.AgentStatus = reader.GetString(3);
-                    if (!reader.IsDBNull(4)) shardState.PauseReason = reader.GetString(4);
-                    if (!reader.IsDBNull(5)) shardState.RunningOnNode = reader.GetInt32(5);
-                    if (!reader.IsDBNull(6)) shardState.WarningBehindThreshold = reader.GetInt64(6);
-                    if (!reader.IsDBNull(7)) shardState.CriticalBehindThreshold = reader.GetInt64(7);
+                    var name = reader.GetString(0);
 
-                    // #368 / jasperfx#565: rehydrate the classified failure so a consumer polling the
-                    // database — which is the only channel left when the publishing node is down — gets
-                    // the same shape a live ShardState observer does, rather than only being able to see
-                    // that the shard is Paused.
-                    shardState.Failure = BuildFailure(
-                        reader.IsDBNull(8) ? null : reader.GetString(8),
-                        reader.IsDBNull(9) ? null : reader.GetInt64(9),
-                        reader.IsDBNull(10) ? null : reader.GetString(10),
-                        reader.IsDBNull(11) ? null : reader.GetString(11),
-                        shardState);
+                    // The LIKE above only narrows. Whether a row genuinely belongs to this tenant is decided
+                    // structurally, on the parsed ShardName — a tenant id containing a ':' or ending with
+                    // another tenant's id would fool any string test (marten#5179).
+                    if (tenant != null &&
+                        !(ShardName.TryParse(name, out var parsed) && parsed?.TenantId == tenant))
+                    {
+                        continue;
+                    }
+
+                    var seq = reader.GetInt64(1);
+                    var shardState = new ShardState(name, seq);
+
+                    if (events.EnableExtendedProgressionTracking)
+                    {
+                        if (!reader.IsDBNull(2)) shardState.LastHeartbeat = reader.GetDateTimeOffset(2);
+                        if (!reader.IsDBNull(3)) shardState.AgentStatus = reader.GetString(3);
+                        if (!reader.IsDBNull(4)) shardState.PauseReason = reader.GetString(4);
+                        if (!reader.IsDBNull(5)) shardState.RunningOnNode = reader.GetInt32(5);
+                        if (!reader.IsDBNull(6)) shardState.WarningBehindThreshold = reader.GetInt64(6);
+                        if (!reader.IsDBNull(7)) shardState.CriticalBehindThreshold = reader.GetInt64(7);
+
+                        // #368 / jasperfx#565: rehydrate the classified failure so a consumer polling the
+                        // database — which is the only channel left when the publishing node is down — gets
+                        // the same shape a live ShardState observer does, rather than only being able to see
+                        // that the shard is Paused.
+                        shardState.Failure = BuildFailure(
+                            reader.IsDBNull(8) ? null : reader.GetString(8),
+                            reader.IsDBNull(9) ? null : reader.GetInt64(9),
+                            reader.IsDBNull(10) ? null : reader.GetString(10),
+                            reader.IsDBNull(11) ? null : reader.GetString(11),
+                            shardState);
+                    }
+
+                    list.Add(shardState);
                 }
 
-                list.Add(shardState);
-            }
-
-            return (IReadOnlyList<ShardState>)list;
-        }, (_connectionString, _events, tenantId), token);
+                return (IReadOnlyList<ShardState>)list;
+            }, (_connectionString, _events, tenantId), token);
+        }
+        catch (Exception e) when (MissingStorageDetection.IsMissingStorage(e))
+        {
+            // #677: nothing observed. Note this read is the 207 case as much as the 208 one — it selects
+            // heartbeat/agent_status/... under EnableExtendedProgressionTracking, none of which exist on a
+            // pc_event_progression created before that feature was migrated in.
+            return [];
+        }
     }
 
     /// <summary>
@@ -500,39 +530,48 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
     public async ValueTask<ProjectionProgressRow?> ReadProjectionProgressAsync(
         string projectionName, string? tenantId, CancellationToken token)
     {
-        var name = string.IsNullOrEmpty(tenantId) ? projectionName : $"{projectionName}:{tenantId}";
-
-        return await _resilience.ExecuteAsync(static async (state, ct) =>
+        try
         {
-            var (connectionString, events, projName, tenant, lookupName) = state;
+            var name = string.IsNullOrEmpty(tenantId) ? projectionName : $"{projectionName}:{tenantId}";
 
-            await using var conn = new SqlConnection(connectionString);
-            await conn.OpenAsync(ct);
-
-            await using var cmd = conn.CreateCommand();
-            cmd.CommandText = events.EnableExtendedProgressionTracking
-                ? $"SELECT last_seq_id, heartbeat, agent_status FROM {events.ProgressionTableName} WHERE name = @name;"
-                : $"SELECT last_seq_id FROM {events.ProgressionTableName} WHERE name = @name;";
-            cmd.Parameters.AddVarChar("@name", lookupName);
-
-            await using var reader = await cmd.ExecuteReaderAsync(ct);
-            if (!await reader.ReadAsync(ct))
+            return await _resilience.ExecuteAsync(static async (state, ct) =>
             {
-                // No row for this (projection, tenant) pair yet — the meaningful "not observed" answer.
-                return (ProjectionProgressRow?)null;
-            }
+                var (connectionString, events, projName, tenant, lookupName) = state;
 
-            var seq = reader.GetInt64(0);
-            DateTimeOffset? heartbeat = null;
-            string? agentStatus = null;
-            if (events.EnableExtendedProgressionTracking)
-            {
-                if (!reader.IsDBNull(1)) heartbeat = reader.GetDateTimeOffset(1);
-                if (!reader.IsDBNull(2)) agentStatus = reader.GetString(2);
-            }
+                await using var conn = new SqlConnection(connectionString);
+                await conn.OpenAsync(ct);
 
-            return new ProjectionProgressRow(projName, tenant, seq, agentStatus, heartbeat);
-        }, (_connectionString, _events, projectionName, tenantId, name), token);
+                await using var cmd = conn.CreateCommand();
+                cmd.CommandText = events.EnableExtendedProgressionTracking
+                    ? $"SELECT last_seq_id, heartbeat, agent_status FROM {events.ProgressionTableName} WHERE name = @name;"
+                    : $"SELECT last_seq_id FROM {events.ProgressionTableName} WHERE name = @name;";
+                cmd.Parameters.AddVarChar("@name", lookupName);
+
+                await using var reader = await cmd.ExecuteReaderAsync(ct);
+                if (!await reader.ReadAsync(ct))
+                {
+                    // No row for this (projection, tenant) pair yet — the meaningful "not observed" answer.
+                    return (ProjectionProgressRow?)null;
+                }
+
+                var seq = reader.GetInt64(0);
+                DateTimeOffset? heartbeat = null;
+                string? agentStatus = null;
+                if (events.EnableExtendedProgressionTracking)
+                {
+                    if (!reader.IsDBNull(1)) heartbeat = reader.GetDateTimeOffset(1);
+                    if (!reader.IsDBNull(2)) agentStatus = reader.GetString(2);
+                }
+
+                return new ProjectionProgressRow(projName, tenant, seq, agentStatus, heartbeat);
+            }, (_connectionString, _events, projectionName, tenantId, name), token);
+        }
+        catch (Exception e) when (MissingStorageDetection.IsMissingStorage(e))
+        {
+            // #677: no progression storage means nothing has been observed, which is the same answer a
+            // missing row already gives. See MissingStorageDetection.
+            return null;
+        }
     }
 
     // #333 / jasperfx#529 — exact per-cell progression read. Unlike the (projectionName, tenantId) overload
@@ -544,78 +583,103 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
     public async ValueTask<ProjectionProgressRow?> ReadProjectionProgressAsync(
         ShardName name, CancellationToken token)
     {
-        return await _resilience.ExecuteAsync(static async (state, ct) =>
+        try
         {
-            var (connectionString, events, shard) = state;
-
-            await using var conn = new SqlConnection(connectionString);
-            await conn.OpenAsync(ct);
-
-            await using var cmd = conn.CreateCommand();
-            cmd.CommandText = events.EnableExtendedProgressionTracking
-                ? $"SELECT last_seq_id, heartbeat, agent_status FROM {events.ProgressionTableName} WHERE name = @name;"
-                : $"SELECT last_seq_id FROM {events.ProgressionTableName} WHERE name = @name;";
-            cmd.Parameters.AddVarChar("@name", shard.Identity);
-
-            await using var reader = await cmd.ExecuteReaderAsync(ct);
-            if (!await reader.ReadAsync(ct))
+            return await _resilience.ExecuteAsync(static async (state, ct) =>
             {
-                // No row for this identity yet — the meaningful "not observed" answer.
-                return (ProjectionProgressRow?)null;
-            }
+                var (connectionString, events, shard) = state;
 
-            var seq = reader.GetInt64(0);
-            DateTimeOffset? heartbeat = null;
-            string? agentStatus = null;
-            if (events.EnableExtendedProgressionTracking)
-            {
-                if (!reader.IsDBNull(1)) heartbeat = reader.GetDateTimeOffset(1);
-                if (!reader.IsDBNull(2)) agentStatus = reader.GetString(2);
-            }
+                await using var conn = new SqlConnection(connectionString);
+                await conn.OpenAsync(ct);
 
-            return new ProjectionProgressRow(shard.Name, shard.TenantId, seq, agentStatus, heartbeat);
-        }, (_connectionString, _events, name), token);
+                await using var cmd = conn.CreateCommand();
+                cmd.CommandText = events.EnableExtendedProgressionTracking
+                    ? $"SELECT last_seq_id, heartbeat, agent_status FROM {events.ProgressionTableName} WHERE name = @name;"
+                    : $"SELECT last_seq_id FROM {events.ProgressionTableName} WHERE name = @name;";
+                cmd.Parameters.AddVarChar("@name", shard.Identity);
+
+                await using var reader = await cmd.ExecuteReaderAsync(ct);
+                if (!await reader.ReadAsync(ct))
+                {
+                    // No row for this identity yet — the meaningful "not observed" answer.
+                    return (ProjectionProgressRow?)null;
+                }
+
+                var seq = reader.GetInt64(0);
+                DateTimeOffset? heartbeat = null;
+                string? agentStatus = null;
+                if (events.EnableExtendedProgressionTracking)
+                {
+                    if (!reader.IsDBNull(1)) heartbeat = reader.GetDateTimeOffset(1);
+                    if (!reader.IsDBNull(2)) agentStatus = reader.GetString(2);
+                }
+
+                return new ProjectionProgressRow(shard.Name, shard.TenantId, seq, agentStatus, heartbeat);
+            }, (_connectionString, _events, name), token);
+        }
+        catch (Exception e) when (MissingStorageDetection.IsMissingStorage(e))
+        {
+            // #677: no progression storage means nothing has been observed, which is the same answer a
+            // missing row already gives. See MissingStorageDetection.
+            return null;
+        }
     }
 
     public async Task<long> FetchHighestEventSequenceNumber(CancellationToken token)
     {
-        return await _resilience.ExecuteAsync(static async (state, ct) =>
+        try
         {
-            var (connectionString, eventsTable) = state;
-            await using var conn = new SqlConnection(connectionString);
-            await conn.OpenAsync(ct);
+            return await _resilience.ExecuteAsync(static async (state, ct) =>
+            {
+                var (connectionString, eventsTable) = state;
+                await using var conn = new SqlConnection(connectionString);
+                await conn.OpenAsync(ct);
 
-            await using var cmd = conn.CreateCommand();
-            cmd.CommandText = $"SELECT ISNULL(MAX(seq_id), 0) FROM {eventsTable};";
+                await using var cmd = conn.CreateCommand();
+                cmd.CommandText = $"SELECT ISNULL(MAX(seq_id), 0) FROM {eventsTable};";
 
-            var result = await cmd.ExecuteScalarAsync(ct);
-            return result is long seq ? seq : 0;
-        }, (_connectionString, _events.EventsTableName), token);
+                var result = await cmd.ExecuteScalarAsync(ct);
+                return result is long seq ? seq : 0;
+            }, (_connectionString, _events.EventsTableName), token);
+        }
+        catch (Exception e) when (MissingStorageDetection.IsMissingStorage(e))
+        {
+            // #677: no events table, so no sequence has been assigned — which is what an empty one reports.
+            return 0;
+        }
     }
 
     public async Task<long?> FindEventStoreFloorAtTimeAsync(DateTimeOffset timestamp, CancellationToken token)
     {
-        return await _resilience.ExecuteAsync(static async (state, ct) =>
+        try
         {
-            var (connectionString, eventsTable, ts) = state;
-            await using var conn = new SqlConnection(connectionString);
-            await conn.OpenAsync(ct);
+            return await _resilience.ExecuteAsync(static async (state, ct) =>
+            {
+                var (connectionString, eventsTable, ts) = state;
+                await using var conn = new SqlConnection(connectionString);
+                await conn.OpenAsync(ct);
 
-            await using var cmd = conn.CreateCommand();
-            // Mirror Marten's MartenDatabase.FindEventStoreFloorAtTimeAsync: the floor is the
-            // earliest event at or AFTER the target timestamp (the first sequence the rewind
-            // re-applies from). A target before all events therefore resolves to the earliest
-            // event's seq_id rather than NULL, so a ToTimestamp rewind re-applies the full stream
-            // (within the documented one-event daemon floor boundary). See polecat#205.
-            cmd.CommandText = $"""
-                SELECT MIN(seq_id) FROM {eventsTable}
-                WHERE timestamp >= @ts;
-                """;
-            cmd.Parameters.AddWithValue("@ts", ts.ToUniversalTime());
+                await using var cmd = conn.CreateCommand();
+                // Mirror Marten's MartenDatabase.FindEventStoreFloorAtTimeAsync: the floor is the
+                // earliest event at or AFTER the target timestamp (the first sequence the rewind
+                // re-applies from). A target before all events therefore resolves to the earliest
+                // event's seq_id rather than NULL, so a ToTimestamp rewind re-applies the full stream
+                // (within the documented one-event daemon floor boundary). See polecat#205.
+                cmd.CommandText = $"""
+                    SELECT MIN(seq_id) FROM {eventsTable}
+                    WHERE timestamp >= @ts;
+                    """;
+                cmd.Parameters.AddWithValue("@ts", ts.ToUniversalTime());
 
-            var result = await cmd.ExecuteScalarAsync(ct);
-            return result is long seq ? (long?)seq : null;
-        }, (_connectionString, _events.EventsTableName, timestamp), token);
+                var result = await cmd.ExecuteScalarAsync(ct);
+                return result is long seq ? (long?)seq : null;
+            }, (_connectionString, _events.EventsTableName, timestamp), token);
+        }
+        catch (Exception e) when (MissingStorageDetection.IsMissingStorage(e))
+        {
+            // #677: no events table, so there is no floor to rewind to.
+            return null;
+        }
     }
 
     /// <summary>
@@ -670,13 +734,22 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
     /// </summary>
     public async Task<long> CountDeadLetterEventsAsync(ShardName shard, CancellationToken token = default)
     {
-        var projectionName = shard.Name;
-        var shardKey = shard.ShardKey;
+        try
+        {
+            var projectionName = shard.Name;
+            var shardKey = shard.ShardKey;
 
-        await using var session = RequireStore().QuerySession();
-        return await session.Query<DeadLetterEvent>()
-            .Where(x => x.ProjectionName == projectionName && x.ShardName == shardKey)
-            .LongCountAsync(token);
+            await using var session = RequireStore().QuerySession();
+            return await session.Query<DeadLetterEvent>()
+                .Where(x => x.ProjectionName == projectionName && x.ShardName == shardKey)
+                .LongCountAsync(token);
+        }
+        catch (Exception e) when (MissingStorageDetection.IsMissingStorage(e))
+        {
+            // #677: no dead-letter table, so no dead letters. Reached under AutoCreate.None, where the
+            // document table is never created on first use (DocumentTableEnsurer is gated on it).
+            return 0;
+        }
     }
 
     /// <summary>
@@ -687,13 +760,21 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
     public async Task<IReadOnlyList<DeadLetterShardCount>> FetchDeadLetterCountsAsync(
         CancellationToken token = default)
     {
-        await using var session = RequireStore().QuerySession();
-        var all = await session.Query<DeadLetterEvent>().ToListAsync(token);
+        try
+        {
+            await using var session = RequireStore().QuerySession();
+            var all = await session.Query<DeadLetterEvent>().ToListAsync(token);
 
-        return all
-            .GroupBy(x => (x.ProjectionName, x.ShardName))
-            .Select(g => new DeadLetterShardCount(g.Key.ProjectionName, g.Key.ShardName, g.LongCount()))
-            .ToList();
+            return all
+                .GroupBy(x => (x.ProjectionName, x.ShardName))
+                .Select(g => new DeadLetterShardCount(g.Key.ProjectionName, g.Key.ShardName, g.LongCount()))
+                .ToList();
+        }
+        catch (Exception e) when (MissingStorageDetection.IsMissingStorage(e))
+        {
+            // #677: no dead-letter table, so no dead letters.
+            return [];
+        }
     }
 
     /// <summary>
@@ -705,19 +786,27 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
     public async Task<IReadOnlyList<DeadLetterShardCount>> FetchDeadLetterCountsAsync(
         string? tenantId, CancellationToken token = default)
     {
-        if (tenantId == null)
+        try
         {
-            return await FetchDeadLetterCountsAsync(token);
+            if (tenantId == null)
+            {
+                return await FetchDeadLetterCountsAsync(token);
+            }
+
+            await using var session = RequireStore().QuerySession();
+            var all = await session.Query<DeadLetterEvent>().ToListAsync(token);
+
+            return all
+                .Where(x => x.TenantId == tenantId)
+                .GroupBy(x => (x.ProjectionName, x.ShardName))
+                .Select(g => new DeadLetterShardCount(g.Key.ProjectionName, g.Key.ShardName, g.LongCount(), tenantId))
+                .ToList();
         }
-
-        await using var session = RequireStore().QuerySession();
-        var all = await session.Query<DeadLetterEvent>().ToListAsync(token);
-
-        return all
-            .Where(x => x.TenantId == tenantId)
-            .GroupBy(x => (x.ProjectionName, x.ShardName))
-            .Select(g => new DeadLetterShardCount(g.Key.ProjectionName, g.Key.ShardName, g.LongCount(), tenantId))
-            .ToList();
+        catch (Exception e) when (MissingStorageDetection.IsMissingStorage(e))
+        {
+            // #677: no dead-letter table, so no dead letters.
+            return [];
+        }
     }
 
     /// <summary>
@@ -730,19 +819,29 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
     public async Task<IReadOnlyList<DeadLetterEvent>> QueryDeadLetterEventsAsync(ShardName shard,
         string? tenantId, int offset, int limit, CancellationToken token = default)
     {
-        var projectionName = shard.Name;
-        var shardKey = shard.ShardKey;
+        try
+        {
+            var projectionName = shard.Name;
+            var shardKey = shard.ShardKey;
 
-        await using var session = RequireStore().QuerySession();
-        var all = await session.Query<DeadLetterEvent>().ToListAsync(token);
+            await using var session = RequireStore().QuerySession();
+            var all = await session.Query<DeadLetterEvent>().ToListAsync(token);
 
-        return all
-            .Where(x => x.ProjectionName == projectionName && x.ShardName == shardKey
-                && (tenantId == null || x.TenantId == tenantId))
-            .OrderByDescending(x => x.EventSequence)
-            .Skip(offset)
-            .Take(limit)
-            .ToList();
+            return all
+                .Where(x => x.ProjectionName == projectionName && x.ShardName == shardKey
+                    && (tenantId == null || x.TenantId == tenantId))
+                .OrderByDescending(x => x.EventSequence)
+                .Skip(offset)
+                .Take(limit)
+                .ToList();
+        }
+        catch (Exception e) when (MissingStorageDetection.IsMissingStorage(e))
+        {
+            // #677: no dead-letter table, so nothing to drill into. Guarded in its own right rather than
+            // left to the Count/FetchCounts siblings — marten#5512 found this exact asymmetry, where one
+            // unguarded drill-in aborted a whole per-store fan-out that was otherwise answering.
+            return [];
+        }
     }
 
     public new async Task EnsureStorageExistsAsync(Type storageType, CancellationToken token)
