@@ -11,9 +11,16 @@ namespace Polecat.Storage;
 ///     Weasel table definition for a document type.
 ///     Table name follows the pattern: pc_doc_{lowercase_type_name}
 /// </summary>
-internal class DocumentTable : Table
+internal partial class DocumentTable : Table
 {
-    public DocumentTable(DocumentMapping mapping)
+    /// <param name="mapping">The document type's mapping.</param>
+    /// <param name="includeForeignKeys">
+    ///     False to declare everything except the foreign-key CONSTRAINTS — the computed columns they
+    ///     sit on are still declared. #684: <see cref="Internal.DocumentTableEnsurer" /> builds the table
+    ///     this way for its first pass, because a constraint cannot be created before the table it
+    ///     references exists and that pass migrates one table at a time. See the remarks there.
+    /// </param>
+    public DocumentTable(DocumentMapping mapping, bool includeForeignKeys = true)
         : base(new SqlServerObjectName(mapping.DatabaseSchemaName, mapping.TableName))
     {
         if (mapping.TenancyStyle == TenancyStyle.Conjoined)
@@ -142,21 +149,30 @@ internal class DocumentTable : Table
                 }
             }
         }
+
+        // #684: the declared computed columns, secondary indexes and foreign keys. Last, because a
+        // computed column must not join the primary key and the partitioning branches above are what
+        // decide the key. See DocumentTable.DeclaredObjects.cs.
+        AddDeclaredSchemaObjects(mapping, includeForeignKeys);
     }
 
     /// <summary>
-    ///     #267: Polecat's <see cref="DocumentTable" /> models only the columns it manages. The
-    ///     persisted computed columns and secondary indexes Polecat itself creates are applied as
-    ///     idempotent raw DDL by <see cref="Internal.DocumentTableEnsurer" /> (not modeled here), and a
-    ///     user may add their own (e.g. a persisted computed column + unique index via an EF migration).
-    ///     Weasel's default <see cref="TableDelta" /> would treat every such object as an "extra" and
-    ///     emit <c>DROP COLUMN</c> / <c>DROP INDEX</c> — destructive — while also leaving the table with
-    ///     a permanently non-empty diff that makes every storage-ensure re-run DDL.
+    ///     #267: strip objects this model does not declare out of the fetched (actual) table before the
+    ///     diff, so Polecat is purely additive — it creates what is missing from its own model and never
+    ///     drops or churns a column, index or foreign key it does not own. A user may add their own (a
+    ///     persisted computed column plus a unique index via an EF migration, say), and Weasel's default
+    ///     <see cref="TableDelta" /> would treat each as an "extra" and emit <c>DROP COLUMN</c> /
+    ///     <c>DROP INDEX</c> — destructive — while also leaving a permanently non-empty diff that makes
+    ///     every storage-ensure re-run DDL.
     ///     <para>
-    ///     This override strips those unmodeled objects from the fetched (actual) table before the diff
-    ///     is computed, so Polecat is purely additive: it creates what is missing from its own model and
-    ///     never drops or churns columns/indexes it does not own. Columns and indexes Polecat <em>does</em>
-    ///     model still reconcile normally (missing/different are detected as before).
+    ///     ⚠️ <b>#684 narrowed what this covers without changing a line of it, and that is the point.</b>
+    ///     Polecat's own computed columns, indexes and foreign keys used to be unmodeled too — raw DDL
+    ///     run by <see cref="Internal.DocumentTableEnsurer" /> — so they were stripped here alongside the
+    ///     user's, which is why the generated script omitted them and
+    ///     <c>AssertDatabaseMatchesConfigurationAsync</c> reported a match without them. They are
+    ///     declared in the model now (see DocumentTable.DeclaredObjects.cs), so they fall on the modeled
+    ///     side of these three comparisons and reconcile normally. Nothing here had to change: the
+    ///     override was always "keep what I do not declare", and the fix was to declare more.
     ///     </para>
     /// </summary>
     public override async Task<ISchemaObjectDelta> CreateDeltaAsync(DbDataReader reader,

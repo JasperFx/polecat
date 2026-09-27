@@ -303,7 +303,49 @@ separate them. That is why `SchemaName = "doc_usage"` appearing in nine files is
 ## Engineering Principles
 
 - Mirror Marten's public API surface where possible for user familiarity
-- Use Weasel.SqlServer for ALL schema management — no hand-written DDL scripts
+- **ALL DDL — every kind of schema creation, migration, delta and drop — goes through Weasel.
+  Always. No exceptions.** Not "prefer Weasel"; not "Weasel for tables and raw DDL for the awkward
+  bits". If a schema object cannot currently be expressed as a Weasel schema object, the work is to
+  make it expressible (in `Weasel.SqlServer` if the gap is the dialect's), **not** to hand-write the
+  statement and run it yourself.
+
+  This is a load-bearing rule rather than a style preference, and #684 is what it costs to break it.
+  Document indexes, vector indexes, JSON indexes, full-text indexes and foreign keys were
+  "raw-DDL managed" — emitted as strings by `DocumentTableEnsurer` at first use, and deliberately
+  *stripped* out of the actual table by `DocumentTable.CreateDeltaAsync` so a migration would never
+  drop them. Each decision was locally reasonable. Together they put those objects outside the
+  schema-object model, and **everything that reads the model then silently disagreed with the
+  database**:
+
+  - `Advanced.ToDatabaseScript()` and `db-dump` omitted every one of them, so the generated creation
+    script did not reproduce the configured schema.
+  - `AssertDatabaseMatchesConfigurationAsync()` reported a match over a database missing all of them,
+    which is what made it invisible — the natural "did this work?" assertion passes.
+  - `AutoCreate.None` could not refuse what it could not see.
+
+  A raw-DDL string is not a shortcut past the model; it is a promise to keep two descriptions of the
+  schema in sync by hand, and that promise is never kept.
+
+  **Two consequences of holding the line, both discovered by doing it in #684:**
+
+  - **SQL Server does not store `CAST`.** It rewrites `CAST(x AS t)` into `CONVERT([t], x)` when it
+    persists a computed column's definition, so a column *declared* with `CAST` never canonicalizes
+    against the catalog — the delta reports it different on every pass and then tries to DROP and
+    re-add it, which fails outright once an index or foreign key depends on it. Declare `CONVERT`.
+    `DocumentIndex.ComputedColumnExpression` is the one place that decides this. Filed upstream as
+    weasel#637, with weasel#638 for the dependent-object half.
+  - **Weasel's identifier policy applies once an object is modeled**, and it *refuses* rather than
+    escapes: `;` `'` `"` `[` `]` are rejected at startup (weasel#416). Index names used to be exempt
+    because they were raw DDL, which is exactly the inconsistency worth removing — every other
+    identifier in Polecat was already held to it. Moving an object into the model can therefore be a
+    **breaking change** for a name that used to be escaped; that is the right trade, but say so.
+
+  Still outstanding on the document path, tracked by #685: the full-text index (token table, its
+  index, the trigger, the backfill) and `CREATE JSON INDEX`. Two things in `DocumentTableEnsurer` are
+  deliberately *not* in scope, because they are pre-migration fixups of legacy tables rather than
+  declarations of a desired schema, and Weasel's delta cannot express either: the Decision D2
+  `version` int→bigint widening (drop default, alter, restore) and #296's in-place strong-typed-id
+  column conversion. Both run *before* the diff precisely so the diff comes out clean.
 - Implement JasperFx.Events interfaces — don't reinvent the event/projection abstractions
 - Opt into the Critter Stack stateful resource model via Weasel's DatabaseResource
 - Keep it simple: QuickAppend only, no dirty tracking, STJ only

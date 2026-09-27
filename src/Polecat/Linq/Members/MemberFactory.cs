@@ -127,9 +127,12 @@ internal class MemberFactory : IMemberResolver
     ///     #217: builds the typed locator, preferring JSON_VALUE(... RETURNING type) on native json
     ///     storage (SQL Server 2025+) over CAST(JSON_VALUE(...) AS type). RETURNING does not support
     ///     uniqueidentifier, so Guid members keep CAST. A null sqlType (string/bool) needs no typing.
-    ///     Note: members covered by a Default-casing Index(...) are instead rewritten to the index's
-    ///     computed-column expression in CreateMember (which takes precedence), so they keep matching
-    ///     the persisted CAST/CONVERT column and stay seekable (#223).
+    ///     ⚠️ This is the locator for an <b>un-indexed</b> member, and CAST is right for it — there is no
+    ///     persisted column for it to line up with. A member covered by a Default-casing Index(...) is
+    ///     rewritten in CreateMember to that index's computed-column expression instead, which takes
+    ///     precedence and is spelled CONVERT since #684 (because that is what SQL Server stores for the
+    ///     column). The two spellings therefore differ on purpose: the one that has to match a persisted
+    ///     column matches it, and the one that has nothing to match keeps the simpler form (#223).
     /// </summary>
     internal static string BuildTypedLocator(string jsonPath, string rawLocator, string? sqlType,
         bool useReturning)

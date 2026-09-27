@@ -211,7 +211,22 @@ public class DocumentIndex
         }
         else
         {
-            expr = $"CAST({json} AS {sqlType})";
+            // #684: CONVERT rather than CAST, and this is a correctness requirement rather than a
+            // preference. SQL Server rewrites CAST(x AS t) to CONVERT([t], x) when it stores a computed
+            // column's definition, so a column DECLARED with CAST never canonicalizes against the
+            // catalog: the delta reports it different on every single pass, and — because a computed
+            // definition cannot be altered in place — tries to DROP and re-add it, which fails outright
+            // once a foreign key or index depends on the column. Declaring the form the server itself
+            // stores is what makes these objects modelable at all.
+            //
+            // The date/time branch above has always used CONVERT for an unrelated reason (determinism,
+            // #223) and has always canonicalized cleanly, which is what confirmed the diagnosis.
+            //
+            // ⚠️ Both consumers move together, which is the property #223 exists to protect: this one
+            // method feeds the DDL and the LINQ locator, so the two stay identical and SQL Server can
+            // still match a predicate to the persisted column. CAST and CONVERT parse to the same tree
+            // in any case — computed_column_index_usability_tests is what holds that.
+            expr = $"CONVERT({sqlType}, {json})";
         }
 
         return casing switch
@@ -234,81 +249,6 @@ public class DocumentIndex
     internal string GetIndexName(string tableName)
     {
         return IndexName ?? DeriveIndexName(tableName);
-    }
-
-    /// <summary>
-    ///     Generates DDL to add persisted computed columns and create the index.
-    ///     Returns multiple SQL statements separated by newlines.
-    /// </summary>
-    internal string[] ToDdlStatements(DocumentMapping mapping)
-    {
-        var schema = mapping.DatabaseSchemaName;
-        var table = mapping.TableName;
-        var qualifiedTable = SqlEscaping.QualifiedName(schema, table);
-        var name = GetIndexName(table);
-        var unique = IsUnique ? "UNIQUE " : "";
-
-        var statements = new List<string>();
-
-        // Add persisted computed columns for each key JSON path
-        foreach (var path in JsonPaths)
-        {
-            var colName = ColumnNameForPath(path, Casing);
-            var sqlType = ResolveSqlType(path, mapping.ResolveClrMemberType(path));
-            var castedExpr = ComputedColumnExpression(path, sqlType, Casing, UsesNativeJson(mapping));
-
-            // #390: COL_LENGTH takes the object name as a *string*, so the same qualified name that
-            // appears bare in ALTER TABLE has to be escaped a second time for the literal position.
-            statements.Add($"""
-                IF COL_LENGTH({SqlEscaping.Literal(qualifiedTable)}, {SqlEscaping.Literal(colName)}) IS NULL
-                    ALTER TABLE {qualifiedTable} ADD {SqlEscaping.QuoteIdentifier(colName)} AS {castedExpr} PERSISTED;
-                """);
-        }
-
-        // Add persisted computed columns for each INCLUDE (covering) path — always Default casing.
-        foreach (var path in IncludeColumns)
-        {
-            var colName = ColumnNameForPath(path, IndexCasing.Default);
-            var sqlType = ResolveSqlType(path, mapping.ResolveClrMemberType(path));
-            var castedExpr = ComputedColumnExpression(path, sqlType, IndexCasing.Default, UsesNativeJson(mapping));
-
-            statements.Add($"""
-                IF COL_LENGTH({SqlEscaping.Literal(qualifiedTable)}, {SqlEscaping.Literal(colName)}) IS NULL
-                    ALTER TABLE {qualifiedTable} ADD {SqlEscaping.QuoteIdentifier(colName)} AS {castedExpr} PERSISTED;
-                """);
-        }
-
-        // Build index column list
-        var indexColumns = new List<string>();
-        if (TenancyScope == TenancyScope.PerTenant)
-        {
-            indexColumns.Add(JasperFx.StorageConstants.TenantIdColumn);
-        }
-
-        foreach (var path in JsonPaths)
-        {
-            var colName = ColumnNameForPath(path, Casing);
-            var sortDir = SortOrder == SortOrder.Descending ? " DESC" : "";
-            indexColumns.Add($"{SqlEscaping.QuoteIdentifier(colName)}{sortDir}");
-        }
-
-        var columnList = string.Join(", ", indexColumns);
-        var include = IncludeColumns.Length > 0
-            ? " INCLUDE (" + string.Join(", ",
-                IncludeColumns.Select(p => SqlEscaping.QuoteIdentifier(ColumnNameForPath(p, IndexCasing.Default)))) + ")"
-            : "";
-        var where = !string.IsNullOrEmpty(Predicate) ? $" WHERE {Predicate}" : "";
-
-        // #390: IndexName is a public-API argument (Index(..., indexName)) that lands in a string
-        // literal here and a bracketed identifier one line later — both positions need escaping, and
-        // they take different escapes.
-        statements.Add($"""
-            IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = {SqlEscaping.Literal(name)}
-                           AND object_id = OBJECT_ID({SqlEscaping.Literal(qualifiedTable)}))
-                CREATE {unique}NONCLUSTERED INDEX {SqlEscaping.QuoteIdentifier(name)} ON {qualifiedTable} ({columnList}){include}{where};
-            """);
-
-        return statements.ToArray();
     }
 
     private string DeriveIndexName(string tableName)

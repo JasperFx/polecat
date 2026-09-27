@@ -4,20 +4,43 @@ Polecat supports computed indexes on document properties. These indexes use SQL 
 
 ## How It Works
 
-When you define a computed index, Polecat:
+When you define a computed index, Polecat declares two things on the document's table:
 
-1. Adds a **persisted computed column** to the document table using `JSON_VALUE(data, '$.path')`
-2. Creates a standard **nonclustered index** on that computed column
+1. A **persisted computed column** over `JSON_VALUE(data, '$.path')`
+2. A standard **nonclustered index** on that computed column
 
-For example, indexing `UserName` on a `User` document produces:
+Both are Weasel schema objects, so they appear in the generated creation script (`db-dump` and
+`Advanced.ToDatabaseScript()`), they are created and reconciled by the normal migration, and
+`AssertDatabaseMatchesConfigurationAsync()` will tell you if one is missing.
+
+For example, indexing `UserName` on a `User` document produces a column in the table's own `CREATE`:
 
 ```sql
-ALTER TABLE [myschema].[pc_doc_user]
-    ADD [cc_username] AS CAST(JSON_VALUE(data, '$.userName') AS varchar(250)) PERSISTED;
-
-CREATE NONCLUSTERED INDEX [ix_pc_doc_user_username]
-    ON [myschema].[pc_doc_user] ([cc_username]);
+cc_username AS (CONVERT(varchar(250), JSON_VALUE(data, '$.userName'))) PERSISTED,
 ```
+
+and the index beside it, guarded so the script can be run more than once:
+
+```sql
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'ix_pc_doc_user_username'
+               AND object_id = OBJECT_ID(N'myschema.pc_doc_user'))
+    CREATE INDEX ix_pc_doc_user_username ON myschema.pc_doc_user (cc_username);
+```
+
+::: tip Why `CONVERT` rather than `CAST`
+SQL Server rewrites `CAST(x AS t)` to `CONVERT(t, x)` when it stores a computed column's definition,
+so a column declared with `CAST` would never match what the catalog reports — the schema diff would
+report it as changed on every single pass. Polecat declares the form the server itself stores. On a
+store using the native SQL Server 2025 `json` column type, most types use the
+`JSON_VALUE(... RETURNING t)` form instead; `uniqueidentifier` has no `RETURNING` support and keeps
+`CONVERT`.
+:::
+
+::: warning Index names are validated
+An index name containing `;` `'` `"` `[` or `]` is refused when the schema is applied, rather than
+escaped. That is Weasel's identifier policy, and it applies to every identifier Polecat declares —
+table names, column names and constraint names have always been held to it.
+:::
 
 ## Simple Indexes
 
@@ -76,9 +99,9 @@ Each include member gets its own persisted computed column, and the index gains 
 
 ```sql
 ALTER TABLE [myschema].[pc_doc_user]
-    ADD [cc_firstname] AS CAST(JSON_VALUE(data, '$.firstName') AS varchar(250)) PERSISTED;
+    ADD [cc_firstname] AS CONVERT(varchar(250), JSON_VALUE(data, '$.firstName')) PERSISTED;
 ALTER TABLE [myschema].[pc_doc_user]
-    ADD [cc_lastname] AS CAST(JSON_VALUE(data, '$.lastName') AS varchar(250)) PERSISTED;
+    ADD [cc_lastname] AS CONVERT(varchar(250), JSON_VALUE(data, '$.lastName')) PERSISTED;
 
 CREATE NONCLUSTERED INDEX [ix_pc_doc_user_username]
     ON [myschema].[pc_doc_user] ([cc_username]) INCLUDE ([cc_firstname], [cc_lastname]);
@@ -145,7 +168,7 @@ The generated SQL for a lowercase index:
 
 ```sql
 ALTER TABLE [myschema].[pc_doc_user]
-    ADD [cc_email_lower] AS LOWER(CAST(JSON_VALUE(data, '$.email') AS varchar(250))) PERSISTED;
+    ADD [cc_email_lower] AS LOWER(CONVERT(varchar(250), JSON_VALUE(data, '$.email'))) PERSISTED;
 
 CREATE NONCLUSTERED INDEX [ix_pc_doc_user_email_lower]
     ON [myschema].[pc_doc_user] ([cc_email_lower]);
