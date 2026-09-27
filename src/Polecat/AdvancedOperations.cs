@@ -626,26 +626,38 @@ public class AdvancedOperations
         var statistics = new Events.EventStoreStatistics();
         var connStr = _store.Options.ConnectionString;
 
-        await _resilience.ExecuteAsync(static async (state, ct) =>
+        // #677: an event store whose tables were never applied reports zeroes rather than throwing.
+        // Diagnostic read; see Internal.MissingStorageDetection.
+        try
         {
-            var (connectionString, sqlText, stats) = state;
-            await using var conn = new SqlConnection(connectionString);
-            await conn.OpenAsync(ct);
-            await using var cmd = conn.CreateCommand();
-            cmd.CommandText = sqlText;
-            await using var reader = await cmd.ExecuteReaderAsync(ct);
+            await _resilience.ExecuteAsync(static async (state, ct) =>
+            {
+                var (connectionString, sqlText, stats) = state;
+                await using var conn = new SqlConnection(connectionString);
+                await conn.OpenAsync(ct);
+                await using var cmd = conn.CreateCommand();
+                cmd.CommandText = sqlText;
+                await using var reader = await cmd.ExecuteReaderAsync(ct);
 
-            if (await reader.ReadAsync(ct))
-                stats.EventCount = reader.GetInt32(0);
+                if (await reader.ReadAsync(ct))
+                    stats.EventCount = reader.GetInt32(0);
 
-            await reader.NextResultAsync(ct);
-            if (await reader.ReadAsync(ct))
-                stats.StreamCount = reader.GetInt32(0);
+                await reader.NextResultAsync(ct);
+                if (await reader.ReadAsync(ct))
+                    stats.StreamCount = reader.GetInt32(0);
 
-            await reader.NextResultAsync(ct);
-            if (await reader.ReadAsync(ct))
-                stats.EventSequenceNumber = Convert.ToInt64(reader.GetValue(0));
-        }, (connStr, sql, statistics), token);
+                await reader.NextResultAsync(ct);
+                if (await reader.ReadAsync(ct))
+                    stats.EventSequenceNumber = Convert.ToInt64(reader.GetValue(0));
+            }, (connStr, sql, statistics), token);
+        }
+        catch (Exception e) when (Internal.MissingStorageDetection.IsMissingStorage(e))
+        {
+            // Partial results are possible in principle — the three counts come back as three result
+            // sets — so hand back a fresh zeroed instance rather than whatever was assigned before the
+            // failure. "Could not read" and "read half of it" must not be indistinguishable.
+            return new Events.EventStoreStatistics();
+        }
 
         return statistics;
     }

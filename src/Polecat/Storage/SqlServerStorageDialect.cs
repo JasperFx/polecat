@@ -76,9 +76,12 @@ internal sealed class SqlServerStorageDialect<TId> : IStorageDialect
 
     public Weasel.Core.SqlGeneration.ISqlFragment ByIdFilter(object rawId) => new SqlServerByIdFilter(rawId, TypeForRawId(rawId));
 
+    // #677: delegated so 208 has ONE definition. The diagnostic event-store reads need the same
+    // classification plus 207 (invalid column), and two spellings of "is this storage missing?"
+    // would drift the way the three copies of the database descriptor did in #675.
     /// <summary>SQL Server error 208: "Invalid object name '%s'."</summary>
     public bool IsUndefinedTable(Exception exception)
-        => exception is SqlException sql && sql.Number == 208;
+        => Internal.MissingStorageDetection.IsUndefinedTable(exception);
 
     // #363: StorageColumnType.String always targets Polecat's varchar columns (ids, tenant_id,
     // type names, correlation/causation) — binding nvarchar defeats their index seeks. JSON stays

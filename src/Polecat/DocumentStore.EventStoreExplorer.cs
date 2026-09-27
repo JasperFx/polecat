@@ -569,9 +569,11 @@ public partial class DocumentStore
         }
         catch (Exception)
         {
-            // Same judgement headSequenceAsync makes: a projections page that cannot reach a daemon
-            // still has progression rows and a head to render, and Unknown is already the defined
-            // answer for "no daemon to ask".
+            // A projections page that cannot reach a daemon still has progression rows and a head to
+            // render, and Unknown is already the defined answer for "no daemon to ask". This one is a
+            // coordinator lookup rather than a database read, so #677's missing-storage classifier does
+            // not apply — the reason it stays a broad catch here is that ANY daemon-lookup failure has
+            // the same well-defined answer.
             return states;
         }
 
@@ -671,22 +673,18 @@ public partial class DocumentStore
     ///     Reporting it as <see cref="ShardStatus.EventStoreSequence" /> made every shard on a stopped
     ///     daemon look caught up — the opposite of what a projections page is opened to find out.
     ///     Marten and Fisher both read the head this way.
+    ///     <para>
+    ///     #677: this used to wrap the read in <c>catch (Exception)</c> returning 0, on the reasoning
+    ///     that the event schema not existing yet is precisely when a console gets pointed at a store.
+    ///     That reasoning was right and the guard was in the wrong place: it belongs to the read, so
+    ///     every caller gets it, and catching bare <c>Exception</c> at one call site also swallowed
+    ///     genuine connection failures — reporting "head = 0" for a database that could not be reached
+    ///     at all. <see cref="PolecatDatabase.FetchHighestEventSequenceNumber" /> now answers 0 for
+    ///     missing storage itself, and a real failure is allowed to surface.
+    ///     </para>
     /// </remarks>
-    private static async Task<long> headSequenceAsync(PolecatDatabase database, CancellationToken ct)
-    {
-        try
-        {
-            return await database.FetchHighestEventSequenceNumber(ct);
-        }
-        catch (Exception)
-        {
-            // The likeliest reason this fails is that the event schema does not exist yet, which is
-            // precisely when a console is most likely to be pointed at the store. Failing the whole
-            // page over one number answers nothing at all — the same judgement TryCreateUsage makes
-            // about the same read.
-            return 0;
-        }
-    }
+    private static Task<long> headSequenceAsync(PolecatDatabase database, CancellationToken ct)
+        => database.FetchHighestEventSequenceNumber(ct);
 
     // ---- #584 / jasperfx#810: the database dimension of the explorer reads ----
     //
