@@ -101,7 +101,8 @@ internal class DocumentMapping
         TableName = tableName;
         DatabaseSchemaName = options.DatabaseSchemaName;
         DotNetTypeName = $"{documentType.FullName}, {documentType.Assembly.GetName().Name}";
-        TenancyStyle = options.Events.TenancyStyle;
+        // #682: per-type, with Events.TenancyStyle as the fallback -- see StoreOptions.TenancyStyleFor.
+        TenancyStyle = options.TenancyStyleFor(documentType);
         JsonColumnType = options.JsonColumnType;
 
         // Discover and register attribute-based indexes

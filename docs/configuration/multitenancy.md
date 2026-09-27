@@ -48,6 +48,10 @@ var store = DocumentStore.For(opts =>
 });
 ```
 
+Document tenancy can also be declared on its own, per type or store-wide, without making the event
+store conjoined — see [Multi-Tenanted Documents](/documents/multi-tenancy). `Events.TenancyStyle` is
+the fallback for any type that does not declare one.
+
 With conjoined tenancy:
 
 - All document tables get a `tenant_id` column

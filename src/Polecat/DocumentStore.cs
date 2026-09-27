@@ -247,6 +247,59 @@ public partial class DocumentStore : IDocumentStore
             options.CommitListeners);
     }
 
+    /// <summary>
+    ///     A lightweight session that holds <b>no</b> connection between commands — every read opens
+    ///     one, runs, and closes it — for the async daemon's projection batch (#683).
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         ⚠️ <b>Intended for a caller that never commits through the session.</b> Until a
+    ///         transaction is begun there is no held connection, so two reads are not isolated from each
+    ///         other — see <see cref="Internal.Sessions.OnDemandTransactionalConnection" />, which
+    ///         switches to the pinned behaviour if anyone does begin one.
+    ///         <see cref="Events.Daemon.PolecatProjectionBatch" /> is exactly that caller: it drains
+    ///         each session's work tracker and executes every operation itself, on one connection and
+    ///         one transaction of its own, so a per-tenant session is only ever a place to read an
+    ///         existing projected document from and a place to queue writes onto.
+    ///     </para>
+    ///     <para>
+    ///         Why it exists: the batch creates one session per tenant it writes under and keeps them
+    ///         all alive until it commits. A <see cref="Internal.Sessions.TransactionalConnection" /> opens on
+    ///         its session's first read and holds that connection for the session's life, so a
+    ///         conjoined store whose batch spans more tenants than the pool has connections deadlocks
+    ///         — every tenant session holding one, the batch's own commit waiting for the next. The
+    ///         default pool is 100, so this began at 101 co-located tenants in one batch and presented
+    ///         as "Timeout expired. The timeout period elapsed prior to obtaining a connection from the
+    ///         pool", with the daemon simply never catching up.
+    ///     </para>
+    /// </remarks>
+    internal IDocumentSession LightweightSessionWithoutHeldConnection(SessionOptions options)
+    {
+        var factory = ResolveConnectionFactory(options);
+        var ensurer = ResolveTableEnsurer(options);
+        var timeout = options.Timeout ?? Options.CommandTimeout;
+        var lifetime = new OnDemandTransactionalConnection(factory, timeout);
+        return new LightweightSession(
+            Options,
+            lifetime,
+            _providers,
+            ensurer,
+            Events,
+            InlineProjections,
+            options.TenantId,
+            options.Listeners,
+            options.CommitListeners);
+    }
+
+    /// <summary>
+    ///     Open a lightweight session scoped to <paramref name="tenantId" /> (#682 / jasperfx#898) —
+    ///     the shorthand for <c>LightweightSession(new SessionOptions { TenantId = tenantId })</c>.
+    /// </summary>
+    public IDocumentSession LightweightSession(string tenantId)
+    {
+        return LightweightSession(new SessionOptions { TenantId = tenantId });
+    }
+
     public IDocumentSession IdentitySession()
     {
         return IdentitySession(new SessionOptions());
@@ -273,6 +326,12 @@ public partial class DocumentStore : IDocumentStore
     public IQuerySession QuerySession()
     {
         return QuerySession(new SessionOptions());
+    }
+
+    /// <inheritdoc cref="LightweightSession(string)" />
+    public IQuerySession QuerySession(string tenantId)
+    {
+        return QuerySession(new SessionOptions { TenantId = tenantId });
     }
 
     public IQuerySession QuerySession(SessionOptions options)

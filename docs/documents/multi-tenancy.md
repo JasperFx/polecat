@@ -6,6 +6,27 @@ Polecat supports isolating document data by tenant using conjoined tenancy (shar
 
 When conjoined tenancy is enabled, all document tables include a `tenant_id` column and use a composite primary key of `(tenant_id, id)`:
 
+Conjoined document tenancy can be turned on three ways, from narrowest to widest:
+
+```cs
+var store = DocumentStore.For(opts =>
+{
+    opts.Connection("...");
+
+    // 1. One document type at a time. Mirrors Marten's Schema.For<T>().MultiTenanted().
+    opts.Schema.For<Order>().MultiTenanted();
+
+    // 2. ...or through a policy, which is the same switch in the policy's spelling.
+    opts.Policies.ForDocument<Invoice>(p => p.MultiTenanted = true);
+
+    // 3. ...or every document type in the store.
+    opts.Policies.AllDocumentsAreMultiTenanted();
+});
+```
+
+A conjoined event store still makes **every** document conjoined, which is how document tenancy
+worked before the per-type opt-in existed:
+
 ```cs
 var store = DocumentStore.For(opts =>
 {
@@ -13,6 +34,17 @@ var store = DocumentStore.For(opts =>
     opts.Events.TenancyStyle = TenancyStyle.Conjoined;
 });
 ```
+
+`Events.TenancyStyle` is the *fallback*, so the two combine the way you would expect: the opt-ins
+above can make a document conjoined in a store whose events are not, and nothing you have already
+configured changes shape. The opt-in only ever widens tenancy — there is deliberately no per-type way
+to make a document single-tenanted inside a conjoined event store, because that would retype a
+primary key under stores that never asked for it.
+
+::: warning Tenancy is a schema decision
+Turning `MultiTenanted()` on for a document type whose table already exists changes its primary key
+from `(id)` to `(tenant_id, id)`. That is a migration, not a setting — plan it like one.
+:::
 
 ### Querying
 

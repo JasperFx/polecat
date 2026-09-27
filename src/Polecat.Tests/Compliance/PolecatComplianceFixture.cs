@@ -144,6 +144,16 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
             options.Events.TenancyStyle = TenancyStyle.Conjoined;
         }
 
+        // Wave 19 / jasperfx#898: refuse the default tenant. Polecat carries the switch directly on
+        // StoreOptions rather than under an Advanced facade (#514), so this is the whole mapping --
+        // and it has to be replayed rather than ignored, because the fact that asks for it builds its
+        // OWN store from a second delegate and every assertion in it is vacuous on a store that
+        // leaves the default tenant on: the tenant-less routes it expects to be refused simply work.
+        if (config.DisableDefaultTenantUsage)
+        {
+            options.DefaultTenantUsageEnabled = false;
+        }
+
         // #593 / jasperfx#810: the tenant-to-database map, which is what makes the store
         // multi-database at all. Two distinct logical names is database-per-tenant; two tenants
         // sharing one, alongside ConjoinedEventTenancy above, is sharded tenancy -- and those are the
@@ -529,6 +539,20 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
     ///     fact exists to catch.
     /// </remarks>
     public override bool SupportsMultipleDatabases => true;
+
+    /// <summary>
+    ///     Wave 19 / jasperfx#898 + jasperfx#885: Polecat can be built with the default tenant refused
+    ///     (<c>StoreOptions.DefaultTenantUsageEnabled = false</c>, #514), and since #678 every read
+    ///     route the fact walks is reachable through a tenant scope — including
+    ///     <c>OpenReadOnlyEventStore(tenantId)</c>, which was the throwing default until this wave.
+    /// </summary>
+    /// <remarks>
+    ///     The refusal itself was never the hard part. What the fact pins is <b>reachability</b>: with
+    ///     the default tenant refused, a tenant-less opener is rejected as it is called, before any
+    ///     scope could be applied, so a surface that has no tenant-scoped opener is not merely awkward
+    ///     — it is gone. That is why this gate could not be flipped before #678.
+    /// </remarks>
+    public override bool SupportsDisablingDefaultTenant => true;
 
     /// <remarks>
     ///     Straight through Polecat's own tenancy rather than by matching

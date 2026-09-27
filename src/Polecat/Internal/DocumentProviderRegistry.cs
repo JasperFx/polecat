@@ -223,7 +223,11 @@ internal class DocumentProviderRegistry
 
             var docType = exprType.GetGenericArguments()[0];
 
-            if (_options.Events.TenancyStyle == TenancyStyle.Conjoined)
+            // #682: per type rather than off Events.TenancyStyle. The fallback makes these agree on a
+            // conjoined event store, but a document conjoined on its own
+            // (Schema.For<T>().MultiTenanted(), or Policies.AllDocumentsAreMultiTenanted()) has the same
+            // one-partition-scheme-per-table problem and used to slip past this guard.
+            if (_options.TenancyStyleFor(docType) == TenancyStyle.Conjoined)
             {
                 throw new NotSupportedException(
                     "RANGE partitioning of document tables on a caller-chosen member is supported for " +

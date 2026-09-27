@@ -138,8 +138,8 @@ Event sourcing behavior that Polecat and Marten both have belongs in
 `JasperFx.Events.ComplianceTests` (source-only package; the suites compile into `Polecat.Tests` so
 JasperFx's aggregate source generator binds Polecat's session types). Enroll a suite with an empty
 subclass in `Compliance/polecat_event_store_compliance.cs`, implement whatever seam it needs on
-`PolecatComplianceFixture`, and delete the Polecat-local copy. **56 suites are enrolled across
-eighteen waves** — the enrollment files are `Compliance/polecat_event_store_compliance*.cs`, mostly
+`PolecatComplianceFixture`, and delete the Polecat-local copy. **57 suites are enrolled across
+nineteen waves** — the enrollment files are `Compliance/polecat_event_store_compliance*.cs`, mostly
 one per wave, and the fixture's `Supports…` overrides are the map of what Polecat has opted into.
 
 That count goes stale every time a wave lands, so recompute it rather than trusting the number
@@ -153,7 +153,8 @@ Note the "one file per wave" rule has an exception: a **document** suite is some
 base `polecat_event_store_compliance.cs` beside the other document suites rather than in a wave file
 of its own, because its fixture is `PolecatDocumentComplianceFixture` and it shares nothing with the
 event-sourcing wave it arrived in. `GuidOptimisticConcurrencyCompliance` (#592) is the current
-example.
+example, and wave 19's `DocumentConjoinedTenancyCompliance` (#683) is the second — enrolled in the
+wave file rather than the base one, because the product work it needed was the wave's.
 
 **A `Supports…` flag that is false is a claim, and it needs a reason in a comment.** Most recent
 gates default false so a store can enroll a suite across a package bump and flip the gate when the
@@ -171,7 +172,19 @@ maintainer had already ruled on (#549, #553) and three nobody knew about, includ
 were silently stubbed empty. Budget for that, and read a failure as evidence before reading it as a
 suite bug. When it *is* a suite bug, fix it upstream rather than weakening the assertion locally.
 
-Wave 17/18 (#591–#594, JasperFx 2.69.0) is the second worked example, and it sharpens the rule: a
+Wave 19 (#683, JasperFx 2.75.0) is the sharpest example yet, and it makes a different point: the
+yield is not only in the **new** suite. Enrolling `DocumentConjoinedTenancyCompliance` found that
+Polecat's LINQ provider decided document tenancy from `Options.Events.TenancyStyle` while every other
+read path decided it from the document's own mapping — so a conjoined document in a
+single-tenanted store was correctly scoped on the keyed load path and **completely unscoped on every
+LINQ shape**. But the *same package bump* also dropped six new facts into
+`ConjoinedEventTenancyCompliance`, which Polecat had been enrolled in since wave 8, and one of those
+— a rebuild spread across 200 tenants — found a connection-pool deadlock in the async daemon that had
+nothing to do with the new feature: the projection batch pinned one pooled connection per tenant
+session for the batch's whole life, so a batch spanning more tenants than the pool deadlocked at 101.
+**Read the package diff, not just the new-suite list.**
+
+Wave 17/18 (#591–#594, JasperFx 2.69.0) is the earlier worked example, and it sharpens the rule: a
 suite that is **brand new upstream** — one no store has ever run — is higher-yield still.
 `GuidOptimisticConcurrencyCompliance` was the first shared coverage of Guid document concurrency for
 *any* store, and three of its five facts failed immediately. Polecat's guard was fed from the

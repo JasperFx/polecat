@@ -207,6 +207,30 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
     }
 
     /// <summary>
+    ///     #678 / jasperfx#885: the tenant-scoped read-only tier. Inherited as a <b>throwing</b> default
+    ///     until now, which is a hole rather than a gap on a store that supports tenancy at all.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         What makes it load-bearing is the interaction with
+    ///         <see cref="StoreOptions.DefaultTenantUsageEnabled" />. With the default tenant refused, a
+    ///         session opened without a tenant is rejected <em>as it is opened</em> — before any scope
+    ///         could be applied — so a surface reachable only through a tenant-less opener is not
+    ///         reachable at all. That is jasperfx#885 exactly: <see cref="IReadOnlyEventStore" /> was
+    ///         unreachable on a tenanted store, not merely inconvenient.
+    ///     </para>
+    ///     <para>
+    ///         A null or empty tenant id means "the default tenant", matching the shared default's own
+    ///         branch, so a caller threading an optional tenant through does not have to special-case it.
+    ///     </para>
+    /// </remarks>
+    IReadOnlyEventStore IEventStore.OpenReadOnlyEventStore(string? tenantId)
+    {
+        var session = string.IsNullOrEmpty(tenantId) ? QuerySession() : QuerySession(tenantId);
+        return (IReadOnlyEventStore)session.Events;
+    }
+
+    /// <summary>
     ///     #572: the UNTYPED compaction entry point, whose whole contract is "resolve the aggregate
     ///     type from stream state" — the only form available to a caller holding a runtime
     ///     <see cref="Type" /> rather than a compile-time <c>T</c>. Polecat had the typed execution

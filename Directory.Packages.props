@@ -591,14 +591,14 @@
              this bump without a line of Polecat moving), jasperfx#880/#881/#883/#884 (AutoCreate XML
              comments, StaticTenantSource's refusal message, the tenant-id casing doc, and
              RuntimeCompiler's exception hierarchy). -->
-        <PackageVersion Include="JasperFx" Version="2.74.0" />
-        <PackageVersion Include="JasperFx.Events" Version="2.74.0" />
+        <PackageVersion Include="JasperFx" Version="2.75.0" />
+        <PackageVersion Include="JasperFx.Events" Version="2.75.0" />
         <!--
              The shared cross-store event sourcing compliance suites. Source-only package: the
              suites compile inside Polecat.Tests so JasperFx's aggregate source generator binds
              Polecat's own session types.
         -->
-        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="2.74.0" />
+        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="2.75.0" />
         <!-- Pin the sibling JasperFx packages for parity with Marten 9's matrix
              even though Polecat doesn't currently reference them directly —
              keeps the lockstep matrix coherent when transitive resolution
@@ -606,7 +606,7 @@
              RuntimeCompiler 5.x line is the active continuation of the 4.x
              lineage; do not pin against the parallel stale 2.0.x series. -->
         <PackageVersion Include="JasperFx.RuntimeCompiler" Version="5.0.0" />
-        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.74.0" />
+        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.75.0" />
         <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
@@ -799,9 +799,9 @@
              is QuickAppend-only and SqlServerEventStoreDialect.BuildRichDescriptor throws, so there
              is nothing here to install. Recorded because "new hook on a base class Polecat's append
              operation derives from" reads like adoption work until you check which path it serves. -->
-        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.33.0" />
-        <PackageVersion Include="Weasel.SqlServer" Version="9.33.0" />
-        <PackageVersion Include="Weasel.Storage" Version="9.33.0" />
+        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.35.1" />
+        <PackageVersion Include="Weasel.SqlServer" Version="9.35.1" />
+        <PackageVersion Include="Weasel.Storage" Version="9.35.1" />
 
         <!-- Strongly typed IDs. Both generators are test-only: they prove Polecat's value-type id
              support against the two libraries Marten's ValueTypeTests exercise. StronglyTypedId emits
@@ -811,7 +811,7 @@
         <PackageVersion Include="Vogen" Version="7.0.0" />
 
         <!-- Source generators (matched to JasperFx.Events above) -->
-        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.74.0" />
+        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.75.0" />
 
         <!-- Build automation -->
         <PackageVersion Include="Nuke.Common" Version="9.0.4" />
