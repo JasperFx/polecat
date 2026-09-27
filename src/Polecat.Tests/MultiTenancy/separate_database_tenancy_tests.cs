@@ -333,6 +333,41 @@ public class separate_database_tenancy_tests : IAsyncLifetime
         databases.ShouldAllBe(db => db is PolecatDatabase);
     }
 
+    /// <summary>
+    ///     polecat#675 — the store-agnostic usage descriptor has to agree with
+    ///     <c>IEventStore.AllDatabases()</c> above. It used to hard-code <c>Cardinality = Single</c>
+    ///     with an empty <c>Databases</c>, and Wolverine enumerates event-subscription agents out of
+    ///     that collection, so a database-per-tenant store advertised agents for the main database
+    ///     only and nothing scheduled the tenant databases' async projections.
+    /// </summary>
+    [Fact]
+    public async Task usage_descriptor_reports_every_tenant_database_against_real_databases()
+    {
+        using var store = CreateSeparateTenantStore();
+        await EnsureSchemaOnAllDatabasesAsync(store);
+
+        // Write events into ONE tenant, so the seed database (tenant A's, which the store's own
+        // ConnectionString points at) has a non-null MAX(seq_id) to be wrongly reported as the
+        // store's.
+        await using (var session = store.LightweightSession(new SessionOptions { TenantId = TenantA }))
+        {
+            session.Events.StartStream(Guid.NewGuid(), new TenancyEventHappened());
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        var usage = await ((IEventStore)store).TryCreateUsage(TestContext.Current.CancellationToken);
+
+        usage.ShouldNotBeNull();
+        usage.Database.Cardinality.ShouldBe(DatabaseCardinality.StaticMultiple);
+        usage.Database.Databases.Count.ShouldBe(2);
+        usage.Database.Databases.SelectMany(x => x.TenantIds).OrderBy(x => x)
+            .ShouldBe([TenantA, TenantB]);
+
+        // MaxEventSequence is single-valued, so it means nothing on a multi-database store; reporting
+        // the seed tenant's number as the store's is worse than reporting none.
+        usage.MaxEventSequence.ShouldBeNull();
+    }
+
     [Fact]
     public void default_tenancy_returns_single_database()
     {

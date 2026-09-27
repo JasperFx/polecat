@@ -1,3 +1,4 @@
+using JasperFx.Core;
 using JasperFx.Descriptors;
 using JasperFx.MultiTenancy;
 using Polecat.Internal;
@@ -25,6 +26,49 @@ public interface ITenancy
     ///     <c>AddResourceSetupOnStartup()</c> can provision every tenant schema.
     /// </summary>
     Task<IReadOnlyList<PolecatDatabase>> BuildDatabasesAsync(CancellationToken token = default);
+
+    /// <summary>
+    ///     Describe every database backing this store for the store-agnostic
+    ///     <see cref="DatabaseUsage" /> descriptor that <c>IEventStore.TryCreateUsage()</c> publishes.
+    ///     Mirrors Marten's <c>ITenancy.DescribeDatabasesAsync()</c>.
+    /// </summary>
+    /// <remarks>
+    ///     polecat#675. The descriptor used to be hand-built in
+    ///     <c>DocumentStore.TryCreateUsage()</c> with <c>Cardinality = Single</c> and an empty
+    ///     <see cref="DatabaseUsage.Databases" /> hard-coded, so a database-per-tenant store
+    ///     described itself as single-database while <c>AllDatabases()</c> — reading this same
+    ///     tenancy — returned every tenant. That disagreement is not cosmetic: Wolverine's
+    ///     <c>EventStoreAgents.SupportedAgentsAsync</c> enumerates event-subscription agents from
+    ///     <see cref="DatabaseUsage.Databases" />, so every tenant database's async projections
+    ///     collapsed onto the main database and nothing scheduled them. Making the tenancy — the one
+    ///     component that knows the answer — own the description is what keeps the two from drifting
+    ///     apart again.
+    ///     <para>
+    ///     Default-implemented off <see cref="Cardinality" /> and <see cref="AllDatabases" /> so
+    ///     <see cref="ITenancy" /> implementations outside this repo keep compiling; the built-in
+    ///     tenancies override it to fill in <c>DatabaseDescriptor.TenantIds</c>, which only the
+    ///     implementation knows.
+    ///     </para>
+    /// </remarks>
+    ValueTask<DatabaseUsage> DescribeDatabasesAsync(CancellationToken token = default)
+    {
+        var databases = AllDatabases();
+
+        if (Cardinality == DatabaseCardinality.Single)
+        {
+            return new ValueTask<DatabaseUsage>(new DatabaseUsage
+            {
+                Cardinality = DatabaseCardinality.Single,
+                MainDatabase = databases.FirstOrDefault()?.Describe()
+            });
+        }
+
+        return new ValueTask<DatabaseUsage>(new DatabaseUsage
+        {
+            Cardinality = Cardinality,
+            Databases = databases.Select(x => x.Describe()).ToList()
+        });
+    }
 
     /// <summary>
     ///     A connection string this tenancy can nominate for the store's own
@@ -66,6 +110,13 @@ internal class DefaultTenancy : ITenancy
 
     public Task<IReadOnlyList<PolecatDatabase>> BuildDatabasesAsync(CancellationToken token = default) =>
         Task.FromResult(AllDatabases());
+
+    public ValueTask<DatabaseUsage> DescribeDatabasesAsync(CancellationToken token = default) =>
+        new(new DatabaseUsage
+        {
+            Cardinality = DatabaseCardinality.Single,
+            MainDatabase = _database.Describe()
+        });
 
     // DefaultTenancy is only ever constructed FROM the store's connection string, so it has nothing
     // to seed back.
@@ -132,6 +183,30 @@ public class SeparateDatabaseTenancy : ITenancy
 
     Task<IReadOnlyList<PolecatDatabase>> ITenancy.BuildDatabasesAsync(CancellationToken token) =>
         Task.FromResult(((ITenancy)this).AllDatabases());
+
+    ValueTask<DatabaseUsage> ITenancy.DescribeDatabasesAsync(CancellationToken token)
+    {
+        // One descriptor per tenant, because that is one descriptor per PolecatDatabase: this
+        // tenancy builds a database per REGISTERED TENANT (identified "Polecat_{tenantId}"), so two
+        // tenants pointed at the same physical database are still two databases everywhere else in
+        // Polecat — AllDatabases(), the resource model, the daemon's per-database coordination.
+        // Marten's StaticMultiTenancy collapses them, because there a database is registered
+        // directly and tenants are attached to it. Agreeing with AllDatabases() is the point of
+        // this method; diverging from it here would recreate polecat#675 in a subtler shape.
+        var descriptors = new List<DatabaseDescriptor>();
+        foreach (var tenantId in _factories.Keys)
+        {
+            var descriptor = ((ITenancy)this).GetDatabase(tenantId).Describe();
+            descriptor.TenantIds.Fill(tenantId);
+            descriptors.Add(descriptor);
+        }
+
+        return new ValueTask<DatabaseUsage>(new DatabaseUsage
+        {
+            Cardinality = DatabaseCardinality.StaticMultiple,
+            Databases = descriptors
+        });
+    }
 
     // The first tenant registered, matching how Marten's StaticMultiTenancy nominates the first
     // AddSingleTenantDatabase call as its Default. It only backs schema modelling and the store's

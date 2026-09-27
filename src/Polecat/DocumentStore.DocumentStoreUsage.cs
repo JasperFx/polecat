@@ -20,18 +20,17 @@ public partial class DocumentStore : IDocumentStoreUsageSource
     /// <see cref="DocumentMappingDescriptor"/> with the SQL Server DDL each
     /// mapping will emit.
     /// </summary>
-    Task<DocumentStoreUsage?> IDocumentStoreUsageSource.TryCreateUsage(CancellationToken token)
+    async Task<DocumentStoreUsage?> IDocumentStoreUsageSource.TryCreateUsage(CancellationToken token)
     {
         var usage = new DocumentStoreUsage
         {
             Subject = "Polecat.DocumentStore",
             SubjectUri = Database.DatabaseUri,
             Version = GetType().Assembly.GetName().Version?.ToString(),
-            Database = new DatabaseUsage
-            {
-                Cardinality = DatabaseCardinality.Single,
-                MainDatabase = Database.Describe(),
-            },
+            // #675: same defect as the event-store descriptor next door — a hard-coded
+            // single-database shape on a store that may well have one database per tenant. Both read
+            // the tenancy now.
+            Database = await DescribeDatabasesAsync(token).ConfigureAwait(false),
             // Per-store logical name (default "Main"; the marker type name for ancillary stores) so the
             // descriptor is distinguishable across stores, mirroring Marten. See polecat#207.
             StoreName = Options.StoreName,
@@ -115,7 +114,7 @@ public partial class DocumentStore : IDocumentStoreUsageSource
             LastModifiedBy = mappings.Any(m => m.Metadata.LastModifiedBy.Enabled)
         };
 
-        return Task.FromResult<DocumentStoreUsage?>(usage);
+        return usage;
     }
 
     private DocumentMappingDescriptor BuildMappingDescriptor(

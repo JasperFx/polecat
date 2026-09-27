@@ -345,6 +345,42 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
                    $"Could not find {nameof(IEventStoreOperations)}.{nameof(IEventStoreOperations.CompactStreamAsync)}<T>({identityType.Name}, ...).");
     }
 
+    /// <summary>
+    ///     #675 — the <see cref="DatabaseUsage" /> half of <c>TryCreateUsage()</c>, delegated to the
+    ///     tenancy so the descriptor and <c>IEventStore.AllDatabases()</c> cannot disagree.
+    /// </summary>
+    /// <remarks>
+    ///     Never throws. <c>TryCreateUsage</c> is a diagnostic that monitoring tools (CritterWatch)
+    ///     poll on a timer, and a DYNAMIC tenancy describes itself by reading its master table — so
+    ///     an unreachable control plane would otherwise turn "describe yourself" into a failed poll
+    ///     on an otherwise healthy store. Falling back to the right cardinality with an empty
+    ///     database list is honest: it says "this is a multi-database store whose tenant set I could
+    ///     not read", where the old hard-coded <c>Single</c> said something false.
+    /// </remarks>
+    private async ValueTask<DatabaseUsage> DescribeDatabasesAsync(CancellationToken token)
+    {
+        var tenancy = Options.Tenancy;
+        if (tenancy == null)
+        {
+            return new DatabaseUsage
+            {
+                Cardinality = DatabaseCardinality.Single,
+                MainDatabase = Database.Describe()
+            };
+        }
+
+        try
+        {
+            return await tenancy.DescribeDatabasesAsync(token).ConfigureAwait(false);
+        }
+        catch (Exception)
+        {
+            // Swallowed rather than logged: DocumentStore has no logger of its own, and the
+            // MaxEventSequence lookup below already treats an unreachable database the same way.
+            return new DatabaseUsage { Cardinality = tenancy.Cardinality };
+        }
+    }
+
     async Task<EventStoreUsage?> IEventStore.TryCreateUsage(CancellationToken token)
     {
         // #649: SubjectUri has to be the STORE's uri, the same value IEventStore.Subject returns,
@@ -362,11 +398,16 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
         // hand-built values; nothing else moves.
         var usage = new EventStoreUsage(((IEventStore)this).Subject, this)
         {
-            Database = new DatabaseUsage
-            {
-                Cardinality = DatabaseCardinality.Single,
-                MainDatabase = Database.Describe()
-            }
+            // #675: ask the TENANCY to describe its databases rather than hand-building a
+            // single-database descriptor here. The hard-coded `Cardinality = Single` plus an
+            // untouched (empty) Databases collection made a database-per-tenant store describe
+            // itself as single-database, while IEventStore.AllDatabases() — reading the same
+            // tenancy — returned every tenant. Wolverine's EventStoreAgents enumerates
+            // event-subscription agents from Database.Databases and falls back to MainDatabase, so
+            // every tenant database's async projections collapsed onto the main database and
+            // nothing scheduled them. The two surfaces now read from one place, which is what
+            // stops them drifting apart again.
+            Database = await DescribeDatabasesAsync(token).ConfigureAwait(false)
         };
 
         // Event store configuration properties
@@ -482,22 +523,30 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
         // ("HWM is behind the actual max event sequence") renders the gap
         // between this and the HighWaterMark. Tolerate the lookup failing
         // (e.g. schema not yet created) by leaving null.
-        try
+        //
+        // #675: single-valued, so it is only meaningful on a single-database store. On
+        // database-per-tenant it used to report the SEED database's max — one arbitrary tenant's
+        // number presented as the store's — which is worse than reporting nothing. Marten gates it
+        // the same way and for the same reason.
+        if (((IEventStore)this).DatabaseCardinality == DatabaseCardinality.Single)
         {
-            usage.MaxEventSequence = await Options.ResiliencePipeline.ExecuteAsync(static async (state, ct) =>
+            try
             {
-                var (connString, eventsTable) = state;
-                await using var conn = new SqlConnection(connString);
-                await conn.OpenAsync(ct);
-                await using var cmd = conn.CreateCommand();
-                cmd.CommandText = $"SELECT MAX(seq_id) FROM {eventsTable};";
-                var result = await cmd.ExecuteScalarAsync(ct);
-                return result is null or DBNull ? (long?)null : (long?)Convert.ToInt64(result);
-            }, (Database.ConnectionString, Events.EventsTableName), token);
-        }
-        catch
-        {
-            usage.MaxEventSequence = null;
+                usage.MaxEventSequence = await Options.ResiliencePipeline.ExecuteAsync(static async (state, ct) =>
+                {
+                    var (connString, eventsTable) = state;
+                    await using var conn = new SqlConnection(connString);
+                    await conn.OpenAsync(ct);
+                    await using var cmd = conn.CreateCommand();
+                    cmd.CommandText = $"SELECT MAX(seq_id) FROM {eventsTable};";
+                    var result = await cmd.ExecuteScalarAsync(ct);
+                    return result is null or DBNull ? (long?)null : (long?)Convert.ToInt64(result);
+                }, (Database.ConnectionString, Events.EventsTableName), token);
+            }
+            catch
+            {
+                usage.MaxEventSequence = null;
+            }
         }
 
         // jasperfx#475 — advertise which event/stream metadata Polecat captures so
