@@ -26,8 +26,9 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
     private readonly StoreOptions _options;
     protected readonly EventGraph _events;
 
-    // Cache types that have no Id property to avoid repeated reflection
-    private static readonly ConcurrentDictionary<Type, bool> _hasIdCache = new();
+    // #674: one compiled assignment per aggregate type — null for a type with no Id member. Replaces a
+    // has-an-Id boolean cache that re-reflected the property on every call anyway.
+    private static readonly ConcurrentDictionary<Type, Action<object, object>?> _identityAssignerCache = new();
 
     public QueryEventStore(QuerySession session, EventGraph events, StoreOptions options)
     {
@@ -678,17 +679,67 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
            && projection.Lifecycle == ProjectionLifecycle.Inline
            && _session.Providers.GetProvider<T>().Mapping.InnerIdType == keyType;
 
+    /// <summary>
+    ///     Assign the stream id onto a freshly aggregated instance's <c>Id</c> member, if it has one.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         #674: this used to assign only when the member's type <em>was</em> the raw stream id type,
+    ///         so an aggregate keyed by a <c>[StronglyTypedId]</c> wrapper came back with <c>Id</c> at
+    ///         <c>default</c> from every live-aggregation path — <c>FetchLatest</c>, <c>FetchForWriting</c>
+    ///         and <c>AggregateStreamAsync</c>. The same aggregate with a bare <c>Guid Id</c> was fine,
+    ///         and Marten populates the wrapped one, so it was a missing unwrap rather than a decision.
+    ///     </para>
+    ///     <para>
+    ///         An inline <em>snapshot</em> of such an aggregate read back correctly, which is what made
+    ///         this easy to miss: the value had been serialized into the stored document, so the document
+    ///         path answered from storage. Only a rebuild from events — which is exactly what
+    ///         <c>FetchForWriting</c> does, even against a snapshotted type — went through here.
+    ///     </para>
+    ///     <para>
+    ///         The wrapper is built once per aggregate type and cached. A raw id whose type does not match
+    ///         the wrapper's inner type is still skipped rather than coerced: a string stream key cannot
+    ///         become a Guid-backed identity, and silently producing one would be worse than leaving it
+    ///         unset.
+    ///     </para>
+    /// </remarks>
     internal static void TrySetIdentity<T>(T aggregate, object streamId) where T : class
     {
-        var hasId = _hasIdCache.GetOrAdd(typeof(T), static t =>
-            DocumentMapping.FindIdProperty(t) != null);
+        var assign = _identityAssignerCache.GetOrAdd(typeof(T), static t => BuildIdentityAssigner(t));
+        assign?.Invoke(aggregate, streamId);
+    }
 
-        if (!hasId) return;
+    /// <summary>
+    ///     Null when <paramref name="aggregateType" /> has no <c>Id</c> member at all — cached as null so
+    ///     the reflection happens once per type rather than once per aggregation.
+    /// </summary>
+    private static Action<object, object>? BuildIdentityAssigner(Type aggregateType)
+    {
+        var idProp = DocumentMapping.FindIdProperty(aggregateType);
+        if (idProp == null) return null;
 
-        var idProp = DocumentMapping.FindIdProperty(typeof(T))!;
-        if (idProp.PropertyType.IsInstanceOfType(streamId))
+        var wrapper = DocumentMapping.TryBuildIdWrapper(idProp.PropertyType);
+
+        if (wrapper == null)
         {
-            idProp.SetValue(aggregate, streamId);
+            return (aggregate, streamId) =>
+            {
+                if (idProp.PropertyType.IsInstanceOfType(streamId))
+                {
+                    idProp.SetValue(aggregate, streamId);
+                }
+            };
         }
+
+        var inner = Nullable.GetUnderlyingType(idProp.PropertyType) ?? idProp.PropertyType;
+        var innerType = Polecat.Storage.ValueTypes.TryResolve(inner)!.SimpleType;
+
+        return (aggregate, streamId) =>
+        {
+            if (innerType.IsInstanceOfType(streamId))
+            {
+                idProp.SetValue(aggregate, wrapper(streamId));
+            }
+        };
     }
 }
