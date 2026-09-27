@@ -576,6 +576,28 @@ internal class DocumentMapping
     ///     strongly-typed id via JasperFx's <see cref="ValueTypeInfo"/> converters.
     /// </summary>
     [RequiresUnreferencedCode("Closes ValueTypeInfo converters over the wrapper + inner types via MakeGenericMethod.")]
+    /// <summary>
+    ///     #674: a function that wraps a raw stream id (Guid/string/int/long) into
+    ///     <paramref name="idType" />'s strongly-typed wrapper, or null when <paramref name="idType" />
+    ///     is already the raw scalar.
+    /// </summary>
+    /// <remarks>
+    ///     Exists so the <em>aggregation</em> path can assign a strong-typed identity without a
+    ///     <see cref="DocumentMapping" /> in hand — a live-aggregated type has no document storage, so
+    ///     there is no mapping to ask. It deliberately routes through the same
+    ///     <see cref="BuildStrongTypedIdConverters" /> the instance path uses rather than resolving the
+    ///     wrapper again: one place decides how a wrapper is constructed, and
+    ///     <see cref="ValueTypes.TryResolve" /> already caches the resolution.
+    /// </remarks>
+    internal static Func<object, object>? TryBuildIdWrapper(Type idType)
+    {
+        var underlying = Nullable.GetUnderlyingType(idType) ?? idType;
+        if (SupportedIdTypes.Contains(underlying)) return null;
+
+        var valueType = TryResolveValueTypeId(underlying);
+        return valueType == null ? null : BuildStrongTypedIdConverters(valueType).wrapper;
+    }
+
     private static (Func<object, object> unwrapper, Func<object, object> wrapper) BuildStrongTypedIdConverters(
         ValueTypeInfo valueType)
     {
