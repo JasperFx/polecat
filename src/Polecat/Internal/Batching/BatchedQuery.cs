@@ -64,6 +64,18 @@ internal class BatchedQuery : IBatchedQuery
         return new BatchedQueryable<T>(this, provider, _session.Options, _session.TenantId, _session.Serializer);
     }
 
+    public Task<IReadOnlyList<T>> Query<T>(string sql, params object[] parameters)
+        => Query<T>(RawSqlPlaceholders.Default, sql, parameters);
+
+    public Task<IReadOnlyList<T>> Query<T>(char placeholder, string sql, params object[] parameters)
+    {
+        // No provider tracked and no table ensured: the caller wrote this SQL, so there is nothing for
+        // Execute() to provision on its behalf. Same contract as IAdvancedSql.
+        var item = new AdvancedSqlBatchItem<T>(sql, placeholder, parameters, _session.Serializer, _providers);
+        AddItem(item);
+        return item.Result;
+    }
+
     public Task<T> QueryByPlan<T>(IBatchQueryPlan<T> plan)
     {
         return plan.Fetch(this);

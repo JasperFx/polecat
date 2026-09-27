@@ -6,7 +6,7 @@ namespace Polecat.Internal;
 
 internal partial class QuerySession : IAdvancedSql
 {
-    private const char DefaultPlaceholder = '?';
+    private const char DefaultPlaceholder = RawSqlPlaceholders.Default;
 
     public IAdvancedSql AdvancedSql => this;
 
@@ -29,8 +29,10 @@ internal partial class QuerySession : IAdvancedSql
         var list = new List<T>();
         while (await dbReader.ReadAsync(token))
         {
-            var value = reader1.ReadValue(dbReader, 0);
-            list.Add(value == null ? default! : (T)Convert.ChangeType(value, typeof(T)));
+            // #676: CastResult like every other overload. The inline Convert.ChangeType this replaces
+            // relied on that method's identity fast path to pass a document or JSON object through,
+            // and threw for anything it could not convert — a subclass or interface T, say.
+            list.Add(CastResult<T>(reader1.ReadValue(dbReader, 0)));
         }
 
         Logger.LogSuccess(commandText);
@@ -182,11 +184,15 @@ internal partial class QuerySession : IAdvancedSql
 
     // ── Helpers ─────────────────────────────────────────────────────────
 
+    // #676: the placeholder rule itself lives in RawSqlPlaceholders, shared with the batched
+    // raw-SQL item. This half is what is specific to a standalone command — @p{i} names chosen here,
+    // because there is one SqlCommand to number them into.
     private static (string CommandText, SqlParameter[] Parameters) PrepareCommand(
         string sql, char placeholder, object[] parameters)
     {
+        var segments = RawSqlPlaceholders.Split(sql, placeholder, parameters.Length);
         var sqlParams = new SqlParameter[parameters.Length];
-        var commandText = sql.TrimStart();
+        var commandText = new System.Text.StringBuilder(segments[0]);
 
         for (var i = 0; i < parameters.Length; i++)
         {
@@ -195,25 +201,13 @@ internal partial class QuerySession : IAdvancedSql
                 ? new SqlParameter(paramName, DBNull.Value)
                 : new SqlParameter(paramName, parameters[i]);
 
-            // Replace first occurrence of placeholder with parameter name
-            var idx = commandText.IndexOf(placeholder);
-            if (idx < 0)
-            {
-                throw new InvalidOperationException(
-                    $"Wrong number of supplied parameters. Expected at least {i + 1} placeholder(s) '{placeholder}' but found {i}.");
-            }
-            commandText = commandText[..idx] + paramName + commandText[(idx + 1)..];
+            commandText.Append(paramName).Append(segments[i + 1]);
         }
 
-        return (commandText, sqlParams);
+        return (commandText.ToString(), sqlParams);
     }
 
-    private static T CastResult<T>(object? value)
-    {
-        if (value == null) return default!;
-        if (value is T typed) return typed;
-        return (T)Convert.ChangeType(value, typeof(T));
-    }
+    private static T CastResult<T>(object? value) => AdvancedSqlResultReader.Cast<T>(value);
 
     // ── Pre-built batches ───────────────────────────────────────────────
 
