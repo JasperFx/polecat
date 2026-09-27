@@ -590,15 +590,60 @@
              NonExistentStreamException and ExistingStreamIdCollisionException wordings change on
              this bump without a line of Polecat moving), jasperfx#880/#881/#883/#884 (AutoCreate XML
              comments, StaticTenantSource's refusal message, the tenant-id casing doc, and
-             RuntimeCompiler's exception hierarchy). -->
-        <PackageVersion Include="JasperFx" Version="2.74.0" />
-        <PackageVersion Include="JasperFx.Events" Version="2.74.0" />
+             RuntimeCompiler's exception hierarchy).
+
+             JasperFx 2.75.1 (from 2.74.0, through 2.75.0). Taken for the conjoined-tenancy
+             compliance wave; polecat#683 is the adoption.
+
+             2.75.0 — CONSUMED, and it is the biggest compliance drop since wave 15:
+             jasperfx#898/#899 — DocumentConjoinedTenancyCompliance (10 new facts) plus SIX new facts
+             on ConjoinedEventTenancyCompliance, which Polecat has been enrolled in since wave 8, so
+             those six go live on the version move with nothing to enroll. New seams:
+             ComplianceStoreConfig.DisableDefaultTenantUsage, DocumentComplianceConfig.Conjoined<T>(),
+             DocumentStorageComplianceFixture.SupportsConjoinedDocuments /
+             SupportsCrossTenantQueries / QueryAllTenantsAsync / QueryTenantsAsync,
+             EventStoreComplianceFixture.SupportsDisablingDefaultTenant, and the tenant-scoped
+             LightweightSession(string) / QuerySession(string) pair on IDocumentSessionFactory itself.
+             ⚠️ That pair needs the EXPLICIT non-generic forwarders on IDocumentStore — a
+             product-typed overload satisfies the generic interface and leaves the contract member on
+             its throwing default, which builds and runs and then throws.
+             jasperfx#888 — IEventStore.OpenReadOnlyEventStore(tenantId); polecat#678 implements it.
+             Not optional alongside SupportsDisablingDefaultTenant, because the fact that gate opens
+             walks that route.
+             jasperfx#889 — the source-generated DetermineAction decides its action per BATCH rather
+             than per event, which is the jasperfx#886 fix. Polecat inherits it through the generator
+             with no product change, and StreamArchivingCompliance's two new facts are what hold it.
+             INERT here: jasperfx#890/#895/#896 (the generator's assembly marker, handing the
+             compiler one copy of it, and an opt-in build-time assertion that it is attached).
+
+             2.75.1 — jasperfx#903/#905, and this is why the bump did not stop at 2.75.0. Two of the
+             facts that arrived in 2.75.0 were wrong, and polecat#683 is what found the first:
+             (a) DocumentConjoinedTenancyCompliance's tenanted-concurrency fact reused the instance it
+             had just stored successfully as its "stale" write — which
+             GuidOptimisticConcurrencyCompliance.a_successful_write_moves_the_instances_own_version_on
+             pins as carrying the LANDED version, so no conforming store could satisfy both. It had
+             never executed anywhere, because jasperfx's own InMemoryDocumentComplianceFixture leaves
+             SupportsOptimisticConcurrency false. Now reads a separate instance first.
+             (b) creating_and_deleting_within_one_batch_stores_nothing was documented as
+             non-discriminating (an inline phantom delete of a row that is not there is a no-op in
+             SQL, so the end state is identical either way). 2.75.1 adds the discriminating twin,
+             creating_and_deleting_within_one_batch_reports_no_deletion, which asserts what the commit
+             REPORTED — and with it ComplianceStoreConfig.CommitListeners / AddCommitListener, the
+             event-store twin of the slot DocumentComplianceConfig has carried since polecat#485.
+             ⚠️ NOT optional: PolecatComplianceFixture has to replay it onto
+             StoreOptions.CommitListeners, and dropping the loop does not make the fact skip — a
+             listener that never fires reads exactly like a store that reports nothing, which is the
+             half that fact's own control exists to catch.
+             INERT: jasperfx#900/#904 (Block workers no longer inherit the ambient Activity) and
+             jasperfx#887/#901 (a no-aggregate double-load the marker fact cannot reach). -->
+        <PackageVersion Include="JasperFx" Version="2.75.1" />
+        <PackageVersion Include="JasperFx.Events" Version="2.75.1" />
         <!--
              The shared cross-store event sourcing compliance suites. Source-only package: the
              suites compile inside Polecat.Tests so JasperFx's aggregate source generator binds
              Polecat's own session types.
         -->
-        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="2.74.0" />
+        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="2.75.1" />
         <!-- Pin the sibling JasperFx packages for parity with Marten 9's matrix
              even though Polecat doesn't currently reference them directly —
              keeps the lockstep matrix coherent when transitive resolution
@@ -606,7 +651,7 @@
              RuntimeCompiler 5.x line is the active continuation of the 4.x
              lineage; do not pin against the parallel stale 2.0.x series. -->
         <PackageVersion Include="JasperFx.RuntimeCompiler" Version="5.0.0" />
-        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.74.0" />
+        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.75.1" />
         <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
@@ -798,10 +843,38 @@
              so Weasel's own remark says a Quick dialect normally leaves the closure unset. Polecat
              is QuickAppend-only and SqlServerEventStoreDialect.BuildRichDescriptor throws, so there
              is nothing here to install. Recorded because "new hook on a base class Polecat's append
-             operation derives from" reads like adoption work until you check which path it serves. -->
-        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.33.0" />
-        <PackageVersion Include="Weasel.SqlServer" Version="9.33.0" />
-        <PackageVersion Include="Weasel.Storage" Version="9.33.0" />
+             operation derives from" reads like adoption work until you check which path it serves.
+
+             Weasel 9.35.1 (from 9.33.0, through 9.34.0/9.35.0). No Polecat change needed on any of
+             it — taken to stay current alongside JasperFx 2.75.1 (polecat#683) — but three of the
+             fixes are on paths Polecat drives, so they are worth knowing about rather than skipping:
+
+             ⚠️ weasel#616/#617 — 9.33.0 was BINARY-breaking. gh-599 defaulted a parameter onto the
+             public SharedLockExtensions signatures, so an assembly compiled against an earlier Weasel
+             threw MissingMethodException at runtime (WolverineFx.SqlServer was the reported victim).
+             9.34.0 restores the removed overloads. Polecat compiles against Weasel rather than
+             loading a prebuilt consumer, so it was never hit — but polecat#664 took the startup
+             migration lock on exactly that API, so anything shipping Polecat beside an older-Weasel
+             consumer wants 9.34.0 or later.
+             weasel#593/#620/#624 — SQL Server migration SCRIPTS are re-runnable and valid under
+             sqlcmd, and a procedure body carrying a GO line is refused rather than emitted. Polecat
+             drives Weasel's migration writer, so this is the `db-gen`/`db-patch` output improving.
+             weasel#627/#630 — a drop-column delta rendered its identifier unquoted and lowercased
+             against a PreserveIdentifierCase table; the catalog's own spelling is read back now.
+             Reachable from Polecat wherever a delta removes a column.
+
+             EF-side, which Polecat.EntityFrameworkCore consumes: weasel#615/#618 (an index EF cannot
+             model is carried as its own DDL instead of a CreateIndex against a column named after the
+             expression), weasel#621/#622 + #625 (EF Core batched queries materialize through EF Core,
+             so owned/complex/JSON members and Includes are no longer silently incomplete — and saving
+             such an entity no longer overwrites data), weasel#628/#631 (table-split ComplexProperty
+             columns are mapped rather than DROPped) and weasel#629/#632 (an EF-derived table never
+             drops what the model cannot express). The last two are data-loss fixes; Polecat's EF
+             integration does not build tables from an EF model, so they are inherited rather than
+             adopted. -->
+        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.35.1" />
+        <PackageVersion Include="Weasel.SqlServer" Version="9.35.1" />
+        <PackageVersion Include="Weasel.Storage" Version="9.35.1" />
 
         <!-- Strongly typed IDs. Both generators are test-only: they prove Polecat's value-type id
              support against the two libraries Marten's ValueTypeTests exercise. StronglyTypedId emits
@@ -811,7 +884,7 @@
         <PackageVersion Include="Vogen" Version="7.0.0" />
 
         <!-- Source generators (matched to JasperFx.Events above) -->
-        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.74.0" />
+        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.75.1" />
 
         <!-- Build automation -->
         <PackageVersion Include="Nuke.Common" Version="9.0.4" />

@@ -11,6 +11,8 @@ public class StorePolicies
     private bool _allDocumentsSoftDeleted;
     private readonly HashSet<Type> _softDeletedTypes = new();
     private readonly HashSet<Type> _tenantPartitioningDisabledTypes = new();
+    private bool _allDocumentsAreMultiTenanted;
+    private readonly HashSet<Type> _multiTenantedTypes = new();
 
     internal StorePolicies(StoreOptions parent)
     {
@@ -23,6 +25,23 @@ public class StorePolicies
     public void AllDocumentsSoftDeleted()
     {
         _allDocumentsSoftDeleted = true;
+    }
+
+    /// <summary>
+    ///     Make every document type conjoined multi-tenanted — a <c>tenant_id</c> column in the primary
+    ///     key and every read scoped to the session's tenant — <b>without</b> physically partitioning
+    ///     the tables (#682, jasperfx#898). Marten's <c>Policies.AllDocumentsAreMultiTenanted()</c>.
+    /// </summary>
+    /// <remarks>
+    ///     The store-wide form of <c>Schema.For&lt;T&gt;().MultiTenanted()</c>. Note that unlike
+    ///     <see cref="AllDocumentsAreMultiTenantedWithPartitioning" /> this does <b>not</b> touch
+    ///     <c>Events.TenancyStyle</c>: document tenancy and event tenancy became independent axes in
+    ///     #682, so a document-only store can be conjoined without pretending to have a conjoined
+    ///     event store, and an event-sourced store can opt a reference document out.
+    /// </remarks>
+    public void AllDocumentsAreMultiTenanted()
+    {
+        _allDocumentsAreMultiTenanted = true;
     }
 
     /// <summary>
@@ -75,12 +94,38 @@ public class StorePolicies
         {
             _tenantPartitioningDisabledTypes.Add(typeof(T));
         }
+
+        if (policy.MultiTenanted)
+        {
+            _multiTenantedTypes.Add(typeof(T));
+        }
     }
 
     internal bool IsSoftDeleted(Type documentType)
     {
         return _allDocumentsSoftDeleted || _softDeletedTypes.Contains(documentType);
     }
+
+    /// <summary>
+    ///     Whether this document type was declared conjoined multi-tenanted through a policy — the
+    ///     store-wide <see cref="AllDocumentsAreMultiTenanted" /> or the per-type
+    ///     <c>ForDocument&lt;T&gt;(p =&gt; p.MultiTenanted = true)</c>.
+    /// </summary>
+    /// <remarks>
+    ///     Deliberately does NOT consider <c>Events.TenancyStyle</c>; <see cref="StoreOptions.TenancyStyleFor" />
+    ///     is the single place that folds the policies together with the event store's style, so that
+    ///     the fallback lives in one spot rather than in every caller.
+    /// </remarks>
+    internal bool IsMultiTenanted(Type documentType)
+    {
+        return _allDocumentsAreMultiTenanted || _multiTenantedTypes.Contains(documentType);
+    }
+
+    /// <summary>
+    ///     True when any policy declares conjoined documents at all, for
+    ///     <see cref="StoreOptions.HasAnyConjoinedDocuments" />'s store-wide question.
+    /// </summary>
+    internal bool AnyMultiTenantedDocuments => _allDocumentsAreMultiTenanted || _multiTenantedTypes.Count > 0;
 
     /// <summary>
     ///     True when the tenant-partitioned-documents policy is active for the store (#335).
@@ -111,6 +156,12 @@ public class DocumentPolicy
     ///     Enable soft deletes for this document type.
     /// </summary>
     public bool SoftDeleted { get; set; }
+
+    /// <summary>
+    ///     Make this document type conjoined multi-tenanted (#682) — the policy-shaped twin of
+    ///     <c>Schema.For&lt;T&gt;().MultiTenanted()</c>.
+    /// </summary>
+    public bool MultiTenanted { get; set; }
 
     /// <summary>
     ///     Opt this document type out of the store-wide managed tenant partitioning policy (#335) —

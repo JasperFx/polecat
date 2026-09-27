@@ -63,10 +63,25 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
 
     private string TenantIdForFilter => _tenantOverride ?? _session.TenantId;
 
-    // #234: document tenancy is global (DocumentMapping.TenancyStyle mirrors Events.TenancyStyle),
-    // and only conjoined tables carry a tenant_id column. Every implicit tenant filter — for list,
-    // scalar, aggregate, group-by, and join query shapes — is gated on this.
-    private bool IsConjoinedTenancy => _session.Options.Events.TenancyStyle == TenancyStyle.Conjoined;
+    /// <summary>
+    ///     Whether <paramref name="mapping" />'s table is conjoined, and therefore whether this query
+    ///     shape gets an implicit <c>tenant_id</c> filter. Only conjoined tables have the column, so on
+    ///     a single-tenanted one there is nothing to filter and <c>AnyTenant()</c> /
+    ///     <c>TenantIsOneOf()</c> are no-ops (#234).
+    /// </summary>
+    /// <remarks>
+    ///     ⚠️ <b>Per MAPPING, not per store.</b> This read <c>Options.Events.TenancyStyle</c> until #682,
+    ///     which was correct only while document tenancy was store-wide and inherited from the event
+    ///     store. Once <c>Schema.For&lt;T&gt;().MultiTenanted()</c> existed, a conjoined document in a
+    ///     single-tenanted store got its <c>tenant_id</c> column and its composite key and then had
+    ///     <b>no filter applied to any LINQ shape</b> — every tenant reading every other tenant's rows,
+    ///     while the keyed load path (which always went through the mapping) stayed correctly scoped.
+    ///     That asymmetry is what <c>DocumentConjoinedTenancyCompliance</c> caught, and it is the reason
+    ///     this is a method over a mapping rather than a property over the session: a JOIN can now have
+    ///     a conjoined side and a single-tenanted one, so there is no single answer for a query.
+    /// </remarks>
+    private static bool IsConjoinedTenancy(DocumentMapping mapping)
+        => mapping.TenancyStyle == TenancyStyle.Conjoined;
 
     // IL2046 — IQueryProvider.CreateQuery(Expression) is not annotated [RUC]/[RDC]
     // in the BCL, but the only AOT-safe implementation is the generic
@@ -129,7 +144,7 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
         // #234: single-tenant tables have no tenant_id column, so no implicit tenant filter is
         // applied — every document is under the default tenant. Explicit AnyTenant()/TenantIsOneOf()
         // are likewise no-ops there. Only conjoined stores filter by tenant_id.
-        if (!parser.IsAnyTenant && provider.Mapping.TenancyStyle == TenancyStyle.Conjoined)
+        if (!parser.IsAnyTenant && IsConjoinedTenancy(provider.Mapping))
         {
             if (parser.TenantIds != null)
             {
@@ -171,7 +186,7 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
 
         if (parser.IsDistinct) parser.Statement.IsDistinct = true;
 
-        if (!parser.IsAnyTenant && IsConjoinedTenancy)
+        if (!parser.IsAnyTenant && IsConjoinedTenancy(provider.Mapping))
         {
             if (parser.TenantIds != null)
             {
@@ -232,7 +247,7 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
         parser.Statement.SelectColumns = "data, version";
         parser.Statement.Limit = 1;
 
-        if (!parser.IsAnyTenant && IsConjoinedTenancy)
+        if (!parser.IsAnyTenant && IsConjoinedTenancy(provider.Mapping))
         {
             if (parser.TenantIds != null)
             {
@@ -306,7 +321,7 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
 
         if (parser.IsDistinct) parser.Statement.IsDistinct = true;
 
-        if (!parser.IsAnyTenant && IsConjoinedTenancy)
+        if (!parser.IsAnyTenant && IsConjoinedTenancy(provider.Mapping))
         {
             if (parser.TenantIds != null)
             {
@@ -409,7 +424,7 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
             parser.Statement.Wheres.Add(CursorPagination.BuildSeekPredicate(orderBy, values));
         }
 
-        if (!parser.IsAnyTenant && IsConjoinedTenancy)
+        if (!parser.IsAnyTenant && IsConjoinedTenancy(provider.Mapping))
         {
             if (parser.TenantIds != null)
             {
@@ -544,7 +559,7 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
         // Route to GroupBy execution if detected
         if (parser.GroupByKeySelector != null)
         {
-            return await ExecuteGroupByAsync<TResult>(parser, memberFactory, token);
+            return await ExecuteGroupByAsync<TResult>(parser, memberFactory, provider.Mapping, token);
         }
 
         // Wait for non-stale projection data if requested
@@ -563,7 +578,7 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
         }
 
         // Add tenant filter (unless AnyTenant was called)
-        if (!parser.IsAnyTenant && IsConjoinedTenancy)
+        if (!parser.IsAnyTenant && IsConjoinedTenancy(provider.Mapping))
         {
             if (parser.TenantIds != null)
             {
@@ -640,7 +655,7 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
     [RequiresDynamicCode("GroupBy execution closes GroupByListHandler<>/ScalarListHandler<> over the projected type via Type.MakeGenericType.")]
     [RequiresUnreferencedCode("GroupBy execution reflects over handler types (Activator.CreateInstance + MethodInfo.Invoke).")]
     private async Task<TResult> ExecuteGroupByAsync<TResult>(
-        LinqQueryParser parser, MemberFactory memberFactory, CancellationToken token)
+        LinqQueryParser parser, MemberFactory memberFactory, DocumentMapping mapping, CancellationToken token)
     {
         var builder2 = new GroupBySelectBuilder(memberFactory, _session.Options);
 
@@ -680,7 +695,7 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
         }
 
         // Add tenant filter
-        if (!parser.IsAnyTenant && IsConjoinedTenancy)
+        if (!parser.IsAnyTenant && IsConjoinedTenancy(mapping))
         {
             if (parser.TenantIds != null)
             {
@@ -793,18 +808,24 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
             IsLeftJoin = joinData.IsLeftJoin
         };
 
-        // Add tenant filters for both sides
-        if (!parser.IsAnyTenant && IsConjoinedTenancy)
+        // Add tenant filters, one side at a time. Since #682 the two sides of a join can disagree
+        // about tenancy -- a conjoined document joined to a single-tenanted lookup table is the
+        // ordinary case -- and only a conjoined side has a tenant_id column to filter on. Filtering
+        // the single-tenanted side would name a column that is not there.
+        if (!parser.IsAnyTenant)
         {
-            if (parser.TenantIds != null)
+            if (IsConjoinedTenancy(outerMapping))
             {
-                joinStatement.OuterWheres.Add(new TenantInFilter(parser.TenantIds, "outer_t.tenant_id"));
-                joinStatement.InnerWheres.Add(new TenantInFilter(parser.TenantIds, "inner_t.tenant_id"));
+                joinStatement.OuterWheres.Add(parser.TenantIds != null
+                    ? new TenantInFilter(parser.TenantIds, "outer_t.tenant_id")
+                    : new ComparisonFilter("outer_t.tenant_id", "=", TenantIdForFilter));
             }
-            else
+
+            if (IsConjoinedTenancy(innerMapping))
             {
-                joinStatement.OuterWheres.Add(new ComparisonFilter("outer_t.tenant_id", "=", TenantIdForFilter));
-                joinStatement.InnerWheres.Add(new ComparisonFilter("inner_t.tenant_id", "=", TenantIdForFilter));
+                joinStatement.InnerWheres.Add(parser.TenantIds != null
+                    ? new TenantInFilter(parser.TenantIds, "inner_t.tenant_id")
+                    : new ComparisonFilter("inner_t.tenant_id", "=", TenantIdForFilter));
             }
         }
 

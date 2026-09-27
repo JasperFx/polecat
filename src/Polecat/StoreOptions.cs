@@ -209,6 +209,69 @@ public class StoreOptions
     public StorePolicies Policies { get; }
 
     /// <summary>
+    ///     True when anything in this store stores documents conjoined — a conjoined event store, the
+    ///     store-wide document policy, or any single type's opt-in (#682).
+    /// </summary>
+    /// <remarks>
+    ///     For the handful of decisions that are genuinely session-wide rather than per document type,
+    ///     <see cref="Internal.NestedTenantSession" />'s identity-map isolation being the one that
+    ///     matters. Prefer <see cref="TenancyStyleFor" /> everywhere a document type is in hand.
+    /// </remarks>
+    internal bool HasAnyConjoinedDocuments
+    {
+        get
+        {
+            if (Events.TenancyStyle == TenancyStyle.Conjoined) return true;
+            if (Policies.AnyMultiTenantedDocuments) return true;
+
+            foreach (var expression in Schema.Expressions)
+            {
+                if (expression is Storage.IDocumentTenancyDeclaration { IsMultiTenanted: true }) return true;
+            }
+
+            return false;
+        }
+    }
+
+    /// <summary>
+    ///     The tenancy style that applies to <paramref name="documentType" />'s table — the single place
+    ///     document tenancy is decided (#682 / jasperfx#898).
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         Three inputs, in order: the per-type opt-in
+    ///         (<c>Schema.For&lt;T&gt;().MultiTenanted()</c> or
+    ///         <c>Policies.ForDocument&lt;T&gt;(p =&gt; p.MultiTenanted = true)</c>), the store-wide
+    ///         <c>Policies.AllDocumentsAreMultiTenanted()</c>, and finally <c>Events.TenancyStyle</c>.
+    ///     </para>
+    ///     <para>
+    ///         ⚠️ <b>The event store's style is the FALLBACK, not an equal input, and it is the only
+    ///         reason this is not a plain lookup.</b> Before #682 a document's tenancy was
+    ///         <c>Events.TenancyStyle</c> and nothing else, so every conjoined event store also had
+    ///         conjoined documents. Keeping that as the default is what makes the per-type opt-in
+    ///         additive: no existing store's tables change shape. It also means the opt-in can only
+    ///         widen tenancy — there is deliberately no per-type way to make a document
+    ///         <em>single</em>-tenanted inside a conjoined event store, because that would retype a
+    ///         primary key for stores that never asked for it.
+    ///     </para>
+    /// </remarks>
+    internal TenancyStyle TenancyStyleFor(Type documentType)
+    {
+        if (Policies.IsMultiTenanted(documentType)) return TenancyStyle.Conjoined;
+
+        foreach (var expression in Schema.Expressions)
+        {
+            if (expression is Storage.IDocumentTenancyDeclaration { IsMultiTenanted: true } declaration
+                && declaration.MappedType == documentType)
+            {
+                return TenancyStyle.Conjoined;
+            }
+        }
+
+        return Events.TenancyStyle;
+    }
+
+    /// <summary>
     ///     Global session listeners applied to all sessions.
     /// </summary>
     public List<IDocumentSessionListener> Listeners { get; } = new();

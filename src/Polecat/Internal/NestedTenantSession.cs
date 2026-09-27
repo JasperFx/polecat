@@ -39,11 +39,17 @@ internal class NestedTenantSession : ITenantOperations
     ///     document per tenant (marten#4801). Under single-tenant storage there is one row per id for
     ///     the whole database, so the parent's map is aliased instead — isolating it there would hide
     ///     the parent's uncommitted documents from this view, which is marten#4947.
+    ///
+    ///     ⚠️ This is one flag for the whole session while tenancy is decided per document type (#682),
+    ///     so it takes the SAFE side: any conjoined document type anywhere in the store isolates the
+    ///     map. Aliasing it while one type is conjoined would reintroduce marten#4801 for that type,
+    ///     which is a wrong document; isolating it while every type is single-tenanted only hides the
+    ///     parent's uncommitted writes, and a store with no conjoined type at all still aliases.
     /// </summary>
     private TenantScopedStorageSession StorageScope
         => _storageScope ??= new TenantScopedStorageSession(
             (Weasel.Storage.IStorageSession)_parent, _tenantId,
-            shareIdentityState: _parent.Options.Events.TenancyStyle != TenancyStyle.Conjoined);
+            shareIdentityState: !_parent.Options.HasAnyConjoinedDocuments);
     public IDocumentSession Parent => _parent;
 
     public IEventOperations Events =>

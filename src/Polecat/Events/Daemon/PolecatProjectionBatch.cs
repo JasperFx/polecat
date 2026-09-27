@@ -67,7 +67,16 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
         // own READS (loading an existing projected document before applying to it) went wherever
         // tenant routing sent them, and under database-per-tenant tenancy "*DEFAULT*" maps to no
         // tenant at all. Mirrors Marten's SessionOptions.ForDatabase.
-        var session = _store.LightweightSession(SessionOptions.ForDatabase(tenantId, _database));
+        //
+        // #683: and with NO connection held between commands. This batch keeps one session per tenant
+        // alive until it commits, and a connection-holding session would pin a pooled connection for
+        // that whole time -- so a conjoined store whose batch spans more tenants than the pool has
+        // connections deadlocked, the batch's own commit waiting behind its own tenant sessions. That
+        // is safe here precisely because this batch never commits through these sessions: it drains
+        // their work trackers below and executes every operation on one connection of its own. See
+        // DocumentStore.LightweightSessionWithoutHeldConnection.
+        var session = _store.LightweightSessionWithoutHeldConnection(
+            SessionOptions.ForDatabase(tenantId, _database));
         _sessions.Add(session);
         return session;
     }
@@ -180,7 +189,9 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
             listenerSession = _sessions.FirstOrDefault();
             if (listenerSession == null)
             {
-                listenerSession = _store.LightweightSession();
+                // #683: same reasoning as SessionForTenant -- this batch drains and executes, so the
+                // session has no commit of its own to be atomic and no reason to pin a connection.
+                listenerSession = _store.LightweightSessionWithoutHeldConnection(new SessionOptions());
                 _sessions.Add(listenerSession);
             }
 

@@ -13,7 +13,7 @@ namespace Polecat.Storage;
 /// </summary>
 [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
     Justification = "Class-level: AddSubClassHierarchy uses Assembly.GetTypes() to discover subclasses of T. Document hierarchies are part of the registered surface and AOT consumers must preserve subclass types (JsonSerializerContext / per-type registration) per the AOT publishing guide.")]
-public class DocumentMappingExpression<T>
+public class DocumentMappingExpression<T> : IDocumentTenancyDeclaration
 {
     internal readonly Type DocumentType = typeof(T);
     internal readonly List<(Type SubClass, string? Alias)> SubClasses = new();
@@ -35,6 +35,37 @@ public class DocumentMappingExpression<T>
         configure(new Metadata.MetadataConfig<T>(MetadataConfig));
         return this;
     }
+
+    /// <summary>
+    ///     Make this document type conjoined multi-tenanted: a <c>tenant_id</c> column inside the
+    ///     primary key, every read scoped to the session's tenant, and the same id free to exist
+    ///     independently in two tenants. Mirrors Marten's <c>Schema.For&lt;T&gt;().MultiTenanted()</c>
+    ///     and Fisher's (#682 / jasperfx#898).
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         Before #682 a document's tenancy was read straight off <c>Events.TenancyStyle</c>, so
+    ///         there was no way to say it per type and no way to say it for documents at all without
+    ///         also making the event store conjoined. That coupling is kept as the <em>fallback</em> —
+    ///         a conjoined event store still makes every document conjoined by default, so no existing
+    ///         configuration changes behaviour — and this is the opt-in that overrides it upward.
+    ///     </para>
+    ///     <para>
+    ///         ⚠️ Tenancy decides the shape of the primary key, so turning this on for a type whose
+    ///         table already exists is a schema migration, not a setting.
+    ///     </para>
+    /// </remarks>
+    public DocumentMappingExpression<T> MultiTenanted()
+    {
+        IsMultiTenanted = true;
+        return this;
+    }
+
+    /// <inheritdoc />
+    public bool IsMultiTenanted { get; private set; }
+
+    /// <inheritdoc />
+    Type IDocumentTenancyDeclaration.MappedType => DocumentType;
 
     /// <summary>
     ///     Register a subclass of T for document hierarchy (single-table inheritance).
@@ -490,6 +521,20 @@ public class PartitioningExpression<T, TValue>
         _parent.SetPartitioning(_member, initialBoundaries, externallyManaged: true);
         return _parent;
     }
+}
+
+/// <summary>
+///     The non-generic face of a <see cref="DocumentMappingExpression{T}" />'s tenancy declaration, so
+///     that <see cref="StoreOptions.TenancyStyleFor" /> can read it out of
+///     <see cref="SchemaConfiguration.Expressions" /> without reflecting over a closed generic (#682).
+/// </summary>
+internal interface IDocumentTenancyDeclaration
+{
+    /// <summary>The document type this expression configures.</summary>
+    Type MappedType { get; }
+
+    /// <summary>True when <c>MultiTenanted()</c> was called on it.</summary>
+    bool IsMultiTenanted { get; }
 }
 
 /// <summary>

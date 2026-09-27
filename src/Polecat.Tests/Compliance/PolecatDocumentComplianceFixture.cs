@@ -3,6 +3,7 @@ using JasperFx;
 using JasperFx.Events.ComplianceTests;
 using JasperFx.Events.Documents;
 using Microsoft.Data.SqlClient;
+using Polecat.Linq;
 using Polecat.Storage;
 using Polecat.TestUtils;
 
@@ -156,6 +157,26 @@ public class PolecatDocumentComplianceFixture : DocumentStorageComplianceFixture
             DeclareSearchIndexes(options, config);
         }
 
+        // Wave 19 / #682 / jasperfx#898: the document types the suite asked to be sliced by tenant
+        // within one database.
+        //
+        // Replayed PER TYPE through Schema.For<T>().MultiTenanted(), which is the API #682 added for
+        // exactly this: before it, a document's tenancy came off Events.TenancyStyle store-wide, so
+        // there was no way to say it per type and no way to say it for documents at all without also
+        // making the event store conjoined. The suite's list is per-type on purpose -- its sharpest
+        // fact is that a shared id lands in two rows rather than one, which needs a conjoined document
+        // to sit beside a single-tenanted one in some store somewhere -- and a store-wide flag would
+        // have satisfied this particular suite while leaving that untestable.
+        //
+        // ⚠️ Not optional, and it does not degrade into skipping: DocumentConjoinedTenancyCompliance
+        // gates on SupportsConjoinedDocuments, so a fixture that flips the gate and drops this loop
+        // fails every fact for a wiring reason -- and the ISOLATION facts fail rather than pass, since
+        // a single-tenanted store folds both tenants' writes into one row.
+        foreach (var documentType in config.ConjoinedDocuments)
+        {
+            Invoke(options, documentType, "MultiTenanted", []);
+        }
+
         _store = new DocumentStore(options);
 
         // Polecat applies schema changes explicitly rather than lazily, and the suite's very first
@@ -227,6 +248,60 @@ public class PolecatDocumentComplianceFixture : DocumentStorageComplianceFixture
     ///     vector half is what decides this.
     /// </remarks>
     public override bool SupportsHybridSearch => ConnectionSource.SupportsVector;
+
+    /// <summary>
+    ///     Wave 19 / #682 / jasperfx#898: Polecat slices documents by tenant within one database — a
+    ///     <c>tenant_id</c> column inside the primary key, the tenant folded into every read by
+    ///     <c>PolecatLinqQueryProvider</c> and the keyed load path — and since #682 that is declarable
+    ///     per document type rather than inherited store-wide from <c>Events.TenancyStyle</c>.
+    /// </summary>
+    public override bool SupportsConjoinedDocuments => true;
+
+    /// <summary>
+    ///     Polecat spells the escapes as operators on the queryable —
+    ///     <c>Query&lt;T&gt;().AnyTenant()</c> and <c>.TenantIsOneOf(...)</c> in
+    ///     <see cref="LinqExtensions" /> — recognized by the LINQ parser as markers rather than
+    ///     translated as predicates. Fisher's shape, not Marten's element predicate, which is precisely
+    ///     why the suite reaches them through a fixture seam.
+    /// </summary>
+    public override bool SupportsCrossTenantQueries => true;
+
+    /// <inheritdoc />
+    /// <remarks>
+    ///     Materialized here rather than handed back as a queryable, matching the seam's contract: what
+    ///     is under test is the tenant scope the escape lifts, not Polecat's operator set.
+    /// </remarks>
+    public override Task<IReadOnlyList<T>> QueryAllTenantsAsync<T>(
+        IDocumentReadOperations session, CancellationToken token)
+        => MaterializeAsync(session.Query<T>().AnyTenant(), token);
+
+    /// <inheritdoc />
+    /// <inheritdoc cref="QueryAllTenantsAsync{T}" path="/remarks" />
+    public override Task<IReadOnlyList<T>> QueryTenantsAsync<T>(
+        IDocumentReadOperations session, string[] tenantIds, CancellationToken token)
+        => MaterializeAsync(session.Query<T>().TenantIsOneOf(tenantIds), token);
+
+    /// <summary>
+    ///     Run one of the escape queries and hand back the rows.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         Both escapes are extensions on <see cref="IQueryable{T}" /> that hand back one, and they
+    ///         preserve the concrete queryable — they rewrite the expression tree through Polecat's own
+    ///         provider — so the async terminator resolves against a real Polecat query rather than
+    ///         falling back to client-side evaluation.
+    ///     </para>
+    ///     <para>
+    ///         ⚠️ <b>The terminator is named through its declaring class, not as an extension method.</b>
+    ///         <see cref="PolecatQueryableExtensions.ToListAsync{T}" /> and the shared
+    ///         <c>DocumentQueryableExtensions.ToListAsync&lt;T&gt;</c> have identical signatures over
+    ///         <c>IQueryable&lt;T&gt;</c>, and both namespaces are in scope in this file, so the
+    ///         extension-method spelling is CS0121-ambiguous. The static call is the fix that does not
+    ///         depend on which usings happen to be present.
+    ///     </para>
+    /// </remarks>
+    private static async Task<IReadOnlyList<T>> MaterializeAsync<T>(IQueryable<T> queryable, CancellationToken token)
+        => await PolecatQueryableExtensions.ToListAsync(queryable, token);
 
     public override IDocumentSessionFactory Sessions =>
         _store ?? throw new InvalidOperationException("The store has not been configured yet.");
