@@ -1,6 +1,8 @@
 using JasperFx;
 using JasperFx.Descriptors;
 using JasperFx.Events;
+using Polecat.Internal;
+using Polecat.Storage;
 using Weasel.Core;
 
 namespace Polecat.Tests.MultiTenancy;
@@ -127,6 +129,54 @@ public class database_usage_descriptor_tests
         database.Databases.Count.ShouldBe(2);
         database.Databases.Select(x => x.DatabaseName).Distinct().ShouldBe(["usage_shared"]);
         database.Databases.SelectMany(x => x.TenantIds).OrderBy(x => x).ShouldBe(["tenant1", "tenant2"]);
+    }
+
+    [Fact]
+    public async Task a_single_cardinality_tenancy_with_several_databases_reports_the_default_tenants_own()
+    {
+        // The shape only an ITenancy outside this repo can produce: Cardinality Single while
+        // AllDatabases() returns more than one. "The first of several" is a guess; the default tenant's
+        // database is the answer the tenancy itself would give. PolecatDatabaseSource decided this
+        // deliberately before #675 moved the description onto ITenancy, and the default implementation
+        // has to keep deciding it the same way.
+        var options = new StoreOptions
+        {
+            ConnectionString = ConnectionStringFor("usage_main"),
+            AutoCreateSchemaObjects = AutoCreate.None,
+            DatabaseSchemaName = "usage_cardinality"
+        };
+
+        await using var store = new DocumentStore(options);
+        var tenancy = new OddlySingleTenancy(
+            new PolecatDatabase(options, ConnectionStringFor("usage_first"), "first"),
+            new PolecatDatabase(options, ConnectionStringFor("usage_default"), "default"));
+
+        // Through the INTERFACE, because the default implementation is what is under test.
+        var usage = await ((ITenancy)tenancy).DescribeDatabasesAsync(TestContext.Current.CancellationToken);
+
+        usage.Cardinality.ShouldBe(DatabaseCardinality.Single);
+        usage.MainDatabase.ShouldNotBeNull()!.DatabaseName.ShouldBe("usage_default");
+    }
+
+    /// <summary>
+    ///     An external-shaped tenancy: Single cardinality, several databases, and no override of
+    ///     <see cref="ITenancy.DescribeDatabasesAsync" /> — so it exercises the interface's default
+    ///     implementation, which is the only thing this test is about.
+    /// </summary>
+    private sealed class OddlySingleTenancy(PolecatDatabase first, PolecatDatabase forDefaultTenant) : ITenancy
+    {
+        public DatabaseCardinality Cardinality => DatabaseCardinality.Single;
+        public string DefaultTenantId => JasperFx.StorageConstants.DefaultTenantId;
+
+        public ConnectionFactory GetConnectionFactory(string tenantId) =>
+            throw new NotSupportedException();
+
+        public PolecatDatabase GetDatabase(string tenantId) => forDefaultTenant;
+
+        public IReadOnlyList<PolecatDatabase> AllDatabases() => [first, forDefaultTenant];
+
+        public Task<IReadOnlyList<PolecatDatabase>> BuildDatabasesAsync(CancellationToken token = default) =>
+            Task.FromResult(AllDatabases());
     }
 
     [Fact]
