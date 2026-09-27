@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using JasperFx;
+using JasperFx.Core;
 using JasperFx.Descriptors;
 using JasperFx.MultiTenancy;
 using Microsoft.Data.SqlClient;
@@ -169,6 +170,33 @@ public class MasterTableTenancy : ITenancy, IDynamicTenantSource<string>
         }
 
         return _cache.Values.Select(x => x.Database).ToList();
+    }
+
+    /// <summary>
+    ///     polecat#675 — describe the tenant databases currently registered in the master table.
+    ///     Reads the control table first, so the descriptor reflects tenants added since the store
+    ///     was built. Mirrors Marten's <c>MasterTableTenancy.DescribeDatabasesAsync()</c>.
+    /// </summary>
+    public async ValueTask<DatabaseUsage> DescribeDatabasesAsync(CancellationToken token = default)
+    {
+        await BuildDatabasesAsync(token).ConfigureAwait(false);
+
+        // One descriptor per tenant — one per PolecatDatabase, matching AllDatabases(). See the note
+        // on SeparateDatabaseTenancy.DescribeDatabasesAsync for why these are not collapsed by
+        // physical database the way Marten's are.
+        var descriptors = new List<DatabaseDescriptor>();
+        foreach (var pair in _cache)
+        {
+            var descriptor = pair.Value.Database.Describe();
+            descriptor.TenantIds.Fill(pair.Key);
+            descriptors.Add(descriptor);
+        }
+
+        return new DatabaseUsage
+        {
+            Cardinality = DatabaseCardinality.DynamicMultiple,
+            Databases = descriptors
+        };
     }
 
     /// <summary>

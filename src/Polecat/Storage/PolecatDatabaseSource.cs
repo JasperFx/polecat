@@ -52,26 +52,9 @@ internal class PolecatDatabaseSource : IDatabaseSource
         return databases;
     }
 
-    public async ValueTask<DatabaseUsage> DescribeDatabasesAsync(CancellationToken token)
-    {
-        var tenancy = Tenancy;
-        var databases = await tenancy.BuildDatabasesAsync(token).ConfigureAwait(false);
-
-        if (tenancy.Cardinality == DatabaseCardinality.Single)
-        {
-            return new DatabaseUsage
-            {
-                Cardinality = DatabaseCardinality.Single,
-                MainDatabase = databases.Count == 1
-                    ? databases[0].Describe()
-                    : tenancy.GetDatabase(tenancy.DefaultTenantId).Describe()
-            };
-        }
-
-        return new DatabaseUsage
-        {
-            Cardinality = tenancy.Cardinality,
-            Databases = databases.Select(x => x.Describe()).ToList()
-        };
-    }
+    // #675: this used to compute the answer itself, which made it the second of three places that
+    // described the same databases — and the only one that got it right. Delegated to the tenancy so
+    // Weasel's db-list, the event-store usage descriptor and AllDatabases() all read one source.
+    public ValueTask<DatabaseUsage> DescribeDatabasesAsync(CancellationToken token) =>
+        Tenancy.DescribeDatabasesAsync(token);
 }
