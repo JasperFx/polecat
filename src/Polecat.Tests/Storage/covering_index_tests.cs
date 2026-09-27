@@ -28,17 +28,18 @@ public class covering_index_tests : OneOffConfigurationsContext
     public void ddl_creates_include_columns_and_include_clause()
     {
         var mapping = new DocumentMapping(typeof(Doc), new StoreOptions { DatabaseSchemaName = "s" });
-        var index = new DocumentIndex(["$.serviceName"]) { IncludeColumns = ["$.bucketEnd", "$.count"] };
+        mapping.Indexes.Add(new DocumentIndex(["$.serviceName"]) { IncludeColumns = ["$.bucketEnd", "$.count"] });
 
-        var ddl = index.ToDdlStatements(mapping);
-        var joined = string.Join("\n", ddl);
+        // #684: rendered from the modeled table rather than from the index in isolation, which is a
+        // stronger assertion -- a declaration that never reached the table now renders nothing at all.
+        var ddl = DocumentTableDdl.RenderFor(mapping);
 
         // computed columns for the key and both include paths
-        joined.ShouldContain("[cc_servicename] AS");
-        joined.ShouldContain("[cc_bucketend] AS");
-        joined.ShouldContain("[cc_count] AS");
+        ddl.ShouldContain("cc_servicename AS");
+        ddl.ShouldContain("cc_bucketend AS");
+        ddl.ShouldContain("cc_count AS");
         // INCLUDE clause over the include columns
-        ddl[^1].ShouldContain("([cc_servicename]) INCLUDE ([cc_bucketend], [cc_count])");
+        ddl.ShouldContain("(cc_servicename) INCLUDE (cc_bucketend, cc_count)");
     }
 
     [Fact]

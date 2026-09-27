@@ -61,7 +61,10 @@ public class computed_column_index_usability_tests : OneOffConfigurationsContext
 
         // On nvarchar(max) storage RETURNING is a syntax error, so fall back to CAST.
         DocumentIndex.ComputedColumnExpression("$.serviceName", "varchar(250)", IndexCasing.Default, useReturning: false)
-            .ShouldBe("CAST(JSON_VALUE(data, '$.serviceName') AS varchar(250))");
+            // #684: CONVERT, not CAST. SQL Server stores a computed column's definition as CONVERT
+            // whichever way it was written, so declaring CAST made the column irreconcilable once it
+            // became a modeled schema object -- see the CAST branch in ComputedColumnExpression.
+            .ShouldBe("CONVERT(varchar(250), JSON_VALUE(data, '$.serviceName'))");
     }
 
     [Fact]
@@ -70,7 +73,7 @@ public class computed_column_index_usability_tests : OneOffConfigurationsContext
         // RETURNING has no uniqueidentifier type, so Guid-typed computed columns (e.g. FK columns)
         // always fall back to CAST.
         DocumentIndex.ComputedColumnExpression("$.userId", "uniqueidentifier", IndexCasing.Default, useReturning: true)
-            .ShouldBe("CAST(JSON_VALUE(data, '$.userId') AS uniqueidentifier)");
+            .ShouldBe("CONVERT(uniqueidentifier, JSON_VALUE(data, '$.userId'))");
     }
 
     [Fact]

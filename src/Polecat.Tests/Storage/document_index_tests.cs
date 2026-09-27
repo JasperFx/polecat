@@ -705,45 +705,50 @@ public class document_index_tests : IntegrationContext
     [Fact]
     public void document_index_ddl_with_lower_casing()
     {
-        var index = new DocumentIndex(["$.name"]) { Casing = IndexCasing.Lower };
         var mapping = new TestDocumentMapping("test_schema", "my_table");
+        mapping.Indexes.Add(new DocumentIndex(["$.name"]) { Casing = IndexCasing.Lower });
 
-        var statements = index.ToDdlStatements(mapping);
+        // #684: the computed column is declared on the table now, so this reads the table's DDL.
+        var ddl = DocumentTableDdl.RenderFor(mapping);
 
         // Should use LOWER() wrapping. #236: native json storage (TestDocumentMapping's default
         // StoreOptions) emits JSON_VALUE(... RETURNING type) rather than CAST.
-        statements[0].ShouldContain("LOWER(JSON_VALUE(data, '$.name' RETURNING ");
+        ddl.ShouldContain("LOWER(JSON_VALUE(data, '$.name' RETURNING ");
         // Column name should include _lower suffix
-        statements[0].ShouldContain("cc_name_lower");
+        ddl.ShouldContain("cc_name_lower");
     }
 
     [Fact]
     public void document_index_ddl_with_upper_casing()
     {
-        var index = new DocumentIndex(["$.email"]) { Casing = IndexCasing.Upper };
         var mapping = new TestDocumentMapping("test_schema", "my_table");
+        mapping.Indexes.Add(new DocumentIndex(["$.email"]) { Casing = IndexCasing.Upper });
 
-        var statements = index.ToDdlStatements(mapping);
+        var ddl = DocumentTableDdl.RenderFor(mapping);
 
         // Should use UPPER() wrapping. #236: native json storage emits RETURNING.
-        statements[0].ShouldContain("UPPER(JSON_VALUE(data, '$.email' RETURNING ");
+        ddl.ShouldContain("UPPER(JSON_VALUE(data, '$.email' RETURNING ");
         // Column name should include _upper suffix
-        statements[0].ShouldContain("cc_email_upper");
+        ddl.ShouldContain("cc_email_upper");
     }
 
     [Fact]
     public void document_index_ddl_default_casing_has_no_wrapper()
     {
-        var index = new DocumentIndex(["$.name"]);
         var mapping = new TestDocumentMapping("test_schema", "my_table");
+        mapping.Indexes.Add(new DocumentIndex(["$.name"]));
 
-        var statements = index.ToDdlStatements(mapping);
+        var ddl = DocumentTableDdl.RenderFor(mapping);
+
+        // The computed column line, isolated: the table's other columns are irrelevant here, and
+        // asserting ShouldNotContain over the whole CREATE would be answering a different question.
+        var computed = ddl.Split('\n').Single(x => x.Contains("cc_name AS"));
 
         // Should NOT contain UPPER or LOWER
-        statements[0].ShouldNotContain("UPPER");
-        statements[0].ShouldNotContain("LOWER");
+        computed.ShouldNotContain("UPPER");
+        computed.ShouldNotContain("LOWER");
         // #236: plain (un-cased) computed column. Native json storage emits RETURNING.
-        statements[0].ShouldContain("JSON_VALUE(data, '$.name' RETURNING ");
+        computed.ShouldContain("JSON_VALUE(data, '$.name' RETURNING ");
     }
 
     [Fact]

@@ -1,6 +1,5 @@
 using System.Reflection;
 using JasperFx.Events.Vectors;
-using Polecat.Internal;
 
 namespace Polecat.Storage;
 
@@ -81,26 +80,6 @@ public class VectorIndex
         {
             JsonPath = SerializedNames.PathFor(MemberChain, options);
         }
-    }
-
-    /// <summary>
-    ///     The DDL that adds the persisted computed column. One statement, and no index — see the
-    ///     remarks on the type.
-    /// </summary>
-    internal string[] ToDdlStatements(DocumentMapping mapping)
-    {
-        var qualifiedTable = SqlEscaping.QualifiedName(mapping.DatabaseSchemaName, mapping.TableName);
-
-        // QUOTED_IDENTIFIER has to be ON for a PERSISTED computed column, and SqlClient sets it ON
-        // per connection by default — stated rather than relied on silently, because a session that
-        // had turned it off would fail here with a message about the setting rather than the column.
-        return
-        [
-            $"""
-             IF COL_LENGTH({SqlEscaping.Literal(qualifiedTable)}, {SqlEscaping.Literal(ColumnName)}) IS NULL
-                 ALTER TABLE {qualifiedTable} ADD {SqlEscaping.QuoteIdentifier(ColumnName)} AS {ColumnExpression()} PERSISTED;
-             """
-        ];
     }
 
     /// <summary>

@@ -558,27 +558,38 @@ public class AdvancedOperations
     }
 
     /// <summary>
-    ///     Generate the full DDL script for all Polecat schema objects (event store tables, document tables, HiLo).
+    ///     Generate the full DDL script for all Polecat schema objects (event store tables, document
+    ///     tables, HiLo) — the same text the <c>db-dump</c> command line writes.
     /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         #686: delegated to <see cref="Weasel.Core.Migrations.IDatabase.ToDatabaseScript" />
+    ///         rather than rendered here. This used to walk <c>BuildFeatureSchemas()</c> by hand and
+    ///         call <c>WriteCreateStatement</c> on each object, which produced a script with the same
+    ///         object set and **two defects a string-matching test could not see**:
+    ///     </para>
+    ///     <para>
+    ///         It had no <c>CREATE SCHEMA</c>, so against a database where the schema did not already
+    ///         exist the very first statement failed with "The specified schema name … either does not
+    ///         exist or you do not have permission to use it" — i.e. the creation script could not
+    ///         create anything. And it had no <c>SET QUOTED_IDENTIFIER ON;</c> header, which Weasel's
+    ///         script writer has emitted since 9.35 (weasel#593) because sqlcmd is the one client that
+    ///         leaves the setting off and SQL Server refuses to add a <c>PERSISTED</c> computed column
+    ///         or a filtered index while it is off. Polecat emits both — every
+    ///         <c>Schema.For&lt;T&gt;().Index(...)</c> rides a persisted computed column, and soft
+    ///         deletes bring filtered indexes — so the header is not decoration here.
+    ///     </para>
+    ///     <para>
+    ///         The hand-written version also wrote a <c>GO</c> after every object, which made the text
+    ///         unusable as a single command ("Incorrect syntax near 'GO'"). Weasel's writer emits
+    ///         <c>GO</c> only where SQL Server needs a new batch — around a stored procedure body,
+    ///         which Polecat has none of — so the script this returns now carries none and runs either
+    ///         way: as one command, or a batch at a time the way sqlcmd and SSMS run a file.
+    ///     </para>
+    /// </remarks>
     public string ToDatabaseScript()
     {
-        var sb = new StringBuilder();
-        var writer = new StringWriter(sb);
-        var migrator = new Weasel.SqlServer.SqlServerMigrator();
-
-        // All schema objects (event store + documents + hilo) via Weasel feature schemas
-        foreach (var featureSchema in _store.Database.BuildFeatureSchemas())
-        {
-            foreach (var schemaObject in featureSchema.Objects)
-            {
-                schemaObject.WriteCreateStatement(migrator, writer);
-                writer.WriteLine();
-                writer.WriteLine("GO");
-                writer.WriteLine();
-            }
-        }
-
-        return sb.ToString();
+        return _store.Database.ToDatabaseScript();
     }
 
     /// <summary>

@@ -110,21 +110,78 @@ public class quoted_identifier_round_trip_tests : IntegrationContext
         (await ScalarAsync("SELECT OBJECT_ID('[quoted_tenant_events].[pc_events]')")).ShouldNotBeNull();
     }
 
+    /// <summary>
+    ///     ⚠️ <b>#684 changed this from "escaped and round-trips" to "refused up front", and that is a
+    ///     breaking change worth reading rather than skimming.</b>
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         This used to assert that an index name containing <c>]</c> and <c>'</c> was escaped
+    ///         correctly in both positions it lands in — the <c>sys.indexes</c> existence probe (a string
+    ///         literal) and <c>CREATE INDEX</c> (a bracketed identifier) — by applying the schema twice
+    ///         and proving the probe matched the index the first pass created. It did, and #665 is why.
+    ///     </para>
+    ///     <para>
+    ///         Index names are Weasel schema objects now, so Weasel's identifier policy governs them, and
+    ///         that policy is to <em>refuse</em> rather than escape: <c>IdentifierValidation</c>
+    ///         (weasel#416) rejects <c>;</c>, <c>'</c>, <c>"</c>, <c>[</c> and <c>]</c> outright. The
+    ///         refusal happens in <c>ApplyAllConfiguredChangesToDatabaseAsync</c>, so a store declaring
+    ///         such a name now fails at startup with a message naming the character.
+    ///     </para>
+    ///     <para>
+    ///         That is the better contract and not merely the one that fell out. Every other identifier
+    ///         in Polecat — table names, column names, constraint names — has been subject to this rule
+    ///         all along; index names were the exception only because they were raw DDL, which is
+    ///         precisely the inconsistency #684 set out to remove. Refusing a hostile name at startup
+    ///         also beats escaping it correctly forever, because the escaping only had to be got wrong
+    ///         once.
+    ///     </para>
+    ///     <para>
+    ///         Kept as a test rather than deleted: the capability changed, so the assertion changed with
+    ///         it, and both halves still matter. A name that is refused must be refused <em>clearly</em>,
+    ///         and a name that is merely unusual must still work.
+    ///     </para>
+    /// </remarks>
     [Fact]
-    public async Task an_index_name_containing_a_bracket_or_a_quote_is_created_and_is_idempotent()
+    public async Task an_index_name_containing_a_bracket_or_a_quote_is_refused()
     {
-        // IndexName is a public-API argument that lands in BOTH a string literal (the sys.indexes
-        // existence probe) and a bracketed identifier (CREATE INDEX). Applying the schema twice
-        // proves the two positions agree: if only one were escaped, the probe would never match its
-        // own index and the second apply would fail with "index already exists".
         const string schema = "quoted_index_names";
-        const string indexName = "idx_qu]oted_o'brien";
 
         await DropTableAsync(schema, "pc_doc_quotednamedoc");
 
-        // Document tables (and their indexes) are created lazily on first use by DocumentTableEnsurer,
-        // so each pass has to actually write. Two passes: the second re-runs the existence probe
-        // against the index the first one created.
+        foreach (var hostile in new[] { "idx_qu]oted", "idx_o'brien", "idx_semi;colon" })
+        {
+            var ex = await Should.ThrowAsync<InvalidOperationException>(() => StoreOptions(opts =>
+            {
+                opts.DatabaseSchemaName = schema;
+                opts.Schema.For<QuotedNameDoc>().Index(x => x.Name, idx => idx.IndexName = hostile);
+            }));
+
+            // The message has to name the offending name, or the operator cannot find the declaration.
+            ex.Message.ShouldContain(hostile);
+        }
+    }
+
+    /// <summary>
+    ///     The other half: an unusual but safe index name is still created, and applying twice is still
+    ///     idempotent.
+    /// </summary>
+    /// <remarks>
+    ///     Without this, "index names are validated now" would be satisfied by a store that refused
+    ///     every index name. Interior spaces are the interesting case — <c>IdentifierValidation</c>
+    ///     allows them deliberately (a legacy <c>unit price</c> column is somebody's real schema) while
+    ///     rejecting a tab or a line break, which could introduce a comment.
+    /// </remarks>
+    [Fact]
+    public async Task an_unusual_but_safe_index_name_round_trips()
+    {
+        const string schema = "quoted_index_names";
+        const string indexName = "idx unusual name";
+
+        await DropTableAsync(schema, "pc_doc_quotednamedoc");
+
+        // Two passes: the second proves the existence check matches the index the first one created,
+        // rather than trying to create it again.
         for (var pass = 0; pass < 2; pass++)
         {
             await StoreOptions(opts =>
@@ -144,7 +201,7 @@ public class quoted_identifier_round_trip_tests : IntegrationContext
         (await ScalarAsync(
             $"""
              SELECT COUNT(*) FROM sys.indexes
-             WHERE name = '{indexName.Replace("'", "''")}'
+             WHERE name = '{indexName}'
                AND object_id = OBJECT_ID('[{schema}].[pc_doc_quotednamedoc]')
              """)).ShouldBe(1);
     }

@@ -1,7 +1,5 @@
 using System.Linq.Expressions;
-using System.Reflection;
 using Weasel.Core;
-using Polecat.Internal;
 
 namespace Polecat.Storage;
 
@@ -36,86 +34,6 @@ public class DocumentForeignKey
     ///     Cascade action for DELETE operations. Default is NoAction.
     /// </summary>
     public CascadeAction OnDelete { get; set; } = CascadeAction.NoAction;
-
-    /// <summary>
-    ///     Generates DDL to add the computed column and create the foreign key constraint.
-    ///     Returns individual statements to be executed separately.
-    /// </summary>
-    internal string[] ToDdlStatements(DocumentMapping parentMapping, DocumentMapping referenceMapping)
-    {
-        var schema = parentMapping.DatabaseSchemaName;
-        var table = parentMapping.TableName;
-        var qualifiedTable = SqlEscaping.QualifiedName(schema, table);
-        var colName = DocumentIndex.ColumnNameForPath(JsonPath);
-        var refTable = SqlEscaping.QualifiedName(referenceMapping.DatabaseSchemaName, referenceMapping.TableName);
-        var constraintName = ConstraintName ?? DeriveConstraintName(table, colName);
-
-        // Determine SQL type from the reference document's ID type
-        var innerIdType = referenceMapping.InnerIdType;
-        var sqlType = innerIdType == typeof(Guid) ? "uniqueidentifier"
-            : innerIdType == typeof(int) ? "int"
-            : innerIdType == typeof(long) ? "bigint"
-            : "varchar(250)";
-
-        var statements = new List<string>();
-
-        // Add persisted computed column for the FK property. #236: routes through the shared
-        // ComputedColumnExpression so the FK column uses JSON_VALUE(... RETURNING type) on native
-        // json storage too (Guid ids still fall back to CAST — RETURNING has no uniqueidentifier).
-        var computedExpr = DocumentIndex.ComputedColumnExpression(
-            JsonPath, sqlType, IndexCasing.Default, DocumentIndex.UsesNativeJson(parentMapping));
-        // #390: COL_LENGTH takes its object name as a string literal — escape for that position
-        // rather than re-composing an unquoted `schema.table` that diverges from qualifiedTable.
-        statements.Add($"""
-            IF COL_LENGTH({SqlEscaping.Literal(qualifiedTable)}, {SqlEscaping.Literal(colName)}) IS NULL
-                ALTER TABLE {qualifiedTable} ADD {SqlEscaping.QuoteIdentifier(colName)} AS {computedExpr} PERSISTED;
-            """);
-
-        // Build ON DELETE clause
-        var onDeleteClause = OnDelete switch
-        {
-            CascadeAction.Cascade => " ON DELETE CASCADE",
-            CascadeAction.SetNull => " ON DELETE SET NULL",
-            CascadeAction.SetDefault => " ON DELETE SET DEFAULT",
-            _ => ""
-        };
-
-        // Add FK constraint (conjoined tenancy includes tenant_id)
-        var isConjoined = parentMapping.TenancyStyle == TenancyStyle.Conjoined
-                       && referenceMapping.TenancyStyle == TenancyStyle.Conjoined;
-
-        // #390: ConstraintName is a public-API argument used in both a literal and an identifier
-        // position below; each gets the escape its position requires.
-        var fkCheck =
-            $"NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = {SqlEscaping.Literal(constraintName)} "
-            + $"AND parent_object_id = OBJECT_ID({SqlEscaping.Literal(qualifiedTable)}))";
-
-        if (isConjoined)
-        {
-            statements.Add($"""
-                IF {fkCheck}
-                    ALTER TABLE {qualifiedTable}
-                    ADD CONSTRAINT {SqlEscaping.QuoteIdentifier(constraintName)}
-                    FOREIGN KEY (tenant_id, {SqlEscaping.QuoteIdentifier(colName)}) REFERENCES {refTable} (tenant_id, id){onDeleteClause};
-                """);
-        }
-        else
-        {
-            statements.Add($"""
-                IF {fkCheck}
-                    ALTER TABLE {qualifiedTable}
-                    ADD CONSTRAINT {SqlEscaping.QuoteIdentifier(constraintName)}
-                    FOREIGN KEY ({SqlEscaping.QuoteIdentifier(colName)}) REFERENCES {refTable} (id){onDeleteClause};
-                """);
-        }
-
-        return statements.ToArray();
-    }
-
-    private static string DeriveConstraintName(string tableName, string columnName)
-    {
-        return $"fk_{tableName}_{columnName}";
-    }
 
     /// <summary>
     ///     Resolves a lambda expression to a JSON path for the foreign key property.

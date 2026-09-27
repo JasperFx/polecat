@@ -117,7 +117,10 @@ internal class DocumentTableEnsurer
             // #255: an externally-managed partitioned table is provisioned ONCE (CreateOnly) and
             // never reconciled afterward, so a later schema apply can't clobber the partitions the
             // app/DBA manages at runtime (SPLIT new months, SWITCH/DROP old ones for retention).
-            var table = new DocumentTable(provider.Mapping);
+            // #684: WITHOUT the foreign-key constraints. They are added by EnsureForeignKeysAsync below,
+            // once every referenced table exists. See DeferForeignKeys' remarks for why deferring them
+            // inside this migration is not enough.
+            var table = new DocumentTable(provider.Mapping, includeForeignKeys: false);
 
             // #296: strongly-typed-id tables created before the inner-type fix carry a varchar(250)
             // id column, which trips InvalidCastException in the shared writeable selectors (they
@@ -136,46 +139,35 @@ internal class DocumentTableEnsurer
                 ? AutoCreate.CreateOnly
                 : AutoCreate.CreateOrUpdate;
             var migration = await SchemaMigration.DetermineAsync(conn, token, table);
-            await migrator.ApplyAllAsync(conn, migration, autoCreate, ct: token);
 
-            // Create custom indexes (computed columns + index)
-            // Computed columns are not modeled in Weasel, so they remain as supplementary DDL.
-            // Each statement executed separately so computed columns are visible
-            // before filtered indexes reference them.
-            foreach (var index in provider.Mapping.Indexes)
+            // #684: the computed columns, secondary indexes and foreign keys the mapping declares are
+            // part of `table` now, so this ONE migration applies them -- they used to follow as raw DDL
+            // loops here, which is what kept them out of the generated script and out of
+            // AssertDatabaseMatchesConfigurationAsync. See DocumentTable.DeclaredObjects.cs.
+            //
+            // The VECTOR translation moved out here with them: a server with no VECTOR type now fails
+            // inside the migration rather than on one isolated ALTER, so the catch has to sit where the
+            // migration is. It reads the declaration list to name the member, which is all the old
+            // per-statement catch had to work with anyway.
+            try
             {
-                foreach (var statement in index.ToDdlStatements(provider.Mapping))
-                {
-                    await using var indexCmd = conn.CreateCommand();
-                    indexCmd.CommandText = statement;
-                    await indexCmd.ExecuteNonQueryAsync(token);
-                }
+                await migrator.ApplyAllAsync(conn, migration, autoCreate, ct: token);
             }
-
-            // Persisted computed VECTOR(n) columns. No index follows one — see VectorIndex.
-            foreach (var vectorIndex in provider.Mapping.VectorIndexes)
+            catch (SqlException e) when (IsMissingVectorType(e) && provider.Mapping.VectorIndexes.Count > 0)
             {
-                foreach (var statement in vectorIndex.ToDdlStatements(provider.Mapping))
-                {
-                    await using var vectorCmd = conn.CreateCommand();
-                    vectorCmd.CommandText = statement;
-                    try
-                    {
-                        await vectorCmd.ExecuteNonQueryAsync(token);
-                    }
-                    catch (SqlException e) when (IsMissingVectorType(e))
-                    {
-                        // Azure SQL Edge and anything before SQL Server 2025 have no VECTOR type, and
-                        // the server's own answer — "Type VECTOR is not a defined system type" — names
-                        // neither Polecat nor the line of configuration that asked for it.
-                        // See IsMissingVectorType for why this keys on the number, not the message.
-                        throw new InvalidOperationException(
-                            $"'{provider.Mapping.DocumentType.Name}.{vectorIndex.MemberName}' is declared as a "
-                            + "vector, but this SQL Server instance has no VECTOR type. Vector search needs "
-                            + "SQL Server 2025 or later; Azure SQL Edge does not have it. Remove the "
-                            + "VectorIndex(...) declaration or move to an instance that supports it.", e);
-                    }
-                }
+                // Azure SQL Edge and anything before SQL Server 2025 have no VECTOR type, and the
+                // server's own answer — "Type VECTOR is not a defined system type" — names neither
+                // Polecat nor the line of configuration that asked for it.
+                // See IsMissingVectorType for why this keys on the number, not the message.
+                var members = provider.Mapping.VectorIndexes
+                    .Select(x => $"{provider.Mapping.DocumentType.Name}.{x.MemberName}")
+                    .ToArray();
+
+                throw new InvalidOperationException(
+                    $"'{string.Join("', '", members)}' {(members.Length == 1 ? "is" : "are")} declared as a "
+                    + "vector, but this SQL Server instance has no VECTOR type. Vector search needs "
+                    + "SQL Server 2025 or later; Azure SQL Edge does not have it. Remove the "
+                    + "VectorIndex(...) declaration or move to an instance that supports it.", e);
             }
 
             // Polecat-owned full-text index: token table, its index, the maintaining trigger, and
@@ -233,16 +225,32 @@ internal class DocumentTableEnsurer
             await using var conn = _connectionFactory.Create();
             await conn.OpenAsync(token);
 
-            foreach (var fk in provider.Mapping.ForeignKeys)
-            {
-                var refProvider = _providerRegistry.GetProvider(fk.ReferenceDocumentType);
-                foreach (var statement in fk.ToDdlStatements(provider.Mapping, refProvider.Mapping))
-                {
-                    await using var fkCmd = conn.CreateCommand();
-                    fkCmd.CommandText = statement;
-                    await fkCmd.ExecuteNonQueryAsync(token);
-                }
-            }
+            // #684: re-diff the table WITH its constraints, now that every referenced table exists. The
+            // first pass built it with `includeForeignKeys: false`, so the constraints are all this delta
+            // consists of; everything else about the table already matches, which makes it cheap as well
+            // as idempotent. No raw DDL, and no second description of the constraint to keep in sync.
+            //
+            // ⚠️ Omitting the constraints from the first pass is not the same as DEFERRING them there,
+            // and deferring is what this originally did. `SchemaMigration` defers a foreign key whose
+            // linked table is created later in the same migration, and Weasel's SQL Server migrator then
+            // writes the deferred set as its LAST command of the same ApplyAllAsync call — which is
+            // exactly right when every table is in one migration, and useless here, where each table is
+            // migrated alone: the constraint still ran, just at the end, against a table that may not
+            // exist. Leaving it out of the model is the only thing that actually holds it back.
+            //
+            // ⚠️ `autoCreate` is carried through rather than forced to CreateOrUpdate, which means an
+            // EXTERNALLY-MANAGED partitioned table (#255, CreateOnly) does not get a foreign key added
+            // to it after creation. That is the narrower behaviour of the two and the deliberate choice:
+            // #255's guarantee is that nothing reconciles those tables after provisioning, and a
+            // constraint added by a later pass is a reconciliation.
+            var table = new DocumentTable(provider.Mapping);
+            var autoCreate = provider.Mapping.Partitioning is { ExternallyManaged: true }
+                ? AutoCreate.CreateOnly
+                : AutoCreate.CreateOrUpdate;
+
+            var migrator = new SqlServerMigrator();
+            var migration = await SchemaMigration.DetermineAsync(conn, token, table);
+            await migrator.ApplyAllAsync(conn, migration, autoCreate, ct: token);
 
             _fksEnsured.TryAdd(provider.Mapping.DocumentType, true);
         }
