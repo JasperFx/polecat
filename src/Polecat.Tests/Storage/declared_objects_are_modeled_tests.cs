@@ -2,6 +2,7 @@ using JasperFx;
 using Microsoft.Data.SqlClient;
 using Polecat.Storage;
 using Polecat.Tests.Harness;
+using Polecat.TestUtils;
 using Weasel.Core;
 using Weasel.SqlServer;
 using Shouldly;
@@ -58,8 +59,24 @@ public class declared_objects_are_modeled_tests : OneOffConfigurationsContext
 
         // The computed columns the index and the foreign key sit on, rendered inline in the CREATE
         // TABLE. Unbracketed because Weasel leaves an ordinary identifier alone.
-        script.ShouldContain("cc_code AS (JSON_VALUE(data, '$.code' RETURNING varchar(250))) PERSISTED");
-        script.ShouldContain("cc_status AS (JSON_VALUE(data, '$.status' RETURNING varchar(250))) PERSISTED");
+        //
+        // ⚠️ The EXPRESSION is asked of the product rather than written out, because it depends on the
+        // store's json mode: on native `json` most types use JSON_VALUE(... RETURNING t), and without it
+        // (Azure SQL Edge, which the `edge` CI lane runs) every type falls back to CONVERT(t, ...).
+        // Spelling the native form here made this pass locally and fail on that lane. Asking
+        // ComputedColumnExpression keeps the assertion about "the declaration reached the script" --
+        // which is what the test is for -- rather than about which branch the renderer took.
+        var useReturning = ConnectionSource.SupportsNativeJson;
+
+        script.ShouldContain(
+            $"cc_code AS ({DocumentIndex.ComputedColumnExpression("$.code", "varchar(250)", IndexCasing.Default, useReturning)}) PERSISTED");
+        script.ShouldContain(
+            $"cc_status AS ({DocumentIndex.ComputedColumnExpression("$.status", "varchar(250)", IndexCasing.Default, useReturning)}) PERSISTED");
+
+        // uniqueidentifier has no RETURNING support, so this one is CONVERT in either mode -- and that
+        // is the column the foreign key sits on, which is why it is spelled out.
+        script.ShouldContain(
+            $"cc_customerid AS ({DocumentIndex.ComputedColumnExpression("$.customerId", "uniqueidentifier", IndexCasing.Default, useReturning)}) PERSISTED");
         script.ShouldContain("cc_customerid AS (CONVERT(uniqueidentifier, JSON_VALUE(data, '$.customerId'))) PERSISTED");
 
         // ...the indexes over them, each guarded so the script runs twice...
@@ -67,8 +84,11 @@ public class declared_objects_are_modeled_tests : OneOffConfigurationsContext
         script.ShouldContain("CREATE INDEX ix_pc_doc_declaredorder_status");
         script.ShouldContain("CREATE INDEX ix_declared_order_placed_desc");
 
-        // ...and the foreign key, which Weasel defers to the end of the script because the table it
-        // references is created by the same script.
+        // ...and the foreign key. It is emitted right after its own table rather than deferred to the
+        // end -- a creation script renders each object's CREATE in the order the feature schema yields
+        // them, with no migration involved and so none of SchemaMigration's deferral. What makes it run
+        // is that DocumentFeatureSchema yields the REFERENCED table first; see InDependencyOrder there.
+        // Before that ordering existed this script was luck: provider order is dictionary order.
         script.ShouldContain("ADD CONSTRAINT fk_pc_doc_declaredorder_cc_customerid FOREIGN KEY(cc_customerid)");
         script.ShouldContain("REFERENCES");
 
