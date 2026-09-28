@@ -56,10 +56,19 @@ public interface ITenancy
 
         if (Cardinality == DatabaseCardinality.Single)
         {
+            // A tenancy that calls itself Single but does not return exactly one database routes
+            // through GetDatabase(DefaultTenantId) instead of taking whatever came first. Carried over
+            // verbatim from PolecatDatabaseSource, which made this decision deliberately before #675
+            // moved the description here: on that shape "the first of several" is a guess, and the
+            // default tenant's database is the answer the tenancy itself would give.
+            var main = databases.Count == 1
+                ? databases[0]
+                : GetDatabase(DefaultTenantId);
+
             return new ValueTask<DatabaseUsage>(new DatabaseUsage
             {
                 Cardinality = DatabaseCardinality.Single,
-                MainDatabase = databases.FirstOrDefault()?.Describe()
+                MainDatabase = main.Describe()
             });
         }
 
