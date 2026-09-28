@@ -311,3 +311,33 @@ public class Freighter
 
 
 }
+
+/// <summary>
+///     jasperfx#914 — IEventStore.HasEventStore. The document-only case is the one that matters: the
+///     interface default is true, so an unimplemented member would pass every other fact and fail only
+///     that one.
+/// </summary>
+public class has_event_store_tests
+{
+    private static DocumentStore CreateStore(Action<StoreOptions> configure) => DocumentStore.For(opts =>
+    {
+        opts.ConnectionString = ConnectionSource.ConnectionString;
+        opts.DatabaseSchemaName = "has_event_store";
+        opts.AutoCreateSchemaObjects = AutoCreate.All;
+        configure(opts);
+    });
+
+    [Fact]
+    public void a_document_only_store_has_no_event_store()
+    {
+        using var store = CreateStore(_ => { });
+        ((IEventStore)store).HasEventStore.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void a_registered_event_type_is_an_event_store()
+    {
+        using var store = CreateStore(opts => opts.Events.AddEventType(typeof(Loaded)));
+        ((IEventStore)store).HasEventStore.ShouldBeTrue();
+    }
+}

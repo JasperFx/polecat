@@ -57,6 +57,14 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
     DatabaseCardinality IEventStore.DatabaseCardinality =>
         Options.Tenancy?.Cardinality ?? DatabaseCardinality.Single;
 
+    /// <summary>
+    ///     jasperfx#914 — true when this store has an event store: any registered event type, or any
+    ///     projection or subscription (Marten's <c>EventGraph.IsActive</c>, which Polecat had no twin of).
+    ///     Computed on every read, never cached: an event type registered lazily on first append makes a
+    ///     store that started document-only active.
+    /// </summary>
+    bool IEventStore.HasEventStore => Events.AllKnownEventTypes().Count > 0 || Options.Projections.IsActive();
+
     bool IEventStore.HasMultipleTenants =>
         Options.Events.TenancyStyle == TenancyStyle.Conjoined
         || Options.Tenancy?.Cardinality == DatabaseCardinality.StaticMultiple;
