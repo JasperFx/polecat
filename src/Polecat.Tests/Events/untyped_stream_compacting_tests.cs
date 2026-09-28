@@ -242,6 +242,57 @@ public class untyped_stream_compacting_tests
         byId.Message.ShouldContain("StreamIdentity.AsString");
         byId.Message.ShouldContain("string stream key overloads");
     }
+    /// <summary>
+    ///     jasperfx#910 — the untyped compaction in one tenant's scope. The same stream key under two
+    ///     tenants, so a compaction that ignored its tenant could not pass by compacting "some" stream
+    ///     with that key: the tenant-less overload reads stream state in the default tenant, where
+    ///     neither of these streams is.
+    /// </summary>
+    [Fact]
+    public async Task compacts_a_tenants_stream_and_leaves_the_other_tenants_alone()
+    {
+        using var store = DocumentStore.For(opts =>
+        {
+            opts.ConnectionString = ConnectionSource.ConnectionString;
+            opts.DatabaseSchemaName = "compact_untyped_tenant";
+            opts.AutoCreateSchemaObjects = AutoCreate.All;
+            opts.UseNativeJsonType = ConnectionSource.SupportsNativeJson;
+            opts.Events.StreamIdentity = StreamIdentity.AsString;
+            opts.Events.TenancyStyle = JasperFx.MultiTenancy.TenancyStyle.Conjoined;
+        });
+        await store.Advanced.Clean.DeleteAllEventDataAsync(TestContext.Current.CancellationToken);
+
+        const string streamKey = "freighter-shared";
+
+        await using (var red = store.LightweightSession("red"))
+        {
+            red.Events.StartStream<Freighter>(streamKey, new Loaded(1), new Loaded(2), new Loaded(3));
+            await red.SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        await using (var blue = store.LightweightSession("blue"))
+        {
+            blue.Events.StartStream<Freighter>(streamKey, new Loaded(10), new Loaded(20));
+            await blue.SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        // Compact the tenant written SECOND, so a result cannot come from whichever row a tenant-blind
+        // read happens to reach first.
+        await ((IEventStore)store).CompactStreamAsync(streamKey, "blue", TestContext.Current.CancellationToken);
+
+        await using (var blue = store.QuerySession("blue"))
+        {
+            var events = await blue.Events.FetchStreamAsync(streamKey, token: TestContext.Current.CancellationToken);
+            events.ShouldHaveSingleItem().Data.ShouldBeOfType<Compacted<Freighter>>().Snapshot.Cargo.ShouldBe(30);
+        }
+
+        await using (var red = store.QuerySession("red"))
+        {
+            (await red.Events.FetchStreamAsync(streamKey, token: TestContext.Current.CancellationToken))
+                .Count.ShouldBe(3, "the other tenant's stream of the same key is untouched");
+        }
+    }
+
 }
 
 public record Loaded(int Amount);
@@ -257,4 +308,6 @@ public class Freighter
     public int Cargo { get; set; }
 
     public void Apply(Loaded e) => Cargo += e.Amount;
+
+
 }
