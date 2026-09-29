@@ -644,15 +644,34 @@
              projection generics and reports a double load; Polecat does not enable the opt-in
              build-time marker assertion (jasperfx#896), so neither is reachable here.
              jasperfx#908/#909 is CI-only (importing the shipped MSBuild targets in JasperFx's own
-             build). -->
-        <PackageVersion Include="JasperFx" Version="2.75.2" />
-        <PackageVersion Include="JasperFx.Events" Version="2.75.2" />
+             build).
+
+             JasperFx 2.76.0 (from 2.75.2). REQUIRED, not a roll-forward: this is the release carrying
+             jasperfx#911, the two new IEventStore members polecat#698 implements — tenant-aware
+             CompactStreamAsync (jasperfx#910) and HasEventStore (jasperfx#914). Both ship as default
+             interface implementations, so Polecat compiled against 2.75.2 either way; the defaults are
+             a refusal and a lie respectively until overridden, which is the whole point of overriding
+             them. The compliance package's contentFiles are byte-identical to 2.75.2 (diff -rq over
+             both extracted nupkgs), so no suite gained or lost a fact and nothing here is a new
+             enrollment.
+             The release's other two changes are INERT here today, and both are latent Polecat work
+             rather than nothing:
+               * jasperfx#912/#915 — ShardStartException carries a classified StartFailureReason
+                 instead of only prose. Additive; Polecat neither throws nor matches on it.
+               * jasperfx#913/#916 — IAdvisoryLock.FindHolderAsync, a default interface member whose
+                 default THROWS (a lock that never looked must not be able to report "unheld"). Polecat
+                 does not implement IAdvisoryLock itself — ProjectionCoordinator hands the distributors
+                 Weasel.SqlServer.AdvisoryLock directly — so the answer comes from Weasel, and
+                 weasel#650/#656 in the 9.36.0 bump below is exactly that implementation. Inherited,
+                 not adopted: nothing in Polecat calls it yet. -->
+        <PackageVersion Include="JasperFx" Version="2.76.0" />
+        <PackageVersion Include="JasperFx.Events" Version="2.76.0" />
         <!--
              The shared cross-store event sourcing compliance suites. Source-only package: the
              suites compile inside Polecat.Tests so JasperFx's aggregate source generator binds
              Polecat's own session types.
         -->
-        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="2.75.2" />
+        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="2.76.0" />
         <!-- Pin the sibling JasperFx packages for parity with Marten 9's matrix
              even though Polecat doesn't currently reference them directly —
              keeps the lockstep matrix coherent when transitive resolution
@@ -660,7 +679,7 @@
              RuntimeCompiler 5.x line is the active continuation of the 4.x
              lineage; do not pin against the parallel stale 2.0.x series. -->
         <PackageVersion Include="JasperFx.RuntimeCompiler" Version="5.0.0" />
-        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.75.2" />
+        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.76.0" />
         <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
@@ -888,10 +907,27 @@
              "a drop that silently did nothing" is the kind of thing worth knowing is fixed if a future
              teardown path ever does reach for it. Does NOT contain weasel#637/#638 (the computed-column
              CAST/CONVERT canonicalization gap and the dependent-object drop), both of which were filed
-             from polecat#684 after this release. -->
-        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.35.2" />
-        <PackageVersion Include="Weasel.SqlServer" Version="9.35.2" />
-        <PackageVersion Include="Weasel.Storage" Version="9.35.2" />
+             from polecat#684 after this release.
+
+             Weasel 9.36.0 (from 9.35.2). Three things matter here, and two of them are Polecat's own
+             filings coming back fixed:
+               * weasel#637/#654 — a computed column declared with CAST now reconciles against the
+                 catalog, which rewrites it to CONVERT. Polecat already works around this by DECLARING
+                 CONVERT (DocumentIndex.ComputedColumnExpression, polecat#684), and that stays: CONVERT
+                 is what SQL Server stores, so declaring it is right independently of the fix. The
+                 workaround is now belt-and-braces rather than load-bearing.
+               * weasel#638/#655 — a changed computed-column definition now carries its dependants
+                 (index, foreign key) through the change instead of being DROPped out from under them.
+                 This one was NOT worked around in Polecat and was reachable on any type widening or
+                 naming-policy change, so the bump closes a real hole rather than tidying one.
+               * weasel#650/#656 — IAdvisoryLock.FindHolderAsync implemented for SQL Server against
+                 sys.dm_tran_locks. Polecat gets this for free because ProjectionCoordinator hands the
+                 distributors Weasel.SqlServer.AdvisoryLock; see the jasperfx#913/#916 note above.
+                 Inherited, not yet consumed.
+             The rest of the release is SQLite, MySQL and docs — no SQL Server dialect surface. -->
+        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.36.0" />
+        <PackageVersion Include="Weasel.SqlServer" Version="9.36.0" />
+        <PackageVersion Include="Weasel.Storage" Version="9.36.0" />
 
         <!-- Strongly typed IDs. Both generators are test-only: they prove Polecat's value-type id
              support against the two libraries Marten's ValueTypeTests exercise. StronglyTypedId emits
@@ -901,7 +937,7 @@
         <PackageVersion Include="Vogen" Version="7.0.0" />
 
         <!-- Source generators (matched to JasperFx.Events above) -->
-        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.75.2" />
+        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.76.0" />
 
         <!-- Build automation -->
         <PackageVersion Include="Nuke.Common" Version="9.0.4" />

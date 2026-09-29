@@ -242,6 +242,108 @@ public class untyped_stream_compacting_tests
         byId.Message.ShouldContain("StreamIdentity.AsString");
         byId.Message.ShouldContain("string stream key overloads");
     }
+    /// <summary>
+    ///     jasperfx#910 — the untyped compaction in one tenant's scope. The same stream key under two
+    ///     tenants, so a compaction that ignored its tenant could not pass by compacting "some" stream
+    ///     with that key: the tenant-less overload reads stream state in the default tenant, where
+    ///     neither of these streams is.
+    /// </summary>
+    [Fact]
+    public async Task compacts_a_tenants_stream_and_leaves_the_other_tenants_alone()
+    {
+        using var store = DocumentStore.For(opts =>
+        {
+            opts.ConnectionString = ConnectionSource.ConnectionString;
+            opts.DatabaseSchemaName = "compact_untyped_tenant";
+            opts.AutoCreateSchemaObjects = AutoCreate.All;
+            opts.UseNativeJsonType = ConnectionSource.SupportsNativeJson;
+            opts.Events.StreamIdentity = StreamIdentity.AsString;
+            opts.Events.TenancyStyle = JasperFx.MultiTenancy.TenancyStyle.Conjoined;
+        });
+        await store.Advanced.Clean.DeleteAllEventDataAsync(TestContext.Current.CancellationToken);
+
+        const string streamKey = "freighter-shared";
+
+        await using (var red = store.LightweightSession("red"))
+        {
+            red.Events.StartStream<Freighter>(streamKey, new Loaded(1), new Loaded(2), new Loaded(3));
+            await red.SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        await using (var blue = store.LightweightSession("blue"))
+        {
+            blue.Events.StartStream<Freighter>(streamKey, new Loaded(10), new Loaded(20));
+            await blue.SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        // Compact the tenant written SECOND, so a result cannot come from whichever row a tenant-blind
+        // read happens to reach first.
+        await ((IEventStore)store).CompactStreamAsync(streamKey, "blue", TestContext.Current.CancellationToken);
+
+        await using (var blue = store.QuerySession("blue"))
+        {
+            var events = await blue.Events.FetchStreamAsync(streamKey, token: TestContext.Current.CancellationToken);
+            events.ShouldHaveSingleItem().Data.ShouldBeOfType<Compacted<Freighter>>().Snapshot.Cargo.ShouldBe(30);
+        }
+
+        await using (var red = store.QuerySession("red"))
+        {
+            (await red.Events.FetchStreamAsync(streamKey, token: TestContext.Current.CancellationToken))
+                .Count.ShouldBe(3, "the other tenant's stream of the same key is untouched");
+        }
+    }
+
+    /// <summary>
+    ///     polecat#698 asked what the TENANT-LESS overload actually does on a conjoined store whose
+    ///     default tenant is enabled — no-op, "stream not found", or compacting a same-keyed default-tenant
+    ///     stream — and said nobody had measured it. Measured here: it opens the default tenant's session,
+    ///     that tenant holds no such stream, and the call is refused. That is the answer worth pinning,
+    ///     because the other two would be silent: a no-op leaves a policy believing it compacted, and a
+    ///     cross-tenant hit corrupts a stream nobody selected.
+    /// </summary>
+    [Fact]
+    public async Task the_tenantless_overload_refuses_another_tenants_stream_rather_than_missing_quietly()
+    {
+        using var store = DocumentStore.For(opts =>
+        {
+            opts.ConnectionString = ConnectionSource.ConnectionString;
+            opts.DatabaseSchemaName = "compact_untyped_tenantless";
+            opts.AutoCreateSchemaObjects = AutoCreate.All;
+            opts.UseNativeJsonType = ConnectionSource.SupportsNativeJson;
+            opts.Events.StreamIdentity = StreamIdentity.AsString;
+            opts.Events.TenancyStyle = JasperFx.MultiTenancy.TenancyStyle.Conjoined;
+        });
+        await store.Advanced.Clean.DeleteAllEventDataAsync(TestContext.Current.CancellationToken);
+
+        const string streamKey = "freighter-tenanted-only";
+
+        await using (var green = store.LightweightSession("green"))
+        {
+            green.Events.StartStream<Freighter>(streamKey, new Loaded(4), new Loaded(5));
+            await green.SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        var ex = await Should.ThrowAsync<InvalidOperationException>(
+            () => ((IEventStore)store).CompactStreamAsync(streamKey, TestContext.Current.CancellationToken));
+        ex.Message.ShouldContain("no such stream in this event store");
+
+        // And the refusal really was a refusal: the tenant's stream is exactly as it was.
+        await using (var green = store.QuerySession("green"))
+        {
+            (await green.Events.FetchStreamAsync(streamKey, token: TestContext.Current.CancellationToken))
+                .Count.ShouldBe(2);
+        }
+
+        // The same call routed through the tenant succeeds, so the refusal above is about scope and not
+        // about the stream being uncompactable.
+        await ((IEventStore)store).CompactStreamAsync(streamKey, "green", TestContext.Current.CancellationToken);
+
+        await using (var green = store.QuerySession("green"))
+        {
+            (await green.Events.FetchStreamAsync(streamKey, token: TestContext.Current.CancellationToken))
+                .ShouldHaveSingleItem().Data.ShouldBeOfType<Compacted<Freighter>>().Snapshot.Cargo.ShouldBe(9);
+        }
+    }
 }
 
 public record Loaded(int Amount);
@@ -257,4 +359,36 @@ public class Freighter
     public int Cargo { get; set; }
 
     public void Apply(Loaded e) => Cargo += e.Amount;
+
+
+}
+
+/// <summary>
+///     jasperfx#914 — IEventStore.HasEventStore. The document-only case is the one that matters: the
+///     interface default is true, so an unimplemented member would pass every other fact and fail only
+///     that one.
+/// </summary>
+public class has_event_store_tests
+{
+    private static DocumentStore CreateStore(Action<StoreOptions> configure) => DocumentStore.For(opts =>
+    {
+        opts.ConnectionString = ConnectionSource.ConnectionString;
+        opts.DatabaseSchemaName = "has_event_store";
+        opts.AutoCreateSchemaObjects = AutoCreate.All;
+        configure(opts);
+    });
+
+    [Fact]
+    public void a_document_only_store_has_no_event_store()
+    {
+        using var store = CreateStore(_ => { });
+        ((IEventStore)store).HasEventStore.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void a_registered_event_type_is_an_event_store()
+    {
+        using var store = CreateStore(opts => opts.Events.AddEventType(typeof(Loaded)));
+        ((IEventStore)store).HasEventStore.ShouldBeTrue();
+    }
 }

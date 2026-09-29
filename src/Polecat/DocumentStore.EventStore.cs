@@ -57,6 +57,14 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
     DatabaseCardinality IEventStore.DatabaseCardinality =>
         Options.Tenancy?.Cardinality ?? DatabaseCardinality.Single;
 
+    /// <summary>
+    ///     jasperfx#914 — true when this store has an event store: any registered event type, or any
+    ///     projection or subscription (Marten's <c>EventGraph.IsActive</c>, which Polecat had no twin of).
+    ///     Computed on every read, never cached: an event type registered lazily on first append makes a
+    ///     store that started document-only active.
+    /// </summary>
+    bool IEventStore.HasEventStore => Events.AllKnownEventTypes().Count > 0 || Options.Projections.IsActive();
+
     bool IEventStore.HasMultipleTenants =>
         Options.Events.TenancyStyle == TenancyStyle.Conjoined
         || Options.Tenancy?.Cardinality == DatabaseCardinality.StaticMultiple;
@@ -264,7 +272,7 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
     Task IEventStore.CompactStreamAsync(Guid streamId, CancellationToken token)
     {
         Events.EnsureAsGuidStorage();
-        return compactStreamAsync(streamId, token);
+        return compactStreamAsync(streamId, null, token);
     }
 
     /// <inheritdoc cref="IEventStore.CompactStreamAsync(Guid, CancellationToken)" />
@@ -272,16 +280,41 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
     {
         ArgumentException.ThrowIfNullOrEmpty(streamKey);
         Events.EnsureAsStringStorage();
-        return compactStreamAsync(streamKey, token);
+        return compactStreamAsync(streamKey, null, token);
+    }
+
+    /// <summary>
+    ///     jasperfx#910 — the untyped compaction run in one tenant's scope: the stream-state read and the
+    ///     compaction both run on a session opened for <paramref name="tenantId" />.
+    /// </summary>
+    /// <remarks>
+    ///     The action-side twin of <c>OpenReadOnlyEventStore(tenantId)</c>. A compaction policy selects a
+    ///     tenant's streams through that reader, and the tenant-less overload above then read stream state
+    ///     in the default tenant — where, as its own remarks say, another tenant's stream "is not visible
+    ///     ... and is reported as missing", and which a store with its default tenant disabled refuses
+    ///     outright. A null or empty tenant id means the default tenant, matching the reader.
+    /// </remarks>
+    Task IEventStore.CompactStreamAsync(Guid streamId, string? tenantId, CancellationToken token)
+    {
+        Events.EnsureAsGuidStorage();
+        return compactStreamAsync(streamId, tenantId, token);
+    }
+
+    /// <inheritdoc cref="IEventStore.CompactStreamAsync(Guid, string?, CancellationToken)" />
+    Task IEventStore.CompactStreamAsync(string streamKey, string? tenantId, CancellationToken token)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(streamKey);
+        Events.EnsureAsStringStorage();
+        return compactStreamAsync(streamKey, tenantId, token);
     }
 
     [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
         Justification = "Closes CompactStreamAsync<T> over an aggregate type read from pc_streams, which was registered by the projection that wrote the stream and is therefore already rooted.")]
     [UnconditionalSuppressMessage("Trimming", "IL2060:MakeGenericMethod",
         Justification = "See above — the type argument is a registered aggregate type resolved through EventGraph.TryResolveAggregateType.")]
-    private async Task compactStreamAsync(object streamIdentity, CancellationToken token)
+    private async Task compactStreamAsync(object streamIdentity, string? tenantId, CancellationToken token)
     {
-        await using var session = LightweightSession();
+        await using var session = string.IsNullOrEmpty(tenantId) ? LightweightSession() : LightweightSession(tenantId);
 
         var state = streamIdentity is Guid streamId
             ? await session.Events.FetchStreamStateAsync(streamId, token).ConfigureAwait(false)
