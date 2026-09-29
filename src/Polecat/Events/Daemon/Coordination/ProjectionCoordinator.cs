@@ -1,3 +1,4 @@
+using JasperFx.Events;
 using JasperFx.Descriptors;
 using JasperFx.Events.Daemon;
 using JasperFx.Events.Projections;
@@ -161,6 +162,17 @@ internal class ProjectionCoordinator : ProjectionCoordinatorBase, IProjectionCoo
 
         var baseLockId = options.DaemonSettings.DaemonLockId;
 
+        // #697 / jasperfx#489: under per-tenant event sequencing each tenant has its own seq_id space,
+        // so a store-global agent per shard cannot represent the store — the distributor has to expand
+        // each shard name into one name per tenant (PerTenantShardExpansion, fed by PolecatDatabase's
+        // ICrossTenantRebuildSource). Both distributors below kept the ORIGINAL constructor overload,
+        // whose body is `: this(..., distributesAgentsPerTenant: false)`, so the expansion existed and
+        // was simply never asked for: a tenant-partitioned store started one agent for the whole store
+        // and no tenant's projections ever advanced. Lock granularity is unchanged either way — still
+        // one advisory lock per store-global shard, with the winning node running that shard's tenant
+        // agents.
+        var distributesAgentsPerTenant = ((IEventStore)store).DistributesAgentsPerTenant;
+
         if (cardinality == DatabaseCardinality.StaticMultiple)
         {
             return new MultiTenantedProjectionDistributor(
@@ -169,7 +181,8 @@ internal class ProjectionCoordinator : ProjectionCoordinatorBase, IProjectionCoo
                 allShards: allShards,
                 lockFactory: lockFactory,
                 setFactory: setFactory,
-                baseLockId: baseLockId);
+                baseLockId: baseLockId,
+                distributesAgentsPerTenant: distributesAgentsPerTenant);
         }
 
         // Single-database tenancy → exactly one PolecatDatabase. The lifted
@@ -183,7 +196,8 @@ internal class ProjectionCoordinator : ProjectionCoordinatorBase, IProjectionCoo
             lockFactory: lockFactory,
             setFactory: setFactory,
             schemaQualifier: options.DatabaseSchemaName,
-            baseLockId: baseLockId);
+            baseLockId: baseLockId,
+            distributesAgentsPerTenant: distributesAgentsPerTenant);
     }
 }
 
