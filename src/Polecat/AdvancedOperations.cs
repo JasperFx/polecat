@@ -889,6 +889,97 @@ public class AdvancedOperations
         }
     }
 
+    /// <summary>
+    ///     Delete every row belonging to one tenant, leaving all other tenants intact: documents of
+    ///     every conjoined type, <c>pc_events</c> and <c>pc_streams</c> (with the inline snapshot each
+    ///     stream row carries), DCB tag tables, natural-key lookups, full-text token tables, flat-table
+    ///     projections, and the tenant's own <c>pc_event_progression</c> rows.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         The row-deleting counterpart of
+    ///         <see cref="RemovePolecatManagedTenantsAsync(string[], TenantDropBehavior, CancellationToken)" />,
+    ///         which requires a PARTITIONED store and drops a partition rather than deleting rows. A
+    ///         conjoined store without partitioning had no supported way to offboard a tenant before
+    ///         this (polecat#680). Marten's <c>DeleteAllTenantDataAsync</c> and Fisher's equivalent are
+    ///         the parity targets.
+    ///     </para>
+    ///     <para>
+    ///         <b>This does not remove the tenant's partition, ordinal or event sequence</b> where the
+    ///         store is partition-managed — those are schema objects, and dropping them is
+    ///         <c>RemovePolecatManagedTenantsAsync</c>'s job. Call that instead, or afterwards, when the
+    ///         tenant is going away for good; use this one when the tenant's DATA should go and its
+    ///         registration should stay.
+    ///     </para>
+    ///     <para>
+    ///         Runs in a single transaction, so a failure leaves the tenant wholly present rather than
+    ///         half-deleted.
+    ///     </para>
+    /// </remarks>
+    /// <returns>
+    ///     Rows deleted per table, for the tables that had any. A store with no multi-tenancy at all
+    ///     returns an EMPTY report rather than throwing or deleting anything — see
+    ///     <paramref name="tenantId" />.
+    /// </returns>
+    /// <param name="tenantId">
+    ///     The tenant to erase. Required: an empty id is refused rather than treated as the default
+    ///     tenant, because "delete everything belonging to nobody in particular" is never what a caller
+    ///     of this method meant.
+    /// </param>
+    /// <param name="token"></param>
+    /// <seealso href="https://github.com/JasperFx/polecat/issues/680" />
+    public async Task<IReadOnlyDictionary<string, int>> DeleteAllTenantDataAsync(
+        string tenantId, CancellationToken token = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
+
+        // A store with no conjoined documents and no conjoined events keeps no tenant_id worth
+        // filtering on, so there is nothing this could delete that would not be everything. Returning
+        // an empty report rather than throwing keeps a tenant-offboarding routine that runs across a
+        // mix of stores from having to special-case the single-tenanted ones — and rather than
+        // deleting nothing SILENTLY, the empty report says so.
+        if (!_store.Options.HasAnyConjoinedDocuments &&
+            _store.Options.Tenancy?.Cardinality != JasperFx.Descriptors.DatabaseCardinality.StaticMultiple)
+        {
+            return new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        // Under database-per-tenant the tenant's rows live in ITS database, not the store's default
+        // one. Resolving the database from the tenant id is what makes this correct on both tenancy
+        // shapes; a store-level connection string would wipe the wrong database's default tenant.
+        var connectionString = ResolveTenantConnectionString(tenantId);
+
+        var cleaner = new Internal.TenantDataCleaner(
+            tenantId,
+            connectionString,
+            _store.Options.DatabaseSchemaName,
+            _store.Events.ProgressionTableName,
+            _store.Options.ResiliencePipeline);
+
+        var deleted = await cleaner.ExecuteAsync(token).ConfigureAwait(false);
+
+        // The tenant's rows are gone, so any cached ordinal/sequence handle for it describes a tenant
+        // whose data no longer exists. Leave the registry alone (see the remarks) but drop the caches
+        // so a later write re-reads rather than trusting a stale view.
+        _store.Events.TenantOrdinals.Evict(tenantId);
+        _store.Events.TenantSequences.Evict(tenantId);
+
+        return deleted;
+    }
+
+    /// <summary>
+    ///     The connection string holding <paramref name="tenantId" />'s rows — its own database under
+    ///     database-per-tenant tenancy, otherwise the store's.
+    /// </summary>
+    private string ResolveTenantConnectionString(string tenantId)
+    {
+        // GetConnectionFactory is the tenancy's own tenant→database routing, so this stays correct
+        // for both shapes without the caller knowing which one it has: a single-database tenancy
+        // hands back the store's connection, a database-per-tenant one hands back that tenant's.
+        var factory = _store.Options.Tenancy?.GetConnectionFactory(tenantId);
+        return factory?.ConnectionString ?? _store.Options.ConnectionString;
+    }
+
     // ---- rolling time-window range partitions (#386) ----
 
     /// <summary>

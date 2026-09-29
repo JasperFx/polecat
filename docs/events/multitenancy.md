@@ -175,3 +175,38 @@ onboarding/removal via `store.Advanced.AddPolecatManagedTenantsAsync` /
 `RemovePolecatManagedTenantsAsync` — see
 [Document multi-tenancy partitioning](/documents/partitioning#managed-per-tenant-partitioning-335).
 :::
+
+## Erasing one tenant's data
+
+`DeleteAllTenantDataAsync` deletes every row belonging to one tenant and leaves the others intact:
+documents of every conjoined type, `pc_events` and `pc_streams` (with the inline snapshot each stream
+row carries), DCB tag tables, natural-key lookups, full-text token tables, flat-table projections, and
+that tenant's own `pc_event_progression` rows.
+
+```cs
+var deleted = await store.Advanced.DeleteAllTenantDataAsync("acme", cancellationToken);
+
+// Rows removed per table, for the tables that had any
+foreach (var (table, rows) in deleted)
+{
+    logger.LogInformation("Deleted {Rows} rows from {Table}", rows, table);
+}
+```
+
+It works on **any** conjoined store, partitioned or not, which is the difference from
+`RemovePolecatManagedTenantsAsync(..., TenantDropBehavior.DeleteData)` — that one requires managed
+partitioning and drops a partition rather than deleting rows.
+
+Three things worth knowing before you call it:
+
+- **It deletes data, not registration.** The tenant's partition, ordinal and per-tenant event sequence
+  are schema objects and are left alone. Use `RemovePolecatManagedTenantsAsync` when the tenant is
+  going away for good; use this when its data should go and its registration should stay.
+- **It runs in one transaction**, so a failure leaves the tenant wholly present rather than half
+  erased.
+- **On a store with no multi-tenancy it deletes nothing** and returns an empty report. With no tenant
+  column to filter on, "delete this tenant" and "delete everything" would be the same statement, so it
+  declines rather than guessing — and the empty report says so instead of failing silently.
+
+Under database-per-tenant tenancy the tenant's own database is resolved from the tenant id, so the
+call reaches the right database without the caller having to know which shape the store has.
