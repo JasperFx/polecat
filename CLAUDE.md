@@ -333,7 +333,11 @@ separate them. That is why `SchemaName = "doc_usage"` appearing in nine files is
     against the catalog — the delta reports it different on every pass and then tries to DROP and
     re-add it, which fails outright once an index or foreign key depends on it. Declare `CONVERT`.
     `DocumentIndex.ComputedColumnExpression` is the one place that decides this. Filed upstream as
-    weasel#637, with weasel#638 for the dependent-object half.
+    weasel#637, with weasel#638 for the dependent-object half; **both landed in Weasel 9.36.0**
+    (weasel#654/#655). Keep declaring `CONVERT` anyway — it is what SQL Server stores, so it is the
+    right declaration independently of the reconciliation fix, which now makes the local choice
+    belt-and-braces rather than load-bearing. The #638 half was never worked around here at all, so
+    that bump closes a hole rather than tidying one.
   - **Weasel's identifier policy applies once an object is modeled**, and it *refuses* rather than
     escapes: `;` `'` `"` `[` `]` are rejected at startup (weasel#416). Index names used to be exempt
     because they were raw DDL, which is exactly the inconsistency worth removing — every other
