@@ -293,6 +293,57 @@ public class untyped_stream_compacting_tests
         }
     }
 
+    /// <summary>
+    ///     polecat#698 asked what the TENANT-LESS overload actually does on a conjoined store whose
+    ///     default tenant is enabled — no-op, "stream not found", or compacting a same-keyed default-tenant
+    ///     stream — and said nobody had measured it. Measured here: it opens the default tenant's session,
+    ///     that tenant holds no such stream, and the call is refused. That is the answer worth pinning,
+    ///     because the other two would be silent: a no-op leaves a policy believing it compacted, and a
+    ///     cross-tenant hit corrupts a stream nobody selected.
+    /// </summary>
+    [Fact]
+    public async Task the_tenantless_overload_refuses_another_tenants_stream_rather_than_missing_quietly()
+    {
+        using var store = DocumentStore.For(opts =>
+        {
+            opts.ConnectionString = ConnectionSource.ConnectionString;
+            opts.DatabaseSchemaName = "compact_untyped_tenantless";
+            opts.AutoCreateSchemaObjects = AutoCreate.All;
+            opts.UseNativeJsonType = ConnectionSource.SupportsNativeJson;
+            opts.Events.StreamIdentity = StreamIdentity.AsString;
+            opts.Events.TenancyStyle = JasperFx.MultiTenancy.TenancyStyle.Conjoined;
+        });
+        await store.Advanced.Clean.DeleteAllEventDataAsync(TestContext.Current.CancellationToken);
+
+        const string streamKey = "freighter-tenanted-only";
+
+        await using (var green = store.LightweightSession("green"))
+        {
+            green.Events.StartStream<Freighter>(streamKey, new Loaded(4), new Loaded(5));
+            await green.SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        var ex = await Should.ThrowAsync<InvalidOperationException>(
+            () => ((IEventStore)store).CompactStreamAsync(streamKey, TestContext.Current.CancellationToken));
+        ex.Message.ShouldContain("no such stream in this event store");
+
+        // And the refusal really was a refusal: the tenant's stream is exactly as it was.
+        await using (var green = store.QuerySession("green"))
+        {
+            (await green.Events.FetchStreamAsync(streamKey, token: TestContext.Current.CancellationToken))
+                .Count.ShouldBe(2);
+        }
+
+        // The same call routed through the tenant succeeds, so the refusal above is about scope and not
+        // about the stream being uncompactable.
+        await ((IEventStore)store).CompactStreamAsync(streamKey, "green", TestContext.Current.CancellationToken);
+
+        await using (var green = store.QuerySession("green"))
+        {
+            (await green.Events.FetchStreamAsync(streamKey, token: TestContext.Current.CancellationToken))
+                .ShouldHaveSingleItem().Data.ShouldBeOfType<Compacted<Freighter>>().Snapshot.Cargo.ShouldBe(9);
+        }
+    }
 }
 
 public record Loaded(int Amount);

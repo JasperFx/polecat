@@ -115,3 +115,29 @@ Two differences from the typed overload are worth knowing:
 `StreamState.CompactedVersion` is the watermark the last compaction reached, so
 `Version - CompactedVersion` is the stream's un-compacted growth — which is what makes a policy like
 the one above idempotent instead of re-compacting the same streams on every pass.
+
+### Compacting a stream in one tenant's scope
+
+Both untyped overloads take an optional tenant id. The stream-state read and the compaction itself
+then run on a session opened for that tenant, which is the action-side twin of
+`OpenReadOnlyEventStore(tenantId)`:
+
+```cs
+var streams = ((IEventStore)store).OpenReadOnlyEventStore("blue").QueryStreamStates();
+
+var overgrown = await streams
+    .Where(x => x.Version - x.CompactedVersion > 500)
+    .ToListAsync();
+
+foreach (var state in overgrown)
+{
+    await ((IEventStore)store).CompactStreamAsync(state.Id, "blue", cancellationToken);
+}
+```
+
+Pass this overload whenever the selector was tenanted, and the tenant-less one only for a
+single-tenanted store. A policy that selects a tenant's streams through the tenanted reader and then
+calls the tenant-less action is reading and writing in two different scopes: on a conjoined store the
+action looks for those stream ids in the *default* tenant's partition, where they are not visible and
+are reported as missing, and on a store whose default tenant is disabled the call is refused
+outright. A null or empty tenant id means the default tenant, matching the reader.
