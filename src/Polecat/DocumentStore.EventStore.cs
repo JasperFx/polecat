@@ -61,6 +61,28 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
         Options.Events.TenancyStyle == TenancyStyle.Conjoined
         || Options.Tenancy?.Cardinality == DatabaseCardinality.StaticMultiple;
 
+    /// <summary>
+    ///     #697 — does this store run one projection agent PER TENANT rather than one store-global
+    ///     agent per shard? True exactly when events are sequenced per tenant, because that is what
+    ///     makes a single store-global agent unable to represent the store: under
+    ///     <c>UseTenantPartitionedEvents</c> each tenant has its own seq_id space, so there is no one
+    ///     ordering for a single agent to follow. Mirrors Marten's answer.
+    /// </summary>
+    /// <remarks>
+    ///     The interface default is <c>false</c>, and false is not a harmless "not supported" here —
+    ///     it is the answer that makes everything downstream fan out store-globally. Wolverine's
+    ///     <c>EventStoreAgents.SupportedAgentsAsync</c> and JasperFx's
+    ///     <c>PerTenantShardExpansion</c> both gate on this property, so while it read false a
+    ///     tenant-partitioned store started exactly one agent for the whole store and every tenant's
+    ///     projections silently never advanced.
+    ///     <para>
+    ///         Distinct from <see cref="IEventStore.HasMultipleTenants" /> just above, which is true
+    ///         for any conjoined or database-per-tenant store. Conjoined WITHOUT per-tenant event
+    ///         sequencing keeps one global seq_id, and there a single agent is correct.
+    ///     </para>
+    /// </remarks>
+    bool IEventStore.DistributesAgentsPerTenant => Events.UseTenantPartitionedEvents;
+
     // Vary the identity Name by the logical store name so multiple Polecat stores (primary + ancillary)
     // are distinguishable — mirrors Marten's `new(Options.StoreName.ToLowerInvariant(), "marten")`. The
     // Type stays the provider ("SqlServer"). See polecat#207.
