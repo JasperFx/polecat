@@ -1,3 +1,5 @@
+using Weasel.SqlServer;
+using JasperFx.Descriptors;
 using System.Text.Json;
 using JasperFx.Events.Daemon;
 using JasperFx.Events.Daemon.HighWater;
@@ -33,15 +35,39 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
         _logger = logger;
         _resilience = resilience;
 
-        var builder = new SqlConnectionStringBuilder(connectionString);
-        var server = builder.DataSource ?? "localhost";
-        // SQL Server uses comma for port (e.g. "localhost,11433") which is invalid in URIs
-        if (server.Contains(','))
-        {
-            server = server.Replace(',', ':');
-        }
+        DatabaseUri = BuildDatabaseUri(connectionString);
+    }
 
-        DatabaseUri = new Uri($"sqlserver://{server}/{builder.InitialCatalog}");
+    /// <summary>
+    ///     The detector's database identity, built through JasperFx's
+    ///     <see cref="DatabaseDescriptor.DatabaseUri" /> rather than by hand.
+    /// </summary>
+    /// <remarks>
+    ///     This used to compose the URI itself — <c>sqlserver://{DataSource}/{InitialCatalog}</c>, with
+    ///     a comma-to-colon swap for the "host,port" form — and that threw
+    ///     <see cref="UriFormatException" /> out of this CONSTRUCTOR for server names SQL Server
+    ///     deployments use constantly: a named instance <c>db-host\MSSQL2017</c>, <c>.\SQLEXPRESS</c>,
+    ///     <c>(localdb)\MSSQLLocalDB</c>, or a <c>tcp:</c> prefix with a port. Measured, all four.
+    ///     Throwing here takes the async daemon down at startup, not at first use.
+    ///     <para>
+    ///         The fix is to delegate rather than to add the missing characters. jasperfx#918 is the
+    ///         same bug upstream and records that the equivalent method had already been patched three
+    ///         times, once per character class somebody hit in production, and that 27 of the 95
+    ///         printable ASCII characters still threw; a fourth patch here would have been the same
+    ///         mistake a fourth time. JasperFx 2.76.1 sanitizes to the alphabet a host actually permits,
+    ///         so borrowing it means this never needs a fifth.
+    ///     </para>
+    /// </remarks>
+    private static Uri BuildDatabaseUri(string connectionString)
+    {
+        var builder = new SqlConnectionStringBuilder(connectionString);
+
+        return new DatabaseDescriptor
+        {
+            Engine = SqlServerProvider.EngineName,
+            ServerName = builder.DataSource ?? string.Empty,
+            DatabaseName = builder.InitialCatalog ?? string.Empty
+        }.DatabaseUri();
     }
 
     public Uri DatabaseUri { get; }
