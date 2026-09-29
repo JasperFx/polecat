@@ -663,15 +663,29 @@
                  does not implement IAdvisoryLock itself — ProjectionCoordinator hands the distributors
                  Weasel.SqlServer.AdvisoryLock directly — so the answer comes from Weasel, and
                  weasel#650/#656 in the 9.36.0 bump below is exactly that implementation. Inherited,
-                 not adopted: nothing in Polecat calls it yet. -->
-        <PackageVersion Include="JasperFx" Version="2.76.0" />
-        <PackageVersion Include="JasperFx.Events" Version="2.76.0" />
+                 not adopted: nothing in Polecat calls it yet.
+
+             JasperFx 2.76.1 (from 2.76.0). Taken for jasperfx#918/#919, which is a SQL SERVER bug and
+             therefore Polecat's more than anyone's: DatabaseDescriptor.DatabaseUri() ran the server
+             name through Uri.EscapeDataString and put the result in the HOST position, where a
+             percent-escape is not legal — so a named instance ("db-host\MSSQL2017"), ".\SQLEXPRESS"
+             and "(localdb)\MSSQLLocalDB" all threw "Invalid URI: The hostname could not be parsed" at
+             startup. 27 of the 95 printable ASCII characters did. It now sanitizes to the alphabet a
+             host actually permits instead of escaping, with a dot-folding fallback for the shape case,
+             and upstream asserts that every input which produced a URI before produces a
+             byte-identical one — so no deployed database identity is renamed by the bump.
+             The compliance package's contentFiles are byte-identical to 2.76.0 (diff -rq over both
+             extracted nupkgs), so no suite gained or lost a fact. jasperfx#920/#921 is CLI docs.
+             This bump does NOT fix Polecat's own copy of that construction in
+             PolecatHighWaterDetector — see the commit that accompanies it. -->
+        <PackageVersion Include="JasperFx" Version="2.76.1" />
+        <PackageVersion Include="JasperFx.Events" Version="2.76.1" />
         <!--
              The shared cross-store event sourcing compliance suites. Source-only package: the
              suites compile inside Polecat.Tests so JasperFx's aggregate source generator binds
              Polecat's own session types.
         -->
-        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="2.76.0" />
+        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="2.76.1" />
         <!-- Pin the sibling JasperFx packages for parity with Marten 9's matrix
              even though Polecat doesn't currently reference them directly —
              keeps the lockstep matrix coherent when transitive resolution
@@ -679,7 +693,7 @@
              RuntimeCompiler 5.x line is the active continuation of the 4.x
              lineage; do not pin against the parallel stale 2.0.x series. -->
         <PackageVersion Include="JasperFx.RuntimeCompiler" Version="5.0.0" />
-        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.76.0" />
+        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.76.1" />
         <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
@@ -937,7 +951,7 @@
         <PackageVersion Include="Vogen" Version="7.0.0" />
 
         <!-- Source generators (matched to JasperFx.Events above) -->
-        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.76.0" />
+        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.76.1" />
 
         <!-- Build automation -->
         <PackageVersion Include="Nuke.Common" Version="9.0.4" />
