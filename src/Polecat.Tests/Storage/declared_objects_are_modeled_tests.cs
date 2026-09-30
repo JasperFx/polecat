@@ -346,6 +346,139 @@ public class declared_objects_are_modeled_tests : OneOffConfigurationsContext
             () => theStore.Database.AssertDatabaseMatchesConfigurationAsync());
     }
 
+    // ── #685: the JSON index, formerly the last raw DDL on the document path ─────────
+
+    private void ConfigureWithJsonIndex(AutoCreate? autoCreate = null)
+    {
+        ConfigureStore(opts =>
+        {
+            if (autoCreate.HasValue) opts.AutoCreateSchemaObjects = autoCreate.Value;
+            opts.Schema.For<DeclaredCustomer>()
+                .JsonIndex(x => x.Code, i => i.IndexName = "jidx_declared_customer");
+        });
+    }
+
+    /// <summary>
+    ///     #685 — the JSON index reaches the generated script. While it was raw DDL rendered at first
+    ///     use, <c>ToDatabaseScript()</c> and <c>db-dump</c> omitted it, so the script did not reproduce
+    ///     the configured schema.
+    /// </summary>
+    [Fact]
+    public async Task a_json_index_reaches_the_generated_script()
+    {
+        if (!TestUtils.ConnectionSource.SupportsNativeJson) return;
+
+        ConfigureWithJsonIndex();
+        theStore.Options.Providers.GetProvider<DeclaredCustomer>();
+
+        var script = theStore.Advanced.ToDatabaseScript();
+
+        script.ShouldContain("CREATE JSON INDEX");
+        script.ShouldContain("jidx_declared_customer");
+    }
+
+    /// <summary>
+    ///     The fixed point: applying then asserting must report a match, twice. This is the trap #684
+    ///     hit through weasel#637 — a declaration that cannot canonicalize against the catalog reports
+    ///     drift on every pass and then tries to drop and re-add.
+    /// </summary>
+    [Fact]
+    public async Task applying_a_json_index_reaches_a_fixed_point()
+    {
+        if (!TestUtils.ConnectionSource.SupportsNativeJson) return;
+
+        ConfigureWithJsonIndex();
+
+        await theStore.Database.ApplyAllConfiguredChangesToDatabaseAsync();
+        await theStore.Database.AssertDatabaseMatchesConfigurationAsync();
+
+        await theStore.Database.ApplyAllConfiguredChangesToDatabaseAsync();
+        await theStore.Database.AssertDatabaseMatchesConfigurationAsync();
+
+        (await IndexNamesAsync("pc_doc_declaredcustomer")).ShouldContain("jidx_declared_customer");
+    }
+
+    /// <summary>
+    ///     <see cref="AutoCreate.None" /> refuses a missing JSON index. It could not while the index was
+    ///     invisible to the model — and that invisibility is what made the gap hard to notice, because
+    ///     the natural "did this work?" assertion passed over a database missing it.
+    /// </summary>
+    [Fact]
+    public async Task auto_create_none_refuses_a_missing_json_index()
+    {
+        if (!TestUtils.ConnectionSource.SupportsNativeJson) return;
+
+        // Build the table WITHOUT the declaration, so the JSON index is the only thing missing.
+        ConfigureStore(opts => { });
+        theStore.Options.Providers.GetProvider<DeclaredCustomer>();
+        await theStore.Database.ApplyAllConfiguredChangesToDatabaseAsync();
+
+        ConfigureWithJsonIndex(AutoCreate.None);
+
+        await Should.ThrowAsync<Exception>(
+            () => theStore.Database.AssertDatabaseMatchesConfigurationAsync());
+    }
+
+    /// <summary>
+    ///     A JSON index Polecat does NOT declare survives a migration. Modeling the declared ones must
+    ///     not turn the migration into "reconcile everything" — and this one is worth its own fact
+    ///     because a JSON index is the shape Weasel used to read as a zero-column phantom and drop
+    ///     (weasel#661).
+    /// </summary>
+    [Fact]
+    public async Task an_undeclared_json_index_survives_a_migration()
+    {
+        if (!TestUtils.ConnectionSource.SupportsNativeJson) return;
+
+        ConfigureStore(opts => { });
+        theStore.Options.Providers.GetProvider<DeclaredCustomer>();
+        await theStore.Database.ApplyAllConfiguredChangesToDatabaseAsync();
+
+        var table = $"{theStore.Options.DatabaseSchemaName}.pc_doc_declaredcustomer";
+
+        await using (var conn = new SqlConnection(TestUtils.ConnectionSource.ConnectionString))
+        {
+            await conn.OpenAsync(TestContext.Current.CancellationToken);
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = $"""
+                SET QUOTED_IDENTIFIER ON;
+                IF NOT EXISTS (SELECT 1 FROM sys.json_indexes WHERE object_id = OBJECT_ID('{table}'))
+                    CREATE JSON INDEX [jidx_user_added] ON {table} (data);
+                """;
+            await cmd.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+        }
+
+        await theStore.Database.ApplyAllConfiguredChangesToDatabaseAsync();
+
+        (await IndexNamesAsync("pc_doc_declaredcustomer")).ShouldContain("jidx_user_added");
+    }
+
+    /// <summary>
+    ///     Two JSON indexes on one table is refused with a message that says why, rather than one of
+    ///     them being silently dropped from the model — SQL Server allows only one per json column, so
+    ///     the second would fail at the database anyway, much further from the declaration.
+    /// </summary>
+    [Fact]
+    public void two_json_indexes_on_one_type_are_refused()
+    {
+        if (!TestUtils.ConnectionSource.SupportsNativeJson) return;
+
+        ConfigureStore(opts =>
+        {
+            opts.Schema.For<DeclaredCustomer>()
+                .JsonIndex(x => x.Code, i => i.IndexName = "jidx_one")
+                .JsonIndex(x => x.Id, i => i.IndexName = "jidx_two");
+        });
+
+        var ex = Should.Throw<InvalidOperationException>(() =>
+        {
+            theStore.Options.Providers.GetProvider<DeclaredCustomer>();
+            theStore.Advanced.ToDatabaseScript();
+        });
+
+        ex.Message.ShouldContain("only one JSON index");
+    }
+
     private async Task<List<string>> IndexNamesAsync(string tableName)
         => await NamesAsync($"""
             SELECT i.name FROM sys.indexes i
