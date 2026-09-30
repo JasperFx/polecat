@@ -181,16 +181,10 @@ internal class DocumentTableEnsurer
                 await ftCmd.ExecuteNonQueryAsync(token);
             }
 
-            // Native SQL Server 2025 JSON indexes (CREATE JSON INDEX) on the json data column.
-            foreach (var jsonIndex in provider.Mapping.JsonIndexes)
-            {
-                foreach (var statement in jsonIndex.ToDdlStatements(provider.Mapping))
-                {
-                    await using var jsonIndexCmd = conn.CreateCommand();
-                    jsonIndexCmd.CommandText = statement;
-                    await jsonIndexCmd.ExecuteNonQueryAsync(token);
-                }
-            }
+            // #685: JSON indexes are no longer rendered here. They are declared on DocumentTable
+            // (AddDeclaredJsonIndexes) and created by the Weasel migration above with everything else,
+            // so they now appear in the generated script, are compared by
+            // AssertDatabaseMatchesConfigurationAsync, and can be refused under AutoCreate.None.
 
             _ensured.TryAdd(docType, true);
         }

@@ -53,6 +53,7 @@ internal partial class DocumentTable
         AddVectorComputedColumns(mapping);
         AddDeclaredForeignKeys(mapping, includeForeignKeys);
         AddDeclaredIndexes(mapping);
+        AddDeclaredJsonIndexes(mapping);
     }
 
     /// <summary>
@@ -219,6 +220,64 @@ internal partial class DocumentTable
             {
                 Indexes.Add(definition);
             }
+        }
+    }
+
+    /// <summary>
+    ///     #685 — SQL Server 2025 <c>CREATE JSON INDEX</c> as a modeled schema object rather than raw
+    ///     DDL rendered at first use.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         The consequences #684 documented applied here unchanged while this was a rendered
+    ///         string: absent from <c>Advanced.ToDatabaseScript()</c> and <c>db-dump</c>, invisible to
+    ///         <c>AssertDatabaseMatchesConfigurationAsync()</c>, and unenforceable under
+    ///         <c>AutoCreate.None</c> — which cannot refuse what it cannot see.
+    ///     </para>
+    ///     <para>
+    ///         Weasel's <c>JsonIndexDefinition</c> (weasel#661) also fixed a bug on the way in: a JSON
+    ///         index IS in <c>sys.indexes</c> with <c>type_desc = 'JSON'</c>, but its
+    ///         <c>sys.index_columns</c> row carries <c>key_ordinal = 0</c>, so the ordinary read
+    ///         returned it with no columns and a migration dropped it as an extra. Polecat was shielded
+    ///         only by <c>CreateDeltaAsync</c> stripping unmodeled indexes, which is precisely the
+    ///         hand-maintained second description of the schema that never stays in sync.
+    ///     </para>
+    ///     <para>
+    ///         Only one JSON index can exist per <c>json</c> column, so a table has at most one — but
+    ///         the mapping is a collection, and a second declaration is a configuration error worth
+    ///         naming rather than silently dropping.
+    ///     </para>
+    /// </remarks>
+    private void AddDeclaredJsonIndexes(DocumentMapping mapping)
+    {
+        if (mapping.JsonIndexes.Count == 0) return;
+
+        if (mapping.JsonColumnType != "json")
+        {
+            throw new InvalidOperationException(
+                $"A JSON index on '{mapping.DocumentType.Name}' requires the native json column type. " +
+                "Set UseNativeJsonType = true (SQL Server 2025+), or use a computed-column Index(...) instead.");
+        }
+
+        if (mapping.JsonIndexes.Count > 1)
+        {
+            throw new InvalidOperationException(
+                $"'{mapping.DocumentType.Name}' declares {mapping.JsonIndexes.Count} JSON indexes, but SQL Server "
+                + "allows only one JSON index per json column. Combine the paths into a single JsonIndex(...).");
+        }
+
+        var jsonIndex = mapping.JsonIndexes[0];
+
+        var definition = new JsonIndexDefinition(jsonIndex.GetIndexName(mapping.TableName), "data")
+        {
+            JsonPaths = jsonIndex.JsonPaths,
+            OptimizeForArraySearch = jsonIndex.OptimizeForArraySearch,
+            FillFactor = jsonIndex.FillFactor
+        };
+
+        if (Indexes.All(x => !x.Name.EqualsIgnoreCase(definition.Name)))
+        {
+            Indexes.Add(definition);
         }
     }
 

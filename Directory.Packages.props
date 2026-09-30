@@ -939,9 +939,9 @@
                  distributors Weasel.SqlServer.AdvisoryLock; see the jasperfx#913/#916 note above.
                  Inherited, not yet consumed.
              The rest of the release is SQLite, MySQL and docs — no SQL Server dialect surface. -->
-        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.36.0" />
-        <PackageVersion Include="Weasel.SqlServer" Version="9.36.0" />
-        <PackageVersion Include="Weasel.Storage" Version="9.36.0" />
+        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.38.0" />
+        <PackageVersion Include="Weasel.SqlServer" Version="9.38.0" />
+        <PackageVersion Include="Weasel.Storage" Version="9.38.0" />
 
         <!-- Strongly typed IDs. Both generators are test-only: they prove Polecat's value-type id
              support against the two libraries Marten's ValueTypeTests exercise. StronglyTypedId emits

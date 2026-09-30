@@ -80,43 +80,11 @@ public class JsonIndex
     /// </summary>
     internal string GetIndexName(string tableName) => IndexName ?? $"jidx_{tableName}";
 
-    /// <summary>
-    ///     Generates the <c>CREATE JSON INDEX</c> DDL. Throws when the store isn't using the native
-    ///     json column type, since the statement is invalid against <c>nvarchar(max)</c> storage.
-    /// </summary>
-    internal string[] ToDdlStatements(DocumentMapping mapping)
-    {
-        if (mapping.JsonColumnType != "json")
-        {
-            throw new InvalidOperationException(
-                $"A JSON index on '{mapping.DocumentType.Name}' requires the native json column type. " +
-                "Set UseNativeJsonType = true (SQL Server 2025+), or use a computed-column Index(...) instead.");
-        }
-
-        var qualifiedTable = SqlEscaping.QualifiedName(mapping.DatabaseSchemaName, mapping.TableName);
-        var name = GetIndexName(mapping.TableName);
-
-        var forClause = JsonPaths.Length > 0
-            ? " FOR (" + string.Join(", ", JsonPaths.Select(p => SqlEscaping.Literal(p))) + ")"
-            : "";
-
-        var withOptions = new List<string>();
-        if (OptimizeForArraySearch) withOptions.Add("OPTIMIZE_FOR_ARRAY_SEARCH = ON");
-        if (FillFactor.HasValue) withOptions.Add($"FILLFACTOR = {FillFactor.Value}");
-        var withClause = withOptions.Count > 0 ? " WITH (" + string.Join(", ", withOptions) + ")" : "";
-
-        // CREATE JSON INDEX requires SET QUOTED_IDENTIFIER ON; set it explicitly so the statement is
-        // robust regardless of the caller's session options. Only one JSON index per json column is
-        // allowed, so existence is keyed on the table, not the index name.
-        return
-        [
-            $"""
-             SET QUOTED_IDENTIFIER ON;
-             IF NOT EXISTS (SELECT 1 FROM sys.json_indexes WHERE object_id = OBJECT_ID({SqlEscaping.Literal(qualifiedTable)}))
-                 CREATE JSON INDEX {SqlEscaping.QuoteIdentifier(name)} ON {qualifiedTable} (data){forClause}{withClause};
-             """
-        ];
-    }
+    // #685: ToDdlStatements is gone. The CREATE JSON INDEX grammar now lives in Weasel's
+    // JsonIndexDefinition (weasel#661) and is declared on DocumentTable, so there is ONE description
+    // of this object rather than a rendered string beside a model that could not see it. The native
+    // json column type is still required, and DocumentTable.AddDeclaredJsonIndexes is where that is
+    // now checked.
 
     /// <summary>
     ///     Resolves a lambda to the JSON paths to index — a single (possibly nested) member or an
