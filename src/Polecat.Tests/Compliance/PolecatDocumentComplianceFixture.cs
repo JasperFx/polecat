@@ -4,6 +4,7 @@ using JasperFx.Events.ComplianceTests;
 using JasperFx.Events.Documents;
 using Microsoft.Data.SqlClient;
 using Polecat.Linq;
+using JasperFx.Documents;
 using Polecat.Storage;
 using Polecat.TestUtils;
 
@@ -104,6 +105,42 @@ public class PolecatDocumentComplianceFixture : DocumentStorageComplianceFixture
         foreach (var listener in config.CommitListeners)
         {
             options.CommitListeners.Add(listener);
+        }
+
+        // #706 / jasperfx#870: soft deletes and hierarchies, declared by the suite because the
+        // diagnostics contract defines what each means and neither can be inferred from a document
+        // type alone. Replayed onto the store's own configuration rather than emulated, so the facts
+        // exercise Polecat's real soft-delete and sub-class behaviour.
+        // Both of Polecat's declaration surfaces are generic in the document type, and the suite hands
+        // these over as runtime Types, so the generic methods are closed here. Deliberately the real
+        // fluent APIs rather than a fixture-only shortcut: the point of the facts is that Polecat's own
+        // soft-delete and sub-class behaviour satisfies the contract.
+        // #706: DECLARE every document type the suite names, not just create its table. Polecat maps a
+        // document type lazily on first use, so a type that had only had its storage ensured was
+        // absent from DocumentTypesAsync -- which is the fresh-boot state a console actually sees, and
+        // the reason MaterializeMappings forces materialization at all. Declaring is the faithful
+        // replay of "this store has these document types".
+        var schemaForDeclaration = options.Schema.GetType().GetMethod(nameof(options.Schema.For))!;
+        foreach (var documentType in config.DocumentTypes)
+        {
+            schemaForDeclaration.MakeGenericMethod(documentType).Invoke(options.Schema, []);
+        }
+
+        var forDocument = typeof(StorePolicies).GetMethod(nameof(StorePolicies.ForDocument))!;
+        foreach (var softDeleted in config.SoftDeletedDocuments)
+        {
+            forDocument.MakeGenericMethod(softDeleted)
+                .Invoke(options.Policies, [new Action<DocumentPolicy>(p => p.SoftDeleted = true)]);
+        }
+
+        var schemaFor = options.Schema.GetType().GetMethod(nameof(options.Schema.For))!;
+        foreach (var declaration in config.SubClasses)
+        {
+            var expression = schemaFor.MakeGenericMethod(declaration.Root).Invoke(options.Schema, [])!;
+            expression.GetType()
+                .GetMethod(nameof(DocumentMappingExpression<object>.AddSubClass),
+                    [typeof(Type), typeof(string)])!
+                .Invoke(expression, [declaration.SubClass, null]);
         }
 
         // #592 / jasperfx#819: the Guid optimistic-concurrency declaration, replayed as a CHECK
@@ -257,6 +294,36 @@ public class PolecatDocumentComplianceFixture : DocumentStorageComplianceFixture
     /// </summary>
     public override bool SupportsConjoinedDocuments => true;
 
+    // ── #706 / #708: the document diagnostics contract (jasperfx#870, jasperfx#928) ──────────────
+
+    public override bool SupportsDocumentDiagnostics => true;
+
+    public override IDocumentStoreDiagnostics DocumentDiagnostics
+        => (IDocumentStoreDiagnostics)RequireStore();
+
+    public override bool SupportsDocumentDiagnosticWrites => true;
+
+    public override IDocumentStoreDiagnosticsWriter DocumentDiagnosticsWriter
+        => new PolecatDocumentDiagnosticsWriter(RequireStore());
+
+    public override bool SupportsSoftDeletedDocuments => true;
+
+    public override bool SupportsDocumentHierarchies => true;
+
+    /// <summary>
+    ///     #708 / jasperfx#928: an explicit all-tenants scope. True because this fixture's store is
+    ///     conjoined and single-database, where AllTenants simply drops the tenant predicate.
+    /// </summary>
+    public override bool SupportsDocumentDiagnosticAllTenants => true;
+
+    /// <summary>
+    ///     FALSE deliberately, and the suite asserts the REFUSAL rather than skipping: Polecat does not
+    ///     translate Dynamic LINQ into its own IQueryable yet (jasperfx#869), so Where / OrderBy throw
+    ///     DocumentCriteriaNotSupportedException. Returning the unfiltered page instead is the one
+    ///     answer a console cannot tell apart from a filter that matched everything.
+    /// </summary>
+    public override bool SupportsDocumentDiagnosticCriteria => false;
+
     /// <summary>
     ///     Polecat spells the escapes as operators on the queryable —
     ///     <c>Query&lt;T&gt;().AnyTenant()</c> and <c>.TenantIsOneOf(...)</c> in
@@ -303,7 +370,13 @@ public class PolecatDocumentComplianceFixture : DocumentStorageComplianceFixture
     private static async Task<IReadOnlyList<T>> MaterializeAsync<T>(IQueryable<T> queryable, CancellationToken token)
         => await PolecatQueryableExtensions.ToListAsync(queryable, token);
 
-    public override IDocumentSessionFactory Sessions =>
+    public override IDocumentSessionFactory Sessions => RequireStore();
+
+    /// <summary>
+    ///     The configured store, or a clear failure. The diagnostics members below read it too, and a
+    ///     null-reference out of a fixture property is a far worse first symptom than this.
+    /// </summary>
+    private DocumentStore RequireStore() =>
         _store ?? throw new InvalidOperationException("The store has not been configured yet.");
 
     public override async Task CleanDocumentDataAsync()

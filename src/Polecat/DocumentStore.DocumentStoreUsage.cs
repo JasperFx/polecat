@@ -36,10 +36,17 @@ public partial class DocumentStore : IDocumentStoreUsageSource
             StoreName = Options.StoreName,
             DatabaseSchemaName = Options.DatabaseSchemaName,
             AutoCreateSchemaObjects = Options.AutoCreateSchemaObjects.ToString(),
-            // Polecat's serializer-resident EnumStorage isn't exposed at the
-            // store level today; default to AsInteger for parity with the
-            // typical configuration.
-            EnumStorage = "AsInteger",
+
+            // #706: read from the serializer rather than hard-coded. This said "AsInteger" whatever
+            // the store was actually configured with -- so a console reading the descriptor to
+            // interpret stored JSON was told the wrong thing for every store using string enums, and
+            // told it confidently. The serializer has exposed both of these all along; the descriptor
+            // simply never asked. Falls back only for a custom ISerializer, which genuinely cannot be
+            // interrogated.
+            EnumStorage = (Options.Serializer as Serialization.Serializer)?.EnumStorage.ToString()
+                          ?? "AsInteger",
+            SerializerCasing = (Options.Serializer as Serialization.Serializer)?.Casing.ToString()
+                               ?? "CamelCase"
         };
 
         // Polecat doesn't have a parallel set of code-generation properties on
@@ -147,6 +154,37 @@ public partial class DocumentStore : IDocumentStoreUsageSource
             PartitioningStrategy = PartitioningStrategyName(mapping.Partitioning),
             Partitioning = BuildPartitioning(mapping.Partitioning),
             Ddl = ddl,
+
+            // #706 / jasperfx#870: the indexes and duplicated columns in STRUCTURED form, so a console
+            // can say whether a filter on a member can use an index without parsing Ddl. Both come
+            // from the same DocumentIndex declarations the table is built from, which is what keeps
+            // them from drifting from the schema they describe.
+            Indexes = mapping.Indexes.Select(index => new DocumentIndexDescriptor
+            {
+                Name = index.GetIndexName(mapping.TableName),
+                IsUnique = index.IsUnique,
+                Predicate = index.Predicate,
+                Members = index.JsonPaths.ToArray(),
+                Columns = index.JsonPaths
+                    .Select(path => Storage.DocumentIndex.ColumnNameForPath(path, index.Casing))
+                    .ToArray()
+            }).ToList(),
+
+            // A Polecat index's persisted computed column IS the duplicated field: it lifts a JSON
+            // member into a real column, which is exactly what a console needs to know to predict
+            // whether a filter reads a column or the JSON body.
+            DuplicatedFields = mapping.Indexes
+                .SelectMany(index => index.JsonPaths.Select(path => new DuplicatedFieldDescriptor
+                {
+                    MemberPath = path,
+                    ColumnName = Storage.DocumentIndex.ColumnNameForPath(path, index.Casing),
+                    DbType = index.SqlTypeByPath.TryGetValue(path, out var sqlType)
+                        ? sqlType
+                        : string.Empty
+                }))
+                .GroupBy(x => x.ColumnName, StringComparer.OrdinalIgnoreCase)
+                .Select(g => g.First())
+                .ToList(),
         };
     }
 

@@ -156,6 +156,12 @@ public static class PolecatServiceCollectionExtensions
         services.AddSingleton<JasperFx.Documents.IDocumentStoreDiagnostics>(sp =>
             (JasperFx.Documents.IDocumentStoreDiagnostics)sp.GetRequiredService<IDocumentStore>());
 
+        // #706 / jasperfx#870: the WRITE sibling, registered beside the reader so a console that can
+        // browse can also correct. Separate interface and separate registration on purpose -- a host
+        // that wants a read-only console removes this one line.
+        services.AddSingleton<JasperFx.Documents.IDocumentStoreDiagnosticsWriter>(sp =>
+            new PolecatDocumentDiagnosticsWriter((DocumentStore)sp.GetRequiredService<IDocumentStore>()));
+
         // #594 / jasperfx#825 -- the store-derived Event Model rung. One SlicePattern.View slice per
         // registered projection: the document it produces, the projection type, and every event its
         // Apply / Create / Evolve methods take.

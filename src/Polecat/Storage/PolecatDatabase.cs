@@ -397,9 +397,11 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
                 await conn.OpenAsync(ct);
 
                 await using var cmd = conn.CreateCommand();
+                // #705 / jasperfx#924: last_updated comes back on BOTH shapes and sits last, after the
+                // optional extended block, so the ordinals of everything already read stay put.
                 var columns = events.EnableExtendedProgressionTracking
-                    ? "name, last_seq_id, heartbeat, agent_status, pause_reason, running_on_node, warning_behind_threshold, critical_behind_threshold, failure_category, failure_event_sequence, failure_event_type, failure_event_tenant_id"
-                    : "name, last_seq_id";
+                    ? "name, last_seq_id, heartbeat, agent_status, pause_reason, running_on_node, warning_behind_threshold, critical_behind_threshold, failure_category, failure_event_sequence, failure_event_type, failure_event_tenant_id, last_updated"
+                    : "name, last_seq_id, last_updated";
 
                 if (tenant == null)
                 {
@@ -429,6 +431,16 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
 
                     var seq = reader.GetInt64(1);
                     var shardState = new ShardState(name, seq);
+
+                    // #705 — LIVENESS, not progress: the progression row's own last_updated. Without it a
+                    // monitor reading AllProjectionProgress cannot tell "caught up, no new events" from
+                    // "no longer maintained" (CritterWatch#1359). The ordinal differs by shape, hence the
+                    // conditional rather than a fixed index.
+                    var lastUpdatedOrdinal = events.EnableExtendedProgressionTracking ? 12 : 2;
+                    if (!reader.IsDBNull(lastUpdatedOrdinal))
+                    {
+                        shardState.LastUpdated = reader.GetDateTimeOffset(lastUpdatedOrdinal);
+                    }
 
                     if (events.EnableExtendedProgressionTracking)
                     {
@@ -542,9 +554,10 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
                 await conn.OpenAsync(ct);
 
                 await using var cmd = conn.CreateCommand();
+                // #705: last_updated last on both shapes, so existing ordinals do not move.
                 cmd.CommandText = events.EnableExtendedProgressionTracking
-                    ? $"SELECT last_seq_id, heartbeat, agent_status FROM {events.ProgressionTableName} WHERE name = @name;"
-                    : $"SELECT last_seq_id FROM {events.ProgressionTableName} WHERE name = @name;";
+                    ? $"SELECT last_seq_id, heartbeat, agent_status, last_updated FROM {events.ProgressionTableName} WHERE name = @name;"
+                    : $"SELECT last_seq_id, last_updated FROM {events.ProgressionTableName} WHERE name = @name;";
                 cmd.Parameters.AddVarChar("@name", lookupName);
 
                 await using var reader = await cmd.ExecuteReaderAsync(ct);
@@ -563,7 +576,15 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
                     if (!reader.IsDBNull(2)) agentStatus = reader.GetString(2);
                 }
 
-                return new ProjectionProgressRow(projName, tenant, seq, agentStatus, heartbeat);
+                var lastUpdatedOrdinal = events.EnableExtendedProgressionTracking ? 3 : 1;
+                DateTimeOffset? lastUpdated = reader.IsDBNull(lastUpdatedOrdinal)
+                    ? null
+                    : reader.GetDateTimeOffset(lastUpdatedOrdinal);
+
+                return new ProjectionProgressRow(projName, tenant, seq, agentStatus, heartbeat)
+                {
+                    LastUpdated = lastUpdated
+                };
             }, (_connectionString, _events, projectionName, tenantId, name), token);
         }
         catch (Exception e) when (MissingStorageDetection.IsMissingStorage(e))
@@ -593,9 +614,10 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
                 await conn.OpenAsync(ct);
 
                 await using var cmd = conn.CreateCommand();
+                // #705: last_updated last on both shapes, so existing ordinals do not move.
                 cmd.CommandText = events.EnableExtendedProgressionTracking
-                    ? $"SELECT last_seq_id, heartbeat, agent_status FROM {events.ProgressionTableName} WHERE name = @name;"
-                    : $"SELECT last_seq_id FROM {events.ProgressionTableName} WHERE name = @name;";
+                    ? $"SELECT last_seq_id, heartbeat, agent_status, last_updated FROM {events.ProgressionTableName} WHERE name = @name;"
+                    : $"SELECT last_seq_id, last_updated FROM {events.ProgressionTableName} WHERE name = @name;";
                 cmd.Parameters.AddVarChar("@name", shard.Identity);
 
                 await using var reader = await cmd.ExecuteReaderAsync(ct);
@@ -614,7 +636,15 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
                     if (!reader.IsDBNull(2)) agentStatus = reader.GetString(2);
                 }
 
-                return new ProjectionProgressRow(shard.Name, shard.TenantId, seq, agentStatus, heartbeat);
+                var lastUpdatedOrdinal = events.EnableExtendedProgressionTracking ? 3 : 1;
+                DateTimeOffset? lastUpdated = reader.IsDBNull(lastUpdatedOrdinal)
+                    ? null
+                    : reader.GetDateTimeOffset(lastUpdatedOrdinal);
+
+                return new ProjectionProgressRow(shard.Name, shard.TenantId, seq, agentStatus, heartbeat)
+                {
+                    LastUpdated = lastUpdated
+                };
             }, (_connectionString, _events, name), token);
         }
         catch (Exception e) when (MissingStorageDetection.IsMissingStorage(e))
