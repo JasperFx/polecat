@@ -50,7 +50,7 @@ public interface ITenancy
     ///     implementation knows.
     ///     </para>
     /// </remarks>
-    ValueTask<DatabaseUsage> DescribeDatabasesAsync(CancellationToken token = default)
+    async ValueTask<DatabaseUsage> DescribeDatabasesAsync(CancellationToken token = default)
     {
         var databases = AllDatabases();
 
@@ -65,18 +65,29 @@ public interface ITenancy
                 ? databases[0]
                 : GetDatabase(DefaultTenantId);
 
-            return new ValueTask<DatabaseUsage>(new DatabaseUsage
+            return new DatabaseUsage
             {
                 Cardinality = DatabaseCardinality.Single,
-                MainDatabase = main.Describe()
-            });
+                // #703: DescribeAsync, not Describe. A conjoined store that sequences events per
+                // tenant IS single-database, so its tenants can only ever be reported here — and a
+                // Wolverine-managed host reads them off this descriptor to decide whether to fan a
+                // shard out per tenant. Describe() cannot fill them: the list lives in
+                // pc_tenant_partitions, so answering takes a round trip.
+                MainDatabase = await main.DescribeAsync(token).ConfigureAwait(false)
+            };
         }
 
-        return new ValueTask<DatabaseUsage>(new DatabaseUsage
+        var described = new List<DatabaseDescriptor>(databases.Count);
+        foreach (var database in databases)
+        {
+            described.Add(await database.DescribeAsync(token).ConfigureAwait(false));
+        }
+
+        return new DatabaseUsage
         {
             Cardinality = Cardinality,
-            Databases = databases.Select(x => x.Describe()).ToList()
-        });
+            Databases = described
+        };
     }
 
     /// <summary>
@@ -120,12 +131,20 @@ internal class DefaultTenancy : ITenancy
     public Task<IReadOnlyList<PolecatDatabase>> BuildDatabasesAsync(CancellationToken token = default) =>
         Task.FromResult(AllDatabases());
 
-    public ValueTask<DatabaseUsage> DescribeDatabasesAsync(CancellationToken token = default) =>
-        new(new DatabaseUsage
+    /// <summary>
+    ///     #703: DescribeAsync, not Describe. A conjoined store that sequences events per tenant is
+    ///     single-database, so this override is the ONLY place its tenants can be reported — and a
+    ///     Wolverine-managed host reads them off here to decide whether to fan a shard out per tenant.
+    ///     Answering takes a round trip (the list lives in pc_tenant_partitions), which is why the
+    ///     synchronous Describe() cannot do it and why this override existed as a gap rather than as a
+    ///     deliberate simplification.
+    /// </summary>
+    public async ValueTask<DatabaseUsage> DescribeDatabasesAsync(CancellationToken token = default) =>
+        new()
         {
             Cardinality = DatabaseCardinality.Single,
-            MainDatabase = _database.Describe()
-        });
+            MainDatabase = await _database.DescribeAsync(token).ConfigureAwait(false)
+        };
 
     // DefaultTenancy is only ever constructed FROM the store's connection string, so it has nothing
     // to seed back.
