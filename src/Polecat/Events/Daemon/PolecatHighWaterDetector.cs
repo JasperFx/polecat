@@ -78,6 +78,11 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
 
         if (stats.CurrentMark == stats.HighestSequence)
         {
+            // #705: THE idle path, and the one that matters for liveness. Caught up is exactly the
+            // state a monitor cannot otherwise distinguish from abandoned, so the row is re-stamped
+            // here rather than returned untouched. Everything below this point has, by definition,
+            // found work to do.
+            await MarkHighWaterAsync(stats.CurrentMark, token);
             return stats;
         }
 
@@ -93,10 +98,17 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
             stats.CurrentMark = maxSeqId.Value;
         }
 
-        if (stats.HasChanged)
-        {
-            await MarkHighWaterAsync(stats.CurrentMark, token);
-        }
+        // #705 / jasperfx#924 — UNCONDITIONAL, where this used to be `if (stats.HasChanged)`.
+        // ShardState.LastUpdated is liveness, not progress: a monitor has to be able to tell "caught
+        // up, no new events" from "no longer maintained", and a row only rewritten when the mark moves
+        // says nothing on an idle store. So every completed detection cycle re-stamps last_updated,
+        // and the mark it writes is simply the one it just computed — unchanged when nothing arrived.
+        //
+        // The cost is one small single-row MERGE per detection cycle on an otherwise idle store, at
+        // DaemonSettings.SlowPollingTime (1s by default). That is the price of the field meaning
+        // anything at all; a store that skips the write has a LastUpdated that ages exactly like a
+        // dead one.
+        await MarkHighWaterAsync(stats.CurrentMark, token);
 
         return stats;
     }
@@ -107,6 +119,11 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
 
         if (stats.CurrentMark == stats.HighestSequence)
         {
+            // #705: THE idle path, and the one that matters for liveness. Caught up is exactly the
+            // state a monitor cannot otherwise distinguish from abandoned, so the row is re-stamped
+            // here rather than returned untouched. Everything below this point has, by definition,
+            // found work to do.
+            await MarkHighWaterAsync(stats.CurrentMark, token);
             return stats;
         }
 
@@ -142,10 +159,17 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
             stats.CurrentMark = maxSeqId.Value;
         }
 
-        if (stats.HasChanged)
-        {
-            await MarkHighWaterAsync(stats.CurrentMark, token);
-        }
+        // #705 / jasperfx#924 — UNCONDITIONAL, where this used to be `if (stats.HasChanged)`.
+        // ShardState.LastUpdated is liveness, not progress: a monitor has to be able to tell "caught
+        // up, no new events" from "no longer maintained", and a row only rewritten when the mark moves
+        // says nothing on an idle store. So every completed detection cycle re-stamps last_updated,
+        // and the mark it writes is simply the one it just computed — unchanged when nothing arrived.
+        //
+        // The cost is one small single-row MERGE per detection cycle on an otherwise idle store, at
+        // DaemonSettings.SlowPollingTime (1s by default). That is the price of the field meaning
+        // anything at all; a store that skips the write has a LastUpdated that ages exactly like a
+        // dead one.
+        await MarkHighWaterAsync(stats.CurrentMark, token);
 
         return stats;
     }

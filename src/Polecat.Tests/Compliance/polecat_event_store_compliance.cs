@@ -114,3 +114,19 @@ public class polecat_guid_optimistic_concurrency_compliance
 
 public class polecat_document_search_compliance
     : DocumentSearchCompliance<PolecatDocumentComplianceFixture>;
+
+/*
+ * #706 / #708 — the document diagnostics contract (jasperfx#870, jasperfx#928).
+ *
+ * A DOCUMENT suite, so it is enrolled here beside the other document suites rather than in a wave
+ * file, following GuidOptimisticConcurrencyCompliance (#592): its fixture is
+ * PolecatDocumentComplianceFixture and it shares nothing with the event-sourcing wave it arrived in.
+ *
+ * jasperfx#870 recorded that all three stores disagreed on every one of these semantics, and named
+ * five Polecat was on the wrong side of: soft-deleted rows returned as live, every sub-class returned
+ * for a request naming one, all tenants returned when none was asked for, ids matched by casting the
+ * column to text (which cannot use the primary key), and a hard-coded EnumStorage in the descriptor.
+ * They are fixed together because the suite asserts them together.
+ */
+public class polecat_document_store_diagnostics_compliance
+    : DocumentStoreDiagnosticsCompliance<PolecatDocumentComplianceFixture>;

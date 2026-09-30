@@ -473,6 +473,19 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
     // .ProjectionScenario and exposes it on Advanced.EventProjectionScenario.
     public override bool SupportsProjectionScenario => true;
 
+    /// <summary>
+    ///     #704 / jasperfx#917 — the composite builder can add an arbitrary projection to a stage, so
+    ///     the async phantom-deletion fact can put a recorder in stage 2.
+    /// </summary>
+    public override bool SupportsAddingProjectionsToComposites => true;
+
+    /// <summary>
+    ///     #705 / jasperfx#924 — AllProjectionProgress carries each row's own last_updated, and the
+    ///     high-water detector re-stamps it on every cycle so the value is liveness rather than a
+    ///     second copy of progress.
+    /// </summary>
+    public override bool SupportsProgressionLastUpdated => true;
+
     /// <remarks>
     ///     A FORWARD into Polecat's own documented entry point, deliberately not a re-implementation.
     ///     The three lines behind EventProjectionScenario (construct, configure, ExecuteAsync) are
@@ -767,6 +780,15 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
 
         public void Snapshot<TDoc>(int stageNumber) where TDoc : notnull
             => _composite.Snapshot<TDoc>(stageNumber);
+
+        /// <summary>
+        ///     #704 / jasperfx#917 — add an arbitrary projection to a composite stage, which the async
+        ///     phantom-deletion fact needs for its stage-2 recorder. The upstream member has a THROWING
+        ///     default, so leaving it unimplemented would have surfaced as a failed fact rather than a
+        ///     compile error.
+        /// </summary>
+        public void Add(ProjectionBase projection, int stageNumber)
+            => _composite.Add((IProjectionSource<IDocumentSession, IQuerySession>)projection, stageNumber);
     }
 
     internal class PolecatComplianceBatch : IComplianceBatch

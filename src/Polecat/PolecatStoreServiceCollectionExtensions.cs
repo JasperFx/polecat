@@ -94,6 +94,12 @@ public static class PolecatStoreServiceCollectionExtensions
         services.AddSingleton<JasperFx.Documents.IDocumentStoreDiagnostics>(sp =>
             (JasperFx.Documents.IDocumentStoreDiagnostics)sp.GetRequiredService<T>());
 
+        // #706: each ancillary store gets its OWN writer. A console targets one by its Subject, which
+        // is that store's database uri, so a single shared writer would silently write to the wrong
+        // store whenever more than one is registered.
+        services.AddSingleton<JasperFx.Documents.IDocumentStoreDiagnosticsWriter>(sp =>
+            new PolecatDocumentDiagnosticsWriter((DocumentStore)(object)sp.GetRequiredService<T>()));
+
         // #594 / jasperfx#825: an ancillary store's projections are View slices too, and its own
         // registration is the only place that knows the marker type they hang off.
         //
