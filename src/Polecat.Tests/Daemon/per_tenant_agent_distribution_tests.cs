@@ -141,6 +141,94 @@ public class per_tenant_agent_distribution_tests : IAsyncLifetime
         sets.SelectMany(x => x.Names).Count().ShouldBe(1);
     }
 
+    /// <summary>
+    ///     #703 — the usage DESCRIPTOR has to list the tenants too, not just the distributor.
+    /// </summary>
+    /// <remarks>
+    ///     A host using Wolverine-managed distribution never runs Polecat's own
+    ///     <c>ProjectionCoordinator</c>, so #700's fan-out does not reach it. Wolverine's
+    ///     <c>EventStoreAgents.SupportedAgentsAsync</c> instead gates on
+    ///     <c>DistributesAgentsPerTenant &amp;&amp; database.TenantIds.Count > 0</c>, reading the ids
+    ///     off this descriptor — so an empty list is indistinguishable from a store that does not
+    ///     partition, and only the store-global agent starts.
+    /// </remarks>
+    [Fact]
+    public async Task the_usage_descriptor_lists_the_tenants_it_distributes_over()
+    {
+        var token = TestContext.Current.CancellationToken;
+
+        using var store = CreateStore(partitioned: true);
+        await store.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: token);
+
+        foreach (var tenant in Tenants)
+        {
+            await AppendAsync(store, tenant);
+        }
+
+        // Control: the store knows its tenants. This is what the rebuild path already read, so a
+        // failure below is the descriptor's alone.
+        (await store.Database.FindRebuildTenantsAsync("QuestParty", token))
+            .OrderBy(x => x).ShouldBe(["Blue", "Green", "Red"]);
+
+        var eventStore = (IEventStore)store;
+        eventStore.DistributesAgentsPerTenant.ShouldBeTrue();
+
+        var usage = await eventStore.TryCreateUsage(token);
+
+        DescribedTenants(usage!).ShouldBe(["Blue", "Green", "Red"],
+            "the descriptor must list the tenants, or a Wolverine-managed host starts only the store-global agent");
+    }
+
+    /// <summary>
+    ///     A tenant's partition exists only once it has appended, so the descriptor cannot be a
+    ///     startup snapshot. Onboarding is the normal case, not an edge one.
+    /// </summary>
+    [Fact]
+    public async Task the_descriptor_picks_up_a_tenant_onboarded_later()
+    {
+        var token = TestContext.Current.CancellationToken;
+
+        using var store = CreateStore(partitioned: true);
+        await store.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: token);
+
+        await AppendAsync(store, "Red");
+
+        var eventStore = (IEventStore)store;
+        DescribedTenants((await eventStore.TryCreateUsage(token))!).ShouldBe(["Red"]);
+
+        await AppendAsync(store, "Blue");
+
+        DescribedTenants((await eventStore.TryCreateUsage(token))!)
+            .ShouldBe(["Blue", "Red"], "a descriptor read after onboarding must include the new tenant");
+    }
+
+    /// <summary>
+    ///     The negative control. A store that does not sequence events per tenant has no partitioned
+    ///     tenants, and must not start claiming tenant ids it cannot distribute over — that would make
+    ///     a Wolverine host fan out agents for a store whose daemon would then refuse the
+    ///     tenant-bearing shard names.
+    /// </summary>
+    [Fact]
+    public async Task a_store_without_per_tenant_sequencing_describes_no_tenants()
+    {
+        var token = TestContext.Current.CancellationToken;
+
+        using var store = CreateStore(partitioned: false);
+        await store.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: token);
+
+        await AppendAsync(store, "Red");
+        await AppendAsync(store, "Blue");
+
+        DescribedTenants((await ((IEventStore)store).TryCreateUsage(token))!).ShouldBeEmpty();
+    }
+
+    private static List<string> DescribedTenants(JasperFx.Events.Descriptors.EventStoreUsage usage)
+        => (usage.Database.MainDatabase?.TenantIds ?? [])
+            .Concat(usage.Database.Databases.SelectMany(x => x.TenantIds))
+            .Distinct()
+            .OrderBy(x => x)
+            .ToList();
+
     private static async Task AppendAsync(DocumentStore store, string tenant)
     {
         await using var session = store.LightweightSession(new SessionOptions { TenantId = tenant });

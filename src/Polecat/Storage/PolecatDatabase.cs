@@ -689,8 +689,31 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
     ///     has a partition). Returns empty when per-tenant partitioning is off. Mirrors Marten's
     ///     <c>MartenDatabase.FindRebuildTenantsAsync</c>.
     /// </summary>
-    public async Task<IReadOnlyList<string>> FindRebuildTenantsAsync(string projectionName,
+    public Task<IReadOnlyList<string>> FindRebuildTenantsAsync(string projectionName,
         CancellationToken token)
+        => PartitionedTenantIdsAsync(token);
+
+    /// <summary>
+    ///     Every tenant partitioned into this database, from the <c>pc_tenant_partitions</c> registry.
+    ///     Empty when the store does not sequence events per tenant, because then there are no
+    ///     partitioned tenants — not because the answer is unknown.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         Two callers with the same question, which is why this is its own method rather than
+    ///         something <see cref="FindRebuildTenantsAsync" /> owns: the rebuild path asks "which
+    ///         tenants do I replay", and <see cref="DescribeAsync" /> asks "which tenants do I tell a
+    ///         monitoring tool about". <c>FindRebuildTenantsAsync</c> takes a projection name it has
+    ///         never used, so making the descriptor call it would have meant passing a projection name
+    ///         that means nothing.
+    ///     </para>
+    ///     <para>
+    ///         Guarded on the table existing. This is reached from the descriptor, which a host can
+    ///         build before any schema has been created — and #677's lesson was that a diagnostic read
+    ///         should answer "nothing to report" rather than throw.
+    ///     </para>
+    /// </remarks>
+    public async Task<IReadOnlyList<string>> PartitionedTenantIdsAsync(CancellationToken token = default)
     {
         if (!_events.UseTenantPartitionedEvents) return [];
 
@@ -703,7 +726,10 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
             await conn.OpenAsync(ct);
 
             await using var cmd = conn.CreateCommand();
-            cmd.CommandText = $"SELECT tenant_id FROM {tenantPartitionsTable} ORDER BY tenant_id;";
+            cmd.CommandText = $"""
+                IF OBJECT_ID('{tenantPartitionsTable}', 'U') IS NOT NULL
+                SELECT tenant_id FROM {tenantPartitionsTable} ORDER BY tenant_id;
+                """;
 
             await using var reader = await cmd.ExecuteReaderAsync(ct);
             while (await reader.ReadAsync(ct))
@@ -713,6 +739,38 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
 
             return (IReadOnlyList<string>)tenants;
         }, (_connectionString, _events.TenantPartitionsTableName), token);
+    }
+
+    /// <summary>
+    ///     #703 — <see cref="Describe" /> plus the tenants partitioned into this database.
+    /// </summary>
+    /// <remarks>
+    ///     Wolverine's <c>EventStoreAgents.SupportedAgentsAsync</c> fans a shard out per tenant only
+    ///     when <c>DistributesAgentsPerTenant &amp;&amp; database.TenantIds.Count > 0</c>, and it reads
+    ///     those ids off this descriptor rather than from the distributor. So on a Wolverine-managed
+    ///     host an empty <c>TenantIds</c> is indistinguishable from a store that does not partition at
+    ///     all: only the store-global agent starts, and no tenant's async projections ever advance.
+    ///     polecat#700 wired the fan-out into Polecat's OWN coordinator, which such a host does not
+    ///     run — hence a second consumer needing the same answer.
+    ///     <para>
+    ///         Asynchronous, and re-read on every call, because a tenant's partition exists only once
+    ///         that tenant has appended. A descriptor snapshotted at startup would omit every tenant
+    ///         onboarded afterwards, which is the normal case rather than an edge one.
+    ///     </para>
+    /// </remarks>
+    public async ValueTask<DatabaseDescriptor> DescribeAsync(CancellationToken token = default)
+    {
+        var descriptor = Describe();
+
+        foreach (var tenantId in await PartitionedTenantIdsAsync(token).ConfigureAwait(false))
+        {
+            if (!descriptor.TenantIds.Contains(tenantId))
+            {
+                descriptor.TenantIds.Add(tenantId);
+            }
+        }
+
+        return descriptor;
     }
 
     public async Task StoreDeadLetterEventAsync(object storage, DeadLetterEvent deadLetterEvent,
