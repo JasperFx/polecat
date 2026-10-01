@@ -336,13 +336,13 @@ internal partial class QuerySession : IQuerySession, JasperFx.Events.IEventTenan
     }
 
     public async Task<IReadOnlyList<T>> LoadManyAsync<T>(IEnumerable<Guid> ids, CancellationToken token = default)
-        where T : class
+        where T : notnull
     {
         return await LoadManyInternalAsync<T>(ids.Cast<object>().ToList(), token);
     }
 
     public async Task<IReadOnlyList<T>> LoadManyAsync<T>(IEnumerable<string> ids, CancellationToken token = default)
-        where T : class
+        where T : notnull
     {
         return await LoadManyInternalAsync<T>(ids.Cast<object>().ToList(), token);
     }
@@ -377,7 +377,7 @@ internal partial class QuerySession : IQuerySession, JasperFx.Events.IEventTenan
     /// </summary>
     internal async Task<IReadOnlyList<T>> LoadManyForTenantAsync<T>(
         List<object> ids, string tenantId, Weasel.Storage.IStorageSession state, CancellationToken token)
-        where T : class
+        where T : notnull
     {
         assertNotDisposed();
         if (ids.Count == 0) return [];
@@ -391,7 +391,7 @@ internal partial class QuerySession : IQuerySession, JasperFx.Events.IEventTenan
     }
 
     protected virtual async Task<IReadOnlyList<T>> LoadManyInternalAsync<T>(
-        List<object> ids, CancellationToken token) where T : class
+        List<object> ids, CancellationToken token) where T : notnull
     {
         assertNotDisposed();
         if (ids.Count == 0) return [];

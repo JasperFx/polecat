@@ -194,12 +194,33 @@ public interface IQuerySession : IAsyncDisposable, IDocumentReadOperations
     /// <summary>
     ///     Load multiple documents by their ids.
     /// </summary>
-    Task<IReadOnlyList<T>> LoadManyAsync<T>(IEnumerable<Guid> ids, CancellationToken token = default) where T : class;
+    /// <remarks>
+    ///     ⚠️ The <c>notnull</c> constraint is load-bearing, not tidying, and it has to stay equal to
+    ///     the contract's. jasperfx#930 added
+    ///     <see cref="IDocumentReadOperations.LoadManyAsync{T}(IEnumerable{Guid},CancellationToken)" />
+    ///     — same name, same parameters, <c>where T : notnull</c> — carrying a correct but unbatched
+    ///     default that loads one document per round trip. C# requires an implementing method's
+    ///     constraints to match the interface member's exactly, so while this read <c>where T : class</c>
+    ///     Polecat's own batched <c>OPENJSON(@ids)</c> load did not satisfy it: CS0425 on every session
+    ///     type, a compile error rather than a silent fallback. Matching the constraint is what makes
+    ///     one method satisfy this interface and the contract both, so a caller holding the session as
+    ///     <see cref="IDocumentReadOperations" /> gets the single round trip. The silent variant of this
+    ///     trap, which Polecat is not exposed to today, is a store whose own <c>LoadManyAsync</c>
+    ///     differs in its PARAMETERS (Marten's takes no token): nothing collides, nothing warns, and
+    ///     every such call quietly loads one document at a time.
+    /// </remarks>
+    new Task<IReadOnlyList<T>> LoadManyAsync<T>(IEnumerable<Guid> ids, CancellationToken token = default)
+        where T : notnull;
 
     /// <summary>
     ///     Load multiple documents by their string ids.
     /// </summary>
-    Task<IReadOnlyList<T>> LoadManyAsync<T>(IEnumerable<string> ids, CancellationToken token = default) where T : class;
+    /// <remarks>
+    ///     The <c>notnull</c> constraint is required for the same reason as the <see cref="Guid" />
+    ///     overload just above.
+    /// </remarks>
+    new Task<IReadOnlyList<T>> LoadManyAsync<T>(IEnumerable<string> ids, CancellationToken token = default)
+        where T : notnull;
 
     /// <summary>
     ///     Load a document by its int id. Returns null if not found.
