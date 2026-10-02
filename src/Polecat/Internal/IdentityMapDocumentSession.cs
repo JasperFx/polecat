@@ -58,7 +58,7 @@ internal class IdentityMapDocumentSession : DocumentSessionBase
     }
 
     protected override async Task<IReadOnlyList<T>> LoadManyInternalAsync<T>(
-        List<object> ids, CancellationToken token) where T : class
+        List<object> ids, CancellationToken token)
     {
         // #462: guard here too -- a fully-satisfied identity-map read never reaches the base class.
         assertNotDisposed();

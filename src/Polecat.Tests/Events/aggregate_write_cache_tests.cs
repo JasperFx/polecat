@@ -225,6 +225,83 @@ public class aggregate_write_cache_tests : OneOffConfigurationsContext
     }
 
     [Fact]
+    public async Task fetch_many_for_writing_uses_each_streams_own_baseline()
+    {
+        // polecat#712: the batched fetch takes every baseline BETWEEN its two round trips, which is the
+        // reason it is two and not one. Same doctored-baseline proof as the single-stream fact above,
+        // run over three streams at once and with one of them deliberately left uncached — if the batch
+        // read from version 1 it would answer 110, and if it applied one stream's baseline to another
+        // the uncached stream would not answer 110.
+        await ConfigureAsync();
+
+        var seeded = await AnOpenVaultAsync();
+        var alsoSeeded = await AnOpenVaultAsync();
+        var uncached = await AnOpenVaultAsync();
+
+        await WarmAsync(seeded, 10);        // version 3, entry at version 2
+        var seededKey = _cache.Stores[^1].Key;
+        await WarmAsync(alsoSeeded, 10);    // version 3, entry at version 2
+        var alsoSeededKey = _cache.Stores[^1].Key;
+        await WarmAsync(uncached, 10);      // version 3, entry at version 2
+        var uncachedKey = _cache.Stores[^1].Key;
+
+        _cache.Seed(seededKey, new Vault { Id = seeded, Owner = "Hilda", Coins = 1000 }, 2);
+        _cache.Seed(alsoSeededKey, new Vault { Id = alsoSeeded, Owner = "Hilda", Coins = 7000 }, 2);
+        _cache.Evict(uncachedKey);
+
+        await using var session = theStore.LightweightSession();
+        var streams = await session.Events.FetchManyForWriting<Vault>([seeded, alsoSeeded, uncached],
+            TestContext.Current.CancellationToken);
+
+        streams[0].Aggregate!.Coins.ShouldBe(1010, "its own baseline, plus event 3");
+        streams[1].Aggregate!.Coins.ShouldBe(7010, "its own baseline, plus event 3");
+        streams[2].Aggregate!.Coins.ShouldBe(110, "no baseline, so the whole stream");
+
+        streams.ShouldAllBe(x => x.StartingVersion == 3);
+
+        // Still two round trips with the cache in play.
+        session.RequestCount.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task fetch_many_for_writing_discards_a_baseline_the_archiver_outran()
+    {
+        // The batched form of the archival fallback: the stream says there are events past the baseline
+        // and the read comes back empty because they are archived, so the baseline is discarded and the
+        // stream re-read from version 1 — which also finds nothing, so an archived stream aggregates to
+        // null exactly as it does on the single-stream path. The sibling in the same call must be
+        // unaffected, and the refetch must cost exactly one extra round trip for the whole call.
+        await ConfigureAsync();
+
+        var archived = await AnOpenVaultAsync();
+        var healthy = await AnOpenVaultAsync();
+
+        await WarmAsync(archived, 10);
+        var archivedKey = _cache.Stores[^1].Key;
+        await WarmAsync(healthy, 10);
+        var healthyKey = _cache.Stores[^1].Key;
+
+        _cache.Seed(archivedKey, new Vault { Id = archived, Owner = "Hilda", Coins = 1000 }, 1);
+        _cache.Seed(healthyKey, new Vault { Id = healthy, Owner = "Hilda", Coins = 7000 }, 2);
+
+        await using (var archiver = theStore.LightweightSession())
+        {
+            archiver.Events.ArchiveStream(archived);
+            await archiver.SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        await using var session = theStore.LightweightSession();
+        var streams = await session.Events.FetchManyForWriting<Vault>([archived, healthy],
+            TestContext.Current.CancellationToken);
+
+        streams[0].Aggregate.ShouldBeNull("the baseline was discarded and the archived stream has no readable events");
+        streams[1].Aggregate!.Coins.ShouldBe(7010, "the sibling keeps its own baseline");
+
+        // Versions, then events, then the one refetch batch.
+        session.RequestCount.ShouldBe(3);
+    }
+
+    [Fact]
     public async Task publishing_hands_the_instance_off_rather_than_sharing_it()
     {
         // With UseIdentityMapForAggregates also on, a published aggregate would otherwise be

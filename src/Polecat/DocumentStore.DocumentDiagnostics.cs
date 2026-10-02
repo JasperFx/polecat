@@ -35,17 +35,23 @@ public partial class DocumentStore : IDocumentStoreDiagnostics
 
         foreach (var mapping in MaterializeMappings().OrderBy(m => m.DocumentType.Name))
         {
+            var rootTypeName = mapping.DocumentType.FullNameInCode();
+
             refs.Add(new DocumentTypeRef(
-                mapping.DocumentType.FullNameInCode(),
+                rootTypeName,
                 mapping.DocumentType.Name.ToLowerInvariant(),
                 mapping.DatabaseSchemaName));
 
             foreach (var sub in mapping.SubClasses)
             {
+                // jasperfx#932: a sub-class names the root whose table holds its rows, so a type
+                // picker can group the hierarchy instead of listing it flat. Polecat already listed
+                // sub-classes while Marten and Fisher did not; the contract settled on listing them,
+                // which makes the marker the part that was missing rather than the listing.
                 refs.Add(new DocumentTypeRef(
                     sub.DocumentType.FullNameInCode(),
                     sub.Alias,
-                    mapping.DatabaseSchemaName));
+                    mapping.DatabaseSchemaName) { RootTypeName = rootTypeName });
             }
         }
 

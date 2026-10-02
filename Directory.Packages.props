@@ -677,15 +677,41 @@
              The compliance package's contentFiles are byte-identical to 2.76.0 (diff -rq over both
              extracted nupkgs), so no suite gained or lost a fact. jasperfx#920/#921 is CLI docs.
              This bump does NOT fix Polecat's own copy of that construction in
-             PolecatHighWaterDetector — see the commit that accompanies it. -->
-        <PackageVersion Include="JasperFx" Version="2.78.0" />
-        <PackageVersion Include="JasperFx.Events" Version="2.78.0" />
+             PolecatHighWaterDetector — see the commit that accompanies it.
+
+             JasperFx 2.79.1 (from 2.78.0). Four changes, and the first one does NOT compile against
+             the previous Polecat source — this is the rare bump that is breaking rather than additive:
+               * jasperfx#930/#934 — IDocumentReadOperations.LoadManyAsync<T> and
+                 IEventStoreOperations.FetchManyForWriting<T>, both default-implemented. The new
+                 LoadManyAsync is constrained `where T : notnull`, and Polecat's own batched
+                 LoadManyAsync was `where T : class`: C# requires an implementing method's constraints
+                 to match the contract's EXACTLY, so the same-signature-different-constraint pair is
+                 CS0425 at every session type. Relaxed to notnull rather than closed with an explicit
+                 implementation, so one method satisfies IQuerySession and the contract both and the
+                 batched OPENJSON(@ids) load is what a caller holding the session as
+                 IDocumentReadOperations actually gets. See the remark on IQuerySession.LoadManyAsync.
+                 FetchManyForWriting is implemented over BatchedQuery in a fixed TWO round trips
+                 however many streams it is handed — versions, then events — against the default's two
+                 per stream. Two rather than one is deliberate: the aggregate write cache can only
+                 supply a baseline once the stream's version is known. It reuses FetchStreamBatchItem
+                 rather than writing a multi-stream SELECT, so it adds no sixth event hydration path.
+               * jasperfx#932/#936 — DocumentTypeRef.RootTypeName, so a listed sub-class names the
+                 root whose table holds its rows. Polecat already LISTED sub-classes (it was the store
+                 the contract settled in favor of); the marker is what it was missing.
+               * jasperfx#931/#935 — the 2.77 IDocumentStoreDiagnostics members go back to
+                 default-implemented. Inert here: Polecat 5.34.0 implements both.
+               * jasperfx#939 — composite projection batches were disposed by a member stage as well
+                 as by the composite, releasing the shared batch's session while later stages still
+                 had operations to write. Entirely inside JasperFx's ProjectionExecution; Polecat
+                 inherits the fix and has no copy of its own. -->
+        <PackageVersion Include="JasperFx" Version="2.79.1" />
+        <PackageVersion Include="JasperFx.Events" Version="2.79.1" />
         <!--
              The shared cross-store event sourcing compliance suites. Source-only package: the
              suites compile inside Polecat.Tests so JasperFx's aggregate source generator binds
              Polecat's own session types.
         -->
-        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="2.78.0" />
+        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="2.79.1" />
         <!-- Pin the sibling JasperFx packages for parity with Marten 9's matrix
              even though Polecat doesn't currently reference them directly —
              keeps the lockstep matrix coherent when transitive resolution
@@ -693,7 +719,7 @@
              RuntimeCompiler 5.x line is the active continuation of the 4.x
              lineage; do not pin against the parallel stale 2.0.x series. -->
         <PackageVersion Include="JasperFx.RuntimeCompiler" Version="5.0.0" />
-        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.78.0" />
+        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.79.1" />
         <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
@@ -951,7 +977,7 @@
         <PackageVersion Include="Vogen" Version="7.0.0" />
 
         <!-- Source generators (matched to JasperFx.Events above) -->
-        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.78.0" />
+        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.79.1" />
 
         <!-- Build automation -->
         <PackageVersion Include="Nuke.Common" Version="9.0.4" />

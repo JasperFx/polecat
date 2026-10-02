@@ -136,10 +136,10 @@ internal class NestedTenantSession : ITenantOperations
         return _parent.LoadForTenantAsync<T>(mapping.UnwrapIdentity(id, nameof(id)), _tenantId, StorageScope, token);
     }
 
-    public Task<IReadOnlyList<T>> LoadManyAsync<T>(IEnumerable<Guid> ids, CancellationToken token = default) where T : class
+    public Task<IReadOnlyList<T>> LoadManyAsync<T>(IEnumerable<Guid> ids, CancellationToken token = default) where T : notnull
         => _parent.LoadManyForTenantAsync<T>(ids.Cast<object>().ToList(), _tenantId, StorageScope, token);
 
-    public Task<IReadOnlyList<T>> LoadManyAsync<T>(IEnumerable<string> ids, CancellationToken token = default) where T : class
+    public Task<IReadOnlyList<T>> LoadManyAsync<T>(IEnumerable<string> ids, CancellationToken token = default) where T : notnull
         => _parent.LoadManyForTenantAsync<T>(ids.Cast<object>().ToList(), _tenantId, StorageScope, token);
 
     public IPolecatQueryable<T> Query<T>() where T : notnull
