@@ -690,8 +690,11 @@
                  implementation, so one method satisfies IQuerySession and the contract both and the
                  batched OPENJSON(@ids) load is what a caller holding the session as
                  IDocumentReadOperations actually gets. See the remark on IQuerySession.LoadManyAsync.
-                 FetchManyForWriting is left on the shared default (correct, one round trip per
-                 stream); polecat#714 tracks the batched override.
+                 FetchManyForWriting is implemented over BatchedQuery in a fixed TWO round trips
+                 however many streams it is handed — versions, then events — against the default's two
+                 per stream. Two rather than one is deliberate: the aggregate write cache can only
+                 supply a baseline once the stream's version is known. It reuses FetchStreamBatchItem
+                 rather than writing a multi-stream SELECT, so it adds no sixth event hydration path.
                * jasperfx#932/#936 — DocumentTypeRef.RootTypeName, so a listed sub-class names the
                  root whose table holds its rows. Polecat already LISTED sub-classes (it was the store
                  the contract settled in favor of); the marker is what it was missing.

@@ -15,6 +15,7 @@ using Polecat.Events.Fetching;
 using Polecat.Events.Operations;
 using Polecat.Events.Protected;
 using Polecat.Internal;
+using Polecat.Internal.Batching;
 using Polecat.Internal.Operations;
 using Polecat.Projections;
 using Polecat.Serialization;
@@ -248,6 +249,206 @@ internal class EventOperations : QueryEventStore, IEventOperations
         where T : class
     {
         return await FetchForWritingInternal<T>(key, false, expectedVersion, cancellation);
+    }
+
+    /// <summary>
+    ///     jasperfx#930 / polecat#712: the many-stream form of <c>FetchForWriting</c>, in a fixed two
+    ///     round trips rather than the shared default's two per stream.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         Round trip one reads every stream's version; round trip two reads every stream's events.
+    ///         Both go through <see cref="BatchedQuery" />, so this adds no SQL and — the part that
+    ///         matters — <b>no sixth event hydration path</b>: <see cref="FetchStreamBatchItem" /> already
+    ///         hydrates through <c>PcEventsRowReader</c>, the canonical reader. See the "Event hydration
+    ///         paths — there are five, and they are copies" note in CLAUDE.md for why writing a bespoke
+    ///         multi-stream SELECT here would have been the wrong trade.
+    ///     </para>
+    ///     <para>
+    ///         Two round trips rather than one is deliberate: the write cache can only be used as a
+    ///         baseline once the stream's version is known, and reading every stream from version 1 to
+    ///         save a round trip would throw away a saving that grows with stream length. Taking the
+    ///         baselines between the two reads is free — <see cref="takeWriteBaseline{T}" /> is pure
+    ///         memory.
+    ///     </para>
+    /// </remarks>
+    public async Task<IReadOnlyList<IEventStream<T>>> FetchManyForWriting<T>(IReadOnlyList<Guid> ids,
+        CancellationToken cancellation = default) where T : class
+        => await fetchManyForWritingAsync<T>(assertDistinctStreams(ids, nameof(ids)), cancellation);
+
+    /// <inheritdoc cref="FetchManyForWriting{T}(IReadOnlyList{Guid}, CancellationToken)" />
+    public async Task<IReadOnlyList<IEventStream<T>>> FetchManyForWriting<T>(IReadOnlyList<string> keys,
+        CancellationToken cancellation = default) where T : class
+        => await fetchManyForWritingAsync<T>(assertDistinctStreams(keys, nameof(keys)), cancellation);
+
+    /// <summary>
+    ///     Two handles on one stream in one session would race each other's expected version, so a
+    ///     repeat is rejected rather than resolved. Matches the contract's own default.
+    /// </summary>
+    private static object[] assertDistinctStreams<TKey>(IReadOnlyList<TKey> keys, string paramName)
+        where TKey : notnull
+    {
+        ArgumentNullException.ThrowIfNull(keys, paramName);
+
+        var seen = new HashSet<TKey>();
+        var boxed = new object[keys.Count];
+        for (var i = 0; i < keys.Count; i++)
+        {
+            var key = keys[i];
+            if (key is null)
+            {
+                throw new ArgumentException(
+                    $"{nameof(FetchManyForWriting)} was given a null stream identity at position {i}.",
+                    paramName);
+            }
+
+            if (!seen.Add(key))
+            {
+                throw new ArgumentException(
+                    $"{nameof(FetchManyForWriting)} was given the stream identity '{key}' more than once. Each stream can be fetched for writing once per call, because two handles on one stream would race each other's expected version.",
+                    paramName);
+            }
+
+            boxed[i] = key;
+        }
+
+        return boxed;
+    }
+
+    private async Task<IReadOnlyList<IEventStream<T>>> fetchManyForWritingAsync<T>(object[] streamIds,
+        CancellationToken cancellation) where T : class
+    {
+        if (streamIds.Length == 0) return [];
+
+        // ---- round trip 1: every stream's version ----
+        var states = await fetchManyStreamStatesAsync(streamIds, cancellation);
+
+        // ---- in memory: take each stream's write-cache baseline, so the read below can start from it ----
+        var baselines = new AggregateBaseline<T>[streamIds.Length];
+        for (var i = 0; i < streamIds.Length; i++)
+        {
+            if (states[i] is { Version: > 0 } state)
+            {
+                baselines[i] = takeWriteBaseline<T>(streamIds[i], state.Version);
+            }
+        }
+
+        // ---- round trip 2: every stream's events ----
+        var eventBatch = (BatchedQuery)_sessionBase.CreateBatchQuery();
+        var eventReads = new Task<IReadOnlyList<IEvent>>?[streamIds.Length];
+        for (var i = 0; i < streamIds.Length; i++)
+        {
+            if (states[i] is { Version: > 0 })
+            {
+                eventReads[i] = addFetchStreamItem(eventBatch, streamIds[i], baselines[i].Version + 1);
+            }
+        }
+
+        await eventBatch.Execute(cancellation);
+
+        var events = new IReadOnlyList<IEvent>[streamIds.Length];
+        for (var i = 0; i < streamIds.Length; i++)
+        {
+            events[i] = eventReads[i] is null ? [] : await eventReads[i]!;
+        }
+
+        // ---- round trip 3, only for a baseline the archiver has outrun ----
+        await refetchArchivedBaselinesAsync(streamIds, states, baselines, events, cancellation);
+
+        var streams = new IEventStream<T>[streamIds.Length];
+        for (var i = 0; i < streamIds.Length; i++)
+        {
+            var streamExists = states[i] is not null;
+            var version = states[i]?.Version ?? 0;
+
+            T? aggregate = null;
+            if (streamExists && version > 0)
+            {
+                aggregate = await foldForWritingAsync(streamIds[i], version, events[i], baselines[i], cancellation);
+                cacheAggregateInIdentityMap<T>(streamIds[i], aggregate);
+            }
+
+            streams[i] = trackForWriting<T>(streamIds[i], version, streamExists, aggregate, cancellation);
+        }
+
+        return streams;
+    }
+
+    /// <summary>
+    ///     Every stream's <see cref="StreamState" /> in one round trip. Null for a stream that does not
+    ///     exist yet, which is the version-0 handle <c>FetchForWriting</c> hands back for one.
+    /// </summary>
+    private async Task<StreamState?[]> fetchManyStreamStatesAsync(object[] streamIds,
+        CancellationToken cancellation)
+    {
+        var batch = (BatchedQuery)_sessionBase.CreateBatchQuery();
+        var reads = new Task<StreamState?>[streamIds.Length];
+        for (var i = 0; i < streamIds.Length; i++)
+        {
+            // The tenant is EventOperations' own rather than the session's, which is what a
+            // tenant-scoped event store needs and is why these items are built here rather than
+            // reached through IBatchedQuery.Events.
+            var item = new FetchStreamStateBatchItem(_events, streamIds[i], _tenantId);
+            batch.RequireEventStore();
+            batch.AddItem(item);
+            reads[i] = item.Result;
+        }
+
+        await batch.Execute(cancellation);
+
+        var states = new StreamState?[streamIds.Length];
+        for (var i = 0; i < streamIds.Length; i++)
+        {
+            states[i] = await reads[i];
+        }
+
+        return states;
+    }
+
+    private Task<IReadOnlyList<IEvent>> addFetchStreamItem(BatchedQuery batch, object streamId, long fromVersion)
+    {
+        var item = new FetchStreamBatchItem(_events, _sessionBase.Serializer, streamId, _tenantId,
+            version: 0, timestamp: null, fromVersion: fromVersion);
+        batch.RequireEventStore();
+        batch.AddItem(item);
+        return item.Result;
+    }
+
+    /// <summary>
+    ///     The many-stream form of the archival fallback in <see cref="buildForWritingAsync{T}" />: a
+    ///     baseline whose later events have been archived is discarded and its stream re-read from
+    ///     version 1. Batched like the others, and skipped entirely — no round trip at all — in the
+    ///     overwhelmingly common case where no stream needs it.
+    /// </summary>
+    private async Task refetchArchivedBaselinesAsync<T>(object[] streamIds, StreamState?[] states,
+        AggregateBaseline<T>[] baselines, IReadOnlyList<IEvent>[] events, CancellationToken cancellation)
+        where T : class
+    {
+        List<int>? stale = null;
+        for (var i = 0; i < streamIds.Length; i++)
+        {
+            if (states[i] is { } state && baselines[i].NeedsArchivalRefetch(events[i], state.Version))
+            {
+                (stale ??= []).Add(i);
+            }
+        }
+
+        if (stale is null) return;
+
+        var batch = (BatchedQuery)_sessionBase.CreateBatchQuery();
+        var reads = new Task<IReadOnlyList<IEvent>>[stale.Count];
+        for (var n = 0; n < stale.Count; n++)
+        {
+            baselines[stale[n]] = baselines[stale[n]].WithoutAggregate();
+            reads[n] = addFetchStreamItem(batch, streamIds[stale[n]], 1);
+        }
+
+        await batch.Execute(cancellation);
+
+        for (var n = 0; n < stale.Count; n++)
+        {
+            events[stale[n]] = await reads[n];
+        }
     }
 
     public async Task<IEventStream<T>> FetchForExclusiveWriting<T>(Guid id, CancellationToken cancellation = default)
@@ -666,63 +867,57 @@ internal class EventOperations : QueryEventStore, IEventOperations
         if (streamExists && version > 0)
         {
             aggregate = await buildForWritingAsync<T>(streamId, version, cancellation);
-
-            // Cache in session-level aggregate identity map if optimization is enabled
-            if (aggregate != null && _events.UseIdentityMapForAggregates)
-            {
-                if (streamId is Guid gid)
-                {
-                    _sessionBase.StoreAggregateInIdentityMap<T, Guid>(gid, aggregate);
-                }
-                else if (streamId is string skey)
-                {
-                    _sessionBase.StoreAggregateInIdentityMap<T, string>(skey, aggregate);
-                }
-            }
+            cacheAggregateInIdentityMap<T>(streamId, aggregate);
         }
 
-        // Create the StreamAction
-        StreamAction action;
-        if (!streamExists)
+        return trackForWriting<T>(streamId, version, streamExists, aggregate, cancellation);
+    }
+
+    /// <summary>
+    ///     Cache a just-built aggregate in the session-level aggregate identity map, when that
+    ///     optimization is enabled.
+    /// </summary>
+    private void cacheAggregateInIdentityMap<T>(object streamId, T? aggregate) where T : class
+    {
+        if (aggregate == null || !_events.UseIdentityMapForAggregates) return;
+
+        if (streamId is Guid gid)
         {
-            if (streamId is Guid guidId)
-            {
-                action = new StreamAction(guidId, StreamActionType.Start);
-            }
-            else
-            {
-                action = new StreamAction((string)streamId, StreamActionType.Start);
-            }
-
-            action.ExpectedVersionOnServer = 0;
+            _sessionBase.StoreAggregateInIdentityMap<T, Guid>(gid, aggregate);
         }
-        else
+        else if (streamId is string skey)
         {
-            if (streamId is Guid guidId)
-            {
-                action = new StreamAction(guidId, StreamActionType.Append);
-            }
-            else
-            {
-                action = new StreamAction((string)streamId, StreamActionType.Append);
-            }
-
-            action.ExpectedVersionOnServer = version;
+            _sessionBase.StoreAggregateInIdentityMap<T, string>(skey, aggregate);
         }
+    }
 
+    /// <summary>
+    ///     Register one stream's <see cref="StreamAction" /> with the unit of work at the version it was
+    ///     read at, and hand back the <see cref="IEventStream{T}" /> that appends to it.
+    /// </summary>
+    /// <remarks>
+    ///     Shared by <c>FetchForWriting</c> and <c>FetchManyForWriting</c>, and it is the whole reason
+    ///     the many-stream form guards each stream separately: the expected version travels on the
+    ///     per-stream action rather than on the session, so a commit asserts every stream it appended
+    ///     to at the version THAT stream was read at.
+    /// </remarks>
+    private IEventStream<T> trackForWriting<T>(object streamId, long version, bool streamExists, T? aggregate,
+        CancellationToken cancellation) where T : class
+    {
+        var actionType = streamExists ? StreamActionType.Append : StreamActionType.Start;
+
+        var action = streamId is Guid guidId
+            ? new StreamAction(guidId, actionType)
+            : new StreamAction((string)streamId, actionType);
+
+        action.ExpectedVersionOnServer = streamExists ? version : 0;
         action.TenantId = _tenantId;
         action.AggregateType = typeof(T);
         _workTracker.AddStream(action);
 
-        // Return the appropriate EventStream variant
-        if (streamId is Guid gId)
-        {
-            return new EventStream<T>(_sessionBase, _events, gId, aggregate, cancellation, action);
-        }
-        else
-        {
-            return new EventStream<T>(_sessionBase, _events, (string)streamId, aggregate, cancellation, action);
-        }
+        return streamId is Guid gId
+            ? new EventStream<T>(_sessionBase, _events, gId, aggregate, cancellation, action)
+            : new EventStream<T>(_sessionBase, _events, (string)streamId, aggregate, cancellation, action);
     }
 
     /// <summary>
@@ -753,57 +948,72 @@ internal class EventOperations : QueryEventStore, IEventOperations
     private async Task<T?> buildForWritingAsync<T>(object streamId, long version, CancellationToken cancellation)
         where T : class
     {
+        var baseline = takeWriteBaseline<T>(streamId, version);
+
+        // fromVersion is inclusive, so a baseline at version N reads N+1 and after. With no baseline
+        // this is `fromVersion: 1`, which is the whole stream -- the uncached behavior, unchanged.
+        var events = await fetchForWritingEventsAsync(streamId, baseline.Version + 1, cancellation);
+
+        if (baseline.NeedsArchivalRefetch(events, version))
+        {
+            baseline = baseline.WithoutAggregate();
+            events = await fetchForWritingEventsAsync(streamId, 1, cancellation);
+        }
+
+        return await foldForWritingAsync(streamId, version, events, baseline, cancellation);
+    }
+
+    /// <summary>
+    ///     The second-level aggregate write cache's read side for one stream (#478 / jasperfx#674):
+    ///     resolve the cache, and take the baseline if there is a usable one. Purely in-memory, which
+    ///     is what lets <c>FetchManyForWriting</c> take every stream's baseline before it issues its
+    ///     one event read.
+    /// </summary>
+    private AggregateBaseline<T> takeWriteBaseline<T>(object streamId, long version) where T : class
+    {
         // Nullo for any type nobody enrolled, so there is no `if (caching enabled)` branch here:
         // every take simply misses. `cacheable` exists only to keep the key construction and the
         // tenancy lookup off the overwhelmingly common uncached path, not to change behavior.
         var cache = _events.AggregateWriteCaching.ResolveCache(typeof(T));
-        var cacheable = !ReferenceEquals(cache, NulloAggregateWriteCache.Instance);
-
-        T? baseline = null;
-        long baselineVersion = 0;
-        var key = default(AggregateCacheKey);
-
-        if (cacheable)
+        if (ReferenceEquals(cache, NulloAggregateWriteCache.Instance))
         {
-            key = new AggregateCacheKey(typeof(T), databaseIdentifier(), _tenantId, streamId);
-
-            // Take-on-read: the entry is removed in the same atomic step, so exactly one caller can
-            // ever win it. That is a requirement rather than a detail -- an aggregate is commonly
-            // mutable and the fold below mutates the instance it is handed, so two callers holding
-            // one instance would corrupt each other. A loser just misses and takes the path below.
-            if (cache.TryTake(key, out var taken, out var takenVersion) && taken is T typed
-                && takenVersion <= version)
-            {
-                baseline = typed;
-                baselineVersion = takenVersion;
-            }
+            return new AggregateBaseline<T>(cache, default, false, null, 0);
         }
 
-        // fromVersion is inclusive, so a baseline at version N reads N+1 and after. With no baseline
-        // this is `fromVersion: 1`, which is the whole stream -- the uncached behavior, unchanged.
-        var events = await fetchForWritingEventsAsync(streamId, baselineVersion + 1, cancellation);
+        var key = new AggregateCacheKey(typeof(T), databaseIdentifier(), _tenantId, streamId);
 
-        if (baseline != null && events.Count == 0 && baselineVersion < version)
+        // Take-on-read: the entry is removed in the same atomic step, so exactly one caller can
+        // ever win it. That is a requirement rather than a detail -- an aggregate is commonly
+        // mutable and the fold below mutates the instance it is handed, so two callers holding
+        // one instance would corrupt each other. A loser just misses and takes the path below.
+        if (cache.TryTake(key, out var taken, out var takenVersion) && taken is T typed
+            && takenVersion <= version)
         {
-            // The stream says there are events past the baseline and the read returned none, which
-            // means they are archived. Fall back to the uncached read so this behaves exactly as it
-            // did before the cache existed (an archived stream aggregates to null).
-            baseline = null;
-            baselineVersion = 0;
-            events = await fetchForWritingEventsAsync(streamId, 1, cancellation);
+            return new AggregateBaseline<T>(cache, key, true, typed, takenVersion);
         }
 
+        return new AggregateBaseline<T>(cache, key, true, null, 0);
+    }
+
+    /// <summary>
+    ///     Fold one stream's events onto its baseline, stamp the identity, and register the write-cache
+    ///     entry. No I/O beyond the aggregator itself, so both the one-stream and many-stream forms
+    ///     finish a stream the same way.
+    /// </summary>
+    private async Task<T?> foldForWritingAsync<T>(object streamId, long version, IReadOnlyList<IEvent> events,
+        AggregateBaseline<T> baseline, CancellationToken cancellation) where T : class
+    {
         T? aggregate;
         if (events.Count > 0)
         {
             var aggregator = _sessionBase.Options.Projections.AggregatorFor<T>();
-            aggregate = await aggregator.BuildAsync(events, _sessionBase, baseline, cancellation);
+            aggregate = await aggregator.BuildAsync(events, _sessionBase, baseline.Aggregate, cancellation);
         }
         else
         {
             // No delta to fold. With a baseline that is the aggregate; without one the stream has no
             // readable events and the answer is null, as it was before.
-            aggregate = baseline;
+            aggregate = baseline.Aggregate;
         }
 
         if (aggregate != null)
@@ -818,7 +1028,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
             }
         }
 
-        if (cacheable && aggregate != null)
+        if (baseline.Cacheable && aggregate != null)
         {
             // Deferred to the commit, and stored at the version the instance actually reflects --
             // `version`, the stream version read at the top of this fetch, NOT the version the
@@ -831,10 +1041,43 @@ internal class EventOperations : QueryEventStore, IEventOperations
             // very instance this caller is still holding, and a concurrent fetch could then take it.
             // The commit is the point at which this caller is done with it. It also means a rolled
             // back commit leaves no entry at all rather than a poisoned one.
-            _sessionBase.RegisterAggregateWriteCacheEntry(cache, key, aggregate, version);
+            _sessionBase.RegisterAggregateWriteCacheEntry(baseline.Cache, baseline.Key, aggregate, version);
         }
 
         return aggregate;
+    }
+
+    /// <summary>
+    ///     One stream's write-cache state between taking the baseline and folding onto it.
+    /// </summary>
+    private readonly struct AggregateBaseline<T> where T : class
+    {
+        public AggregateBaseline(IAggregateWriteCache cache, AggregateCacheKey key, bool cacheable,
+            T? aggregate, long version)
+        {
+            Cache = cache;
+            Key = key;
+            Cacheable = cacheable;
+            Aggregate = aggregate;
+            Version = version;
+        }
+
+        public IAggregateWriteCache Cache { get; }
+        public AggregateCacheKey Key { get; }
+        public bool Cacheable { get; }
+        public T? Aggregate { get; }
+        public long Version { get; }
+
+        /// <summary>
+        ///     The stream says there are events past the baseline and the read returned none, which means
+        ///     they are archived. Discarding is always sound because <see cref="IAggregateWriteCache.TryTake" />
+        ///     has already removed the entry, and it makes an archived stream aggregate to null exactly as
+        ///     it did before the cache existed.
+        /// </summary>
+        public bool NeedsArchivalRefetch(IReadOnlyList<IEvent> events, long streamVersion)
+            => Aggregate != null && events.Count == 0 && Version < streamVersion;
+
+        public AggregateBaseline<T> WithoutAggregate() => new(Cache, Key, Cacheable, null, 0);
     }
 
     private Task<IReadOnlyList<IEvent>> fetchForWritingEventsAsync(object streamId, long fromVersion,
