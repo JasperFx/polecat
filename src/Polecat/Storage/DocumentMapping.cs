@@ -146,6 +146,63 @@ internal class DocumentMapping
             UseNumericRevisions = true;
             UseLongRevisions = true;
         }
+
+        // #720: ...or a [VersionMetadata]-attributed member. The fluent DSL's equivalent is merged
+        // later, so DocumentProviderRegistry calls this again after the merge.
+        ResolveMappedConcurrencyMode();
+    }
+
+    /// <summary>
+    ///     #720 — a version member declared through <c>Metadata(m =&gt; m.Version.MapTo(...))</c> or
+    ///     <c>[VersionMetadata]</c> selects the concurrency mode from its own CLR type, exactly as the
+    ///     marker interfaces select it from theirs: <see cref="Guid" /> is optimistic concurrency,
+    ///     <see cref="int" /> is a 32-bit revision, <see cref="long" /> a 64-bit one.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         Polecat has no <c>Schema.For&lt;T&gt;().UseOptimisticConcurrency(true)</c> switch — the
+    ///         member <em>is</em> the declaration. Before #720 a mapped version member selected no mode
+    ///         at all, so neither storage binder was built and the mapping was wholly inert: an offered
+    ///         API (<see cref="Metadata.MetadataColumnExpression{T}.MapTo" /> is public and documented as
+    ///         mirroring Marten's) that could not be turned on. Nothing can have depended on the old
+    ///         behaviour, because the old behaviour was nothing.
+    ///     </para>
+    ///     <para>
+    ///         A marker interface wins: it is the more specific declaration, and it is what
+    ///         <c>CaptureExpectedRevision</c> and <c>StoreForConcurrency</c> consult first. Mapping the
+    ///         version column on a type that already implements one therefore only redirects where the
+    ///         value is read from and written to, which is what it meant before this change too.
+    ///     </para>
+    /// </remarks>
+    internal void ResolveMappedConcurrencyMode()
+    {
+        if (UseOptimisticConcurrency || UseNumericRevisions) return;
+
+        var member = Metadata.Version.Member;
+        if (member is null) return;
+
+        var memberType = member.GetRawMemberType();
+        if (memberType == typeof(Guid))
+        {
+            UseOptimisticConcurrency = true;
+        }
+        else if (memberType == typeof(int))
+        {
+            UseNumericRevisions = true;
+        }
+        else if (memberType == typeof(long))
+        {
+            UseNumericRevisions = true;
+            UseLongRevisions = true;
+        }
+        else
+        {
+            throw new InvalidOperationException(
+                $"Document type '{_documentType.FullNameInCode()}' maps the version metadata column onto " +
+                $"'{member.Name}', whose type is {memberType?.FullNameInCode() ?? "unknown"}. A mapped version " +
+                "member declares the concurrency mode from its own type, so it must be Guid (optimistic " +
+                "concurrency), int (32-bit revision) or long (64-bit revision).");
+        }
     }
 
     public Type DocumentType => _documentType;
@@ -226,19 +283,19 @@ internal class DocumentMapping
     /// <summary>
     ///     When true, uses Guid-based optimistic concurrency (IVersioned interface).
     /// </summary>
-    public bool UseOptimisticConcurrency { get; }
+    public bool UseOptimisticConcurrency { get; private set; }
 
     /// <summary>
     ///     When true, uses numeric revision tracking (IRevisioned int or ILongVersioned long interface).
     /// </summary>
-    public bool UseNumericRevisions { get; }
+    public bool UseNumericRevisions { get; private set; }
 
     /// <summary>
     ///     When true, the numeric revision is tracked as a 64-bit long (ILongVersioned) rather than a
     ///     32-bit int (IRevisioned). Only meaningful when <see cref="UseNumericRevisions" /> is true.
     ///     Recommended for MultiStreamProjection-derived views where Version is the global event sequence.
     /// </summary>
-    public bool UseLongRevisions { get; }
+    public bool UseLongRevisions { get; private set; }
 
     /// <summary>
     ///     Registered subclass types for this document hierarchy.

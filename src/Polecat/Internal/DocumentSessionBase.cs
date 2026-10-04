@@ -362,7 +362,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             _ => storage.Upsert(document, session, session.TenantId)
         };
 
-        CaptureExpectedRevision(op, document);
+        CaptureExpectedRevision(op, document, storage.MappedRevisionFor(document));
 
         return new Operations.ClosedShapeOperationAdapter(op, session, document, provider.Mapping.GetId(document));
     }
@@ -378,9 +378,14 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         var storage = (Polecat.Storage.ClosedShape.IPolecatObjectWriteStorage)session.StorageFor(document.GetType());
 
         // #592: the same version seeding Store<T> does, through the object bridge.
+        // #720 adds the mapped-member branch in the same order StoreForConcurrency uses it.
         if (document is IVersioned objectVersioned && objectVersioned.Version != Guid.Empty)
         {
             storage.StoreObject(session, document, objectVersioned.Version);
+        }
+        else if (storage.MappedVersionForObject(document) is { } mapped && mapped != Guid.Empty)
+        {
+            storage.StoreObject(session, document, mapped);
         }
         else
         {
@@ -388,7 +393,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         }
 
         var op = storage.UpsertObject(document, session, session.TenantId);
-        CaptureExpectedRevision(op, document);
+        CaptureExpectedRevision(op, document, storage.MappedRevisionForObject(document));
 
         return new Operations.ClosedShapeOperationAdapter(op, session, document, provider.Mapping.GetId(document));
     }
@@ -420,6 +425,17 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     ///         <see cref="CaptureExpectedRevision" />, which already reads the document rather than
     ///         the session.
     ///     </para>
+    ///     <para>
+    ///         #720 — a version member named through <c>Metadata(m =&gt; m.Version.MapTo(...))</c> is
+    ///         consulted next, through the <c>MappedVersionFor</c> seam (weasel#590). It comes
+    ///         <em>after</em> <see cref="IVersioned" /> because the marker is the more specific
+    ///         declaration, and <em>before</em> the unseeded fallback because that fallback is exactly
+    ///         the bug: a guard that binds nothing never matches, so the write is refused on an
+    ///         unmodified row. The <see cref="Guid.Empty" /> rule is the same one, applied in the same
+    ///         place, for the same reason — this is the fourth independent sighting of this field
+    ///         (fisher#245, marten#5372, polecat#592, polecat#720), so it is deliberately one branch
+    ///         rather than two.
+    ///     </para>
     /// </remarks>
     private static void StoreForConcurrency<T>(Weasel.Storage.IDocumentStorage<T> storage,
         Weasel.Storage.IStorageSession session, T document) where T : notnull
@@ -430,13 +446,28 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             return;
         }
 
+        if (storage.MappedVersionFor(document) is { } mapped && mapped != Guid.Empty)
+        {
+            storage.Store(session, document, mapped);
+            return;
+        }
+
         storage.Store(session, document);
     }
 
     // Numeric revisions: the doc-carried version is the equality expectation (0 = new/auto),
     // matching the bespoke pipeline's expectedRevision capture. Shared with the projection
     // storage (#273 E2e).
-    internal static void CaptureExpectedRevision(Weasel.Storage.IStorageOperation op, object document)
+    /// <param name="mappedRevision">
+    ///     #720 — the document's <c>Metadata(m =&gt; m.Version.MapTo(...))</c> revision, from the
+    ///     storage's <c>MappedRevisionFor</c> seam (weasel#590), or null when the caller has no
+    ///     storage in hand or the mapping declares no such member. Consulted after the marker
+    ///     interfaces and before the 0 default, mirroring <see cref="StoreForConcurrency{T}" />'s
+    ///     ordering; 0 keeps meaning "new / auto-increment", so a mapped member that is still 0 falls
+    ///     through to the same insert the marker-interface path takes.
+    /// </param>
+    internal static void CaptureExpectedRevision(Weasel.Storage.IStorageOperation op, object document,
+        long? mappedRevision = null)
     {
         if (op is Weasel.Storage.IRevisionedOperation revisioned)
         {
@@ -444,7 +475,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             {
                 ILongVersioned longVersioned => longVersioned.Version,
                 IRevisioned rev => rev.Version,
-                _ => 0
+                _ => mappedRevision ?? 0
             };
         }
     }
@@ -655,6 +686,10 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         {
             versioned.Version = version;
         }
+        else
+        {
+            ApplyMappedVersion(document, version);
+        }
 
         Store(document);
     }
@@ -669,6 +704,10 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         {
             longVersioned.Version = revision;
         }
+        else
+        {
+            ApplyMappedRevision(document, revision);
+        }
 
         Store(document);
     }
@@ -679,8 +718,36 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         {
             longVersioned.Version = revision;
         }
+        else
+        {
+            ApplyMappedRevision(document, revision);
+        }
 
         Store(document);
+    }
+
+    /// <summary>
+    ///     #720 — these two methods name the expected version by assigning it to the document and then
+    ///     calling <see cref="Store{T}(T)" />, which is why a mapped member needs the write-back half as
+    ///     well as the read: with nowhere for the assignment to land, the call silently degrades into a
+    ///     plain <c>Store</c> at the unchanged value, and #559's strictly-greater rule then refuses it.
+    /// </summary>
+    private void ApplyMappedVersion<T>(T document, Guid version) where T : notnull
+    {
+        if (((Weasel.Storage.IStorageSession)this).StorageFor<T>() is
+            Storage.ClosedShape.IPolecatMappedConcurrencyStorage<T> mapped)
+        {
+            mapped.TryApplyMappedVersion(document, version);
+        }
+    }
+
+    private void ApplyMappedRevision<T>(T document, long revision) where T : notnull
+    {
+        if (((Weasel.Storage.IStorageSession)this).StorageFor<T>() is
+            Storage.ClosedShape.IPolecatMappedConcurrencyStorage<T> mapped)
+        {
+            mapped.TryApplyMappedRevision(document, revision);
+        }
     }
 
     public void QueueSqlCommand(string sql, params object[] parameterValues)

@@ -191,6 +191,12 @@ internal class DocumentProviderRegistry
             if (metadataField?.GetValue(expr) is Storage.Metadata.DocumentMetadataConfig metadataConfig)
             {
                 mapping.Metadata.MergeFrom(metadataConfig);
+
+                // #720: a mapped version member declares the concurrency mode, and the DSL's copy only
+                // arrives here -- the mapping's constructor has already run and saw whatever the
+                // attributes said. Re-resolving is a no-op once a mode is selected, so the constructor's
+                // answer (and any marker interface) stands.
+                mapping.ResolveMappedConcurrencyMode();
             }
         }
     }

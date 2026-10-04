@@ -1,6 +1,7 @@
 using System.Data;
 using System.Data.Common;
 using JasperFx;
+using JasperFx.Core.Reflection;
 using Microsoft.Data.SqlClient;
 using Weasel.Core;
 using Weasel.Core.SqlGeneration;
@@ -42,6 +43,15 @@ internal interface IPolecatObjectWriteStorage
     /// </summary>
     void StoreObject(IStorageSession session, object document, Guid? version);
 
+    /// <summary>
+    ///     #720 — the object-typed twin of <c>IDocumentStorage&lt;T&gt;.MappedVersionFor</c> /
+    ///     <c>MappedRevisionFor</c>, so <c>StoreObjects</c> seeds a mapped concurrency member the same
+    ///     way <c>Store&lt;T&gt;</c> does. Null means "no mapped member of that kind".
+    /// </summary>
+    Guid? MappedVersionForObject(object document);
+
+    long? MappedRevisionForObject(object document);
+
     Weasel.Storage.IStorageOperation UpsertObject(object document, IStorageSession session, string tenantId);
 
     /// <summary>Session-free upsert for the projection paths (no version-tracker reads).</summary>
@@ -49,6 +59,26 @@ internal interface IPolecatObjectWriteStorage
 
     IDeletion HardDeletionForObjectId(object id, string tenantId);
     IDeletion HardDeletionForDocument(object document, string tenantId);
+}
+
+/// <summary>
+///     #720 — write-back onto a <c>Metadata(m =&gt; m.Version.MapTo(...))</c> concurrency member, for
+///     the session's <c>UpdateExpectedVersion</c> / <c>UpdateRevision</c>.
+/// </summary>
+/// <remarks>
+///     Those two methods name the expectation by assigning it to the document and then calling
+///     <c>Store</c>, so a document whose concurrency member is not a marker-interface property has
+///     nowhere for the assignment to land: the call degrades into a plain <c>Store</c> at the
+///     unchanged revision, which the <c>#559</c> strictly-greater rule then refuses. Polecat-local
+///     rather than a Weasel seam because weasel#590 added only the read half.
+/// </remarks>
+internal interface IPolecatMappedConcurrencyStorage<in TDoc> where TDoc : notnull
+{
+    /// <summary>Returns false when this mapping has no mapped Guid version member.</summary>
+    bool TryApplyMappedVersion(TDoc document, Guid version);
+
+    /// <summary>Returns false when this mapping has no mapped numeric revision member.</summary>
+    bool TryApplyMappedRevision(TDoc document, long revision);
 }
 
 /// <summary>
@@ -147,7 +177,8 @@ internal interface IPolecatDeletionStorage
 
 internal abstract class PolecatDocumentStorage<TDoc, TId>
     : IDocumentStorage<TDoc, TId>, IPolecatObjectStorage<TDoc>, IPolecatBatchLoadStorage<TDoc>,
-        IPolecatBulkVersionCheckStorage<TDoc>, IPolecatDeletionStorage
+        IPolecatBulkVersionCheckStorage<TDoc>, IPolecatDeletionStorage,
+        IPolecatMappedConcurrencyStorage<TDoc>
     where TDoc : notnull
     where TId : notnull
 {
@@ -173,10 +204,48 @@ internal abstract class PolecatDocumentStorage<TDoc, TId>
     private readonly IOperationFragment _hardDeleteFragment;
     private readonly IOperationFragment _undeleteFragment;
 
+    /// <summary>#720: readers for a <c>Metadata(m =&gt; m.Version.MapTo(...))</c> member; null when there is none.</summary>
+    private readonly Func<TDoc, Guid>? _mappedVersion;
+
+    private readonly Func<TDoc, long>? _mappedRevision;
+
+    /// <summary>#720: the write-back half, for UpdateExpectedVersion / UpdateRevision.</summary>
+    private readonly Action<TDoc, Guid>? _setMappedVersion;
+
+    private readonly Action<TDoc, long>? _setMappedRevision;
+
     protected PolecatDocumentStorage(DocumentMapping mapping, DocumentStorageDescriptor<TDoc, TId> descriptor)
     {
         _mapping = mapping;
         _descriptor = descriptor;
+
+        // #720: the mapped version member, read back off the document so the concurrency guard can be
+        // seeded from the instance. Only one of the two can exist -- the member's type is what chose
+        // the mode in DocumentMapping.ResolveMappedConcurrencyMode -- and a marker interface wins the
+        // mode, so a mapped member on an IVersioned/IRevisioned type is still only a relocation of
+        // where the value lives, which is what the session's interface-first ordering already says.
+        var mappedVersionMember = mapping.Metadata.Version.Member;
+        if (mappedVersionMember is not null)
+        {
+            var memberType = mappedVersionMember.GetRawMemberType();
+            if (memberType == typeof(Guid) && mapping.UseOptimisticConcurrency)
+            {
+                _mappedVersion = LambdaBuilder.Getter<TDoc, Guid>(mappedVersionMember);
+                _setMappedVersion = LambdaBuilder.Setter<TDoc, Guid>(mappedVersionMember);
+            }
+            else if (memberType == typeof(int) && mapping.UseNumericRevisions)
+            {
+                var intGetter = LambdaBuilder.Getter<TDoc, int>(mappedVersionMember);
+                var intSetter = LambdaBuilder.Setter<TDoc, int>(mappedVersionMember);
+                _mappedRevision = doc => intGetter!(doc);
+                _setMappedRevision = (doc, revision) => intSetter!(doc, (int)revision);
+            }
+            else if (memberType == typeof(long) && mapping.UseNumericRevisions)
+            {
+                _mappedRevision = LambdaBuilder.Getter<TDoc, long>(mappedVersionMember);
+                _setMappedRevision = LambdaBuilder.Setter<TDoc, long>(mappedVersionMember);
+            }
+        }
 
         // Read layout must match the shared selectors: writeable flavors read id=0, data=1,
         // metadata from 2; the QueryOnly selectors EXCLUDE id (data=0, metadata from 1) and
@@ -604,6 +673,38 @@ internal abstract class PolecatDocumentStorage<TDoc, TId>
     public Guid? VersionFor(TDoc document, IStorageSession session)
         => session.Versions.VersionFor<TDoc, TId>(Identity(document));
 
+    /// <summary>
+    ///     #720 / weasel#590 — the document's own mapped concurrency version, so a session can seed a
+    ///     write's guard from the instance rather than only from what it happens to have read.
+    /// </summary>
+    /// <remarks>
+    ///     Null means "this mapping has no mapped version member", which is what the interface's
+    ///     default says and what the session reads as "fall through". <see cref="Guid.Empty" /> is a
+    ///     real answer — "never stored" — and the rule that it stays unseeded belongs to the caller,
+    ///     in one place, alongside the identical rule for <see cref="IVersioned" />.
+    /// </remarks>
+    public Guid? MappedVersionFor(TDoc document) => _mappedVersion?.Invoke(document);
+
+    /// <summary>
+    ///     #720 / weasel#590 — the numeric twin. Widens an <see cref="int" /> member to
+    ///     <see cref="long" />, because the revision column comes in both widths.
+    /// </summary>
+    public long? MappedRevisionFor(TDoc document) => _mappedRevision?.Invoke(document);
+
+    public bool TryApplyMappedVersion(TDoc document, Guid version)
+    {
+        if (_setMappedVersion is null) return false;
+        _setMappedVersion(document, version);
+        return true;
+    }
+
+    public bool TryApplyMappedRevision(TDoc document, long revision)
+    {
+        if (_setMappedRevision is null) return false;
+        _setMappedRevision(document, revision);
+        return true;
+    }
+
     public virtual void Eject(IStorageSession session, TDoc document)
     {
         var id = Identity(document);
@@ -718,6 +819,10 @@ internal abstract class PolecatDocumentStorage<TDoc, TId>
 
     public void StoreObject(IStorageSession session, object document, Guid? version)
         => Store(session, (TDoc)document, version);
+
+    public Guid? MappedVersionForObject(object document) => MappedVersionFor((TDoc)document);
+
+    public long? MappedRevisionForObject(object document) => MappedRevisionFor((TDoc)document);
 
     public Weasel.Storage.IStorageOperation UpsertObject(object document, IStorageSession session, string tenantId)
         => Upsert((TDoc)document, session, tenantId);
