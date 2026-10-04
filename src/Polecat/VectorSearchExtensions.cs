@@ -120,16 +120,12 @@ public static class VectorSearchExtensions
         // spelling the same column two ways.
         builder.Append($" WHERE {column} IS NOT NULL");
 
-        if (mapping.DeleteStyle == DeleteStyle.SoftDelete)
-        {
-            builder.Append(" AND is_deleted = 0");
-        }
-
-        if (mapping.TenancyStyle == TenancyStyle.Conjoined)
-        {
-            builder.Append(" AND tenant_id = ");
-            builder.AppendParameter(session.TenantId);
-        }
+        // Soft deletion, conjoined tenancy and the hierarchy discriminator, from the one place all
+        // three search surfaces share (#723). typeof(T) rather than mapping.DocumentType: the
+        // provider registry routes a sub-class to its ROOT's provider, so the mapping here is the
+        // root's and the requested type is the only thing that still knows a sub-class was asked for.
+        DocumentSearchFilters.Apply(
+            DocumentSearchFilters.For(mapping, typeof(T), session.TenantId), builder);
 
         if (filter is not null)
         {
