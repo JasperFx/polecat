@@ -175,6 +175,18 @@ public static class FullTextSearchExtensions
         var docTable = mapping.QualifiedTableName;
         var conjoined = mapping.TenancyStyle == TenancyStyle.Conjoined;
 
+        // Soft deletion, conjoined tenancy and the hierarchy discriminator for the DOCUMENT table,
+        // from the one place all three search surfaces share (#723). typeof(T) rather than
+        // mapping.DocumentType: the provider registry routes a sub-class to its ROOT's provider, so
+        // the mapping here is the root's and the requested type is the only thing that still knows a
+        // sub-class was asked for.
+        //
+        // ⚠️ The token-table scoping below is NOT this. Tokens are keyed by member and tenant and
+        // carry no discriminator of their own — a sub-class's tokens live under the root's member
+        // name, so narrowing them would drop every hit. The discriminator belongs on the join to the
+        // document table, which is where these go.
+        var docFilters = DocumentSearchFilters.For(mapping, typeof(T), session.TenantId, "d.");
+
         // IAdvancedSql replaces each '?' with @p0, @p1, ... in the order they appear in the TEXT, so
         // this list is built in exactly the order the placeholders below are written.
         var parameters = new List<object>();
@@ -223,7 +235,7 @@ public static class FullTextSearchExtensions
              )
              SELECT TOP(?) d.id, d.data, scored.score
              FROM scored INNER JOIN {docTable} d ON d.id = scored.doc_id
-             {DocFilters(mapping, conjoined, filter is not null)}
+             {DocFilters(docFilters, filter is not null)}
              """;
 
         AddMemberScope();  // tf
@@ -233,7 +245,12 @@ public static class FullTextSearchExtensions
         parameters.Add(options.B);
         parameters.Add(options.B);
         parameters.Add(limit);
-        if (conjoined) parameters.Add(session.TenantId);
+
+        // In the order DocFilters rendered them, which is the order their placeholders appear.
+        foreach (var docFilter in docFilters)
+        {
+            if (docFilter.Parameter is not null) parameters.Add(docFilter.Parameter);
+        }
 
         // ⚠️ Built through a BatchBuilder rather than IAdvancedSql's '?' route (#633). A caller's
         // filter is an ISqlFragment that binds parameters of its own, and IAdvancedSql numbers
@@ -269,22 +286,23 @@ public static class FullTextSearchExtensions
     }
 
     /// <summary>
-    ///     Filters on the document table itself. Soft-deleted rows keep their tokens — the trigger
-    ///     sees an UPDATE, not a DELETE — so they have to be excluded here or a deleted document would
-    ///     come back from a search.
+    ///     The <see cref="DocumentSearchFilters" /> predicates rendered for this statement's
+    ///     '?'-placeholder route. Soft-deleted rows keep their tokens — the trigger sees an UPDATE,
+    ///     not a DELETE — so they have to be excluded here or a deleted document would come back
+    ///     from a search.
     /// </summary>
     /// <remarks>
     ///     <c>WHERE 1=1</c> appears only when a caller's filter is going to be appended and there is
     ///     nothing else to hang it off — the alternative is deciding between <c>WHERE</c> and
     ///     <c>AND</c> at the append site, in two places.
     /// </remarks>
-    private static string DocFilters(DocumentMapping mapping, bool conjoined, bool hasFilter)
+    private static string DocFilters(
+        IReadOnlyList<DocumentSearchFilters.SearchFilter> filters, bool hasFilter)
     {
-        var wheres = new List<string>();
-        if (mapping.DeleteStyle == DeleteStyle.SoftDelete) wheres.Add("d.is_deleted = 0");
-        if (conjoined) wheres.Add("d.tenant_id = ?");
-
-        if (wheres.Count > 0) return "WHERE " + string.Join(" AND ", wheres);
+        if (filters.Count > 0)
+        {
+            return "WHERE " + string.Join(" AND ", filters.Select(x => x.ToPlaceholderSql()));
+        }
 
         return hasFilter ? "WHERE 1=1" : string.Empty;
     }
