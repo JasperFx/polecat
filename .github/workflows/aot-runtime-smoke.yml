@@ -1,0 +1,83 @@
+name: aot-runtime-smoke
+
+# AOT RUNTIME gate (#725), the companion to `aot-smoke`. The division of labour is the point:
+#
+#   aot-smoke          BUILDS Polecat.AotSmoke and never runs it. A static gate on annotations.
+#   aot-runtime-smoke  PUBLISHES NATIVE and RUNS, against a real SQL Server.
+#
+# The first cannot replace the second, and not merely because it lacks a database: Polecat's public
+# LINQ async surface (PolecatQueryableExtensions) carries class-level
+# [UnconditionalSuppressMessage] for IL2026/IL2060/IL3050, so the analyzer is SILENT on exactly the
+# path Marten's four Native AOT bugs were on. Adding a read to the build-only lane therefore gates
+# nothing new at runtime — "writes were fine, the first read threw" (marten#5328) is what a
+# build-only lane reports as green.
+#
+# ⚠️ continue-on-error IS DELIBERATE AND IS NOT A TODO. This lane found, on its first run, that
+# Polecat does not function at all under Native AOT: DocumentMapping builds its identity accessors
+# through MethodInfo.MakeGenericMethod, which native AOT cannot do, and DocumentStore's CONSTRUCTOR
+# registers DeadLetterEvent eagerly — so every consumer hits it before writing a single document.
+# See #733. Until that closes, this lane reports per-shape results into the log without blocking
+# merges. Flip continue-on-error off when #733 lands; the lane is already asserting the right thing.
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: 1
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 1
+
+jobs:
+  publish-and-run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    continue-on-error: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install .NET 10.0.x
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Start SQL Server
+        run: docker compose up -d
+
+      - name: Wait for SQL Server to be healthy
+        run: |
+          for i in {1..30}; do
+            STATUS=$(docker inspect --format='{{.State.Health.Status}}' polecat-sqlserver)
+            if [ "$STATUS" == "healthy" ]; then
+              echo "SQL Server is ready!"
+              exit 0
+            fi
+            echo "Waiting for SQL Server... ($i)"
+            sleep 5
+          done
+          echo "SQL Server failed to become healthy"
+          exit 1
+
+      # Native publish. Trim and AOT warnings are NOT promoted to errors here, deliberately: this
+      # lane's question is what HAPPENS, and failing the publish on a warning would stop it ever
+      # being asked. aot-smoke is the lane that asserts what is annotated.
+      - name: Publish native (linux-x64)
+        run: |
+          dotnet publish src/Polecat.AotRuntimeSmoke/Polecat.AotRuntimeSmoke.csproj \
+            -c Release -r linux-x64 -o ${{ runner.temp }}/aot
+
+      # The binary prints one line per execution shape, each naming the Marten issue it mirrors, and
+      # returns non-zero on the first failure — so the log says WHICH shape broke rather than only
+      # that something did.
+      - name: Run the native binary against SQL Server
+        env:
+          POLECAT_TESTING_DATABASE: "Server=localhost,11433;User Id=sa;Password=P@55w0rd;Timeout=30;MultipleActiveResultSets=True;Initial Catalog=master;Encrypt=False"
+        run: ${{ runner.temp }}/aot/Polecat.AotRuntimeSmoke
+
+      - name: Stop SQL Server
+        if: always()
+        run: docker compose down
