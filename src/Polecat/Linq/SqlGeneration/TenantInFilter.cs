@@ -28,6 +28,16 @@ internal class TenantInFilter : ISqlFragment
             return;
         }
 
+        // #710: same 2100-parameter ceiling as InFilter, reached by a store with enough tenants in
+        // one TenantIsOneOf call. tenant_id is varchar(250) everywhere it exists, so the unpacked
+        // column is typed to match rather than left as OPENJSON's nvarchar -- an nvarchar probe
+        // against this varchar column is the #363 implicit-conversion scan.
+        if (JsonValueList.ShouldBindAsJsonArray(_tenantIds.Length))
+        {
+            JsonValueList.AppendInClause(builder, _columnName, _tenantIds, "varchar(250)", x => x);
+            return;
+        }
+
         builder.Append(_columnName);
         builder.Append(" IN (");
         for (var i = 0; i < _tenantIds.Length; i++)

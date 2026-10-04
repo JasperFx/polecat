@@ -9,16 +9,23 @@ internal class IdMember : IQueryableMember
 {
     private readonly ValueTypeInfo? _valueTypeInfo;
 
-    public IdMember(Type idType, ValueTypeInfo? valueTypeInfo = null)
+    public IdMember(Type idType, ValueTypeInfo? valueTypeInfo = null, string? locatorSqlType = null)
     {
         MemberType = idType;
         _valueTypeInfo = valueTypeInfo;
+        LocatorSqlType = locatorSqlType;
     }
 
     public Type MemberType { get; }
     public string TypedLocator => "id";
     public string RawLocator => "id";
     public bool IsBoolean => false;
+
+    /// <summary>
+    ///     The id COLUMN's own type, not the member's. A strong-typed id's wrapper has no SQL type;
+    ///     the column holds its inner scalar (#296/#302).
+    /// </summary>
+    public string? LocatorSqlType { get; }
 
     public object? ConvertValue(object? value)
     {

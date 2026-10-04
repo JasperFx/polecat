@@ -39,6 +39,12 @@ internal class EnumMember : IQueryableMember
     public string RawLocator { get; }
     public bool IsBoolean => false;
 
+    /// <summary>
+    ///     <c>int</c> under <see cref="EnumStorage.AsInteger" />, and null otherwise — a name-stored
+    ///     enum is compared as the uncast nvarchar the JSON holds.
+    /// </summary>
+    public string? LocatorSqlType => _enumStorage == EnumStorage.AsInteger ? "int" : null;
+
     public object? ConvertValue(object? value)
     {
         if (value == null) return null;
