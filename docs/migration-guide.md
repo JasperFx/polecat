@@ -112,7 +112,11 @@ the UTF-8 text, verified byte-for-byte against the previous spelling before the 
 document is re-embedded** by this upgrade. The new `MapFromAggregate` is documented in
 [Vector Projections](/events/projections/vector-projections).
 
-Vector projections were introduced in 5.29, so the affected surface is one release old.
+**Vector projections are new in 5.30.0** ([#628](https://github.com/JasperFx/polecat/issues/628)),
+so the `before` shape above never shipped in a release — it existed only between that work landing
+and this rename, both inside 5.30.0. Nobody upgrading from 5.29 or earlier has a
+`VectorProjection` to migrate, so the signature above is simply the one to write against rather
+than a change to make.
 
 ### Hand-written projections start being validated
 
