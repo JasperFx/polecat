@@ -53,6 +53,11 @@ public class storage_operation_seam_tests
     {
         public string TenantId { get; set; } = string.Empty;
         public string? LastParameterName => null;
+
+        // Weasel 9.40.0 (weasel#675). This stub binds nothing, so zero is the honest answer -- and
+        // it is not the same as the interface's UnknownParameterCount default (-1), which means "no
+        // information" rather than "none bound".
+        public int ParameterCount => 0;
         public void Append(string sql) { }
         public void Append(char character) { }
         public void AppendParameters(params object[] parameters) { }

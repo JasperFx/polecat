@@ -1048,9 +1048,45 @@
                * weasel#666 (the new Weasel.Firebird provider) is an eighth dialect, and
                  Migrator.FingerprintTableName / Migrator.OrderRollbacks came with it as virtuals
                  whose defaults are the previous behaviour. Both inert. -->
-        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.39.0" />
-        <PackageVersion Include="Weasel.SqlServer" Version="9.39.0" />
-        <PackageVersion Include="Weasel.Storage" Version="9.39.0" />
+
+        <!-- Weasel 9.40.0 (#721, from 9.39.0). Four changes, one of which Polecat ADOPTS and three
+             of which are inert. Written out per #709's lesson: that bump went 9.36 -> 9.38 with no
+             entry at all and thereby hid two inherited fixes (weasel#663, a stranded migration lock
+             on Polecat's own startup path; weasel#662, a TableDelta NRE that DatabaseResource.Check
+             reported as a MISSING RESOURCE). An unexplained bump is how an inherited fix goes
+             unnoticed, so each release gets a line even when the answer is "nothing".
+
+               * weasel#675 — ICommandBuilder.ParameterCount, the current command's bound-parameter
+                 count. ADOPTED: AliasingCommandBuilder forwards it, and JsonValueList turns #710's
+                 flat ~100 threshold into a floor with a real per-command ceiling against
+                 SqlServerMigrator.MaxParametersPerCommand. Filed FROM #710, so this is Polecat's own
+                 request coming back.
+                 ⚠️ It ships with a default implementation returning
+                 ICommandBuilder.UnknownParameterCount (-1), and that default is load-bearing rather
+                 than a formality: without it the member was a runtime break, and a published Polecat
+                 would have thrown TypeLoadException on AliasingCommandBuilder the first time a host
+                 loaded it. weasel#682 caught that before release. So -1 means "no information", NOT
+                 "none bound", and JsonValueList treats it as "skip the ceiling".
+               * weasel#677 — ToDatabaseScript and WriteScriptsByTypeAsync now order objects and
+                 features by dependency. Filed OFF polecat#684, where a model that migrated cleanly
+                 could still emit an unrunnable creation script. Polecat has carried its own
+                 DocumentFeatureSchema.InDependencyOrder workaround since #684; left in place here
+                 rather than removed, because the two sorts have not been compared and a mutual
+                 reference is still unhandled on both sides. Worth revisiting, not worth bundling.
+               * weasel#681 — a creation script's foreign key is guarded so the script re-runs. INERT:
+                 Polecat's generated_schema_script_executes already runs the script twice and was
+                 green before the bump, so nothing here depended on it.
+               * weasel#686 — MySQL renders foreign keys inline in CREATE TABLE. INERT: wrong dialect.
+
+             ⚠️ Nothing in 9.40.0 goes near weasel#637/#638 (SQL Server storing CAST as CONVERT, and a
+             changed computed definition dropped without its dependent index/FK), both of which landed
+             in 9.36.0. Verified against the release diff rather than from memory: Weasel.SqlServer
+             changed in exactly two places, BatchBuilder.cs (+6, ParameterCount) and one new test
+             file. So DocumentIndex.ComputedColumnExpression keeps declaring CONVERT — still the right
+             declaration independently of the reconciliation fix. -->
+        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.40.0" />
+        <PackageVersion Include="Weasel.SqlServer" Version="9.40.0" />
+        <PackageVersion Include="Weasel.Storage" Version="9.40.0" />
 
         <!-- Strongly typed IDs. Both generators are test-only: they prove Polecat's value-type id
              support against the two libraries Marten's ValueTypeTests exercise. StronglyTypedId emits

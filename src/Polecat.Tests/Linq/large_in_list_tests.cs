@@ -136,6 +136,80 @@ public class large_in_list_tests: OneOffConfigurationsContext
         Render(new InFilter(member.TypedLocator, member, new List<object?>())).Sql.ShouldContain("1=0");
     }
 
+    // ---- #721: the command-level ceiling ------------------------------------------------------
+
+    /// <summary>
+    ///     A builder that reports no information about its parameter count, the way one compiled
+    ///     against a Weasel older than 9.40.0 does.
+    /// </summary>
+    private sealed class UncountedBuilder : Weasel.Core.ICommandBuilder
+    {
+        public string TenantId { get; set; } = string.Empty;
+        public string? LastParameterName => null;
+
+        // The interface's own default. "No information", NOT "none bound".
+        public int ParameterCount => Weasel.Core.ICommandBuilder.UnknownParameterCount;
+
+        public void Append(string sql) { }
+        public void Append(char character) { }
+        public void AppendParameters(params object[] parameters) { }
+        public System.Data.Common.DbParameter AppendParameter(object value) => throw new NotSupportedException();
+        public Weasel.Core.IGroupedParameterBuilder CreateGroupedParameterBuilder(char? separator = null) => throw new NotSupportedException();
+        public System.Data.Common.DbParameter[] AppendWithDbParameters(string text) => [];
+        public System.Data.Common.DbParameter[] AppendWithDbParameters(string text, char placeholder) => [];
+        public void StartNewCommand() { }
+        public void AddParameters(object parameters) { }
+        public void AddParameters(IDictionary<string, object?> parameters) { }
+        public void AddParameters<T>(IDictionary<string, T> parameters) { }
+    }
+
+    [Fact]
+    public void the_budget_is_weasels_rather_than_a_restated_constant()
+    {
+        // Read from SqlServerMigrator so a Weasel change moves both together, and deliberately below
+        // SQL Server's hard 2100 -- the slack is for parameters bound AFTER this fragment, which it
+        // cannot see.
+        JsonValueList.Budget.ShouldBe(new SqlServerMigrator().MaxParametersPerCommand);
+        JsonValueList.Budget.ShouldBeLessThan(2100);
+    }
+
+    [Fact]
+    public void a_small_list_on_a_fresh_command_is_still_one_parameter_per_value()
+    {
+        // The ceiling must not disturb the floor's answer when there is budget to spare.
+        JsonValueList.ShouldBindAsJsonArray(new BatchBuilder(), 10).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void a_small_list_becomes_an_array_once_the_command_has_spent_its_budget()
+    {
+        // ⚠️ THE #721 fact. 50 values is far under the floor, so before this the fragment bound 50
+        // more parameters onto a command already holding 1,990 -- 2,040, and climbing toward the
+        // server's refusal with every further filter.
+        var builder = new BatchBuilder();
+        for (var i = 0; i < JsonValueList.Budget - 10; i++) builder.AppendParameter($"x{i}");
+
+        builder.ParameterCount.ShouldBe(JsonValueList.Budget - 10);
+        JsonValueList.ShouldBindAsJsonArray(builder, 50).ShouldBeTrue();
+
+        // And exactly at the budget it is still allowed through, so the boundary is not off by one.
+        var atBudget = new BatchBuilder();
+        for (var i = 0; i < JsonValueList.Budget - 10; i++) atBudget.AppendParameter($"x{i}");
+        JsonValueList.ShouldBindAsJsonArray(atBudget, 10).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void a_builder_that_cannot_count_falls_back_to_the_floor_alone()
+    {
+        // -1 means "no information", so the ceiling is skipped and behaviour is exactly as it was
+        // before #721. Treating -1 as zero would read as "nothing bound" on a full command; treating
+        // it as full would turn every small IsOneOf into an OPENJSON join.
+        var uncounted = new UncountedBuilder();
+
+        JsonValueList.ShouldBindAsJsonArray(uncounted, 10).ShouldBeFalse();
+        JsonValueList.ShouldBindAsJsonArray(uncounted, JsonValueList.Threshold + 1).ShouldBeTrue();
+    }
+
     // ---- integration: the repro, and that the answers are right ------------------------------
 
     private async Task<string[]> StoredIdsAsync()
@@ -210,5 +284,68 @@ public class large_in_list_tests: OneOffConfigurationsContext
 
         // doc-0 is one of the nulled-out slots, so it drops out; everything else still matches.
         found.Select(x => x.Id).OrderBy(x => x).ShouldBe(stored.Where(x => x != "doc-0").OrderBy(x => x));
+    }
+
+    /// <summary>
+    ///     ⚠️ <b>The #721 repro: MANY SMALL lists on one command.</b>
+    /// </summary>
+    /// <remarks>
+    ///     Twenty-five filters of a hundred values. Every list is at or under the floor, so each one
+    ///     looks harmless on its own and no per-fragment threshold can see the problem — but together
+    ///     they bound 2,500 parameters on a single command and SQL Server refuses over 2,100. This is
+    ///     the case the low threshold could not reach at any value, because lowering it far enough to
+    ///     cover twenty fragments would turn every single-digit <c>IsOneOf</c> in the store into an
+    ///     OPENJSON join.
+    /// </remarks>
+    [Fact]
+    public async Task many_small_lists_on_one_command_stay_under_the_server_limit()
+    {
+        var stored = await StoredIdsAsync();
+
+        await using var query = theStore.QuerySession();
+        IQueryable<Doc> queryable = query.Query<Doc>();
+
+        for (var f = 0; f < 25; f++)
+        {
+            // Each probe carries every stored id plus distinct filler, so the intersection of all
+            // twenty-five is exactly the stored set and an over-wide render would be visible.
+            var probe = stored
+                .Concat(Enumerable.Range(f * 1000, JsonValueList.Threshold - stored.Length)
+                    .Select(i => $"filler-{i}"))
+                .ToArray();
+
+            probe.Length.ShouldBe(JsonValueList.Threshold);
+            queryable = queryable.Where(x => probe.Contains(x.Id));
+        }
+
+        var found = await queryable.ToListAsync(TestContext.Current.CancellationToken);
+
+        found.Select(x => x.Id).OrderBy(x => x).ShouldBe(stored.OrderBy(x => x));
+    }
+
+    /// <summary>
+    ///     The example weasel#675 was filed for, pinned because it is NOT what #721 fixes.
+    /// </summary>
+    /// <remarks>
+    ///     Two filters of 1,500 values were the motivating case for exposing the parameter count —
+    ///     "both under any per-fragment ceiling and together over the server's". That stopped being
+    ///     true the moment #710 shipped with a low threshold: 1,500 is over the floor, so each
+    ///     fragment already became a single array parameter on its own. Kept as a fact so the claim in
+    ///     <see cref="JsonValueList" />'s remarks stays checkable rather than remembered.
+    /// </remarks>
+    [Fact]
+    public async Task two_large_lists_on_one_command_were_already_safe()
+    {
+        var stored = await StoredIdsAsync();
+
+        var ids = stored.Concat(Enumerable.Range(0, 1500).Select(i => $"other-{i}")).ToArray();
+        var names = stored.Concat(Enumerable.Range(0, 1500).Select(i => $"other-{i}")).ToArray();
+
+        await using var query = theStore.QuerySession();
+        var found = await query.Query<Doc>()
+            .Where(x => ids.Contains(x.Id) && names.Contains(x.Name))
+            .ToListAsync(TestContext.Current.CancellationToken);
+
+        found.Select(x => x.Id).OrderBy(x => x).ShouldBe(stored.OrderBy(x => x));
     }
 }
