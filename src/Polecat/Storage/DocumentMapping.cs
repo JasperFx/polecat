@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using JasperFx;
@@ -593,6 +594,30 @@ internal class DocumentMapping
     [RequiresUnreferencedCode("Closes IdentityAssigner<TDoc,TId> over the document + id types.")]
     private static IIdentityAssigner CreateAssigner(Type documentType, Type idType, object identification)
     {
+        // ⚠️ #733: THIS IS WHERE A NATIVELY-PUBLISHED POLECAT STILL STOPS, and it is not fixable
+        // here. idType is routinely a VALUE type (Guid, int, long), and MakeGenericType cannot close
+        // an instantiation with a value-type argument under Native AOT -- only all-reference-type
+        // ones share a canonical body:
+        //
+        //   NotSupportedException: 'Polecat.Internal.IdentityAssigner`2[DeadLetterEvent,System.Guid]'
+        //   is missing native code or metadata.
+        //
+        // Two consumer-side workarounds were tried and both are dead ends, recorded so they are not
+        // tried again:
+        //
+        //   * holding the strategy as object and invoking AssignIfMissing REFLECTIVELY. Published and
+        //     run natively; GetMethods() on SequentialGuidIdentification<TDoc> returns nothing,
+        //     because nothing statically references those members and the trimmer removed the
+        //     metadata. You cannot reflect your way out of generics under AOT -- the metadata you
+        //     would reflect over is trimmed too.
+        //   * reimplementing the identity rules (CombGuid, Hi-Lo) against _idGetter / _idSetter.
+        //     That is a second description of Weasel's behaviour kept in step by hand, which is the
+        //     trade this repo's own rules reject -- and the reason the two fallbacks ABOVE are
+        //     acceptable is precisely that they are not that.
+        //
+        // The fix is a non-generic seam in Weasel.Core.Identity: weasel#689 (the facade, which this
+        // call needs) and weasel#690 (constructing ValueTypeIdentification<,,>, which a strong-typed
+        // id needs). Until one lands, #733 stays open and aot-runtime-smoke stays continue-on-error.
         var assignerType = typeof(IdentityAssigner<,>).MakeGenericType(documentType, idType);
         return (IIdentityAssigner)Activator.CreateInstance(assignerType, identification)!;
     }
@@ -611,10 +636,34 @@ internal class DocumentMapping
     private static (Func<object, object?> getter, Action<object, object> setter) BuildRawIdAccessors(
         PropertyInfo property)
     {
+        // #733: MakeGenericMethod cannot close an instantiation ILC did not precompile, so under
+        // Native AOT this threw before any document was read or written -- from DocumentMapping's
+        // CONSTRUCTOR, which every document type goes through.
+        //
+        // ⚠️ The fallback is NOT a reimplementation of the fast path, and that matters: the fast
+        // path exists only to avoid per-call reflection. PropertyInfo.GetValue/SetValue reads and
+        // writes the same property with the same semantics, just slower -- so there is no second
+        // behaviour to keep in step, which is what makes this safe to branch on rather than a
+        // divergence waiting to happen. Same shape as JasperFx's own LambdaBuilder and
+        // ValueTypeInfo fallbacks (jasperfx#942).
+        if (!RuntimeFeature.IsDynamicCodeSupported) return RawIdAccessorsByReflection(property);
+
         var closed = typeof(DocumentMapping)
             .GetMethod(nameof(RawIdAccessors), BindingFlags.NonPublic | BindingFlags.Static)!
             .MakeGenericMethod(property.DeclaringType!, property.PropertyType);
         return ((Func<object, object?>, Action<object, object>))closed.Invoke(null, [property])!;
+    }
+
+    /// <summary>
+    ///     The AOT path's id accessors (#733). <c>internal</c> so a test can hold it beside the fast
+    ///     path and assert the two agree — the JIT suite never reaches it otherwise, because it is
+    ///     behind <see cref="RuntimeFeature.IsDynamicCodeSupported" />.
+    /// </summary>
+    internal static (Func<object, object?> getter, Action<object, object> setter) RawIdAccessorsByReflection(
+        PropertyInfo property)
+    {
+        return (document => property.GetValue(document),
+            (document, value) => property.SetValue(document, value));
     }
 
     [RequiresUnreferencedCode("Delegates to LambdaBuilder.GetProperty / SetProperty.")]
@@ -658,10 +707,36 @@ internal class DocumentMapping
     private static (Func<object, object> unwrapper, Func<object, object> wrapper) BuildStrongTypedIdConverters(
         ValueTypeInfo valueType)
     {
+        // #733 / #736. ⚠️ jasperfx#942 taught ValueTypeInfo.CreateWrapper / UnWrapper to fall back to
+        // reflection under Native AOT -- and that alone does NOT help here, which is the part #736
+        // gets wrong when it says "these Polecat call sites now work in a native image". Both are
+        // GENERIC methods, and Polecat reaches them through its own MakeGenericMethod below. A fix
+        // inside a callee cannot help a caller that cannot close the generic to call it.
+        //
+        // So the AOT path composes the same reflection members jasperfx#942's own fallback uses --
+        // ValueTypeInfo.ValueProperty, Ctor and Builder, all public -- rather than waiting for a
+        // non-generic overload upstream. One wrapping rule, expressed twice over the same metadata.
+        if (!RuntimeFeature.IsDynamicCodeSupported) return StrongTypedIdConvertersByReflection(valueType);
+
         var closed = typeof(DocumentMapping)
             .GetMethod(nameof(StrongTypedIdConverters), BindingFlags.NonPublic | BindingFlags.Static)!
             .MakeGenericMethod(valueType.OuterType, valueType.SimpleType);
         return ((Func<object, object>, Func<object, object>))closed.Invoke(null, [valueType])!;
+    }
+
+    /// <summary>
+    ///     The AOT path's strong-typed id converters (#733), over the same <see cref="ValueTypeInfo" />
+    ///     members jasperfx#942's own fallback uses. <c>internal</c> for the same reason as
+    ///     <see cref="RawIdAccessorsByReflection" />.
+    /// </summary>
+    internal static (Func<object, object> unwrapper, Func<object, object> wrapper)
+        StrongTypedIdConvertersByReflection(ValueTypeInfo valueType)
+    {
+        return (
+            outer => valueType.ValueProperty.GetValue(outer)!,
+            inner => valueType.Ctor != null
+                ? valueType.Ctor.Invoke([inner])
+                : valueType.Builder!.Invoke(null, [inner])!);
     }
 
     [RequiresUnreferencedCode("Delegates to ValueTypeInfo.UnWrapper / CreateWrapper.")]

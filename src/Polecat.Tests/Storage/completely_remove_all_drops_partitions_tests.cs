@@ -18,6 +18,17 @@ public class RemoveAllSample
 }
 
 /// <summary>
+///     A type no partitioned fact in this class touches, so the unpartitioned fact asserts an absence
+///     that is about ITS store rather than about the whole database. See the remarks on
+///     <c>an_unpartitioned_store_is_unaffected</c>.
+/// </summary>
+public class UnpartitionedSample
+{
+    public Guid Id { get; set; }
+    public DateTimeOffset BucketEnd { get; set; }
+}
+
+/// <summary>
 ///     #718: <c>CompletelyRemoveAllAsync</c> drops the partition scheme and function, not only the
 ///     tables.
 /// </summary>
@@ -114,6 +125,13 @@ public class completely_remove_all_drops_partitions_tests: OneOffConfigurationsC
         // And the migration converges, which is what says the surviving-or-rebuilt function agrees
         // with the model rather than merely existing.
         await theStore.Database.AssertDatabaseMatchesConfigurationAsync();
+
+        // ⚠️ Clean up, because this fact deliberately ENDS with the objects existing and they are
+        // DATABASE-scoped -- so without this it hands its leftovers to whichever test in this class
+        // runs next. That is the #718 leak itself, reproduced by the tests written to prove it: on
+        // one ordering an_unpartitioned_store_is_unaffected saw this function and failed. Caught by
+        // a full-suite run, not in isolation, which is the only place an ordering problem shows.
+        await theStore.Advanced.CompletelyRemoveAllAsync(token);
     }
 
     [Fact]
@@ -134,6 +152,17 @@ public class completely_remove_all_drops_partitions_tests: OneOffConfigurationsC
         (await FunctionCountAsync()).ShouldBe(0);
     }
 
+    /// <summary>
+    ///     ⚠️ Its own document type, and that is load-bearing rather than tidiness.
+    /// </summary>
+    /// <remarks>
+    ///     Asserted against <c>ps_pc_doc_unpartitionedsample_*</c>, a name no other fact in this class
+    ///     creates. The first version of this fact asserted the SHARED
+    ///     <c>ps_pc_doc_removeallsample_*</c> name, which made it a statement about the whole database
+    ///     rather than about this store — so a sibling fact's leftovers could fail it, and on one
+    ///     ordering did. A partition scheme is database-scoped; a fact that asserts a global absence
+    ///     is a fact about every other test in the class.
+    /// </remarks>
     [Fact]
     public async Task an_unpartitioned_store_is_unaffected()
     {
@@ -147,12 +176,12 @@ public class completely_remove_all_drops_partitions_tests: OneOffConfigurationsC
         // but state crossing between two stores that share nothing in their configuration.
         var token = TestContext.Current.CancellationToken;
 
-        ConfigureStore(opts => opts.Schema.For<RemoveAllSample>());
+        ConfigureStore(opts => opts.Schema.For<UnpartitionedSample>());
         await theStore.Database.ApplyAllConfiguredChangesToDatabaseAsync();
 
         await theStore.Advanced.CompletelyRemoveAllAsync(token);
 
-        (await SchemeCountAsync()).ShouldBe(0);
-        (await FunctionCountAsync()).ShouldBe(0);
+        (await CountAsync("sys.partition_schemes", "ps_pc_doc_unpartitionedsample_bucket_end")).ShouldBe(0);
+        (await CountAsync("sys.partition_functions", "pf_pc_doc_unpartitionedsample_bucket_end")).ShouldBe(0);
     }
 }
