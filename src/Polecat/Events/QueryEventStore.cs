@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Collections.Concurrent;
 using System.Linq.Expressions;
 using System.Reflection;
@@ -106,6 +107,10 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
     ///     capture it is REFUSED by <see cref="EventQuery.AssertFiltersAreSupported" /> (never
     ///     silently ignored; unfiltered results would read as filtered).
     /// </summary>
+    [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
+        Justification = "Polecat's own use of its LINQ async wrappers, which carry [RequiresDynamicCode] since #733. This member cannot propagate the annotation -- it implements a JasperFx interface that does not carry one, and annotating an implementation alone is IL2046. A CONSUMER is still warned, at the public entry point they call. ⚠️ This is NOT the suppression #733 removed: that one asserted the path was SAFE. This one records that the path is unsafe and that the diagnostic has nowhere to go from here. Upstream: annotate the JasperFx interface.")]
+    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+        Justification = "Polecat's own use of its LINQ async wrappers, which carry [RequiresDynamicCode] since #733. This member cannot propagate the annotation -- it implements a JasperFx interface that does not carry one, and annotating an implementation alone is IL2046. A CONSUMER is still warned, at the public entry point they call. ⚠️ This is NOT the suppression #733 removed: that one asserted the path was SAFE. This one records that the path is unsafe and that the diagnostic has nowhere to go from here. Upstream: annotate the JasperFx interface.")]
     public async Task<PagedEvents> QueryEventsAsync(EventQuery query, CancellationToken token = default)
     {
         query.AssertFiltersAreSupported(SupportedEventQueryFilters());

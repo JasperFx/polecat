@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Polecat.Linq;
 
 namespace Polecat.Pagination;
@@ -14,6 +15,8 @@ public static class PagedListExtensions
     /// <param name="pageNumber">The 1-based page number.</param>
     /// <param name="pageSize">The number of items per page.</param>
     /// <param name="token">Cancellation token.</param>
+    [RequiresUnreferencedCode("Executes a Polecat LINQ query, which closes handler and selector generics over the document type at runtime. Use raw SQL (session.QueryAsync<T>) under Native AOT. See polecat#733.")]
+    [RequiresDynamicCode("Executes a Polecat LINQ query, which closes handler and selector generics over the document type at runtime. Use raw SQL (session.QueryAsync<T>) under Native AOT. See polecat#733.")]
     public static async Task<IPagedList<T>> ToPagedListAsync<T>(
         this IQueryable<T> queryable, int pageNumber, int pageSize,
         CancellationToken token = default)

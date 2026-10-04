@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using JasperFx;
 using JasperFx.Core.Reflection;
 using JasperFx.Descriptors;
@@ -820,6 +821,10 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
     ///     <see cref="ShardName.Name" /> as <c>ProjectionName</c> and
     ///     <see cref="ShardName.ShardKey" /> as <c>ShardName</c>.
     /// </summary>
+    [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
+        Justification = "Polecat's own use of its LINQ async wrappers, which carry [RequiresDynamicCode] since #733. This member cannot propagate the annotation -- it implements a JasperFx interface that does not carry one, and annotating an implementation alone is IL2046. A CONSUMER is still warned, at the public entry point they call. ⚠️ This is NOT the suppression #733 removed: that one asserted the path was SAFE. This one records that the path is unsafe and that the diagnostic has nowhere to go from here. Upstream: annotate the JasperFx interface.")]
+    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+        Justification = "Polecat's own use of its LINQ async wrappers, which carry [RequiresDynamicCode] since #733. This member cannot propagate the annotation -- it implements a JasperFx interface that does not carry one, and annotating an implementation alone is IL2046. A CONSUMER is still warned, at the public entry point they call. ⚠️ This is NOT the suppression #733 removed: that one asserted the path was SAFE. This one records that the path is unsafe and that the diagnostic has nowhere to go from here. Upstream: annotate the JasperFx interface.")]
     public async Task<long> CountDeadLetterEventsAsync(ShardName shard, CancellationToken token = default)
     {
         try
@@ -845,6 +850,10 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
     ///     (jasperfx#356). Dead letters are typically few, so the rows are materialized
     ///     and grouped in memory rather than relying on a SQL GROUP BY translation.
     /// </summary>
+    [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
+        Justification = "Polecat's own use of its LINQ async wrappers, which carry [RequiresDynamicCode] since #733. This member cannot propagate the annotation -- it implements a JasperFx interface that does not carry one, and annotating an implementation alone is IL2046. A CONSUMER is still warned, at the public entry point they call. ⚠️ This is NOT the suppression #733 removed: that one asserted the path was SAFE. This one records that the path is unsafe and that the diagnostic has nowhere to go from here. Upstream: annotate the JasperFx interface.")]
+    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+        Justification = "Polecat's own use of its LINQ async wrappers, which carry [RequiresDynamicCode] since #733. This member cannot propagate the annotation -- it implements a JasperFx interface that does not carry one, and annotating an implementation alone is IL2046. A CONSUMER is still warned, at the public entry point they call. ⚠️ This is NOT the suppression #733 removed: that one asserted the path was SAFE. This one records that the path is unsafe and that the diagnostic has nowhere to go from here. Upstream: annotate the JasperFx interface.")]
     public async Task<IReadOnlyList<DeadLetterShardCount>> FetchDeadLetterCountsAsync(
         CancellationToken token = default)
     {
@@ -871,6 +880,10 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
     ///     so counts that would otherwise collide on <c>{ProjectionName}:{ShardName}</c> are separated
     ///     per tenant. A null <paramref name="tenantId" /> falls back to the store-global shape.
     /// </summary>
+    [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
+        Justification = "Polecat's own use of its LINQ async wrappers, which carry [RequiresDynamicCode] since #733. This member cannot propagate the annotation -- it implements a JasperFx interface that does not carry one, and annotating an implementation alone is IL2046. A CONSUMER is still warned, at the public entry point they call. ⚠️ This is NOT the suppression #733 removed: that one asserted the path was SAFE. This one records that the path is unsafe and that the diagnostic has nowhere to go from here. Upstream: annotate the JasperFx interface.")]
+    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+        Justification = "Polecat's own use of its LINQ async wrappers, which carry [RequiresDynamicCode] since #733. This member cannot propagate the annotation -- it implements a JasperFx interface that does not carry one, and annotating an implementation alone is IL2046. A CONSUMER is still warned, at the public entry point they call. ⚠️ This is NOT the suppression #733 removed: that one asserted the path was SAFE. This one records that the path is unsafe and that the diagnostic has nowhere to go from here. Upstream: annotate the JasperFx interface.")]
     public async Task<IReadOnlyList<DeadLetterShardCount>> FetchDeadLetterCountsAsync(
         string? tenantId, CancellationToken token = default)
     {
@@ -904,6 +917,10 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
     ///     one partition. Dead letters are few, so rows are materialized then ordered/paged in memory
     ///     (consistent with <see cref="FetchDeadLetterCountsAsync(CancellationToken)" />).
     /// </summary>
+    [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
+        Justification = "Polecat's own use of its LINQ async wrappers, which carry [RequiresDynamicCode] since #733. This member cannot propagate the annotation -- it implements a JasperFx interface that does not carry one, and annotating an implementation alone is IL2046. A CONSUMER is still warned, at the public entry point they call. ⚠️ This is NOT the suppression #733 removed: that one asserted the path was SAFE. This one records that the path is unsafe and that the diagnostic has nowhere to go from here. Upstream: annotate the JasperFx interface.")]
+    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+        Justification = "Polecat's own use of its LINQ async wrappers, which carry [RequiresDynamicCode] since #733. This member cannot propagate the annotation -- it implements a JasperFx interface that does not carry one, and annotating an implementation alone is IL2046. A CONSUMER is still warned, at the public entry point they call. ⚠️ This is NOT the suppression #733 removed: that one asserted the path was SAFE. This one records that the path is unsafe and that the diagnostic has nowhere to go from here. Upstream: annotate the JasperFx interface.")]
     public async Task<IReadOnlyList<DeadLetterEvent>> QueryDeadLetterEventsAsync(ShardName shard,
         string? tenantId, int offset, int limit, CancellationToken token = default)
     {
