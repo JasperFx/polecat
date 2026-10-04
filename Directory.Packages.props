@@ -964,10 +964,93 @@
                  sys.dm_tran_locks. Polecat gets this for free because ProjectionCoordinator hands the
                  distributors Weasel.SqlServer.AdvisoryLock; see the jasperfx#913/#916 note above.
                  Inherited, not yet consumed.
-             The rest of the release is SQLite, MySQL and docs — no SQL Server dialect surface. -->
-        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.38.0" />
-        <PackageVersion Include="Weasel.SqlServer" Version="9.38.0" />
-        <PackageVersion Include="Weasel.Storage" Version="9.38.0" />
+             The rest of the release is SQLite, MySQL and docs — no SQL Server dialect surface.
+
+             Weasel 9.37.0 / 9.38.0 — WRITTEN AFTER THE FACT. polecat#709 bumped 9.36.0 -> 9.38.0 for
+             weasel#661 and recorded the reason in its commit message but not here, so this block
+             ended at 9.36.0 while the pins said 9.38.0. Three of 9.37.0's five commits reach Polecat
+             and two of them are bugs Polecat could hit, which is why they are worth writing down late
+             rather than not at all:
+               * weasel#659/#663 — ApplyAllConfiguredChangesToDatabaseAsync released the global
+                 migration lock only on its SUCCESS paths. An exception anywhere between attaining it
+                 and finishing skipped the release, and the finally block only disposed the
+                 connection — which is not enough for a session-scoped lock on a POOLED connection,
+                 because the driver resets a connection when it is next used rather than when it is
+                 returned. This is squarely on Polecat's startup path: PolecatActivator passes
+                 Polecat's OWN migration lock (#664) into exactly this method, per tenant database in
+                 a loop. So one failed tenant migration stranded the lock and every later replica —
+                 and every later database in that same loop sharing the resource — was told "Unable to
+                 attain the global lock in time to apply database changes", whose own suggested remedy
+                 (ContinueOnFailures) would start them against an unmigrated schema. That is the
+                 deploy crash-loop the #664 notes warn about, arriving by a route #664 did not close.
+                 Fixed in Weasel.Core.Migrations.DatabaseBase, so Polecat inherits it with no change.
+               * weasel#658/#662 — a TableDelta for a table that does not exist yet threw
+                 NullReferenceException from HasChanges(), the one case whose answer is unambiguously
+                 "yes". Polecat reaches this through PolecatSystemPart, which wraps every tenant
+                 database in a Weasel DatabaseResource; a resource Check() over an unprovisioned
+                 database calls FindDeltaAsync(...).HasChanges(), and DatabaseResource catches the
+                 exception and reports the resource MISSING — so the NRE reached an operator as a
+                 wrong diagnosis rather than as an error.
+               * weasel#664/#665 — the lock's reconnection loop overwrote `conn` without disposing the
+                 outgoing one, leaking a socket and a pool slot per attempt against a server that had
+                 just refused a connection. Inherited; same startup path as #663.
+               * weasel#661 is the JSON index, already consumed by polecat#709. weasel#660 (Oracle
+                 descending index) and all of 9.38.0 (weasel#667, Oracle identity columns round-trip)
+                 are other dialects. ⚠️ Weasel's 9.38 notes flag one deliberate behaviour change for
+                 anyone crossing it: IsAutoNumber now counts towards TableColumn equality. Oracle-only
+                 in practice — Polecat declares no identity columns outside Weasel's own HiloTable —
+                 and inert here.
+
+             Weasel 9.39.0 (from 9.38.0). Taken for weasel#669, which is a SQL SERVER bug on a path
+             Polecat drives, and the FIRST of these in a while that is a Polecat defect rather than
+             something inherited.
+               * weasel#668/#669 — SQL Server compiles a whole batch before running any of it, and
+                 binds column names against tables that ALREADY EXIST at compile time (deferred name
+                 resolution covers only tables that do not). TableDelta.WriteUpdate wrote the missing
+                 columns' ALTER TABLE … ADD and everything after it into ONE batch, so a later
+                 statement whose EXPRESSION named a column the same delta was adding failed to compile
+                 with error 207 — and the ALTER never ran either, because nothing in a batch that did
+                 not compile does.
+
+                 Weasel measured the whole matrix, and the line is expression versus name list: a
+                 filtered index's PREDICATE, a check constraint, and a computed column derived from
+                 the new column all failed; an index's key columns, its INCLUDE list and a foreign
+                 key's columns always worked. That asymmetry is why this went unnoticed for so long.
+
+                 ⚠️ Polecat declares filtered indexes (DocumentIndex.Predicate ->
+                 IndexDefinition.Predicate), so the reachable shape here is a configuration change
+                 that adds a column AND a filtered index naming it in one delta — turning on soft
+                 deletes next to Predicate = "is_deleted = 0", say. Note the predicate cannot name a
+                 COMPUTED column (SQL Server refuses that outright), so it is the conditional ordinary
+                 columns — is_deleted, deleted_at, doc_type — that make this reachable. Polecat's
+                 existing create_filtered_index test builds the index WITH the table, where
+                 WriteUpdate never runs, which is why no test here ever saw it. A regression test on
+                 the ALTER path comes with this bump. Polecat's computed columns all derive from
+                 `data`, which always exists, and Polecat declares no check constraints, so the other
+                 two cases in the matrix are inert.
+
+                 ⚠️ THE RENDERED OUTPUT CHANGES: a table delta that changes a column now carries GO
+                 separators, and this correction belongs on
+                 DocumentTable.AddDeclaredSchemaObjects' remark, which claimed one batch is fine and
+                 that "no GO is needed" on the strength of having MEASURED the plain-index case. The
+                 measurement was right and the generalization was not. Nothing to adjust in Polecat
+                 otherwise: Polecat never executes delta text itself (every path goes through
+                 SqlServerMigrator.ApplyAllAsync, which splits on GO), and the one no-GO assertion in
+                 the suite is over a CREATION script against a dropped schema, where WriteUpdate does
+                 not run. A consumer that hands WriteUpdate output to a single SqlCommand must split
+                 it first; SqlServerBatchSplitter.Split is public, and its Separator is newly public
+                 in this release.
+               * weasel#670/#671 — WriteRollback now undoes check-constraint changes, which it had no
+                 counterpart for at all. INERT here: Polecat declares no check constraints. Worth
+                 knowing anyway, because a constraint a rollback left behind is undeclared by
+                 definition and therefore invisible to FindDeltaAsync — sys.check_constraints is the
+                 only way to see it.
+               * weasel#666 (the new Weasel.Firebird provider) is an eighth dialect, and
+                 Migrator.FingerprintTableName / Migrator.OrderRollbacks came with it as virtuals
+                 whose defaults are the previous behaviour. Both inert. -->
+        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.39.0" />
+        <PackageVersion Include="Weasel.SqlServer" Version="9.39.0" />
+        <PackageVersion Include="Weasel.Storage" Version="9.39.0" />
 
         <!-- Strongly typed IDs. Both generators are test-only: they prove Polecat's value-type id
              support against the two libraries Marten's ValueTypeTests exercise. StronglyTypedId emits

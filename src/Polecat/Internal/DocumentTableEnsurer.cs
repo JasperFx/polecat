@@ -170,15 +170,36 @@ internal class DocumentTableEnsurer
                     + "VectorIndex(...) declaration or move to an instance that supports it.", e);
             }
 
-            // Polecat-owned full-text index: token table, its index, the maintaining trigger, and
-            // the backfill for rows that predate the declaration. Rendered over the whole collection
-            // because one trigger serves the table — see FullTextIndex.ToDdlStatements.
-            foreach (var statement in Storage.FullText.FullTextIndex.ToDdlStatements(
-                         provider.Mapping, provider.Mapping.FullTextIndexes))
+            // #685: the Polecat-owned full-text index is no longer rendered here. Its token table and
+            // maintaining trigger are declared schema objects (FullTextSchemaObjects.For) and reconciled
+            // by a migration like everything else, so they now appear in the generated script, are
+            // compared by AssertDatabaseMatchesConfigurationAsync, and can be refused under
+            // AutoCreate.None -- which could not refuse what it could not see.
+            //
+            // A SECOND migration rather than extra objects on the one above, for two reasons: the
+            // trigger's target and the table its body writes to both have to exist before CREATE
+            // TRIGGER runs, which only holds if the document table's migration has already been
+            // applied; and the vector-type translation above stays scoped to the statement that can
+            // actually raise it.
+            var ftObjects = Storage.FullText.FullTextSchemaObjects.For(provider.Mapping);
+            if (ftObjects.Length > 0)
             {
-                await using var ftCmd = conn.CreateCommand();
-                ftCmd.CommandText = statement;
-                await ftCmd.ExecuteNonQueryAsync(token);
+                var ftMigration = await SchemaMigration.DetermineAsync(conn, token, ftObjects);
+                await migrator.ApplyAllAsync(conn, ftMigration, AutoCreate.CreateOrUpdate, ct: token);
+
+                // The backfill is a DATA migration and deliberately not a schema object: a trigger only
+                // fires on writes made after it exists, so a declaration against a store that already
+                // holds documents would otherwise index nothing -- no error, just a search that quietly
+                // answers empty. Idempotent, so running it on every ensure is correct rather than merely
+                // harmless. It follows the migration because it writes to the table that migration
+                // creates.
+                foreach (var statement in Storage.FullText.FullTextIndex.BackfillStatements(
+                             provider.Mapping, provider.Mapping.FullTextIndexes))
+                {
+                    await using var ftCmd = conn.CreateCommand();
+                    ftCmd.CommandText = statement;
+                    await ftCmd.ExecuteNonQueryAsync(token);
+                }
             }
 
             // #685: JSON indexes are no longer rendered here. They are declared on DocumentTable

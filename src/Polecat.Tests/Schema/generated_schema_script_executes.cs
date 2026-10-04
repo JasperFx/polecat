@@ -197,11 +197,12 @@ public class generated_schema_script_executes
     ///     <para>
     ///         Asserted against the catalog rather than through
     ///         <c>AssertDatabaseMatchesConfigurationAsync</c>, which is the check this reaches for first
-    ///         and the one that does not discriminate here: a store built from these options has nothing
-    ///         to migrate whether the script ran or not, because Polecat applies document indexes and
-    ///         foreign keys through <c>DocumentTableEnsurer</c> at first use rather than modelling them
-    ///         as Weasel schema objects — so they are absent from the generated script and absent from
-    ///         what the assert compares. See #684; the gap is real and is not what these tests are for.
+    ///         and the weaker one here. That assert compares the model against the database; this has to
+    ///         establish that the <em>script</em> is what built the database, and it ran against a
+    ///         dropped schema to make that the only explanation. (It was also, before #684/#685,
+    ///         incapable of discriminating at all: the indexes, foreign keys and full-text objects were
+    ///         raw DDL applied by <c>DocumentTableEnsurer</c> at first use, so they were absent from the
+    ///         script and absent from what the assert compared.)
     ///     </para>
     ///     <para>
     ///         So the tables are counted directly. Every table the script declares has to be there, on
@@ -233,6 +234,16 @@ public class generated_schema_script_executes
         tables.ShouldContain("pc_streams");
         tables.ShouldContain("pc_events");
         tables.ShouldContain("pc_event_progression");
+
+        // #685: the full-text token table, and the trigger that is the one object here whose create
+        // cannot be guarded with an IF. Both have to exist after each pass.
+        tables.ShouldContain("pc_ft_scriptedcustomer");
+
+        await using var triggerCmd = conn.CreateCommand();
+        triggerCmd.CommandText = $"SELECT OBJECT_ID('{Schema}.tr_pc_ft_scriptedcustomer', 'TR');";
+        (await triggerCmd.ExecuteScalarAsync()).ShouldNotBe(DBNull.Value,
+            "The full-text maintenance trigger is missing, so every search over this type answers "
+            + "empty while the script reported success.");
     }
 
     /// <summary>
@@ -275,12 +286,18 @@ public class generated_schema_script_executes
         opts.DatabaseSchemaName = Schema;
         opts.UseNativeJsonType = ConnectionSource.SupportsNativeJson;
 
-        // Indexes and a foreign key on purpose. They are NOT in the generated script today (#684), and
-        // declaring them anyway is what makes these tests fail rather than change meaning on the day
-        // that is fixed: the guards those statements need to survive a second run are exactly what the
-        // run-twice halves above are here to hold.
+        // Indexes, a foreign key and a full-text index on purpose. All of them ARE in the generated
+        // script now (#684, #685), which is what makes the run-twice halves above load-bearing rather
+        // than decorative: each of those objects needs a guard to survive a second pass, and one
+        // unguarded statement aborts every statement after it in its batch.
+        //
+        // The full-text declaration is the sharpest of the three here. It contributes a table, an index
+        // on it and a TRIGGER -- and a trigger is the one object whose create cannot be guarded by an
+        // IF, because CREATE TRIGGER has to begin its batch. Weasel answers that with DROP TRIGGER IF
+        // EXISTS plus an EXEC sp_executesql, and this is where that actually gets executed twice.
         opts.Schema.For<ScriptedCustomer>()
-            .UniqueIndex(x => x.Code);
+            .UniqueIndex(x => x.Code)
+            .FullTextIndex(x => x.Code);
 
         opts.Schema.For<ScriptedOrder>()
             .Index(x => x.Status)

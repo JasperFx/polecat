@@ -53,6 +53,21 @@ internal class DocumentFeatureSchema : FeatureSchemaBase
             }
 
             yield return new DocumentTable(provider.Mapping);
+
+            // #685: the full-text token table and the trigger that maintains it, yielded WITH the
+            // document table rather than created as raw DDL at first use. Order matters and is the
+            // reason they are yielded here rather than appended after the loop: the trigger's body
+            // inserts into the token table and its target is the document table, so a generated
+            // script -- which renders each CREATE in yield order with no migration involved, and
+            // therefore none of SchemaMigration's deferral -- has to see all three in that order.
+            //
+            // Weasel's own reasoning for a trigger being an independent object that merely names a
+            // target (weasel#452) is why this is two objects rather than one composite; yielding
+            // them adjacently is what answers the drift that independence allows.
+            foreach (var ftObject in FullText.FullTextSchemaObjects.For(provider.Mapping))
+            {
+                yield return ftObject;
+            }
         }
     }
 

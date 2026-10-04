@@ -30,6 +30,14 @@ namespace Polecat.Storage.FullText;
 ///         deliberately not offered rather than accepted and ignored.
 ///     </para>
 ///     <para>
+///         <b>The schema this amounts to is three objects, and two of them are modeled (#685).</b>
+///         <see cref="FullTextTokenTable" /> is a Weasel table that owns its own index, and
+///         <see cref="FullTextTrigger" /> is a Weasel trigger; <c>FullTextSchemaObjects.For</c> is the
+///         single answer to "which objects, in what order". The backfill below is the third and stays
+///         raw SQL on purpose — it writes rows rather than declaring structure. See
+///         <see cref="BackfillStatements" />.
+///     </para>
+///     <para>
 ///         <b>Maintained by a trigger, so the write path is untouched.</b> The same trade
 ///         <see cref="VectorIndex" /> makes with its computed column: the tokens are derived from
 ///         <c>data</c> and cannot drift from the document, and no session code changes to keep them
@@ -141,74 +149,36 @@ public class FullTextIndex
             : "pc_ft_" + mapping.TableName;
 
     /// <summary>
-    ///     The DDL that creates the token table, its index, the trigger that maintains it, and the
-    ///     backfill for rows that predate the declaration — in that order, each its own statement
-    ///     because a <c>CREATE TRIGGER</c> has to begin its batch.
+    ///     #685: the one-time backfill that makes a newly declared index cover rows written before it
+    ///     existed — one statement per declared member.
     /// </summary>
     /// <remarks>
-    ///     <b>Static over the whole collection, not per index, and that is load-bearing.</b> One
-    ///     trigger maintains one table, so a per-index rendering would have the second declared
-    ///     member's <c>CREATE OR ALTER</c> replace the first member's trigger — leaving the first
-    ///     silently unmaintained, which is the same shape of quiet failure the backfill exists to
-    ///     prevent. The trigger body therefore covers every declared member in one pass.
+    ///     <para>
+    ///         <b>This is a data migration, not a schema object, and it stays raw SQL for that reason.</b>
+    ///         The token table and the trigger are now Weasel objects (<see cref="FullTextTokenTable" />,
+    ///         <see cref="FullTextTrigger" />) so they appear in a generated script, are compared by
+    ///         <c>AssertDatabaseMatchesConfigurationAsync()</c>, and can be refused under
+    ///         <c>AutoCreate.None</c>. A backfill is none of those things: it describes rows rather than
+    ///         structure, there is nothing in the catalog for a delta to compare it against, and it is
+    ///         correct to run it after the schema converges rather than as part of converging.
+    ///     </para>
+    ///     <para>
+    ///         Scoped to rows this member has no tokens for, so it is idempotent and so declaring a
+    ///         second member later does not re-tokenize the first. A trigger only fires on writes made
+    ///         after it exists, so without this a declaration against a store that already holds
+    ///         documents produces an index matching nothing — no error, no rows, just a search that
+    ///         quietly answers empty.
+    ///     </para>
     /// </remarks>
-    internal static string[] ToDdlStatements(DocumentMapping mapping, IReadOnlyList<FullTextIndex> indexes)
+    internal static string[] BackfillStatements(DocumentMapping mapping, IReadOnlyList<FullTextIndex> indexes)
     {
         if (indexes.Count == 0) return [];
 
         var docTable = SqlEscaping.QualifiedName(mapping.DatabaseSchemaName, mapping.TableName);
         var ftTable = SqlEscaping.QualifiedName(mapping.DatabaseSchemaName, TableNameFor(mapping));
-        var ftIndexName = "ix_" + TableNameFor(mapping) + "_term";
-        var triggerName = SqlEscaping.QualifiedName(mapping.DatabaseSchemaName, "tr_" + TableNameFor(mapping));
-        var idType = IdColumnType(mapping);
         var tenant = TenantColumn(mapping);
-        var deletedTenant = DeletedTenantPredicate(mapping);
 
-        var statements = new List<string>
-        {
-            $"""
-             IF OBJECT_ID({SqlEscaping.Literal(ftTable)}, 'U') IS NULL
-             CREATE TABLE {ftTable} (
-                 doc_id {idType} NOT NULL,
-                 tenant_id varchar(250) NOT NULL,
-                 member varchar(200) NOT NULL,
-                 term varchar(255) NOT NULL,
-                 pos int NOT NULL
-             );
-             """,
-
-            $"""
-             IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = {SqlEscaping.Literal(ftIndexName)}
-                            AND object_id = OBJECT_ID({SqlEscaping.Literal(ftTable)}))
-             CREATE INDEX {SqlEscaping.QuoteIdentifier(ftIndexName)} ON {ftTable} (term, doc_id) INCLUDE (pos, member, tenant_id);
-             """
-        };
-
-        // One SELECT per declared member, fused into a single INSERT. CREATE OR ALTER so a
-        // re-declaration re-renders the body rather than needing a drop, and so this is idempotent
-        // like every other statement here.
-        var legs = string.Join("\n    UNION ALL\n", indexes.Select(x =>
-            $"""
-                 SELECT i.id, {tenant}, {SqlEscaping.Literal(x.MemberName)}, s.value, s.ordinal
-                 FROM inserted i
-                 {x.TokenizeClause("i")}
-             """));
-
-        statements.Add(
-            $"""
-             CREATE OR ALTER TRIGGER {triggerName} ON {docTable} AFTER INSERT, UPDATE, DELETE
-             AS
-             BEGIN
-                 SET NOCOUNT ON;
-                 DELETE ft FROM {ftTable} ft INNER JOIN deleted d ON ft.doc_id = d.id{deletedTenant};
-                 INSERT INTO {ftTable} (doc_id, tenant_id, member, term, pos)
-             {legs}
-             END
-             """);
-
-        // Backfill, one statement per member. Scoped to rows this member has no tokens for, so it is
-        // idempotent and so declaring a second member later does not re-tokenize the first.
-        statements.AddRange(indexes.Select(x =>
+        return indexes.Select(x =>
             $"""
              INSERT INTO {ftTable} (doc_id, tenant_id, member, term, pos)
              SELECT i.id, {tenant}, {SqlEscaping.Literal(x.MemberName)}, s.value, s.ordinal
@@ -217,28 +187,15 @@ public class FullTextIndex
              AND NOT EXISTS (SELECT 1 FROM {ftTable} ft
                              WHERE ft.doc_id = i.id AND ft.tenant_id = {tenant}
                                AND ft.member = {SqlEscaping.Literal(x.MemberName)});
-             """));
-
-        return statements.ToArray();
+             """).ToArray();
     }
-
-    /// <summary>
-    ///     The token table's key column has to match the document table's id column exactly, which
-    ///     means the INNER type for a strongly-typed id — the same rule #296/#302 settled for
-    ///     <c>DocumentTable</c>, and the same varchar landmine if it is got wrong.
-    /// </summary>
-    private static string IdColumnType(DocumentMapping mapping) =>
-        mapping.InnerIdType == typeof(Guid) ? "uniqueidentifier"
-        : mapping.InnerIdType == typeof(int) ? "int"
-        : mapping.InnerIdType == typeof(long) ? "bigint"
-        : "varchar(250)";
 
     /// <summary>
     ///     The conjoined-tenancy column, or the default tenant literal for a single-tenant table.
     ///     The token rows carry it so a search can key on (doc_id, tenant_id) — document ids are only
     ///     unique per tenant under conjoined tenancy, so joining on doc_id alone would cross tenants.
     /// </summary>
-    private static string TenantColumn(DocumentMapping mapping) =>
+    internal static string TenantColumn(DocumentMapping mapping) =>
         mapping.TenancyStyle == TenancyStyle.Conjoined ? "i.tenant_id" : "'*DEFAULT*'";
 
     /// <summary>
@@ -262,7 +219,7 @@ public class FullTextIndex
     ///         disambiguate.
     ///     </para>
     /// </remarks>
-    private static string DeletedTenantPredicate(DocumentMapping mapping) =>
+    internal static string DeletedTenantPredicate(DocumentMapping mapping) =>
         mapping.TenancyStyle == TenancyStyle.Conjoined ? " AND ft.tenant_id = d.tenant_id" : "";
 
     /// <summary>
@@ -271,7 +228,7 @@ public class FullTextIndex
     ///     <c>ordinal</c>, and the position is what makes a phrase search possible at all — storing
     ///     it now rather than later keeps that from becoming a schema migration.
     /// </summary>
-    private string TokenizeClause(string alias)
+    internal string TokenizeClause(string alias)
     {
         // The replacement is rendered from C# rather than computed in SQL. TRANSLATE demands its
         // second and third arguments be the same LENGTH, and deriving that in T-SQL is a trap from
