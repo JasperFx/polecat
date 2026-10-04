@@ -153,7 +153,7 @@ internal class DocumentReader : AdvancedSqlResultReader
         if (reader.IsDBNull(startColumn + 1)) return null; // data column is null
 
         var json = reader.GetString(startColumn + 1); // data is second column
-        var doc = _serializer.FromJson(_type, json);
+        var doc = _serializer.FromJson(ResolveType(reader), json);
 
         if (doc == null) return null;
 
@@ -161,6 +161,73 @@ internal class DocumentReader : AdvancedSqlResultReader
         SyncMetadata(doc, reader, startColumn);
 
         return doc;
+    }
+
+    /// <summary>
+    ///     The CLR type to deserialize this row as — the concrete sub-class when the statement
+    ///     carried a <c>doc_type</c> column, and the requested type otherwise (#729).
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         ⚠️ <b>Found BY NAME rather than by position, which is the whole reason this is
+    ///         cheap.</b> The search statements select <c>id, data, &lt;score&gt;</c>, and three
+    ///         things read those positions by index that all have to agree:
+    ///         <see cref="ColumnCount" />, <c>QueryByBatchAsync&lt;T1, T2&gt;</c> (which reads the
+    ///         score at <see cref="ColumnCount" />), and <see cref="SyncMetadata" /> (which probes
+    ///         <c>startColumn + 2</c> guarded only by <c>FieldCount</c> and a type test — it is
+    ///         already reading the score column on the scored overloads and gets away with it solely
+    ///         because a <c>double</c> matches none of its tests). Appending a column and shifting
+    ///         any of those indexes is how that becomes a wrong version rather than a compile error.
+    ///         A name lookup leaves every index alone.
+    ///     </para>
+    ///     <para>
+    ///         Gated on the mapping being a hierarchy, so a raw-SQL query that happens to select a
+    ///         column called <c>doc_type</c> from something unrelated cannot start reinterpreting
+    ///         rows.
+    ///     </para>
+    ///     <para>
+    ///         An alias this deployment does not know is data written by one that did, so it falls
+    ///         back to the requested type rather than throwing — the same tolerance
+    ///         <c>DocumentStore.DocumentDiagnostics</c> already applies to an unknown
+    ///         <c>doc_type</c>. A search is a read; refusing the whole page because one row names a
+    ///         sub-class deployed elsewhere would be worse than materializing it as its root.
+    ///     </para>
+    /// </remarks>
+    private Type ResolveType(DbDataReader reader)
+    {
+        var mapping = _provider.Mapping;
+        if (!mapping.IsHierarchy()) return _type;
+
+        var ordinal = DocTypeOrdinal(reader);
+        if (ordinal < 0 || reader.IsDBNull(ordinal)) return _type;
+
+        try
+        {
+            return mapping.TypeFor(reader.GetString(ordinal));
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return _type;
+        }
+    }
+
+    /// <summary>
+    ///     The <c>doc_type</c> column's ordinal, or -1. <see cref="DbDataReader.GetOrdinal" /> throws
+    ///     when the column is absent, and absent is the ordinary case here — every non-hierarchy
+    ///     statement and every hierarchy statement built before #729 — so the scan is cheaper than
+    ///     the exception.
+    /// </summary>
+    private static int DocTypeOrdinal(DbDataReader reader)
+    {
+        for (var i = 0; i < reader.FieldCount; i++)
+        {
+            if (string.Equals(reader.GetName(i), "doc_type", StringComparison.OrdinalIgnoreCase))
+            {
+                return i;
+            }
+        }
+
+        return -1;
     }
 
     public override Task<object?> ReadValueAsync(DbDataReader reader, int startColumn, CancellationToken token)

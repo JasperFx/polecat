@@ -187,6 +187,12 @@ public static class FullTextSearchExtensions
         // document table, which is where these go.
         var docFilters = DocumentSearchFilters.For(mapping, typeof(T), session.TenantId, "d.");
 
+        // #729: the discriminator, so a search for the ROOT of a hierarchy resolves each row to its
+        // concrete type the way Query<Root>() does. LAST in the select list on purpose -- the
+        // document reader finds it by NAME, but QueryByBatchAsync<T1, T2> still reads the score at a
+        // fixed index, so anything inserted before scored.score would silently become the score.
+        var discriminator = mapping.IsHierarchy() ? ", d.doc_type" : string.Empty;
+
         // IAdvancedSql replaces each '?' with @p0, @p1, ... in the order they appear in the TEXT, so
         // this list is built in exactly the order the placeholders below are written.
         var parameters = new List<object>();
@@ -233,7 +239,7 @@ public static class FullTextSearchExtensions
                  CROSS JOIN stats s
                  GROUP BY tf.doc_id
              )
-             SELECT TOP(?) d.id, d.data, scored.score
+             SELECT TOP(?) d.id, d.data, scored.score{discriminator}
              FROM scored INNER JOIN {docTable} d ON d.id = scored.doc_id
              {DocFilters(docFilters, filter is not null)}
              """;

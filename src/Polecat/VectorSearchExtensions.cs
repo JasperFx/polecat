@@ -112,7 +112,15 @@ public static class VectorSearchExtensions
         // statement are the query vector, the tenant and whatever the filter binds.
         builder.Append($"SELECT TOP({limit}) id, data, VECTOR_DISTANCE('{metric}', {column}, CAST(");
         builder.AppendParameter(ToVectorLiteral(query.Span));
-        builder.Append($" AS VECTOR({index.Dimensions}))) AS distance FROM {mapping.QualifiedTableName}");
+        builder.Append($" AS VECTOR({index.Dimensions}))) AS distance");
+
+        // #729: the discriminator, so a search for the ROOT of a hierarchy resolves each row to its
+        // concrete type the way Query<Root>() does. LAST in the select list on purpose -- the
+        // document reader finds it by NAME, but QueryByBatchAsync<T1, T2> still reads the score at a
+        // fixed index, so anything inserted before `distance` would silently become the score.
+        if (mapping.IsHierarchy()) builder.Append(", doc_type");
+
+        builder.Append($" FROM {mapping.QualifiedTableName}");
 
         // ⚠️ No table alias, deliberately. A filter fragment comes out of the same where-parsing that
         // backs Query<T>().Where(...), which renders its column references UNQUALIFIED because a LINQ
