@@ -703,15 +703,74 @@
                * jasperfx#939 — composite projection batches were disposed by a member stage as well
                  as by the composite, releasing the shared batch's session while later stages still
                  had operations to write. Entirely inside JasperFx's ProjectionExecution; Polecat
-                 inherits the fix and has no copy of its own. -->
-        <PackageVersion Include="JasperFx" Version="2.79.1" />
-        <PackageVersion Include="JasperFx.Events" Version="2.79.1" />
+                 inherits the fix and has no copy of its own.
+
+             2.80.1 (from 2.79.1, spanning 2.79.2 and 2.80.0). Four changes, and NONE of them is
+             inert — unusual enough to say so, since the usual shape of these notes is "mostly inert".
+
+               * jasperfx#940/#941 — GeneratedEvolverAttribute's evolverType parameters and
+                 EvolverType property now carry [DynamicallyAccessedMembers(PublicConstructors)], so
+                 ILLink keeps the constructors of the file-scoped evolver classes the source
+                 generator emits. Before it, a PublishAot app failed at startup with
+                 MissingMethodException when the runtime activated the evolver, and a class-wide
+                 IL2072 suppression on JasperFxAggregationProjectionBase hid the warning that would
+                 have said so.
+                 CONSUMED: DocumentStore registers projections through GeneratedEvolver. This is an
+                 INHERITED AOT FIX and exactly the kind #709 hid by bumping with no notes — and it is
+                 the same failure shape as polecat#733 one layer down (a suppression hiding the
+                 warning that would have named the problem). It does not fix #733; Polecat still dies
+                 earlier, in DocumentMapping's constructor.
+               * jasperfx#943 — GuidOptimisticConcurrencyCompliance gained five facts for a version
+                 member named through the store's own metadata mapping rather than IVersioned, plus a
+                 DocumentComplianceConfig.MapVersionTo<T>() seam and a SupportsMappedConcurrencyMember
+                 gate.
+                 ⚠️ NOT inert and NOT free: taking this package without replaying the seam fails all
+                 TEN facts in that suite at setup, 0ms each — not skips them. PolecatDocumentCompliance
+                 Fixture replays the seam and flips the gate (polecat#720 shipped the feature in #728),
+                 and the #592 concurrency CHECK had to move below the store construction: it built a
+                 throwaway DocumentMapping, which never sees the fluent-DSL merge that
+                 DocumentProviderRegistry performs before re-running ResolveMappedConcurrencyMode.
+               * jasperfx#944/#945 — four hierarchy facts in DocumentSearchCompliance: a sub-class
+                 search returns only that sub-class, a root search returns the whole hierarchy, the
+                 same for hybrid, and a sub-class search still takes a filter.
+                 CONSUMED and GREEN on arrival, because polecat#723 and #729 landed first. Filed FROM
+                 Polecat; Marten has the sub-class bug today (marten#5440).
+               * jasperfx#948/#949 — ResilientEventLoader.LoadAsync returned the Polly pipeline's task
+                 instead of awaiting it, so the EventLoaderException wrap never ran (ExecuteAsync
+                 captures even a synchronous throw into the returned task).
+                 ⚠️ CONSUMED, and it is a BEHAVIOUR CHANGE on Polecat's daemon:
+                 DocumentStore.EventStore.cs constructs ResilientEventLoader directly, so an event-load
+                 failure that previously surfaced as a bare provider exception now arrives wrapped in
+                 EventLoaderException. Nothing in Polecat catches the bare type — the daemon's two
+                 catches in PolecatEventLoader sit INSIDE the decorator — and no test asserts on it,
+                 so nothing here needed changing. Worth knowing for anyone whose own code catches a
+                 SqlException out of the daemon. A cancellation of the caller's own token is still
+                 rethrown bare.
+
+             2.80.2 (from 2.80.1). One change, and it is the third AOT fix in three releases.
+
+               * jasperfx#950/#951 — IEvent.CreateAggregateIdentitySource<TId>() and
+                 StreamAction.CreateAggregateIdentitySource<TId>() built and CompileFast()ed their own
+                 expression tree for a strong-typed id, which throws PlatformNotSupportedException in a
+                 native image. Both now compose ValueTypeInfo.CreateWrapper, which #942 already taught
+                 to fall back to reflection, so there is one wrapping path instead of three.
+                 CONSUMED, INHERITED, and invisible from here: Polecat never calls either method —
+                 JasperFxSingleStreamProjectionBase's CONSTRUCTOR does, and every Polecat
+                 SingleStreamProjection derives from it. So before 2.80.2 no Polecat single-stream
+                 projection over a strong-typed id could be CONSTRUCTED under Native AOT, and nothing
+                 in Polecat's source would have told you that.
+                 ⚠️ Does not fix polecat#733 either. Note the pattern across #942, #951 and this
+                 bump: each upstream fix makes a generic method's BODY AOT-safe, and Polecat's
+                 remaining blockers are its own MakeGenericMethod / MakeGenericType calls needed to
+                 REACH such methods — which no fix inside the callee can help with. -->
+        <PackageVersion Include="JasperFx" Version="2.80.2" />
+        <PackageVersion Include="JasperFx.Events" Version="2.80.2" />
         <!--
              The shared cross-store event sourcing compliance suites. Source-only package: the
              suites compile inside Polecat.Tests so JasperFx's aggregate source generator binds
              Polecat's own session types.
         -->
-        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="2.79.1" />
+        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="2.80.2" />
         <!-- Pin the sibling JasperFx packages for parity with Marten 9's matrix
              even though Polecat doesn't currently reference them directly —
              keeps the lockstep matrix coherent when transitive resolution
@@ -719,7 +778,7 @@
              RuntimeCompiler 5.x line is the active continuation of the 4.x
              lineage; do not pin against the parallel stale 2.0.x series. -->
         <PackageVersion Include="JasperFx.RuntimeCompiler" Version="5.0.0" />
-        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.79.1" />
+        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.80.2" />
         <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
@@ -1096,7 +1155,7 @@
         <PackageVersion Include="Vogen" Version="7.0.0" />
 
         <!-- Source generators (matched to JasperFx.Events above) -->
-        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.79.1" />
+        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.80.2" />
 
         <!-- Build automation -->
         <PackageVersion Include="Nuke.Common" Version="9.0.4" />

@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Linq.Expressions;
 using JasperFx;
 using JasperFx.Events.ComplianceTests;
@@ -143,6 +144,20 @@ public class PolecatDocumentComplianceFixture : DocumentStorageComplianceFixture
                 .Invoke(expression, [declaration.SubClass, null]);
         }
 
+        // jasperfx#943 / #720: a document can name its concurrency version through the store's own
+        // metadata mapping rather than through IVersioned, and that is a SEPARATE code path in every
+        // store offering both -- found broken four times independently (fisher#245, marten#5372,
+        // polecat#592, polecat#720). Replayed through the real DSL rather than by setting
+        // DocumentMetadataConfig.Member directly: a fact that configured the store by a route no user
+        // takes would pin the wrong path.
+        var mapVersion = typeof(PolecatDocumentComplianceFixture)
+            .GetMethod(nameof(MapVersionMember), BindingFlags.NonPublic | BindingFlags.Static)!;
+        foreach (var mapped in config.MappedVersionMembers)
+        {
+            mapVersion.MakeGenericMethod(mapped.DocumentType)
+                .Invoke(null, [options, mapped.MemberName]);
+        }
+
         // #592 / jasperfx#819: the Guid optimistic-concurrency declaration, replayed as a CHECK
         // rather than as a setting.
         //
@@ -157,18 +172,7 @@ public class PolecatDocumentComplianceFixture : DocumentStorageComplianceFixture
         // marker still drives the guard or someone made it opt-in and every fact in the suite went
         // red for a reason a fixture could have named. This fails at build time with the type in the
         // message.
-        foreach (var type in config.OptimisticConcurrencyTypes)
-        {
-            if (!new Polecat.Storage.DocumentMapping(type, options).UseOptimisticConcurrency)
-            {
-                throw new InvalidOperationException(
-                    $"The compliance configuration declared Guid optimistic concurrency for {type.FullName}, "
-                    + "and Polecat's mapping did not turn it on. Polecat derives the guard from the IVersioned "
-                    + "marker alone (DocumentMapping.UseOptimisticConcurrency is get-only), so either the type "
-                    + "no longer implements IVersioned or that derivation has changed and this fixture needs a "
-                    + "real opt-in to replay.");
-            }
-        }
+        // ⚠️ The check itself moved BELOW the store construction -- see AssertConcurrencyIsOn.
 
         // jasperfx#842 / #843: the vector and full-text indexes DocumentSearchCompliance declares.
         //
@@ -215,6 +219,8 @@ public class PolecatDocumentComplianceFixture : DocumentStorageComplianceFixture
         }
 
         _store = new DocumentStore(options);
+
+        AssertConcurrencyIsOn(config);
 
         // Polecat applies schema changes explicitly rather than lazily, and the suite's very first
         // act may be a read against a table nothing has written yet.
@@ -305,6 +311,77 @@ public class PolecatDocumentComplianceFixture : DocumentStorageComplianceFixture
 
     public override IDocumentStoreDiagnosticsWriter DocumentDiagnosticsWriter
         => new PolecatDocumentDiagnosticsWriter(RequireStore());
+
+    /// <summary>
+    ///     #592 / jasperfx#819: the Guid optimistic-concurrency declaration, replayed as a CHECK
+    ///     rather than as a setting, because Polecat has no switch to replay onto — the version
+    ///     member <em>is</em> the declaration.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         Asserting instead of no-oping, deliberately. A silent no-op reads identically whether
+    ///         the declaration still drives the guard or someone made it opt-in and every fact in the
+    ///         suite went red for a reason a fixture could have named. This fails at build time with
+    ///         the type in the message.
+    ///     </para>
+    ///     <para>
+    ///         ⚠️ <b>It asks the STORE's provider, and jasperfx#943 is why.</b> This used to construct
+    ///         <c>new DocumentMapping(type, options)</c> inline — which worked for as long as every
+    ///         declared type carried <see cref="IVersioned" />, because the marker is read in the
+    ///         constructor. jasperfx#943 added <c>CompliancePallet</c>, whose version is named by the
+    ///         FLUENT DSL instead, and the fluent declarations are merged onto a mapping by
+    ///         <c>DocumentProviderRegistry</c> — which then re-runs
+    ///         <c>ResolveMappedConcurrencyMode</c>. A mapping built here has not seen that merge, so
+    ///         the flag read false and all ten facts in the suite failed at setup with 0ms.
+    ///     </para>
+    ///     <para>
+    ///         The fixture already knew this: the search-index replay a few lines up says "a mapping
+    ///         built here would be a different object from the one the store ends up using". Same
+    ///         lesson, and this is the place that was still getting it wrong.
+    ///     </para>
+    /// </remarks>
+    private void AssertConcurrencyIsOn(DocumentComplianceConfig config)
+    {
+        foreach (var type in config.OptimisticConcurrencyTypes)
+        {
+            var mapping = RequireStore().Options.Providers!.GetProvider(type).Mapping;
+            if (mapping.UseOptimisticConcurrency) continue;
+
+            throw new InvalidOperationException(
+                $"The compliance configuration declared Guid optimistic concurrency for {type.FullName}, "
+                + "and the mapping the STORE uses did not turn it on. Polecat derives the guard from the "
+                + "version member — IVersioned, [VersionMetadata], or Metadata(m => m.Version.MapTo(...)) "
+                + "— so either the type declares none of those, or that derivation has changed and this "
+                + "fixture needs a real opt-in to replay. See #592, #720 and jasperfx#943.");
+        }
+    }
+
+    /// <summary>
+    ///     jasperfx#943's seam gives a member NAME; <c>Metadata(m =&gt; m.Version.MapTo(...))</c> wants
+    ///     an expression. This builds <c>x =&gt; (object?)x.&lt;name&gt;</c> so the replay goes through
+    ///     the DSL a user would write.
+    /// </summary>
+    private static void MapVersionMember<T>(StoreOptions options, string memberName) where T : notnull
+    {
+        var parameter = Expression.Parameter(typeof(T), "x");
+        var body = Expression.Convert(Expression.PropertyOrField(parameter, memberName), typeof(object));
+        var lambda = Expression.Lambda<Func<T, object?>>(body, parameter);
+
+        options.Schema.For<T>().Metadata(m => m.Version.MapTo(lambda));
+    }
+
+    /// <summary>
+    ///     jasperfx#943: Polecat honours a mapped concurrency member as of #720 — before that, the
+    ///     guard was fed from the session's own version tracker, so a document loaded in one session
+    ///     and stored through another was refused every time, on an unmodified row.
+    /// </summary>
+    /// <remarks>
+    ///     ⚠️ Flipped to true in the same change that took the package carrying these facts. A gate
+    ///     left false while the feature exists is the shape CLAUDE.md warns about: "false" then means
+    ///     neither "not built yet" nor a deliberate divergence, just that nobody noticed the suite had
+    ///     grown a claim Polecat already satisfies.
+    /// </remarks>
+    public override bool SupportsMappedConcurrencyMember => true;
 
     public override bool SupportsSoftDeletedDocuments => true;
 
