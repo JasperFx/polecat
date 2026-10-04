@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <OutputType>Exe</OutputType>
+        <TargetFramework>net10.0</TargetFramework>
+        <TargetFrameworks></TargetFrameworks>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <IsPackable>false</IsPackable>
+
+        <!-- #725. The companion to Polecat.AotSmoke, and the division of labour is the point.
+
+             Polecat.AotSmoke BUILDS and never runs: it is a static gate on annotations, and it
+             cannot catch a runtime AOT failure even with a read in it, because the public LINQ async
+             surface carries class-level [UnconditionalSuppressMessage] for IL2026/IL3050 — so the
+             analyzer is silent on exactly the path Marten's four AOT bugs were on.
+
+             This project PUBLISHES NATIVE AND RUNS, against a real database. That is the only thing
+             that can observe "writes were fine, the first read threw" (marten#5328). -->
+        <PublishAot>true</PublishAot>
+        <InvariantGlobalization>true</InvariantGlobalization>
+
+        <!-- ⚠️ Deliberately NOT promoting IL warnings to errors here. This lane's job is to find out
+             what HAPPENS, not to assert what is annotated; that is AotSmoke's job. Failing the build
+             on a warning would stop this lane ever reaching the runtime question. -->
+    </PropertyGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\Polecat\Polecat.csproj" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Microsoft.Extensions.Hosting" />
+        <PackageReference Include="JasperFx.Events.SourceGenerator" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+    </ItemGroup>
+
+</Project>

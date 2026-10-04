@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using JasperFx.Events.Daemon;
 using JasperFx.Events.Projections;
 using Polecat.Events;
@@ -21,6 +22,14 @@ public partial class DocumentStore : IDocumentStore
         new(StringComparer.OrdinalIgnoreCase);
     private Lazy<IInlineProjection<IDocumentSession>[]> _inlineProjections;
 
+    // #725: DeadLetterEvent is registered below but named by no consumer code, so the trimmer
+
+    // has nothing to keep its Id property alive and DocumentMapping's identity probe fails
+
+    // under Native AOT -- taking the entire store down with it, from this constructor.
+
+    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties, typeof(DeadLetterEvent))]
+
     public DocumentStore(StoreOptions options)
     {
         Options = options ?? throw new ArgumentNullException(nameof(options));
@@ -41,6 +50,15 @@ public partial class DocumentStore : IDocumentStore
         // (pc_doc_deadletterevent), mirroring Marten. Register the provider eagerly
         // so the document table is created by schema migration and the IEventDatabase
         // dead-letter count reads can LINQ-query it (jasperfx#356).
+        //
+        // ⚠️ #725: this is the ONE document type Polecat registers that no consumer code mentions,
+        // and under Native AOT that difference was fatal to the WHOLE STORE. DocumentMapping finds
+        // the identity by reflecting over the type's public properties; nothing statically reads
+        // DeadLetterEvent.Id (the store assigns it, the daemon reads it, both reflectively), so the
+        // trimmer removed it and this line threw "must have a public property named 'Id'" --
+        // from the CONSTRUCTOR, so every document write, every read, every event append and every
+        // aggregation failed, not merely the dead-letter path. Found by Polecat.AotRuntimeSmoke on
+        // its first run; see the DynamicDependency on this constructor, which is what preserves it.
         _providers.GetProvider<DeadLetterEvent>();
 
         // Validate + eagerly register RANGE-partitioned document types (#211) so their partition

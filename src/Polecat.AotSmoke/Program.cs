@@ -21,6 +21,9 @@
 //   - SaveChangesAsync / session command execution (would require a real DB and
 //     runs through reflection-based DocumentMapping + the STJ serializer, which
 //     carry the RUC/RDC annotations we don't exercise here).
+//     ⚠️ #725: Polecat.AotRuntimeSmoke is the lane that DOES execute, natively
+//     published against a real database, because no build-only gate can observe
+//     a runtime AOT failure.
 //   - Async daemon / projection runtime (projection dispatch is source-generated
 //     by JasperFx.Events.SourceGenerator, exercised via the concrete projection
 //     registration below).
@@ -30,6 +33,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Polecat;
 using Polecat.AotSmoke;
+using Polecat.Linq;
 using Polecat.Projections;
 
 var builder = Host.CreateApplicationBuilder(args);
@@ -77,15 +81,51 @@ await using var scope = host.Services.CreateAsyncScope();
 var session = scope.ServiceProvider.GetRequiredService<IDocumentSession>();
 
 // --- LINQ query construction --------------------------------------------
-// Construct (but never enumerate) a Where-filtered IQueryable through the
-// LINQ provider. This exercises IQuerySession.Query<T> + the generic
+// Construct a Where-filtered IQueryable through the LINQ provider. This
+// exercises IQuerySession.Query<T> + the generic
 // IQueryProvider.CreateQuery<TElement>(Expression) entry on
-// PolecatLinqQueryProvider — both AOT-clean. Materialization (ToListAsync
-// etc.) routes through the reflective ExecuteAsync<TResult> path, which is
-// annotated [RequiresDynamicCode] + [RequiresUnreferencedCode] and would
-// surface here under our WarningsAsErrors.
+// PolecatLinqQueryProvider — both AOT-clean.
+//
+// ⚠️ #725 corrected what this comment used to claim. It said materialization
+// "routes through the reflective ExecuteAsync<TResult> path, which is annotated
+// [RequiresDynamicCode] + [RequiresUnreferencedCode] and would surface here
+// under our WarningsAsErrors". It does NOT surface, and that is the whole
+// problem: PolecatQueryableExtensions carries CLASS-LEVEL
+// [UnconditionalSuppressMessage] for IL2026/IL2060/IL3050, so the annotation on
+// ExecuteAsync is swallowed at the extension-method boundary. The same class's
+// own remarks say "AOT-publishing apps should avoid the LINQ-async wrappers" —
+// which the suppression guarantees no consumer is ever told by the analyzer.
+//
+// So the reads below are build-clean, and this lane gates their ANNOTATIONS
+// only: if a future change replaces that suppression with a propagating
+// [RequiresDynamicCode], this build is where it is noticed. What actually
+// happens when an AOT-published consumer runs them is a different question, and
+// a build-only lane cannot answer it — see Polecat.AotRuntimeSmoke, which
+// publishes native and runs. "Writes were fine, the first read threw"
+// (marten#5328) is exactly what a lane that builds but never executes reports
+// as green.
 var query = session.Query<Quest>().Where(q => q.Title == "smoke-test");
 _ = query.Expression;
+
+// Execution shapes, each mirroring one of Marten's four Native AOT failures.
+// Never reached — the connection string is bogus and this program's job is to
+// compile — so they are wrapped rather than awaited for effect. Taking their
+// delegates keeps the call sites in the compiled, analyzed surface.
+_ = new Func<Task>(async () => _ = await query.ToListAsync());                    // marten#5328
+_ = new Func<Task>(async () => _ = await session.LoadAsync<Quest>(Guid.Empty));   // marten#5328
+_ = new Func<Task>(async () =>
+{
+    // marten#5361: an enum compared to a VARIABLE, the shape most likely to
+    // reach WhereClauseParser's CompileAndInvoke fallback, because an enum
+    // operand is commonly wrapped in a Convert node that is neither a bare
+    // constant nor a closure member.
+    var wanted = Difficulty.Hard;
+    _ = await session.Query<Quest>().Where(q => q.Difficulty == wanted).ToListAsync();
+});
+_ = new Func<Task>(async () => _ = await session.Events.FetchStreamAsync(Guid.Empty));       // marten#5373
+_ = new Func<Task>(async () => _ = await session.Events.AggregateStreamAsync<Quest>(Guid.Empty)); // marten#5373
+_ = new Func<Task>(async () =>
+    _ = await session.Query<Quest>().Where(q => q.Tags.Contains("aot")).ToListAsync());      // marten#5374
 
 // --- Polecat.AspNetCore extension surface -------------------------------
 // Touch a StreamMany<T> / StreamOne<T> constructor. These IResult wrappers
@@ -118,6 +158,8 @@ return 0;
 namespace Polecat.AotSmoke
 {
     /// <summary>One event type — included via ProjectionBase.IncludedEventTypes.</summary>
+    internal enum Difficulty { Easy, Hard }
+
     internal sealed record QuestStarted(string Title);
 
     /// <summary>
@@ -128,6 +170,12 @@ namespace Polecat.AotSmoke
     {
         public Guid Id { get; set; }
         public string Title { get; set; } = string.Empty;
+
+        /// <summary>#725 / marten#5361: an enum member, compared to a variable above.</summary>
+        public Difficulty Difficulty { get; set; }
+
+        /// <summary>#725 / marten#5374: a child collection, filtered above.</summary>
+        public List<string> Tags { get; set; } = [];
 
         public static Quest Create(QuestStarted e) => new() { Title = e.Title };
     }
