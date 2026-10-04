@@ -39,13 +39,34 @@ internal partial class DocumentTable
     ///     Declare everything the mapping asks for, in the order Weasel's delta applies it.
     /// </summary>
     /// <remarks>
-    ///     Columns before indexes and foreign keys because they are what those sit on, and
-    ///     <c>TableDelta.WriteUpdate</c> emits missing columns ahead of missing indexes for the same
-    ///     reason. Worth recording that they land in <b>one batch</b> and that this is fine: an
-    ///     <c>ALTER TABLE … ADD … AS … PERSISTED</c> followed by a <c>CREATE INDEX</c> on that column in
-    ///     the same batch succeeds — measured, guarded and unguarded — because index DDL is compiled
-    ///     per statement at execution. No <c>GO</c> is needed, which is why none of this depends on
-    ///     Weasel's batch splitter.
+    ///     <para>
+    ///         Columns before indexes and foreign keys because they are what those sit on, and
+    ///         <c>TableDelta.WriteUpdate</c> emits missing columns ahead of missing indexes for the same
+    ///         reason.
+    ///     </para>
+    ///     <para>
+    ///         ⚠️ <b>They no longer land in one batch, and the claim that used to stand here was too
+    ///         broad.</b> It said an <c>ALTER TABLE … ADD … AS … PERSISTED</c> followed by a
+    ///         <c>CREATE INDEX</c> on that column succeeds in the same batch — measured, guarded and
+    ///         unguarded — and therefore that no <c>GO</c> is needed. The measurement was right and the
+    ///         generalization was not. SQL Server compiles a whole batch before running any of it and
+    ///         binds column names against tables that already exist, so the line is <b>expression versus
+    ///         name list</b>: an index's key columns and <c>INCLUDE</c> list and a foreign key's columns
+    ///         are name lists and always worked, which is what was measured; a <b>filtered index's
+    ///         predicate</b>, a check constraint, and a computed column derived from the new column are
+    ///         expressions and all failed with error 207 — and the <c>ALTER</c> never ran either,
+    ///         because nothing in a batch that did not compile does.
+    ///     </para>
+    ///     <para>
+    ///         Polecat declares filtered indexes, so the reachable shape was a configuration change
+    ///         adding a column <em>and</em> a filtered index naming it in one delta. Weasel 9.39.0
+    ///         (weasel#668/#669) ends the batch after every statement that adds, re-adds or retypes a
+    ///         column, so <c>WriteUpdate</c> output now carries <c>GO</c>. Nothing here depends on that
+    ///         being split by hand — every Polecat path runs this through
+    ///         <c>SqlServerMigrator.ApplyAllAsync</c>, which splits on it — but a consumer handing
+    ///         delta text to a single <c>SqlCommand</c> has to call
+    ///         <c>SqlServerBatchSplitter.Split</c> first.
+    ///     </para>
     /// </remarks>
     private void AddDeclaredSchemaObjects(DocumentMapping mapping, bool includeForeignKeys)
     {
