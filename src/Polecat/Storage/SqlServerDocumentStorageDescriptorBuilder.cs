@@ -52,6 +52,10 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
 
         DocumentVersionBinder<TDoc>? versionBinder = null;
         DocumentRevisionBinder<TDoc>? revisionBinder = null;
+        // #720: whether the version/revision binder was given a document member to project onto.
+        // Decides whether QueryOnly's SELECT carries the column at all -- see the queryOnlyReadArray
+        // comment below, which used to ask the narrower question "does TDoc implement IVersioned".
+        var versionHasMember = false;
         var versionReadIndex = -1;
         var docTypeReadIndex = -1;
         Func<string, Type>? resolveDocumentType = null;
@@ -88,9 +92,18 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
         {
             // Parity with the bespoke load path: IVersioned documents get guid_version
             // applied to their Version member on every load.
-            var versionMember = typeof(IVersioned).IsAssignableFrom(typeof(TDoc))
-                ? typeof(TDoc).GetProperty(nameof(IVersioned.Version))
-                : null;
+            //
+            // #720: ...and so do documents that name the member through
+            // Metadata(m => m.Version.MapTo(...)) or [VersionMetadata], which is how the numeric
+            // branch below has always read it. The mapped member won the mode selection in
+            // DocumentMapping, so it has to win the binder too -- otherwise the column is written and
+            // guarded while the member it was mapped onto stays at its default, and the round trip
+            // the mapping exists for never closes.
+            var versionMember = mapping.Metadata.Version.Member
+                                ?? (typeof(IVersioned).IsAssignableFrom(typeof(TDoc))
+                                    ? typeof(TDoc).GetProperty(nameof(IVersioned.Version))
+                                    : null);
+            versionHasMember = versionMember is not null;
             versionBinder = new DocumentVersionBinder<TDoc>("guid_version", dialect, versionMember);
             writeBinders.Add(versionBinder);
             versionReadIndex = readBinders.Count;
@@ -102,6 +115,7 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
             // CASE expressions handle auto-increment (Revision = 0) vs explicit revisions.
             var revisionMember = mapping.Metadata.Version.Member
                                  ?? typeof(TDoc).GetProperty("Version");
+            versionHasMember = revisionMember is not null;
             var columnType = mapping.UseLongRevisions ? StorageColumnType.Long : StorageColumnType.Int;
             revisionBinder = new DocumentRevisionBinder<TDoc>("version", dialect, revisionMember, columnType);
             writeBinders.Add(revisionBinder);
@@ -189,9 +203,11 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
         var writeArray = writeBinders.ToArray();
         var readArray = readBinders.ToArray();
         // QueryOnly's SELECT omits the version/revision binder only when it has no mapped
-        // member — mirrors Marten's #4602 rule.
-        var versionHasMember = (versionBinder is not null && typeof(IVersioned).IsAssignableFrom(typeof(TDoc)))
-                               || revisionBinder is not null;
+        // member — mirrors Marten's #4602 rule. #720: "has a mapped member" is now asked of the
+        // member the binder was actually built with, rather than of IVersioned — a document that
+        // names its version through Metadata(m => m.Version.MapTo(...)) has one too, and dropping
+        // the column from the QueryOnly SELECT leaves that member at its default on every load,
+        // which in turn leaves the next write's concurrency guard with nothing to bind.
         var queryOnlyReadArray = versionReadIndex >= 0 && !versionHasMember
             ? readArray.Where((_, i) => i != versionReadIndex).ToArray()
             : readArray;

@@ -141,19 +141,43 @@ Polecat automatically detects concurrency mode from interfaces:
 - Implements `IRevisioned` → Numeric revisions (int)
 - Implements `ILongVersioned` → Numeric revisions (long)
 
-### Manual Configuration
+### Naming the version member yourself
+
+A document that cannot (or would rather not) implement one of the marker interfaces can name the
+member the version lives on, through the metadata mapping. The member's own type chooses the mode,
+exactly as the interface does:
 
 ```cs
-opts.Policies.ForDocument<Order>(mapping =>
-{
-    mapping.UseOptimisticConcurrency = true; // Guid-based
-    // OR
-    mapping.UseNumericRevisions = true; // Integer-based
-});
+opts.Schema.For<Order>().Metadata(m => m.Version.MapTo(x => x.Etag));        // Guid  -> Guid versioning
+opts.Schema.For<Invoice>().Metadata(m => m.Version.MapTo(x => x.Revision));  // int   -> numeric revisions
+opts.Schema.For<Ledger>().Metadata(m => m.Version.MapTo(x => x.Sequence));   // long  -> long numeric revisions
 ```
 
+The `[VersionMetadata]` attribute is the same declaration on the document itself:
+
+```cs
+public class Order
+{
+    public Guid Id { get; set; }
+
+    [VersionMetadata] public Guid Etag { get; set; }
+}
+```
+
+A mapped member behaves exactly as the interface member does in every respect — it is stamped on
+write, populated on load, carries the expected version into the guard, and obeys the same
+"`Guid.Empty` / `0` means never stored" rule. `UpdateExpectedVersion` and `UpdateRevision` assign to
+it too.
+
 ::: warning
-`UseOptimisticConcurrency` and `UseNumericRevisions` are mutually exclusive. Choose one per document type.
+A mapped version member must be a `Guid`, an `int` or a `long`. Anything else is refused when the
+store is built, rather than silently ignored.
+:::
+
+::: warning
+Guid versioning and numeric revisions are mutually exclusive — one per document type. A marker
+interface wins over a mapped member, so mapping the version on a type that already implements one
+only relocates where the value is read from and written to.
 :::
 
 ## ConcurrencyException

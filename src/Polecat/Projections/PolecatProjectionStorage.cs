@@ -125,8 +125,11 @@ internal class PolecatProjectionStorage<TDoc, TId> : IProjectionStorage<TDoc, TI
             _provider.Mapping.AssignIdIfMissing(snapshot, _provider.SequenceSource);
         }
 
-        var op = ((Weasel.Storage.IDocumentStorage<TDoc>)Storage).UpsertProjected(snapshot, tenantId);
-        DocumentSessionBase.CaptureExpectedRevision(op, snapshot);
+        var typed = (Weasel.Storage.IDocumentStorage<TDoc>)Storage;
+        var op = typed.UpsertProjected(snapshot, tenantId);
+        // #720: a projected view can name its revision member through the metadata DSL just as a
+        // hand-stored document can, and the two have to agree about what the expectation is.
+        DocumentSessionBase.CaptureExpectedRevision(op, snapshot, typed.MappedRevisionFor(snapshot));
         _session.WorkTracker.Add(new ClosedShapeOperationAdapter(
             op, SessionFor(tenantId), snapshot, _provider.Mapping.GetId(snapshot)));
     }

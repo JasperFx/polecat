@@ -77,6 +77,20 @@ public class Order : IVersioned
 
 See [Optimistic Concurrency](/documents/concurrency) for more details.
 
+### Mapping the version onto a member of your own
+
+The version column can be mapped onto any member instead, and the member's type chooses the
+concurrency mode — `Guid` for Guid versioning, `int` or `long` for numeric revisions:
+
+```cs
+opts.Schema.For<Order>().Metadata(m => m.Version.MapTo(x => x.Etag));
+```
+
+`[VersionMetadata]` on the member is the same declaration. Either way the mapped member is a full
+concurrency declaration, not just a place to read the stored value: it is stamped on write,
+populated on load, and carries the expected version into the write's guard. See
+[Optimistic Concurrency](/documents/concurrency#naming-the-version-member-yourself).
+
 ## Built-in Metadata Columns
 
 Every document table includes these metadata columns automatically:

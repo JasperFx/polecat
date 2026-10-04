@@ -18,7 +18,8 @@ namespace Polecat.Storage.ClosedShape;
 /// </summary>
 internal sealed class SubClassPolecatStorage<T, TRoot, TId>
     : IDocumentStorage<T, TId>, IPolecatObjectStorage<T>, IPolecatBatchLoadStorage<T>,
-        IPolecatBulkVersionCheckStorage<T>, IPolecatDeletionStorage
+        IPolecatBulkVersionCheckStorage<T>, IPolecatDeletionStorage,
+        IPolecatMappedConcurrencyStorage<T>
     where T : notnull, TRoot
     where TRoot : notnull
     where TId : notnull
@@ -137,6 +138,23 @@ internal sealed class SubClassPolecatStorage<T, TRoot, TId>
     public void Store(IStorageSession session, T document, long revision) => _parent.Store(session, document, revision);
 
     public Guid? VersionFor(T document, IStorageSession session) => _parent.VersionFor(document, session);
+
+    // #720: the hierarchy root owns the mapping, so it owns the mapped version/revision member too.
+    // Without these the default interface implementation answers null and a subclass write is the
+    // one shape that silently loses its concurrency guard.
+    public Guid? MappedVersionFor(T document) => _parent.MappedVersionFor(document);
+
+    public long? MappedRevisionFor(T document) => _parent.MappedRevisionFor(document);
+
+    public Guid? MappedVersionForObject(object document) => ParentBridge.MappedVersionForObject(document);
+
+    public long? MappedRevisionForObject(object document) => ParentBridge.MappedRevisionForObject(document);
+
+    public bool TryApplyMappedVersion(T document, Guid version)
+        => ((IPolecatMappedConcurrencyStorage<TRoot>)_parent).TryApplyMappedVersion(document, version);
+
+    public bool TryApplyMappedRevision(T document, long revision)
+        => ((IPolecatMappedConcurrencyStorage<TRoot>)_parent).TryApplyMappedRevision(document, revision);
 
     public void Eject(IStorageSession session, T document) => _parent.Eject(session, document);
 
