@@ -51,7 +51,8 @@ internal class MemberFactory : IMemberResolver
         // Check if it's the Id property on the root document
         if (expression.Member.Name == "Id" && expression.Expression is ParameterExpression)
         {
-            return new IdMember(_idType, _valueTypeId);
+            return new IdMember(_idType, _valueTypeId,
+                Storage.DocumentTable.SqlTypeForIdentity(_mapping.InnerIdType));
         }
 
         var jsonPath = BuildJsonPath(expression);
@@ -98,19 +99,28 @@ internal class MemberFactory : IMemberResolver
         // the predicate to the persisted computed column and can seek the index. Without this the
         // translator's expression (e.g. bare JSON_VALUE for a string, CAST(... AS datetimeoffset)
         // for a date) never lines up with the index column, so the index is dead weight.
-        if (TryGetIndexedLocator(jsonPath, storedType, out var indexedLocator))
+        // #710: the locator's SQL TYPE travels with it, because the #223 rewrite can change it --
+        // an index may declare a different type than SqlTypeMap would, and the caller can override
+        // it outright (DocumentIndex.SqlType). A fragment binding a value list has to type the other
+        // side of the comparison to match, and nothing but this knows what it matches.
+        var locatorSqlType = sqlType;
+
+        if (TryGetIndexedLocator(jsonPath, storedType, out var indexedLocator, out var indexedSqlType))
         {
             typedLocator = indexedLocator;
+            locatorSqlType = indexedSqlType;
         }
 
         return valueType != null
-            ? new ValueTypeMember(rawLocator, typedLocator, memberType, valueType)
-            : new QueryableMember(rawLocator, typedLocator, memberType);
+            ? new ValueTypeMember(rawLocator, typedLocator, memberType, valueType, locatorSqlType)
+            : new QueryableMember(rawLocator, typedLocator, memberType, locatorSqlType: locatorSqlType);
     }
 
-    private bool TryGetIndexedLocator(string jsonPath, Type underlying, out string locator)
+    private bool TryGetIndexedLocator(string jsonPath, Type underlying, out string locator,
+        out string? sqlType)
     {
         locator = string.Empty;
+        sqlType = null;
 
         // Only Default-casing indexes are predicate-transparent. Upper/Lower computed columns
         // fold case, so a plain equality/range predicate must not be rewritten onto them.
@@ -118,7 +128,7 @@ internal class MemberFactory : IMemberResolver
             i.Casing == IndexCasing.Default && Array.IndexOf(i.JsonPaths, jsonPath) >= 0);
         if (index == null) return false;
 
-        var sqlType = index.ResolveSqlType(jsonPath, underlying);
+        sqlType = index.ResolveSqlType(jsonPath, underlying);
         locator = DocumentIndex.ComputedColumnExpression(jsonPath, sqlType, IndexCasing.Default, _useReturning);
         return true;
     }

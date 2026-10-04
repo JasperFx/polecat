@@ -28,16 +28,19 @@ internal class StreamStateMemberFactory : IMemberResolver
         // StreamId/StreamKey on the events queryable.
         return expression.Member.Name switch
         {
-            nameof(StreamState.Id) => new QueryableMember("id", "id", typeof(Guid)),
-            nameof(StreamState.Key) => new QueryableMember("id", "id", typeof(string)),
-            nameof(StreamState.Version) => new QueryableMember("version", "version", typeof(long)),
+            nameof(StreamState.Id) => new QueryableMember("id", "id", typeof(Guid), locatorSqlType: "uniqueidentifier"),
+            nameof(StreamState.Key) => new QueryableMember("id", "id", typeof(string), locatorSqlType: "varchar(250)"),
+            nameof(StreamState.Version) => new QueryableMember("version", "version", typeof(long), locatorSqlType: "bigint"),
             nameof(StreamState.AggregateType) => new AggregateTypeQueryableMember(_events),
             nameof(StreamState.LastTimestamp) =>
-                new QueryableMember("timestamp", "timestamp", typeof(DateTimeOffset)),
-            nameof(StreamState.Created) => new QueryableMember("created", "created", typeof(DateTimeOffset)),
-            nameof(StreamState.IsArchived) => new QueryableMember("is_archived", "is_archived", typeof(bool)),
+                new QueryableMember("timestamp", "timestamp", typeof(DateTimeOffset),
+                    locatorSqlType: "datetimeoffset"),
+            nameof(StreamState.Created) => new QueryableMember("created", "created", typeof(DateTimeOffset),
+                locatorSqlType: "datetimeoffset"),
+            nameof(StreamState.IsArchived) => new QueryableMember("is_archived", "is_archived", typeof(bool), locatorSqlType: "bit"),
             nameof(StreamState.CompactedVersion) =>
-                new QueryableMember("compacted_version", "compacted_version", typeof(long)),
+                new QueryableMember("compacted_version", "compacted_version", typeof(long),
+                    locatorSqlType: "bigint"),
             _ => throw new Polecat.Linq.BadLinqExpressionException(
                 $"Polecat cannot translate the member '{expression.Member.DeclaringType?.Name}.{expression.Member.Name}' " +
                 $"in a stream state query. Translatable members are the public properties of {nameof(StreamState)}: " +
@@ -68,6 +71,9 @@ internal class StreamStateMemberFactory : IMemberResolver
         public string TypedLocator => "type";
         public string RawLocator => "type";
         public bool IsBoolean => false;
+
+        /// <summary>#710: the pc_streams.type column's own type, so a large IN list seeks rather than scans.</summary>
+        public string? LocatorSqlType => "varchar(250)";
 
         public object? ConvertValue(object? value)
             => value switch

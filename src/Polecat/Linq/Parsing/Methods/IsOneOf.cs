@@ -80,6 +80,20 @@ internal class InFilter : ISqlFragment
             return;
         }
 
+        // #710: SQL Server rejects a command with more than 2100 parameters, so a large list cannot
+        // travel as one parameter per value -- it threw rather than running. Above the threshold the
+        // whole list goes as ONE JSON array parameter instead, which is what the by-id paths have
+        // done since #363 and why LoadManyAsync worked over a list this could not.
+        //
+        // The locator's own SQL type is what the unpacked column is typed to; see
+        // JsonValueList.AppendInClause for why reading it beats inferring it in both directions.
+        if (JsonValueList.ShouldBindAsJsonArray(_values.Count))
+        {
+            JsonValueList.AppendInClause(builder, _locator, _values, _member.LocatorSqlType,
+                _member.ConvertValue);
+            return;
+        }
+
         builder.Append(_locator);
         builder.Append(" IN (");
         for (var i = 0; i < _values.Count; i++)
