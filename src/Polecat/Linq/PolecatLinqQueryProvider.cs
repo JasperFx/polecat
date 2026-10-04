@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Data.Common;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
@@ -1679,18 +1680,34 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
     // themselves and hand the narrowed queryable back down, so a store implements four primitives and
     // nothing more.
 
+    [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
+        Justification = "Polecat's own use of its LINQ async wrappers, which carry [RequiresDynamicCode] since #733. An EXPLICIT interface implementation cannot propagate the annotation -- the interface does not carry one, and annotating only the implementation is IL2046. A consumer is still warned, at the public entry point they call. ⚠️ NOT the suppression #733 removed: that one asserted the path was SAFE. This records that it is unsafe and that the diagnostic has nowhere left to go.")]
+    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+        Justification = "Polecat's own use of its LINQ async wrappers, which carry [RequiresDynamicCode] since #733. An EXPLICIT interface implementation cannot propagate the annotation -- the interface does not carry one, and annotating only the implementation is IL2046. A consumer is still warned, at the public entry point they call. ⚠️ NOT the suppression #733 removed: that one asserted the path was SAFE. This records that it is unsafe and that the diagnostic has nowhere left to go.")]
     Task<IReadOnlyList<T>> JasperFx.Events.Documents.IDocumentQueryExecutor.ExecuteToListAsync<T>(
         IQueryable<T> queryable, CancellationToken token)
         => queryable.ToListAsync(token);
 
+    [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
+        Justification = "Polecat's own use of its LINQ async wrappers, which carry [RequiresDynamicCode] since #733. An EXPLICIT interface implementation cannot propagate the annotation -- the interface does not carry one, and annotating only the implementation is IL2046. A consumer is still warned, at the public entry point they call. ⚠️ NOT the suppression #733 removed: that one asserted the path was SAFE. This records that it is unsafe and that the diagnostic has nowhere left to go.")]
+    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+        Justification = "Polecat's own use of its LINQ async wrappers, which carry [RequiresDynamicCode] since #733. An EXPLICIT interface implementation cannot propagate the annotation -- the interface does not carry one, and annotating only the implementation is IL2046. A consumer is still warned, at the public entry point they call. ⚠️ NOT the suppression #733 removed: that one asserted the path was SAFE. This records that it is unsafe and that the diagnostic has nowhere left to go.")]
     Task<T?> JasperFx.Events.Documents.IDocumentQueryExecutor.ExecuteFirstOrDefaultAsync<T>(
         IQueryable<T> queryable, CancellationToken token) where T : default
         => queryable.FirstOrDefaultAsync(token);
 
+    [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
+        Justification = "Polecat's own use of its LINQ async wrappers, which carry [RequiresDynamicCode] since #733. An EXPLICIT interface implementation cannot propagate the annotation -- the interface does not carry one, and annotating only the implementation is IL2046. A consumer is still warned, at the public entry point they call. ⚠️ NOT the suppression #733 removed: that one asserted the path was SAFE. This records that it is unsafe and that the diagnostic has nowhere left to go.")]
+    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+        Justification = "Polecat's own use of its LINQ async wrappers, which carry [RequiresDynamicCode] since #733. An EXPLICIT interface implementation cannot propagate the annotation -- the interface does not carry one, and annotating only the implementation is IL2046. A consumer is still warned, at the public entry point they call. ⚠️ NOT the suppression #733 removed: that one asserted the path was SAFE. This records that it is unsafe and that the diagnostic has nowhere left to go.")]
     Task<int> JasperFx.Events.Documents.IDocumentQueryExecutor.ExecuteCountAsync<T>(
         IQueryable<T> queryable, CancellationToken token)
         => queryable.CountAsync(token);
 
+    [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
+        Justification = "Polecat's own use of its LINQ async wrappers, which carry [RequiresDynamicCode] since #733. An EXPLICIT interface implementation cannot propagate the annotation -- the interface does not carry one, and annotating only the implementation is IL2046. A consumer is still warned, at the public entry point they call. ⚠️ NOT the suppression #733 removed: that one asserted the path was SAFE. This records that it is unsafe and that the diagnostic has nowhere left to go.")]
+    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+        Justification = "Polecat's own use of its LINQ async wrappers, which carry [RequiresDynamicCode] since #733. An EXPLICIT interface implementation cannot propagate the annotation -- the interface does not carry one, and annotating only the implementation is IL2046. A consumer is still warned, at the public entry point they call. ⚠️ NOT the suppression #733 removed: that one asserted the path was SAFE. This records that it is unsafe and that the diagnostic has nowhere left to go.")]
     Task<bool> JasperFx.Events.Documents.IDocumentQueryExecutor.ExecuteAnyAsync<T>(
         IQueryable<T> queryable, CancellationToken token)
         => queryable.AnyAsync(token);

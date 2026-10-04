@@ -50,6 +50,8 @@ public static class AggregateToExtensions
     ///     <see cref="AggregateToManyAsync{T}"/>, which fans the queried events out through a multi-stream
     ///     projection to one aggregate per identity.
     /// </summary>
+    [RequiresUnreferencedCode("Executes a Polecat LINQ query, which closes handler and selector generics over the document type at runtime. Use raw SQL (session.QueryAsync<T>) under Native AOT. See polecat#733.")]
+    [RequiresDynamicCode("Executes a Polecat LINQ query, which closes handler and selector generics over the document type at runtime. Use raw SQL (session.QueryAsync<T>) under Native AOT. See polecat#733.")]
     public static async Task<T?> AggregateToAsync<T>(this IQueryable<IEvent> queryable, T? state = null,
         CancellationToken token = default) where T : class
     {

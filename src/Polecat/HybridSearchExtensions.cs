@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using JasperFx.Events.Vectors;
 using Polecat.Internal;
@@ -57,6 +58,8 @@ public static class HybridSearchExtensions
     ///     rows the caller will discard consume the depth, and the fused order is a ranking of a set
     ///     that includes them (jasperfx#843).
     /// </param>
+    [RequiresUnreferencedCode("Hybrid search's WebStyle text leg executes a Polecat LINQ query, which closes handler and selector generics over the document type at runtime. Use raw SQL (session.QueryAsync<T>) under Native AOT. See polecat#733.")]
+    [RequiresDynamicCode("Hybrid search's WebStyle text leg executes a Polecat LINQ query, which closes handler and selector generics over the document type at runtime. Use raw SQL (session.QueryAsync<T>) under Native AOT. See polecat#733.")]
     public static async Task<IReadOnlyList<T>> HybridSearchAsync<T>(
         this IQuerySession session,
         Expression<Func<T, object?>> member,
@@ -76,6 +79,8 @@ public static class HybridSearchExtensions
     ///     relevance floor.
     /// </summary>
     /// <inheritdoc cref="HybridSearchAsync{T}" />
+    [RequiresUnreferencedCode("Hybrid search's WebStyle text leg executes a Polecat LINQ query, which closes handler and selector generics over the document type at runtime. Use raw SQL (session.QueryAsync<T>) under Native AOT. See polecat#733.")]
+    [RequiresDynamicCode("Hybrid search's WebStyle text leg executes a Polecat LINQ query, which closes handler and selector generics over the document type at runtime. Use raw SQL (session.QueryAsync<T>) under Native AOT. See polecat#733.")]
     public static Task<IReadOnlyList<HybridMatch<T>>> HybridSearchWithScoresAsync<T>(
         this IQuerySession session,
         Expression<Func<T, object?>> member,
@@ -116,6 +121,8 @@ public static class HybridSearchExtensions
     ///     members the portable overload cannot infer.
     /// </summary>
     /// <inheritdoc cref="HybridSearchAsync{T}" />
+    [RequiresUnreferencedCode("Hybrid search's WebStyle text leg executes a Polecat LINQ query, which closes handler and selector generics over the document type at runtime. Use raw SQL (session.QueryAsync<T>) under Native AOT. See polecat#733.")]
+    [RequiresDynamicCode("Hybrid search's WebStyle text leg executes a Polecat LINQ query, which closes handler and selector generics over the document type at runtime. Use raw SQL (session.QueryAsync<T>) under Native AOT. See polecat#733.")]
     public static Task<IReadOnlyList<HybridMatch<T>>> HybridSearchWithScoresAsync<T>(
         this IQuerySession session,
         Expression<Func<T, object?>> textMember,
@@ -131,6 +138,8 @@ public static class HybridSearchExtensions
         return SearchAsync(session, NameOf(textMember), vectorMember, text, query, limit, options, filter, token);
     }
 
+    [RequiresUnreferencedCode("Hybrid search's WebStyle text leg executes a Polecat LINQ query, which closes handler and selector generics over the document type at runtime. Use raw SQL (session.QueryAsync<T>) under Native AOT. See polecat#733.")]
+    [RequiresDynamicCode("Hybrid search's WebStyle text leg executes a Polecat LINQ query, which closes handler and selector generics over the document type at runtime. Use raw SQL (session.QueryAsync<T>) under Native AOT. See polecat#733.")]
     private static async Task<IReadOnlyList<HybridMatch<T>>> SearchAsync<T>(
         IQuerySession session,
         string textMemberName,
@@ -181,6 +190,8 @@ public static class HybridSearchExtensions
     ///     satisfies the query or it does not — so it reads through the LINQ operator and takes source
     ///     order.
     /// </summary>
+    [RequiresUnreferencedCode("Executes a Polecat LINQ query, which closes handler and selector generics over the document type at runtime. Use raw SQL (session.QueryAsync<T>) under Native AOT. See polecat#733.")]
+    [RequiresDynamicCode("Executes a Polecat LINQ query, which closes handler and selector generics over the document type at runtime. Use raw SQL (session.QueryAsync<T>) under Native AOT. See polecat#733.")]
     private static async Task<IReadOnlyList<T>> TextLegAsync<T>(
         IQuerySession session, string textMemberName, string text, HybridTextStyle style, int depth,
         Expression<Func<T, bool>>? filter, CancellationToken token) where T : notnull

@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using JasperFx.Events.Vectors;
 
@@ -36,6 +37,10 @@ internal sealed class PolecatSearchOperations(IQuerySession session): IDocumentS
         CancellationToken token = default) where T : notnull
         => session.VectorSearchWithScoresAsync(member, query, limit, distance, filter, token);
 
+    [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
+        Justification = "Polecat's own use of its hybrid search, which carries [RequiresDynamicCode] since #733 because its WebStyle text leg executes a LINQ query. This member implements JasperFx's IDocumentSearchOperations, which does not carry the annotation, so propagating it here alone is IL2046. A consumer calling session.Search.HybridSearchWithScoresAsync reaches the annotated extension directly and IS warned. ⚠️ NOT the suppression #733 removed: that asserted safety.")]
+    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+        Justification = "Polecat's own use of its hybrid search, which carries [RequiresDynamicCode] since #733 because its WebStyle text leg executes a LINQ query. This member implements JasperFx's IDocumentSearchOperations, which does not carry the annotation, so propagating it here alone is IL2046. A consumer calling session.Search.HybridSearchWithScoresAsync reaches the annotated extension directly and IS warned. ⚠️ NOT the suppression #733 removed: that asserted safety.")]
     public Task<IReadOnlyList<HybridMatch<T>>> HybridSearchWithScoresAsync<T>(
         Expression<Func<T, object?>> vectorMember,
         string text,

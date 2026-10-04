@@ -63,6 +63,7 @@ const config: UserConfig<DefaultTheme.Config> = {
             { text: 'Configuring Document Storage', link: '/configuration/storeoptions' },
             { text: 'JSON Serialization', link: '/configuration/json' },
             { text: 'Resiliency Policies', link: '/configuration/retries' },
+            { text: 'Native AOT', link: '/configuration/native-aot' },
             { text: 'Multi-Tenancy', link: '/configuration/multitenancy' },
             { text: 'MCP Server', link: '/configuration/mcp' },
             { text: 'Aspire Dashboard Commands', link: '/configuration/aspire-commands' },

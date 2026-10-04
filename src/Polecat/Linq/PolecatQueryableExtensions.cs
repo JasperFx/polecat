@@ -7,21 +7,46 @@ namespace Polecat.Linq;
 ///     Async LINQ extension methods for Polecat queryables.
 /// </summary>
 /// <remarks>
-///     Every method in this class constructs LINQ expression trees that reference
-///     <see cref="System.Linq.Queryable"/> methods by string name (via
-///     <see cref="System.Linq.Expressions.Expression.Call(Type, string, Type[], Expression[])"/>).
-///     The .NET trimmer cannot statically reason about those lookups, so the
-///     class-level suppressions document the contract: AOT-publishing apps should
-///     avoid the LINQ-async wrappers and either use raw SQL (<c>session.QueryAsync</c>),
-///     compiled queries, or a source-generated query path. The Queryable / Enumerable
-///     methods referenced here are framework intrinsics that the trimmer keeps alive.
+///     <para>
+///         ⚠️ <b>These are NOT usable under Native AOT, and since #733 they say so.</b> Executing a
+///         Polecat LINQ query closes generics over the document type at runtime — <c>src/Polecat</c>
+///         has 108 <c>MakeGenericType</c> / <c>MakeGenericMethod</c> sites, 21 of them in
+///         <c>PolecatLinqQueryProvider</c> alone — and a natively-published consumer meets
+///         <c>NotSupportedException: … is missing native code</c> rather than a wrong answer.
+///     </para>
+///     <para>
+///         <b>Why this is an annotation rather than the previous suppression, which was the actual
+///         defect.</b> This class used to carry class-level
+///         <see cref="UnconditionalSuppressMessageAttribute" /> for IL2026 / IL2060 / IL3050, whose
+///         justification read "the trimmer preserves those intrinsics" — while these same remarks
+///         told AOT publishers to avoid the wrappers. Both cannot be true. An
+///         <c>UnconditionalSuppressMessage</c> is an assertion that the suppressed thing is safe, so
+///         the suppression silenced the one diagnostic that would have told a consumer what the
+///         remark was asking them to know. The result was a store that compiled clean under
+///         <c>PublishAot</c> and threw on its first query (#733), which is marten#5328's shape with
+///         the warning deliberately switched off.
+///     </para>
+///     <para>
+///         <b>What to use instead when publishing AOT:</b> raw SQL through
+///         <c>session.QueryAsync&lt;T&gt;</c> / <c>session.QueryByBatchAsync</c>, which does not build
+///         an expression tree. See <c>docs/configuration/native-aot.md</c>.
+///     </para>
+///     <para>
+///         ⚠️ Note the asymmetry this leaves on purpose: a consumer who is NOT publishing AOT sees
+///         nothing change, because IL2026 / IL3050 are only reported in a trimming or AOT context.
+///         The annotation costs nothing to a normal consumer and tells the truth to the one who
+///         needs it.
+///     </para>
 /// </remarks>
-[UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
-    Justification = "Class-level: LINQ extension methods reference framework Queryable / Enumerable methods by name; the trimmer preserves those intrinsics.")]
-[UnconditionalSuppressMessage("Trimming", "IL2060:DynamicallyAccessedMembers",
-    Justification = "Class-level: Expression.Call(Type, string, …) on Queryable / Enumerable; trimmer-preserved framework intrinsics.")]
-[UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
-    Justification = "Class-level: LINQ expression construction calls generic Queryable methods via Expression.Call which requires runtime code generation in the general case. The framework intrinsics referenced here are preserved.")]
+[RequiresUnreferencedCode(
+    "Polecat's LINQ async wrappers execute through PolecatLinqQueryProvider, which closes handler and "
+    + "selector generics over the document type at runtime. Use raw SQL (session.QueryAsync<T>) when "
+    + "trimming. See polecat#733.")]
+[RequiresDynamicCode(
+    "Polecat's LINQ async wrappers execute through PolecatLinqQueryProvider, which closes handler and "
+    + "selector generics over the document type via MakeGenericType. A natively-published app throws "
+    + "NotSupportedException on the first query. Use raw SQL (session.QueryAsync<T>) under Native AOT. "
+    + "See polecat#733.")]
 public static class PolecatQueryableExtensions
 {
     /// <summary>

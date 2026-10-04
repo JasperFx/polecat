@@ -107,25 +107,37 @@ var session = scope.ServiceProvider.GetRequiredService<IDocumentSession>();
 var query = session.Query<Quest>().Where(q => q.Title == "smoke-test");
 _ = query.Expression;
 
-// Execution shapes, each mirroring one of Marten's four Native AOT failures.
-// Never reached — the connection string is bogus and this program's job is to
-// compile — so they are wrapped rather than awaited for effect. Taking their
-// delegates keeps the call sites in the compiled, analyzed surface.
-_ = new Func<Task>(async () => _ = await query.ToListAsync());                    // marten#5328
+// ⚠️ THE LINQ-EXECUTION SHAPES ARE GONE FROM HERE, and their removal is the
+// point rather than a retreat.
+//
+// #734 added them with the note that this lane "gates their ANNOTATIONS: if a
+// future change replaces that suppression with a propagating
+// [RequiresDynamicCode], this build is where it is noticed". #733 did exactly
+// that one commit later, and this build noticed: three ToListAsync call sites
+// became IL2026 + IL3050 ERRORS under the WarningsAsErrors above.
+//
+// Which is the correct outcome. This project's contract, stated at the top of
+// the csproj, is that an app consuming Polecat THROUGH THE AOT-CLEAN SURFACES
+// compiles with no IL warnings. Executing a LINQ query is now declared NOT one
+// of those surfaces, so it does not belong in the clean set — keeping it here
+// behind a suppression would rebuild the exact dishonesty #733 removed, one
+// layer out.
+//
+// Execution is covered by Polecat.AotRuntimeSmoke, which publishes native and
+// RUNS. That is where the five shapes live now.
+
+// The shapes that are still AOT-clean, and which this lane therefore still
+// gates. Never reached — the connection string is bogus and this program's job
+// is to compile — so they are wrapped rather than awaited for effect. Taking
+// their delegates keeps the call sites in the compiled, analyzed surface.
+//
+// ⚠️ These compiling clean is a FACT ABOUT THE ANNOTATIONS, not evidence that
+// they work: #733 shows the keyed load path fails at runtime under AOT too, it
+// simply has no annotation saying so yet. When one is added, this build breaks
+// and these move out as well.
 _ = new Func<Task>(async () => _ = await session.LoadAsync<Quest>(Guid.Empty));   // marten#5328
-_ = new Func<Task>(async () =>
-{
-    // marten#5361: an enum compared to a VARIABLE, the shape most likely to
-    // reach WhereClauseParser's CompileAndInvoke fallback, because an enum
-    // operand is commonly wrapped in a Convert node that is neither a bare
-    // constant nor a closure member.
-    var wanted = Difficulty.Hard;
-    _ = await session.Query<Quest>().Where(q => q.Difficulty == wanted).ToListAsync();
-});
 _ = new Func<Task>(async () => _ = await session.Events.FetchStreamAsync(Guid.Empty));       // marten#5373
 _ = new Func<Task>(async () => _ = await session.Events.AggregateStreamAsync<Quest>(Guid.Empty)); // marten#5373
-_ = new Func<Task>(async () =>
-    _ = await session.Query<Quest>().Where(q => q.Tags.Contains("aot")).ToListAsync());      // marten#5374
 
 // --- Polecat.AspNetCore extension surface -------------------------------
 // Touch a StreamMany<T> / StreamOne<T> constructor. These IResult wrappers
