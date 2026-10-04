@@ -108,6 +108,42 @@ public class exclusive_append_lock_failure_tests
         locked.InnerException.ShouldBeOfType<SqlException>().Number.ShouldBe(1205);
     }
 
+    /// <summary>
+    ///     #724: the one leg of <see cref="Polecat.Resilience.PolecatRetryPredicates" /> that needs a
+    ///     genuine <see cref="SqlException" />, reusing the real deadlock this class already forces.
+    /// </summary>
+    /// <remarks>
+    ///     <see cref="SqlException" /> cannot be constructed, so the rest of #724's facts assert the
+    ///     decision table by error number. This is what proves the public overload actually finds a
+    ///     number in a real exception chain — and the chain here is the hard shape: a
+    ///     <see cref="StreamLockedException" /> wrapping the <c>SqlException</c>, which is what a
+    ///     caller's <c>ShouldHandle</c> is handed.
+    /// </remarks>
+    [Fact]
+    public async Task a_real_deadlock_is_classified_by_isolation_level_through_the_wrapper()
+    {
+        using var store = CreateStore("lockfail_replay");
+
+        var (failure, _) = await ForceADeadlock(
+            store,
+            (session, id, t) => session.Events.AppendExclusive(id, t, new MonsterSlain("Troll", 2)),
+            TestContext.Current.CancellationToken);
+
+        failure.ShouldBeOfType<StreamLockedException>();
+        failure!.InnerException.ShouldBeOfType<SqlException>().Number.ShouldBe(1205);
+
+        // At ReadCommitted a replay re-reads current data, so this is the ordinary safe retry...
+        Polecat.Resilience.PolecatRetryPredicates
+            .IsUnsafeToReplay(failure, System.Data.IsolationLevel.ReadCommitted)
+            .ShouldBeFalse();
+
+        // ...and under a snapshot the operations being replayed came from one the replay will not
+        // re-take, which is marten#5528's mechanism. Both directions, through the wrapper.
+        Polecat.Resilience.PolecatRetryPredicates
+            .IsUnsafeToReplay(failure, System.Data.IsolationLevel.Snapshot)
+            .ShouldBeTrue();
+    }
+
     [Fact]
     public async Task a_deadlock_during_fetch_for_exclusive_writing_surfaces_as_a_stream_locked_exception()
     {

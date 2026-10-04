@@ -444,6 +444,17 @@ public class StoreOptions
     /// <summary>
     ///     Replace the default Polly resilience pipeline with a custom one.
     /// </summary>
+    /// <remarks>
+    ///     ⚠️ <b>A retry strategy added here replays a unit of work that has already been
+    ///     computed</b>, not the application code that computed it — so it must not handle a
+    ///     snapshot update conflict (3960), and under a <c>Snapshot</c> or <c>Serializable</c>
+    ///     session it must not handle a deadlock or lock timeout either. Compose
+    ///     <see cref="Resilience.PolecatRetryPredicates.IsUnsafeToReplay(Exception, System.Data.IsolationLevel)" />
+    ///     into your <c>ShouldHandle</c>. The full reasoning, and what it cost Marten
+    ///     (marten#5528, a silently lost write), is on
+    ///     <see cref="Resilience.PolecatResilienceDefaults.AddPolecatDefaults" /> and in
+    ///     <c>docs/configuration/retries.md</c> (#724).
+    /// </remarks>
     public void ConfigurePolly(Action<ResiliencePipelineBuilder> configure)
     {
         var builder = new ResiliencePipelineBuilder();
@@ -452,9 +463,27 @@ public class StoreOptions
     }
 
     /// <summary>
-    ///     Extend the default Polly resilience pipeline with additional strategies.
-    ///     The default transient retry is applied first, then your additions.
+    ///     Extend the default Polly resilience pipeline with additional strategies. The defaults are
+    ///     applied first, then your additions.
     /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         ⚠️ <b>There is no "default transient retry" — this used to say there was.</b>
+    ///         <see cref="Resilience.PolecatResilienceDefaults.AddPolecatDefaults" /> adds no
+    ///         strategy at all, deliberately (#724), so extending the defaults extends an empty
+    ///         pipeline. The old wording mattered because it implied a retry was already in place and
+    ///         safe, which is the opposite of the truth: nothing retries, and adding something that
+    ///         does is the hazard.
+    ///     </para>
+    ///     <para>
+    ///         Connection OPENS are retried, but by Microsoft.Data.SqlClient rather than by this
+    ///         pipeline, and over a list that deliberately excludes 1205 and 1222 —
+    ///         <c>ConnectionFactory.TransientSqlErrors</c> (#652).
+    ///     </para>
+    ///     <para>
+    ///         The retry caveat on <see cref="ConfigurePolly" /> applies here unchanged.
+    ///     </para>
+    /// </remarks>
     public void ExtendPolly(Action<ResiliencePipelineBuilder> configure)
     {
         var builder = new ResiliencePipelineBuilder();
