@@ -479,6 +479,185 @@ public class declared_objects_are_modeled_tests : OneOffConfigurationsContext
         ex.Message.ShouldContain("only one JSON index");
     }
 
+    // ── #685: the full-text index, the last raw DDL on the document path ────────────
+
+    private void ConfigureWithFullText(AutoCreate? autoCreate = null)
+    {
+        ConfigureStore(opts =>
+        {
+            if (autoCreate.HasValue) opts.AutoCreateSchemaObjects = autoCreate.Value;
+            opts.Schema.For<DeclaredCustomer>().FullTextIndex(x => x.Code);
+        });
+    }
+
+    private const string FtTable = "pc_ft_declaredcustomer";
+    private const string FtTrigger = "tr_pc_ft_declaredcustomer";
+
+    /// <summary>
+    ///     #685 — the token table, its index and the maintaining trigger all reach the generated
+    ///     script. While they were raw DDL rendered at first use, <c>ToDatabaseScript()</c> and
+    ///     <c>db-dump</c> omitted every one of them, so the script did not reproduce the configured
+    ///     schema: a database built from it would accept writes and answer every full-text search
+    ///     empty.
+    /// </summary>
+    [Fact]
+    public void the_full_text_objects_reach_the_generated_script()
+    {
+        ConfigureWithFullText();
+        theStore.Options.Providers.GetProvider<DeclaredCustomer>();
+
+        var script = theStore.Advanced.ToDatabaseScript();
+
+        script.ShouldContain($"CREATE TABLE {theStore.Options.DatabaseSchemaName}.{FtTable}");
+        script.ShouldContain($"CREATE INDEX ix_{FtTable}_term");
+        script.ShouldContain($"CREATE TRIGGER {theStore.Options.DatabaseSchemaName}.{FtTrigger}");
+
+        // The trigger has to come AFTER both tables it touches: a creation script renders each CREATE
+        // in the order the feature schema yields them, with no migration involved and therefore none of
+        // SchemaMigration's deferral. Asserted by position rather than by presence, because all three
+        // being present in the wrong order is a script that will not run.
+        script.IndexOf($"CREATE TABLE {theStore.Options.DatabaseSchemaName}.{FtTable}", StringComparison.Ordinal)
+            .ShouldBeLessThan(script.IndexOf($"CREATE TRIGGER {theStore.Options.DatabaseSchemaName}.{FtTrigger}",
+                StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    ///     The fixed point. For the trigger this is a body comparison against
+    ///     <c>sys.sql_modules</c>, so it is the fact that catches a rendering SQL Server stores
+    ///     differently from the way Polecat declares it — that reports drift on every pass, and then
+    ///     drops and re-creates the trigger on every storage-ensure forever.
+    /// </summary>
+    [Fact]
+    public async Task applying_the_full_text_objects_reaches_a_fixed_point()
+    {
+        ConfigureWithFullText();
+
+        await theStore.Database.ApplyAllConfiguredChangesToDatabaseAsync();
+        await theStore.Database.AssertDatabaseMatchesConfigurationAsync();
+
+        await theStore.Database.ApplyAllConfiguredChangesToDatabaseAsync();
+        await theStore.Database.AssertDatabaseMatchesConfigurationAsync();
+
+        (await IndexNamesAsync(FtTable)).ShouldContain($"ix_{FtTable}_term");
+        (await TriggerNamesAsync("pc_doc_declaredcustomer")).ShouldContain(FtTrigger);
+
+        // And the objects the migration built actually WORK, which is a different claim from their
+        // existing under the right names. The write below is served by the trigger this migration
+        // created -- the fixed point above is what establishes that, since a storage-ensure with
+        // nothing to do cannot have replaced it.
+        await using (var session = theStore.LightweightSession())
+        {
+            session.Store(new DeclaredCustomer { Id = Guid.NewGuid(), Code = "quick brown fox" });
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        (await NamesAsync($"""
+            SELECT term FROM {theStore.Options.DatabaseSchemaName}.{FtTable} ORDER BY pos;
+            """)).ShouldBe(["quick", "brown", "fox"]);
+    }
+
+    /// <summary>
+    ///     <see cref="AutoCreate.None" /> refuses a missing token table. It could not while the table
+    ///     was invisible to the model — and that invisibility is what made the gap hard to notice,
+    ///     because the natural "did this work?" assertion passed over a database that had none of it.
+    /// </summary>
+    [Fact]
+    public async Task auto_create_none_refuses_a_missing_full_text_table()
+    {
+        // Build the document table WITHOUT the declaration, so the full-text objects are the only
+        // things missing.
+        ConfigureStore(opts => { });
+        theStore.Options.Providers.GetProvider<DeclaredCustomer>();
+        await theStore.Database.ApplyAllConfiguredChangesToDatabaseAsync();
+
+        ConfigureWithFullText(AutoCreate.None);
+
+        await Should.ThrowAsync<Exception>(
+            () => theStore.Database.AssertDatabaseMatchesConfigurationAsync());
+    }
+
+    /// <summary>
+    ///     A trigger Polecat does not declare survives a migration — the #267 guarantee, restated for
+    ///     the object kind this issue added.
+    /// </summary>
+    /// <remarks>
+    ///     Worth its own fact rather than resting on the index one. A trigger is an independent schema
+    ///     object that merely names its target (weasel#452), not something the table owns, so nothing
+    ///     about the table's own delta protects it: what protects it is that the migration only visits
+    ///     objects in the model. A reconcile-everything reading would silently delete a user's
+    ///     data-integrity logic.
+    /// </remarks>
+    [Fact]
+    public async Task an_undeclared_trigger_survives_a_migration()
+    {
+        ConfigureWithFullText();
+        await theStore.Database.ApplyAllConfiguredChangesToDatabaseAsync();
+
+        var schema = theStore.Options.DatabaseSchemaName;
+        var table = $"{schema}.pc_doc_declaredcustomer";
+
+        await using (var conn = new SqlConnection(TestUtils.ConnectionSource.ConnectionString))
+        {
+            await conn.OpenAsync(TestContext.Current.CancellationToken);
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = $"""
+                IF OBJECT_ID('{schema}.tr_user_added', 'TR') IS NULL
+                    EXEC sp_executesql N'CREATE TRIGGER {schema}.tr_user_added ON {table} AFTER INSERT AS BEGIN SET NOCOUNT ON; END';
+                """;
+            await cmd.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+        }
+
+        await theStore.Database.ApplyAllConfiguredChangesToDatabaseAsync();
+
+        var triggers = await TriggerNamesAsync("pc_doc_declaredcustomer");
+        triggers.ShouldContain("tr_user_added");
+        triggers.ShouldContain(FtTrigger);
+    }
+
+    /// <summary>
+    ///     Declaring a second member re-renders the trigger rather than leaving the first member's
+    ///     body in place.
+    /// </summary>
+    /// <remarks>
+    ///     This is the behaviour the old renderer bought with <c>CREATE OR ALTER</c>, and it has to
+    ///     survive the move to a modeled object, where it is instead bought by the delta reporting
+    ///     <c>Update</c> on a changed body. If it did not, the new member would be covered by the
+    ///     backfill (which is unconditional) and then never maintained again — searchable until its
+    ///     document is next written, and silently not afterwards.
+    /// </remarks>
+    [Fact]
+    public async Task redeclaring_the_index_re_renders_the_trigger()
+    {
+        ConfigureWithFullText();
+        await theStore.Database.ApplyAllConfiguredChangesToDatabaseAsync();
+
+        (await TriggerDefinitionAsync(FtTrigger)).ShouldNotContain("$.notes");
+
+        // Same type, a second declared member. The token table is unchanged; only the trigger body is.
+        ConfigureStore(opts => opts.Schema.For<DeclaredCustomer>()
+            .FullTextIndex(x => x.Code)
+            .FullTextIndex(x => x.Notes));
+
+        await theStore.Database.ApplyAllConfiguredChangesToDatabaseAsync();
+        await theStore.Database.AssertDatabaseMatchesConfigurationAsync();
+
+        var definition = await TriggerDefinitionAsync(FtTrigger);
+        definition.ShouldContain("$.code");
+        definition.ShouldContain("$.notes");
+    }
+
+    private async Task<List<string>> TriggerNamesAsync(string tableName)
+        => await NamesAsync($"""
+            SELECT t.name FROM sys.triggers t
+            WHERE t.parent_id = OBJECT_ID('{theStore.Options.DatabaseSchemaName}.{tableName}');
+            """);
+
+    private async Task<string> TriggerDefinitionAsync(string triggerName)
+        => (await NamesAsync($"""
+            SELECT sm.definition FROM sys.sql_modules sm
+            WHERE sm.object_id = OBJECT_ID('{theStore.Options.DatabaseSchemaName}.{triggerName}');
+            """)).Single();
+
     private async Task<List<string>> IndexNamesAsync(string tableName)
         => await NamesAsync($"""
             SELECT i.name FROM sys.indexes i
@@ -514,6 +693,9 @@ public class declared_objects_are_modeled_tests : OneOffConfigurationsContext
     {
         public Guid Id { get; set; }
         public string Code { get; set; } = string.Empty;
+
+        /// <summary>A second text member, so a full-text declaration can gain one (#685).</summary>
+        public string Notes { get; set; } = string.Empty;
     }
 
     public class DeclaredOrder

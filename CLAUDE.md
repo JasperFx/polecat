@@ -344,12 +344,39 @@ separate them. That is why `SchemaName = "doc_usage"` appearing in nine files is
     identifier in Polecat was already held to it. Moving an object into the model can therefore be a
     **breaking change** for a name that used to be escaped; that is the right trade, but say so.
 
-  Still outstanding on the document path, tracked by #685: the full-text index (token table, its
-  index, the trigger, the backfill) and `CREATE JSON INDEX`. Two things in `DocumentTableEnsurer` are
-  deliberately *not* in scope, because they are pre-migration fixups of legacy tables rather than
-  declarations of a desired schema, and Weasel's delta cannot express either: the Decision D2
-  `version` int→bigint widening (drop default, alter, restore) and #296's in-place strong-typed-id
-  column conversion. Both run *before* the diff precisely so the diff comes out clean.
+  **#685 closed the last of it, and the full-text half is the one worth reading.** `CREATE JSON
+  INDEX` went Weasel-side as `JsonIndexDefinition` (weasel#661, Weasel 9.38.0). The full-text index
+  became **two** Polecat objects rather than one composite: a `FullTextTokenTable : Table` that owns
+  its own index, and a `FullTextTrigger : Weasel.SqlServer.Triggers.Trigger`. Weasel already had a
+  home for each, a composite would have had to re-implement fetch and delta for a set whose members
+  compare in completely different ways (`sys.columns` versus `sys.sql_modules`), and Weasel's own
+  reasoning for a trigger being an independent object that merely names a target (weasel#452) applies
+  unchanged. `FullTextSchemaObjects.For(mapping)` is the single answer to "which objects, in what
+  order", so the whole-database feature schema and the lazy first-use ensurer cannot disagree — and
+  the order is load-bearing on the **script** path specifically, which renders CREATEs in yield order
+  with none of `SchemaMigration`'s deferral.
+
+  Three things that generalize past this issue:
+
+  - **A trigger cannot be guarded with an `IF`**, because `CREATE TRIGGER` has to begin its batch.
+    Weasel answers that with `DROP TRIGGER IF EXISTS` + `EXEC sp_executesql`, which is also what makes
+    it expressible as a delta — `Trigger.CreateDeltaAsync` compares the body `sys.sql_modules` hands
+    back against the declared one. That comparison is the trigger's canonicalization trap: a body SQL
+    Server stores differently from the way Polecat declares it reports drift on every single pass.
+    `generated_schema_script_executes` runs the script **twice** and is where that is actually caught.
+  - **A backfill is a data migration and stays raw SQL.** It describes rows rather than structure,
+    there is nothing in the catalog for a delta to compare it against, and it belongs *after* the
+    schema converges rather than as part of converging. That is not a loophole in the Weasel rule —
+    the rule is about DDL.
+  - The token table has **no primary key**, deliberately: no tuple of its columns is unique, and
+    adding one would be a migration against every table the old renderer created. Matching the old
+    renderer's shape exactly is what makes the first delta after upgrading come out `None`.
+
+  Two things in `DocumentTableEnsurer` are deliberately *not* in scope, because they are
+  pre-migration fixups of legacy tables rather than declarations of a desired schema, and Weasel's
+  delta cannot express either: the Decision D2 `version` int→bigint widening (drop default, alter,
+  restore) and #296's in-place strong-typed-id column conversion. Both run *before* the diff
+  precisely so the diff comes out clean.
 - Implement JasperFx.Events interfaces — don't reinvent the event/projection abstractions
 - Opt into the Critter Stack stateful resource model via Weasel's DatabaseResource
 - Keep it simple: QuickAppend only, no dirty tracking, STJ only
