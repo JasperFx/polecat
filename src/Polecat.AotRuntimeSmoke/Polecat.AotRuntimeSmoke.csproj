@@ -18,7 +18,11 @@
              This project PUBLISHES NATIVE AND RUNS, against a real database. That is the only thing
              that can observe "writes were fine, the first read threw" (marten#5328). -->
         <PublishAot>true</PublishAot>
-        <InvariantGlobalization>true</InvariantGlobalization>
+        <!-- ⚠️ NOT InvariantGlobalization. #733: the event-store paths throw
+             "NotSupportedException: Globalization Invariant Mode is not supported" under it, so a
+             Polecat consumer cannot use that switch. Discovered here rather than reasoned about,
+             which is the point of this lane; recorded in docs/configuration/native-aot.md. -->
+        <InvariantGlobalization>false</InvariantGlobalization>
 
         <!-- ⚠️ Deliberately NOT promoting IL warnings to errors here. This lane's job is to find out
              what HAPPENS, not to assert what is annotated; that is AotSmoke's job. Failing the build

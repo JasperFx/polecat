@@ -57,16 +57,70 @@ The annotation propagates, so these now carry it too: `ToPagedListAsync`, `Aggre
 equally broken under AOT today, and simply have no annotation saying so. #733 is the tracking issue
 for the whole surface; this release annotated the one that was actively *asserting* its own safety.
 
+## How far it gets today
+
+Measured, not estimated — `Polecat.AotRuntimeSmoke` publishes native and runs. As of this release the
+store **builds, connects, and migrates its schema** under Native AOT; it fails when it tries to
+construct a document provider.
+
+| | native |
+|---|---|
+| `DocumentStore` construction, including the built-in `DeadLetterEvent` registration | ✅ |
+| schema migration — the run creates its own tables | ✅ |
+| identity accessors, strong-typed id wrap/unwrap, identity assignment | ✅ |
+| **constructing a document provider** | ❌ [#733](https://github.com/JasperFx/polecat/issues/733) |
+| document writes, reads, events | ❌ blocked behind the above |
+
+The remaining failure is `PolecatClosedShapeRegistration.BuildTypedProvider<TDoc, TId>`, reached
+through `MakeGenericMethod` with a value-type `TId`. No annotation fixes it: the closed-shape storage
+classes are generic by design, so the instantiations have to be *emitted* in the consumer's assembly —
+a source generator, the way `JasperFx.Events.SourceGenerator` already handles projection dispatch.
+
+## The consumer contract
+
+⚠️ Two of the walls found on the way turned out **not** to be Polecat defects, and they will still
+apply once #733 closes. If you publish natively you have to do both.
+
+### Root your document types
+
+Polecat finds a document's identity by reflecting over its public properties. Nothing in your code
+statically *reads* that property — the store assigns it and the store reads it — so the trimmer
+removes it and startup fails:
+
+```
+InvalidOperationException: Document type 'Quest' must have a public property named 'Id'
+or a property marked with [Identity] of type Guid, string, int, or long.
+```
+
+Polecat cannot fix this for you: it cannot name types it has never seen. Keep them alive yourself:
+
+```cs
+internal static class AotRoots
+{
+    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties, typeof(Quest))]
+    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties, typeof(QuestStarted))]
+    internal static void Keep() { }
+}
+```
+
+…called once at startup. One entry per document and event type. (`DeadLetterEvent` is the single type
+Polecat *does* name, and it carries its own `DynamicDependency` for exactly this reason.)
+
+### Do not use `InvariantGlobalization`
+
+```
+NotSupportedException: Globalization Invariant Mode is not supported.
+```
+
+The event-store paths need real globalization data, so `<InvariantGlobalization>true</InvariantGlobalization>`
+breaks event append and aggregation. It is a tempting switch in an AOT project because it shrinks the
+image; it is not available here.
+
 ## If you need AOT today
 
-You do not have a working option within Polecat, and this page would rather say so than suggest a
-workaround that also throws. Raw SQL through `session.QueryAsync<T>` avoids building an expression
-tree, but it still goes through `DocumentMapping`, so it fails at store construction like everything
-else.
-
-Follow [#733](https://github.com/JasperFx/polecat/issues/733). The realistic fix is
-source-generating the per-document-type plumbing in the consumer's assembly, the way
-`JasperFx.Events.SourceGenerator` already handles projection dispatch.
+You still do not have a working option, and this page would rather say so than suggest a workaround
+that also throws. Follow [#733](https://github.com/JasperFx/polecat/issues/733), which now has the
+remaining scope written down rather than an open question.
 
 ## How this is tested
 

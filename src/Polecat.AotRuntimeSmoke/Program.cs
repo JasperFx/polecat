@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 // AOT RUNTIME smoke test (#725).
 //
 // Publishes native and RUNS, against a real database. Its companion
@@ -22,6 +23,18 @@ using Polecat.Linq;
 var connectionString =
     Environment.GetEnvironmentVariable("POLECAT_TESTING_DATABASE")
     ?? "Server=localhost,11433;User Id=sa;Password=P@55w0rd;Timeout=5;MultipleActiveResultSets=True;Initial Catalog=master;Encrypt=False";
+
+// ⚠️ #733: THE CONSUMER'S OWN DOCUMENT TYPES NEED THEIR MEMBERS PRESERVED, and this is the line
+// that says so. Polecat finds a document's identity by reflecting over its public properties, and
+// nothing in a consumer's code statically reads Quest.Id -- the store assigns it and the store reads
+// it, both reflectively -- so the trimmer removes it and the identity probe refuses:
+//
+//   InvalidOperationException: Document type 'Quest' must have a public property named 'Id' ...
+//
+// This is NOT something Polecat can fix on a consumer's behalf: it cannot name types it has never
+// seen. It is the AOT contract a consumer has to meet, and it is exactly the shape of the
+// DynamicDependency #734 added for DeadLetterEvent -- the one document type Polecat DOES name.
+AotRoots.Keep();
 
 var builder = Host.CreateApplicationBuilder(args);
 
@@ -155,6 +168,19 @@ return failures.Count == 0 ? 0 : 1;
 
 namespace Polecat.AotRuntimeSmoke
 {
+    /// <summary>
+    ///     #733: keeps the document types' members alive through trimming. A real consumer writes
+    ///     this, or uses a source generator that writes it for them.
+    /// </summary>
+    internal static class AotRoots
+    {
+        [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties, typeof(Quest))]
+        [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties, typeof(QuestStarted))]
+        internal static void Keep()
+        {
+        }
+    }
+
     internal enum Difficulty { Easy, Hard }
 
     internal sealed record QuestStarted(string Title);

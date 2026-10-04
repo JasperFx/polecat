@@ -558,33 +558,55 @@ internal class DocumentMapping
     [RequiresUnreferencedCode("Closes the generic Weasel.Core.Identity strategy over the document + id types.")]
     private IIdentityAssigner? BuildIdentityAssigner()
     {
+        // ⚠️ #733: the strong-typed branch goes through Weasel's factory and the other three do NOT,
+        // and that asymmetry is measured rather than stylistic.
+        //
+        // Identifications.ForValueType (weasel#690) is the one that MUST be Weasel's:
+        // ValueTypeIdentification<,,> takes the WRAPPED PRIMITIVE as a type argument -- Guid, int --
+        // so closing it is a value-type instantiation Native AOT cannot build, and the factory
+        // branches to a reflective strategy on IsDynamicCodeSupported for exactly that.
+        //
+        // The other three are closed HERE, over the document type only -- an all-reference-type
+        // instantiation, which shares a canonical body and works natively. Routing them through
+        // Identifications.ForSequentialGuid / ForHiloInt / ForHiloLong was tried and REGRESSED the
+        // native path:
+        //
+        //   MissingMethodException: No parameterless constructor defined for type
+        //   'Weasel.Core.Identity.SequentialGuidIdentification`1[DeadLetterEvent]'
+        //
+        // Weasel's Close() helper does MakeGenericType + Activator.CreateInstance from inside
+        // Weasel's own assembly, and ILC does not preserve the closed instantiation's CONSTRUCTORS
+        // for it -- so the type resolves and then has no usable ctor. The same two calls made from
+        // here do work, because the typeof() and the Activator call sit in the assembly ILC is
+        // rooting from. Filed as weasel#694. When that lands, all four can move to the factory and
+        // "which strategy fits which id shape" stops being duplicated here and in Marten.
         if (ValueTypeId != null)
         {
-            var strategyType = typeof(ValueTypeIdentification<,,>)
-                .MakeGenericType(_documentType, ValueTypeId.OuterType, ValueTypeId.SimpleType);
-            var strategy = Activator.CreateInstance(strategyType, _idProperty, ValueTypeId, _documentType)!;
-            return CreateAssigner(_documentType, ValueTypeId.OuterType, strategy);
+            return CreateAssigner(_documentType, ValueTypeId.OuterType,
+                Identifications.ForValueType(_documentType, _idProperty, ValueTypeId, _documentType));
         }
 
         if (IdType == typeof(Guid))
         {
-            var strategy = Activator.CreateInstance(
-                typeof(SequentialGuidIdentification<>).MakeGenericType(_documentType), _idProperty)!;
-            return CreateAssigner(_documentType, typeof(Guid), strategy);
+            return CreateAssigner(_documentType, typeof(Guid),
+                (IIdentification)Activator.CreateInstance(
+                    typeof(SequentialGuidIdentification<>).MakeGenericType(_documentType), _idProperty)!);
         }
 
         if (IdType == typeof(int))
         {
-            var strategy = Activator.CreateInstance(
-                typeof(HiloIntIdentification<>).MakeGenericType(_documentType), _idProperty, _documentType)!;
-            return CreateAssigner(_documentType, typeof(int), strategy);
+            return CreateAssigner(_documentType, typeof(int),
+                (IIdentification)Activator.CreateInstance(
+                    typeof(HiloIntIdentification<>).MakeGenericType(_documentType), _idProperty,
+                    _documentType)!);
         }
 
         if (IdType == typeof(long))
         {
-            var strategy = Activator.CreateInstance(
-                typeof(HiloLongIdentification<>).MakeGenericType(_documentType), _idProperty, _documentType)!;
-            return CreateAssigner(_documentType, typeof(long), strategy);
+            return CreateAssigner(_documentType, typeof(long),
+                (IIdentification)Activator.CreateInstance(
+                    typeof(HiloLongIdentification<>).MakeGenericType(_documentType), _idProperty,
+                    _documentType)!);
         }
 
         // string ids are externally assigned in Polecat — no auto-generation.
@@ -592,32 +614,19 @@ internal class DocumentMapping
     }
 
     [RequiresUnreferencedCode("Closes IdentityAssigner<TDoc,TId> over the document + id types.")]
-    private static IIdentityAssigner CreateAssigner(Type documentType, Type idType, object identification)
+    private static IIdentityAssigner CreateAssigner(Type documentType, Type idType, IIdentification identification)
     {
-        // ⚠️ #733: THIS IS WHERE A NATIVELY-PUBLISHED POLECAT STILL STOPS, and it is not fixable
-        // here. idType is routinely a VALUE type (Guid, int, long), and MakeGenericType cannot close
-        // an instantiation with a value-type argument under Native AOT -- only all-reference-type
-        // ones share a canonical body:
-        //
-        //   NotSupportedException: 'Polecat.Internal.IdentityAssigner`2[DeadLetterEvent,System.Guid]'
-        //   is missing native code or metadata.
-        //
-        // Two consumer-side workarounds were tried and both are dead ends, recorded so they are not
-        // tried again:
-        //
-        //   * holding the strategy as object and invoking AssignIfMissing REFLECTIVELY. Published and
-        //     run natively; GetMethods() on SequentialGuidIdentification<TDoc> returns nothing,
-        //     because nothing statically references those members and the trimmer removed the
-        //     metadata. You cannot reflect your way out of generics under AOT -- the metadata you
-        //     would reflect over is trimmed too.
-        //   * reimplementing the identity rules (CombGuid, Hi-Lo) against _idGetter / _idSetter.
-        //     That is a second description of Weasel's behaviour kept in step by hand, which is the
-        //     trade this repo's own rules reject -- and the reason the two fallbacks ABOVE are
-        //     acceptable is precisely that they are not that.
-        //
-        // The fix is a non-generic seam in Weasel.Core.Identity: weasel#689 (the facade, which this
-        // call needs) and weasel#690 (constructing ValueTypeIdentification<,,>, which a strong-typed
-        // id needs). Until one lands, #733 stays open and aot-runtime-smoke stays continue-on-error.
+        // #733: resolved in Weasel 9.41.0. idType is routinely a VALUE type (Guid, int, long), and
+        // MakeGenericType cannot close an instantiation with a value-type argument under Native AOT
+        // -- only all-reference-type ones share a canonical body. weasel#689 added a non-generic
+        // IIdentification facade for exactly this, and FacadeIdentityAssigner explains why a
+        // statically-referenced interface is the one shape that works (reflection does not: the
+        // trimmer removes the metadata you would reflect over).
+        if (!RuntimeFeature.IsDynamicCodeSupported)
+        {
+            return new FacadeIdentityAssigner(identification);
+        }
+
         var assignerType = typeof(IdentityAssigner<,>).MakeGenericType(documentType, idType);
         return (IIdentityAssigner)Activator.CreateInstance(assignerType, identification)!;
     }
