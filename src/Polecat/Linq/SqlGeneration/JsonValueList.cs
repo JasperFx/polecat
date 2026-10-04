@@ -25,23 +25,72 @@ namespace Polecat.Linq.SqlGeneration;
 ///         short <c>IN (@p0, @p1, …)</c> hands the optimizer real literals and a real row count, where
 ///         <c>OPENJSON</c> is costed at a fixed guess regardless of the list's actual length — so
 ///         switching unconditionally would change the plan of every small <c>IsOneOf</c> for no
-///         correctness gain. But a HIGH threshold would not close the hole either, because <b>the 2100
-///         budget belongs to the command, not to this fragment</b>: two filters of 1500 values each are
-///         both under any per-fragment ceiling and together over the server's. Until a fragment can ask
-///         the builder how much budget is left (JasperFx/weasel#675), a threshold low enough that
-///         summing across fragments cannot realistically reach 2100 is what actually holds — and it
-///         costs nothing, because this is roughly where OPENJSON stops losing anyway.
+///         correctness gain.
+///     </para>
+///     <para>
+///         <b>#721: that low threshold is the FLOOR, and the command's own parameter count is now the
+///         ceiling.</b> The 2100 budget belongs to the command, not to this fragment, and a fragment
+///         could not see past itself until Weasel 9.40.0 exposed
+///         <c>ICommandBuilder.ParameterCount</c> (weasel#675, filed off #710). So the decision is made
+///         twice: over <see cref="Threshold" /> values, bind an array because the list is big enough
+///         that OPENJSON stops losing on its own merits; under it, bind an array anyway when what is
+///         ALREADY bound on this command plus this list would cross
+///         <c>SqlServerMigrator.MaxParametersPerCommand</c>.
+///     </para>
+///     <para>
+///         ⚠️ <b>Note which case the ceiling actually fixes, because it is not the one weasel#675 was
+///         filed for.</b> Two filters of 1500 values each — the motivating example — were never broken
+///         once #710 shipped: 1500 is over the floor, so each fragment already became an array on its
+///         own. The residual hole is the opposite shape, <i>many small</i> lists each under the floor
+///         summing past the budget, which takes roughly twenty-plus filters of a hundred values. That
+///         is the case no per-fragment threshold can reach at any value, because lowering it far
+///         enough to cover twenty fragments would penalize every single-digit <c>IsOneOf</c> in the
+///         store.
+///     </para>
+///     <para>
+///         A builder compiled against an older Weasel returns
+///         <see cref="Weasel.Core.ICommandBuilder.UnknownParameterCount" /> (-1), which means "no
+///         information" rather than "none bound" — so the ceiling is skipped and the floor alone
+///         decides, exactly as before #721. Treating -1 as zero would be the silently-wrong version
+///         of this.
 ///     </para>
 /// </remarks>
 internal static class JsonValueList
 {
     /// <summary>
     ///     Above this many values, bind one JSON array instead of one parameter per value. See the
-    ///     remarks for why this is ~100 rather than ~2000.
+    ///     remarks for why this is ~100 rather than ~2000, and why it is a floor rather than the whole
+    ///     decision.
     /// </summary>
     internal const int Threshold = 100;
 
-    internal static bool ShouldBindAsJsonArray(int count) => count > Threshold;
+    /// <summary>
+    ///     The per-command parameter budget this fragment will not help exceed —
+    ///     <c>SqlServerMigrator.MaxParametersPerCommand</c>, read rather than restated so a Weasel
+    ///     change moves both together.
+    /// </summary>
+    /// <remarks>
+    ///     Weasel's 2000 is already below SQL Server's hard 2100, and that slack does real work here:
+    ///     parameters bound AFTER this fragment — the rest of the where clause, a TOP, a tenant id —
+    ///     are not visible to it, so a budget equal to the limit would leave no room for them.
+    /// </remarks>
+    internal static int Budget { get; } = new SqlServerMigrator().MaxParametersPerCommand;
+
+    /// <summary>
+    ///     Whether <paramref name="count" /> values should travel as one JSON array on this command.
+    ///     See the remarks on the class for the floor-and-ceiling split.
+    /// </summary>
+    internal static bool ShouldBindAsJsonArray(Weasel.Core.ICommandBuilder builder, int count)
+    {
+        // The floor: big enough that OPENJSON is the better plan on its own merits.
+        if (count > Threshold) return true;
+
+        // The ceiling, which needs the command's running total (#721, weasel#675).
+        var alreadyBound = builder.ParameterCount;
+        if (alreadyBound == Weasel.Core.ICommandBuilder.UnknownParameterCount) return false;
+
+        return alreadyBound + count > Budget;
+    }
 
     /// <summary>
     ///     OPENJSON's own <c>value</c> column type. The fallback when the locator is left uncast — a

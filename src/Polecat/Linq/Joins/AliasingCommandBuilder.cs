@@ -28,6 +28,20 @@ internal class AliasingCommandBuilder : ICommandBuilder
 
     public string? LastParameterName => _inner.LastParameterName;
 
+    /// <summary>
+    ///     Weasel 9.40.0 (weasel#675): how many parameters are already bound on the command being
+    ///     built, so a fragment rendering a value list can decide against
+    ///     <c>SqlServerMigrator.MaxParametersPerCommand</c> instead of guessing (#710, #721).
+    /// </summary>
+    /// <remarks>
+    ///     The wrapper owns no parameters of its own — it rewrites locators and delegates every bind —
+    ///     so the inner builder's count IS this builder's count. Returning 0 here would be the
+    ///     dangerous answer: a join's fragment would read "nothing bound yet" on a command that had
+    ///     already spent its budget, which is precisely the miscount
+    ///     <see cref="JsonValueList.ShouldBindAsJsonArray" /> consults this to avoid.
+    /// </remarks>
+    public int ParameterCount => _inner.ParameterCount;
+
     public void Append(string sql)
     {
         _inner.Append(JoinStatement.AliasLocator(sql, _alias));

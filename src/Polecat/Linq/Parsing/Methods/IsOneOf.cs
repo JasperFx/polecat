@@ -87,7 +87,7 @@ internal class InFilter : ISqlFragment
         //
         // The locator's own SQL type is what the unpacked column is typed to; see
         // JsonValueList.AppendInClause for why reading it beats inferring it in both directions.
-        if (JsonValueList.ShouldBindAsJsonArray(_values.Count))
+        if (JsonValueList.ShouldBindAsJsonArray(builder, _values.Count))
         {
             JsonValueList.AppendInClause(builder, _locator, _values, _member.LocatorSqlType,
                 _member.ConvertValue);

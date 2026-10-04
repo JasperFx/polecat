@@ -32,7 +32,7 @@ internal class TenantInFilter : ISqlFragment
         // one TenantIsOneOf call. tenant_id is varchar(250) everywhere it exists, so the unpacked
         // column is typed to match rather than left as OPENJSON's nvarchar -- an nvarchar probe
         // against this varchar column is the #363 implicit-conversion scan.
-        if (JsonValueList.ShouldBindAsJsonArray(_tenantIds.Length))
+        if (JsonValueList.ShouldBindAsJsonArray(builder, _tenantIds.Length))
         {
             JsonValueList.AppendInClause(builder, _columnName, _tenantIds, "varchar(250)", x => x);
             return;
