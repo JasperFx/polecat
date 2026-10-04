@@ -404,12 +404,57 @@ public class AdvancedOperations
 
     /// <summary>
     ///     Drop all Polecat schema objects in this store's configured schema — every
-    ///     <c>pc_*</c> table plus any <see cref="FlatTableProjection" /> table. Unlike the
-    ///     <c>CleanAll*</c> methods (which only delete rows), this removes the tables
-    ///     themselves. Mirrors Marten's <c>IDocumentCleaner.CompletelyRemoveAllAsync</c>
-    ///     (polecat#191). Foreign keys are dropped first so the tables can be removed in any
-    ///     order; missing tables are ignored so this is safe to call repeatedly.
+    ///     <c>pc_*</c> table, any <see cref="FlatTableProjection" /> table, and every partition
+    ///     scheme and function the model declares. Unlike the <c>CleanAll*</c> methods (which only
+    ///     delete rows), this removes the objects themselves. Mirrors Marten's
+    ///     <c>IDocumentCleaner.CompletelyRemoveAllAsync</c> (polecat#191). Foreign keys are dropped
+    ///     first so the tables can be removed in any order; missing objects are ignored so this is
+    ///     safe to call repeatedly.
     /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         ⚠️ <b>#718: this used to be a table sweep only, and partition schemes and functions
+    ///         were therefore NEVER dropped by anything in the product.</b> Partitioning (#335
+    ///         tenant partitioning, #386 rolling range partitions, archived-stream partitioning)
+    ///         creates them through Weasel, but neither is a table, so neither appears in
+    ///         <c>INFORMATION_SCHEMA.TABLES</c> and the <c>pc[_]%</c> sweep could not see them. The
+    ///         tell was that <b>six test files hand-rolled the teardown the product did not do</b>.
+    ///     </para>
+    ///     <para>
+    ///         <b>Why the leftovers were worse than ordinary orphans.</b> A partition function and
+    ///         scheme are <b>database</b>-scoped, not schema-scoped, so they outlive the schema this
+    ///         was called for AND are shared by every schema in the database — which is exactly how
+    ///         this repo's own suite isolates itself. A re-provision after a "completely remove all"
+    ///         therefore met a surviving function carrying the OLD boundary set, rather than creating
+    ///         a fresh one. Same two-disagreeing-descriptions shape as #684, reached from the other
+    ///         end: the database held state the model did not put there and could not see.
+    ///     </para>
+    ///     <para>
+    ///         <b>Two passes now, and the split is deliberate</b> (#718 option 2). The modeled pass
+    ///         walks <c>BuildFeatureSchemas()</c> and emits each partitioned table's
+    ///         <c>ISqlServerPartitioning.WriteDropDdl</c> — Weasel's own drop, so the objects are
+    ///         removed by the same model that created them and a new partitioning strategy is covered
+    ///         for free. The catalog pass stays, and stays explicitly NOT model-driven: it is what
+    ///         removes tables for document types no longer configured and legacy <c>pc_*</c> tables
+    ///         from an earlier version, which a purely modeled drop would silently stop doing. That
+    ///         is a real capability for a method people use to reset a database.
+    ///     </para>
+    ///     <para>
+    ///         <b>Order is load-bearing:</b> foreign keys, then tables, then partitions. A partition
+    ///         scheme cannot be dropped while a table or index still sits on it, so the modeled pass
+    ///         has to come last — which is also why it could not simply be folded into the existing
+    ///         sweep.
+    ///     </para>
+    ///     <para>
+    ///         ⚠️ The catalog sweep is <b>not</b> a violation of CLAUDE.md's "all DDL through Weasel"
+    ///         rule being quietly tolerated — it is a carve-out with a reason. #684's failure mode was
+    ///         raw DDL acting as a SECOND DESCRIPTION of the schema, a promise to keep two
+    ///         descriptions in sync by hand. This pass describes nothing; it discovers from the
+    ///         catalog, and what it discovers is precisely the objects the model does not know about.
+    ///         The part that WAS a rule violation — a modeled object the drop could not see — is what
+    ///         moved to Weasel here.
+    ///     </para>
+    /// </remarks>
     public async Task CompletelyRemoveAllAsync(CancellationToken token = default)
     {
         // #514: fan out across EVERY tenant database. Reading _store.Options.ConnectionString
@@ -427,9 +472,10 @@ public class AdvancedOperations
 {
         var schema = _store.Options.DatabaseSchemaName;
         var flatTables = CollectFlatTableNames();
+        var partitionDdl = CollectPartitionDropDdl();
         await _resilience.ExecuteAsync(static async (state, ct) =>
         {
-            var (connectionString, schemaName, flatTableNames) = state;
+            var (connectionString, schemaName, flatTableNames, partitionDropDdl) = state;
             await using var conn = new SqlConnection(connectionString);
             await conn.OpenAsync(ct);
 
@@ -483,7 +529,52 @@ public class AdvancedOperations
                     $"IF OBJECT_ID({SqlEscaping.Literal(qualified)}, 'U') IS NOT NULL DROP TABLE {qualified};";
                 await dropCmd.ExecuteNonQueryAsync(ct);
             }
-        }, (connStr, schema, flatTables), token);
+
+            // #718: the modeled pass, LAST -- a partition scheme cannot be dropped while a table or
+            // index still sits on it. Weasel's own WriteDropDdl, so a new partitioning strategy is
+            // covered without touching this method.
+            if (partitionDropDdl.Length > 0)
+            {
+                await using var dropPartitions = conn.CreateCommand();
+                dropPartitions.CommandText = partitionDropDdl;
+                await dropPartitions.ExecuteNonQueryAsync(ct);
+            }
+        }, (connStr, schema, flatTables, partitionDdl), token);
+    }
+
+    /// <summary>
+    ///     Every declared partition scheme and function, as Weasel's own drop DDL (#718).
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         Walks <c>BuildFeatureSchemas()</c> rather than a list maintained here, so this covers
+    ///         whatever the model declares — the event tables' archived-stream partitioning, #386's
+    ///         rolling ranges, #335's conjoined tenant partitions, and anything added later.
+    ///     </para>
+    ///     <para>
+    ///         ⚠️ Each strategy's <c>WriteDropDdl</c> already guards itself with
+    ///         <c>IF EXISTS (SELECT 1 FROM sys.partition_schemes …)</c>, which is what makes this safe
+    ///         to run against a database that was never partitioned — and safe to run twice.
+    ///     </para>
+    ///     <para>
+    ///         Returns one batch rather than one command per object: these are <c>IF EXISTS</c>-guarded
+    ///         statements with no <c>GO</c> requirement between them, and the whole point is that the
+    ///         set is dropped after the tables rather than interleaved with them.
+    ///     </para>
+    /// </remarks>
+    private string CollectPartitionDropDdl()
+    {
+        var writer = new StringWriter();
+
+        foreach (var feature in _store.Database.BuildFeatureSchemas())
+        {
+            foreach (var table in feature.Objects.OfType<Weasel.SqlServer.Tables.Table>())
+            {
+                table.SqlServerPartitioning?.WriteDropDdl(writer, table);
+            }
+        }
+
+        return writer.ToString();
     }
 
     /// <summary>
