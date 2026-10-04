@@ -89,6 +89,12 @@ document table, kept in step by a trigger. The consequences that matter to you:
 - **It runs anywhere Polecat runs** — the stock container, Azure SQL Edge, Azure SQL Database.
 - **Declaring an index on existing documents backfills them.** The index covers rows written before
   it existed, so you do not reindex by hand.
+- **The token table and its trigger are part of your schema**, not something conjured at runtime.
+  They appear in `db-dump` and `Advanced.ToDatabaseScript()`, `AssertDatabaseMatchesConfigurationAsync()`
+  compares them, and under `AutoCreate.None` a missing one is refused rather than silently created —
+  so a database built from a generated script answers searches, where before it would have accepted
+  writes and answered every search empty. The backfill is the exception and is not part of the
+  schema: it writes rows, so it runs after the schema converges.
 
 And the cost, stated plainly:
 
@@ -215,9 +221,9 @@ you are upgrading across it:
   another.
 
 ::: tip
-Upgrading repairs itself. The trigger is `CREATE OR ALTER` and the backfill runs whenever
-storage is ensured, so the corrected trigger replaces the old one and the corrected backfill
-restores the tokens the old one destroyed. Nothing has to be rebuilt by hand.
+Upgrading repairs itself. A changed trigger body is reconciled like any other schema change, and
+the backfill runs whenever storage is ensured, so the corrected trigger replaces the old one and
+the corrected backfill restores the tokens the old one destroyed. Nothing has to be rebuilt by hand.
 :::
 
 A single-tenant store is unaffected — its document table has no `tenant_id` column at all, and
