@@ -1143,9 +1143,9 @@
              changed in exactly two places, BatchBuilder.cs (+6, ParameterCount) and one new test
              file. So DocumentIndex.ComputedColumnExpression keeps declaring CONVERT — still the right
              declaration independently of the reconciliation fix. -->
-        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.40.0" />
-        <PackageVersion Include="Weasel.SqlServer" Version="9.40.0" />
-        <PackageVersion Include="Weasel.Storage" Version="9.40.0" />
+        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.41.0" />
+        <PackageVersion Include="Weasel.SqlServer" Version="9.41.0" />
+        <PackageVersion Include="Weasel.Storage" Version="9.41.0" />
 
         <!-- Strongly typed IDs. Both generators are test-only: they prove Polecat's value-type id
              support against the two libraries Marten's ValueTypeTests exercise. StronglyTypedId emits
