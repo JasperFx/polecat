@@ -825,14 +825,14 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
         // TResult is IReadOnlyList<TElement>
         var elementType = typeof(TResult).GetGenericArguments()[0];
         var handlerType = typeof(QueryHandlers.GroupByListHandler<>).MakeGenericType(elementType);
-        var handler = Activator.CreateInstance(handlerType, _session.Serializer)!;
+                // #741: the non-generic IQueryHandler, not reflection. BOTH
+        // handlerType.GetMethod("HandleAsync")! and task.GetType().GetProperty("Result")!
+        // return null for a trimmed member rather than throwing, so each `!` was a latent
+        // NullReferenceException under Native AOT -- waiting for whichever query shape got
+        // here first.
+        var handler = (QueryHandlers.IQueryHandler)Activator.CreateInstance(handlerType, _session.Serializer)!;
 
-        var handleMethod = handlerType.GetMethod("HandleAsync")!;
-        var task = (Task)handleMethod.Invoke(handler, [reader, token])!;
-        await task;
-
-        var resultProperty = task.GetType().GetProperty("Result")!;
-        return (TResult)resultProperty.GetValue(task)!;
+        return (TResult)(await handler.HandleAsObjectAsync(reader, token).ConfigureAwait(false))!;
     }
 
     private static System.Linq.Expressions.ParameterExpression? FindGroupingParameterInExpression(
@@ -1265,14 +1265,14 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
 
         // Create and invoke JoinListHandler<TOuter, TInner, TResultElement>
         var handlerType = typeof(JoinListHandler<,,>).MakeGenericType(outerType, innerType, resultElementType);
-        var handler = Activator.CreateInstance(handlerType, _session.Serializer, compiledSelector, isLeftJoin)!;
+                // #741: the non-generic IQueryHandler, not reflection. BOTH
+        // handlerType.GetMethod("HandleAsync")! and task.GetType().GetProperty("Result")!
+        // return null for a trimmed member rather than throwing, so each `!` was a latent
+        // NullReferenceException under Native AOT -- waiting for whichever query shape got
+        // here first.
+        var handler = (QueryHandlers.IQueryHandler)Activator.CreateInstance(handlerType, _session.Serializer, compiledSelector, isLeftJoin)!;
 
-        var handleMethod = handlerType.GetMethod("HandleAsync")!;
-        var task = (Task)handleMethod.Invoke(handler, [reader, token])!;
-        await task;
-
-        var resultProperty = task.GetType().GetProperty("Result")!;
-        var list = resultProperty.GetValue(task)!;
+        var list = (await handler.HandleAsObjectAsync(reader, token).ConfigureAwait(false))!;
 
         // For single-value modes, extract the single element
         if (valueMode is SingleValueMode.First or SingleValueMode.FirstOrDefault
@@ -1458,15 +1458,15 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
         }
 
         var handlerType = typeof(ListQueryHandler<>).MakeGenericType(itemType);
-        var handler = Activator.CreateInstance(handlerType, selector)!;
 
-        var handleMethod = handlerType.GetMethod("HandleAsync")!;
-        var task = (Task)handleMethod.Invoke(handler, [reader, token])!;
-        await task;
-
-        var resultProperty = task.GetType().GetProperty("Result")!;
-        return (TResult)resultProperty.GetValue(task)!;
+        // #741: cast to the NON-GENERIC IQueryHandler rather than reflecting for HandleAsync.
+        // GetMethod returns null for a trimmed member, and the `!` after it was every LINQ query's
+        // NullReferenceException under Native AOT. MakeGenericType over itemType alone is fine --
+        // one reference-type argument shares a canonical body.
+        var handler = (QueryHandlers.IQueryHandler)Activator.CreateInstance(handlerType, selector)!;
+        return (TResult)(await handler.HandleAsObjectAsync(reader, token).ConfigureAwait(false))!;
     }
+
 
     [RequiresDynamicCode("Closes ScalarListHandler<> over TResult's element type via Type.MakeGenericType.")]
     [RequiresUnreferencedCode("Reflects over ScalarListHandler<>.HandleAsync via MethodInfo.Invoke and Task<>.Result via GetProperty.")]
@@ -1476,14 +1476,14 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
         // TResult is IReadOnlyList<TScalar>, extract TScalar
         var scalarType = typeof(TResult).GetGenericArguments()[0];
         var handlerType = typeof(ScalarListHandler<>).MakeGenericType(scalarType);
-        var handler = Activator.CreateInstance(handlerType)!;
+                // #741: the non-generic IQueryHandler, not reflection. BOTH
+        // handlerType.GetMethod("HandleAsync")! and task.GetType().GetProperty("Result")!
+        // return null for a trimmed member rather than throwing, so each `!` was a latent
+        // NullReferenceException under Native AOT -- waiting for whichever query shape got
+        // here first.
+        var handler = (QueryHandlers.IQueryHandler)Activator.CreateInstance(handlerType)!;
 
-        var handleMethod = handlerType.GetMethod("HandleAsync")!;
-        var task = (Task)handleMethod.Invoke(handler, [reader, token])!;
-        await task;
-
-        var resultProperty = task.GetType().GetProperty("Result")!;
-        return (TResult)resultProperty.GetValue(task)!;
+        return (TResult)(await handler.HandleAsObjectAsync(reader, token).ConfigureAwait(false))!;
     }
 
     [RequiresDynamicCode("Closes ProjectionListHandler<,> over (sourceType, TResult's projected type) via Type.MakeGenericType.")]
@@ -1495,14 +1495,14 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
         // TResult is IReadOnlyList<TProjected>
         var projectedType = typeof(TResult).GetGenericArguments()[0];
         var handlerType = typeof(ProjectionListHandler<,>).MakeGenericType(sourceType, projectedType);
-        var handler = Activator.CreateInstance(handlerType, _session.Serializer, selectExpression)!;
+                // #741: the non-generic IQueryHandler, not reflection. BOTH
+        // handlerType.GetMethod("HandleAsync")! and task.GetType().GetProperty("Result")!
+        // return null for a trimmed member rather than throwing, so each `!` was a latent
+        // NullReferenceException under Native AOT -- waiting for whichever query shape got
+        // here first.
+        var handler = (QueryHandlers.IQueryHandler)Activator.CreateInstance(handlerType, _session.Serializer, selectExpression)!;
 
-        var handleMethod = handlerType.GetMethod("HandleAsync")!;
-        var task = (Task)handleMethod.Invoke(handler, [reader, token])!;
-        await task;
-
-        var resultProperty = task.GetType().GetProperty("Result")!;
-        return (TResult)resultProperty.GetValue(task)!;
+        return (TResult)(await handler.HandleAsObjectAsync(reader, token).ConfigureAwait(false))!;
     }
 
     [RequiresDynamicCode("Closes DeserializingSelector<> + OneResultHandler<> over documentType via Type.MakeGenericType.")]
@@ -1527,14 +1527,14 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
         }
 
         var handlerType = typeof(OneResultHandler<>).MakeGenericType(documentType);
-        var handler = Activator.CreateInstance(handlerType, selector, canBeNull, canBeMultiples)!;
+                // #741: the non-generic IQueryHandler, not reflection. BOTH
+        // handlerType.GetMethod("HandleAsync")! and task.GetType().GetProperty("Result")!
+        // return null for a trimmed member rather than throwing, so each `!` was a latent
+        // NullReferenceException under Native AOT -- waiting for whichever query shape got
+        // here first.
+        var handler = (QueryHandlers.IQueryHandler)Activator.CreateInstance(handlerType, selector, canBeNull, canBeMultiples)!;
 
-        var handleMethod = handlerType.GetMethod("HandleAsync")!;
-        var task = (Task)handleMethod.Invoke(handler, [reader, token])!;
-        await task;
-
-        var resultProperty = task.GetType().GetProperty("Result")!;
-        return (TResult)resultProperty.GetValue(task)!;
+        return (TResult)(await handler.HandleAsObjectAsync(reader, token).ConfigureAwait(false))!;
     }
 
     private static Type FindDocumentType(Expression expression)
