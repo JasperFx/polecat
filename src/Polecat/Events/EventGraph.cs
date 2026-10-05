@@ -431,9 +431,27 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
         // primitive) misses the wrapper and trips the post-FEC fail-fast in
         // JasperFxAggregationProjectionBase.tryUseAssemblyRegisteredEvolver (JasperFx#276).
         var idType = ResolveAggregateIdType(typeof(TDoc));
-        var projectionType = typeof(SingleStreamProjection<,>).MakeGenericType(typeof(TDoc), idType);
+
+        // ⚠️ #733: the four canonical identity types are closed STATICALLY, for the same reason
+        // PolecatClosedShapeRegistration.BuildProviderFor does it -- TDoc is already a type parameter
+        // here, so these are ordinary generic calls ILC can see and compile. Closing TId with
+        // MakeGenericType works under CoreCLR and throws in a native image on the first live
+        // aggregation:
+        //
+        //   NotSupportedException: 'SingleStreamProjection`2[Quest,System.Guid]' is missing native
+        //   code or metadata.
+        //
+        // The reflective tail stays for a STRONG-TYPED id, whose wrapper is a runtime value nothing
+        // here can name -- the same split as the closed-shape registration, and the same one Marten
+        // and Fisher make.
 #pragma warning disable CS8714 // notnull constraint mismatch
-        var projection = (ProjectionBase)Activator.CreateInstance(projectionType)!;
+        ProjectionBase projection =
+            idType == typeof(Guid) ? new SingleStreamProjection<TDoc, Guid>()
+            : idType == typeof(string) ? new SingleStreamProjection<TDoc, string>()
+            : idType == typeof(int) ? new SingleStreamProjection<TDoc, int>()
+            : idType == typeof(long) ? new SingleStreamProjection<TDoc, long>()
+            : (ProjectionBase)Activator.CreateInstance(
+                typeof(SingleStreamProjection<,>).MakeGenericType(typeof(TDoc), idType))!;
 #pragma warning restore CS8714
         projection.Lifecycle = ProjectionLifecycle.Live;
         projection.AssembleAndAssertValidity();

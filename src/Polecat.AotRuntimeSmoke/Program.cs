@@ -1,4 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 // AOT RUNTIME smoke test (#725).
 //
 // Publishes native and RUNS, against a real database. Its companion
@@ -43,6 +45,22 @@ builder.Services.AddPolecat((StoreOptions opts) =>
     opts.ConnectionString = connectionString;
     opts.DatabaseSchemaName = "aot_runtime_smoke";
     opts.AutoCreateSchemaObjects = JasperFx.AutoCreate.All;
+
+    // ⚠️ #733: THE SECOND HALF OF THE CONSUMER CONTRACT. Native AOT disables reflection-based
+    // System.Text.Json, so without this every document write fails with:
+    //
+    //   InvalidOperationException: Reflection-based serialization has been disabled for this
+    //   application. Either use the source generator APIs or explicitly configure the
+    //   'JsonSerializerOptions.TypeInfoResolver' property.
+    //
+    // Polecat's seam for it is ConfigureSerialization(JsonSerializerOptions, ...). The context has
+    // to name every type that crosses the serializer -- including JasperFx's DeadLetterEvent, which
+    // Polecat registers as a document on the consumer's behalf and which no consumer would think to
+    // list. That is a documentation obligation, not something a consumer can infer.
+    opts.ConfigureSerialization(new JsonSerializerOptions
+    {
+        TypeInfoResolver = SmokeJsonContext.Default
+    });
 });
 
 using var host = builder.Build();
@@ -60,6 +78,17 @@ async Task Shape(string name, string marten, Func<Task> action)
     {
         Console.WriteLine($"  FAIL  {name}  ({marten})");
         Console.WriteLine($"        {e.GetType().FullName}: {e.Message}");
+
+        // ⚠️ The first few frames, because the MESSAGE is not always enough. polecat#741: the LINQ
+        // shapes fail with a bare NullReferenceException, which names nothing -- and in a native
+        // image there is no debugger to attach, so whatever the lane prints is the whole diagnosis.
+        // Trimmed to keep a seven-shape run readable.
+        foreach (var frame in (e.StackTrace ?? string.Empty)
+                 .Split('\n', StringSplitOptions.RemoveEmptyEntries).Take(6))
+        {
+            Console.WriteLine($"          {frame.Trim()}");
+        }
+
         failures.Add(name);
     }
 }
@@ -160,6 +189,27 @@ await Shape("filter on a child collection", "marten#5374", async () =>
     _ = found.Count;
 });
 
+// --- 7. a STRONG-TYPED document id -------------------------------------------
+// The last shape #733 had not measured. Closes ValueTypeIdentification<,,> and
+// BuildTypedProvider<,> over value-type arguments.
+await Shape("write and read a strong-typed id", "polecat#733", async () =>
+{
+    var badgeId = new BadgeId(Guid.NewGuid());
+
+    await using (var scope = host.Services.CreateAsyncScope())
+    {
+        var session = scope.ServiceProvider.GetRequiredService<IDocumentSession>();
+        session.Store(new Badge { Id = badgeId, Holder = "aot" });
+        await session.SaveChangesAsync();
+    }
+
+    await using var read = host.Services.CreateAsyncScope();
+    var reader = read.ServiceProvider.GetRequiredService<IDocumentSession>();
+    var loaded = await reader.LoadAsync<Badge>(badgeId);
+    if (loaded?.Holder != "aot") throw new InvalidOperationException(
+        $"strong-typed id round trip gave '{loaded?.Holder}'");
+});
+
 Console.WriteLine(failures.Count == 0
     ? "Polecat AOT runtime smoke OK."
     : $"Polecat AOT runtime smoke FAILED: {string.Join(", ", failures)}");
@@ -169,6 +219,22 @@ return failures.Count == 0 ? 0 : 1;
 namespace Polecat.AotRuntimeSmoke
 {
     /// <summary>
+    ///     #733: the source-generated serializer a Native AOT consumer must supply.
+    /// </summary>
+    /// <remarks>
+    ///     ⚠️ <c>DeadLetterEvent</c> is listed because POLECAT registers it as a document type in
+    ///     <c>DocumentStore</c>'s constructor, so it crosses the serializer even in an application
+    ///     that never touches dead letters. A consumer cannot deduce that from their own code.
+    /// </remarks>
+    [JsonSerializable(typeof(Quest))]
+    [JsonSerializable(typeof(QuestStarted))]
+    [JsonSerializable(typeof(Badge))]
+    [JsonSerializable(typeof(JasperFx.Events.Daemon.DeadLetterEvent))]
+    internal sealed partial class SmokeJsonContext : JsonSerializerContext
+    {
+    }
+
+    /// <summary>
     ///     #733: keeps the document types' members alive through trimming. A real consumer writes
     ///     this, or uses a source generator that writes it for them.
     /// </summary>
@@ -176,9 +242,30 @@ namespace Polecat.AotRuntimeSmoke
     {
         [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties, typeof(Quest))]
         [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties, typeof(QuestStarted))]
+        [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties, typeof(Badge))]
+        [DynamicDependency(DynamicallyAccessedMemberTypes.All, typeof(BadgeId))]
         internal static void Keep()
         {
         }
+    }
+
+    /// <summary>
+    ///     #733: a strong-typed id, so the one remaining doubt gets measured instead of asserted.
+    /// </summary>
+    /// <remarks>
+    ///     `BuildValueTypeProvider` closes <c>ValueTypeIdentification&lt;TDoc, TOuter, TInner&gt;</c>
+    ///     and <c>BuildTypedProvider&lt;TDoc, TOuter&gt;</c> reflectively, because the wrapper type is
+    ///     a runtime value. Both have VALUE-type arguments here (<c>BadgeId</c> is a
+    ///     <c>readonly record struct</c>, <c>TInner</c> is <see cref="Guid" />), which is the shape
+    ///     that normally has no compiled code — so I expected this to fail and would rather find out
+    ///     than keep saying so. Marten's AOT guide lists strong-typed ids as working.
+    /// </remarks>
+    internal readonly record struct BadgeId(Guid Value);
+
+    internal sealed class Badge
+    {
+        public BadgeId Id { get; set; }
+        public string Holder { get; set; } = string.Empty;
     }
 
     internal enum Difficulty { Easy, Hard }
