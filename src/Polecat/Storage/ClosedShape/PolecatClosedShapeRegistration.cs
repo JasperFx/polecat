@@ -21,40 +21,104 @@ namespace Polecat.Storage.ClosedShape;
     Justification = "Same as IL3050.")]
 internal static class PolecatClosedShapeRegistration
 {
-    internal static object BuildProviderFor(DocumentMapping mapping)
+    /// <summary>
+    ///     The closed-shape provider for <typeparamref name="TDoc" />.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         ⚠️ <b>The four canonical id types are closed STATICALLY, and that is what makes this
+    ///         work under Native AOT</b> (#733). <typeparamref name="TDoc" /> is already the document
+    ///         type here — <c>PolecatProviderGraph.StorageFor&lt;T&gt;</c> is generic — so
+    ///         <c>BuildTypedProvider&lt;TDoc, Guid&gt;</c> and its three siblings are ordinary generic
+    ///         calls the compiler emits and ILC compiles. The id type is still DECIDED at runtime;
+    ///         what changed is that the generic is no longer CLOSED at runtime.
+    ///     </para>
+    ///     <para>
+    ///         This method used to do <c>MakeGenericMethod(mapping.DocumentType, mapping.IdType)</c>,
+    ///         which works under CoreCLR and throws in a native image on the first document
+    ///         operation:
+    ///     </para>
+    ///     <code>
+    ///     NotSupportedException: 'PolecatClosedShapeRegistration.BuildTypedProvider[Quest,System.Guid]'
+    ///     is missing native code. MethodInfo.MakeGenericMethod() is not compatible with AOT.
+    ///     </code>
+    ///     <para>
+    ///         <c>MakeGenericType</c> / <c>MakeGenericMethod</c> can close an instantiation whose
+    ///         arguments are all REFERENCE types, because those share one canonical body — which is
+    ///         why reaching this method itself through <c>MakeGenericMethod(documentType)</c> is fine,
+    ///         and why only the id type needed moving. An id type is routinely <see cref="Guid" />,
+    ///         <see cref="int" /> or <see cref="long" />.
+    ///     </para>
+    ///     <para>
+    ///         <b>Both sibling stores already did it this way</b> and Polecat was the outlier:
+    ///         Marten's <c>ClosedShapeRegistration.BuildSupportedProvider&lt;TDoc&gt;</c> and Fisher's
+    ///         <c>DocumentProviderRegistry.BuildProviderFor&lt;T&gt;</c>, the latter from fisher#384 —
+    ///         the same bug, the same symptom, the same fix.
+    ///     </para>
+    ///     <para>
+    ///         A strong-typed id wrapper stays reflective, because its type is a runtime value nothing
+    ///         here can name. That is the one case Weasel's own
+    ///         <c>Identifications.ForValueType</c> carries a reflective fallback for (weasel#690).
+    ///     </para>
+    /// </remarks>
+    internal static object BuildProviderFor<TDoc>(DocumentMapping mapping) where TDoc : notnull
     {
-        var buildTyped = typeof(PolecatClosedShapeRegistration)
-            .GetMethod(nameof(BuildTypedProvider), BindingFlags.NonPublic | BindingFlags.Static)!;
-
         if (mapping.ValueTypeId is { } vt)
         {
-            var identification = typeof(ValueTypeIdentification<,,>)
-                .MakeGenericType(mapping.DocumentType, vt.OuterType, vt.SimpleType)
-                .GetConstructors()[0]
-                .Invoke(new object[] { mapping.IdMember, vt, mapping.DocumentType });
-            return buildTyped.MakeGenericMethod(mapping.DocumentType, vt.OuterType)
-                .Invoke(null, new[] { mapping, identification })!;
+            return BuildValueTypeProvider<TDoc>(mapping, vt);
         }
 
-        object strategy = mapping.IdType switch
+        if (mapping.IdType == typeof(Guid))
         {
-            var t when t == typeof(Guid) =>
-                new object[] { typeof(SequentialGuidIdentification<>), mapping.IdMember },
-            var t when t == typeof(string) =>
-                new object[] { typeof(StringIdentification<>), mapping.IdMember },
-            var t when t == typeof(int) =>
-                new object[] { typeof(HiloIntIdentification<>), mapping.IdMember, mapping.DocumentType },
-            var t when t == typeof(long) =>
-                new object[] { typeof(HiloLongIdentification<>), mapping.IdMember, mapping.DocumentType },
-            _ => throw new NotSupportedException(
-                $"Unsupported id type {mapping.IdType.FullName} for closed-shape storage.")
-        };
+            return BuildTypedProvider<TDoc, Guid>(mapping,
+                new SequentialGuidIdentification<TDoc>(mapping.IdMember));
+        }
 
-        var parts = (object[])strategy;
-        var strategyType = ((Type)parts[0]).MakeGenericType(mapping.DocumentType);
-        var identificationInstance = Activator.CreateInstance(strategyType, parts.Skip(1).ToArray())!;
-        return buildTyped.MakeGenericMethod(mapping.DocumentType, mapping.IdType)
-            .Invoke(null, new[] { mapping, identificationInstance })!;
+        if (mapping.IdType == typeof(string))
+        {
+            return BuildTypedProvider<TDoc, string>(mapping,
+                new StringIdentification<TDoc>(mapping.IdMember));
+        }
+
+        if (mapping.IdType == typeof(int))
+        {
+            return BuildTypedProvider<TDoc, int>(mapping,
+                new HiloIntIdentification<TDoc>(mapping.IdMember, mapping.DocumentType));
+        }
+
+        if (mapping.IdType == typeof(long))
+        {
+            return BuildTypedProvider<TDoc, long>(mapping,
+                new HiloLongIdentification<TDoc>(mapping.IdMember, mapping.DocumentType));
+        }
+
+        throw new NotSupportedException(
+            $"Unsupported id type {mapping.IdType.FullName} for closed-shape storage.");
+    }
+
+    /// <summary>
+    ///     The provider for a strong-typed id, whose wrapper type is a runtime value — so this one
+    ///     closes reflectively and is the only part of #733's fix that does.
+    /// </summary>
+    /// <remarks>
+    ///     ⚠️ Still a value-type argument in <c>ValueTypeIdentification&lt;TDoc, TOuter, TInner&gt;</c>
+    ///     and in <c>BuildTypedProvider&lt;TDoc, TOuter&gt;</c> when the wrapper is a
+    ///     <c>readonly record struct</c>, so a natively-published store with a strong-typed document
+    ///     id still fails here. Tracked on #733; the smoke harness drives a plain Guid id, so it is
+    ///     not currently covered either way.
+    /// </remarks>
+    private static object BuildValueTypeProvider<TDoc>(DocumentMapping mapping, ValueTypeInfo vt)
+        where TDoc : notnull
+    {
+        var identification = typeof(ValueTypeIdentification<,,>)
+            .MakeGenericType(typeof(TDoc), vt.OuterType, vt.SimpleType)
+            .GetConstructors()[0]
+            .Invoke(new object[] { mapping.IdMember, vt, mapping.DocumentType });
+
+        return typeof(PolecatClosedShapeRegistration)
+            .GetMethod(nameof(BuildTypedProvider), BindingFlags.NonPublic | BindingFlags.Static)!
+            .MakeGenericMethod(typeof(TDoc), vt.OuterType)
+            .Invoke(null, new[] { mapping, identification })!;
     }
 
     private static DocumentProvider<TDoc> BuildTypedProvider<TDoc, TId>(
@@ -137,6 +201,12 @@ internal sealed class PolecatProviderGraph : IProviderGraph
 {
     private readonly Internal.DocumentProviderRegistry _registry;
     private readonly Dictionary<Type, object> _providers = new();
+
+    /// <summary>
+    ///     Each registered type's QueryOnly storage, captured where <c>T</c> is still a type
+    ///     parameter. #741 — see <see cref="QueryOnlySelectClauseFor" />; this is not a speed cache.
+    /// </summary>
+    private readonly Dictionary<Type, object> _selectClauses = new();
     private readonly object _lock = new();
 
     public PolecatProviderGraph(Internal.DocumentProviderRegistry registry)
@@ -158,10 +228,14 @@ internal sealed class PolecatProviderGraph : IProviderGraph
             // wrap the root's flavors in SubClassPolecatStorage (#273 E2e).
             var mapping = _registry.GetProvider(typeof(T)).Mapping;
             var provider = mapping.DocumentType == typeof(T)
-                ? (DocumentProvider<T>)PolecatClosedShapeRegistration.BuildProviderFor(mapping)
+                ? (DocumentProvider<T>)PolecatClosedShapeRegistration.BuildProviderFor<T>(mapping)
                 : (DocumentProvider<T>)PolecatClosedShapeRegistration.BuildSubClassProviderFor(
                     mapping, typeof(T), ProviderFor(mapping.DocumentType));
             _providers[typeof(T)] = provider;
+
+            // #741: capture the select clause HERE, while T is still a type parameter. See
+            // QueryOnlySelectClauseFor for why this is not a cache for speed.
+            _selectClauses[typeof(T)] = provider.QueryOnly;
             return provider;
         }
     }
@@ -171,6 +245,7 @@ internal sealed class PolecatProviderGraph : IProviderGraph
         lock (_lock)
         {
             _providers[typeof(T)] = provider;
+            _selectClauses[typeof(T)] = provider.QueryOnly;
         }
     }
 
@@ -198,11 +273,57 @@ internal sealed class PolecatProviderGraph : IProviderGraph
     ///     Non-generic access to a root document type's QueryOnly storage as the shared
     ///     select-clause contract — the LINQ provider's materialization seam (#273 E2d).
     /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         ⚠️ <b>#741: this used to reflect, and under Native AOT that was every LINQ query's
+    ///         undoing.</b> It read
+    ///         <c>provider.GetType().GetProperty(nameof(DocumentProvider&lt;object&gt;.QueryOnly))!</c>
+    ///         — and <see cref="Type.GetProperty(string)" /> returns <b>null</b> for a member the
+    ///         trimmer removed rather than throwing, so the null-forgiving operator one line later
+    ///         produced a bare <see cref="NullReferenceException" /> naming nothing:
+    ///     </para>
+    ///     <code>
+    ///     NullReferenceException
+    ///       at PolecatProviderGraph.QueryOnlySelectClauseFor(Type)
+    ///       at PolecatLinqQueryProvider.ExecuteAsync
+    ///       at PolecatQueryableExtensions.ToListAsync
+    ///     </code>
+    ///     <para>
+    ///         Three separate LINQ shapes in the AOT smoke run failed on this one line — a document
+    ///         read, an enum comparison and a child-collection filter — which looked like three bugs
+    ///         until the harness started printing frames.
+    ///     </para>
+    ///     <para>
+    ///         <b>The fix is to never ask at all.</b> <c>DocumentProvider&lt;T&gt;.QueryOnly</c> is
+    ///         read in <see cref="StorageFor{T}" /> and <see cref="Append{T}" />, where <c>T</c> is
+    ///         still a type parameter and the property access is an ordinary one the compiler emits.
+    ///         So this is a <i>projection of state captured generically</i>, not a cache for speed:
+    ///         removing it would not slow this down, it would break it under AOT again. Same shape as
+    ///         weasel#689's lesson — a statically-referenced member survives trimming; a reflected one
+    ///         does not.
+    ///     </para>
+    ///     <para>
+    ///         <c>ProviderFor</c> is still called first, for its side effect: it builds and registers
+    ///         the provider for a type nothing has touched yet, which is what populates the entry
+    ///         below. Its own <c>MakeGenericMethod</c> closes a single REFERENCE-type argument, which
+    ///         shares a canonical body and works natively.
+    ///     </para>
+    /// </remarks>
     internal Weasel.Storage.ISelectClause QueryOnlySelectClauseFor(Type documentType)
     {
-        var provider = ProviderFor(documentType);
-        return (Weasel.Storage.ISelectClause)provider.GetType()
-            .GetProperty(nameof(DocumentProvider<object>.QueryOnly))!
-            .GetValue(provider)!;
+        ProviderFor(documentType);
+
+        lock (_lock)
+        {
+            if (_selectClauses.TryGetValue(documentType, out var clause))
+            {
+                return (Weasel.Storage.ISelectClause)clause;
+            }
+        }
+
+        throw new InvalidOperationException(
+            $"No closed-shape QueryOnly storage was registered for '{documentType.FullName}'. "
+            + "ProviderFor should have built one; this means the provider was registered by a route "
+            + "that does not record its select clause (see polecat#741).");
     }
 }

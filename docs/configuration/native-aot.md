@@ -68,13 +68,51 @@ construct a document provider.
 | `DocumentStore` construction, including the built-in `DeadLetterEvent` registration | ✅ |
 | schema migration — the run creates its own tables | ✅ |
 | identity accessors, strong-typed id wrap/unwrap, identity assignment | ✅ |
-| **constructing a document provider** | ❌ [#733](https://github.com/JasperFx/polecat/issues/733) |
-| document writes, reads, events | ❌ blocked behind the above |
+| document **writes** | ✅ |
+| **`LoadAsync`** — keyed reads | ✅ |
+| **event append and `FetchStreamAsync`** | ✅ |
+| **live aggregation** (`AggregateStreamAsync`) | ✅ |
+| `Query<T>()` — LINQ reads, enum comparisons, child-collection filters | ✅ |
+| a **strong-typed** document id (`readonly record struct FooId(Guid)`) | ❌ [#733](https://github.com/JasperFx/polecat/issues/733) |
 
-The remaining failure is `PolecatClosedShapeRegistration.BuildTypedProvider<TDoc, TId>`, reached
-through `MakeGenericMethod` with a value-type `TId`. No annotation fixes it: the closed-shape storage
-classes are generic by design, so the instantiations have to be *emitted* in the consumer's assembly —
-a source generator, the way `JasperFx.Events.SourceGenerator` already handles projection dispatch.
+### What makes the supported shapes work
+
+Everywhere `TDoc` is already a type parameter and only the *id* type was closed at runtime, the four
+canonical id types are now closed **statically** — `BuildTypedProvider<TDoc, Guid>` and its three
+siblings are ordinary generic calls ILC can see and compile. The id type is still decided at runtime;
+what changed is that the generic is no longer *closed* at runtime.
+
+`MakeGenericType` / `MakeGenericMethod` can close an instantiation whose arguments are all
+**reference** types, because those share one canonical body — so reaching these methods from a
+runtime `Type` is fine. It is a **value-type** argument that has no compiled code, and an id type is
+routinely `Guid`, `int` or `long`.
+
+⚠️ A **strong-typed id** wrapper is still closed reflectively, because its type is a runtime value
+nothing in Polecat can name. A natively-published store whose documents use `readonly record struct`
+ids will still fail; plain `Guid` / `string` / `int` / `long` ids work.
+
+### LINQ works — and the warnings are now over-broad
+
+`Query<T>()` reads, enum comparisons and child-collection filters all run in a native image,
+measured by `Polecat.AotRuntimeSmoke`.
+
+⚠️ The LINQ async surface still carries `[RequiresDynamicCode]` from
+[#738](https://github.com/JasperFx/polecat/pull/738), which was honest when LINQ genuinely threw and
+is now **too broad**. Narrowing it is tracked on
+[#741](https://github.com/JasperFx/polecat/issues/741). Marten documents two shapes that genuinely
+need a JIT and are worth avoiding here too: a compiled query with an `enum`-typed parameter, and a
+`where` clause whose value comes from a **method call** — hoist that into a local first.
+
+### What does not work: a strong-typed document id
+
+```
+NotSupportedException: 'ValueTypeIdentification`3[Badge,BadgeId,System.Guid]'
+is missing native code or metadata.
+```
+
+`BuildValueTypeProvider` closes that generic over the *wrapper* and its *inner* type, both value
+types, and the wrapper is a runtime value nothing in Polecat can name. Plain `Guid` / `string` /
+`int` / `long` ids are fine. Tracked on [#733](https://github.com/JasperFx/polecat/issues/733).
 
 ## The consumer contract
 
@@ -106,6 +144,32 @@ internal static class AotRoots
 …called once at startup. One entry per document and event type. (`DeadLetterEvent` is the single type
 Polecat *does* name, and it carries its own `DynamicDependency` for exactly this reason.)
 
+### Supply a source-generated serializer
+
+Native AOT disables reflection-based `System.Text.Json`, so every write fails with:
+
+```
+InvalidOperationException: Reflection-based serialization has been disabled for this application.
+Either use the source generator APIs or explicitly configure the
+'JsonSerializerOptions.TypeInfoResolver' property.
+```
+
+Declare a context and hand it to Polecat:
+
+```cs
+[JsonSerializable(typeof(Quest))]
+[JsonSerializable(typeof(QuestStarted))]
+[JsonSerializable(typeof(JasperFx.Events.Daemon.DeadLetterEvent))]
+internal sealed partial class MyJsonContext : JsonSerializerContext;
+
+// ...
+opts.ConfigureSerialization(new JsonSerializerOptions { TypeInfoResolver = MyJsonContext.Default });
+```
+
+⚠️ **`DeadLetterEvent` is on that list and you would never guess it.** Polecat registers it as a
+document type in `DocumentStore`'s constructor, so it crosses the serializer even in an application
+that never touches dead letters. Every document type, every event type, and that one.
+
 ### Do not use `InvariantGlobalization`
 
 ```
@@ -118,9 +182,14 @@ image; it is not available here.
 
 ## If you need AOT today
 
-You still do not have a working option, and this page would rather say so than suggest a workaround
-that also throws. Follow [#733](https://github.com/JasperFx/polecat/issues/733), which now has the
-remaining scope written down rather than an open question.
+You have a working subset, which is new: meet the three contract items above and a natively-published
+app can construct a store, migrate its schema, write documents, load them by id, append and read
+events, and aggregate a stream live. What you cannot do is use `Query<T>()` or a strong-typed
+document id.
+
+Measured rather than asserted — `Polecat.AotRuntimeSmoke` publishes native and runs every one of
+those shapes against SQL Server in CI. Follow
+[#733](https://github.com/JasperFx/polecat/issues/733) for the rest.
 
 ## How this is tested
 

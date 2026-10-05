@@ -11,7 +11,7 @@ namespace Polecat.Linq.QueryHandlers;
     Justification = "Class-level: deserializes JSON_OBJECT rows via ISerializer.FromJson. Result types flow in from GroupBy<T>() registration on the caller side and are preserved per the AOT publishing guide.")]
 [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
     Justification = "Class-level: ISerializer.FromJson is annotated RDC. AOT consumers supply a source-generator-backed impl.")]
-internal class GroupByListHandler<T>
+internal class GroupByListHandler<T> : IQueryHandler<IReadOnlyList<T>>
 {
     private readonly ISerializer _serializer;
 
