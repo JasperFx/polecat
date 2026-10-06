@@ -294,12 +294,31 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
             }
         }, (_connectionString, allOps, participants, messageBatch), token);
 
+        // ⚠️ The post-commit hooks below deliberately do NOT take `token`, and that is load-bearing
+        // as of JasperFx 2.81.0 (jasperfx#953 / #980, polecat#744). A drain that times out calls
+        // CancelAsync on exactly the token this method received, and it can land in the window
+        // between `tx.CommitAsync` returning and these hooks running. The transaction is durably
+        // committed by then and the progression row has advanced, so the page will never be
+        // reprocessed — abandoning its side effects here loses them outright rather than deferring
+        // them. Before 2.81.0 the drain was unbounded, so this token was never cancelled mid-range
+        // and passing it was harmless.
+        //
+        // The listener loop is the worse half. It is still ENTERED with a cancelled token — so the
+        // failure is not a skipped call but any token-honouring work inside the listener throwing —
+        // and the loop suppresses every exception on purpose, so that failure is SILENT: no log
+        // line, no shard failure, no dead letter, for a page whose documents committed.
+        //
+        // The cost of CancellationToken.None is that a slow post-commit flush can outlast the drain
+        // deadline, which is the right trade for an at-most-once side effect on a committed page:
+        // the daemon's hard stop is what bounds shutdown, and losing an outbox flush is not
+        // recoverable while a late one is.
+        //
         // Outside the resilience pipeline so the post-commit hook does not
         // re-fire on a transient retry — by definition the SQL transaction
         // has committed exactly once by the time we reach here.
         if (messageBatch is not null)
         {
-            await messageBatch.AfterCommitAsync(token).ConfigureAwait(false);
+            await messageBatch.AfterCommitAsync(CancellationToken.None).ConfigureAwait(false);
         }
 
         // AfterCommit runs once, after the transaction is durably committed → "at most once". A faulting
@@ -311,7 +330,8 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
             {
                 try
                 {
-                    await listener.AfterCommitAsync(listenerSession!, Commit, token).ConfigureAwait(false);
+                    await listener.AfterCommitAsync(listenerSession!, Commit, CancellationToken.None)
+                        .ConfigureAwait(false);
                 }
                 catch
                 {

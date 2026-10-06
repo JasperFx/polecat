@@ -64,24 +64,41 @@ Unlike Marten's PostgreSQL `LISTEN/NOTIFY`, Polecat uses **polling** to detect n
 ## Graceful Shutdown and the Drain Timeout
 
 When a projection or subscription shard is stopped, the daemon does not simply cancel it. It first tries to
-*drain* the agent: let the in-flight page of events finish being applied, then flush the shard's progression row
-so the next start picks up exactly where this one left off. `StopAndDrainTimeout` bounds how long the daemon
-waits for that drain on **a single** shard:
+*drain* the agent. `StopAndDrainTimeout` bounds how long the daemon waits for that drain on **a single** shard:
 
 ```cs
 // The default is 5 seconds
 opts.Projections.StopAndDrainTimeout = TimeSpan.FromSeconds(30);
 ```
 
+A drain does three things, in this order:
+
+1. **The page or range in flight is allowed to finish** and mark the shard's progression, so the next start picks
+   up exactly where this one left off.
+2. **Work already queued behind it is dropped.** Those events are not lost — nothing marked them complete, so
+   whoever runs the shard next resumes them from the progression row.
+3. **If the in-flight page is still running when the timeout expires, it is cancelled.** Its transaction rolls
+   back and it does **not** mark progression, so it is re-processed on the next start.
+
 The bound applies to every stop path: stopping one agent, stopping all agents (the `SIGTERM`/host shutdown
 path), and the internal stop-if-already-running replacement that happens when an agent is reassigned.
 
-**Why you would raise it.** If the drain is cut off before the progression flush lands, the shard restarts
-against a stale progression row and throws `ProgressionProgressOutOfOrderException` on its next start. Raise
-the timeout when in-flight batches legitimately take longer than five seconds — a large `BatchSize`, expensive
-projection code, heavy rebuild load, or a slow or contended SQL Server. This is most visible shutting down a
-host with a large agent universe: a [database-per-tenant](/documents/multi-tenancy) deployment with thousands of
-(projection × tenant) shards all draining inside a Kubernetes termination grace window.
+::: warning Pages slower than the timeout are re-processed
+Step 3 is a redelivery, and it is the trade-off to understand before leaving the timeout at its default. A page
+that legitimately takes longer than `StopAndDrainTimeout` will be cancelled and run again on the next start —
+every time the shard is stopped or reassigned.
+
+For a projection this is usually invisible: applying the same events to the same aggregate is idempotent. For a
+**[subscription](/events/subscriptions)** it means your side effects run twice, because what a subscription does
+with an event is typically not idempotent and not inside the rolled-back transaction. Either raise the timeout
+past your slowest page, or make the subscription's handling idempotent.
+:::
+
+**Why you would raise it.** Raise the timeout when in-flight batches legitimately take longer than five seconds
+— a large `BatchSize`, expensive projection code, an external call inside a subscription, heavy rebuild load, or
+a slow or contended SQL Server. This is most visible shutting down a host with a large agent universe: a
+[database-per-tenant](/documents/multi-tenancy) deployment with thousands of (projection × tenant) shards all
+draining inside a Kubernetes termination grace window.
 
 ::: tip
 A per-shard bound is only useful if the process lives long enough to spend it. Match a raised
@@ -90,12 +107,20 @@ A per-shard bound is only useful if the process lives long enough to spend it. M
 :::
 
 **Why you would lower it.** A deployment that would rather cut a wedged shard loose quickly and take the
-progression replay hit — to keep node failover and reassignment latency low, for instance — can set it below
-the default.
+reprocessing hit — to keep node failover and reassignment latency low, for instance — can set it below the
+default. Under `DaemonMode.HotCold` this is what stops a node that has lost a shard's lock from continuing to
+work its backlog while another node already owns the shard.
 
 **Opting out.** `Timeout.InfiniteTimeSpan`, or any non-positive value, removes the separate bound so the drain
 is limited only by the daemon's own cancellation. Be aware that this means a genuinely wedged shard can hold up
 shutdown indefinitely.
+
+::: tip Version note
+The first Polecat release built on JasperFx 2.81.0 is the first in which the projection and subscription
+*executions* actually honour this bound. Before it they awaited their whole queued backlog regardless, so a stopping shard could keep working for
+far longer than `StopAndDrainTimeout` — on a HotCold node that had already lost the shard's lock, long after
+another node had taken it over.
+:::
 
 ## Waiting for Non-Stale Data
 

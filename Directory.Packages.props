@@ -762,15 +762,66 @@
                  ⚠️ Does not fix polecat#733 either. Note the pattern across #942, #951 and this
                  bump: each upstream fix makes a generic method's BODY AOT-safe, and Polecat's
                  remaining blockers are its own MakeGenericMethod / MakeGenericType calls needed to
-                 REACH such methods — which no fix inside the callee can help with. -->
-        <PackageVersion Include="JasperFx" Version="2.80.2" />
-        <PackageVersion Include="JasperFx.Events" Version="2.80.2" />
+                 REACH such methods — which no fix inside the callee can help with.
+
+             2.81.0 (from 2.80.2). Seventeen commits, and unusually for a JasperFx bump the headline
+             items are NOT in JasperFx.Events' store-facing surface at all. Taken for the two drain
+             fixes, which are a behaviour change on Polecat's daemon and the reason polecat#744 exists.
+
+               * ⚠️ NO COMPLIANCE YIELD, and that is measured rather than assumed. The usual
+                 highest-value step on a JasperFx bump is diffing JasperFx.Events.ComplianceTests'
+                 contentFiles tree, because a new FACT in a suite Polecat is already enrolled in
+                 arrives silently (wave 19 found a connection-pool deadlock that way). Unzipped both
+                 nupkgs and compared: 72 .cs files either side, identical file lists, no content
+                 differences. So no suite to enroll and no new fact to satisfy here.
+               * jasperfx#953 — subscription StopAndDrainAsync honours DaemonSettings
+                 .StopAndDrainTimeout (default 5s): the range in flight finishes, queued ranges are
+                 dropped for the next owner to resume from progression, and a range still running at
+                 the deadline is cancelled. CONSUMED and INHERITED — the change is entirely inside
+                 SubscriptionExecutionBase, which Polecat derives from.
+                 ⚠️ Found and reproduced ON POLECAT under HotCold (see polecat#744): a node that had
+                 lost a subscription's lock kept processing its backlog for 34s while another node
+                 already ran it, and graceful shutdown took 27s against a 30s termination grace period.
+               * jasperfx#980/#983 — the same treatment for ProjectionExecution and
+                 GroupedProjectionExecution. CONSUMED and INHERITED. ⚠️ Note this CLOSES the half
+                 polecat#744's body records as still outstanding, so that issue's text is now stale on
+                 that point: both drains are bounded as of 2.81.0, not just the subscription one.
+                 ⚠️⚠️ THE ONE THING THAT NEEDED A POLECAT FIX, and it is a regression the bump
+                 INTRODUCES rather than a gap it exposes. Both drains cancel the very token the shard
+                 handed down, and PolecatProjectionBatch.ExecuteAsync passed that token to its
+                 POST-COMMIT hooks — messageBatch.AfterCommitAsync and every IChangeListener
+                 .AfterCommitAsync. A cancellation landing between tx.CommitAsync returning and those
+                 hooks therefore abandoned side effects for a page that had durably committed and whose
+                 progression row had advanced, so it would never be reprocessed: lost, not deferred.
+                 Before 2.81.0 the drain was unbounded, so that token was never cancelled mid-range and
+                 passing it was harmless. Both hooks now take CancellationToken.None, pinned by
+                 post_commit_hooks_survive_drain_cancellation_tests.
+               * jasperfx#952/#982 — cheaper ShardName construction and TryParse (shared default Uri,
+                 lazy RelativeUrl, IndexOf instead of Split). INERT: public API and behaviour unchanged,
+                 and upstream pins the old grammar over 20,000 random inputs.
+               * jasperfx#963/#965 and #964 phases 1–4 (#974–#979) — the in-memory document store
+                 becomes the JasperFx.Events.InMemory package and grows events, live aggregation,
+                 inline projections and ConfigureEvents / ConfigureProjections. INERT here: Polecat
+                 references no in-memory store.
+                 ⚠️ Worth knowing for the NEXT compliance wave rather than this bump: the in-memory
+                 fixture running more of the event compliance project changes the answer to "does
+                 jasperfx's own fixture actually run this fact?", which is the check CLAUDE.md
+                 prescribes before concluding a failing compliance fact is a Polecat bug.
+               * jasperfx#954/#956–#961 (#966–#972) — the fluent event model, domain/module
+                 declarations, slice-name collisions and SourceWriter output. INERT: Stoat / Bobcat
+                 authoring surface, nothing Polecat consumes.
+               * jasperfx#794 (#984) and the BlockIdleWakeupTests race fix (#973) — upstream CI and
+                 upstream test hygiene. INERT.
+
+             JasperFx.RuntimeCompiler stays at 5.0.0: already the latest on that line. -->
+        <PackageVersion Include="JasperFx" Version="2.81.0" />
+        <PackageVersion Include="JasperFx.Events" Version="2.81.0" />
         <!--
              The shared cross-store event sourcing compliance suites. Source-only package: the
              suites compile inside Polecat.Tests so JasperFx's aggregate source generator binds
              Polecat's own session types.
         -->
-        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="2.80.2" />
+        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="2.81.0" />
         <!-- Pin the sibling JasperFx packages for parity with Marten 9's matrix
              even though Polecat doesn't currently reference them directly —
              keeps the lockstep matrix coherent when transitive resolution
@@ -778,7 +829,7 @@
              RuntimeCompiler 5.x line is the active continuation of the 4.x
              lineage; do not pin against the parallel stale 2.0.x series. -->
         <PackageVersion Include="JasperFx.RuntimeCompiler" Version="5.0.0" />
-        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.80.2" />
+        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.81.0" />
         <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
@@ -1155,7 +1206,7 @@
         <PackageVersion Include="Vogen" Version="7.0.0" />
 
         <!-- Source generators (matched to JasperFx.Events above) -->
-        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.80.2" />
+        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.81.0" />
 
         <!-- Build automation -->
         <PackageVersion Include="Nuke.Common" Version="9.0.4" />
