@@ -558,28 +558,34 @@ internal class DocumentMapping
     [RequiresUnreferencedCode("Closes the generic Weasel.Core.Identity strategy over the document + id types.")]
     private IIdentityAssigner? BuildIdentityAssigner()
     {
-        // ⚠️ #733: the strong-typed branch goes through Weasel's factory and the other three do NOT,
-        // and that asymmetry is measured rather than stylistic.
+        // All four branches go through Weasel's Identifications factory, so "which strategy fits
+        // which id shape" lives in one place instead of being duplicated here and in Marten.
         //
-        // Identifications.ForValueType (weasel#690) is the one that MUST be Weasel's:
-        // ValueTypeIdentification<,,> takes the WRAPPED PRIMITIVE as a type argument -- Guid, int --
-        // so closing it is a value-type instantiation Native AOT cannot build, and the factory
-        // branches to a reflective strategy on IsDynamicCodeSupported for exactly that.
-        //
-        // The other three are closed HERE, over the document type only -- an all-reference-type
-        // instantiation, which shares a canonical body and works natively. Routing them through
-        // Identifications.ForSequentialGuid / ForHiloInt / ForHiloLong was tried and REGRESSED the
-        // native path:
+        // ⚠️ #733: the three non-value-type branches closed the generic HERE until Weasel 9.42.0,
+        // and why they had to is worth keeping. Weasel's Close() helper does MakeGenericType +
+        // Activator.CreateInstance from inside Weasel's own assembly, and ILC did not root the closed
+        // instantiation's CONSTRUCTORS for it — so natively the type resolved and then had no usable
+        // ctor:
         //
         //   MissingMethodException: No parameterless constructor defined for type
         //   'Weasel.Core.Identity.SequentialGuidIdentification`1[DeadLetterEvent]'
         //
-        // Weasel's Close() helper does MakeGenericType + Activator.CreateInstance from inside
-        // Weasel's own assembly, and ILC does not preserve the closed instantiation's CONSTRUCTORS
-        // for it -- so the type resolves and then has no usable ctor. The same two calls made from
-        // here do work, because the typeof() and the Activator call sit in the assembly ILC is
-        // rooting from. Filed as weasel#694. When that lands, all four can move to the factory and
-        // "which strategy fits which id shape" stops being duplicated here and in Marten.
+        // The same two calls made from here worked, because the typeof() and the Activator call sat
+        // in the assembly ILC was rooting from. weasel#694 roots them properly, with
+        // [DynamicDependency(PublicConstructors, typeof(Strategy<>))] on each factory — DAM on the
+        // open generic carries to the closed instantiation.
+        //
+        // All three move together rather than one at a time, because there was no safe subset: which
+        // exception a consumer got depended on what else its own assembly happened to reference. From
+        // Polecat, ForSequentialGuid looked fine and was not — a consumer that constructs the same
+        // strategy itself roots the canonical body by accident, leaving only the trimmed ctor
+        // metadata to fail on, while one that does not gets NotSupportedException from
+        // MakeGenericType a layer earlier.
+        //
+        // ValueTypeId still MUST be Weasel's: ValueTypeIdentification<,,> takes the WRAPPED PRIMITIVE
+        // as a type argument — Guid, int — so closing it is a value-type instantiation Native AOT
+        // cannot build at all, and ForValueType branches to a reflective strategy on
+        // IsDynamicCodeSupported for exactly that (weasel#690).
         if (ValueTypeId != null)
         {
             return CreateAssigner(_documentType, ValueTypeId.OuterType,
@@ -589,24 +595,19 @@ internal class DocumentMapping
         if (IdType == typeof(Guid))
         {
             return CreateAssigner(_documentType, typeof(Guid),
-                (IIdentification)Activator.CreateInstance(
-                    typeof(SequentialGuidIdentification<>).MakeGenericType(_documentType), _idProperty)!);
+                Identifications.ForSequentialGuid(_documentType, _idProperty));
         }
 
         if (IdType == typeof(int))
         {
             return CreateAssigner(_documentType, typeof(int),
-                (IIdentification)Activator.CreateInstance(
-                    typeof(HiloIntIdentification<>).MakeGenericType(_documentType), _idProperty,
-                    _documentType)!);
+                Identifications.ForHiloInt(_documentType, _idProperty, _documentType));
         }
 
         if (IdType == typeof(long))
         {
             return CreateAssigner(_documentType, typeof(long),
-                (IIdentification)Activator.CreateInstance(
-                    typeof(HiloLongIdentification<>).MakeGenericType(_documentType), _idProperty,
-                    _documentType)!);
+                Identifications.ForHiloLong(_documentType, _idProperty, _documentType));
         }
 
         // string ids are externally assigned in Polecat — no auto-generation.

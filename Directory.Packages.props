@@ -1194,9 +1194,85 @@
              changed in exactly two places, BatchBuilder.cs (+6, ParameterCount) and one new test
              file. So DocumentIndex.ComputedColumnExpression keeps declaring CONVERT — still the right
              declaration independently of the reconciliation fix. -->
-        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.41.0" />
-        <PackageVersion Include="Weasel.SqlServer" Version="9.41.0" />
-        <PackageVersion Include="Weasel.Storage" Version="9.41.0" />
+        <!-- Weasel 9.41.0 (#733/#740, from 9.40.0) — WRITTEN AFTER THE FACT, for exactly the reason
+             the 9.40.0 block above states. #740 explained itself in its PR description and in the code
+             it changed, and left no entry here. Two commits, both FILED FROM Polecat's Native AOT
+             layer-peeling, and both ADOPTED:
+
+               * weasel#689/#691 — a non-generic IIdentification facade, which the generic
+                 IIdentification<TDoc,TId> satisfies by default implementations. ADOPTED by
+                 FacadeIdentityAssigner. CreateAssigner closed IdentityAssigner<TDoc,TId> over a
+                 value-type TId — Guid, int, long — and MakeGenericType cannot build that natively,
+                 because only all-reference-type arguments share one canonical body. Reflection is not
+                 a way out either: the trimmer removes the metadata you would reflect over, so
+                 GetMethods() comes back empty. A statically referenced interface is the shape that
+                 survives.
+                 ⚠️ The generic adapter STAYS for the JIT: the facade returns object, so it boxes the
+                 assigned id on every call.
+               * weasel#690/#692 — Identifications.ForValueType branches on
+                 RuntimeFeature.IsDynamicCodeSupported to a reflective strategy, so a strong-typed id
+                 strategy can be built without closing ValueTypeIdentification<TDoc,TWrapper,TInner>
+                 — the one identity generic whose arguments are NOT all reference types, since TInner
+                 is the wrapped primitive.
+                 ⚠️ ADOPTED in DocumentMapping ONLY. PolecatClosedShapeRegistration
+                 .BuildValueTypeProvider still closes that generic itself AND still closes
+                 BuildTypedProvider<TDoc,TOuter> over a record-struct wrapper, so a natively-published
+                 store with a strong-typed document id still fails there. That is the one measured
+                 shape #733 stays open for; 9.42.0 does not close it either, because the strategy
+                 Polecat needs rooted is the one weasel#694 deliberately left out. -->
+
+        <!-- Weasel 9.42.0 (from 9.41.0). Four changes: one ADOPTED, one INHERITED on a path Polecat
+             drives, two inert.
+
+               * weasel#694/#697 — [DynamicDependency(PublicConstructors, typeof(Strategy<>))] on each
+                 Identifications factory, rooting both the canonical body and the ctor metadata of the
+                 six strategies the factories close. ADOPTED, and it discharges a promise the code has
+                 been carrying since #739: DocumentMapping.BuildIdentityAssigner now routes its Guid /
+                 int / long branches through Identifications.ForSequentialGuid / ForHiloInt /
+                 ForHiloLong instead of doing MakeGenericType + Activator.CreateInstance locally, so
+                 "which strategy fits which id shape" stops being duplicated here and in Marten.
+                 Filed FROM Polecat, where moving to the factory had REGRESSED the native path:
+                 Weasel's Close() helper makes those same two calls from inside WEASEL's assembly, and
+                 ILC rooted no ctor for the closed instantiation, so the type resolved and then had no
+                 usable ctor (MissingMethodException). The calls worked from here only because the
+                 typeof() and the Activator call sat in the assembly ILC was rooting from.
+                 ⚠️ Why ForSequentialGuid "looked fine from Polecat" and was not, which is the part
+                 worth remembering: Polecat has TWO identity construction sites, and
+                 PolecatClosedShapeRegistration.BuildProviderFor<TDoc> writes
+                 `new SequentialGuidIdentification<TDoc>(...)` STATICALLY. That accidental root created
+                 the canonical body the reflective site then found — so which exception the reflective
+                 site threw, or whether it threw at all, depended on another file. There was never a
+                 safe subset, which is why all three branches move together. The static site stays
+                 static on purpose: no reflection at all is the better shape, not a workaround.
+               * weasel#695 — the SQL Server AdvisoryLock, substantially rewritten. INHERITED on a path
+                 Polecat drives: ProjectionCoordinator constructs Weasel.SqlServer.AdvisoryLock per
+                 projection database for HotCold agent distribution, so this is the daemon's shard lock.
+                 Three observable changes:
+                 (a) HasLock was inverted. `_conn is not { State: Closed }` is TRUE when _conn is NULL,
+                     because null matches no property pattern — and the old reconnect path set
+                     _conn = null while leaving _locks populated. So a lock whose session had already
+                     gone away still reported as held, which is the bug in the title.
+                 (b) TryAttainLockAsync now passes lockTimeoutMs: 0 instead of waiting, on the grounds
+                     that a caller polling every cycle gains nothing from blocking and blocking only
+                     delays it stopping the shards it lost. It is also reentrancy-guarded now, since
+                     sp_getapplock COUNTS and re-taking a held lock would have needed two releases.
+                     ⚠️ This is NOT the startup migration lock (#664). That is SqlServerGlobalLock /
+                     IGlobalLock<SqlConnection> from weasel#599, whose timeout Polecat sets itself
+                     precisely because Weasel's 1000ms default is too short to survive a deploy. The
+                     lockTimeoutMs: 0 here does not reach it.
+                 (c) NEW BACKGROUND TRAFFIC: the ctor starts a 5-second PeriodicTimer that probes
+                     APPLOCK_MODE for every held lock, drops the ones the session has lost and logs a
+                     warning, so HasLock goes false and the daemon can stop that shard. The probe
+                     shares the lock's one connection, which is why everything is now serialized behind
+                     a semaphore. It is Weasel's own connection, so it sits outside
+                     StoreOptions.ResiliencePipeline the same way the rest of AdvisoryLock always has —
+                     but it is one command per 5s per projection database that did not exist before.
+               * weasel#696 and weasel#698 — PostgreSQL table storage parameters (fillfactor,
+                 autovacuum) written on create and kept by the delta, plus a fluent API and docs over
+                 them. INERT: wrong dialect. -->
+        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.42.0" />
+        <PackageVersion Include="Weasel.SqlServer" Version="9.42.0" />
+        <PackageVersion Include="Weasel.Storage" Version="9.42.0" />
 
         <!-- Strongly typed IDs. Both generators are test-only: they prove Polecat's value-type id
              support against the two libraries Marten's ValueTypeTests exercise. StronglyTypedId emits
