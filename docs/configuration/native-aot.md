@@ -42,6 +42,11 @@ class's own remarks said AOT publishers should avoid them. Both could not be tru
 suppression silenced the one diagnostic that would have told you. The result was a store that
 compiled clean under `PublishAot` and threw on first use.
 
+⚠️ That reasoning is still sound, but the *conclusion it reached about LINQ* no longer holds: #742
+fixed the throwing, and #743 measured the surface as working. The annotation is therefore now
+knowingly broader than the failures — see
+[Why the LINQ surface still carries an AOT warning](#why-the-linq-surface-still-carries-an-aot-warning).
+
 ::: tip This changes nothing for a normal application
 IL2026 and IL3050 are only reported when you are trimming or AOT-publishing. If you are not, you see
 no new warnings.
@@ -52,16 +57,18 @@ The annotation propagates, so these now carry it too: `ToPagedListAsync`, `Aggre
 
 ## What is *not* yet annotated
 
-⚠️ **Clean compilation is not a promise of AOT safety anywhere in Polecat.** The keyed load path
-(`LoadAsync`), event reads (`FetchStreamAsync`, `AggregateStreamAsync`) and document writes are all
-equally broken under AOT today, and simply have no annotation saying so. #733 is the tracking issue
-for the whole surface; this release annotated the one that was actively *asserting* its own safety.
+⚠️ **Clean compilation is not a promise of AOT safety anywhere in Polecat, in either direction.**
+The keyed load path (`LoadAsync`), event reads (`FetchStreamAsync`, `AggregateStreamAsync`) and
+document writes carry no AOT annotation at all — and all of them are now **measured as working**
+(#742), so here the absence happens to be right. The annotated LINQ surface is the inverse: it warns
+on shapes that work. Neither the presence nor the absence of a warning is evidence; only
+`Polecat.AotRuntimeSmoke` is. #733 tracks the remaining failure.
 
 ## How far it gets today
 
-Measured, not estimated — `Polecat.AotRuntimeSmoke` publishes native and runs. As of this release the
-store **builds, connects, and migrates its schema** under Native AOT; it fails when it tries to
-construct a document provider.
+Measured, not estimated — `Polecat.AotRuntimeSmoke` publishes native and runs against a real SQL
+Server. **18 shapes, 16 of which pass.** The two that do not are a projection into an anonymous type
+(#743) and a strong-typed document id (#733); everything else below works.
 
 | | native |
 |---|---|
@@ -73,6 +80,11 @@ construct a document provider.
 | **event append and `FetchStreamAsync`** | ✅ |
 | **live aggregation** (`AggregateStreamAsync`) | ✅ |
 | `Query<T>()` — LINQ reads, enum comparisons, child-collection filters | ✅ |
+| `Count` / `Any` / `Sum` / `Min` / `Average` — the scalar aggregates | ✅ |
+| `GroupBy`, including a value-type key, projected into a **named** type | ✅ |
+| `GroupJoin(...).SelectMany(...)` | ✅ |
+| a `where` value from a **method call**, a **member chain** or an **array literal** | ✅ |
+| a projection into an **anonymous type** | ❌ [#743](https://github.com/JasperFx/polecat/issues/743) |
 | a **strong-typed** document id (`readonly record struct FooId(Guid)`) | ❌ [#733](https://github.com/JasperFx/polecat/issues/733) |
 
 ### What makes the supported shapes work
@@ -91,17 +103,65 @@ routinely `Guid`, `int` or `long`.
 nothing in Polecat can name. A natively-published store whose documents use `readonly record struct`
 ids will still fail; plain `Guid` / `string` / `int` / `long` ids work.
 
-### LINQ works — and the warnings are now over-broad
+### LINQ works, and the one shape that does not is a projection into an anonymous type
 
-`Query<T>()` reads, enum comparisons and child-collection filters all run in a native image,
-measured by `Polecat.AotRuntimeSmoke`.
+`Query<T>()` reads, enum comparisons, child-collection filters, the scalar aggregates (`CountAsync`,
+`AnyAsync`, `SumAsync`, `MinAsync`, `AverageAsync`), `GroupBy` and `GroupJoin(...).SelectMany(...)`
+all run in a native image, measured by `Polecat.AotRuntimeSmoke`.
 
-⚠️ The LINQ async surface still carries `[RequiresDynamicCode]` from
-[#738](https://github.com/JasperFx/polecat/pull/738), which was honest when LINQ genuinely threw and
-is now **too broad**. Narrowing it is tracked on
-[#741](https://github.com/JasperFx/polecat/issues/741). Marten documents two shapes that genuinely
-need a JIT and are worth avoiding here too: a compiled query with an `enum`-typed parameter, and a
-`where` clause whose value comes from a **method call** — hoist that into a local first.
+::: danger A projection into an anonymous type cannot work
+```cs
+// ❌ fails in a native image
+.GroupBy(q => q.Difficulty).Select(g => new { g.Key, Count = g.Count() })
+
+// ✅ identical query, named projection — works
+.GroupBy(q => q.Difficulty).Select(g => new Tally { Key = g.Key, Count = g.Count() })
+```
+
+`GroupByListHandler` deserializes the projection through `System.Text.Json`, which under Native AOT
+needs a `JsonTypeInfo` from your source-generated context. **You cannot supply one for an anonymous
+type**, because `[JsonSerializable]` needs a nameable type — so unlike "root your document types"
+below, this is not a contract you can satisfy. Project into a named type and register it with your
+`JsonSerializerContext`.
+
+Tracked on [#743](https://github.com/JasperFx/polecat/issues/743). ⚠️ Marten has the same latent
+limitation: its AOT runtime smoke covers neither group-by nor anonymous projections, and its AOT
+guide does not mention them, while its LINQ suppressions are justified on consumers supplying a
+source-generated serializer — which is the assumption that fails here.
+:::
+
+### Why the LINQ surface still carries an AOT warning
+
+[#743](https://github.com/JasperFx/polecat/issues/743) asked for `PolecatQueryableExtensions`'
+`[RequiresDynamicCode]` to be narrowed to "the shapes that genuinely need a JIT". Measuring found
+that set is **empty**: `MakeGenericType` on these paths closes over reference types, which share a
+canonical body, and ILC interprets the expression trees `WhereClauseParser` compiles rather than
+refusing them.
+
+The annotation stays anyway, and the reasoning is worth stating because it is the opposite of what
+the measurement first suggested. Removing a warning asserts safety across the **whole** surface —
+17 files in `Polecat/Linq` carry it, covering includes, metadata, soft deletes, cursor paging and
+the selectors, and the measured shapes are a fraction of that. Removing it would also mean putting a
+class-level `UnconditionalSuppressMessage` back on the providers to silence the ~21
+`MakeGenericType` sites, which is the exact form [#738](https://github.com/JasperFx/polecat/pull/738)
+removed as the original defect.
+
+So: **#738** established that a suppression which understates is dishonest. **#743** answered that an
+annotation which overstates is the same sin inverted. Both are right, and there is a third — a
+removal justified by partial measurement is the understating suppression again with extra steps. The
+annotation is deliberately broader than the measured failure set, and saying so here is the
+alternative to pretending otherwise in either direction.
+
+⚠️ Marten resolves this differently: `src/Marten/Linq` carries no `[RequiresDynamicCode]` at all, and
+32 of its files carry class-level `UnconditionalSuppressMessage` instead. Polecat is the stricter of
+the two today. That is a deliberate divergence from the usual "mirror Marten" principle, not an
+oversight.
+
+Marten also documents two shapes that genuinely need a JIT and are worth avoiding here: a compiled
+query with an `enum`-typed parameter — moot in Polecat, which
+[will not implement compiled queries](https://github.com/JasperFx/polecat/blob/main/marten-gaps.md)
+because SQL Server caches plans natively — and a `where` clause whose value comes from a method call,
+which Polecat **measures as working**.
 
 ### What does not work: a strong-typed document id
 
@@ -198,7 +258,15 @@ Two CI lanes, with deliberately different jobs:
 | lane | what it does | what it proves |
 |---|---|---|
 | `aot-smoke` | **builds** a static-mode consumer with IL2026/IL3050 promoted to errors | the AOT-*clean* surface has not regressed its annotations |
-| `aot-runtime-smoke` | **publishes native and runs** against SQL Server | what actually happens — currently #733, on every shape |
+| `aot-runtime-smoke` | **publishes native and runs** against SQL Server | what actually happens, shape by shape |
 
-`aot-runtime-smoke` is `continue-on-error` while #733 is open. A build-only lane cannot catch a
-runtime AOT failure, which is why the second one exists.
+`aot-runtime-smoke` is `continue-on-error` while #733 and the anonymous-projection shape (#743) are
+open, so it reports **two** known failures. A build-only lane cannot catch a runtime AOT failure,
+which is why the second one exists — and `PolecatQueryableExtensions` suppressing its own IL3050 is
+exactly why `aot-smoke` is silent on the path that broke.
+
+⚠️ Read the lane's failures before believing them. Two of the shapes added in #743 failed on their
+first run for reasons that were the **harness's** fault, not Polecat's: one query was simply
+unsupported (`GroupJoin` without a following `SelectMany`, which Polecat already refuses clearly),
+and one projection type was missing from the smoke's own `JsonSerializerContext`. Only after fixing
+both did the real limitation — that an anonymous projection *cannot* be registered — separate out.
