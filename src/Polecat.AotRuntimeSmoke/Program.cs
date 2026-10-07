@@ -210,6 +210,127 @@ await Shape("write and read a strong-typed id", "polecat#733", async () =>
         $"strong-typed id round trip gave '{loaded?.Holder}'");
 });
 
+// --- 8-10. the three shapes that reach WhereClauseParser.CompileAndInvoke ------
+// polecat#743. Shape 3 above was supposed to be the CompileAndInvoke probe and is NOT: an enum
+// compared to a captured local is a MemberExpression over a ConstantExpression closure, which
+// ExtractValue reads with FieldInfo.GetValue and never compiles. So the fallback has been
+// unmeasured this whole time, and #743 asks which shapes "genuinely need a JIT" before narrowing
+// the annotation around them. These three are every branch of ExtractValue that ends in
+// Expression.Lambda(...).Compile().DynamicInvoke().
+
+await Shape("LINQ where-value from a METHOD CALL", "polecat#743", async () =>
+{
+    await using var scope = host.Services.CreateAsyncScope();
+    var session = scope.ServiceProvider.GetRequiredService<IDocumentSession>();
+    var found = await session.Query<Quest>().Where(q => q.Title == TitleSource.Build()).ToListAsync();
+    _ = found.Count;
+});
+
+await Shape("LINQ where-value from a MEMBER CHAIN", "polecat#743", async () =>
+{
+    var holder = new TitleHolder { Inner = new TitleHolder { Title = "aot" } };
+    await using var scope = host.Services.CreateAsyncScope();
+    var session = scope.ServiceProvider.GetRequiredService<IDocumentSession>();
+    var found = await session.Query<Quest>().Where(q => q.Title == holder.Inner.Title).ToListAsync();
+    _ = found.Count;
+});
+
+await Shape("LINQ where-value from an ARRAY LITERAL", "polecat#743", async () =>
+{
+    await using var scope = host.Services.CreateAsyncScope();
+    var session = scope.ServiceProvider.GetRequiredService<IDocumentSession>();
+    var found = await session.Query<Quest>()
+        .Where(q => new[] { "aot", "other" }.Contains(q.Title)).ToListAsync();
+    _ = found.Count;
+});
+
+// --- 11-14. the SCALAR aggregates, whose TResult is a VALUE TYPE ---------------
+// polecat#743, and the shape that matters most here. Every LINQ fact above resolves through
+// IPolecatAsyncQueryProvider.ExecuteAsync<TResult> with a REFERENCE-type TResult --
+// IReadOnlyList<Quest>, Quest. The scalar surface closes that same method over int, long, bool,
+// decimal and double, and a runtime-closed generic with a value-type argument is the one shape
+// with no canonical body to share. That is the pattern behind #733, #740 and #742, so leaving the
+// whole scalar surface unmeasured while narrowing an annotation around the where-clause shapes
+// would be narrowing around the wrong thing.
+
+await Shape("LINQ CountAsync (TResult = int)", "polecat#743", async () =>
+{
+    await using var scope = host.Services.CreateAsyncScope();
+    var session = scope.ServiceProvider.GetRequiredService<IDocumentSession>();
+    _ = await session.Query<Quest>().CountAsync();
+});
+
+await Shape("LINQ AnyAsync (TResult = bool)", "polecat#743", async () =>
+{
+    await using var scope = host.Services.CreateAsyncScope();
+    var session = scope.ServiceProvider.GetRequiredService<IDocumentSession>();
+    _ = await session.Query<Quest>().AnyAsync();
+});
+
+await Shape("LINQ SumAsync (TResult = int)", "polecat#743", async () =>
+{
+    await using var scope = host.Services.CreateAsyncScope();
+    var session = scope.ServiceProvider.GetRequiredService<IDocumentSession>();
+    _ = await session.Query<Quest>().SumAsync(q => q.Tags.Count);
+});
+
+await Shape("LINQ MinAsync (TResult = a type ARGUMENT)", "polecat#743", async () =>
+{
+    await using var scope = host.Services.CreateAsyncScope();
+    var session = scope.ServiceProvider.GetRequiredService<IDocumentSession>();
+    _ = await session.Query<Quest>().MinAsync<Quest, string>(q => q.Title);
+});
+
+// --- 15-16. GROUP BY and GROUP JOIN -------------------------------------------
+// polecat#743. The two LINQ execution paths with their own handlers and their own
+// [RequiresDynamicCode] messages, and the two most likely to genuinely need a JIT:
+//
+//   GroupByListHandler<>  closed over the PROJECTED/ELEMENT type
+//   JoinListHandler<,,> + Func<,,>  closed over outer/inner/result
+//
+// A group-by key is routinely int, Guid, DateTime or an enum, so unlike ExecuteAsync<TResult>
+// (statically instantiated by its caller) this closing is genuinely at runtime over whatever the
+// projection produces. Grouping by an ENUM here on purpose: a value type declared in the
+// consumer's own assembly, which is the worst case.
+
+await Shape("LINQ GroupBy with a VALUE-TYPE key, NAMED projection", "polecat#743", async () =>
+{
+    await using var scope = host.Services.CreateAsyncScope();
+    var session = scope.ServiceProvider.GetRequiredService<IDocumentSession>();
+    var grouped = await session.Query<Quest>()
+        .GroupBy(q => q.Difficulty)
+        .Select(g => new DifficultyTally { Key = g.Key, Count = g.Count() })
+        .ToListAsync();
+    _ = grouped.Count;
+});
+
+// ⚠️ The same query with an ANONYMOUS projection, which is the shape every GroupBy example writes.
+// GroupByListHandler<> DESERIALIZES the projection through STJ, and under AOT that needs a
+// JsonTypeInfo from the consumer's source-generated context -- which a consumer CANNOT supply for an
+// anonymous type, because [JsonSerializable] needs a nameable type. So this is not a "root your
+// types" contract the consumer can satisfy; measured here rather than assumed either way.
+await Shape("LINQ GroupBy with an ANONYMOUS projection", "polecat#743", async () =>
+{
+    await using var scope = host.Services.CreateAsyncScope();
+    var session = scope.ServiceProvider.GetRequiredService<IDocumentSession>();
+    var grouped = await session.Query<Quest>()
+        .GroupBy(q => q.Difficulty)
+        .Select(g => new { g.Key, Count = g.Count() })
+        .ToListAsync();
+    _ = grouped.Count;
+});
+
+await Shape("LINQ GroupJoin", "polecat#743", async () =>
+{
+    await using var scope = host.Services.CreateAsyncScope();
+    var session = scope.ServiceProvider.GetRequiredService<IDocumentSession>();
+    var joined = await session.Query<Quest>()
+        .GroupJoin(session.Query<Quest>(), o => o.Id, i => i.Id, (o, inner) => new { o, inner })
+        .SelectMany(x => x.inner.DefaultIfEmpty(), (x, i) => new JoinedTitle { Outer = x.o.Title, Inner = i!.Title })
+        .ToListAsync();
+    _ = joined.Count;
+});
+
 Console.WriteLine(failures.Count == 0
     ? "Polecat AOT runtime smoke OK."
     : $"Polecat AOT runtime smoke FAILED: {string.Join(", ", failures)}");
@@ -230,6 +351,8 @@ namespace Polecat.AotRuntimeSmoke
     [JsonSerializable(typeof(QuestStarted))]
     [JsonSerializable(typeof(Badge))]
     [JsonSerializable(typeof(JasperFx.Events.Daemon.DeadLetterEvent))]
+    [JsonSerializable(typeof(DifficultyTally))]
+    [JsonSerializable(typeof(JoinedTitle))]
     internal sealed partial class SmokeJsonContext : JsonSerializerContext
     {
     }
@@ -271,6 +394,35 @@ namespace Polecat.AotRuntimeSmoke
     internal enum Difficulty { Easy, Hard }
 
     internal sealed record QuestStarted(string Title);
+
+    /// <summary>
+    ///     polecat#743. A STATIC METHOD rather than a local function, because an expression tree
+    ///     cannot reference one (CS8110) — and the whole point is for this call to survive into the
+    ///     tree as a MethodCallExpression, which is the node ExtractValue has no reflective reading
+    ///     for.
+    /// </summary>
+    internal sealed class DifficultyTally
+    {
+        public Difficulty Key { get; set; }
+        public int Count { get; set; }
+    }
+
+    internal sealed class JoinedTitle
+    {
+        public string Outer { get; set; } = string.Empty;
+        public string? Inner { get; set; }
+    }
+
+    internal static class TitleSource
+    {
+        internal static string Build() => "aot";
+    }
+
+    internal sealed class TitleHolder
+    {
+        public string Title { get; set; } = string.Empty;
+        public TitleHolder? Inner { get; set; }
+    }
 
     internal sealed class Quest
     {

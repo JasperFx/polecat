@@ -8,34 +8,57 @@ namespace Polecat.Linq;
 /// </summary>
 /// <remarks>
 ///     <para>
-///         ⚠️ <b>These are NOT usable under Native AOT, and since #733 they say so.</b> Executing a
-///         Polecat LINQ query closes generics over the document type at runtime — <c>src/Polecat</c>
-///         has 108 <c>MakeGenericType</c> / <c>MakeGenericMethod</c> sites, 21 of them in
-///         <c>PolecatLinqQueryProvider</c> alone — and a natively-published consumer meets
-///         <c>NotSupportedException: … is missing native code</c> rather than a wrong answer.
+///         ⚠️ <b>This surface is annotated for AOT, and the annotation is deliberately BROADER than
+///         the measured failure set.</b> Polecat LINQ reads, enum comparisons, child-collection
+///         filters, the scalar aggregates, group-by and group-join all run in a native image today —
+///         measured by <c>Polecat.AotRuntimeSmoke</c>, which publishes native and runs against a real
+///         SQL Server (#742, #743). The one LINQ shape that does NOT work is a projection to an
+///         ANONYMOUS type; see below.
 ///     </para>
 ///     <para>
-///         <b>Why this is an annotation rather than the previous suppression, which was the actual
-///         defect.</b> This class used to carry class-level
-///         <see cref="UnconditionalSuppressMessageAttribute" /> for IL2026 / IL2060 / IL3050, whose
-///         justification read "the trimmer preserves those intrinsics" — while these same remarks
-///         told AOT publishers to avoid the wrappers. Both cannot be true. An
-///         <c>UnconditionalSuppressMessage</c> is an assertion that the suppressed thing is safe, so
-///         the suppression silenced the one diagnostic that would have told a consumer what the
-///         remark was asking them to know. The result was a store that compiled clean under
-///         <c>PublishAot</c> and threw on its first query (#733), which is marten#5328's shape with
-///         the warning deliberately switched off.
+///         <b>So why keep the annotation.</b> #743 asked for it to be narrowed to "the shapes that
+///         genuinely need a JIT", and the measurement found that set to be EMPTY —
+///         <c>MakeGenericType</c> here closes over reference types, which share a canonical body, and
+///         ILC interprets the expression trees <c>WhereClauseParser</c> compiles. But removing a
+///         warning is an assertion of safety across the WHOLE surface, and the measured shapes are a
+///         fraction of it: 17 files in <c>Polecat/Linq</c> carry this annotation, covering includes,
+///         metadata, soft deletes, cursor paging and the selectors, and nothing exercises most of
+///         them natively. Removing it would also mean putting a class-level
+///         <see cref="UnconditionalSuppressMessageAttribute" /> back on the providers to silence the
+///         ~21 <c>MakeGenericType</c> sites — the exact form #738 removed as "the actual defect".
 ///     </para>
 ///     <para>
-///         <b>What to use instead when publishing AOT:</b> raw SQL through
-///         <c>session.QueryAsync&lt;T&gt;</c> / <c>session.QueryByBatchAsync</c>, which does not build
-///         an expression tree. See <c>docs/configuration/native-aot.md</c>.
+///         ⚠️ <b>The honesty argument cuts three ways, not two.</b> #738 established that a
+///         suppression which understates is dishonest, and #743 answered that an annotation which
+///         overstates is the same sin inverted. Both are right, and there is a third: a REMOVAL
+///         justified by partial measurement is the understating suppression again with extra steps.
+///         So the annotation stays, and this remark says plainly that it overstates — which is the
+///         part the old version got wrong. It used to claim these methods were unusable and threw on
+///         the first query; that was true when #738 wrote it and false from #742 onward.
+///     </para>
+///     <para>
+///         <b>Marten does it the other way, which is worth knowing before changing this.</b>
+///         <c>src/Marten/Linq</c> carries NO <c>[RequiresDynamicCode]</c> at all — it has 32 files
+///         with class-level <c>UnconditionalSuppressMessage</c> for IL2026 / IL3050 instead, justified
+///         on AOT consumers supplying "a source-generator-backed serializer". ⚠️ That justification
+///         has the same hole as the one below: a consumer cannot supply <c>JsonSerializable</c> for an
+///         anonymous type. Marten's own AOT runtime smoke covers neither group-by nor anonymous
+///         projections, and its AOT guide is silent on them, so this is a shared latent gap rather
+///         than a Polecat divergence.
+///     </para>
+///     <para>
+///         ⚠️ <b>The one shape that genuinely cannot work: a projection to an anonymous type.</b>
+///         <c>GroupByListHandler</c> deserializes the projection through
+///         <see cref="System.Text.Json.JsonSerializer" />, and under Native AOT that needs a
+///         <c>JsonTypeInfo</c> from the consumer's source-generated context. A consumer CANNOT provide
+///         one for an anonymous type, because <c>[JsonSerializable]</c> needs a nameable type — so
+///         unlike "root your document types", this is not a contract the consumer can satisfy.
+///         Project into a NAMED type and register it; the identical query then works. Measured both
+///         ways in <c>Polecat.AotRuntimeSmoke</c>.
 ///     </para>
 ///     <para>
 ///         ⚠️ Note the asymmetry this leaves on purpose: a consumer who is NOT publishing AOT sees
 ///         nothing change, because IL2026 / IL3050 are only reported in a trimming or AOT context.
-///         The annotation costs nothing to a normal consumer and tells the truth to the one who
-///         needs it.
 ///     </para>
 /// </remarks>
 [RequiresUnreferencedCode(
