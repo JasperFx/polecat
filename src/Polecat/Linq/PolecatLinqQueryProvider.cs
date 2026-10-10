@@ -167,6 +167,56 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
         return parser.Statement;
     }
 
+    /// <summary>
+    ///     jasperfx#869: translate ONLY what <paramref name="expression" /> adds on top of
+    ///     <c>Query&lt;T&gt;()</c> — its <c>Where</c> fragments and its <c>ORDER BY</c> terms — through
+    ///     this provider's own parser, without any of the scoping every execution path appends
+    ///     (tenant, soft deletes, <c>doc_type</c>, the metadata markers).
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         For the document diagnostics surface, which applies operator-typed criteria and owns its
+    ///         scoping itself: it has to reach columns no LINQ operator exposes (correlation, causation,
+    ///         last-modified-by), and it reports the row's metadata alongside its byte-exact JSON. So the
+    ///         provider contributes the translation and the caller the rest of the statement.
+    ///     </para>
+    ///     <para>
+    ///         Anything other than <c>Where</c> / <c>OrderBy</c> / <c>ThenBy</c> on the chain is refused:
+    ///         a <c>Take</c>, <c>Select</c> or scoping operator would be silently dropped by a caller that
+    ///         only reads the fragments.
+    ///     </para>
+    /// </remarks>
+    /// <exception cref="BadLinqExpressionException">A shape this provider cannot translate.</exception>
+    internal Statement TranslateCriteria(Expression expression)
+    {
+        AssertCriteriaOnly(expression);
+
+        var documentType = FindDocumentType(expression);
+        var provider = _providers.GetProvider(documentType);
+
+        var memberFactory = new MemberFactory(_session.Options, provider.Mapping);
+        var parser = new LinqQueryParser(memberFactory, provider.Mapping.QualifiedTableName,
+            SoftDeleteTarget.For(provider.Mapping));
+        parser.Parse(expression);
+
+        return parser.Statement;
+    }
+
+    private static void AssertCriteriaOnly(Expression expression)
+    {
+        while (expression is MethodCallExpression call)
+        {
+            if (call.Method.DeclaringType != typeof(Queryable)
+                || call.Method.Name is not ("Where" or "OrderBy" or "OrderByDescending" or "ThenBy" or "ThenByDescending"))
+            {
+                throw new BadLinqExpressionException(
+                    $"Only Where and OrderBy can be translated as document criteria, not {call.Method.Name}.");
+            }
+
+            expression = call.Arguments[0];
+        }
+    }
+
     internal async Task<string> ExecuteJsonArrayAsync(Expression expression, CancellationToken token)
     {
         var documentType = FindDocumentType(expression);
