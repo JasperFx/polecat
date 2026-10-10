@@ -209,13 +209,6 @@ public partial class DocumentStore : IDocumentStoreDiagnostics
     }
 
     /// <summary>
-    ///     jasperfx#869 — the shapes Polecat's LINQ provider would translate SILENTLY WRONG, refused before
-    ///     they reach it. Every other shape either translates correctly or throws, which the surface turns
-    ///     into a refusal anyway.
-    /// </summary>
-    internal static DynamicQueryPolicy CriteriaPolicy { get; } = DynamicQueryPolicy.Default;
-
-    /// <summary>
     ///     jasperfx#869 — the page and total for a query that carries <see cref="DocumentQueryOptions.Where" />
     ///     and/or <see cref="DocumentQueryOptions.OrderBy" />.
     /// </summary>
@@ -329,10 +322,19 @@ public partial class DocumentStore : IDocumentStoreDiagnostics
         }
         else
         {
-            for (var i = 0; i < criteria.OrderBys.Count; i++)
+            // A key that repeats an earlier one is dropped: it can never change the order, and SQL Server
+            // refuses the statement outright ("a column has been specified more than once in the order
+            // by list"). It is the ordinary case, not an edge one — an ordering that already names the
+            // id is tie-broken by the id again.
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            var first = true;
+            foreach (var term in criteria.OrderBys)
             {
-                if (i > 0) builder.Append(", ");
-                criteria.OrderBys[i].Apply(builder);
+                if (term.Literal is not null && !seen.Add(term.Literal)) continue;
+
+                if (!first) builder.Append(", ");
+                term.Apply(builder);
+                first = false;
             }
         }
 
@@ -616,16 +618,115 @@ public partial class DocumentStore : IDocumentStoreDiagnostics
 }
 
 /// <summary>
-///     jasperfx#869: the generic half of criteria translation, closed over the requested document type.
+///     jasperfx#869: the generic half of criteria translation, closed over the requested document type, and
+///     the shapes Polecat refuses because its LINQ provider would answer them WRONGLY rather than fail.
 /// </summary>
 /// <remarks>
-///     A separate class, not a member of <see cref="DocumentStore" />, on purpose: a
-///     <c>[RequiresUnreferencedCode]</c> member on <see cref="DocumentStore" /> surfaces as IL2026 at
-///     <c>SecondaryStoreProxyFactory</c>, which emits a subclass of the store and so keeps every member
-///     of it reflectable.
+///     <para>
+///         A separate class, not a member of <see cref="DocumentStore" />, on purpose: a
+///         <c>[RequiresUnreferencedCode]</c> member on <see cref="DocumentStore" /> surfaces as IL2026 at
+///         <c>SecondaryStoreProxyFactory</c>, which emits a subclass of the store and so keeps every member
+///         of it reflectable.
+///     </para>
+///     <para>
+///         <b>The refusals are measured, not guessed.</b> Each one was found by running the shape against a
+///         seeded table and comparing with LINQ to objects running the same text, and each is pinned by
+///         <c>document_diagnostics_criteria_shapes</c>, which also asserts the raw provider is STILL wrong —
+///         so the day Polecat translates one of them correctly, that test says the rule can go. Shapes the
+///         provider cannot translate are not listed: it throws, and the surface turns that into a refusal.
+///     </para>
 /// </remarks>
 internal static class DiagnosticsCriteria
 {
+    private static readonly HashSet<Type> _dateAndTimeTypes =
+        [typeof(DateTime), typeof(DateTimeOffset), typeof(DateOnly), typeof(TimeOnly), typeof(TimeSpan)];
+
+    internal const string DateMemberRefusal =
+        "reads a member of a date or time value (PlacedAt.Year, Created.Date, Duration.TotalMinutes), which Polecat translates as a JSON path into the stored text, so it matches nothing. Compare the whole value with a range instead: PlacedAt >= @0 and PlacedAt < @1.";
+
+    internal const string NullableValueRefusal =
+        "reads .Value of a nullable member, which Polecat translates as a JSON path, so it matches nothing. Compare the member itself (ShippedAt > @0 — a null never matches), or test it with .HasValue.";
+
+    internal const string CollectionSizeRefusal =
+        "reads the Count or Length of a collection, which Polecat translates as a JSON path, so it matches nothing. Polecat cannot filter or order on a collection's size; Tags.Contains(@0) is supported.";
+
+    internal const string EnumRangeRefusal =
+        "compares an enum with <, <=, > or >=, but this store keeps enums as their NAMES, so it would compare the names alphabetically rather than the values. Use = or 'in @0' with the members you want.";
+
+    internal const string EnumOrderingRefusal =
+        "orders by an enum, but this store keeps enums as their NAMES, so the order would be alphabetical rather than by value. Order by another member.";
+
+    /// <summary>The refusals that hold for every Polecat store.</summary>
+    internal static DynamicQueryPolicy Policy { get; } = DynamicQueryPolicy.Default.WithRules(
+        DynamicQueryShapeRules.For(node =>
+            node is System.Linq.Expressions.MemberExpression { Expression: { } owner } && _dateAndTimeTypes.Contains(owner.Type)
+                ? DateMemberRefusal
+                : null),
+        DynamicQueryShapeRules.For(node =>
+            node is System.Linq.Expressions.MemberExpression { Expression: { } owner, Member.Name: "Value" }
+            && Nullable.GetUnderlyingType(owner.Type) is not null
+                ? NullableValueRefusal
+                : null),
+        DynamicQueryShapeRules.NoCollectionSizeProperty(CollectionSizeRefusal));
+
+    /// <summary>
+    ///     <see cref="Policy" /> plus the refusals for a store whose serializer keeps enums as names
+    ///     (<c>EnumStorage.AsString</c>), where equality and <c>in</c> still translate correctly but a range
+    ///     comparison does not.
+    /// </summary>
+    internal static DynamicQueryPolicy EnumsAsNamesPolicy { get; } = Policy.WithRules(
+        DynamicQueryShapeRules.For(node =>
+            node is System.Linq.Expressions.BinaryExpression
+            {
+                NodeType: System.Linq.Expressions.ExpressionType.GreaterThan
+                or System.Linq.Expressions.ExpressionType.GreaterThanOrEqual
+                or System.Linq.Expressions.ExpressionType.LessThan
+                or System.Linq.Expressions.ExpressionType.LessThanOrEqual
+            } binary && (isEnum(binary.Left) || isEnum(binary.Right))
+                ? EnumRangeRefusal
+                : null));
+
+    internal static DynamicQueryPolicy PolicyFor(StoreOptions options)
+        => options.Serializer.EnumStorage == Weasel.Core.EnumStorage.AsString ? EnumsAsNamesPolicy : Policy;
+
+    private static bool isEnum(System.Linq.Expressions.Expression expression)
+    {
+        while (expression is System.Linq.Expressions.UnaryExpression
+               {
+                   NodeType: System.Linq.Expressions.ExpressionType.Convert
+                   or System.Linq.Expressions.ExpressionType.ConvertChecked
+               } convert)
+        {
+            expression = convert.Operand;
+        }
+
+        return (Nullable.GetUnderlyingType(expression.Type) ?? expression.Type).IsEnum;
+    }
+
+    /// <summary>
+    ///     An ordering by an enum stored as its name. Not a <see cref="IDynamicQueryShapeRule" />: a rule sees
+    ///     one node at a time and cannot tell an ordering key from the same member inside a predicate, where
+    ///     it is fine. So the composed ordering's key lambdas are read directly.
+    /// </summary>
+    private static void assertOrderingIsByValue(System.Linq.Expressions.Expression expression, StoreOptions storeOptions)
+    {
+        if (storeOptions.Serializer.EnumStorage != Weasel.Core.EnumStorage.AsString) return;
+
+        while (expression is System.Linq.Expressions.MethodCallExpression call)
+        {
+            if (call.Method.DeclaringType == typeof(Queryable)
+                && call.Method.Name is "OrderBy" or "OrderByDescending" or "ThenBy" or "ThenByDescending"
+                && call.Arguments[1] is System.Linq.Expressions.UnaryExpression { Operand: System.Linq.Expressions.LambdaExpression key }
+                && isEnum(key.Body))
+            {
+                throw new DocumentCriteriaNotSupportedException(nameof(DocumentQueryOptions.OrderBy),
+                    $"'{key.Body}' {EnumOrderingRefusal}");
+            }
+
+            expression = call.Arguments[0];
+        }
+    }
+
     [RequiresDynamicCode("jasperfx#869: applies Dynamic LINQ text to a runtime document type.")]
     [RequiresUnreferencedCode("jasperfx#869: applies Dynamic LINQ text to a runtime document type.")]
     internal static async Task<Linq.SqlGeneration.Statement> TranslateFor<T>(DocumentStore store,
@@ -634,7 +735,8 @@ internal static class DiagnosticsCriteria
         // The session is only the provider's host: nothing executes through it, and binding it to the
         // main database skips tenant routing, which the diagnostics surface does itself.
         await using var session = store.QuerySession(SessionOptions.ForDatabase(store.Database));
-        var queryable = options.ApplyCriteriaTo(session.Query<T>(), mapping.IdMember.Name, DocumentStore.CriteriaPolicy);
+        var queryable = options.ApplyCriteriaTo(session.Query<T>(), mapping.IdMember.Name, PolicyFor(store.Options));
+        assertOrderingIsByValue(queryable.Expression, store.Options);
 
         try
         {
