@@ -20,6 +20,11 @@ public class CriteriaAddress
     public string? Region { get; set; }
 }
 
+public class CriteriaBillTo
+{
+    public string? City { get; set; }
+}
+
 public class CriteriaLineItem
 {
     public string Sku { get; set; } = "";
@@ -52,6 +57,8 @@ public class CriteriaOrder
     public TimeOnly Window { get; set; }
     public int? Rating { get; set; }
     public TimeSpan Duration { get; set; }
+    public int? Discount { get; set; }
+    public CriteriaBillTo BillTo { get; set; } = new();
 }
 
 /// <summary>What Polecat's diagnostics surface does with a shape, as measured against the oracle.</summary>
@@ -168,7 +175,9 @@ public static class CriteriaShapes
             ShippedAt = i % 2 == 0 ? placed.AddDays(2) : null,
             Window = new TimeOnly(i + 8, i * 5),
             Rating = i % 3 == 0 ? null : i,
-            Duration = TimeSpan.FromMinutes(i * 25)
+            Duration = TimeSpan.FromMinutes(i * 25),
+            Discount = i % 4 == 0 ? null : i % 2 == 0 ? 5 : 10,
+            BillTo = new CriteriaBillTo { City = i % 3 == 1 ? null : i % 2 == 0 ? "Austin" : "Dallas" }
         };
 
     /// <summary>
@@ -212,6 +221,15 @@ public static class CriteriaShapes
         new("nested_null", "ShipTo.Region = null", null),
         new("null_compare", "Note = null", null),
         new("not_null_compare", "Note != null", null),
+        new("null_not_equal", "Note != @0", null, "gift") { Verdict = ShapeVerdict.PolicyRefuses },
+        new("null_not_of_equal", "not (Note = @0)", null, "gift") { Verdict = ShapeVerdict.PolicyRefuses },
+        new("null_not_contains", "not Note.Contains(@0)", null, "door") { Verdict = ShapeVerdict.PolicyRefuses, OracleWhere = "Note = null or not Note.Contains(@0)" },
+        new("nullable_int_not_equal", "Discount != @0", null, 5) { Verdict = ShapeVerdict.PolicyRefuses },
+        new("nested_null_not_equal", "BillTo.City != @0", null, "Austin") { Verdict = ShapeVerdict.PolicyRefuses },
+        new("null_not_equal_guarded_or", "Note != @0 or Note = null", null, "gift"),
+        new("null_not_equal_guarded_and", "Note != null and Note != @0", null, "gift"),
+        new("nullable_int_not_equal_guarded", "Discount != @0 or Discount = null", null, 5),
+        new("string_not_equal", "CustomerName != @0", null, "Gamma"),
         new("starts_with", "CustomerName.StartsWith(@0)", null, "Al") { Verdict = ShapeVerdict.CaseInsensitiveCollation, CollationRows = ["o1", "o3"] },
         new("contains", "CustomerName.Contains(@0)", null, "ta"),
         new("ends_with", "CustomerName.EndsWith(@0)", null, "a"),

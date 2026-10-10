@@ -119,7 +119,10 @@ public class document_diagnostics_criteria_shapes : IClassFixture<CriteriaShapeS
     [
         DiagnosticsCriteria.DateMemberRefusal, DiagnosticsCriteria.NullableValueRefusal,
         DiagnosticsCriteria.CollectionSizeRefusal, DiagnosticsCriteria.EnumRangeRefusal,
-        DiagnosticsCriteria.EnumOrderingRefusal
+        DiagnosticsCriteria.EnumOrderingRefusal,
+
+        // DynamicQueryShapeRules.SqlNullSemantics(), JasperFx's own text.
+        "the database leaves rows where it is null OUT"
     ];
 
     private static async Task<IReadOnlyList<Guid>> DiagnosticsRowsAsync(DocumentStore store, CriteriaShape shape)

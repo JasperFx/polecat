@@ -667,7 +667,12 @@ internal static class DiagnosticsCriteria
             && Nullable.GetUnderlyingType(owner.Type) is not null
                 ? NullableValueRefusal
                 : null),
-        DynamicQueryShapeRules.NoCollectionSizeProperty(CollectionSizeRefusal));
+        DynamicQueryShapeRules.NoCollectionSizeProperty(CollectionSizeRefusal),
+        // Three-valued logic: NULL <> 'x' is unknown, so `Note != "x"`, `not (Note = "x")` and
+        // `not Note.Contains("x")` drop every row whose member is null where the text read as C# keeps
+        // them. Measured on Polecat (3 of 7 rows) before the shared rule existed; the guarded forms
+        // (`... or Note = null`, `Note != null and ...`) translate correctly and stay allowed.
+        DynamicQueryShapeRules.SqlNullSemantics());
 
     /// <summary>
     ///     <see cref="Policy" /> plus the refusals for a store whose serializer keeps enums as names
