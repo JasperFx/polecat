@@ -1,14 +1,21 @@
 # Native AOT
 
-::: danger Polecat does not currently work under Native AOT
-A natively-published application throws on its first database operation, from `DocumentStore`'s
-constructor. This is [polecat#733](https://github.com/JasperFx/polecat/issues/733), and this page
-documents the current state rather than a configuration you can turn on.
+::: warning Native AOT works, with two documented exceptions and a contract you have to meet
+A natively-published application can construct a store, migrate its schema, write and read
+documents, append and read events, aggregate streams live, and run the LINQ surface. **18 shapes are
+measured in CI and 16 pass.** The two that do not are a **strong-typed document id**
+([#751](https://github.com/JasperFx/polecat/issues/751)) and a projection into an **anonymous type**
+([#743](https://github.com/JasperFx/polecat/issues/743)).
+
+This is not a switch you turn on: you also have to meet [the consumer contract](#the-consumer-contract)
+below — root your document types, supply a source-generated serializer, and avoid
+`InvariantGlobalization`. Nothing here is estimated; `Polecat.AotRuntimeSmoke` publishes native and
+runs every shape against a real SQL Server on each build.
 :::
 
-## What happens
+## What used to happen
 
-Publishing with `PublishAot=true` succeeds. Running the result does not:
+Until 5.36.0, publishing with `PublishAot=true` succeeded and running the result did not:
 
 ```
 System.NotSupportedException: 'Polecat.Storage.DocumentMapping.RawIdAccessors[
@@ -16,14 +23,19 @@ System.NotSupportedException: 'Polecat.Storage.DocumentMapping.RawIdAccessors[
 is missing native code. MethodInfo.MakeGenericMethod() is not compatible with AOT compilation.
 ```
 
-Every operation fails the same way — document write, document read, `LoadAsync`, LINQ, event append,
-event read, live aggregation. They all fail *before* doing anything, because `DocumentStore`'s
-constructor builds a document mapping, and `DocumentMapping` closes generics over the document type
-at runtime. `src/Polecat` has **108** `MakeGenericType` / `MakeGenericMethod` sites, 21 of them in
-the LINQ provider alone.
+**Every** operation failed the same way — document write, document read, `LoadAsync`, LINQ, event
+append, event read, live aggregation. They all failed *before* doing anything, because
+`DocumentStore`'s constructor builds a document mapping and `DocumentMapping` closed generics over the
+document type at runtime. `DeadLetterEvent` was simply the first type to hit it, because the store
+registers it eagerly; a consumer's own document types hit the same wall one step later.
 
-`DeadLetterEvent` is simply the first type to hit it, because the store registers it eagerly. Your
-own document types hit exactly the same wall.
+That was [#733](https://github.com/JasperFx/polecat/issues/733), closed across #739, #740 and #742 by
+peeling one layer at a time — publish native, run, see where it stops next — rather than by reasoning
+about it. The history is worth keeping because it is what the measurements below are measured
+*against*, and because its conclusion still governs the one shape left: an instantiation whose
+arguments are all **reference** types shares one canonical body and can be closed at runtime, while a
+**value**-type argument cannot, so the fix was to close the id type statically rather than to annotate
+anything.
 
 ## What changed in this release
 
@@ -62,13 +74,14 @@ The keyed load path (`LoadAsync`), event reads (`FetchStreamAsync`, `AggregateSt
 document writes carry no AOT annotation at all — and all of them are now **measured as working**
 (#742), so here the absence happens to be right. The annotated LINQ surface is the inverse: it warns
 on shapes that work. Neither the presence nor the absence of a warning is evidence; only
-`Polecat.AotRuntimeSmoke` is. #733 tracks the remaining failure.
+`Polecat.AotRuntimeSmoke` is. [#751](https://github.com/JasperFx/polecat/issues/751) tracks the
+remaining failure.
 
 ## How far it gets today
 
 Measured, not estimated — `Polecat.AotRuntimeSmoke` publishes native and runs against a real SQL
 Server. **18 shapes, 16 of which pass.** The two that do not are a projection into an anonymous type
-(#743) and a strong-typed document id (#733); everything else below works.
+(#743) and a strong-typed document id (#751); everything else below works.
 
 | | native |
 |---|---|
@@ -85,7 +98,7 @@ Server. **18 shapes, 16 of which pass.** The two that do not are a projection in
 | `GroupJoin(...).SelectMany(...)` | ✅ |
 | a `where` value from a **method call**, a **member chain** or an **array literal** | ✅ |
 | a projection into an **anonymous type** | ❌ [#743](https://github.com/JasperFx/polecat/issues/743) |
-| a **strong-typed** document id (`readonly record struct FooId(Guid)`) | ❌ [#733](https://github.com/JasperFx/polecat/issues/733) |
+| a **strong-typed** document id (`readonly record struct FooId(Guid)`) | ❌ [#751](https://github.com/JasperFx/polecat/issues/751) |
 
 ### What makes the supported shapes work
 
@@ -172,12 +185,21 @@ is missing native code or metadata.
 
 `BuildValueTypeProvider` closes that generic over the *wrapper* and its *inner* type, both value
 types, and the wrapper is a runtime value nothing in Polecat can name. Plain `Guid` / `string` /
-`int` / `long` ids are fine. Tracked on [#733](https://github.com/JasperFx/polecat/issues/733).
+`int` / `long` ids are fine. Tracked on [#751](https://github.com/JasperFx/polecat/issues/751),
+split out of #733 when that closed.
+
+⚠️ The two escapes you would try first are both dead ends, established on #733 by trying them:
+**reflecting** over the closed type's members fails because nothing statically references them and the
+trimmer removed the metadata — you cannot reflect your way out of generics under AOT — and
+**reimplementing** the identity rules locally means a second description of Weasel's behaviour kept in
+step by hand. A `[DynamicDependency]` on the wrapper does not help either: it preserves `FooId`'s
+members without instantiating `ValueTypeIdentification<Doc, FooId, Guid>`. Closing it needs the
+instantiation emitted in **your** assembly, which is why #751 is open rather than fixed.
 
 ## The consumer contract
 
-⚠️ Two of the walls found on the way turned out **not** to be Polecat defects, and they will still
-apply once #733 closes. If you publish natively you have to do both.
+⚠️ Two of the walls found on the way turned out **not** to be Polecat defects, and they apply
+whatever else changes. If you publish natively you have to do both.
 
 ### Root your document types
 
@@ -242,14 +264,15 @@ image; it is not available here.
 
 ## If you need AOT today
 
-You have a working subset, which is new: meet the three contract items above and a natively-published
-app can construct a store, migrate its schema, write documents, load them by id, append and read
-events, and aggregate a stream live. What you cannot do is use `Query<T>()` or a strong-typed
-document id.
+Meet the three contract items above and a natively-published app can construct a store, migrate its
+schema, write documents, load them by id, append and read events, aggregate a stream live, and run
+`Query<T>()` — including the scalar aggregates, `GroupBy` and `GroupJoin`. The two things you cannot
+do are use a **strong-typed document id** ([#751](https://github.com/JasperFx/polecat/issues/751)) and
+project into an **anonymous type** ([#743](https://github.com/JasperFx/polecat/issues/743)); project
+into a named type registered with your `JsonSerializerContext` instead.
 
 Measured rather than asserted — `Polecat.AotRuntimeSmoke` publishes native and runs every one of
-those shapes against SQL Server in CI. Follow
-[#733](https://github.com/JasperFx/polecat/issues/733) for the rest.
+those shapes against SQL Server on each build.
 
 ## How this is tested
 
@@ -260,10 +283,29 @@ Two CI lanes, with deliberately different jobs:
 | `aot-smoke` | **builds** a static-mode consumer with IL2026/IL3050 promoted to errors | the AOT-*clean* surface has not regressed its annotations |
 | `aot-runtime-smoke` | **publishes native and runs** against SQL Server | what actually happens, shape by shape |
 
-`aot-runtime-smoke` is `continue-on-error` while #733 and the anonymous-projection shape (#743) are
-open, so it reports **two** known failures. A build-only lane cannot catch a runtime AOT failure,
-which is why the second one exists — and `PolecatQueryableExtensions` suppressing its own IL3050 is
-exactly why `aot-smoke` is silent on the path that broke.
+A build-only lane cannot catch a runtime AOT failure, which is why the second one exists — and
+`PolecatQueryableExtensions` suppressing its own IL3050 is exactly why `aot-smoke` was silent on the
+path that broke.
+
+**`aot-runtime-smoke` blocks, and each shape declares its expected outcome.** It used to be
+`continue-on-error` because #733 made it fail wholesale; that flag came off in #751. The two
+documented limitations are declared **expected failures** citing #751 and #743, which is what lets the
+lane go green over them — and the lane is red whenever reality disagrees in either direction:
+
+| the lane goes red when | because |
+|---|---|
+| a working shape fails | an AOT regression, which is the point |
+| an **expected failure passes** | the gap closed and this page, the issue and the harness are now stale |
+| an expected failure's message stops containing its documented reason | a database that is down is not evidence about AOT |
+
+⚠️ That last row is why an expectation pins a substring rather than a bool. Without it, an expected
+failure turns green for any unrelated break — on exactly the shape nobody is watching, because
+failing *is* its expected outcome.
+
+⚠️ **The previous arrangement gated nothing**, and that is the argument for this one rather than for
+a shorter fix. Returning non-zero on any failure, over two shapes documented as failing, meant
+permanently red; permanently red plus `continue-on-error` meant a regression in the other sixteen
+shapes changed nothing a reader or a merge gate could see. A gate that cannot go green does not gate.
 
 ⚠️ Read the lane's failures before believing them. Two of the shapes added in #743 failed on their
 first run for reasons that were the **harness's** fault, not Polecat's: one query was simply
