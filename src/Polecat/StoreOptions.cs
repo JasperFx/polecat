@@ -720,6 +720,63 @@ public class EventStoreOptions : IEventStoreInstrumentation
         = Polecat.Events.Aggregation.NulloMessageOutbox.Instance;
 
     /// <summary>
+    ///     Configures the SQL Server advisory lock the async daemon's projection coordinator takes per
+    ///     shard set to decide which node runs it (#749). Leave it unset and the lock behaves exactly as
+    ///     Weasel's three-argument <c>AdvisoryLock</c> constructor does: a 5 second monitor with a 5 second
+    ///     probe timeout. The counterpart of Marten's <c>StoreOptions.Events.UseMonitoredAdvisoryLock</c>.
+    /// </summary>
+    /// <example>
+    ///     <code>
+    ///     opts.Events.ConfigureAdvisoryLock = lockOptions =>
+    ///     {
+    ///         lockOptions.MonitoringInterval = 10.Seconds();
+    ///         lockOptions.ProbeTimeout = 3.Seconds();
+    ///     };
+    ///     </code>
+    /// </example>
+    /// <remarks>
+    ///     <para>
+    ///         ⚠️ <b>Turning the monitor off re-opens weasel#695's split brain</b>, and is not a neutral
+    ///         performance option. <c>sp_getapplock</c> holds are session-scoped: when SQL Server ends a
+    ///         node's session — a failover, a gateway reconfiguration, a killed session — every lock goes
+    ///         with it, and without the monitor that node goes on reporting them held while another node
+    ///         takes them, so both run the same shard. A non-positive or infinite
+    ///         <c>MonitoringInterval</c> is that opt-out.
+    ///     </para>
+    ///     <para>
+    ///         The probe already short-circuits while a node holds no locks, so its query cost tracks the
+    ///         shards a node actually holds rather than the databases configured. What opting out really
+    ///         saves is one parked timer per database, which matters only at the scale of a deployment
+    ///         with a thousand or more tenant databases (weasel#439).
+    ///     </para>
+    ///     <para>
+    ///         Keep <c>ProbeTimeout</c> under the interval. Disposal waits behind an in-flight probe, so
+    ///         the probe timeout bounds daemon shutdown as much as it bounds a query.
+    ///     </para>
+    ///     <para>
+    ///         A configure action rather than one property per setting, deliberately diverging from
+    ///         Marten's discrete bools: a later Weasel setting then needs no Polecat change at all, where
+    ///         mirroring properties is a second description of Weasel's options kept in step by hand.
+    ///         There is no <c>ReleaseTimeout</c>, unlike the PostgreSQL sibling — a pooled
+    ///         <c>SqlConnection</c> keeps its session's locks when it closes, so an abandoned release would
+    ///         strand the lock against the node that needs it next (see Weasel's
+    ///         <c>AdvisoryLock.DisposeAsync</c>).
+    ///     </para>
+    ///     <para>
+    ///         Invoked once when the coordinator is built, and the one result is shared by the lock of
+    ///         every database it coordinates.
+    ///     </para>
+    /// </remarks>
+    public Action<Weasel.SqlServer.SqlServerAdvisoryLockOptions>? ConfigureAdvisoryLock { get; set; }
+
+    internal Weasel.SqlServer.SqlServerAdvisoryLockOptions BuildAdvisoryLockOptions()
+    {
+        var options = new Weasel.SqlServer.SqlServerAdvisoryLockOptions();
+        ConfigureAdvisoryLock?.Invoke(options);
+        return options;
+    }
+
+    /// <summary>
     ///     Pre-register an event type with the event store. Mirrors Marten's
     ///     <c>StoreOptions.Events.AddEventType&lt;TEvent&gt;()</c>. Not strictly necessary — event types are
     ///     registered on the fly as they are appended — but pre-registration can help with asynchronous

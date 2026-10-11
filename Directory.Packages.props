@@ -1276,9 +1276,30 @@
                * weasel#696 and weasel#698 — PostgreSQL table storage parameters (fillfactor,
                  autovacuum) written on create and kept by the delta, plus a fluent API and docs over
                  them. INERT: wrong dialect. -->
-        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.42.0" />
-        <PackageVersion Include="Weasel.SqlServer" Version="9.42.0" />
-        <PackageVersion Include="Weasel.Storage" Version="9.42.0" />
+
+        <!-- Weasel 9.43.0 (from 9.42.0). One change, ADOPTED, and it exists for Polecat: Polecat is the
+             only consumer of Weasel.SqlServer.AdvisoryLock in the stack.
+
+               * weasel#700/#701 — SqlServerAdvisoryLockOptions (MonitoringInterval, ProbeTimeout) and a
+                 four-argument AdvisoryLock constructor taking it. 9.42.0's monitor (weasel#695, (c) in
+                 the entry above) was right and right to default on, but on a hard-coded 5s timer with
+                 no seam — so Weasel's half is INERT without Polecat's, and #749 is that half:
+                 opts.Events.ConfigureAdvisoryLock, built once in ProjectionCoordinator.BuildLockFactory
+                 and passed to every database's lock.
+                 Purely additive. The three-argument constructor keeps its signature (weasel#616: a
+                 defaulted parameter would have been a binary break against Polecat as compiled) and
+                 forwards to `new SqlServerAdvisoryLockOptions()`, whose defaults are 9.42.0's exactly —
+                 so an unset ConfigureAdvisoryLock is byte-for-byte the previous behaviour.
+                 ⚠️ #749 asked for a ReleaseTimeout too, mirroring the Postgres sibling. It does not
+                 exist, and the reason is measured rather than assumed: a POOLED SqlConnection keeps its
+                 session, and its sp_getapplock holds, when it closes, so an abandoned release strands
+                 the lock against the next node. Polecat builds pooled connections. Pinned in Weasel by
+                 advisory_lock_options.a_pooled_connection_keeps_its_locks_when_it_closes.
+                 ⚠️ The opt-out (a non-positive or infinite MonitoringInterval) re-opens weasel#695's
+                 split brain; documented as that, not as a tuning knob. -->
+        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.43.0" />
+        <PackageVersion Include="Weasel.SqlServer" Version="9.43.0" />
+        <PackageVersion Include="Weasel.Storage" Version="9.43.0" />
 
         <!-- Strongly typed IDs. Both generators are test-only: they prove Polecat's value-type id
              support against the two libraries Marten's ValueTypeTests exercise. StronglyTypedId emits
