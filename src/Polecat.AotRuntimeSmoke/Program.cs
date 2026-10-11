@@ -65,32 +65,88 @@ builder.Services.AddPolecat((StoreOptions opts) =>
 
 using var host = builder.Build();
 
-var failures = new List<string>();
+// ⚠️ EVERY SHAPE DECLARES ITS EXPECTED OUTCOME, and the lane is red whenever reality disagrees in
+// EITHER direction. That is what lets `continue-on-error` come off (#751).
+//
+// Before this, the lane printed per-shape results and returned non-zero on any failure — so with two
+// shapes documented as failing (#751, #743) it was PERMANENTLY red, and `continue-on-error: true`
+// made it permanently ignorable. A regression in any of the sixteen WORKING shapes would have changed
+// nothing a reader or a merge gate could see. A gate that cannot go green does not gate.
+//
+// So an expected failure is not a silenced one. It is red if it stops reproducing — if the shape
+// starts PASSING (the gap closed and the docs went stale) or fails for some OTHER reason than the
+// documented one (a database that is down is not evidence about AOT). The `because` substring is what
+// makes the second case detectable, and it is the whole reason `Expectation` is not a bool.
+var regressions = new List<string>();
 
-async Task Shape(string name, string marten, Func<Task> action)
+// `expect` defaults to Passes on purpose: this lane's premise is that a shape SHOULD work, so
+// declaring an expected failure is the exceptional act, and it has to carry a citation.
+async Task Shape(string name, string issue, Func<Task> action, Expectation? expect = null)
 {
-    try
-    {
-        await action();
-        Console.WriteLine($"  ok    {name}  ({marten})");
-    }
-    catch (Exception e)
-    {
-        Console.WriteLine($"  FAIL  {name}  ({marten})");
-        Console.WriteLine($"        {e.GetType().FullName}: {e.Message}");
+    var expectation = expect ?? Expectation.Passes;
 
+    void Frames(Exception e)
+    {
         // ⚠️ The first few frames, because the MESSAGE is not always enough. polecat#741: the LINQ
         // shapes fail with a bare NullReferenceException, which names nothing -- and in a native
         // image there is no debugger to attach, so whatever the lane prints is the whole diagnosis.
-        // Trimmed to keep a seven-shape run readable.
+        // Trimmed to keep an eighteen-shape run readable.
         foreach (var frame in (e.StackTrace ?? string.Empty)
                  .Split('\n', StringSplitOptions.RemoveEmptyEntries).Take(6))
         {
             Console.WriteLine($"          {frame.Trim()}");
         }
-
-        failures.Add(name);
     }
+
+    try
+    {
+        await action();
+    }
+    catch (Exception e)
+    {
+        if (expectation.ShouldPass)
+        {
+            Console.WriteLine($"  FAIL  {name}  ({issue})");
+            Console.WriteLine($"        {e.GetType().FullName}: {e.Message}");
+            Frames(e);
+            regressions.Add(name);
+            return;
+        }
+
+        // An expected failure that reproduces. Still printed in full: this log is the only record of
+        // WHY the shape is excluded, and the next reader should not have to take the citation's word.
+        var message = $"{e.GetType().FullName}: {e.Message}";
+        if (!message.Contains(expectation.Because!, StringComparison.Ordinal))
+        {
+            Console.WriteLine($"  FAIL  {name}  ({issue})");
+            Console.WriteLine($"        Expected failure, but NOT the documented one — the message does");
+            Console.WriteLine($"        not contain \"{expectation.Because}\". Either the limitation has");
+            Console.WriteLine($"        changed shape, or something unrelated broke.");
+            Console.WriteLine($"        {message}");
+            Frames(e);
+            regressions.Add($"{name} [failed for an undocumented reason]");
+            return;
+        }
+
+        Console.WriteLine($"  xfail {name}  ({issue})");
+        Console.WriteLine($"        as documented: {message}");
+        return;
+    }
+
+    if (!expectation.ShouldPass)
+    {
+        // ⚠️ The direction that is easy to forget, and the one a plain skip would swallow. If a
+        // documented AOT limitation quietly starts working, `docs/configuration/native-aot.md`, the
+        // citing issue and this file are all now wrong — which is a thing to go fix, not to celebrate
+        // silently.
+        Console.WriteLine($"  UNEXPECTED PASS  {name}  ({issue})");
+        Console.WriteLine($"        Declared an expected failure \"{expectation.Because}\", and it PASSED.");
+        Console.WriteLine($"        Delete the expectation, close {issue}, and correct native-aot.md.");
+        regressions.Add($"{name} [expected to fail, passed]");
+        return;
+    }
+
+    Console.WriteLine($"  ok    {name}  ({issue})");
 }
 
 Console.WriteLine("Polecat AOT runtime smoke:");
@@ -190,9 +246,14 @@ await Shape("filter on a child collection", "marten#5374", async () =>
 });
 
 // --- 7. a STRONG-TYPED document id -------------------------------------------
-// The last shape #733 had not measured. Closes ValueTypeIdentification<,,> and
-// BuildTypedProvider<,> over value-type arguments.
-await Shape("write and read a strong-typed id", "polecat#733", async () =>
+// EXPECTED FAILURE, #751. The last shape #733 had not measured; measuring it is what found this.
+// `BuildValueTypeProvider` closes ValueTypeIdentification<,,> and BuildTypedProvider<,> over the
+// WRAPPER and its inner type, both value types -- so there is no canonical body to share, and ILC
+// cannot have precompiled an instantiation naming types from the consumer's assembly. #733's own
+// layer-peeling ruled out both escapes (reflecting over the closed type's members, whose metadata the
+// trimmer removes; and reimplementing Weasel's identity rules locally). Closing it needs something
+// emitting the instantiation in the CONSUMER's assembly, which is a program rather than a patch.
+await Shape("write and read a strong-typed id", "polecat#751", async () =>
 {
     var badgeId = new BadgeId(Guid.NewGuid());
 
@@ -208,7 +269,7 @@ await Shape("write and read a strong-typed id", "polecat#733", async () =>
     var loaded = await reader.LoadAsync<Badge>(badgeId);
     if (loaded?.Holder != "aot") throw new InvalidOperationException(
         $"strong-typed id round trip gave '{loaded?.Holder}'");
-});
+}, Expectation.FailsWith("is missing native code or metadata"));
 
 // --- 8-10. the three shapes that reach WhereClauseParser.CompileAndInvoke ------
 // polecat#743. Shape 3 above was supposed to be the CompileAndInvoke probe and is NOT: an enum
@@ -304,11 +365,13 @@ await Shape("LINQ GroupBy with a VALUE-TYPE key, NAMED projection", "polecat#743
     _ = grouped.Count;
 });
 
-// ⚠️ The same query with an ANONYMOUS projection, which is the shape every GroupBy example writes.
-// GroupByListHandler<> DESERIALIZES the projection through STJ, and under AOT that needs a
+// ⚠️ EXPECTED FAILURE, #743, and the one shape here that CANNOT be fixed rather than merely has
+// not been. The same query with an ANONYMOUS projection, which is the shape every GroupBy example
+// writes. GroupByListHandler<> DESERIALIZES the projection through STJ, and under AOT that needs a
 // JsonTypeInfo from the consumer's source-generated context -- which a consumer CANNOT supply for an
-// anonymous type, because [JsonSerializable] needs a nameable type. So this is not a "root your
-// types" contract the consumer can satisfy; measured here rather than assumed either way.
+// anonymous type, because [JsonSerializable] needs a nameable type. So unlike every other AOT
+// contract item, this is not one the consumer can satisfy; the answer is a named projection type.
+// Marten has the same latent limitation (marten#5624).
 await Shape("LINQ GroupBy with an ANONYMOUS projection", "polecat#743", async () =>
 {
     await using var scope = host.Services.CreateAsyncScope();
@@ -318,7 +381,7 @@ await Shape("LINQ GroupBy with an ANONYMOUS projection", "polecat#743", async ()
         .Select(g => new { g.Key, Count = g.Count() })
         .ToListAsync();
     _ = grouped.Count;
-});
+}, Expectation.FailsWith("JsonTypeInfo metadata for type"));
 
 await Shape("LINQ GroupJoin", "polecat#743", async () =>
 {
@@ -331,14 +394,45 @@ await Shape("LINQ GroupJoin", "polecat#743", async () =>
     _ = joined.Count;
 });
 
-Console.WriteLine(failures.Count == 0
-    ? "Polecat AOT runtime smoke OK."
-    : $"Polecat AOT runtime smoke FAILED: {string.Join(", ", failures)}");
+Console.WriteLine(regressions.Count == 0
+    ? "Polecat AOT runtime smoke OK \u2014 every shape matched its declared expectation."
+    : $"Polecat AOT runtime smoke FAILED: {string.Join(", ", regressions)}");
 
-return failures.Count == 0 ? 0 : 1;
+return regressions.Count == 0 ? 0 : 1;
 
 namespace Polecat.AotRuntimeSmoke
 {
+    /// <summary>
+    ///     What a shape is declared to do in a native image. The lane is red whenever reality
+    ///     disagrees in either direction.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         ⚠️ <b>This is not a bool, and <see cref="Because" /> is the reason</b> (#751). An
+    ///         expected failure that matched on nothing would turn green for a database that is down,
+    ///         a trimmed-away property, or any other unrelated break — and it would do so on exactly
+    ///         the shape nobody is watching, because its failure is the expected outcome. Pinning the
+    ///         substring means the lane says "as documented" only when it is.
+    ///     </para>
+    ///     <para>
+    ///         An expected failure is red three ways: the shape passes, it fails with a message that
+    ///         does not contain <see cref="Because" />, or (via <see cref="ShouldPass" /> on every
+    ///         other shape) something it shares a code path with regresses.
+    ///     </para>
+    /// </remarks>
+    internal readonly record struct Expectation(bool ShouldPass, string? Because)
+    {
+        /// <summary>The default, and the premise of this whole lane: the shape should work.</summary>
+        internal static Expectation Passes => new(true, null);
+
+        /// <summary>
+        ///     A documented limitation. <paramref name="because" /> is a substring the failure's
+        ///     <c>Type: Message</c> must contain, so the lane distinguishes "still broken in the way
+        ///     the docs say" from "broken for some other reason".
+        /// </summary>
+        internal static Expectation FailsWith(string because) => new(false, because);
+    }
+
     /// <summary>
     ///     #733: the source-generated serializer a Native AOT consumer must supply.
     /// </summary>

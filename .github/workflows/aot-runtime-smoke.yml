@@ -12,12 +12,24 @@ name: aot-runtime-smoke
 # nothing new at runtime — "writes were fine, the first read threw" (marten#5328) is what a
 # build-only lane reports as green.
 #
-# ⚠️ continue-on-error IS DELIBERATE AND IS NOT A TODO. This lane found, on its first run, that
-# Polecat does not function at all under Native AOT: DocumentMapping builds its identity accessors
-# through MethodInfo.MakeGenericMethod, which native AOT cannot do, and DocumentStore's CONSTRUCTOR
-# registers DeadLetterEvent eagerly — so every consumer hits it before writing a single document.
-# See #733. Until that closes, this lane reports per-shape results into the log without blocking
-# merges. Flip continue-on-error off when #733 lands; the lane is already asserting the right thing.
+# ⚠️ THIS LANE BLOCKS. continue-on-error came off in #751, and the mechanism that let it is worth
+# knowing before adding a shape.
+#
+# On its first run the lane found that Polecat did not function AT ALL under Native AOT (#733), so it
+# was created continue-on-error with a note to flip that off "when #733 lands". #733 landed — 16 of
+# 18 shapes now pass — but two documented limitations remain, and a lane that returns non-zero on ANY
+# failure could never go green over them. Permanently red plus continue-on-error means a regression in
+# the sixteen WORKING shapes changes nothing anyone can see. A gate that cannot go green does not gate.
+#
+# So each shape in Program.cs DECLARES its expected outcome and the binary is red whenever reality
+# disagrees in either direction: an expected pass that fails, an expected FAILURE that passes (the gap
+# closed and the docs are now stale), or an expected failure whose message no longer contains the
+# documented reason (a database that is down is not evidence about AOT). The two expected failures are
+# the strong-typed document id (#751) and a projection into an anonymous type (#743); both are
+# documented in docs/configuration/native-aot.md, and the log still prints each in full.
+#
+# ⚠️ An expected failure is therefore NOT a skip, and the right response to one going red is to read
+# it rather than to adjust its expectation.
 
 on:
   push:
@@ -34,7 +46,6 @@ jobs:
   publish-and-run:
     runs-on: ubuntu-latest
     timeout-minutes: 25
-    continue-on-error: true
 
     steps:
       - name: Checkout
@@ -70,9 +81,10 @@ jobs:
           dotnet publish src/Polecat.AotRuntimeSmoke/Polecat.AotRuntimeSmoke.csproj \
             -c Release -r linux-x64 -o ${{ runner.temp }}/aot
 
-      # The binary prints one line per execution shape, each naming the Marten issue it mirrors, and
-      # returns non-zero on the first failure — so the log says WHICH shape broke rather than only
-      # that something did.
+      # The binary prints one line per execution shape — `ok`, `xfail` or `FAIL` — each naming the
+      # issue it mirrors or is excluded by, and returns non-zero listing every shape that did not
+      # match its declared expectation. So the log says WHICH shape broke rather than only that
+      # something did, and it runs every shape rather than stopping at the first failure.
       - name: Run the native binary against SQL Server
         env:
           POLECAT_TESTING_DATABASE: "Server=localhost,11433;User Id=sa;Password=P@55w0rd;Timeout=30;MultipleActiveResultSets=True;Initial Catalog=master;Encrypt=False"
