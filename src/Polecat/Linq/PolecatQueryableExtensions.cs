@@ -78,6 +78,10 @@ public static class PolecatQueryableExtensions
     public static async Task<IReadOnlyList<T>> ToListAsync<T>(
         this IQueryable<T> queryable, CancellationToken token = default)
     {
+        // #743: roots ScalarListHandler<T> while T is still a compile-time fact, so a value-type scalar
+        // projection (Select(x => x.Id) over a Guid) has native code under AOT. See ScalarListHandlers.
+        _ = QueryHandlers.ScalarListHandlerRoot<T>.Rooted;
+
         var provider = GetPolecatProvider(queryable);
         return await provider.ExecuteAsync<IReadOnlyList<T>>(queryable.Expression, token);
     }

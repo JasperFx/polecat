@@ -2,10 +2,10 @@
 
 ::: warning Native AOT works, with two documented exceptions and a contract you have to meet
 A natively-published application can construct a store, migrate its schema, write and read
-documents, append and read events, aggregate streams live, and run the LINQ surface. **18 shapes are
-measured in CI and 16 pass.** The two that do not are a **strong-typed document id**
-([#751](https://github.com/JasperFx/polecat/issues/751)) and a projection into an **anonymous type**
-([#743](https://github.com/JasperFx/polecat/issues/743)).
+documents, append and read events, aggregate streams live, and run the LINQ surface. **33 shapes are
+measured in CI and 31 pass.** The two that do not are a **strong-typed document id**
+([#751](https://github.com/JasperFx/polecat/issues/751)) and a `GroupBy` projected into an **anonymous
+type** ([#743](https://github.com/JasperFx/polecat/issues/743)).
 
 This is not a switch you turn on: you also have to meet [the consumer contract](#the-consumer-contract)
 below — root your document types, supply a source-generated serializer, and avoid
@@ -80,8 +80,8 @@ remaining failure.
 ## How far it gets today
 
 Measured, not estimated — `Polecat.AotRuntimeSmoke` publishes native and runs against a real SQL
-Server. **18 shapes, 16 of which pass.** The two that do not are a projection into an anonymous type
-(#743) and a strong-typed document id (#751); everything else below works.
+Server. **33 shapes, 31 of which pass.** The two that do not are a `GroupBy` projected into an anonymous
+type (#743) and a strong-typed document id (#751); everything else below works.
 
 | | native |
 |---|---|
@@ -97,7 +97,14 @@ Server. **18 shapes, 16 of which pass.** The two that do not are a projection in
 | `GroupBy`, including a value-type key, projected into a **named** type | ✅ |
 | `GroupJoin(...).SelectMany(...)` | ✅ |
 | a `where` value from a **method call**, a **member chain** or an **array literal** | ✅ |
-| a projection into an **anonymous type** | ❌ [#743](https://github.com/JasperFx/polecat/issues/743) |
+| `Select` of a member — a `string`, an `enum`, a `Guid` id; on documents and on `QueryAllRawEvents()` | ✅ (5.37: value types fixed) |
+| `Select` into a named type, or into an **anonymous** type without a `GroupBy` | ✅ |
+| `Distinct`, `OrderBy`/`ThenBy`/`Skip`/`Take`, `FirstOrDefault`, `SingleOrDefault`, string `StartsWith`/`Contains` | ✅ |
+| `ToPagedListAsync`, `ToJsonArrayAsync` | ✅ |
+| `ToJsonPageByCursorAsync` — keyset cursor paging | ✅ (5.37: fixed) |
+| `ModifiedSince` / `CreatedSince` | ✅ |
+| soft deletes — the default filter, `MaybeDeleted`, `IsDeleted`, `DeletedSince` | ✅ |
+| a `GroupBy` projected into an **anonymous type** | ❌ [#743](https://github.com/JasperFx/polecat/issues/743) |
 | a **strong-typed** document id (`readonly record struct FooId(Guid)`) | ❌ [#751](https://github.com/JasperFx/polecat/issues/751) |
 
 ### What makes the supported shapes work
@@ -116,13 +123,26 @@ routinely `Guid`, `int` or `long`.
 nothing in Polecat can name. A natively-published store whose documents use `readonly record struct`
 ids will still fail; plain `Guid` / `string` / `int` / `long` ids work.
 
-### LINQ works, and the one shape that does not is a projection into an anonymous type
+### LINQ works, and the one shape that does not is a `GroupBy` into an anonymous type
 
 `Query<T>()` reads, enum comparisons, child-collection filters, the scalar aggregates (`CountAsync`,
-`AnyAsync`, `SumAsync`, `MinAsync`, `AverageAsync`), `GroupBy` and `GroupJoin(...).SelectMany(...)`
-all run in a native image, measured by `Polecat.AotRuntimeSmoke`.
+`AnyAsync`, `SumAsync`, `MinAsync`, `AverageAsync`), member and object projections, ordering and
+paging, metadata and soft-delete filters, `GroupBy` and `GroupJoin(...).SelectMany(...)` all run in a
+native image, measured by `Polecat.AotRuntimeSmoke`. There are no includes to measure: Polecat does not
+implement `Include<T>()` ([marten-gaps.md](https://github.com/JasperFx/polecat/blob/main/marten-gaps.md)).
 
-::: danger A projection into an anonymous type cannot work
+::: tip Two LINQ defects fixed in 5.37, both found by extending the measurement
+- **A value-type `Select`** — `Select(x => x.Id)` over a `Guid`, an `enum`, an `int` — threw
+  `NotSupportedException` ("missing native code"). The providers closed `ScalarListHandler<T>` over the
+  element type with `MakeGenericType`, which has no compiled body for a value type. `ToListAsync<T>` now
+  roots the instantiation while `T` is still a compile-time fact.
+- **Keyset cursor paging** threw on every page that had a successor. The cursor codec called the
+  reflection-default `JsonSerializer` overloads, which take no options and so never see your
+  `JsonSerializerContext` — nothing you could register would have helped. It now writes with
+  `Utf8JsonWriter`, byte-for-byte what it wrote before, so cursors your clients already hold stay valid.
+:::
+
+::: danger A `GroupBy` projected into an anonymous type cannot work
 ```cs
 // ❌ fails in a native image
 .GroupBy(q => q.Difficulty).Select(g => new { g.Key, Count = g.Count() })
@@ -132,7 +152,9 @@ all run in a native image, measured by `Polecat.AotRuntimeSmoke`.
 ```
 
 `GroupByListHandler` deserializes the projection through `System.Text.Json`, which under Native AOT
-needs a `JsonTypeInfo` from your source-generated context. **You cannot supply one for an anonymous
+needs a `JsonTypeInfo` from your source-generated context. It is specific to `GroupBy`: a plain
+`Select(x => new { x.Title })` is measured as working, because its selector does not go through the
+serializer. **You cannot supply one for an anonymous
 type**, because `[JsonSerializable]` needs a nameable type — so unlike "root your document types"
 below, this is not a contract you can satisfy. Project into a named type and register it with your
 `JsonSerializerContext`.
@@ -146,15 +168,20 @@ source-generated serializer — which is the assumption that fails here.
 ### Why the LINQ surface still carries an AOT warning
 
 [#743](https://github.com/JasperFx/polecat/issues/743) asked for `PolecatQueryableExtensions`'
-`[RequiresDynamicCode]` to be narrowed to "the shapes that genuinely need a JIT". Measuring found
-that set is **empty**: `MakeGenericType` on these paths closes over reference types, which share a
-canonical body, and ILC interprets the expression trees `WhereClauseParser` compiles rather than
-refusing them.
+`[RequiresDynamicCode]` to be narrowed to "the shapes that genuinely need a JIT". The first round of
+measurement found that set **empty** — the where-clause shapes, the scalar aggregates, `GroupBy` and
+`GroupJoin` all ran — and concluded that `MakeGenericType` on these paths only closed over reference
+types.
 
-The annotation stays anyway, and the reasoning is worth stating because it is the opposite of what
-the measurement first suggested. Removing a warning asserts safety across the **whole** surface —
-17 files in `Polecat/Linq` carry it, covering includes, metadata, soft deletes, cursor paging and
-the selectors, and the measured shapes are a fraction of that. Removing it would also mean putting a
+⚠️ **That conclusion was wrong, and the annotation it would have removed was covering two real
+failures.** Extending the measurement to the rest of the surface — metadata, soft deletes, paging and
+the selectors — found that a value-type `Select` and keyset cursor paging both threw in a native
+image (both fixed in 5.37; see above). Neither was reachable from the shapes the first round measured.
+A warning removed then would have been removed over code that did not work.
+
+The annotation stays, and that history is the argument. Removing a warning asserts safety across the
+**whole** surface — 17 files in `Polecat/Linq` carry it — and what is measured is still a sample of
+it, however much larger. Removing it would also mean putting a
 class-level `UnconditionalSuppressMessage` back on the providers to silence the ~21
 `MakeGenericType` sites, which is the exact form [#738](https://github.com/JasperFx/polecat/pull/738)
 removed as the original defect.
@@ -268,8 +295,8 @@ Meet the three contract items above and a natively-published app can construct a
 schema, write documents, load them by id, append and read events, aggregate a stream live, and run
 `Query<T>()` — including the scalar aggregates, `GroupBy` and `GroupJoin`. The two things you cannot
 do are use a **strong-typed document id** ([#751](https://github.com/JasperFx/polecat/issues/751)) and
-project into an **anonymous type** ([#743](https://github.com/JasperFx/polecat/issues/743)); project
-into a named type registered with your `JsonSerializerContext` instead.
+project a `GroupBy` into an **anonymous type** ([#743](https://github.com/JasperFx/polecat/issues/743));
+project it into a named type registered with your `JsonSerializerContext` instead.
 
 Measured rather than asserted — `Polecat.AotRuntimeSmoke` publishes native and runs every one of
 those shapes against SQL Server on each build.

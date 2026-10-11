@@ -1525,13 +1525,18 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
     {
         // TResult is IReadOnlyList<TScalar>, extract TScalar
         var scalarType = typeof(TResult).GetGenericArguments()[0];
-        var handlerType = typeof(ScalarListHandler<>).MakeGenericType(scalarType);
-                // #741: the non-generic IQueryHandler, not reflection. BOTH
+
+        // #743: an instantiation ToListAsync<T> rooted statically first, so a VALUE-type scalar has native
+        // code under AOT; MakeGenericType only for a path no generic call site reached. See
+        // ScalarListHandlers.
+        // #741: the non-generic IQueryHandler, not reflection. BOTH
         // handlerType.GetMethod("HandleAsync")! and task.GetType().GetProperty("Result")!
         // return null for a trimmed member rather than throwing, so each `!` was a latent
         // NullReferenceException under Native AOT -- waiting for whichever query shape got
         // here first.
-        var handler = (QueryHandlers.IQueryHandler)Activator.CreateInstance(handlerType)!;
+        var handler = ScalarListHandlers.TryCreate(scalarType)
+                      ?? (QueryHandlers.IQueryHandler)Activator.CreateInstance(
+                          typeof(ScalarListHandler<>).MakeGenericType(scalarType))!;
 
         return (TResult)(await handler.HandleAsObjectAsync(reader, token).ConfigureAwait(false))!;
     }

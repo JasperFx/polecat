@@ -300,20 +300,19 @@ internal class EventLinqQueryProvider : IPolecatAsyncQueryProvider
     {
         var scalarType = typeof(TResult).GetGenericArguments()[0];
 
-        // Polecat#46 cold-start: cache the parameterless ctor delegate for
+        // #743: the instantiation ToListAsync<T> rooted statically, so a VALUE-type scalar has native code
+        // under AOT. Polecat#46 cold-start: otherwise cache the parameterless ctor delegate for
         // ScalarListHandler<TScalar> per scalarType via GenericFactoryCache.
-        var handler = GenericFactoryCache.BuildAs<object>(
-            typeof(ScalarListHandler<>),
-            scalarType,
-            static closed => () => Activator.CreateInstance(closed)!);
+        var handler = ScalarListHandlers.TryCreate(scalarType)
+                      ?? GenericFactoryCache.BuildAs<IQueryHandler>(
+                          typeof(ScalarListHandler<>),
+                          scalarType,
+                          static closed => () => (IQueryHandler)Activator.CreateInstance(closed)!);
 
-        var handlerType = handler.GetType();
-        var handleMethod = handlerType.GetMethod("HandleAsync")!;
-        var task = (Task)handleMethod.Invoke(handler, [reader, token])!;
-        await task;
-
-        var resultProperty = task.GetType().GetProperty("Result")!;
-        return (TResult)resultProperty.GetValue(task)!;
+        // #741's fix, which the document provider took and this copy never did: the non-generic
+        // IQueryHandler instead of GetMethod("HandleAsync")! and GetProperty("Result")!, both of which
+        // return null for a trimmed member, so each `!` was a NullReferenceException under Native AOT.
+        return (TResult)(await handler.HandleAsObjectAsync(reader, token).ConfigureAwait(false))!;
     }
 
     [RequiresDynamicCode("Closes DeserializingSelector<> + OneResultHandler<> over documentType via Type.MakeGenericType.")]

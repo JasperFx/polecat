@@ -21,6 +21,10 @@ using Microsoft.Extensions.Hosting;
 using Polecat;
 using Polecat.AotRuntimeSmoke;
 using Polecat.Linq;
+using Polecat.Linq.CursorPaging;
+using Polecat.Linq.Metadata;
+using Polecat.Linq.SoftDeletes;
+using Polecat.Pagination;
 
 var connectionString =
     Environment.GetEnvironmentVariable("POLECAT_TESTING_DATABASE")
@@ -90,7 +94,7 @@ async Task Shape(string name, string issue, Func<Task> action, Expectation? expe
         // ⚠️ The first few frames, because the MESSAGE is not always enough. polecat#741: the LINQ
         // shapes fail with a bare NullReferenceException, which names nothing -- and in a native
         // image there is no debugger to attach, so whatever the lane prints is the whole diagnosis.
-        // Trimmed to keep an eighteen-shape run readable.
+        // Trimmed to keep a run of thirty-odd shapes readable.
         foreach (var frame in (e.StackTrace ?? string.Empty)
                  .Split('\n', StringSplitOptions.RemoveEmptyEntries).Take(6))
         {
@@ -394,6 +398,189 @@ await Shape("LINQ GroupJoin", "polecat#743", async () =>
     _ = joined.Count;
 });
 
+// --- 17+. THE REST OF THE LINQ SURFACE ---------------------------------------
+// polecat#743's last measurement item: "includes, metadata queries, soft-delete filters, cursor
+// paging, the selectors" -- the surface the class-level [RequiresDynamicCode] covers and the shapes
+// above did not reach. This is what the annotation decision is waiting on, because a warning removed
+// on partial measurement is the understating suppression again with extra steps.
+//
+// ⚠️ Includes are NOT measured here because Polecat does not have them: marten-gaps.md lists
+// Include<T>() as not planned. That is an absence, not a pass, and it is said here so nobody reads the
+// missing shape as an oversight.
+//
+// Every shape is declared to PASS. Any that does not is a finding, and goes in with an Expectation
+// citing an issue, never in silence.
+
+// --- selectors: what a projection closes over ---------------------------------
+// The selector is chosen by the projected type, so each of these closes a different generic. The
+// value-type ones (an enum, an int) are the shape with no canonical body to share -- the #733 pattern.
+
+await Shape("LINQ Select a REFERENCE-type member (string)", "polecat#743", async () =>
+{
+    await using var scope = host.Services.CreateAsyncScope();
+    var session = scope.ServiceProvider.GetRequiredService<IDocumentSession>();
+    var titles = await session.Query<Quest>().Select(q => q.Title).ToListAsync();
+    if (titles.Count == 0) throw new InvalidOperationException("no titles projected");
+});
+
+await Shape("LINQ Select a VALUE-type member (enum)", "polecat#743", async () =>
+{
+    await using var scope = host.Services.CreateAsyncScope();
+    var session = scope.ServiceProvider.GetRequiredService<IDocumentSession>();
+    var levels = await session.Query<Quest>().Select(q => q.Difficulty).ToListAsync();
+    if (levels.Count == 0) throw new InvalidOperationException("no enums projected");
+});
+
+// ⚠️ The enum shape above is what FOUND this: ScalarListHandler<Difficulty> had no native code,
+// because the providers closed it over the element type with MakeGenericType. A Guid id is the case
+// real code hits most, and the event provider carried its own copy of the same closing -- so both are
+// measured rather than inferred from the enum.
+await Shape("LINQ Select a Guid id (value type)", "polecat#743", async () =>
+{
+    await using var scope = host.Services.CreateAsyncScope();
+    var session = scope.ServiceProvider.GetRequiredService<IDocumentSession>();
+    var ids = await session.Query<Quest>().Select(q => q.Id).ToListAsync();
+    if (!ids.Contains(questId)) throw new InvalidOperationException("the stored id was not projected");
+});
+
+await Shape("event LINQ Select a value-type member (long)", "polecat#743", async () =>
+{
+    await using var scope = host.Services.CreateAsyncScope();
+    var session = scope.ServiceProvider.GetRequiredService<IDocumentSession>();
+    var sequences = await session.Events.QueryAllRawEvents().Select(e => e.Sequence).ToListAsync();
+    if (sequences.Count == 0) throw new InvalidOperationException("no event sequences projected");
+});
+
+await Shape("LINQ Select into a NAMED type, no GroupBy", "polecat#743", async () =>
+{
+    await using var scope = host.Services.CreateAsyncScope();
+    var session = scope.ServiceProvider.GetRequiredService<IDocumentSession>();
+    var rows = await session.Query<Quest>()
+        .Select(q => new DifficultyTally { Key = q.Difficulty, Count = q.Tags.Count })
+        .ToListAsync();
+    if (rows.Count == 0) throw new InvalidOperationException("no rows projected");
+});
+
+// ⚠️ The GroupBy anonymous projection fails in GroupByListHandler; whether a PLAIN Select into an
+// anonymous type shares that wall depends on whether its selector deserializes through STJ too.
+// Measured rather than assumed in either direction.
+await Shape("LINQ Select into an ANONYMOUS type, no GroupBy", "polecat#743", async () =>
+{
+    await using var scope = host.Services.CreateAsyncScope();
+    var session = scope.ServiceProvider.GetRequiredService<IDocumentSession>();
+    var rows = await session.Query<Quest>().Select(q => new { q.Title, q.Difficulty }).ToListAsync();
+    if (rows.Count == 0) throw new InvalidOperationException("no rows projected");
+});
+
+// ⚠️ No SelectMany over a child collection. It was added, and failed on CoreCLR as well as native:
+// Polecat refuses that operator outright (BadLinqExpressionException, "refused rather than ignored"),
+// and supports SelectMany only after a GroupJoin, which the GroupJoin shape above covers. A shape
+// that fails without AOT measures the harness, not AOT -- the trap #743 recorded for its own first run.
+
+await Shape("LINQ Select scalar + Distinct", "polecat#743", async () =>
+{
+    await using var scope = host.Services.CreateAsyncScope();
+    var session = scope.ServiceProvider.GetRequiredService<IDocumentSession>();
+    var titles = await session.Query<Quest>().Select(q => q.Title).Distinct().ToListAsync();
+    if (titles.Count == 0) throw new InvalidOperationException("no distinct titles");
+});
+
+// --- single-row terminals and ordering ---------------------------------------
+
+await Shape("LINQ OrderBy + Skip + Take", "polecat#743", async () =>
+{
+    await using var scope = host.Services.CreateAsyncScope();
+    var session = scope.ServiceProvider.GetRequiredService<IDocumentSession>();
+    _ = await session.Query<Quest>().OrderBy(q => q.Title).ThenBy(q => q.Id).Skip(0).Take(5).ToListAsync();
+});
+
+await Shape("LINQ FirstOrDefaultAsync / SingleOrDefaultAsync", "polecat#743", async () =>
+{
+    await using var scope = host.Services.CreateAsyncScope();
+    var session = scope.ServiceProvider.GetRequiredService<IDocumentSession>();
+    var first = await session.Query<Quest>().Where(q => q.Id == questId).FirstOrDefaultAsync();
+    var single = await session.Query<Quest>().Where(q => q.Id == questId).SingleOrDefaultAsync();
+    if (first is null || single is null) throw new InvalidOperationException("the stored quest was not found");
+});
+
+await Shape("LINQ string StartsWith / Contains", "polecat#743", async () =>
+{
+    await using var scope = host.Services.CreateAsyncScope();
+    var session = scope.ServiceProvider.GetRequiredService<IDocumentSession>();
+    var found = await session.Query<Quest>()
+        .Where(q => q.Title.StartsWith("smoke") || q.Title.Contains("test")).ToListAsync();
+    if (found.Count == 0) throw new InvalidOperationException("string predicates matched nothing");
+});
+
+// --- paging -------------------------------------------------------------------
+
+await Shape("ToPagedListAsync", "polecat#743", async () =>
+{
+    await using var scope = host.Services.CreateAsyncScope();
+    var session = scope.ServiceProvider.GetRequiredService<IDocumentSession>();
+    var page = await session.Query<Quest>().OrderBy(q => q.Id).ToPagedListAsync(1, 10);
+    if (page.TotalItemCount == 0) throw new InvalidOperationException("paged list is empty");
+});
+
+await Shape("ToJsonPageByCursorAsync (cursor paging)", "polecat#743", async () =>
+{
+    await using var scope = host.Services.CreateAsyncScope();
+    var session = scope.ServiceProvider.GetRequiredService<IDocumentSession>();
+    var page = await session.Query<Quest>().OrderBy(q => q.Id).ToJsonPageByCursorAsync(null, 10);
+    _ = page;
+});
+
+await Shape("ToJsonArrayAsync", "polecat#743", async () =>
+{
+    await using var scope = host.Services.CreateAsyncScope();
+    var session = scope.ServiceProvider.GetRequiredService<IDocumentSession>();
+    var json = await session.Query<Quest>().Where(q => q.Id == questId).ToJsonArrayAsync();
+    if (!json.Contains("smoke-test")) throw new InvalidOperationException($"unexpected json: {json}");
+});
+
+// --- metadata filters ----------------------------------------------------------
+
+await Shape("LINQ ModifiedSince / CreatedSince", "polecat#743", async () =>
+{
+    var since = DateTimeOffset.UtcNow.AddHours(-1);
+    await using var scope = host.Services.CreateAsyncScope();
+    var session = scope.ServiceProvider.GetRequiredService<IDocumentSession>();
+    var modified = await session.Query<Quest>().ModifiedSince(since).ToListAsync();
+    var created = await session.Query<Quest>().CreatedSince(since).ToListAsync();
+    if (modified.Count == 0 || created.Count == 0) throw new InvalidOperationException(
+        $"metadata filters matched modified={modified.Count} created={created.Count}");
+});
+
+// --- soft deletes ---------------------------------------------------------------
+// A [SoftDeleted] type: the default filter hides it, and each of the three operators reaches it.
+
+await Shape("soft delete: default filter, MaybeDeleted, IsDeleted, DeletedSince", "polecat#743", async () =>
+{
+    var relicId = Guid.NewGuid();
+    var before = DateTimeOffset.UtcNow.AddMinutes(-5);
+
+    await using (var scope = host.Services.CreateAsyncScope())
+    {
+        var session = scope.ServiceProvider.GetRequiredService<IDocumentSession>();
+        session.Store(new Relic { Id = relicId, Name = "aot" });
+        await session.SaveChangesAsync();
+        session.Delete<Relic>(relicId);
+        await session.SaveChangesAsync();
+    }
+
+    await using var read = host.Services.CreateAsyncScope();
+    var reader = read.ServiceProvider.GetRequiredService<IDocumentSession>();
+
+    var visible = await reader.Query<Relic>().Where(r => r.Id == relicId).ToListAsync();
+    var maybe = await reader.Query<Relic>().MaybeDeleted().Where(r => r.Id == relicId).ToListAsync();
+    var deleted = await reader.Query<Relic>().IsDeleted().Where(r => r.Id == relicId).ToListAsync();
+    var since = await reader.Query<Relic>().DeletedSince(before).Where(r => r.Id == relicId).ToListAsync();
+
+    if (visible.Count != 0 || maybe.Count != 1 || deleted.Count != 1 || since.Count != 1)
+        throw new InvalidOperationException(
+            $"visible={visible.Count} maybe={maybe.Count} deleted={deleted.Count} since={since.Count}");
+});
+
 Console.WriteLine(regressions.Count == 0
     ? "Polecat AOT runtime smoke OK \u2014 every shape matched its declared expectation."
     : $"Polecat AOT runtime smoke FAILED: {string.Join(", ", regressions)}");
@@ -444,6 +631,7 @@ namespace Polecat.AotRuntimeSmoke
     [JsonSerializable(typeof(Quest))]
     [JsonSerializable(typeof(QuestStarted))]
     [JsonSerializable(typeof(Badge))]
+    [JsonSerializable(typeof(Relic))]
     [JsonSerializable(typeof(JasperFx.Events.Daemon.DeadLetterEvent))]
     [JsonSerializable(typeof(DifficultyTally))]
     [JsonSerializable(typeof(JoinedTitle))]
@@ -460,6 +648,7 @@ namespace Polecat.AotRuntimeSmoke
         [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties, typeof(Quest))]
         [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties, typeof(QuestStarted))]
         [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties, typeof(Badge))]
+        [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties, typeof(Relic))]
         [DynamicDependency(DynamicallyAccessedMemberTypes.All, typeof(BadgeId))]
         internal static void Keep()
         {
@@ -486,6 +675,14 @@ namespace Polecat.AotRuntimeSmoke
     }
 
     internal enum Difficulty { Easy, Hard }
+
+    /// <summary>polecat#743: a soft-deleted document, for the soft-delete operators.</summary>
+    [Polecat.Attributes.SoftDeleted]
+    internal sealed class Relic
+    {
+        public Guid Id { get; set; }
+        public string Name { get; set; } = string.Empty;
+    }
 
     internal sealed record QuestStarted(string Title);
 
