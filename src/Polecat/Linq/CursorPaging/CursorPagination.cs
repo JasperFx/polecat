@@ -1,4 +1,3 @@
-using System.Text;
 using System.Text.Json;
 using Polecat.Linq.Members;
 using Polecat.Linq.SqlGeneration;
@@ -46,16 +45,69 @@ internal static class CursorPagination
     /// <summary>
     ///     Encodes the sort-key values of the last row on a page into an opaque continuation cursor.
     /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         ⚠️ <b>Written with <see cref="Utf8JsonWriter" />, not <see cref="JsonSerializer" /></b>
+    ///         (polecat#743). This used to be <c>JsonSerializer.Serialize(object?[])</c> — the
+    ///         reflection-default overload, which takes no options, so it never sees a consumer's
+    ///         source-generated <c>JsonSerializerContext</c>. Under Native AOT reflection-based STJ is
+    ///         disabled, so cursor paging threw on every page that had a successor, and there was nothing a
+    ///         consumer could register to stop it. Found by <c>Polecat.AotRuntimeSmoke</c>.
+    ///     </para>
+    ///     <para>
+    ///         The bytes are unchanged, which is what keeps a cursor a client is already holding valid across
+    ///         an upgrade: for every value type below, STJ's own converter is a single call to the matching
+    ///         <see cref="Utf8JsonWriter" /> method with the same default encoder, so this writes what it wrote.
+    ///         <c>cursor_codec_tests</c> pins that per type against <see cref="JsonSerializer" /> itself.
+    ///     </para>
+    ///     <para>
+    ///         The set is exactly what <see cref="ConvertSlot" /> can decode. A key of any other type was
+    ///         always refused — on the NEXT request, by decode — and that boundary stays where it was: such
+    ///         a value is written as a string, so the next request still fails with the same message from the
+    ///         same place. ⚠️ NOT as null, which reads as the obvious placeholder and is wrong:
+    ///         <see cref="ConvertSlot" /> answers a null slot before it checks the type, so a null would
+    ///         decode quietly instead of being refused.
+    ///     </para>
+    /// </remarks>
     public static string Encode(IReadOnlyList<object?> keyValues)
     {
-        var array = new object?[keyValues.Count];
-        for (var i = 0; i < keyValues.Count; i++)
+        var buffer = new System.Buffers.ArrayBufferWriter<byte>();
+        using (var writer = new Utf8JsonWriter(buffer))
         {
-            array[i] = NormalizeForCursor(keyValues[i]);
+            writer.WriteStartArray();
+            foreach (var value in keyValues)
+            {
+                WriteSlot(writer, NormalizeForCursor(value));
+            }
+
+            writer.WriteEndArray();
         }
 
-        var json = JsonSerializer.Serialize(array);
-        return Version + Convert.ToBase64String(Encoding.UTF8.GetBytes(json));
+        return Version + Convert.ToBase64String(buffer.WrittenSpan);
+    }
+
+    private static void WriteSlot(Utf8JsonWriter writer, object? value)
+    {
+        switch (value)
+        {
+            case null: writer.WriteNullValue(); break;
+            case string x: writer.WriteStringValue(x); break;
+            case Guid x: writer.WriteStringValue(x); break;
+            case bool x: writer.WriteBooleanValue(x); break;
+            case int x: writer.WriteNumberValue(x); break;
+            case long x: writer.WriteNumberValue(x); break;
+            case short x: writer.WriteNumberValue(x); break;
+            case byte x: writer.WriteNumberValue(x); break;
+            case decimal x: writer.WriteNumberValue(x); break;
+            case double x: writer.WriteNumberValue(x); break;
+            case float x: writer.WriteNumberValue(x); break;
+            case DateTimeOffset x: writer.WriteStringValue(x); break;
+            case DateTime x: writer.WriteStringValue(x); break;
+
+            // Not decodable, so decode refuses it on the next request, as it always has. A string, not a
+            // null: see the remarks on Encode.
+            default: writer.WriteStringValue(value.ToString()); break;
+        }
     }
 
     /// <summary>
@@ -71,11 +123,18 @@ internal static class CursorPagination
                 $"Unrecognized or unversioned cursor. Expected a '{Version}' prefixed value.", nameof(cursor));
         }
 
+        // Parsed with JsonDocument rather than JsonSerializer.Deserialize<JsonElement[]>, for the reason
+        // Encode's remarks give: the reflection-default overload cannot run under Native AOT (#743).
         JsonElement[] slots;
         try
         {
-            var json = Encoding.UTF8.GetString(Convert.FromBase64String(cursor[Version.Length..]));
-            slots = JsonSerializer.Deserialize<JsonElement[]>(json) ?? [];
+            using var document = JsonDocument.Parse(Convert.FromBase64String(cursor[Version.Length..]));
+            slots = document.RootElement.ValueKind switch
+            {
+                JsonValueKind.Array => document.RootElement.EnumerateArray().Select(x => x.Clone()).ToArray(),
+                JsonValueKind.Null => [],
+                _ => throw new JsonException("A cursor payload is a JSON array.")
+            };
         }
         catch (Exception ex) when (ex is FormatException or JsonException)
         {
