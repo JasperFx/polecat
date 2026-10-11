@@ -122,6 +122,42 @@ far longer than `StopAndDrainTimeout` — on a HotCold node that had already los
 another node had taken it over.
 :::
 
+## The HotCold Shard Lock
+
+Under `DaemonMode.HotCold`, each node takes a SQL Server `sp_getapplock` per shard set to decide which node
+runs it. Those holds are **session-scoped**: when SQL Server ends a node's session — a failover, a gateway
+reconfiguration, a killed session — every lock goes with it. So the lock runs a monitor that periodically asks
+SQL Server which of its locks it still holds, and drops the ones it has lost so the daemon stops those shards
+instead of running them alongside the node that took them over.
+
+The defaults are a 5 second interval and a 5 second probe timeout. They are configurable:
+
+```cs
+opts.Events.ConfigureAdvisoryLock = lockOptions =>
+{
+    lockOptions.MonitoringInterval = 10.Seconds();
+    lockOptions.ProbeTimeout = 3.Seconds();
+};
+```
+
+The probe costs nothing while a node holds no locks, so its load tracks the shards a node actually holds,
+not the databases configured.
+
+**Keep `ProbeTimeout` under `MonitoringInterval`.** Shutdown waits behind an in-flight probe, so the probe
+timeout bounds daemon shutdown as much as it bounds a query.
+
+::: danger Turning the monitor off reintroduces split brain
+A non-positive or infinite `MonitoringInterval` starts no monitor at all. A node that then loses its session
+goes on reporting its locks as held while another node takes them, and **both nodes run the same shard** —
+the failure [weasel#695](https://github.com/JasperFx/weasel/issues/695) fixed, which in a three-replica load
+test processed 22,000 outbox events more than once. The only reason to opt out is a deployment with so many
+tenant databases that one parked timer each is itself the cost.
+:::
+
+There is no release timeout to configure, unlike Marten's PostgreSQL lock. A pooled `SqlConnection` keeps its
+session — and its locks — when it closes, so a release abandoned on a deadline would leave the lock held
+against the next node that needs it.
+
 ## Waiting for Non-Stale Data
 
 ### CatchUpAsync

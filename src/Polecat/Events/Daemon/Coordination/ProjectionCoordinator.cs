@@ -112,6 +112,31 @@ internal class ProjectionCoordinator : ProjectionCoordinatorBase, IProjectionCoo
         return daemon;
     }
 
+    /// <summary>
+    ///     sp_getapplock is session-bound and shared by both multi-node distributors.
+    ///     Weasel.SqlServer.AdvisoryLock (weasel#284 / α7) satisfies the lifted
+    ///     JasperFx.Events.Daemon.IAdvisoryLock contract directly, so this closure is the only
+    ///     Polecat-side bridge needed.
+    /// </summary>
+    /// <remarks>
+    ///     #749: the lock's monitor settings come from <see cref="EventStoreOptions.ConfigureAdvisoryLock" />,
+    ///     built ONCE here rather than per lock, so the action runs once however many databases the
+    ///     coordinator spans. AdvisoryLock reads the values in its constructor and keeps no reference, so
+    ///     sharing the instance is safe.
+    /// </remarks>
+    internal static Func<IProjectionDatabase, IAdvisoryLock> BuildLockFactory(StoreOptions options,
+        ILoggerFactory loggerFactory)
+    {
+        var lockLogger = loggerFactory.CreateLogger<AdvisoryLock>();
+        var lockOptions = options.Events.BuildAdvisoryLockOptions();
+
+        return db => new AdvisoryLock(
+            () => new SqlConnection(((PolecatDatabase)db).ConnectionString),
+            lockLogger,
+            db.Identifier,
+            lockOptions);
+    }
+
     private static IProjectionDistributor? BuildDistributor(DocumentStore store, ILoggerFactory loggerFactory)
     {
         // Mirrors Marten's pick: tenancy with multiple databases →
@@ -149,16 +174,7 @@ internal class ProjectionCoordinator : ProjectionCoordinatorBase, IProjectionCoo
         Func<IProjectionDatabase, IReadOnlyList<ShardName>, int, IProjectionSet> setFactory =
             (db, names, lockId) => new ProjectionSet(lockId, (PolecatDatabase)db, names);
 
-        // sp_getapplock is session-bound and shared by both multi-node
-        // distributors. Weasel.SqlServer.AdvisoryLock (weasel#284 / α7)
-        // satisfies the lifted JasperFx.Events.Daemon.IAdvisoryLock contract
-        // directly, so this closure is the only Polecat-side bridge needed.
-        var lockLogger = loggerFactory.CreateLogger<AdvisoryLock>();
-        Func<IProjectionDatabase, IAdvisoryLock> lockFactory =
-            db => new AdvisoryLock(
-                () => new SqlConnection(((PolecatDatabase)db).ConnectionString),
-                lockLogger,
-                db.Identifier);
+        var lockFactory = BuildLockFactory(options, loggerFactory);
 
         var baseLockId = options.DaemonSettings.DaemonLockId;
 
