@@ -813,15 +813,21 @@
                * jasperfx#794 (#984) and the BlockIdleWakeupTests race fix (#973) — upstream CI and
                  upstream test hygiene. INERT.
 
-             JasperFx.RuntimeCompiler stays at 5.0.0: already the latest on that line. -->
-        <PackageVersion Include="JasperFx" Version="2.81.0" />
-        <PackageVersion Include="JasperFx.Events" Version="2.81.0" />
+             JasperFx.RuntimeCompiler stays at 5.0.0: already the latest on that line.
+             JasperFx 2.84.0 (from 2.81.0). REQUIRED, not a roll-forward: it carries jasperfx#869,
+             the Dynamic LINQ criteria surface IDocumentStoreDiagnostics.QueryDocumentsAsync now
+             applies — DocumentQueryOptions.ApplyCriteriaTo / Untranslatable, DynamicQueryPolicy and
+             DynamicQueryShapeRules (including SqlNullSemantics), and the twelve criteria facts in
+             DocumentStoreDiagnosticsCompliance that SupportsDocumentDiagnosticCriteria => true now
+             runs. -->
+        <PackageVersion Include="JasperFx" Version="2.84.0" />
+        <PackageVersion Include="JasperFx.Events" Version="2.84.0" />
         <!--
              The shared cross-store event sourcing compliance suites. Source-only package: the
              suites compile inside Polecat.Tests so JasperFx's aggregate source generator binds
              Polecat's own session types.
         -->
-        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="2.81.0" />
+        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="2.84.0" />
         <!-- Pin the sibling JasperFx packages for parity with Marten 9's matrix
              even though Polecat doesn't currently reference them directly —
              keeps the lockstep matrix coherent when transitive resolution
@@ -829,7 +835,7 @@
              RuntimeCompiler 5.x line is the active continuation of the 4.x
              lineage; do not pin against the parallel stale 2.0.x series. -->
         <PackageVersion Include="JasperFx.RuntimeCompiler" Version="5.0.0" />
-        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.81.0" />
+        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.84.0" />
         <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
@@ -1282,7 +1288,7 @@
         <PackageVersion Include="Vogen" Version="7.0.0" />
 
         <!-- Source generators (matched to JasperFx.Events above) -->
-        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.81.0" />
+        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.84.0" />
 
         <!-- Build automation -->
         <PackageVersion Include="Nuke.Common" Version="9.0.4" />

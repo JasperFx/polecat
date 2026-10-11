@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Data;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -8,10 +9,12 @@ using JasperFx;
 using JasperFx.Core;
 using JasperFx.Core.Reflection;
 using JasperFx.Documents;
+using JasperFx.Linq;
 using JasperFx.MultiTenancy;
 using Microsoft.Data.SqlClient;
 
 using Polecat.Internal;
+using Polecat.Linq;
 namespace Polecat;
 
 public partial class DocumentStore : IDocumentStoreDiagnostics
@@ -65,23 +68,6 @@ public partial class DocumentStore : IDocumentStoreDiagnostics
         // question. Asserted first so it cannot be resolved by accident further down.
         options.AssertValidTenantScope();
 
-        // jasperfx#870: a criterion we cannot apply is REFUSED. Returning the unfiltered page is the
-        // one wrong answer - a console cannot tell it apart from a filter that matched every row.
-        // Polecat does not translate Dynamic LINQ yet (jasperfx#869).
-        if (options.Where.IsNotEmpty())
-        {
-            throw new DocumentCriteriaNotSupportedException(nameof(DocumentQueryOptions.Where),
-                "Polecat does not yet translate a Dynamic LINQ predicate for document diagnostics (jasperfx#869). "
-                + "Query without a Where, or use the store's own LINQ surface.");
-        }
-
-        if (options.OrderBy.IsNotEmpty())
-        {
-            throw new DocumentCriteriaNotSupportedException(nameof(DocumentQueryOptions.OrderBy),
-                "Polecat does not yet translate a Dynamic LINQ ordering for document diagnostics (jasperfx#869). "
-                + "Query without an OrderBy; rows come back ordered by id.");
-        }
-
         var resolved = ResolveForDiagnostics(documentTypeName);
         if (resolved == null)
         {
@@ -111,7 +97,7 @@ public partial class DocumentStore : IDocumentStoreDiagnostics
         }
 
         var conditions = new List<string>();
-        var parameters = new List<Action<SqlCommand>>();
+        var parameters = new List<Action<SqlParameterCollection>>();
 
         if (options.IdEquals.IsNotEmpty())
         {
@@ -132,7 +118,7 @@ public partial class DocumentStore : IDocumentStoreDiagnostics
         {
             var effective = tenantId ?? DefaultTenantId();
             conditions.Add("tenant_id = @tenant");
-            parameters.Add(cmd => cmd.Parameters.AddVarChar("@tenant", effective));
+            parameters.Add(p => p.AddVarChar("@tenant", effective));
         }
 
         // Hierarchies: naming a sub-class returns only its rows; naming the root returns every row in
@@ -142,7 +128,7 @@ public partial class DocumentStore : IDocumentStoreDiagnostics
         {
             var alias = mapping.AliasFor(requestedType);
             conditions.Add("doc_type = @doc_type");
-            parameters.Add(cmd => cmd.Parameters.AddVarChar("@doc_type", alias));
+            parameters.Add(p => p.AddVarChar("@doc_type", alias));
         }
 
         if (mapping.DeleteStyle == DeleteStyle.SoftDelete && !options.IncludeSoftDeleted)
@@ -153,26 +139,26 @@ public partial class DocumentStore : IDocumentStoreDiagnostics
         if (options.CorrelationId != null && mapping.Metadata.CorrelationId.Enabled)
         {
             conditions.Add("correlation_id = @correlation");
-            parameters.Add(cmd => cmd.Parameters.AddVarChar("@correlation", options.CorrelationId!));
+            parameters.Add(p => p.AddVarChar("@correlation", options.CorrelationId!));
         }
 
         if (options.CausationId != null && mapping.Metadata.CausationId.Enabled)
         {
             conditions.Add("causation_id = @causation");
-            parameters.Add(cmd => cmd.Parameters.AddVarChar("@causation", options.CausationId!));
+            parameters.Add(p => p.AddVarChar("@causation", options.CausationId!));
         }
 
         if (options.LastModifiedBy != null && mapping.Metadata.LastModifiedBy.Enabled)
         {
             conditions.Add("last_modified_by = @last_modified_by");
-            parameters.Add(cmd => cmd.Parameters.AddVarChar("@last_modified_by", options.LastModifiedBy!));
+            parameters.Add(p => p.AddVarChar("@last_modified_by", options.LastModifiedBy!));
         }
 
         var where = conditions.Count > 0 ? " where " + string.Join(" and ", conditions) : "";
 
-        void Bind(SqlCommand command)
+        void Bind(SqlParameterCollection collection)
         {
-            foreach (var p in parameters) p(command);
+            foreach (var p in parameters) p(collection);
         }
 
         var table = mapping.QualifiedTableName;
@@ -182,6 +168,17 @@ public partial class DocumentStore : IDocumentStoreDiagnostics
         // row as tenants interleave.
         var order = conjoined && options.AllTenants ? "tenant_id, id" : "id";
 
+        if (options.HasCriteria())
+        {
+            // Translated BEFORE a connection is opened: a refusal costs no round trip.
+            var criteria = await TranslateCriteriaForDiagnosticsAsync(requestedType, mapping, options)
+                .ConfigureAwait(false);
+            var tenantFirst = conjoined && options.AllTenants;
+
+            return await QueryWithCriteriaAsync(mapping, options, criteria, tenantId, $"{table}{where}", selection,
+                tenantFirst, conditions.Count > 0, Bind, offset, pageNumber, pageSize, token).ConfigureAwait(false);
+        }
+
         await using var conn = new SqlConnection(ConnectionStringFor(tenantId));
         await conn.OpenAsync(token).ConfigureAwait(false);
 
@@ -189,7 +186,7 @@ public partial class DocumentStore : IDocumentStoreDiagnostics
         await using (var countCmd = conn.CreateCommand())
         {
             countCmd.CommandText = $"select count_big(*) from {table}{where}";
-            Bind(countCmd);
+            Bind(countCmd.Parameters);
             total = Convert.ToInt64(await countCmd.ExecuteScalarAsync(token).ConfigureAwait(false));
         }
 
@@ -199,7 +196,7 @@ public partial class DocumentStore : IDocumentStoreDiagnostics
             cmd.CommandText =
                 $"select {selection} from {table}{where} " +
                 $"order by {order} offset {offset} rows fetch next {pageSize} rows only";
-            Bind(cmd);
+            Bind(cmd.Parameters);
 
             await using var reader = await cmd.ExecuteReaderAsync(token).ConfigureAwait(false);
             while (await reader.ReadAsync(token).ConfigureAwait(false))
@@ -209,6 +206,178 @@ public partial class DocumentStore : IDocumentStoreDiagnostics
         }
 
         return new DocumentQueryResult(rows, total, pageNumber, pageSize);
+    }
+
+    /// <summary>
+    ///     jasperfx#869 — the page and total for a query that carries <see cref="DocumentQueryOptions.Where" />
+    ///     and/or <see cref="DocumentQueryOptions.OrderBy" />.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         <b>The mechanism: Polecat's LINQ provider translates the criteria, this surface keeps its
+    ///         own statement.</b> The text is composed onto <c>Query&lt;T&gt;()</c> for the REQUESTED type
+    ///         (so a sub-class name resolves the sub-class's members) through
+    ///         <see cref="DocumentQueryCriteria.ApplyCriteriaTo{T}" />, and the provider's own parser turns
+    ///         the result into WHERE fragments and ORDER BY terms. Those are appended to the same
+    ///         <c>select … from table where …</c> the criteria-free path runs, with the same scoping
+    ///         conditions bound the same way.
+    ///     </para>
+    ///     <para>
+    ///         <b>Why not run the LINQ query and read its rows.</b> Every semantic this surface already
+    ///         has — the tenant (including database-per-tenant, which needs this surface's own connection
+    ///         routing), <c>AllTenants</c>, soft deletes and <c>IncludeSoftDeleted</c>, the
+    ///         <c>doc_type</c> filter for a sub-class, <c>IdEquals</c> bound as the stored identity type,
+    ///         and the correlation / causation / last-modified-by filters — is a condition in that one
+    ///         statement. Several of them have no LINQ operator at all (the metadata columns), and the
+    ///         result must be the byte-exact stored JSON plus its metadata, not a deserialized document.
+    ///         Composing the provider's fragments into the existing statement keeps every one of those by
+    ///         construction, keeps the total and the page in the same WHERE, and is still one count and
+    ///         one page query — no id round trip and no second read. No operator text is ever spliced
+    ///         into SQL: the fragments are the provider's, and every value in them is a parameter.
+    ///     </para>
+    ///     <para>
+    ///         Ordering is tenant first under <c>AllTenants</c>, then the query's ordering — which
+    ///         <see cref="DocumentQueryCriteria.ApplyCriteriaTo{T}" /> tie-breaks by the identity member, so
+    ///         equal keys still page deterministically — and the id alone without an ordering.
+    ///     </para>
+    /// </remarks>
+    private async Task<DocumentQueryResult> QueryWithCriteriaAsync(Storage.DocumentMapping mapping,
+        DocumentQueryOptions options, Linq.SqlGeneration.Statement criteria, string? tenantId, string fromAndWhere,
+        string selection, bool tenantFirst, bool hasConditions, Action<SqlParameterCollection> bind, int offset,
+        int pageNumber, int pageSize, CancellationToken token)
+    {
+        await using var conn = new SqlConnection(ConnectionStringFor(tenantId));
+        await conn.OpenAsync(token).ConfigureAwait(false);
+
+        long total;
+        await using (var count = BuildCriteriaBatch(conn, options, $"select count_big(*) from {fromAndWhere}",
+                         criteria, hasConditions, bind, orderBy: null))
+        {
+            total = Convert.ToInt64(await count.ExecuteScalarAsync(token).ConfigureAwait(false));
+        }
+
+        var rows = new List<StoredDocument>();
+        await using (var page = BuildCriteriaBatch(conn, options, $"select {selection} from {fromAndWhere}", criteria,
+                         hasConditions, bind,
+                         orderBy: builder => AppendCriteriaOrdering(builder, criteria, tenantFirst, offset, pageSize)))
+        {
+            await using var reader = await page.ExecuteReaderAsync(token).ConfigureAwait(false);
+            while (await reader.ReadAsync(token).ConfigureAwait(false))
+            {
+                rows.Add(ReadStoredDocument(reader, mapping));
+            }
+        }
+
+        return new DocumentQueryResult(rows, total, pageNumber, pageSize);
+    }
+
+    /// <summary>
+    ///     One command: <paramref name="head" /> (which already carries this surface's own conditions),
+    ///     then the criteria's WHERE fragments, then <paramref name="orderBy" />. The fragments bind
+    ///     positional parameters through the builder; the scoping conditions keep their named, typed
+    ///     ones (#363 varchar binding), so the two cannot collide.
+    /// </summary>
+    private static SqlBatch BuildCriteriaBatch(SqlConnection conn, DocumentQueryOptions options, string head,
+        Linq.SqlGeneration.Statement criteria, bool hasConditions, Action<SqlParameterCollection> bind,
+        Action<Weasel.SqlServer.BatchBuilder>? orderBy)
+    {
+        var batch = new SqlBatch(conn);
+        try
+        {
+            var builder = new Weasel.SqlServer.BatchBuilder(batch);
+            builder.Append(head);
+
+            var first = !hasConditions;
+            foreach (var fragment in criteria.Wheres)
+            {
+                builder.Append(first ? " where (" : " and (");
+                fragment.Apply(builder);
+                builder.Append(")");
+                first = false;
+            }
+
+            orderBy?.Invoke(builder);
+            builder.Compile();
+        }
+        catch (Exception e) when (DocumentQueryCriteria.IsTranslationFailure(e))
+        {
+            // A fragment that refuses only when it is rendered is still the provider refusing the shape.
+            batch.Dispose();
+            throw options.Untranslatable(e);
+        }
+
+        bind(batch.BatchCommands[0].Parameters);
+        return batch;
+    }
+
+    private static void AppendCriteriaOrdering(Weasel.SqlServer.BatchBuilder builder,
+        Linq.SqlGeneration.Statement criteria, bool tenantFirst, int offset, int pageSize)
+    {
+        builder.Append(" order by ");
+        if (tenantFirst) builder.Append("tenant_id, ");
+
+        if (criteria.OrderBys.Count == 0)
+        {
+            builder.Append("id");
+        }
+        else
+        {
+            // A key that repeats an earlier one is dropped: it can never change the order, and SQL Server
+            // refuses the statement outright ("a column has been specified more than once in the order
+            // by list"). It is the ordinary case, not an edge one — an ordering that already names the
+            // id is tie-broken by the id again.
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            var first = true;
+            foreach (var term in criteria.OrderBys)
+            {
+                if (term.Literal is not null && !seen.Add(term.Literal)) continue;
+
+                if (!first) builder.Append(", ");
+                term.Apply(builder);
+                first = false;
+            }
+        }
+
+        builder.Append($" offset {offset} rows fetch next {pageSize} rows only");
+    }
+
+    private static System.Reflection.MethodInfo? _translateCriteria;
+
+    /// <summary>
+    ///     Compose the criteria onto <c>Query&lt;T&gt;()</c> for <paramref name="requestedType" /> and hand
+    ///     back the provider's translation, or throw the contract's refusal.
+    /// </summary>
+    [UnconditionalSuppressMessage("Trimming", "IL2026",
+        Justification = "jasperfx#869: criteria are operator-typed text applied to a runtime document type; DocumentQueryCriteria.ApplyCriteriaTo refuses outright when dynamic code is unavailable, and the document types reached here are the store's registered mappings, which Polecat's LINQ provider already requires to be preserved (see PolecatLinqQueryProvider). The explicit IDocumentStoreDiagnostics implementation cannot carry the annotation itself (IL2046).")]
+    [UnconditionalSuppressMessage("AOT", "IL3050",
+        Justification = "jasperfx#869: guarded — DocumentQueryCriteria.ApplyCriteriaTo throws DocumentCriteriaNotSupportedException when RuntimeFeature.IsDynamicCodeSupported is false, before any generic instantiation is used. The explicit IDocumentStoreDiagnostics implementation cannot carry the annotation itself (IL3051).")]
+    [UnconditionalSuppressMessage("Trimming", "IL2060",
+        Justification = "jasperfx#869: closes DiagnosticsCriteria.TranslateFor<T> over a registered document type; see the IL2026 justification.")]
+    private async Task<Linq.SqlGeneration.Statement> TranslateCriteriaForDiagnosticsAsync(Type requestedType,
+        Storage.DocumentMapping mapping, DocumentQueryOptions options)
+    {
+        if (!DocumentQueryCriteria.IsAvailable)
+        {
+            // Lets ApplyCriteriaTo phrase the refusal, without closing a generic over the type first.
+            options.ApplyCriteriaTo(Array.Empty<object>().AsQueryable());
+        }
+
+        try
+        {
+            // Looked up here rather than in a static initializer: a reflective reference to a
+            // [RequiresUnreferencedCode] member from an initializer is itself an unsuppressable IL2026.
+            _translateCriteria ??= typeof(DiagnosticsCriteria).GetMethod(nameof(DiagnosticsCriteria.TranslateFor),
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
+
+            var translation = (Task<Linq.SqlGeneration.Statement>)_translateCriteria
+                .MakeGenericMethod(requestedType).Invoke(null, [this, mapping, options])!;
+            return await translation.ConfigureAwait(false);
+        }
+        catch (System.Reflection.TargetInvocationException e) when (e.InnerException is not null)
+        {
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(e.InnerException).Throw();
+            throw;
+        }
     }
 
     /// <summary>
@@ -245,7 +414,7 @@ public partial class DocumentStore : IDocumentStoreDiagnostics
             $"select top 1 {SelectionFor(mapping)} from {mapping.QualifiedTableName} " +
             $"where {string.Join(" and ", conditions)}";
 
-        bind!(cmd);
+        bind!(cmd.Parameters);
         if (conjoined) cmd.Parameters.AddVarChar("@tenant", normalized ?? DefaultTenantId());
         if (filterByDocType) cmd.Parameters.AddVarChar("@doc_type", mapping.AliasFor(requestedType));
 
@@ -332,34 +501,34 @@ public partial class DocumentStore : IDocumentStoreDiagnostics
     ///     Convert the text id to the mapping's STORED identity type so the comparison can seek the
     ///     primary key. Returns false when the text cannot be that type, which matches nothing.
     /// </summary>
-    private static bool TryBindId(Storage.DocumentMapping mapping, string id, out Action<SqlCommand>? bind)
+    private static bool TryBindId(Storage.DocumentMapping mapping, string id, out Action<SqlParameterCollection>? bind)
     {
         var type = Nullable.GetUnderlyingType(mapping.InnerIdType) ?? mapping.InnerIdType;
 
         if (type == typeof(Guid))
         {
             if (!Guid.TryParse(id, out var guid)) { bind = null; return false; }
-            bind = cmd => cmd.Parameters.Add("@id", SqlDbType.UniqueIdentifier).Value = guid;
+            bind = p => p.Add("@id", SqlDbType.UniqueIdentifier).Value = guid;
             return true;
         }
 
         if (type == typeof(int))
         {
             if (!int.TryParse(id, out var i)) { bind = null; return false; }
-            bind = cmd => cmd.Parameters.Add("@id", SqlDbType.Int).Value = i;
+            bind = p => p.Add("@id", SqlDbType.Int).Value = i;
             return true;
         }
 
         if (type == typeof(long))
         {
             if (!long.TryParse(id, out var l)) { bind = null; return false; }
-            bind = cmd => cmd.Parameters.Add("@id", SqlDbType.BigInt).Value = l;
+            bind = p => p.Add("@id", SqlDbType.BigInt).Value = l;
             return true;
         }
 
         // varchar id: VarChar rather than NVarChar so the comparison does not wrap the column in
         // CONVERT_IMPLICIT and scan (#363).
-        bind = cmd => cmd.Parameters.AddVarChar("@id", id);
+        bind = p => p.AddVarChar("@id", id);
         return true;
     }
 
@@ -445,5 +614,142 @@ public partial class DocumentStore : IDocumentStoreDiagnostics
         }
 
         return Options.Providers.AllProviders.Select(p => p.Mapping);
+    }
+}
+
+/// <summary>
+///     jasperfx#869: the generic half of criteria translation, closed over the requested document type, and
+///     the shapes Polecat refuses because its LINQ provider would answer them WRONGLY rather than fail.
+/// </summary>
+/// <remarks>
+///     <para>
+///         A separate class, not a member of <see cref="DocumentStore" />, on purpose: a
+///         <c>[RequiresUnreferencedCode]</c> member on <see cref="DocumentStore" /> surfaces as IL2026 at
+///         <c>SecondaryStoreProxyFactory</c>, which emits a subclass of the store and so keeps every member
+///         of it reflectable.
+///     </para>
+///     <para>
+///         <b>The refusals are measured, not guessed.</b> Each one was found by running the shape against a
+///         seeded table and comparing with LINQ to objects running the same text, and each is pinned by
+///         <c>document_diagnostics_criteria_shapes</c>, which also asserts the raw provider is STILL wrong —
+///         so the day Polecat translates one of them correctly, that test says the rule can go. Shapes the
+///         provider cannot translate are not listed: it throws, and the surface turns that into a refusal.
+///     </para>
+/// </remarks>
+internal static class DiagnosticsCriteria
+{
+    private static readonly HashSet<Type> _dateAndTimeTypes =
+        [typeof(DateTime), typeof(DateTimeOffset), typeof(DateOnly), typeof(TimeOnly), typeof(TimeSpan)];
+
+    internal const string DateMemberRefusal =
+        "reads a member of a date or time value (PlacedAt.Year, Created.Date, Duration.TotalMinutes), which Polecat translates as a JSON path into the stored text, so it matches nothing. Compare the whole value with a range instead: PlacedAt >= @0 and PlacedAt < @1.";
+
+    internal const string NullableValueRefusal =
+        "reads .Value of a nullable member, which Polecat translates as a JSON path, so it matches nothing. Compare the member itself (ShippedAt > @0 — a null never matches), or test it with .HasValue.";
+
+    internal const string CollectionSizeRefusal =
+        "reads the Count or Length of a collection, which Polecat translates as a JSON path, so it matches nothing. Polecat cannot filter or order on a collection's size; Tags.Contains(@0) is supported.";
+
+    internal const string EnumRangeRefusal =
+        "compares an enum with <, <=, > or >=, but this store keeps enums as their NAMES, so it would compare the names alphabetically rather than the values. Use = or 'in @0' with the members you want.";
+
+    internal const string EnumOrderingRefusal =
+        "orders by an enum, but this store keeps enums as their NAMES, so the order would be alphabetical rather than by value. Order by another member.";
+
+    /// <summary>The refusals that hold for every Polecat store.</summary>
+    internal static DynamicQueryPolicy Policy { get; } = DynamicQueryPolicy.Default.WithRules(
+        DynamicQueryShapeRules.For(node =>
+            node is System.Linq.Expressions.MemberExpression { Expression: { } owner } && _dateAndTimeTypes.Contains(owner.Type)
+                ? DateMemberRefusal
+                : null),
+        DynamicQueryShapeRules.For(node =>
+            node is System.Linq.Expressions.MemberExpression { Expression: { } owner, Member.Name: "Value" }
+            && Nullable.GetUnderlyingType(owner.Type) is not null
+                ? NullableValueRefusal
+                : null),
+        DynamicQueryShapeRules.NoCollectionSizeProperty(CollectionSizeRefusal),
+        // Three-valued logic: NULL <> 'x' is unknown, so `Note != "x"`, `not (Note = "x")` and
+        // `not Note.Contains("x")` drop every row whose member is null where the text read as C# keeps
+        // them. Measured on Polecat (3 of 7 rows) before the shared rule existed; the guarded forms
+        // (`... or Note = null`, `Note != null and ...`) translate correctly and stay allowed.
+        DynamicQueryShapeRules.SqlNullSemantics());
+
+    /// <summary>
+    ///     <see cref="Policy" /> plus the refusals for a store whose serializer keeps enums as names
+    ///     (<c>EnumStorage.AsString</c>), where equality and <c>in</c> still translate correctly but a range
+    ///     comparison does not.
+    /// </summary>
+    internal static DynamicQueryPolicy EnumsAsNamesPolicy { get; } = Policy.WithRules(
+        DynamicQueryShapeRules.For(node =>
+            node is System.Linq.Expressions.BinaryExpression
+            {
+                NodeType: System.Linq.Expressions.ExpressionType.GreaterThan
+                or System.Linq.Expressions.ExpressionType.GreaterThanOrEqual
+                or System.Linq.Expressions.ExpressionType.LessThan
+                or System.Linq.Expressions.ExpressionType.LessThanOrEqual
+            } binary && (isEnum(binary.Left) || isEnum(binary.Right))
+                ? EnumRangeRefusal
+                : null));
+
+    internal static DynamicQueryPolicy PolicyFor(StoreOptions options)
+        => options.Serializer.EnumStorage == Weasel.Core.EnumStorage.AsString ? EnumsAsNamesPolicy : Policy;
+
+    private static bool isEnum(System.Linq.Expressions.Expression expression)
+    {
+        while (expression is System.Linq.Expressions.UnaryExpression
+               {
+                   NodeType: System.Linq.Expressions.ExpressionType.Convert
+                   or System.Linq.Expressions.ExpressionType.ConvertChecked
+               } convert)
+        {
+            expression = convert.Operand;
+        }
+
+        return (Nullable.GetUnderlyingType(expression.Type) ?? expression.Type).IsEnum;
+    }
+
+    /// <summary>
+    ///     An ordering by an enum stored as its name. Not a <see cref="IDynamicQueryShapeRule" />: a rule sees
+    ///     one node at a time and cannot tell an ordering key from the same member inside a predicate, where
+    ///     it is fine. So the composed ordering's key lambdas are read directly.
+    /// </summary>
+    private static void assertOrderingIsByValue(System.Linq.Expressions.Expression expression, StoreOptions storeOptions)
+    {
+        if (storeOptions.Serializer.EnumStorage != Weasel.Core.EnumStorage.AsString) return;
+
+        while (expression is System.Linq.Expressions.MethodCallExpression call)
+        {
+            if (call.Method.DeclaringType == typeof(Queryable)
+                && call.Method.Name is "OrderBy" or "OrderByDescending" or "ThenBy" or "ThenByDescending"
+                && call.Arguments[1] is System.Linq.Expressions.UnaryExpression { Operand: System.Linq.Expressions.LambdaExpression key }
+                && isEnum(key.Body))
+            {
+                throw new DocumentCriteriaNotSupportedException(nameof(DocumentQueryOptions.OrderBy),
+                    $"'{key.Body}' {EnumOrderingRefusal}");
+            }
+
+            expression = call.Arguments[0];
+        }
+    }
+
+    [RequiresDynamicCode("jasperfx#869: applies Dynamic LINQ text to a runtime document type.")]
+    [RequiresUnreferencedCode("jasperfx#869: applies Dynamic LINQ text to a runtime document type.")]
+    internal static async Task<Linq.SqlGeneration.Statement> TranslateFor<T>(DocumentStore store,
+        Storage.DocumentMapping mapping, DocumentQueryOptions options) where T : notnull
+    {
+        // The session is only the provider's host: nothing executes through it, and binding it to the
+        // main database skips tenant routing, which the diagnostics surface does itself.
+        await using var session = store.QuerySession(SessionOptions.ForDatabase(store.Database));
+        var queryable = options.ApplyCriteriaTo(session.Query<T>(), mapping.IdMember.Name, PolicyFor(store.Options));
+        assertOrderingIsByValue(queryable.Expression, store.Options);
+
+        try
+        {
+            return ((PolecatLinqQueryProvider)queryable.Provider).TranslateCriteria(queryable.Expression);
+        }
+        catch (Exception e) when (DocumentQueryCriteria.IsTranslationFailure(e))
+        {
+            throw options.Untranslatable(e);
+        }
     }
 }

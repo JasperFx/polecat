@@ -394,12 +394,13 @@ public class PolecatDocumentComplianceFixture : DocumentStorageComplianceFixture
     public override bool SupportsDocumentDiagnosticAllTenants => true;
 
     /// <summary>
-    ///     FALSE deliberately, and the suite asserts the REFUSAL rather than skipping: Polecat does not
-    ///     translate Dynamic LINQ into its own IQueryable yet (jasperfx#869), so Where / OrderBy throw
-    ///     DocumentCriteriaNotSupportedException. Returning the unfiltered page instead is the one
-    ///     answer a console cannot tell apart from a filter that matched everything.
+    ///     jasperfx#869: Where / OrderBy are composed onto <c>Query&lt;T&gt;()</c> and translated by
+    ///     Polecat's own LINQ provider, then appended to the diagnostics statement beside its tenant,
+    ///     soft-delete, hierarchy, id and metadata conditions — see
+    ///     <c>DocumentStore.QueryWithCriteriaAsync</c>. A shape the provider cannot translate, or would
+    ///     translate wrongly (<c>DocumentStore.CriteriaPolicy</c>), is still refused.
     /// </summary>
-    public override bool SupportsDocumentDiagnosticCriteria => false;
+    public override bool SupportsDocumentDiagnosticCriteria => true;
 
     /// <summary>
     ///     Polecat spells the escapes as operators on the queryable —
