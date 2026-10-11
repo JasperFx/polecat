@@ -135,6 +135,216 @@ hybrid search, so a library written against the store-agnostic contract can reac
 Polecat. The member has a throwing default, so this is purely additive. See
 [Store-Neutral Search](/documents/querying/store-neutral-search).
 
+## Key Changes in 5.0.0
+
+::: tip The 5.0.0 release itself changes no public API
+Measured, not recalled: the public surface of `Polecat.dll` is **identical** in 4.8.0 and 5.0.0. Every
+break in the 4.x → 5.0 upgrade shipped in **4.8.0**, a minor release, which is why this section
+covers 4.6.0 through 5.0.0 rather than 5.0.0 alone.
+:::
+
+Those releases were published to NuGet without git tags, so the version boundaries are easy to lose.
+This section was produced by building `Polecat.dll` at each published release and diffing its public
+and protected surface by reflection:
+
+| Release | Commit | Public API vs. previous | What it means for an upgrade |
+|---|---|---|---|
+| 4.6.0 | `bd610ce` (tag `v4.6.0`) | — | starting point |
+| 4.7.0 | `b939bd7` | **88 added, 0 removed** | additive; behaviour changes below |
+| 4.7.1 | `b2ca2a3` | unchanged | one behaviour change below |
+| 4.8.0 | `4e3b011` | **26 removed or changed**, 35 added | every source and binary break below |
+| 5.0.0 | `d7e0fa5` | unchanged | internal: the event append path, pin bumps |
+
+**Where to start reading:**
+
+- **From 4.6.x or 4.7.x:** all of it. The breaks are in 4.8.0.
+- **From 4.8.0:** only [What 5.0.0 itself changed](#what-5-0-0-itself-changed) and the
+  [pin bumps](#foundation-pin-bumps-4-6-to-5-0). Your code already compiles against the 5.0 API.
+
+### Foundation pin bumps, 4.6 to 5.0
+
+| Package | 4.6.0 | 4.7.x | 4.8.0 | 5.0.0 |
+|---|---|---|---|---|
+| `JasperFx` | `2.16.0` | `2.18.0` | `2.24.0` | `2.24.1` |
+| `JasperFx.Events` | `2.16.0` | `2.18.0` | `2.24.0` | `2.24.1` |
+| `Weasel.SqlServer` | `9.3.0` | `9.3.0` | `9.16.0` | `9.16.2` |
+| `Weasel.Storage` | *(not referenced)* | *(not referenced)* | `9.16.0` | `9.16.2` |
+
+`Weasel.Storage` is a **new dependency in 4.8.0**: it is the shared document and event storage runtime
+Polecat moved onto ([#273](https://github.com/JasperFx/polecat/issues/273)). It arrives transitively; pin
+it alongside `Weasel.SqlServer` if you pin the Weasel family centrally. Target frameworks are unchanged
+(`net9.0;net10.0`).
+
+### Removed: the `Polecat.CodeGeneration` package and `[Document]` (4.8.0)
+
+[#274](https://github.com/JasperFx/polecat/pull/274). The last published `Polecat.CodeGeneration` is
+**4.7.1**; no 4.8.0 exists. `Polecat.Attributes.DocumentAttribute` — its discovery marker, with an
+optional `IdType` — went with it.
+
+The generator was never wired into Polecat's runtime, and nothing in Polecat read `[Document]` or its
+`IdType`, so removing both changes no behaviour. Delete the package reference and the attributes:
+
+```csharp
+// before (4.7.x)
+[Document(IdType = typeof(Guid))]
+public class Invoice { public Guid Id { get; set; } }
+
+// after (4.8.0+) — identity is found exactly as it always was: by convention, or [Identity]
+public class Invoice { public Guid Id { get; set; } }
+```
+
+### Changed: session listeners receive the change set (4.8.0)
+
+[#269](https://github.com/JasperFx/polecat/issues/269) / [#272](https://github.com/JasperFx/polecat/pull/272).
+`IDocumentSessionListener.AfterCommitAsync` gains an `IChangeSet` parameter carrying what the commit
+wrote — inserted, updated and deleted documents, streams and events:
+
+```csharp
+// before (4.7.x)
+public Task AfterCommitAsync(IDocumentSession session, CancellationToken token)
+
+// after (4.8.0+)
+public Task AfterCommitAsync(IDocumentSession session, IChangeSet commit, CancellationToken token)
+```
+
+`IChangeSet` and `IDeletion` live in `Polecat.Services`.
+
+### Changed: subscription change listeners move and widen (4.8.0)
+
+Same issue, the daemon side. `Polecat.Subscriptions.IChangeListener` — one `AfterCommitAsync(token)` —
+is replaced by **`Polecat.IChangeListener`**, which mirrors Marten's and has two hooks:
+
+| Hook | Runs | Delivery |
+|---|---|---|
+| `BeforeCommitAsync(session, commit, token)` | before the projection batch commits | at least once |
+| `AfterCommitAsync(session, commit, token)` | after the batch commits | at most once — the right place for cache invalidation |
+
+What that means for your code:
+
+- An implementation of the old interface implements the new one, and takes both hooks.
+- `NullChangeListener` moved from `Polecat.Subscriptions` to `Polecat`. A subscription that returns
+  `NullChangeListener.Instance` needs only the `using`.
+- `ISubscription.ProcessEventsAsync` and `SubscriptionBase.ProcessEventsAsync` now return
+  `Task<Polecat.IChangeListener>`.
+- **New:** a listener can be registered for every async projection batch with
+  `opts.Projections.AsyncListeners.Add(...)`, not only returned from a subscription.
+
+```csharp
+// before (4.7.x)
+using Polecat.Subscriptions;
+
+public override async Task<IChangeListener> ProcessEventsAsync(EventRange page,
+    ISubscriptionController controller, IDocumentOperations operations, CancellationToken token)
+{
+    // ...
+    return NullChangeListener.Instance;
+}
+
+// after (4.8.0+) — same body; IChangeListener and NullChangeListener now resolve from Polecat
+using Polecat;
+```
+
+### Changed: `IWorkTracker.Operations` holds the shared operation type (4.8.0)
+
+[#281](https://github.com/JasperFx/polecat/pull/281) / [#298](https://github.com/JasperFx/polecat/pull/298).
+`session.PendingChanges.Operations` is now `IReadOnlyList<Weasel.Storage.IStorageOperation>` rather than
+`IReadOnlyList<Polecat.Internal.IStorageOperation>`, because every document and event write now runs on
+the shared storage runtime. `IWorkTracker` also now extends `IChangeSet`.
+
+`Polecat.Internal.IStorageOperation` still exists and now extends `Weasel.Storage.IStorageOperation`, so
+code that only *reads* the list through the base interface keeps working. Code that typed a variable or
+pattern-matched as `Polecat.Internal.IStorageOperation` changes to `Weasel.Storage.IStorageOperation`.
+
+### Changed: `ISerializer`'s members are declared on Weasel's base interface (4.8.0)
+
+[#277](https://github.com/JasperFx/polecat/pull/277). `Polecat.Serialization.ISerializer` now extends
+`Weasel.Core.ISerializer`, and `ToJson`, the `FromJson` / `FromJsonAsync` overloads, `Casing` and
+`EnumStorage` are declared there instead. The **set of members is unchanged**, so:
+
+- **Calling** a serializer is source-compatible.
+- **Implementing** one (`opts.Serializer = new MySerializer()`) is source-compatible with ordinary,
+  implicit implementations. Explicit implementations must change their qualifier:
+  `Polecat.Serialization.ISerializer.ToJson(...)` becomes `Weasel.Core.ISerializer.ToJson(...)`.
+- It is a **binary** break either way: recompile anything built against 4.7.x.
+
+A custom serializer does **not** need to implement `Weasel.Storage.IStorageSerializer`. The built-in
+`Serializer` does, and Polecat adapts any other `ISerializer` to it.
+
+### Behaviour changes
+
+Code that still compiles and acts differently, by the release it changed in.
+
+**4.7.0**
+
+- **Auto-assigned `Guid` ids are sequential** ([#245](https://github.com/JasperFx/polecat/pull/245)).
+  Polecat used `Guid.NewGuid()`, whose random values fragment SQL Server's clustered
+  `uniqueidentifier` index; it now generates ids that sort in insertion order. They remain unique, but
+  they are **predictable** — do not hand an auto-assigned id out as an unguessable token.
+- **`CorrelationId` / `CausationId` are seeded from `Activity.Current`** when a session opens
+  ([#250](https://github.com/JasperFx/polecat/pull/250)), as Marten does. With
+  `opts.Events.EnableCorrelationId` / `EnableCausationId` on, events now carry trace ids where they
+  were previously null. A value you set explicitly still wins.
+- **`Patch().Set()` honours `EnumStorage`** ([#264](https://github.com/JasperFx/polecat/pull/264)).
+  Under `EnumStorage.AsString` a patched enum is now written as its name; it was written as an integer
+  while the rest of the document held names. Documents patched before upgrading keep the integer.
+- **`Patch().Set()` accepts `DateTime`, `DateTimeOffset`, `DateOnly` and `TimeOnly`**
+  ([#265](https://github.com/JasperFx/polecat/pull/265)).
+
+**4.7.1**
+
+- **`AutoCreate.None` is honoured at runtime** ([#268](https://github.com/JasperFx/polecat/pull/268)).
+  The async daemon's storage ensure, Hi-Lo's `pc_hilo` and the master-table tenancy's `pc_tenants` were
+  each still being provisioned on first use under `None`. They no longer are — so a store that was
+  silently relying on that now has to provision those objects itself, as `None` always said.
+
+**4.8.0**
+
+- **Single-tenant document tables have no `tenant_id` column**
+  ([#234](https://github.com/JasperFx/polecat/issues/234) / [#303](https://github.com/JasperFx/polecat/pull/303)),
+  matching Marten. Existing tables keep theirs — defaulted and no longer modeled — so there is **no
+  migration**. But the implicit tenant filter is now conjoined-only, so on a single-tenant store
+  `ForTenant(...)`, `AnyTenant()` and `TenantIsOneOf(...)` **no longer filter documents**. If you were
+  using `ForTenant` on a store without conjoined tenancy to keep documents apart, configure conjoined
+  tenancy.
+- **`[JsonPropertyName]` and `[JsonStringEnumMemberName]` are honoured by LINQ and patching**
+  ([#270](https://github.com/JasperFx/polecat/issues/270) / [#271](https://github.com/JasperFx/polecat/pull/271)).
+  A renamed member was stored under its JSON name but queried and patched under its CLR name, so
+  predicates matched nothing and patches wrote a second, stray key. Both now use the stored name.
+  ⚠️ Stray keys an earlier patch wrote are still in those documents.
+
+### What 5.0.0 itself changed
+
+Nothing in the public API (see the top of this section). Internally, the event append path moved onto
+the shared storage runtime ([#306](https://github.com/JasperFx/polecat/pull/306)–[#312](https://github.com/JasperFx/polecat/pull/312)),
+and Polecat's own inline `SqlCommand` append was deleted once the whole suite passed on the new one.
+It went in only once it was at parity — the whole suite passed with it as the only path — so appends
+behave as they did. An `Events.UseClosedShapeEventStorage` opt-in
+existed briefly during that work; it was added and removed between 4.8.0 and 5.0.0, so no published
+release ever had it.
+
+The rest of 5.0.0 moved the remaining document paths onto the same runtime — batched loads, bulk
+insert with and without version checks, set-based delete and undelete
+([#313](https://github.com/JasperFx/polecat/pull/313)–[#317](https://github.com/JasperFx/polecat/pull/317)) —
+and bumped JasperFx to 2.24.1 and Weasel to 9.16.2.
+
+### Schema changes in 4.7 and 4.8
+
+- **Strong-typed id columns use the inner type** (4.8.0,
+  [#296](https://github.com/JasperFx/polecat/issues/296) / [#302](https://github.com/JasperFx/polecat/pull/302)).
+  A document with a `Guid`-, `int`- or `long`-backed id wrapper got a `varchar(250)` id column, and
+  Lightweight and IdentityMap reads of it threw `InvalidCastException`. The column is now
+  `uniqueidentifier`, `int` or `bigint`. An existing table is **converted in place, data preserved** —
+  drop the primary key, alter the column, re-add it — by the lazy schema ensure on first access to that
+  document type. Because it is part of that ensure, a store running `AutoCreate.None` has to apply the
+  column change itself. String-backed wrappers keep `varchar(250)`.
+- **Index and foreign-key computed columns changed expression** (4.7.0,
+  [#236](https://github.com/JasperFx/polecat/issues/236) / [#246](https://github.com/JasperFx/polecat/pull/246))
+  to `JSON_VALUE(data, '$.path' RETURNING type)` on native `json` storage, so the persisted column and
+  the LINQ predicate stay textually identical and the index stays seekable. That is still the form
+  today. Before 5.32.0 these columns were created outside Weasel's schema model, so an existing
+  column was not reconciled to a changed expression; from 5.32.0 they are modeled and a migration
+  does reconcile them.
+
 ## Key Changes in 4.0.0
 
 Polecat 4.0 ships in lockstep with [Marten 9.0](https://martendb.io) and [JasperFx 2.0](https://github.com/JasperFx/jasperfx/issues/215) as part of the [Critter Stack 2026](https://github.com/JasperFx/jasperfx/issues/217) release wave. The 4.0 line builds on the same JasperFx 2.0 / JasperFx.Events 2.0 / Weasel 9.0 release-candidate matrix that Marten 9 consumes — this is the consolidation cycle, not a rewrite. Most upgrades are pin bumps; the breaking surface is small and localized, and the bulk of the rc-line dedup work is source-compatible for typical applications (see [rc dedup-wave relocations](#rc-dedup-wave-relocations)).
