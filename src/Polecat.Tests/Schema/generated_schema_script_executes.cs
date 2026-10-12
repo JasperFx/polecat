@@ -295,13 +295,19 @@ public class generated_schema_script_executes
         // on it and a TRIGGER -- and a trigger is the one object whose create cannot be guarded by an
         // IF, because CREATE TRIGGER has to begin its batch. Weasel answers that with DROP TRIGGER IF
         // EXISTS plus an EXEC sp_executesql, and this is where that actually gets executed twice.
+        //
+        // #642: a Porter index on BOTH types. Each yields the schema's two stemmer FUNCTIONS, so this is
+        // where the script has to emit them once rather than twice, ahead of the triggers that call
+        // them -- and where a function has to survive the second pass like everything else.
         opts.Schema.For<ScriptedCustomer>()
             .UniqueIndex(x => x.Code)
-            .FullTextIndex(x => x.Code);
+            .FullTextIndex(x => x.Code)
+            .FullTextIndex(Polecat.Storage.FullText.FullTextTokenizer.Porter, x => x.Name);
 
         opts.Schema.For<ScriptedOrder>()
             .Index(x => x.Status)
-            .ForeignKey<ScriptedCustomer>(x => x.CustomerId);
+            .ForeignKey<ScriptedCustomer>(x => x.CustomerId)
+            .FullTextIndex(Polecat.Storage.FullText.FullTextTokenizer.Porter, x => x.Status);
     }
 
     private static async Task DropSchemaAsync()
@@ -335,6 +341,12 @@ public class generated_schema_script_executes
                 JOIN sys.schemas s ON s.schema_id = q.schema_id
                 WHERE s.name = '{Schema}';
 
+                -- #642's stemmer functions. Tables first: a trigger calling one goes with its table.
+                SELECT @sql += 'DROP FUNCTION IF EXISTS ' + QUOTENAME(s.name) + '.' + QUOTENAME(o.name) + ';' + CHAR(13)
+                FROM sys.objects o
+                JOIN sys.schemas s ON s.schema_id = o.schema_id
+                WHERE s.name = '{Schema}' AND o.type IN ('FN', 'IF', 'TF');
+
                 EXEC sp_executesql @sql;
             END
             """;
@@ -345,6 +357,7 @@ public class generated_schema_script_executes
     {
         public Guid Id { get; set; }
         public string Code { get; set; } = string.Empty;
+        public string Name { get; set; } = string.Empty;
     }
 
     public class ScriptedOrder

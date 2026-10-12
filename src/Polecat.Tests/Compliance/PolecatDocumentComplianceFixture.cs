@@ -524,7 +524,11 @@ public class PolecatDocumentComplianceFixture : DocumentStorageComplianceFixture
             .MakeGenericMethod(documentType)
             .Invoke(options.Schema, null)!;
 
-        expression.GetType().GetMethod(method)!.Invoke(expression, arguments);
+        // By name AND arity rather than by name alone: #642 added FullTextIndex(FullTextTokenizer, params ...)
+        // beside FullTextIndex(params ...), and GetMethod(name) then throws AmbiguousMatchException.
+        expression.GetType().GetMethods()
+            .Single(x => x.Name == method && x.GetParameters().Length == arguments.Length)
+            .Invoke(expression, arguments);
     }
 
     /// <summary>

@@ -50,7 +50,7 @@ internal class FullTextTrigger: Trigger
         // One SELECT per declared member, fused into a single INSERT.
         var legs = string.Join("\n    UNION ALL\n", indexes.Select(x =>
             $"""
-                 SELECT i.id, {tenant}, {SqlEscaping.Literal(x.MemberName)}, s.value, s.ordinal
+                 SELECT i.id, {tenant}, {SqlEscaping.Literal(x.TokenKey)}, {x.TermExpression(mapping)}, s.ordinal
                  FROM inserted i
                  {x.TokenizeClause("i")}
              """));

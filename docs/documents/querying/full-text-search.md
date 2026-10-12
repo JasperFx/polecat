@@ -98,10 +98,11 @@ document table, kept in step by a trigger. The consequences that matter to you:
 
 And the cost, stated plainly:
 
-::: warning Tokenization is simple, and simple means literal
-Terms are lowercased and split on whitespace and punctuation. There is **no stemming, no thesaurus,
-and no language-aware word breaking**. `running` does not match `run`, and `mice` does not match
-`mouse`. If you need linguistic matching, normalize the text yourself before storing it.
+::: warning By default, tokenization is literal
+Terms are lowercased and split on whitespace and punctuation, and that is all. `running` does not match
+`run`, and `configuring retries` does not match `configure retry` — unless you opt into
+[stemming](#stemming). There is no thesaurus and no language-aware word breaking either way, so `mice`
+never matches `mouse`.
 :::
 
 Marten's `regConfig` overloads have no counterpart here — a PostgreSQL text-search configuration
@@ -181,6 +182,59 @@ It is applied **before** the limit, so you get the best `limit` of the filtered 
 filtered remains of the best `limit` — the same reason it matters there. A `Where` on the LINQ
 operator is still the right tool when you do not need the ranking; this exists so a ranked search can
 be scoped without losing its ordering.
+
+## Stemming
+
+Declare an index with `FullTextTokenizer.Porter` and its terms are reduced to their stems, so different
+forms of a word match each other:
+
+```csharp
+opts.Schema.For<Article>().FullTextIndex(FullTextTokenizer.Porter, x => x.Body);
+
+// matches a body of "Configure retry for the outbox"
+var hits = await session.Query<Article>()
+    .Where(x => x.Body.PlainTextSearch("configuring retries"))
+    .ToListAsync();
+```
+
+The stemmer is Martin Porter's English stemmer, the same one SQLite's FTS5 `porter` tokenizer uses, so
+**Polecat and Fisher stem identically**. It applies to every search operator against that index, and
+to ranked search.
+
+The tokenizer is **per index**, so a member holding identifiers or codes can stay literal while prose
+stems:
+
+```csharp
+opts.Schema.For<Article>()
+    .FullTextIndex(x => x.Sku)                                // literal
+    .FullTextIndex(FullTextTokenizer.Porter, x => x.Body);    // stemmed
+```
+
+What to know before you turn it on:
+
+- **Only plain English words are stemmed.** A term is stemmed when it is 3 to 64 lowercase ASCII
+  letters; anything else (digits, accented letters, very short or very long terms) is stored and searched
+  as written. So `cafés` does not match `café`, where SQLite, which folds accents first, would.
+- **Prefix searches are stemmed too**, as SQLite's are. `PrefixSearch("configuring")` finds
+  `configure`, and `PrefixSearch("config")` finds it as well. The edge case is a partial word whose stem
+  is not a prefix of the stored stem: `PrefixSearch("configuri")` finds nothing.
+- **Writes cost more.** Stemming runs inside the trigger that maintains the index, at roughly 160
+  microseconds a term, so about a sixth of a second for a thousand-word document. Searching costs
+  nothing extra.
+- **Changing an existing index's tokenizer is safe.** Stemmed and literal terms are stored under
+  different keys, so the next schema migration re-tokenizes every document already written, and removes
+  the terms the old tokenizer produced. Without that, a newly stemmed index would quietly miss every
+  document written before the change.
+- **The stemmer is part of your schema.** It is two T-SQL functions per schema, `pc_porter_stem` and
+  `pc_porter_cv`, created and compared like any other schema object: they appear in a generated
+  script, and `AutoCreate.None` refuses a database that is missing them.
+
+::: tip How the two halves are kept in agreement
+A query term is stemmed in C#, and a stored term is stemmed by T-SQL inside the trigger. If they ever
+disagreed, a search would not fail — it would quietly return nothing. So both are tested against the
+same independent reference: SQLite's own Porter stemmer over 23,549 dictionary words, with the T-SQL
+version run inside SQL Server.
+:::
 
 ## Several members
 

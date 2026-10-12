@@ -57,10 +57,10 @@ internal class FullTextSearchMethods: IMethodCallParser
 
         var query = expression.Method.Name switch
         {
-            "PhraseSearch" => FullTextQuery.Phrase(searchTerm),
-            "PrefixSearch" => FullTextQuery.Prefix(searchTerm),
-            "WebStyleSearch" => FullTextQuery.WebStyle(searchTerm),
-            _ => FullTextQuery.Plain(searchTerm)
+            "PhraseSearch" => FullTextQuery.Phrase(searchTerm, index),
+            "PrefixSearch" => FullTextQuery.Prefix(searchTerm, index),
+            "WebStyleSearch" => FullTextQuery.WebStyle(searchTerm, index),
+            _ => FullTextQuery.Plain(searchTerm, index)
         };
 
         return new FullTextFilter(mapping, index, query);
@@ -181,7 +181,7 @@ internal class FullTextFilter: ISqlFragment
         }
 
         builder.Append(" AND f0.member = ");
-        builder.AppendParameter(_index.MemberName);
+        builder.AppendParameter(_index.TokenKey);
 
         if (clause.Phrase)
         {
