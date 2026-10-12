@@ -87,25 +87,9 @@ internal class EventListHandler
                 @event.StreamKey = streamId.ToString();
             }
 
-            // #256: read the opt-in metadata columns appended to the full-event SELECT (when enabled),
-            // in the same enable order the query provider emitted them.
-            var options = _events.EventOptions;
-            var ordinal = 11; // #388: ordinal 10 is bdata
-            if (options.EnableCorrelationId)
-            {
-                @event.CorrelationId = sqlReader.IsDBNull(ordinal) ? null : sqlReader.GetString(ordinal);
-                ordinal++;
-            }
-            if (options.EnableCausationId)
-            {
-                @event.CausationId = sqlReader.IsDBNull(ordinal) ? null : sqlReader.GetString(ordinal);
-                ordinal++;
-            }
-            if (options.EnableUserName)
-            {
-                @event.UserName = sqlReader.IsDBNull(ordinal) ? null : sqlReader.GetString(ordinal);
-                ordinal++;
-            }
+            // #756: through the shared reader, which also reads headers -- this copy never did.
+            Internal.PcEventsRowReader.ReadMetadata(sqlReader, @event,
+                Internal.MetadataSlots.Compute(_events.EventOptions), _serializer);
 
             results.Add(@event);
         }

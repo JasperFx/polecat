@@ -144,15 +144,11 @@ internal class EventLinqQueryProvider : IPolecatAsyncQueryProvider
         {
             if (_isAllEvents)
             {
-                // Full IEvent result set. #256: append the opt-in metadata columns (when enabled) so
-                // hydrated events carry correlation/causation/user_name — EventListHandler reads them
-                // at the trailing ordinals in this same enable order.
-                var columns = Internal.PcEventsRowReader.CoreSelectColumns;
-                var eventOptions = _events.EventOptions;
-                if (eventOptions.EnableCorrelationId) columns += ", correlation_id";
-                if (eventOptions.EnableCausationId) columns += ", causation_id";
-                if (eventOptions.EnableUserName) columns += ", user_name";
-                parser.Statement.SelectColumns = columns;
+                // Full IEvent result set. #256 appended the opt-in metadata columns by hand here, and
+                // left headers out (#756) -- so QueryAllRawEvents never carried Headers. Composed by the
+                // one helper every event read uses, so EventListHandler's MetadataSlots line up.
+                parser.Statement.SelectColumns =
+                    Internal.PcEventsRowReader.ComposeSelectColumns(_events.EventOptions);
             }
             else
             {
