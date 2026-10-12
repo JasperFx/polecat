@@ -43,6 +43,8 @@
 
     <ItemGroup>
         <Content Include="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
+        <!-- #642: SQLite FTS5 porter stems for 23,549 dictionary words; both Porter stemmers are pinned to it. -->
+        <Content Include="Storage/FullText/porter_oracle.tsv" CopyToOutputDirectory="PreserveNewest" />
     </ItemGroup>
 
 </Project>
