@@ -532,6 +532,41 @@ public class StoreOptions
     }
 
     /// <summary>
+    ///     Registers a document type's strong-typed identity so it works under Native AOT. One line per
+    ///     document type with a strong-typed id; under a JIT it does nothing and costs nothing. Mirrors
+    ///     Marten's <c>StoreOptions.RegisterValueTypeId</c>.
+    /// </summary>
+    /// <example>
+    ///     <code>
+    ///     // public readonly record struct BadgeId(Guid Value);
+    ///     opts.RegisterValueTypeId&lt;Badge, BadgeId, Guid&gt;();
+    ///     </code>
+    /// </example>
+    /// <typeparam name="TDoc">The document type whose identity is <typeparamref name="TWrapper" />.</typeparam>
+    /// <typeparam name="TWrapper">The strong-typed id: a Vogen, StronglyTypedId or <c>readonly record struct</c> wrapper.</typeparam>
+    /// <typeparam name="TInner">The wrapped primitive: <see cref="Guid" />, <see cref="string" />, <see cref="int" /> or <see cref="long" />.</typeparam>
+    /// <remarks>
+    ///     <para>
+    ///         Polecat closes its document storage over the wrapper type at runtime, and a Native AOT image
+    ///         has no compiled code for an instantiation over a value type that nothing named at compile
+    ///         time. Naming all three types here is what makes the compiler emit them (#751). Without it,
+    ///         under AOT, the first session to touch the document fails with
+    ///         <c>NotSupportedException: 'ValueTypeIdentification`3[...]' is missing native code</c>.
+    ///     </para>
+    ///     <para>
+    ///         The document type is part of the signature because the storage is closed over the document
+    ///         as well as the id, so an id-only registration could not root it.
+    ///     </para>
+    /// </remarks>
+    public void RegisterValueTypeId<TDoc, TWrapper, TInner>()
+        where TDoc : notnull
+        where TWrapper : struct
+        where TInner : notnull
+    {
+        Polecat.Storage.ClosedShape.ValueTypeIdRegistry.Register<TDoc, TWrapper, TInner>();
+    }
+
+    /// <summary>
     ///     Configure the serialization settings for the document store.
     /// </summary>
     public void ConfigureSerialization(
