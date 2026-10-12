@@ -1297,9 +1297,25 @@
                  advisory_lock_options.a_pooled_connection_keeps_its_locks_when_it_closes.
                  ⚠️ The opt-out (a non-positive or infinite MonitoringInterval) re-opens weasel#695's
                  split brain; documented as that, not as a tuning knob. -->
-        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.43.0" />
-        <PackageVersion Include="Weasel.SqlServer" Version="9.43.0" />
-        <PackageVersion Include="Weasel.Storage" Version="9.43.0" />
+
+        <!-- Weasel 9.44.0 (from 9.43.0). One change, ADOPTED, and Polecat found it.
+
+               * weasel#703/#704 - a SQL Server Function's creation script drops first, so a generated
+                 script containing one runs twice, the answer Weasel's Trigger already had. #642 (#759)
+                 hit the bare CREATE FUNCTION the moment the Porter stemmer's two functions entered the
+                 schema, and shipped a local RerunnableFunction subclass that composed Weasel's own drop
+                 and create. Deleted here: PorterStemFunction now yields plain Weasel Functions.
+                 The subclass needed a SECOND override, and Weasel's fix needed the equivalent, which is
+                 the part worth remembering. FunctionDelta used to compare Body(), and Body() renders
+                 THROUGH WriteCreateStatement, so adding the drop to one side of the comparison only is a
+                 delta that reports Update on every pass. Weasel now compares CreateStatement() on both
+                 sides, which also covers a function declared with CUSTOM drop statements (the stored
+                 copy always reads back with the default drop). Polecat's
+                 a_porter_index_reaches_a_fixed_point and generated_schema_script_executes are what pin
+                 it from this side. -->
+        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.44.0" />
+        <PackageVersion Include="Weasel.SqlServer" Version="9.44.0" />
+        <PackageVersion Include="Weasel.Storage" Version="9.44.0" />
 
         <!-- Strongly typed IDs. Both generators are test-only: they prove Polecat's value-type id
              support against the two libraries Marten's ValueTypeTests exercise. StronglyTypedId emits
