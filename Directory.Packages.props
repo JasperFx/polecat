@@ -1313,9 +1313,26 @@
                  copy always reads back with the default drop). Polecat's
                  a_porter_index_reaches_a_fixed_point and generated_schema_script_executes are what pin
                  it from this side. -->
-        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.44.0" />
-        <PackageVersion Include="Weasel.SqlServer" Version="9.44.0" />
-        <PackageVersion Include="Weasel.Storage" Version="9.44.0" />
+
+        <!-- Weasel 9.45.0 (from 9.44.0). Two fixes, both ADOPTED as-is (no Polecat code changes).
+
+               * weasel#706 - db-patch drop files no longer `drop schema if exists ... CASCADE` every
+                 schema the application knows about; they roll back only the objects the patch touched,
+                 and the patch creates only the changed schemas (SchemaMigration.ChangedSchemas). On
+                 SQL Server the drop file used to drop every Polecat schema it named.
+               * weasel#707 - primary keys on existing tables, found from Wolverine's SQL Server queue
+                 tables (wolverine#4989). SQL Server can now add an IDENTITY column to a populated
+                 table, drops a removed primary key before creating a new clustered index, makes a new
+                 key's columns NOT NULL first (in their own batch), and no longer writes an empty
+                 `add PRIMARY KEY ()`. TableBase.PrimaryKeyName is empty for a table without primary key
+                 columns, and adding a key to an existing table is a PrimaryKeyDifference.Create the
+                 delta actually applies. The opt-in DetectColumnDrift compares effective nullability, so a
+                 primary key column counts as NOT NULL instead of being skipped.
+                 Every Polecat table declares its primary key, so the gate is the same as for any delta
+                 change: the schema suites must stay quiet on existing tables. -->
+        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.45.0" />
+        <PackageVersion Include="Weasel.SqlServer" Version="9.45.0" />
+        <PackageVersion Include="Weasel.Storage" Version="9.45.0" />
 
         <!-- Strongly typed IDs. Both generators are test-only: they prove Polecat's value-type id
              support against the two libraries Marten's ValueTypeTests exercise. StronglyTypedId emits
