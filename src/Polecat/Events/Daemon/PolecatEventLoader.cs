@@ -42,6 +42,10 @@ internal class PolecatEventLoader : IEventLoader
 
     private readonly EventGraph _events;
     private readonly StoreOptions _options;
+
+    // #756: fixed for the loader's lifetime, like the command text -- computed from the same options the
+    // SELECT is composed from, so the two cannot disagree about where a metadata column is.
+    private readonly Internal.MetadataSlots _metadataSlots;
     private readonly string _connectionString;
     private readonly HashSet<string>? _allowedDotNetTypes;
     private readonly string? _tenantFilter;
@@ -67,6 +71,7 @@ internal class PolecatEventLoader : IEventLoader
     {
         _events = events;
         _options = options;
+        _metadataSlots = Internal.MetadataSlots.Compute(options.Events);
         _connectionString = connectionString;
         // #163 Phase 2: a per-tenant rebuild/subscription shard scopes the load to one tenant so it
         // reads only that tenant's bounded sequence range, not the whole store. Null = store-global.
@@ -243,8 +248,7 @@ internal class PolecatEventLoader : IEventLoader
         }
 
         return $"""
-            SELECT TOP(@batchSize) seq_id, id, stream_id, version, data, type, timestamp,
-                tenant_id, dotnet_type, is_archived, bdata
+            SELECT TOP(@batchSize) {Internal.PcEventsRowReader.ComposeSelectColumns(_options.Events)}
             FROM {_events.EventsTableName}
             WHERE seq_id > @floor AND seq_id <= @ceiling AND is_archived = 0{tenantPredicate}{typePredicate}
             ORDER BY seq_id;
@@ -425,6 +429,12 @@ internal class PolecatEventLoader : IEventLoader
             @event.EventTypeName = typeName;
             @event.DotNetTypeName = dotNetTypeName!;
             @event.IsArchived = isArchived;
+
+            // #756: the opt-in metadata columns, which this loader never selected -- so every event the
+            // daemon handed to a subscription or an async projection had a null CorrelationId,
+            // CausationId, Headers and UserName, and nothing downstream of the daemon could be traced
+            // back to the request that caused it.
+            Internal.PcEventsRowReader.ReadMetadata(reader, @event, _metadataSlots, _options.Serializer);
 
             if (_events.StreamIdentity == StreamIdentity.AsGuid && rawStreamId is Guid g)
             {

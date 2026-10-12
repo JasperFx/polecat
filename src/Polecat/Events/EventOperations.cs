@@ -1503,22 +1503,9 @@ internal class EventOperations : QueryEventStore, IEventOperations
                 @event.StreamKey = rawStreamId.ToString();
             }
 
-            var metaIndex = 11; // #388: ordinal 10 is bdata
-            if (eventOptions.EnableCorrelationId)
-            {
-                @event.CorrelationId = reader.IsDBNull(metaIndex) ? null : reader.GetString(metaIndex);
-                metaIndex++;
-            }
-            if (eventOptions.EnableCausationId)
-            {
-                @event.CausationId = reader.IsDBNull(metaIndex) ? null : reader.GetString(metaIndex);
-                metaIndex++;
-            }
-            if (eventOptions.EnableHeaders && !reader.IsDBNull(metaIndex))
-            {
-                var headersJson = reader.GetString(metaIndex);
-                @event.Headers = _sessionBase.Serializer.FromJson<Dictionary<string, object>>(headersJson);
-            }
+            // #756: through the shared reader, which also reads user_name -- this copy never did.
+            Internal.PcEventsRowReader.ReadMetadata(reader, @event, Internal.MetadataSlots.Compute(eventOptions),
+                _sessionBase.Serializer);
 
             results.Add(@event);
         }
@@ -1724,22 +1711,9 @@ internal class EventOperations : QueryEventStore, IEventOperations
         @event.DotNetTypeName = dotNetTypeName!;
         @event.IsArchived = isArchived;
 
-        var metaIndex = 11; // #388: ordinal 10 is bdata
-        if (eventOptions.EnableCorrelationId)
-        {
-            @event.CorrelationId = reader.IsDBNull(metaIndex) ? null : reader.GetString(metaIndex);
-            metaIndex++;
-        }
-        if (eventOptions.EnableCausationId)
-        {
-            @event.CausationId = reader.IsDBNull(metaIndex) ? null : reader.GetString(metaIndex);
-            metaIndex++;
-        }
-        if (eventOptions.EnableHeaders && !reader.IsDBNull(metaIndex))
-        {
-            var headersJson = reader.GetString(metaIndex);
-            @event.Headers = serializer.FromJson<Dictionary<string, object>>(headersJson);
-        }
+        // #756: through the shared reader, which also reads user_name -- this copy never did.
+        Internal.PcEventsRowReader.ReadMetadata(reader, @event, Internal.MetadataSlots.Compute(eventOptions),
+            serializer);
 
         return @event;
     }

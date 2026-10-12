@@ -353,6 +353,34 @@ internal static class PcEventsRowReader
         @event.DotNetTypeName = dotNetTypeName!;
         @event.IsArchived = isArchived;
 
+        ReadMetadata(reader, @event, slots, ctx.Serializer);
+    }
+
+    /// <summary>
+    ///     Map the opt-in metadata columns — <c>correlation_id</c>, <c>causation_id</c>, <c>headers</c>,
+    ///     <c>user_name</c> — from the row onto <paramref name="event" />, at the ordinals
+    ///     <paramref name="slots" /> computed from the same options the SELECT was composed from.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         ⚠️ <b>The one place this mapping lives, and #756 is why.</b> Polecat has five event
+    ///         hydration paths (see CLAUDE.md), and each used to carry its own hand-written copy of this
+    ///         block — and no two agreed. The async daemon's loader read none of these columns, so every
+    ///         subscription and async projection saw a null <c>CorrelationId</c> and nothing downstream of
+    ///         the daemon could be traced to the request that caused it. The event LINQ path skipped
+    ///         <c>headers</c>; the two DCB tag paths skipped <c>user_name</c>. Each copy was locally
+    ///         reasonable and the set was wrong.
+    ///     </para>
+    ///     <para>
+    ///         Every path now selects through <see cref="ComposeSelectColumns" /> (or
+    ///         <see cref="ComposeSelectColumnsWithAlias" />) and reads through this, with
+    ///         <see cref="MetadataSlots.Compute" /> — so the SELECT and the read are derived from the same
+    ///         options by the same code, and a new metadata column is added in exactly two places.
+    ///     </para>
+    /// </remarks>
+    internal static void ReadMetadata(DbDataReader reader, IEvent @event, MetadataSlots slots,
+        ISerializer serializer)
+    {
         // Per-batch pre-computed slots. Each branch tests a sentinel and is
         // taken/not-taken the same way for every row in this batch — branch
         // predictor pegged. The per-row metaIndex++ chain is gone.
@@ -371,7 +399,7 @@ internal static class PcEventsRowReader
         if (slots.HeadersIdx >= 0 && !reader.IsDBNull(slots.HeadersIdx))
         {
             var headersJson = reader.GetString(slots.HeadersIdx);
-            @event.Headers = ctx.Serializer.FromJson<Dictionary<string, object>>(headersJson);
+            @event.Headers = serializer.FromJson<Dictionary<string, object>>(headersJson);
         }
         if (slots.UserNameIdx >= 0)
         {
