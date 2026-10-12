@@ -165,7 +165,8 @@ public static class FullTextSearchExtensions
                             : $"'{typeof(T).Name}.{name}' is not a declared full-text member. Declared: "
                               + string.Join(", ", mapping.FullTextIndexes.Select(x => x.MemberName)) + ".");
 
-        var terms = FullTextIndex.Tokenize(text);
+        // #642: through the index, so a Porter index is searched with stemmed terms.
+        var terms = index.TokenizeQuery(text);
 
         // No terms is not an error and not everything — it is no match, the same answer the LINQ
         // operator gives for an empty search.
@@ -201,13 +202,13 @@ public static class FullTextSearchExtensions
 
         void AddMemberScope()
         {
-            parameters.Add(index.MemberName);
+            parameters.Add(index.TokenKey);
             parameters.AddRange(terms);
             if (conjoined) parameters.Add(session.TenantId);
         }
 
         // lens: member, [tenant]
-        parameters.Add(index.MemberName);
+        parameters.Add(index.TokenKey);
         if (conjoined) parameters.Add(session.TenantId);
 
         var sql =

@@ -24,10 +24,10 @@ namespace Polecat.Storage.FullText;
 ///     </para>
 ///     <para>
 ///         <b>What that costs, stated plainly because the docs have to say it too:</b> we own
-///         tokenization. Terms are lowercased and split on punctuation and whitespace. There is no
-///         stemming, no thesaurus, and no language-aware word breaking — <c>running</c> does not
-///         match <c>run</c>. Marten's <c>regConfig</c> overloads have no counterpart and are
-///         deliberately not offered rather than accepted and ignored.
+///         tokenization. Terms are lowercased and split on punctuation and whitespace. Stemming is
+///         opt-in per index (<see cref="FullTextTokenizer.Porter" />, #642); there is no thesaurus and
+///         no language-aware word breaking. Marten's <c>regConfig</c> overloads have no counterpart
+///         and are deliberately not offered rather than accepted and ignored.
 ///     </para>
 ///     <para>
 ///         <b>The schema this amounts to is three objects, and two of them are modeled (#685).</b>
@@ -105,11 +105,59 @@ public class FullTextIndex
             .Split(' ', StringSplitOptions.RemoveEmptyEntries);
     }
 
-    internal FullTextIndex(string jsonPath, MemberInfo[]? memberChain)
+    internal FullTextIndex(string jsonPath, MemberInfo[]? memberChain,
+        FullTextTokenizer tokenizer = FullTextTokenizer.Literal)
     {
         JsonPath = jsonPath;
         MemberChain = memberChain;
+        Tokenizer = tokenizer;
     }
+
+    /// <summary>How this index breaks text into terms (#642). <see cref="FullTextTokenizer.Literal" /> by default.</summary>
+    public FullTextTokenizer Tokenizer { get; }
+
+    /// <summary>
+    ///     What the token rows for this index are keyed by in the <c>member</c> column, and therefore
+    ///     what every search filters on (#642).
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         ⚠️ <b>The tokenizer is part of the key, and that is what makes changing it safe.</b>
+    ///         Stemmed and literal terms for the same member are different data, and the backfill decides
+    ///         what to (re)tokenize by asking which keys have no rows. Keyed by member alone, switching an
+    ///         existing index to <see cref="FullTextTokenizer.Porter" /> would find the member already
+    ///         "indexed" with literal terms, backfill nothing, and the stemmed searches would quietly miss
+    ///         every document written before the switch. With the tokenizer in the key, a switch is a new
+    ///         key with no rows, so the backfill re-tokenizes everything, and
+    ///         <see cref="BackfillStatements" /> clears the old key's rows.
+    ///     </para>
+    ///     <para>
+    ///         A <see cref="FullTextTokenizer.Literal" /> index keeps the bare member name, exactly as before
+    ///         #642, so an existing store needs no migration of its token rows.
+    ///     </para>
+    /// </remarks>
+    internal string TokenKey => Tokenizer == FullTextTokenizer.Porter ? MemberName + "#porter" : MemberName;
+
+    /// <summary>
+    ///     Tokenize search text exactly as this index tokenized the stored text: <see cref="Tokenize" />,
+    ///     then each term stemmed by <see cref="PorterStemmer" /> for a Porter index.
+    /// </summary>
+    internal string[] TokenizeQuery(string text)
+    {
+        var terms = Tokenize(text);
+        return Tokenizer == FullTextTokenizer.Porter
+            ? terms.Select(PorterStemmer.Stem).ToArray()
+            : terms;
+    }
+
+    /// <summary>
+    ///     The stored term for a token row: <c>s.value</c> from <see cref="TokenizeClause" />, wrapped in
+    ///     the schema's <c>pc_porter_stem</c> for a Porter index.
+    /// </summary>
+    internal string TermExpression(DocumentMapping mapping) =>
+        Tokenizer == FullTextTokenizer.Porter
+            ? PorterStemFunction.Call(mapping.DatabaseSchemaName, "s.value")
+            : "s.value";
 
     /// <summary>
     ///     The JSON path the text is read from, re-rendered under the store's serializer naming
@@ -178,16 +226,22 @@ public class FullTextIndex
         var ftTable = SqlEscaping.QualifiedName(mapping.DatabaseSchemaName, TableNameFor(mapping));
         var tenant = TenantColumn(mapping);
 
+        // #642: rows under a key no declared index produces any more -- an index whose tokenizer
+        // changed, or one that was removed -- are cleared first. The rows they hold were tokenized by a
+        // rule nothing searches with, and leaving them is only harmless until a key is reused.
+        var declaredKeys = string.Join(", ", indexes.Select(x => SqlEscaping.Literal(x.TokenKey)));
+        var cleanup = $"DELETE FROM {ftTable} WHERE member NOT IN ({declaredKeys});";
+
         return indexes.Select(x =>
             $"""
              INSERT INTO {ftTable} (doc_id, tenant_id, member, term, pos)
-             SELECT i.id, {tenant}, {SqlEscaping.Literal(x.MemberName)}, s.value, s.ordinal
+             SELECT i.id, {tenant}, {SqlEscaping.Literal(x.TokenKey)}, {x.TermExpression(mapping)}, s.ordinal
              FROM {docTable} i
              {x.TokenizeClause("i")}
              AND NOT EXISTS (SELECT 1 FROM {ftTable} ft
                              WHERE ft.doc_id = i.id AND ft.tenant_id = {tenant}
-                               AND ft.member = {SqlEscaping.Literal(x.MemberName)});
-             """).ToArray();
+                               AND ft.member = {SqlEscaping.Literal(x.TokenKey)});
+             """).Prepend(cleanup).ToArray();
     }
 
     /// <summary>

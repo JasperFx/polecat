@@ -22,9 +22,9 @@ internal sealed record FullTextQuery(IReadOnlyList<IReadOnlyList<FullTextClause>
     public bool IsEmpty => OrGroups.Count == 0 || OrGroups.All(g => g.Count == 0);
 
     /// <summary>Every term must appear, in any order.</summary>
-    internal static FullTextQuery Plain(string text)
+    internal static FullTextQuery Plain(string text, FullTextIndex? index = null)
     {
-        var clauses = FullTextIndex.Tokenize(text)
+        var clauses = Terms(text, index)
             .Select(t => new FullTextClause([t], false, false))
             .ToList();
 
@@ -50,9 +50,9 @@ internal sealed record FullTextQuery(IReadOnlyList<IReadOnlyList<FullTextClause>
     ///         the same answer <c>PlainTextSearch</c> gives for an empty search rather than "everything".
     ///     </para>
     /// </remarks>
-    internal static FullTextQuery Prefix(string text)
+    internal static FullTextQuery Prefix(string text, FullTextIndex? index = null)
     {
-        var clauses = FullTextIndex.Tokenize(text)
+        var clauses = Terms(text, index)
             .Select(t => new FullTextClause([t], false, false, true))
             .ToList();
 
@@ -60,9 +60,9 @@ internal sealed record FullTextQuery(IReadOnlyList<IReadOnlyList<FullTextClause>
     }
 
     /// <summary>The terms adjacent and in order.</summary>
-    internal static FullTextQuery Phrase(string text)
+    internal static FullTextQuery Phrase(string text, FullTextIndex? index = null)
     {
-        var terms = FullTextIndex.Tokenize(text);
+        var terms = Terms(text, index);
         return new FullTextQuery(terms.Length == 0 ? [] : [[new FullTextClause(terms, true, false)]]);
     }
 
@@ -92,7 +92,7 @@ internal sealed record FullTextQuery(IReadOnlyList<IReadOnlyList<FullTextClause>
     ///         happens to lack them. "Not this" is not a search.
     ///     </para>
     /// </remarks>
-    internal static FullTextQuery WebStyle(string text)
+    internal static FullTextQuery WebStyle(string text, FullTextIndex? index = null)
     {
         var groups = new List<List<FullTextClause>>();
         var current = new List<FullTextClause>();
@@ -112,7 +112,7 @@ internal sealed record FullTextQuery(IReadOnlyList<IReadOnlyList<FullTextClause>
 
             var negated = raw.StartsWith('-');
             var body = negated ? raw[1..] : raw;
-            var terms = FullTextIndex.Tokenize(body);
+            var terms = Terms(body, index);
             if (terms.Length == 0) continue;
 
             current.Add(new FullTextClause(terms, quoted && terms.Length > 1, negated));
@@ -130,6 +130,12 @@ internal sealed record FullTextQuery(IReadOnlyList<IReadOnlyList<FullTextClause>
     ///     Split on whitespace, keeping <c>"quoted runs"</c> together and reporting whether each
     ///     segment was quoted. A leading <c>-</c> survives on the segment so the caller can read it.
     /// </summary>
+    // #642: through the index, so a Porter index's query terms are stemmed exactly as its stored terms
+    // were. Prefix terms too, as SQLite's are: `configuring` as a prefix stems to `configur` and finds
+    // `configure`. Null only for callers that build a query with no index in hand.
+    private static string[] Terms(string text, FullTextIndex? index)
+        => index?.TokenizeQuery(text) ?? FullTextIndex.Tokenize(text);
+
     private static IEnumerable<(string Text, bool Quoted)> Segments(string text)
     {
         var i = 0;

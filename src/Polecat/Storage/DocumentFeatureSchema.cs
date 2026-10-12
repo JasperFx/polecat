@@ -39,6 +39,11 @@ internal class DocumentFeatureSchema : FeatureSchemaBase
         // invalid table '...'". Provider order is dictionary order, so whether a script ran at all was
         // luck. The whole-database MIGRATION path was never affected, because there every table is in one
         // SchemaMigration and Weasel defers the constraint itself.
+        // #642: the Porter stemmer functions belong to a SCHEMA, so every Porter-indexed type in it
+        // yields them. Emitted once -- a generated script would otherwise CREATE the same function twice
+        // and fail on the second.
+        var emittedFunctions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
         foreach (var provider in InDependencyOrder(_options.Providers.AllProviders))
         {
             // #255: externally-managed partitioned tables are intentionally excluded from the bulk
@@ -66,6 +71,12 @@ internal class DocumentFeatureSchema : FeatureSchemaBase
             // them adjacently is what answers the drift that independence allows.
             foreach (var ftObject in FullText.FullTextSchemaObjects.For(provider.Mapping))
             {
+                if (ftObject is Weasel.SqlServer.Functions.Function function
+                    && !emittedFunctions.Add(function.Identifier.QualifiedName))
+                {
+                    continue;
+                }
+
                 yield return ftObject;
             }
         }
