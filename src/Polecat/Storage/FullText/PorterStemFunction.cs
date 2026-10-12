@@ -1,4 +1,3 @@
-using System.Data.Common;
 using Polecat.Internal;
 using Weasel.Core;
 using Weasel.SqlServer;
@@ -55,53 +54,10 @@ internal static class PorterStemFunction
     /// <summary>Both functions, the pattern helper first because the stemmer calls it.</summary>
     internal static IEnumerable<Function> For(string schema)
     {
-        yield return new RerunnableFunction(PatternIdentifier(schema), PatternSql(schema));
-        yield return new RerunnableFunction(StemIdentifier(schema), StemSql(schema));
-    }
-
-    /// <summary>
-    ///     A Weasel <see cref="Function" /> whose creation script can be run twice.
-    /// </summary>
-    /// <remarks>
-    ///     <para>
-    ///         ⚠️ Weasel.SqlServer's <see cref="Function" /> renders a bare <c>CREATE FUNCTION</c>, so
-    ///         a generated script containing one fails on its second run with "There is already an object
-    ///         named ..." — which <c>generated_schema_script_executes</c> caught the moment a Porter index
-    ///         put the stemmer into a script. Weasel's own <c>Trigger</c> answers the same problem by
-    ///         dropping first (<c>DROP TRIGGER IF EXISTS</c>, then <c>EXEC sp_executesql</c>), and this does
-    ///         exactly that by composing Weasel's two statements; it writes no DDL of its own.
-    ///     </para>
-    ///     <para>
-    ///         Dropping is safe here because nothing binds to these functions: the full-text trigger calls
-    ///         them without <c>SCHEMABINDING</c>. The migration path is unaffected —
-    ///         <c>FunctionDelta.WriteUpdate</c> already drops before it creates, and a second
-    ///         <c>DROP FUNCTION IF EXISTS</c> is a no-op. The gap belongs upstream in Weasel; this goes away
-    ///         when <see cref="Function" /> gets the trigger's treatment (weasel#703).
-    ///     </para>
-    /// </remarks>
-    private sealed class RerunnableFunction(DbObjectName identifier, string body) : Function(identifier, body)
-    {
-        public override void WriteCreateStatement(Migrator migrator, TextWriter writer)
-        {
-            WriteDropStatement(migrator, writer);
-            base.WriteCreateStatement(migrator, writer);
-        }
-
-        // ⚠️ The other half, and it is not optional. FunctionDelta compares Body() on both sides, and
-        // Body() is rendered THROUGH WriteCreateStatement -- so with only the override above, the declared
-        // side carries the drop prefix while the side read back from sys.sql_modules (a plain Function)
-        // does not, and the delta reports an update on every single pass. a_porter_index_reaches_a_fixed_point
-        // caught exactly that. Reading the stored function back as this type puts the same prefix on both.
-        protected override async Task<FunctionBase?> ReadExistingFromReaderAsync(DbDataReader reader,
-            CancellationToken ct)
-        {
-            if (!await reader.ReadAsync(ct).ConfigureAwait(false)) return null;
-
-            var definition = await reader.GetFieldValueAsync<string>(0, ct).ConfigureAwait(false);
-            return string.IsNullOrEmpty(definition)
-                ? null
-                : new RerunnableFunction(Identifier, definition.TrimEnd());
-        }
+        // Plain Weasel Functions since Weasel 9.44.0 (weasel#703/#704): their creation script drops first,
+        // so a generated script containing them runs twice, which used to need a local subclass.
+        yield return new Function(PatternIdentifier(schema), PatternSql(schema));
+        yield return new Function(StemIdentifier(schema), StemSql(schema));
     }
 
     internal static string PatternSql(string schema) =>
