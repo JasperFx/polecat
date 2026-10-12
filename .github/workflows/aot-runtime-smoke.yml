@@ -12,7 +12,7 @@ name: aot-runtime-smoke
 # nothing new at runtime — "writes were fine, the first read threw" (marten#5328) is what a
 # build-only lane reports as green.
 #
-# ⚠️ THIS LANE BLOCKS. continue-on-error came off in #751, and the mechanism that let it is worth
+# ⚠️ THIS LANE BLOCKS. continue-on-error came off in #752, and the mechanism that let it is worth
 # knowing before adding a shape.
 #
 # On its first run the lane found that Polecat did not function AT ALL under Native AOT (#733), so it
@@ -25,8 +25,10 @@ name: aot-runtime-smoke
 # disagrees in either direction: an expected pass that fails, an expected FAILURE that passes (the gap
 # closed and the docs are now stale), or an expected failure whose message no longer contains the
 # documented reason (a database that is down is not evidence about AOT). The two expected failures are
-# the strong-typed document id (#751) and a projection into an anonymous type (#743); both are
-# documented in docs/configuration/native-aot.md, and the log still prints each in full.
+# a GroupBy projected into an anonymous type (#743), which cannot work, and a strong-typed document id
+# deliberately left UNregistered (#751) -- the control proving opts.RegisterValueTypeId is what makes the
+# registered one pass. Both are documented in docs/configuration/native-aot.md, and the log still prints
+# each in full.
 #
 # ⚠️ An expected failure is therefore NOT a skip, and the right response to one going red is to read
 # it rather than to adjust its expectation.

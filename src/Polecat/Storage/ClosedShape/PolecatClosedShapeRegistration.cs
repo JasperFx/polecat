@@ -101,15 +101,20 @@ internal static class PolecatClosedShapeRegistration
     ///     closes reflectively and is the only part of #733's fix that does.
     /// </summary>
     /// <remarks>
-    ///     ⚠️ Still a value-type argument in <c>ValueTypeIdentification&lt;TDoc, TOuter, TInner&gt;</c>
-    ///     and in <c>BuildTypedProvider&lt;TDoc, TOuter&gt;</c> when the wrapper is a
-    ///     <c>readonly record struct</c>, so a natively-published store with a strong-typed document
-    ///     id still fails here. Tracked on #733; the smoke harness drives a plain Guid id, so it is
-    ///     not currently covered either way.
+    ///     ⚠️ A value-type argument in <c>ValueTypeIdentification&lt;TDoc, TOuter, TInner&gt;</c> and in
+    ///     <c>BuildTypedProvider&lt;TDoc, TOuter&gt;</c> when the wrapper is a <c>readonly record struct</c>,
+    ///     so under Native AOT the reflective path below has no native code. #751: a consumer that called
+    ///     <see cref="StoreOptions.RegisterValueTypeId{TDoc,TWrapper,TInner}" /> rooted the instantiation,
+    ///     and <see cref="ValueTypeIdRegistry" /> hands it back here before reflection is tried.
     /// </remarks>
     private static object BuildValueTypeProvider<TDoc>(DocumentMapping mapping, ValueTypeInfo vt)
         where TDoc : notnull
     {
+        if (ValueTypeIdRegistry.TryProvider<TDoc>(vt.OuterType, mapping, vt) is { } registered)
+        {
+            return registered;
+        }
+
         var identification = typeof(ValueTypeIdentification<,,>)
             .MakeGenericType(typeof(TDoc), vt.OuterType, vt.SimpleType)
             .GetConstructors()[0]
@@ -121,7 +126,7 @@ internal static class PolecatClosedShapeRegistration
             .Invoke(null, new[] { mapping, identification })!;
     }
 
-    private static DocumentProvider<TDoc> BuildTypedProvider<TDoc, TId>(
+    internal static DocumentProvider<TDoc> BuildTypedProvider<TDoc, TId>(
         DocumentMapping mapping,
         IIdentification<TDoc, TId> identification)
         where TDoc : notnull

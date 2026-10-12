@@ -1,15 +1,16 @@
 # Native AOT
 
-::: warning Native AOT works, with two documented exceptions and a contract you have to meet
+::: warning Native AOT works, with one documented exception and a contract you have to meet
 A natively-published application can construct a store, migrate its schema, write and read
-documents, append and read events, aggregate streams live, and run the LINQ surface. **33 shapes are
-measured in CI and 31 pass.** The two that do not are a **strong-typed document id**
-([#751](https://github.com/JasperFx/polecat/issues/751)) and a `GroupBy` projected into an **anonymous
-type** ([#743](https://github.com/JasperFx/polecat/issues/743)).
+documents, use strong-typed document ids, append and read events, aggregate streams live, and run the
+LINQ surface. **36 shapes are measured in CI.** 34 pass, and the two expected failures are a `GroupBy`
+projected into an **anonymous type** ([#743](https://github.com/JasperFx/polecat/issues/743)), which
+cannot work, and an **unregistered** strong-typed id, kept as the control that proves registering one
+is required.
 
 This is not a switch you turn on: you also have to meet [the consumer contract](#the-consumer-contract)
-below — root your document types, supply a source-generated serializer, and avoid
-`InvariantGlobalization`. Nothing here is estimated; `Polecat.AotRuntimeSmoke` publishes native and
+below — root your document types, supply a source-generated serializer, register each strong-typed
+document id, and avoid `InvariantGlobalization`. Nothing here is estimated; `Polecat.AotRuntimeSmoke` publishes native and
 runs every shape against a real SQL Server on each build.
 :::
 
@@ -74,14 +75,13 @@ The keyed load path (`LoadAsync`), event reads (`FetchStreamAsync`, `AggregateSt
 document writes carry no AOT annotation at all — and all of them are now **measured as working**
 (#742), so here the absence happens to be right. The annotated LINQ surface is the inverse: it warns
 on shapes that work. Neither the presence nor the absence of a warning is evidence; only
-`Polecat.AotRuntimeSmoke` is. [#751](https://github.com/JasperFx/polecat/issues/751) tracks the
-remaining failure.
+`Polecat.AotRuntimeSmoke` is.
 
 ## How far it gets today
 
 Measured, not estimated — `Polecat.AotRuntimeSmoke` publishes native and runs against a real SQL
-Server. **33 shapes, 31 of which pass.** The two that do not are a `GroupBy` projected into an anonymous
-type (#743) and a strong-typed document id (#751); everything else below works.
+Server. **36 shapes, 34 of which pass.** The two that do not are a `GroupBy` projected into an anonymous
+type (#743) and, deliberately, a strong-typed id nobody registered (#751); everything else below works.
 
 | | native |
 |---|---|
@@ -105,7 +105,8 @@ type (#743) and a strong-typed document id (#751); everything else below works.
 | `ModifiedSince` / `CreatedSince` | ✅ |
 | soft deletes — the default filter, `MaybeDeleted`, `IsDeleted`, `DeletedSince` | ✅ |
 | a `GroupBy` projected into an **anonymous type** | ❌ [#743](https://github.com/JasperFx/polecat/issues/743) |
-| a **strong-typed** document id (`readonly record struct FooId(Guid)`) | ❌ [#751](https://github.com/JasperFx/polecat/issues/751) |
+| a **strong-typed** document id (`readonly record struct FooId(Guid)`): load, LINQ filter, `Select` | ✅ **once registered** (5.39, [#751](https://github.com/JasperFx/polecat/issues/751)) |
+| a strong-typed document id that was **not** registered | ❌ see [Register strong-typed ids](#register-strong-typed-document-ids) |
 
 ### What makes the supported shapes work
 
@@ -119,9 +120,10 @@ what changed is that the generic is no longer *closed* at runtime.
 runtime `Type` is fine. It is a **value-type** argument that has no compiled code, and an id type is
 routinely `Guid`, `int` or `long`.
 
-⚠️ A **strong-typed id** wrapper is still closed reflectively, because its type is a runtime value
-nothing in Polecat can name. A natively-published store whose documents use `readonly record struct`
-ids will still fail; plain `Guid` / `string` / `int` / `long` ids work.
+⚠️ A **strong-typed id** wrapper is a runtime value nothing in Polecat can name, so Polecat cannot close
+its storage statically on your behalf. **You** can, with one line per document type — see
+[Register strong-typed document ids](#register-strong-typed-document-ids). Plain `Guid` / `string` /
+`int` / `long` ids need nothing.
 
 ### LINQ works, and the one shape that does not is a `GroupBy` into an anonymous type
 
@@ -203,30 +205,11 @@ query with an `enum`-typed parameter — moot in Polecat, which
 because SQL Server caches plans natively — and a `where` clause whose value comes from a method call,
 which Polecat **measures as working**.
 
-### What does not work: a strong-typed document id
-
-```
-NotSupportedException: 'ValueTypeIdentification`3[Badge,BadgeId,System.Guid]'
-is missing native code or metadata.
-```
-
-`BuildValueTypeProvider` closes that generic over the *wrapper* and its *inner* type, both value
-types, and the wrapper is a runtime value nothing in Polecat can name. Plain `Guid` / `string` /
-`int` / `long` ids are fine. Tracked on [#751](https://github.com/JasperFx/polecat/issues/751),
-split out of #733 when that closed.
-
-⚠️ The two escapes you would try first are both dead ends, established on #733 by trying them:
-**reflecting** over the closed type's members fails because nothing statically references them and the
-trimmer removed the metadata — you cannot reflect your way out of generics under AOT — and
-**reimplementing** the identity rules locally means a second description of Weasel's behaviour kept in
-step by hand. A `[DynamicDependency]` on the wrapper does not help either: it preserves `FooId`'s
-members without instantiating `ValueTypeIdentification<Doc, FooId, Guid>`. Closing it needs the
-instantiation emitted in **your** assembly, which is why #751 is open rather than fixed.
-
 ## The consumer contract
 
-⚠️ Two of the walls found on the way turned out **not** to be Polecat defects, and they apply
-whatever else changes. If you publish natively you have to do both.
+⚠️ Several walls found on the way turned out **not** to be Polecat defects: they are things only
+your code can do, because only your code can name your types. If you publish natively you have to do
+all of them.
 
 ### Root your document types
 
@@ -279,6 +262,39 @@ opts.ConfigureSerialization(new JsonSerializerOptions { TypeInfoResolver = MyJso
 document type in `DocumentStore`'s constructor, so it crosses the serializer even in an application
 that never touches dead letters. Every document type, every event type, and that one.
 
+### Register strong-typed document ids
+
+If a document's id is a strong-typed wrapper (Vogen, StronglyTypedId, or a plain
+`readonly record struct`), register it, one line per document type:
+
+```cs
+// public readonly record struct BadgeId(Guid Value);
+opts.RegisterValueTypeId<Badge, BadgeId, Guid>();
+```
+
+Polecat closes its document storage over the wrapper type at runtime. A wrapper is a **value** type,
+and a native image has no compiled code for an instantiation over a value type that nothing named at
+compile time, so without the call the first session to touch the document fails:
+
+```
+NotSupportedException: 'Weasel.Core.Identity.ValueTypeIdentification`3[Badge,BadgeId,System.Guid]'
+is missing native code or metadata.
+```
+
+Naming all three types in your code is what makes the compiler emit them. The **document** type is in
+the signature because the storage is closed over the document as well as the id, so an id-only
+registration could not root it. This is the same API Marten has (`RegisterValueTypeId`, marten#5589).
+
+Under a JIT the call does nothing and costs nothing, and an unregistered id still works through
+reflection, so it is safe to add unconditionally. Load by id, a LINQ filter on the id and `Select` of
+the id are all measured natively with the call in place, and an unregistered id is measured too, as
+the expected failure that proves the call is necessary.
+
+⚠️ The two escapes you would try first instead are both dead ends, established on #733 by trying
+them: **reflecting** over the closed type's members fails because the trimmer removed the metadata
+— you cannot reflect your way out of generics under AOT — and a `[DynamicDependency]` on the wrapper
+preserves its members without instantiating anything.
+
 ### Do not use `InvariantGlobalization`
 
 ```
@@ -291,12 +307,12 @@ image; it is not available here.
 
 ## If you need AOT today
 
-Meet the three contract items above and a natively-published app can construct a store, migrate its
-schema, write documents, load them by id, append and read events, aggregate a stream live, and run
-`Query<T>()` — including the scalar aggregates, `GroupBy` and `GroupJoin`. The two things you cannot
-do are use a **strong-typed document id** ([#751](https://github.com/JasperFx/polecat/issues/751)) and
-project a `GroupBy` into an **anonymous type** ([#743](https://github.com/JasperFx/polecat/issues/743));
-project it into a named type registered with your `JsonSerializerContext` instead.
+Meet the contract items above and a natively-published app can construct a store, migrate its schema,
+write documents, load them by id — strong-typed ids included, once registered — append and read
+events, aggregate a stream live, and run `Query<T>()`, including the scalar aggregates, `GroupBy` and
+`GroupJoin`. The one thing you cannot do is project a `GroupBy` into an **anonymous type**
+([#743](https://github.com/JasperFx/polecat/issues/743)); project it into a named type registered with
+your `JsonSerializerContext` instead.
 
 Measured rather than asserted — `Polecat.AotRuntimeSmoke` publishes native and runs every one of
 those shapes against SQL Server on each build.
@@ -315,9 +331,9 @@ A build-only lane cannot catch a runtime AOT failure, which is why the second on
 path that broke.
 
 **`aot-runtime-smoke` blocks, and each shape declares its expected outcome.** It used to be
-`continue-on-error` because #733 made it fail wholesale; that flag came off in #751. The two
-documented limitations are declared **expected failures** citing #751 and #743, which is what lets the
-lane go green over them — and the lane is red whenever reality disagrees in either direction:
+`continue-on-error` because #733 made it fail wholesale; that flag came off in #752. The two
+expected failures — the anonymous `GroupBy` (#743) and the deliberately unregistered strong-typed id
+(#751) — are what lets the lane go green over known behaviour — and the lane is red whenever reality disagrees in either direction:
 
 | the lane goes red when | because |
 |---|---|

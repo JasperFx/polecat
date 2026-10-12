@@ -65,15 +65,21 @@ builder.Services.AddPolecat((StoreOptions opts) =>
     {
         TypeInfoResolver = SmokeJsonContext.Default
     });
+
+    // ⚠️ #751: THE THIRD PART OF THE CONSUMER CONTRACT, for a strong-typed document id. Polecat closes
+    // its storage over the wrapper at runtime, and a native image has no code for that instantiation
+    // unless something named it at compile time -- which is what this call does. Marten's answer too.
+    // Medal is deliberately NOT registered: see the shape that expects it to fail.
+    opts.RegisterValueTypeId<Badge, BadgeId, Guid>();
 });
 
 using var host = builder.Build();
 
 // ⚠️ EVERY SHAPE DECLARES ITS EXPECTED OUTCOME, and the lane is red whenever reality disagrees in
-// EITHER direction. That is what lets `continue-on-error` come off (#751).
+// EITHER direction. That is what lets `continue-on-error` come off (#752).
 //
 // Before this, the lane printed per-shape results and returned non-zero on any failure — so with two
-// shapes documented as failing (#751, #743) it was PERMANENTLY red, and `continue-on-error: true`
+// shapes documented as failing (then: the strong-typed id and #743) it was PERMANENTLY red, and `continue-on-error: true`
 // made it permanently ignorable. A regression in any of the sixteen WORKING shapes would have changed
 // nothing a reader or a merge gate could see. A gate that cannot go green does not gate.
 //
@@ -250,17 +256,14 @@ await Shape("filter on a child collection", "marten#5374", async () =>
 });
 
 // --- 7. a STRONG-TYPED document id -------------------------------------------
-// EXPECTED FAILURE, #751. The last shape #733 had not measured; measuring it is what found this.
-// `BuildValueTypeProvider` closes ValueTypeIdentification<,,> and BuildTypedProvider<,> over the
-// WRAPPER and its inner type, both value types -- so there is no canonical body to share, and ILC
-// cannot have precompiled an instantiation naming types from the consumer's assembly. #733's own
-// layer-peeling ruled out both escapes (reflecting over the closed type's members, whose metadata the
-// trimmer removes; and reimplementing Weasel's identity rules locally). Closing it needs something
-// emitting the instantiation in the CONSUMER's assembly, which is a program rather than a patch.
-await Shape("write and read a strong-typed id", "polecat#751", async () =>
-{
-    var badgeId = new BadgeId(Guid.NewGuid());
+// #751. Registered through opts.RegisterValueTypeId<Badge, BadgeId, Guid>() above, which roots the
+// ValueTypeIdentification<,,> / BuildTypedProvider<,> instantiations that BuildValueTypeProvider used to
+// close reflectively over a value-type wrapper. Marten's three checks for the same fix (#5589): load by
+// id, filter on the id in LINQ, and select the id.
+var badgeId = new BadgeId(Guid.NewGuid());
 
+await Shape("write and read a strong-typed id (registered)", "polecat#751", async () =>
+{
     await using (var scope = host.Services.CreateAsyncScope())
     {
         var session = scope.ServiceProvider.GetRequiredService<IDocumentSession>();
@@ -273,6 +276,35 @@ await Shape("write and read a strong-typed id", "polecat#751", async () =>
     var loaded = await reader.LoadAsync<Badge>(badgeId);
     if (loaded?.Holder != "aot") throw new InvalidOperationException(
         $"strong-typed id round trip gave '{loaded?.Holder}'");
+});
+
+await Shape("LINQ filter on a strong-typed id (registered)", "polecat#751", async () =>
+{
+    await using var scope = host.Services.CreateAsyncScope();
+    var session = scope.ServiceProvider.GetRequiredService<IDocumentSession>();
+    var found = await session.Query<Badge>().Where(b => b.Id == badgeId).ToListAsync();
+    if (found.Count != 1) throw new InvalidOperationException($"filter on the id matched {found.Count}");
+});
+
+await Shape("LINQ select a strong-typed id (registered)", "polecat#751", async () =>
+{
+    await using var scope = host.Services.CreateAsyncScope();
+    var session = scope.ServiceProvider.GetRequiredService<IDocumentSession>();
+    var ids = await session.Query<Badge>().Select(b => b.Id).ToListAsync();
+    if (!ids.Contains(badgeId)) throw new InvalidOperationException("the stored id was not projected");
+});
+
+// ⚠️ EXPECTED FAILURE, and the reason this lane can say the registration is what does the work: the
+// same shape over a document whose id was NOT registered still fails exactly as it did before #751. If
+// this ever passes, either the reflective path became AOT-safe or something else rooted Medal -- and
+// the docs' "you must register" would then be overstating.
+await Shape("write and read a strong-typed id (NOT registered)", "polecat#751", async () =>
+{
+    var medalId = new MedalId(Guid.NewGuid());
+    await using var scope = host.Services.CreateAsyncScope();
+    var session = scope.ServiceProvider.GetRequiredService<IDocumentSession>();
+    session.Store(new Medal { Id = medalId, Holder = "aot" });
+    await session.SaveChangesAsync();
 }, Expectation.FailsWith("is missing native code or metadata"));
 
 // --- 8-10. the three shapes that reach WhereClauseParser.CompileAndInvoke ------
@@ -631,6 +663,7 @@ namespace Polecat.AotRuntimeSmoke
     [JsonSerializable(typeof(Quest))]
     [JsonSerializable(typeof(QuestStarted))]
     [JsonSerializable(typeof(Badge))]
+    [JsonSerializable(typeof(Medal))]
     [JsonSerializable(typeof(Relic))]
     [JsonSerializable(typeof(JasperFx.Events.Daemon.DeadLetterEvent))]
     [JsonSerializable(typeof(DifficultyTally))]
@@ -650,27 +683,40 @@ namespace Polecat.AotRuntimeSmoke
         [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties, typeof(Badge))]
         [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties, typeof(Relic))]
         [DynamicDependency(DynamicallyAccessedMemberTypes.All, typeof(BadgeId))]
+        [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties, typeof(Medal))]
+        [DynamicDependency(DynamicallyAccessedMemberTypes.All, typeof(MedalId))]
         internal static void Keep()
         {
         }
     }
 
     /// <summary>
-    ///     #733: a strong-typed id, so the one remaining doubt gets measured instead of asserted.
+    ///     #733 / #751: a strong-typed id, registered through <c>RegisterValueTypeId</c>.
     /// </summary>
     /// <remarks>
-    ///     `BuildValueTypeProvider` closes <c>ValueTypeIdentification&lt;TDoc, TOuter, TInner&gt;</c>
-    ///     and <c>BuildTypedProvider&lt;TDoc, TOuter&gt;</c> reflectively, because the wrapper type is
-    ///     a runtime value. Both have VALUE-type arguments here (<c>BadgeId</c> is a
-    ///     <c>readonly record struct</c>, <c>TInner</c> is <see cref="Guid" />), which is the shape
-    ///     that normally has no compiled code — so I expected this to fail and would rather find out
-    ///     than keep saying so. Marten's AOT guide lists strong-typed ids as working.
+    ///     <c>BuildValueTypeProvider</c> closes <c>ValueTypeIdentification&lt;TDoc, TOuter, TInner&gt;</c>
+    ///     and <c>BuildTypedProvider&lt;TDoc, TOuter&gt;</c> over VALUE-type arguments here (<c>BadgeId</c>
+    ///     is a <c>readonly record struct</c>, <c>TInner</c> is <see cref="Guid" />), which has no compiled
+    ///     code unless the consumer's registration rooted it. <see cref="MedalId" /> is the control.
     /// </remarks>
     internal readonly record struct BadgeId(Guid Value);
 
     internal sealed class Badge
     {
         public BadgeId Id { get; set; }
+        public string Holder { get; set; } = string.Empty;
+    }
+
+    /// <summary>
+    ///     #751: a strong-typed id deliberately left UNregistered, so the lane keeps proving that
+    ///     <c>RegisterValueTypeId</c> is what makes <see cref="BadgeId" /> work. Rooted exactly like
+    ///     <see cref="Badge" /> in every other respect, so the registration is the only difference.
+    /// </summary>
+    internal readonly record struct MedalId(Guid Value);
+
+    internal sealed class Medal
+    {
+        public MedalId Id { get; set; }
         public string Holder { get; set; } = string.Empty;
     }
 
