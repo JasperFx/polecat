@@ -105,6 +105,30 @@ public interface ITenancy
     ///     </para>
     /// </summary>
     string? SeedConnectionString => null;
+
+    /// <summary>
+    ///     Find the database that holds <paramref name="tenantId" />'s data by LOOKUP ONLY, or null
+    ///     when this tenancy does not know the tenant. Backs <c>IEventStore.FindDatabaseForTenantAsync</c>.
+    /// </summary>
+    /// <remarks>
+    ///     #764 / jasperfx#1005. Unlike <see cref="GetDatabase" />, this never refuses with
+    ///     <see cref="UnknownTenantIdException" /> and never registers or provisions anything for a
+    ///     tenant it has not already been told about: its callers (Bobcat's
+    ///     <c>AfterAsyncDaemonsCatchUpAsync(tenantId)</c>, Wolverine's correlation query) treat null as
+    ///     "fall back to every database", so an unknown tenant must cost a lookup and nothing more.
+    ///     <para>
+    ///     Default-implemented so <see cref="ITenancy" /> implementations outside this repo keep
+    ///     compiling. The default only answers for a single-database tenancy with exactly one database,
+    ///     which is the same conservative answer JasperFx's own default gives; anything else is null.
+    ///     </para>
+    /// </remarks>
+    ValueTask<PolecatDatabase?> FindDatabaseAsync(string tenantId, CancellationToken token = default)
+    {
+        if (Cardinality != DatabaseCardinality.Single) return ValueTask.FromResult<PolecatDatabase?>(null);
+
+        var databases = AllDatabases();
+        return ValueTask.FromResult(databases.Count == 1 ? databases[0] : null);
+    }
 }
 
 /// <summary>
@@ -149,6 +173,12 @@ internal class DefaultTenancy : ITenancy
     // DefaultTenancy is only ever constructed FROM the store's connection string, so it has nothing
     // to seed back.
     public string? SeedConnectionString => null;
+
+    // Single database, with or without conjoined tenancy: every tenant's rows live in the one database,
+    // so every tenant id resolves to it. Deliberately not checked against pc_tenant_partitions; a
+    // conjoined tenant does not have to be registered anywhere to have data.
+    public ValueTask<PolecatDatabase?> FindDatabaseAsync(string tenantId, CancellationToken token = default) =>
+        ValueTask.FromResult<PolecatDatabase?>(_database);
 }
 
 /// <summary>
@@ -241,4 +271,12 @@ public class SeparateDatabaseTenancy : ITenancy
     // own Database property — nothing routes to it, because DefaultTenantUsageEnabled is off.
     string? ITenancy.SeedConnectionString =>
         _factories.Values.FirstOrDefault()?.ConnectionString;
+
+    // Only a tenant registered through AddTenant() has a database. GetDatabase() would throw for any
+    // other; this answers null instead, and building the PolecatDatabase for a registered tenant is
+    // the same in-memory step GetDatabase() and AllDatabases() already take. Nothing touches SQL Server.
+    ValueTask<PolecatDatabase?> ITenancy.FindDatabaseAsync(string tenantId, CancellationToken token) =>
+        ValueTask.FromResult(_factories.ContainsKey(tenantId)
+            ? ((ITenancy)this).GetDatabase(tenantId)
+            : null);
 }

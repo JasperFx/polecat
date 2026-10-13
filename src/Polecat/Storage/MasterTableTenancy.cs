@@ -100,6 +100,22 @@ public class MasterTableTenancy : ITenancy, IDynamicTenantSource<string>
     }
 
     /// <summary>
+    ///     #764: the database for a tenant registered and enabled in the master table, or null for an
+    ///     unknown or disabled one. A read of the registry and nothing else: no tenant row is written and
+    ///     no tenant database is created, and an unknown tenant is not cached, so a tenant added later
+    ///     resolves on the next call.
+    /// </summary>
+    public async ValueTask<PolecatDatabase?> FindDatabaseAsync(string tenantId, CancellationToken token = default)
+    {
+        if (_cache.TryGetValue(tenantId, out var cached)) return cached.Database;
+
+        var lookup = await LookupTenantAsync(tenantId, token).ConfigureAwait(false);
+        if (lookup.ConnectionString is null) return null;
+
+        return _cache.GetOrAdd(tenantId, id => CreateEntry(id, lookup.ConnectionString)).Database;
+    }
+
+    /// <summary>
     ///     The refusal for a tenant this tenancy will not open a session for.
     /// </summary>
     /// <remarks>
