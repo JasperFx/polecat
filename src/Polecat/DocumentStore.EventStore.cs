@@ -142,6 +142,19 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
         ValueTask.FromResult<IReadOnlyList<IEventDatabase>>(
             Options.Tenancy?.AllDatabases().Cast<IEventDatabase>().ToList() ?? []);
 
+    // #764 / jasperfx#1005: JasperFx's default only answers for a single-database store, so a
+    // database-per-tenant store left Bobcat's AfterAsyncDaemonsCatchUpAsync(tenantId) and Wolverine's
+    // correlation query waiting on, and querying, every tenant's database. The tenancy is the one
+    // component that knows the answer; it looks the tenant up without creating anything, and null
+    // (an unknown tenant) still sends the caller back to AllDatabases().
+    async ValueTask<IEventDatabase?> IEventStore.FindDatabaseForTenantAsync(string tenantId, CancellationToken token)
+    {
+        ArgumentNullException.ThrowIfNull(tenantId);
+
+        if (Options.Tenancy is null) return null;
+        return await Options.Tenancy.FindDatabaseAsync(tenantId, token).ConfigureAwait(false);
+    }
+
     Type IEventStore<IDocumentSession, IQuerySession>.IdentityTypeForProjectedType(Type aggregateType) =>
         Events.StreamIdentity == StreamIdentity.AsGuid ? typeof(Guid) : typeof(string);
 
