@@ -33,6 +33,9 @@
           <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
         </PackageReference>
         <PackageReference Include="Microsoft.Data.SqlClient" />
+        <!-- GHSA-846f-f764-76mx: lifts SqlClient's vulnerable transitive Pkcs to a patched version.
+             See Directory.Packages.props. -->
+        <PackageReference Include="System.Security.Cryptography.Pkcs" />
         <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
         <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
         <PackageReference Include="Polly.Core" />

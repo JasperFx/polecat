@@ -1353,6 +1353,19 @@
         <PackageVersion Include="Nuke.Common" Version="9.0.4" />
     </ItemGroup>
 
+    <!-- GHSA-846f-f764-76mx (CVE-2026-84008, high): SignedCms.CheckSignature DoS in
+         System.Security.Cryptography.Pkcs. Microsoft.Data.SqlClient carries it transitively —
+         7.0.0 pins 9.0.13, and even 7.1.1 still pins 9.0.18 — so bumping SqlClient does not
+         clear it. Polecat references the package directly (src/Polecat/Polecat.csproj) so the
+         patched floor lands in the published nuspec and reaches every consumer. Drop this once a
+         SqlClient release depends on a patched version. -->
+    <ItemGroup Condition=" '$(TargetFramework)' == 'net10.0' ">
+        <PackageVersion Include="System.Security.Cryptography.Pkcs" Version="10.0.13" />
+    </ItemGroup>
+    <ItemGroup Condition=" '$(TargetFramework)' == 'net9.0' ">
+        <PackageVersion Include="System.Security.Cryptography.Pkcs" Version="9.0.21" />
+    </ItemGroup>
+
     <!-- EF Core -->
     <ItemGroup Condition=" '$(TargetFramework)' == 'net10.0' ">
         <PackageVersion Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.0" />
