@@ -87,6 +87,28 @@ public class database_usage_descriptor_tests
         database.Databases.Count.ShouldBe(all.Count);
     }
 
+    // JasperFx/wolverine#5002: the database half on its own, for Wolverine's heartbeat, agrees with the usage
+    [Fact]
+    public async Task describing_the_databases_alone_matches_the_usage()
+    {
+        await using var store = BuildStore(opts =>
+        {
+            opts.MultiTenantedDatabases(tenancy =>
+            {
+                tenancy.AddTenant("tenant1", ConnectionStringFor("usage_tenant1"));
+                tenancy.AddTenant("tenant2", ConnectionStringFor("usage_tenant2"));
+            });
+        });
+
+        var databases = await ((IEventStore)store).TryDescribeDatabasesAsync(CancellationToken.None);
+        var usage = await DatabaseUsageOf(store);
+
+        databases.ShouldNotBeNull();
+        databases.Cardinality.ShouldBe(usage.Cardinality);
+        databases.Databases.Select(x => (x.DatabaseName, string.Join(",", x.TenantIds))).OrderBy(x => x.DatabaseName)
+            .ShouldBe(usage.Databases.Select(x => (x.DatabaseName, string.Join(",", x.TenantIds))).OrderBy(x => x.DatabaseName));
+    }
+
     [Fact]
     public async Task each_described_tenant_database_carries_its_tenant_id()
     {

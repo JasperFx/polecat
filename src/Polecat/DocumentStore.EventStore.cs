@@ -449,6 +449,17 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
         }
     }
 
+    /// <summary>
+    ///     JasperFx/wolverine#5002 — just the database half of <c>TryCreateUsage()</c>, through the same
+    ///     never-throwing <see cref="DescribeDatabasesAsync" />. Wolverine asks for it on every leader heartbeat,
+    ///     and the full usage also reads the highest event sequence and describes every projection,
+    ///     subscription, event type and tag type.
+    /// </summary>
+    async Task<DatabaseUsage?> IEventStore.TryDescribeDatabasesAsync(CancellationToken token)
+    {
+        return await DescribeDatabasesAsync(token).ConfigureAwait(false);
+    }
+
     async Task<EventStoreUsage?> IEventStore.TryCreateUsage(CancellationToken token)
     {
         // #649: SubjectUri has to be the STORE's uri, the same value IEventStore.Subject returns,
