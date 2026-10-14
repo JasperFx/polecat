@@ -54,6 +54,15 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
 
     string IEventStore.MetricsPrefix => "polecat";
 
+    // #768: the gate jasperfx#537 put on the async daemon's ExtendedProgressionWriter. It reads this
+    // flag live on every ShardState publication and drops the publication when it is false, which is
+    // the interface default. Polecat never overrode it, so a running Polecat daemon with
+    // EnableExtendedProgressionTracking on created the extended columns and then never wrote to them:
+    // heartbeat, agent_status, pause_reason, running_on_node and the failure_* columns stayed NULL.
+    // The direct WriteExtendedProgressionAsync tests could not see it, because they call the database
+    // write themselves. Mirrors Marten's DocumentStore.EventStore.cs.
+    bool IEventStore.ExtendedProgressionEnabled => Options.Events.EnableExtendedProgressionTracking;
+
     DatabaseCardinality IEventStore.DatabaseCardinality =>
         Options.Tenancy?.Cardinality ?? DatabaseCardinality.Single;
 
