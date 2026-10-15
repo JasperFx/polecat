@@ -53,6 +53,20 @@ public record CourseId(Guid Value);
 
 Supported inner value types: `Guid`, `string`, `int`, `long`, `short`.
 
+### Registering Tag Types under Trimming or Native AOT
+
+`RegisterTagType<TTag>()` finds the tag's inner value by reflecting over the tag type, so it is marked
+`[RequiresUnreferencedCode]` and `[RequiresDynamicCode]`, and an application analyzed for trimming or
+Native AOT gets IL2026/IL3050 warnings where it calls it. Pass the unwrapper explicitly instead, which
+builds the registration from `TagTypeRegistration.FromUnwrapper<TTag, TInner>` with no reflection:
+
+```cs
+opts.Events.RegisterTagType<StudentId, Guid>(x => x.Value, "student")
+    .ForAggregate<StudentCourseEnrollment>();
+```
+
+The table suffix is optional and defaults to the tag type's name.
+
 ## Tagging Events
 
 Use `BuildEvent` and `WithTag` to attach tags before appending:

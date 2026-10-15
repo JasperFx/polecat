@@ -40,27 +40,64 @@ await session.SaveChangesAsync();
 
 This sets `is_archived = 0` on both tables, making the stream active again.
 
-## Tombstoning (Hard Delete)
+## Tombstoning (Deleting a Stream)
 
-For permanent removal of a stream and all its events:
+`ArchiveStream` hides a stream but keeps every row. When the data has to actually go, for a GDPR
+erasure request, test or demo data, or a purge job, `TombstoneStream` is the hard delete: it removes
+the stream and every event in it from the database.
 
+<!-- snippet: sample_polecat_tombstone_stream -->
+<a id='snippet-sample_polecat_tombstone_stream'></a>
 ```cs
-session.Events.TombstoneStream(streamId);
-await session.SaveChangesAsync();
+await using var session2 = theStore.LightweightSession();
+
+// Queues a hard DELETE of the stream, its events and their tag rows.
+// Nothing touches the database until SaveChangesAsync()
+session2.Events.TombstoneStream(streamId);
+await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 ```
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.Tests/Events/tombstone_stream_tests.cs#L23-L30' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_tombstone_stream' title='Start of snippet'>anchor</a></sup>
+<!-- endSnippet -->
+
+There is an overload for each stream identity, `TombstoneStream(Guid)` and `TombstoneStream(string)`;
+use the one that matches `StreamIdentity`.
 
 ::: warning
-Tombstoning permanently `DELETE`s the stream record and all associated events from the database. This cannot be undone.
+Tombstoning permanently `DELETE`s the stream record and all associated events from the database. This
+cannot be undone, and unlike `ArchiveStream` there is no `UnArchiveStream` to bring it back.
 :::
 
-Tombstoning works with both Guid and string stream IDs.
+What to expect:
+
+- **It is queued.** Like `ArchiveStream` and `Append`, `TombstoneStream` only adds an operation to the
+  session's unit of work. The `DELETE` runs when you call `SaveChangesAsync()`, in the same transaction
+  as anything else in that session, and discarding the session without saving deletes nothing.
+- **The whole stream goes.** The row in `pc_streams` and every row for that stream in `pc_events` are
+  deleted. The stream's [DCB tag rows](/events/dcb) and any natural key rows go with them, because
+  those tables cascade from the events and streams tables.
+- **It is tenant-scoped.** Only the stream in the session's tenant is deleted. Under conjoined
+  tenancy, a stream with the same id in another tenant is untouched.
+- **A missing stream is a no-op.** Tombstoning a stream that does not exist, or was already deleted,
+  is not an error.
+- **The id can be reused.** After the delete, you can start a new stream with the same identity.
+- **Sequence numbers are not reused.** The deleted events leave a gap in the event sequence, and new
+  events keep counting up from the high-water mark. A tombstoned stream can never hide later events
+  from an async projection.
+- **Projected documents are left alone.** Tombstoning deletes events, not the documents that
+  projections already built from them. If an aggregate snapshot or read model should go too, delete
+  it in the same session (for example with `session.Delete<T>(id)`) so both land in one transaction.
+
+`TombstoneStream` is part of the shared `JasperFx.Events.IEventStoreOperations` contract as of
+JasperFx 2.90.0, the same surface Marten implements, so store-agnostic code can call it through
+`IEventStoreOperations` without referencing Polecat. Polecat's behaviour is pinned by the shared
+`StreamTombstoningCompliance` suite.
 
 ## Archiving vs Tombstoning
 
 | Operation | Reversible | Data Preserved | Use Case |
 | :--- | :--- | :--- | :--- |
 | Archive | Yes | Yes | Soft removal, compliance holds |
-| Tombstone | No | No | GDPR right to erasure, cleanup |
+| Tombstone (`TombstoneStream`) | No | No | GDPR right to erasure, cleanup |
 
 ## Compacting a Stream
 
