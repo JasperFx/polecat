@@ -64,12 +64,21 @@ public interface IEventOperations : JasperFx.Events.IEventStoreOperations, IQuer
     /// <inheritdoc cref="JasperFx.Events.IEventStoreOperations.TombstoneStream(string)" />
     new void TombstoneStream(string streamKey);
 
-    // CompactStreamAsync<T> used to be declared here. It was lifted onto
-    // JasperFx.Events.IEventStoreOperations in jasperfx#635 (2.41.0) as default-implemented members
-    // that throw, so a store without compacting stays source-compatible. This interface already
-    // inherits that one, so keeping the local copy would make the signature reachable through two
-    // paths and every CALL SITE ambiguous (CS0121) -- the same break Marten took in marten#5194.
-    // EventOperations still implements the overloads; only the declaration moved.
+    // CompactStreamAsync<T> was lifted onto JasperFx.Events.IEventStoreOperations in jasperfx#635
+    // (2.41.0) as default-implemented members that throw. #425 then deleted the local copy, citing
+    // CS0121 ambiguity, and that broke BINARY compatibility from 5.11.0 on: an assembly compiled
+    // against Polecat <= 5.10 calls it through a member reference whose parent is
+    // Polecat.Events.IEventOperations, and the runtime does not search base interfaces to resolve
+    // it, so the call threw MissingMethodException. Re-declaring with `new` (as TombstoneStream and
+    // FetchLatest do) restores that without the ambiguity: `new` hides the inherited declaration, so
+    // a call site through this interface binds to exactly one member. EventOperations' public
+    // overloads satisfy both interface slots.
+
+    /// <inheritdoc cref="JasperFx.Events.IEventStoreOperations.CompactStreamAsync{T}(Guid, Action{StreamCompactingRequest{T}})" />
+    new Task CompactStreamAsync<T>(Guid streamId, Action<StreamCompactingRequest<T>>? configure = null) where T : class;
+
+    /// <inheritdoc cref="JasperFx.Events.IEventStoreOperations.CompactStreamAsync{T}(string, Action{StreamCompactingRequest{T}})" />
+    new Task CompactStreamAsync<T>(string streamKey, Action<StreamCompactingRequest<T>>? configure = null) where T : class;
 
     // FetchLatest is declared on two parent interfaces — JasperFx.Events.IEventStoreOperations
     // (where Marten put it canonically) and Polecat.Events.IQueryEventStore (kept on the
