@@ -22,6 +22,8 @@ namespace Polecat.Events;
 /// </list>
 /// <c>TombstoneStream(Guid|string)</c>, the hard delete of a stream, was one of those extras
 /// until jasperfx#1014 (2.90.0) lifted it onto <see cref="JasperFx.Events.IEventStoreOperations"/>.
+/// It is still re-declared here with <c>new</c> so assemblies compiled against older Polecat
+/// keep binding to it.
 /// <c>CompactStreamAsync&lt;T&gt;</c> was one of those extras until jasperfx#635 (2.41.0) lifted
 /// it onto <see cref="JasperFx.Events.IEventStoreOperations"/> alongside the
 /// <see cref="StreamCompactingRequest{T}"/> data shape it already shared. Execution still depends
@@ -48,9 +50,19 @@ public interface IEventOperations : JasperFx.Events.IEventStoreOperations, IQuer
     /// </summary>
     void UnArchiveStream(string streamKey);
 
-    // TombstoneStream(Guid) and TombstoneStream(string) used to be declared here. They were lifted
-    // onto JasperFx.Events.IEventStoreOperations in jasperfx#1014 (2.90.0); EventOperations
-    // implements the inherited declarations directly.
+    // TombstoneStream was lifted onto JasperFx.Events.IEventStoreOperations in jasperfx#1014
+    // (2.90.0), but the declarations stay here, re-declared with `new`, for BINARY compatibility.
+    // An assembly compiled against Polecat <= 5.41 calls them through a member reference whose
+    // parent is Polecat.Events.IEventOperations, and the runtime does not search base interfaces
+    // when it resolves one. Removing them in #773 made every such call throw MissingMethodException
+    // -- WolverineFx.Polecat 6.50.2's PolecatOps.TombstoneStream among them. `new` keeps CS0108
+    // quiet; EventOperations' one public method satisfies both interface slots.
+
+    /// <inheritdoc cref="JasperFx.Events.IEventStoreOperations.TombstoneStream(Guid)" />
+    new void TombstoneStream(Guid streamId);
+
+    /// <inheritdoc cref="JasperFx.Events.IEventStoreOperations.TombstoneStream(string)" />
+    new void TombstoneStream(string streamKey);
 
     // CompactStreamAsync<T> used to be declared here. It was lifted onto
     // JasperFx.Events.IEventStoreOperations in jasperfx#635 (2.41.0) as default-implemented members
