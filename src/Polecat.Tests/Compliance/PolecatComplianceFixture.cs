@@ -431,6 +431,11 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
     // ArchiveStream it takes effect on SaveChanges rather than immediately.
     public override bool SupportsUnarchiveStream => true;
 
+    // #772. TombstoneStream(Guid|string) is a hard DELETE of the stream, its events and its tag
+    // rows, queued until SaveChanges. Now on the shared IEventStoreOperations (jasperfx#1014), so
+    // the suite drives it through session.Events directly.
+    public override bool SupportsTombstoneStream => true;
+
     public override void UnArchiveStream(IDocumentSession session, object streamIdentity)
     {
         switch (streamIdentity)

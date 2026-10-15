@@ -13,5 +13,10 @@ public class fetch_latest_compliance
 public class stream_archiving_compliance
     : StreamArchivingCompliance<PolecatComplianceFixture, IDocumentSession, IQuerySession>;
 
+// #772: TombstoneStream(Guid|string) moved onto the shared IEventStoreOperations in jasperfx#1014
+// (2.90.0); the fixture flips SupportsTombstoneStream.
+public class stream_tombstoning_compliance
+    : StreamTombstoningCompliance<PolecatComplianceFixture, IDocumentSession, IQuerySession>;
+
 public class event_store_explorer_compliance
     : EventStoreExplorerCompliance<PolecatComplianceFixture, IDocumentSession, IQuerySession>;

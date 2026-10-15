@@ -604,6 +604,8 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
         return new EventProgressionTable(this);
     }
 
+    [RequiresUnreferencedCode("Discovers the tag type's inner value by reflecting over its members. Under trimming or Native AOT use RegisterTagType<TTag, TInner>(Func<TTag, TInner>), which builds the registration from TagTypeRegistration.FromUnwrapper<TTag, TInner>.")]
+    [RequiresDynamicCode("Closes TagTypeRegistration<TTag, TInner> with MakeGenericType. Under Native AOT use RegisterTagType<TTag, TInner>(Func<TTag, TInner>), which builds the registration from TagTypeRegistration.FromUnwrapper<TTag, TInner>.")]
     public ITagTypeRegistration RegisterTagType<TTag>() where TTag : notnull
     {
         var existing = _tagTypes.FirstOrDefault(t => t.TagType == typeof(TTag));
@@ -613,11 +615,27 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
         return registration;
     }
 
+    [RequiresUnreferencedCode("Discovers the tag type's inner value by reflecting over its members. Under trimming or Native AOT use RegisterTagType<TTag, TInner>(Func<TTag, TInner>), which builds the registration from TagTypeRegistration.FromUnwrapper<TTag, TInner>.")]
+    [RequiresDynamicCode("Closes TagTypeRegistration<TTag, TInner> with MakeGenericType. Under Native AOT use RegisterTagType<TTag, TInner>(Func<TTag, TInner>), which builds the registration from TagTypeRegistration.FromUnwrapper<TTag, TInner>.")]
     public ITagTypeRegistration RegisterTagType<TTag>(string tableSuffix) where TTag : notnull
     {
         var existing = _tagTypes.FirstOrDefault(t => t.TagType == typeof(TTag));
         if (existing != null) return existing;
         var registration = TagTypeRegistration.Create<TTag>(tableSuffix);
+        _tagTypes.Add(registration);
+        return registration;
+    }
+
+    /// <summary>
+    ///     Register a tag type from an explicit unwrapper that returns its inner value. Trim and
+    ///     Native AOT safe: nothing is discovered by reflection or closed at runtime.
+    /// </summary>
+    public ITagTypeRegistration RegisterTagType<TTag, TInner>(Func<TTag, TInner> unwrapper, string? tableSuffix = null)
+        where TTag : notnull
+    {
+        var existing = _tagTypes.FirstOrDefault(t => t.TagType == typeof(TTag));
+        if (existing != null) return existing;
+        var registration = TagTypeRegistration.FromUnwrapper(unwrapper, tableSuffix);
         _tagTypes.Add(registration);
         return registration;
     }

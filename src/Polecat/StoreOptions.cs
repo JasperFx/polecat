@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using JasperFx;
 using JasperFx.Events;
@@ -1049,6 +1050,8 @@ public class EventStoreOptions : IEventStoreInstrumentation
     ///     Register a tag type for Dynamic Consistency Boundary (DCB) support.
     ///     Creates a tag table with an auto-generated suffix.
     /// </summary>
+    [RequiresUnreferencedCode("Discovers the tag type's inner value by reflecting over its members. Under trimming or Native AOT use RegisterTagType<TTag, TInner>(Func<TTag, TInner>), which builds the registration from TagTypeRegistration.FromUnwrapper<TTag, TInner>.")]
+    [RequiresDynamicCode("Closes TagTypeRegistration<TTag, TInner> with MakeGenericType. Under Native AOT use RegisterTagType<TTag, TInner>(Func<TTag, TInner>), which builds the registration from TagTypeRegistration.FromUnwrapper<TTag, TInner>.")]
     public ITagTypeRegistration RegisterTagType<TTag>() where TTag : notnull
     {
         return EventGraph!.RegisterTagType<TTag>();
@@ -1057,8 +1060,21 @@ public class EventStoreOptions : IEventStoreInstrumentation
     /// <summary>
     ///     Register a tag type with an explicit table suffix for DCB support.
     /// </summary>
+    [RequiresUnreferencedCode("Discovers the tag type's inner value by reflecting over its members. Under trimming or Native AOT use RegisterTagType<TTag, TInner>(Func<TTag, TInner>), which builds the registration from TagTypeRegistration.FromUnwrapper<TTag, TInner>.")]
+    [RequiresDynamicCode("Closes TagTypeRegistration<TTag, TInner> with MakeGenericType. Under Native AOT use RegisterTagType<TTag, TInner>(Func<TTag, TInner>), which builds the registration from TagTypeRegistration.FromUnwrapper<TTag, TInner>.")]
     public ITagTypeRegistration RegisterTagType<TTag>(string tableSuffix) where TTag : notnull
     {
         return EventGraph!.RegisterTagType<TTag>(tableSuffix);
+    }
+
+    /// <summary>
+    ///     Register a tag type for DCB support from an explicit unwrapper that returns the tag's
+    ///     inner value, for example <c>RegisterTagType&lt;StudentId, Guid&gt;(x =&gt; x.Value)</c>.
+    ///     Trim and Native AOT safe. The table suffix defaults to the tag type's name.
+    /// </summary>
+    public ITagTypeRegistration RegisterTagType<TTag, TInner>(Func<TTag, TInner> unwrapper, string? tableSuffix = null)
+        where TTag : notnull
+    {
+        return EventGraph!.RegisterTagType(unwrapper, tableSuffix);
     }
 }

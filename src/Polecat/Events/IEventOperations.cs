@@ -17,9 +17,11 @@ namespace Polecat.Events;
 /// and its parent <see cref="JasperFx.Events.IEventOperations"/>. This interface
 /// inherits the canonical contracts and adds the Polecat-specific extras:
 /// <list type="bullet">
-///   <item><c>UnArchiveStream</c> + <c>TombstoneStream</c> — Polecat-specific
-///   archive-lifecycle operations not yet present in the canonical surface.</item>
+///   <item><c>UnArchiveStream</c> — a Polecat-specific archive-lifecycle operation not yet
+///   present in the canonical surface.</item>
 /// </list>
+/// <c>TombstoneStream(Guid|string)</c>, the hard delete of a stream, was one of those extras
+/// until jasperfx#1014 (2.90.0) lifted it onto <see cref="JasperFx.Events.IEventStoreOperations"/>.
 /// <c>CompactStreamAsync&lt;T&gt;</c> was one of those extras until jasperfx#635 (2.41.0) lifted
 /// it onto <see cref="JasperFx.Events.IEventStoreOperations"/> alongside the
 /// <see cref="StreamCompactingRequest{T}"/> data shape it already shared. Execution still depends
@@ -46,15 +48,9 @@ public interface IEventOperations : JasperFx.Events.IEventStoreOperations, IQuer
     /// </summary>
     void UnArchiveStream(string streamKey);
 
-    /// <summary>
-    ///     Permanently delete a stream and all its events (hard DELETE) by Guid id.
-    /// </summary>
-    void TombstoneStream(Guid streamId);
-
-    /// <summary>
-    ///     Permanently delete a stream and all its events (hard DELETE) by string key.
-    /// </summary>
-    void TombstoneStream(string streamKey);
+    // TombstoneStream(Guid) and TombstoneStream(string) used to be declared here. They were lifted
+    // onto JasperFx.Events.IEventStoreOperations in jasperfx#1014 (2.90.0); EventOperations
+    // implements the inherited declarations directly.
 
     // CompactStreamAsync<T> used to be declared here. It was lifted onto
     // JasperFx.Events.IEventStoreOperations in jasperfx#635 (2.41.0) as default-implemented members

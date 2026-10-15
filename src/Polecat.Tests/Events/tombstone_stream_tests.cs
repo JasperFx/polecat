@@ -20,9 +20,14 @@ public class tombstone_stream_tests : IntegrationContext
             new MembersJoined(1, "Town", ["A", "B"]));
         await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
+        #region sample_polecat_tombstone_stream
         await using var session2 = theStore.LightweightSession();
+
+        // Queues a hard DELETE of the stream, its events and their tag rows.
+        // Nothing touches the database until SaveChangesAsync()
         session2.Events.TombstoneStream(streamId);
         await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
+        #endregion
 
         // Stream should be completely gone
         await using var query = theStore.QuerySession();
