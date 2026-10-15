@@ -832,15 +832,20 @@
              resume itself needs no Polecat code; ProjectionSideEffectCompliance gains three facts for it
              and rebuild_mode_start_resumes_after_a_failure covers restarting a failed Rebuild-mode run.
              Writing that test found DocumentStore never overrode IEventStore.ExtendedProgressionEnabled,
-             so a running daemon never persisted extended telemetry; fixed in the same change. -->
-        <PackageVersion Include="JasperFx" Version="2.88.0" />
-        <PackageVersion Include="JasperFx.Events" Version="2.88.0" />
+             so a running daemon never persisted extended telemetry; fixed in the same change.
+             JasperFx 2.89.0 (from 2.88.0). REQUIRED: carries jasperfx#1016, ShardFailure.IsTransient
+             and TransientFailures.AddClassifier. Microsoft.Data.SqlClient never sets
+             DbException.IsTransient, so DocumentStore registers Resilience.SqlServerTransientFailures
+             to classify SqlException by error number (wolverine#4986 restarts only transient
+             failures). -->
+        <PackageVersion Include="JasperFx" Version="2.89.0" />
+        <PackageVersion Include="JasperFx.Events" Version="2.89.0" />
         <!--
              The shared cross-store event sourcing compliance suites. Source-only package: the
              suites compile inside Polecat.Tests so JasperFx's aggregate source generator binds
              Polecat's own session types.
         -->
-        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="2.88.0" />
+        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="2.89.0" />
         <!-- Pin the sibling JasperFx packages for parity with Marten 9's matrix
              even though Polecat doesn't currently reference them directly —
              keeps the lockstep matrix coherent when transitive resolution
@@ -848,7 +853,7 @@
              RuntimeCompiler 5.x line is the active continuation of the 4.x
              lineage; do not pin against the parallel stale 2.0.x series. -->
         <PackageVersion Include="JasperFx.RuntimeCompiler" Version="5.0.0" />
-        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.88.0" />
+        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.89.0" />
         <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
@@ -1355,7 +1360,7 @@
         <PackageVersion Include="Vogen" Version="7.0.0" />
 
         <!-- Source generators (matched to JasperFx.Events above) -->
-        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.88.0" />
+        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.89.0" />
 
         <!-- Build automation -->
         <PackageVersion Include="Nuke.Common" Version="9.0.4" />
