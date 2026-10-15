@@ -1,6 +1,7 @@
 using System.Data.Common;
 using System.Reflection;
 using JasperFx.Events.Daemon;
+using JasperFx.Events.Projections;
 using Microsoft.Data.SqlClient;
 using Polecat.Resilience;
 using Polecat.TestUtils;
@@ -44,6 +45,9 @@ public class sql_server_transient_failure_tests
         ((DbException)exception).IsTransient.ShouldBeFalse();
 
         TransientFailures.IsTransient(exception).ShouldBeTrue();
+
+        // jasperfx#1019: and the daemon retries it rather than dead-lettering the event under SkipApplyErrors
+        ProjectionExceptions.IsExceptionTransient(exception).ShouldBeTrue();
     }
 
     [Theory]
@@ -54,6 +58,7 @@ public class sql_server_transient_failure_tests
     public void a_permanent_sql_error_is_not_transient(int number)
     {
         TransientFailures.IsTransient(SqlExceptions.WithErrors(number)).ShouldBeFalse();
+        ProjectionExceptions.IsExceptionTransient(SqlExceptions.WithErrors(number)).ShouldBeFalse();
     }
 
     [Fact]
@@ -167,6 +172,7 @@ public class sql_server_transient_failure_tests
             ((DbException)victim).IsTransient.ShouldBeFalse();
             TransientFailures.IsTransient(victim).ShouldBeTrue();
             ShardFailure.For(victim, DateTimeOffset.UtcNow).IsTransient.ShouldBeTrue();
+            ProjectionExceptions.IsExceptionTransient(victim).ShouldBeTrue();
         }
         finally
         {
