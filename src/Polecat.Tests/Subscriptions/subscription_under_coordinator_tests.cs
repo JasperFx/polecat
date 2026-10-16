@@ -39,7 +39,14 @@ namespace Polecat.Tests.Subscriptions;
 /// </remarks>
 public class subscription_under_coordinator_tests
 {
+    // Opted into ONE fresh-process retry under CI's supervised runner (build/SupervisedTests.cs), the
+    // only test in the suite that is. Its failure mode is a 60-second WaitForNonStaleData on a daemon
+    // the host starts, beside three other test hosts on a 4-vCPU runner: it passed on retry, alone,
+    // in two of the ~80 supervised CI jobs before JasperFx/bobcat#565 (polecat runs 38785135829 and
+    // 38487174196). A pass on retry is reported as flaky in the job summary and the ledger, never as
+    // a clean pass; take this trait off once the ledger shows it no longer needs it.
     [Fact]
+    [Trait("Retry", "2")]
     public async Task a_subscription_receives_events_through_the_projection_coordinator()
     {
         var token = TestContext.Current.CancellationToken;

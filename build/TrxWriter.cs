@@ -1,8 +1,12 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
 using System.Globalization;
 using System.Xml.Linq;
 using Bobcat.Supervisor;
 
-namespace Polecat.Build.SupervisedTests;
+namespace Polecat.Build;
 
 /// <summary>
 ///     Writes a supervised run's results as a Visual Studio TRX file.

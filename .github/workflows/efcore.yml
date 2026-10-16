@@ -15,5 +15,5 @@ jobs:
       matrix:
         storage_type: [default, edge]
     with:
-      TEST_PROJECT_PATH: src/Polecat.EntityFrameworkCore.Tests/Polecat.EntityFrameworkCore.Tests.csproj
+      NUKE_TARGET: CIEfCore
       STORAGE_TYPE: ${{ matrix.storage_type }}

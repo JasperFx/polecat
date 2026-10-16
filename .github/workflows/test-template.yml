@@ -3,47 +3,40 @@ name: test-template
 on:
   workflow_call:
     inputs:
-      TEST_PROJECT_PATH:
+      # The Nuke target that runs the suite through Bobcat's supervisor: CIPolecat, CIAspNetCore or
+      # CIEfCore (build/SupervisedTests.cs). What CI does lives in build/, not here — this workflow
+      # only supplies the SQL Server the target runs against.
+      NUKE_TARGET:
         required: true
         type: string
       STORAGE_TYPE:
         required: false
         type: string
         default: "default"
-      # Worker processes for the supervised runner. 1 keeps the historical behaviour exactly:
-      # a single MTP host, TRX report, dorny/test-reporter. Above 1 the run goes through
-      # build/SupervisedTests, which partitions by test class and gives each worker its own
-      # catalog. Opt-in per caller so a suite that has not been checked for parallel-readiness
-      # cannot be parallelised by accident.
+      # Worker processes. 0 leaves the target's committed count in charge, which the runner clamps
+      # to ProcessorCount / 2 (2 on a 4-vCPU hosted runner). A positive number is passed as
+      # --test-workers, which overrides the committed count AND the clamp — so a caller that sets it
+      # is making a measured claim about what the runner can carry, and should say what it is.
       TEST_WORKERS:
         required: false
         type: number
-        default: 1
-      # TEST_FILTERS is gone. It defaulted to "Category!=Flaky" and no caller ever overrode it,
-      # but there is not a single [Trait] attribute anywhere in the repo — so the filter matched
-      # every test and had never excluded anything. Under Microsoft Testing Platform the equivalent
-      # would be `--filter-not-trait "Category=Flaky"`; add it back with real traits behind it if
-      # a flaky-test quarantine is ever actually wanted.
+        default: 0
 
 jobs:
   test:
     runs-on: ubuntu-latest
-    env:
-      TEST_PROJECT_PATH: ${{ inputs.TEST_PROJECT_PATH }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
 
+      # 9.0.x runs the test hosts (bin/Release/net9.0); 10.0.x builds and runs the Nuke project,
+      # which targets net10.0.
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: '9.0.x'
-
-      - name: Restore
-        run: dotnet restore ${{ env.TEST_PROJECT_PATH }}
-
-      - name: Build
-        run: dotnet build ${{ env.TEST_PROJECT_PATH }} -c Release --no-restore
+          dotnet-version: |
+            9.0.x
+            10.0.x
 
       - name: Start SQL Server
         run: |
@@ -67,83 +60,43 @@ jobs:
           echo "SQL Server failed to become healthy"
           exit 1
 
-      # Runs the Microsoft Testing Platform executable directly rather than going through
-      # `dotnet test`. An xUnit v3 test project builds as its own MTP executable, and invoking it is
-      # the only way to get the TRX report out on every SDK.
-      #
-      # `dotnet test` does not work here, which is worth recording because two of the three failure
-      # modes are silent:
-      #   dotnet test ... --logger "trx;..."        VSTest-only. MTP warns MTP0001 that the property
-      #                                             is ignored, runs the tests, exits 0 — and writes
-      #                                             no TRX at all, so the reporter step below finds
-      #                                             nothing and the build goes red for the wrong
-      #                                             reason.
-      #   dotnet test ... -- --report-trx           arguments are swallowed. Tests run, exit 0, no TRX.
-      #   dotnet test ... --report-trx              MSBuild rejects it outright: MSB1001 Unknown switch.
-      # All three were measured on SDK 10.0.101 before settling on this.
-      #
-      # Verified that a failing test still fails the build: a deliberately failing probe produced
-      # "failed: 1, succeeded: 37", printed the assertion and a file:line stack trace inline, and
-      # exited 2. A runner swap that quietly stopped failing builds would be the worst outcome here.
-      #
-      # The TRX lands in <project>/bin/Release/net9.0/TestResults/, which the reporter's
-      # **/TestResults/*.trx glob already matches.
-      - name: Test
-        if: ${{ inputs.TEST_WORKERS == 1 }}
-        run: |
-          PROJECT_DIR=$(dirname "${{ env.TEST_PROJECT_PATH }}")
-          ASSEMBLY=$(basename "${{ env.TEST_PROJECT_PATH }}" .csproj)
-          "$PROJECT_DIR/bin/Release/net9.0/$ASSEMBLY" --report-trx --report-trx-filename test-results.trx
-
-      # The supervised path. Drives the same executable over Microsoft.Testing.Platform's server
-      # mode across TEST_WORKERS processes, partitioning by test CLASS and giving each worker its
-      # own catalog via POLECAT_TESTING_DATABASE. See build/SupervisedTests/Program.cs.
-      #
-      # A supervised run produces no TRX on its own — each worker executes a slice and none of
-      # them knows the whole run — so the runner writes one itself, into the same TestResults/
-      # directory the single-process path uses. The reporter step below is shared and unchanged.
-      # Last main run's per-test durations, so lanes are balanced by measured cost rather than by
-      # counting tests. Best-effort by design: `continue-on-error` plus the runner treating a
-      # missing file as "balance by count" means a first run on a new branch, a pruned artifact or
-      # a download hiccup costs the balancing hint and nothing else.
-      - name: Fetch previous test durations
-        if: ${{ inputs.TEST_WORKERS != 1 }}
+      # The last green main run's ledger for this target and server, merged with the committed one
+      # (build/test-ledger/) so lanes are balanced by recent measured durations. Best-effort by
+      # design: a first run on a branch, a pruned artifact or a download hiccup costs the freshest
+      # balancing hint and nothing else — the committed ledger still applies.
+      - name: Fetch previous test ledger
         continue-on-error: true
         run: |
           gh run download --repo "$GITHUB_REPOSITORY" \
-            --name "durations-${{ inputs.STORAGE_TYPE }}" \
-            --dir previous-durations \
-            $(gh run list --repo "$GITHUB_REPOSITORY" --workflow polecat.yml --branch main \
+            --name "test-ledger-${{ inputs.NUKE_TARGET }}-${{ inputs.STORAGE_TYPE }}" \
+            --dir previous-ledger \
+            $(gh run list --repo "$GITHUB_REPOSITORY" --workflow "${{ github.workflow }}.yml" --branch main \
                 --status success --limit 1 --json databaseId --jq '.[0].databaseId')
         env:
           GH_TOKEN: ${{ github.token }}
 
+      # Builds the test project and drives its Microsoft.Testing.Platform host across worker
+      # processes: lanes partitioned by test class, a catalog per lane, stall reporting, opt-in
+      # retries, the run report into the job summary, and a TRX where the reporter below looks.
       - name: Test (supervised)
-        if: ${{ inputs.TEST_WORKERS != 1 }}
         run: |
-          PROJECT_DIR=$(dirname "${{ env.TEST_PROJECT_PATH }}")
-          ASSEMBLY=$(basename "${{ env.TEST_PROJECT_PATH }}" .csproj)
-          dotnet run --project build/SupervisedTests/SupervisedTests.csproj -c Release -- \
-            --executable "$PROJECT_DIR/bin/Release/net9.0/$ASSEMBLY" \
-            --workers ${{ inputs.TEST_WORKERS }} \
-            --durations-in previous-durations \
-            --durations-out durations/durations.json
+          WORKERS=""
+          if [ "${{ inputs.TEST_WORKERS }}" != "0" ]; then WORKERS="--test-workers ${{ inputs.TEST_WORKERS }}"; fi
+          ./build.sh ${{ inputs.NUKE_TARGET }} --framework net9.0 --storage ${{ inputs.STORAGE_TYPE }} $WORKERS
 
-      # Published from main only. A PR's durations describe a tree that is about to stop existing,
-      # and every PR overwriting the shared hint would make the balancer track whichever branch
-      # last ran rather than the trunk everything is measured against.
-      - name: Publish test durations
-        if: ${{ inputs.TEST_WORKERS != 1 && github.ref == 'refs/heads/main' && !cancelled() }}
+      # Every run's ledger, red or green, PR or main: the next main run reads main's, and
+      # `./build.sh UpdateTestLedgers --ledger-source <dir>` folds any of them into the committed one.
+      - name: Publish test ledger
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
-          name: durations-${{ inputs.STORAGE_TYPE }}
-          path: durations/durations.json
+          name: test-ledger-${{ inputs.NUKE_TARGET }}-${{ inputs.STORAGE_TYPE }}
+          path: |
+            artifacts/test-ledger/
+            artifacts/test-reports/
           retention-days: 30
           if-no-files-found: warn
 
-      # Runs for BOTH paths. The supervised runner writes an equivalent TRX to the same
-      # TestResults/ directory (build/SupervisedTests/TrxWriter.cs), so reporting is identical
-      # whichever path produced it — same artifact, same annotations on the PR.
       - name: Report results
         uses: dorny/test-reporter@v3
         if: ${{ !cancelled() }}

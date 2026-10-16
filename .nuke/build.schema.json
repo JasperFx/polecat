@@ -25,6 +25,10 @@
       "type": "string",
       "enum": [
         "Attach",
+        "CI",
+        "CIAspNetCore",
+        "CIEfCore",
+        "CIPolecat",
         "Compile",
         "CompileProject",
         "Detach",
@@ -41,7 +45,8 @@
         "Test",
         "TestAspnetcore",
         "TestEfCore",
-        "TestPolecat"
+        "TestPolecat",
+        "UpdateTestLedgers"
       ]
     },
     "Verbosity": {
@@ -127,8 +132,16 @@
           "type": "string",
           "description": "SQL Server connection string used for integration tests"
         },
+        "DisableTestRetry": {
+          "type": "boolean",
+          "description": "Disable the opt-in retries entirely"
+        },
         "Framework": {
           "type": "string"
+        },
+        "LedgerSource": {
+          "type": "string",
+          "description": "Directory of ledger files UpdateTestLedgers folds in (default: artifacts/test-ledger)"
         },
         "Project": {
           "type": "string"
@@ -136,6 +149,22 @@
         "Solution": {
           "type": "string",
           "description": "Path to a solution file that is automatically loaded"
+        },
+        "Storage": {
+          "type": "string",
+          "description": "The SQL Server the run is against (default | edge); keys the test ledger"
+        },
+        "TestFilter": {
+          "type": "string",
+          "description": "Run only tests whose display name contains this text; matching nothing fails"
+        },
+        "TestWorkers": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Worker processes for a supervised run; overrides the committed count and the ProcessorCount/2 clamp",
+          "format": "int32"
         }
       }
     },
