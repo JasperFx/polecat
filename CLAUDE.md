@@ -323,6 +323,10 @@ Every test job runs a Nuke target — `CIPolecat`, `CIAspNetCore`, `CIEfCore` (`
   Each CI run uploads its own as the `test-ledger-<target>-<storage>` artifact, and the next run
   merges the last green main run's. Refresh the committed copy now and then:
   `gh run download <run id> --pattern 'test-ledger-*' --dir ledgers && ./build.sh UpdateTestLedgers --ledger-source ledgers`.
+  **It balances CI only.** The ledger is keyed by the Microsoft.Testing.Platform test uid, and the
+  same 3,402 tests had zero uids in common between a local Debug run and CI's Release run on
+  /home/runner/work — xUnit v3 derives the uid from the assembly's location. A local run therefore
+  balances by test count, which is harmless; never commit a ledger from a local run.
 
 ## Engineering Principles
 
