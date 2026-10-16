@@ -1,0 +1,1046 @@
+{
+  "version": 1,
+  "maxRunsPerTest": 3,
+  "tests": {
+    "064ac32a7a543e5f4fe00ff48cce04c43504cf1a829914ecafd124d7c3c262e6": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "064ac32a7a543e5f4fe00ff48cce04c43504cf1a829914ecafd124d7c3c262e6",
+        "displayName": "Polecat.AspNetCore.Testing.HighWaterHealthCheckTests.healthy_within_grace_window_when_mark_first_seen_behind",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 1506,
+        "firstMs": 1506,
+        "stallInduced": false
+      }
+    ],
+    "070ac3b48b8f77ebbf4f1cb8a1b42be1eeda42795c14a2da7d5c60bdc0970174": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "070ac3b48b8f77ebbf4f1cb8a1b42be1eeda42795c14a2da7d5c60bdc0970174",
+        "displayName": "Polecat.AspNetCore.Testing.etag_helpers_tests.no_header_does_not_match",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 0,
+        "firstMs": 0,
+        "stallInduced": false
+      }
+    ],
+    "071b1f0f11992514e968a1729db7165b8249efc3adc2d415952e077f158a4c2b": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "071b1f0f11992514e968a1729db7165b8249efc3adc2d415952e077f158a4c2b",
+        "displayName": "Polecat.AspNetCore.Testing.streaming_etag_hardening_tests.a_tracking_session_emits_the_same_etag_as_a_lightweight_one",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 425,
+        "firstMs": 425,
+        "stallInduced": false
+      }
+    ],
+    "0b4a98f36d3fcc04daa4d1b34b770d5d3a9354c4bbcec32ca9bbf4010122592d": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "0b4a98f36d3fcc04daa4d1b34b770d5d3a9354c4bbcec32ca9bbf4010122592d",
+        "displayName": "Polecat.AspNetCore.Testing.stream_event_result_types_tests.on_empty_status_covers_paging_off_the_end_of_a_real_stream",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 1618,
+        "firstMs": 1618,
+        "stallInduced": false
+      }
+    ],
+    "121a612db0ec778523c45ed37be6613463cbd83ba67054b005d525e3e1a3b9e2": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "121a612db0ec778523c45ed37be6613463cbd83ba67054b005d525e3e1a3b9e2",
+        "displayName": "Polecat.AspNetCore.Testing.etag_streaming_tests.stream_one_returns_full_body_when_if_none_match_stale",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 3239,
+        "firstMs": 3239,
+        "stallInduced": false
+      }
+    ],
+    "14198ef40edb5638b2c9a6a597ca7df47cf27eba76df17f2bad8ff210b512f8b": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "14198ef40edb5638b2c9a6a597ca7df47cf27eba76df17f2bad8ff210b512f8b",
+        "displayName": "Polecat.AspNetCore.Testing.mcp_endpoint_tests.can_list_projections",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 36,
+        "firstMs": 36,
+        "stallInduced": false
+      }
+    ],
+    "14bc466048c1df9f8f8b089474369f53a9402b8b839b25448c9d56613325aea8": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "14bc466048c1df9f8f8b089474369f53a9402b8b839b25448c9d56613325aea8",
+        "displayName": "Polecat.AspNetCore.Testing.streaming_etag_hardening_tests.a_tracking_session_streams_the_document_body_not_its_id",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 145,
+        "firstMs": 145,
+        "stallInduced": false
+      }
+    ],
+    "15a3024d83c63723531a38e6805957bd1e892c245068b24851fee75c437d9026": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "15a3024d83c63723531a38e6805957bd1e892c245068b24851fee75c437d9026",
+        "displayName": "Polecat.AspNetCore.Testing.stream_event_result_types_tests.stream_events_accepts_a_prebuilt_plan_and_honors_its_filters",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 859,
+        "firstMs": 859,
+        "stallInduced": false
+      }
+    ],
+    "18d2cae961b72cb9892be287d61799f4524aefc74bde8aa1906f1ac227480668": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "18d2cae961b72cb9892be287d61799f4524aefc74bde8aa1906f1ac227480668",
+        "displayName": "Polecat.AspNetCore.Testing.mcp_endpoint_tests.can_initialize",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 25,
+        "firstMs": 25,
+        "stallInduced": false
+      }
+    ],
+    "1f6725e247acafdd955deeda1cebc00d7554e0b6655bb321993ab920f197fde7": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "1f6725e247acafdd955deeda1cebc00d7554e0b6655bb321993ab920f197fde7",
+        "displayName": "Polecat.AspNetCore.Testing.stream_paged_tests.first_page",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 84,
+        "firstMs": 84,
+        "stallInduced": false
+      }
+    ],
+    "205f952a8d46235c4eb10d2e4c7202724cc9f9934aa1fb5daea4505bbb1c9cb4": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "205f952a8d46235c4eb10d2e4c7202724cc9f9934aa1fb5daea4505bbb1c9cb4",
+        "displayName": "Polecat.AspNetCore.Testing.streaming_etag_hardening_tests.a_malformed_cursor_is_a_bad_request(cursor: \u0022garbage\u0022)",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 149,
+        "firstMs": 149,
+        "stallInduced": false
+      }
+    ],
+    "213a1fb60cf077f2432f077205c2fda538af727fe7184dffab6774054a8855eb": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "213a1fb60cf077f2432f077205c2fda538af727fe7184dffab6774054a8855eb",
+        "displayName": "Polecat.AspNetCore.Testing.stream_paged_by_cursor_tests.first_page_sets_cursor_and_continuation_header",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 92,
+        "firstMs": 92,
+        "stallInduced": false
+      }
+    ],
+    "2611b6a4bf58d239d25aeb1da718c3c5ad852a7c7cfb57b9404a6fcfbd282701": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "2611b6a4bf58d239d25aeb1da718c3c5ad852a7c7cfb57b9404a6fcfbd282701",
+        "displayName": "Polecat.AspNetCore.Testing.etag_streaming_tests.stream_aggregate_no_etag_when_emit_etag_false",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 1541,
+        "firstMs": 1541,
+        "stallInduced": false
+      }
+    ],
+    "36f7bb4bd9f341a32099591920779a13b903dcf45a63ebb589cc3b423050c7c8": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "36f7bb4bd9f341a32099591920779a13b903dcf45a63ebb589cc3b423050c7c8",
+        "displayName": "Polecat.AspNetCore.Testing.streaming_etag_hardening_tests.a_revisioned_document_emits_an_etag",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 87,
+        "firstMs": 87,
+        "stallInduced": false
+      }
+    ],
+    "3bfdcfd8224594e7f09bcaa27bd3befe55d0f7490cb69aa082b4af3738f66fdf": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "3bfdcfd8224594e7f09bcaa27bd3befe55d0f7490cb69aa082b4af3738f66fdf",
+        "displayName": "Polecat.AspNetCore.Testing.streaming_etag_hardening_tests.a_select_projection_still_answers_with_an_etag",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 87,
+        "firstMs": 87,
+        "stallInduced": false
+      }
+    ],
+    "3de9a7501aa37657bfd1a95b15835979653efb4dc76f662e2e06af14a6f28593": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "3de9a7501aa37657bfd1a95b15835979653efb4dc76f662e2e06af14a6f28593",
+        "displayName": "Polecat.AspNetCore.Testing.stream_event_result_types_tests.stream_event_state_accepts_a_prebuilt_plan",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 98,
+        "firstMs": 98,
+        "stallInduced": false
+      }
+    ],
+    "3ede6af9cf0f0a0e89a9dba661b96ed05e3db148f6fb8efbd27084d190218def": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "3ede6af9cf0f0a0e89a9dba661b96ed05e3db148f6fb8efbd27084d190218def",
+        "displayName": "Polecat.AspNetCore.Testing.HighWaterHealthCheckTests.registers_settings_timeprovider_tracker_and_check",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 15,
+        "firstMs": 15,
+        "stallInduced": false
+      }
+    ],
+    "4388d53c42adb4f3b7f8c5b3f976c2bae801d7a0cb0fba44e1b2ae02f225780d": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "4388d53c42adb4f3b7f8c5b3f976c2bae801d7a0cb0fba44e1b2ae02f225780d",
+        "displayName": "Polecat.AspNetCore.Testing.HighWaterHealthCheckTests.healthy_when_daemon_mode_is_disabled_even_if_mark_is_stuck",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 113,
+        "firstMs": 113,
+        "stallInduced": false
+      }
+    ],
+    "454385d198d1c7a3505089bc31cb5d243e9bb67cb772624b3ae8b0bedb4f4f8d": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "454385d198d1c7a3505089bc31cb5d243e9bb67cb772624b3ae8b0bedb4f4f8d",
+        "displayName": "Polecat.AspNetCore.Testing.stream_event_result_types_tests.stream_event_state_returns_404_for_a_missing_stream",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 90,
+        "firstMs": 90,
+        "stallInduced": false
+      }
+    ],
+    "45f7a9914d533e35996323c4474e0f1cafab00fdcaab938827b5e60d4788c737": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "45f7a9914d533e35996323c4474e0f1cafab00fdcaab938827b5e60d4788c737",
+        "displayName": "Polecat.AspNetCore.Testing.stream_event_result_types_tests.stream_events_writes_the_alias_and_not_the_dotnet_type",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 104,
+        "firstMs": 104,
+        "stallInduced": false
+      }
+    ],
+    "4e6a814dee28835be3e7e28abac6ec328c0283fe37bbe286be4c04cf7cd0ac81": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "4e6a814dee28835be3e7e28abac6ec328c0283fe37bbe286be4c04cf7cd0ac81",
+        "displayName": "Polecat.AspNetCore.Testing.etag_streaming_tests.stream_aggregate_404_for_unknown_stream",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 150,
+        "firstMs": 150,
+        "stallInduced": false
+      }
+    ],
+    "4f04eff7bfcca20bf98a736f2564dadfa50985701db6512aa12fd1a09abbe170": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "4f04eff7bfcca20bf98a736f2564dadfa50985701db6512aa12fd1a09abbe170",
+        "displayName": "Polecat.AspNetCore.Testing.etag_helpers_tests.multi_value_comma_list_matches_any",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 0,
+        "firstMs": 0,
+        "stallInduced": false
+      }
+    ],
+    "51897f7bcc762660a2df3616183c5936f866fc820b451db272843fe193eaba84": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "51897f7bcc762660a2df3616183c5936f866fc820b451db272843fe193eaba84",
+        "displayName": "Polecat.AspNetCore.Testing.stream_event_result_types_tests.stream_events_writes_the_event_body",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 127,
+        "firstMs": 127,
+        "stallInduced": false
+      }
+    ],
+    "5e4672c33f92ceb4f012d291ededdadd082c18b81bf2be15af842c5e8df2b572": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "5e4672c33f92ceb4f012d291ededdadd082c18b81bf2be15af842c5e8df2b572",
+        "displayName": "Polecat.AspNetCore.Testing.etag_streaming_tests.stream_one_emits_etag_on_hit",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 109,
+        "firstMs": 109,
+        "stallInduced": false
+      }
+    ],
+    "5fc929771f69cc3005f028dce19058440323d29799d3b621c62db238fedf203c": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "5fc929771f69cc3005f028dce19058440323d29799d3b621c62db238fedf203c",
+        "displayName": "Polecat.AspNetCore.Testing.streaming_etag_hardening_tests.a_select_projections_etag_round_trips_to_304",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 103,
+        "firstMs": 103,
+        "stallInduced": false
+      }
+    ],
+    "5feea58e382e2ba114f16cb8a48d6ed78f2ef693ed29c5ee4f3e8e5185e490d2": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "5feea58e382e2ba114f16cb8a48d6ed78f2ef693ed29c5ee4f3e8e5185e490d2",
+        "displayName": "Polecat.AspNetCore.Testing.streaming_etag_hardening_tests.a_malformed_cursor_is_a_bad_request(cursor: \u0022v1:\u0022)",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 83,
+        "firstMs": 83,
+        "stallInduced": false
+      }
+    ],
+    "60a87dda9ae1b71fad730c2191ee3dc74b4cae0e25e8c06065372539aa5c23b4": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "60a87dda9ae1b71fad730c2191ee3dc74b4cae0e25e8c06065372539aa5c23b4",
+        "displayName": "Polecat.AspNetCore.Testing.HighWaterHealthCheckTests.without_autorestart_no_restart_is_attempted",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 276,
+        "firstMs": 276,
+        "stallInduced": false
+      }
+    ],
+    "60f6db3c33e98472939c0bf14277b8a6a9de60e74175e824ec52433b0819c975": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "60f6db3c33e98472939c0bf14277b8a6a9de60e74175e824ec52433b0819c975",
+        "displayName": "Polecat.AspNetCore.Testing.stream_paged_by_cursor_tests.follows_cursor_to_next_page",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 85,
+        "firstMs": 85,
+        "stallInduced": false
+      }
+    ],
+    "6197e5b4bcf718874d2967083c94a6fa9696dee595624d7d95aab6c354a9add1": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "6197e5b4bcf718874d2967083c94a6fa9696dee595624d7d95aab6c354a9add1",
+        "displayName": "Polecat.AspNetCore.Testing.stream_paged_by_cursor_tests.paginates_entire_set_in_order",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 96,
+        "firstMs": 96,
+        "stallInduced": false
+      }
+    ],
+    "6255924514f39dc98539a92ebf7ff5c51888cc336432a9e6d7e12f4030c4c17d": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "6255924514f39dc98539a92ebf7ff5c51888cc336432a9e6d7e12f4030c4c17d",
+        "displayName": "Polecat.AspNetCore.Testing.streaming_result_types_tests.stream_many_returns_empty_array_when_no_results",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 92,
+        "firstMs": 92,
+        "stallInduced": false
+      }
+    ],
+    "66401462fd0828dd0a5ac4b724d7797859ddbbc4a3c4d0dace337940a03d91d5": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "66401462fd0828dd0a5ac4b724d7797859ddbbc4a3c4d0dace337940a03d91d5",
+        "displayName": "Polecat.AspNetCore.Testing.etag_streaming_tests.stream_one_no_etag_behavior_ignores_if_none_match_when_disabled",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 105,
+        "firstMs": 105,
+        "stallInduced": false
+      }
+    ],
+    "6c3e77d5e3a43455ac703a5274f8b09b53e7d0c36ffdbf6ac6a2a3a2202f9fcf": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "6c3e77d5e3a43455ac703a5274f8b09b53e7d0c36ffdbf6ac6a2a3a2202f9fcf",
+        "displayName": "Polecat.AspNetCore.Testing.etag_streaming_tests.stream_aggregate_etag_changes_after_appending_events",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 159,
+        "firstMs": 159,
+        "stallInduced": false
+      }
+    ],
+    "6cb89b1dd02162cd4c1391cf23b8865ac3b80ca94b3552448918a3a634de76c3": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "6cb89b1dd02162cd4c1391cf23b8865ac3b80ca94b3552448918a3a634de76c3",
+        "displayName": "Polecat.AspNetCore.Testing.streaming_result_types_tests.stream_one_returns_200_with_document",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 79,
+        "firstMs": 79,
+        "stallInduced": false
+      }
+    ],
+    "72ec043f3b4029c98280d1e32797c3dd285ef54e1d7a8aeeef0edaab80735706": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "72ec043f3b4029c98280d1e32797c3dd285ef54e1d7a8aeeef0edaab80735706",
+        "displayName": "Polecat.AspNetCore.Testing.mcp_endpoint_tests.returns_error_for_unknown_method",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 27,
+        "firstMs": 27,
+        "stallInduced": false
+      }
+    ],
+    "74ac8392f522195482d1165eb57bebcdde79660f96d4756b122ad85141a0b459": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "74ac8392f522195482d1165eb57bebcdde79660f96d4756b122ad85141a0b459",
+        "displayName": "Polecat.AspNetCore.Testing.mcp_endpoint_tests.can_list_known_event_types",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 25,
+        "firstMs": 25,
+        "stallInduced": false
+      }
+    ],
+    "78e0ef593aee56c65af386c86e07922dd631db3eacc3d8f873cbcc524aaa8c6f": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "78e0ef593aee56c65af386c86e07922dd631db3eacc3d8f873cbcc524aaa8c6f",
+        "displayName": "Polecat.AspNetCore.Testing.streaming_etag_hardening_tests.a_malformed_cursor_is_a_bad_request(cursor: \u0022v1:!!!not-base64!!!\u0022)",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 82,
+        "firstMs": 82,
+        "stallInduced": false
+      }
+    ],
+    "7ab1a6ad72f233ae0f6332c33f2848b544987824e64a24cb80bed17b5175db48": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "7ab1a6ad72f233ae0f6332c33f2848b544987824e64a24cb80bed17b5175db48",
+        "displayName": "Polecat.AspNetCore.Testing.etag_helpers_tests.multi_value_comma_list_no_match",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 0,
+        "firstMs": 0,
+        "stallInduced": false
+      }
+    ],
+    "7aecf89f646e07399a6bea6c6fc59354f8109ddd72d06d4b2f1956c8c83da0e4": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "7aecf89f646e07399a6bea6c6fc59354f8109ddd72d06d4b2f1956c8c83da0e4",
+        "displayName": "Polecat.AspNetCore.Testing.stream_event_result_types_tests.stream_event_state_returns_200_with_the_metadata",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 97,
+        "firstMs": 97,
+        "stallInduced": false
+      }
+    ],
+    "7da6cb2c54755a12439a988edbdd6be2038de39ca5b46768607d01b2d0539b52": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "7da6cb2c54755a12439a988edbdd6be2038de39ca5b46768607d01b2d0539b52",
+        "displayName": "Polecat.AspNetCore.Testing.streaming_etag_hardening_tests.a_malformed_cursor_is_a_bad_request(cursor: \u0022v2:abc\u0022)",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 86,
+        "firstMs": 86,
+        "stallInduced": false
+      }
+    ],
+    "7f0a40116d03c068f8740d1d0a6fb67a7f8fb649e85b2cc73976f04695908832": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "7f0a40116d03c068f8740d1d0a6fb67a7f8fb649e85b2cc73976f04695908832",
+        "displayName": "Polecat.AspNetCore.Testing.etag_helpers_tests.format_long_produces_quoted_value",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 0,
+        "firstMs": 0,
+        "stallInduced": false
+      }
+    ],
+    "82a10a41d246bd44cf05af613257beda58d2d9564b1aa6116ec00708adb74c62": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "82a10a41d246bd44cf05af613257beda58d2d9564b1aa6116ec00708adb74c62",
+        "displayName": "Polecat.AspNetCore.Testing.streaming_etag_hardening_tests.a_wellformed_cursor_is_still_served",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 91,
+        "firstMs": 91,
+        "stallInduced": false
+      }
+    ],
+    "83574bfdc9197b2703de231a7997fa8859d92cff25211a9aa0be7d0ad34fa844": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "83574bfdc9197b2703de231a7997fa8859d92cff25211a9aa0be7d0ad34fa844",
+        "displayName": "Polecat.AspNetCore.Testing.mcp_endpoint_tests.can_get_event_store_configuration",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 26,
+        "firstMs": 26,
+        "stallInduced": false
+      }
+    ],
+    "847d33f01a7a6a324a6160e6a081b8d153857636aa1f9bf1c1066af07021462d": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "847d33f01a7a6a324a6160e6a081b8d153857636aa1f9bf1c1066af07021462d",
+        "displayName": "Polecat.AspNetCore.Testing.etag_helpers_tests.exact_match",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 0,
+        "firstMs": 0,
+        "stallInduced": false
+      }
+    ],
+    "890cfd9756d8a8f1d3e08224e43bd9de1f9b0cbd7c779424a35b01c8b1246c31": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "890cfd9756d8a8f1d3e08224e43bd9de1f9b0cbd7c779424a35b01c8b1246c31",
+        "displayName": "Polecat.AspNetCore.Testing.stream_event_result_types_tests.both_results_set_content_length",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 98,
+        "firstMs": 98,
+        "stallInduced": false
+      }
+    ],
+    "8fc6eca0ee524c4ea06dac355ffc7d3aecb1936f0abdc3542e055c23226c71cf": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "8fc6eca0ee524c4ea06dac355ffc7d3aecb1936f0abdc3542e055c23226c71cf",
+        "displayName": "Polecat.AspNetCore.Testing.HighWaterHealthCheckTests.autorestart_triggers_a_restart_once_and_still_reports_unhealthy",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 284,
+        "firstMs": 284,
+        "stallInduced": false
+      }
+    ],
+    "938aa2e95f08d8ff3fa1c0a17923057759057d83931bf219f36155200aeffa57": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "938aa2e95f08d8ff3fa1c0a17923057759057d83931bf219f36155200aeffa57",
+        "displayName": "Polecat.AspNetCore.Testing.streaming_result_types_tests.stream_aggregate_returns_404_for_unknown_id",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 95,
+        "firstMs": 95,
+        "stallInduced": false
+      }
+    ],
+    "9b23a89f935aed87b84d61932e5b5ca991e57c65158bb5a6db6dc34c2b2e59b0": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "9b23a89f935aed87b84d61932e5b5ca991e57c65158bb5a6db6dc34c2b2e59b0",
+        "displayName": "Polecat.AspNetCore.Testing.mcp_endpoint_tests.returns_error_for_unknown_tool",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 24,
+        "firstMs": 24,
+        "stallInduced": false
+      }
+    ],
+    "9b29e5f7432e74c968177469443c127fb0316ce5c72aa328fc837a806d0d547f": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "9b29e5f7432e74c968177469443c127fb0316ce5c72aa328fc837a806d0d547f",
+        "displayName": "Polecat.AspNetCore.Testing.mcp_endpoint_tests.returns_parse_error_for_invalid_json",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 25,
+        "firstMs": 25,
+        "stallInduced": false
+      }
+    ],
+    "9c36e4d5806a2f4e0f929abf2e69d7fc6fa52fbbf36b6c57248ef44655e02824": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "9c36e4d5806a2f4e0f929abf2e69d7fc6fa52fbbf36b6c57248ef44655e02824",
+        "displayName": "Polecat.AspNetCore.Testing.HighWaterHealthCheckTests.running_daemon_never_stamps_the_high_water_heartbeat",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 1547,
+        "firstMs": 1547,
+        "stallInduced": false
+      }
+    ],
+    "9ca2e52cdece3a21ba290b411281f03adea3d6b4c5b45abf188c9d4923d2b0d6": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "9ca2e52cdece3a21ba290b411281f03adea3d6b4c5b45abf188c9d4923d2b0d6",
+        "displayName": "Polecat.AspNetCore.Testing.streaming_result_types_tests.stream_aggregate_returns_200_with_aggregate",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 98,
+        "firstMs": 98,
+        "stallInduced": false
+      }
+    ],
+    "a66b9b87be6725d56ee89d917a6e019e01531cc57a644900629098ac66682dbd": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "a66b9b87be6725d56ee89d917a6e019e01531cc57a644900629098ac66682dbd",
+        "displayName": "Polecat.AspNetCore.Testing.stream_paged_tests.last_partial_page",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 77,
+        "firstMs": 77,
+        "stallInduced": false
+      }
+    ],
+    "ac4b018c356656aca932c83f39fd3dda45fee1bd43e9b9876fca92814cc1dc39": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "ac4b018c356656aca932c83f39fd3dda45fee1bd43e9b9876fca92814cc1dc39",
+        "displayName": "Polecat.AspNetCore.Testing.etag_streaming_tests.stream_aggregate_returns_full_body_when_if_none_match_stale",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 119,
+        "firstMs": 119,
+        "stallInduced": false
+      }
+    ],
+    "acc3382f184b33d7e32b131769b6bc0d024bdf16e2c8198d34dc7f82856842c7": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "acc3382f184b33d7e32b131769b6bc0d024bdf16e2c8198d34dc7f82856842c7",
+        "displayName": "Polecat.AspNetCore.Testing.etag_helpers_tests.format_guid_produces_quoted_value",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 0,
+        "firstMs": 0,
+        "stallInduced": false
+      }
+    ],
+    "afe4e93756ab5f21c6ab16aaef0b9f613b417b02b41f310c839154da374599cc": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "afe4e93756ab5f21c6ab16aaef0b9f613b417b02b41f310c839154da374599cc",
+        "displayName": "Polecat.AspNetCore.Testing.HighWaterHealthCheckTests.a_stale_heartbeat_does_not_trip_a_caught_up_mark",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 1444,
+        "firstMs": 1444,
+        "stallInduced": false
+      }
+    ],
+    "b00befac889fffb4c5c842a8b3fa9c9110a4773b352a221f7a1bf5e13ccdd274": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "b00befac889fffb4c5c842a8b3fa9c9110a4773b352a221f7a1bf5e13ccdd274",
+        "displayName": "Polecat.AspNetCore.Testing.etag_helpers_tests.mismatch_does_not_match",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 0,
+        "firstMs": 0,
+        "stallInduced": false
+      }
+    ],
+    "b679b2fd653965d4dce61da4ebd51cb5bdba9b08d55a16d78ccadcadbf2a8121": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "b679b2fd653965d4dce61da4ebd51cb5bdba9b08d55a16d78ccadcadbf2a8121",
+        "displayName": "Polecat.AspNetCore.Testing.streaming_etag_hardening_tests.a_cursor_with_the_wrong_key_arity_is_a_bad_request",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 87,
+        "firstMs": 87,
+        "stallInduced": false
+      }
+    ],
+    "b8cf601d55eca81b92f07caea1b9acffcc838547d937578dbc2c6eb73716c527": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "b8cf601d55eca81b92f07caea1b9acffcc838547d937578dbc2c6eb73716c527",
+        "displayName": "Polecat.AspNetCore.Testing.etag_streaming_tests.stream_one_no_etag_when_emit_etag_false",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 78,
+        "firstMs": 78,
+        "stallInduced": false
+      }
+    ],
+    "bb5448ffa2eb1b9992b653f2898b38696469a648f30d896f7a4cad0d32523172": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "bb5448ffa2eb1b9992b653f2898b38696469a648f30d896f7a4cad0d32523172",
+        "displayName": "Polecat.AspNetCore.Testing.stream_event_result_types_tests.on_empty_status_opts_out_of_the_404",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 96,
+        "firstMs": 96,
+        "stallInduced": false
+      }
+    ],
+    "bdb694058245cd86945d404feaf29b79b9dbb854e2938d65b75296b3235ad9d2": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "bdb694058245cd86945d404feaf29b79b9dbb854e2938d65b75296b3235ad9d2",
+        "displayName": "Polecat.AspNetCore.Testing.streaming_result_types_tests.stream_one_returns_404_when_not_found",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 71,
+        "firstMs": 71,
+        "stallInduced": false
+      }
+    ],
+    "c02c762ca3330f7b2ac42e6ff5488575b94a5667746278b0c70b11b2eec1cf4d": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "c02c762ca3330f7b2ac42e6ff5488575b94a5667746278b0c70b11b2eec1cf4d",
+        "displayName": "Polecat.AspNetCore.Testing.stream_paged_tests.middle_page",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 81,
+        "firstMs": 81,
+        "stallInduced": false
+      }
+    ],
+    "c038682d8e67e1cc1f9b2a0da74d0baf8d3c58797c78bb00605baa7861fd9d61": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "c038682d8e67e1cc1f9b2a0da74d0baf8d3c58797c78bb00605baa7861fd9d61",
+        "displayName": "Polecat.AspNetCore.Testing.HighWaterHealthCheckTests.healthy_when_mark_advances_before_threshold",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 1989,
+        "firstMs": 1989,
+        "stallInduced": false
+      }
+    ],
+    "c154f1c92f89c5cc7461663a4311be3bb47f131d4499f6848ea4565f869d9538": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "c154f1c92f89c5cc7461663a4311be3bb47f131d4499f6848ea4565f869d9538",
+        "displayName": "Polecat.AspNetCore.Testing.etag_streaming_tests.stream_aggregate_returns_304_when_if_none_match_matches",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 99,
+        "firstMs": 99,
+        "stallInduced": false
+      }
+    ],
+    "c69ded369c3952c3a81771181961e07d957614d95f8208dec67e7b8e42924ee7": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "c69ded369c3952c3a81771181961e07d957614d95f8208dec67e7b8e42924ee7",
+        "displayName": "Polecat.AspNetCore.Testing.streaming_result_types_tests.stream_many_returns_200_with_json_array",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 80,
+        "firstMs": 80,
+        "stallInduced": false
+      }
+    ],
+    "cab43b9f9454c5c8d039d8857b1bdf591d41d2c96aaf416db26dc0dd6a93f6ec": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "cab43b9f9454c5c8d039d8857b1bdf591d41d2c96aaf416db26dc0dd6a93f6ec",
+        "displayName": "Polecat.AspNetCore.Testing.HighWaterHealthCheckTests.unhealthy_when_mark_stuck_behind_past_threshold",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 218,
+        "firstMs": 218,
+        "stallInduced": false
+      }
+    ],
+    "cb717a52df9f38c60142f299de199c742971af51559beec63edf2597de71cc4b": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "cb717a52df9f38c60142f299de199c742971af51559beec63edf2597de71cc4b",
+        "displayName": "Polecat.AspNetCore.Testing.stream_event_result_types_tests.stream_events_returns_200_with_the_serialized_events",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 96,
+        "firstMs": 96,
+        "stallInduced": false
+      }
+    ],
+    "cc950f1d88ce993161081c6f9a27e34fb2241a4a326619327eed1aefb7da88a1": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "cc950f1d88ce993161081c6f9a27e34fb2241a4a326619327eed1aefb7da88a1",
+        "displayName": "Polecat.AspNetCore.Testing.HighWaterHealthCheckTests.a_fresh_heartbeat_does_not_rescue_a_stuck_mark",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 255,
+        "firstMs": 255,
+        "stallInduced": false
+      }
+    ],
+    "cea1b0c72aa2528111c357c7f51a7e9922041011e43ce78d79f0223ae757522e": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "cea1b0c72aa2528111c357c7f51a7e9922041011e43ce78d79f0223ae757522e",
+        "displayName": "Polecat.AspNetCore.Testing.streaming_etag_hardening_tests.a_wildcard_if_none_match_also_yields_an_empty_304",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 90,
+        "firstMs": 90,
+        "stallInduced": false
+      }
+    ],
+    "d09939046dc0b7c742e8f292ab8fae3dcc92332920c35c975b1385788d264078": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "d09939046dc0b7c742e8f292ab8fae3dcc92332920c35c975b1385788d264078",
+        "displayName": "Polecat.AspNetCore.Testing.HighWaterHealthCheckTests.healthy_when_no_async_projections_even_if_events_pile_up",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 591,
+        "firstMs": 591,
+        "stallInduced": false
+      }
+    ],
+    "d590dcb5d00428d62884385e37015d17d5184215433f8108064f31903910bf79": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "d590dcb5d00428d62884385e37015d17d5184215433f8108064f31903910bf79",
+        "displayName": "Polecat.AspNetCore.Testing.stream_event_result_types_tests.stream_events_returns_404_for_a_missing_stream_by_default",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 92,
+        "firstMs": 92,
+        "stallInduced": false
+      }
+    ],
+    "d84839736feff9df1adbf71a49ad19aaafef7f5ddd944b0132ea4c649a246f81": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "d84839736feff9df1adbf71a49ad19aaafef7f5ddd944b0132ea4c649a246f81",
+        "displayName": "Polecat.AspNetCore.Testing.stream_paged_by_cursor_tests.last_page_has_null_cursor_and_no_header",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 129,
+        "firstMs": 129,
+        "stallInduced": false
+      }
+    ],
+    "d95b3f209ac59cea9b603df4a7176008bb8cc74cc73a2be24c5cdf88a07aef64": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "d95b3f209ac59cea9b603df4a7176008bb8cc74cc73a2be24c5cdf88a07aef64",
+        "displayName": "Polecat.AspNetCore.Testing.HighWaterHealthCheckTests.healthy_when_mark_is_caught_up",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 1366,
+        "firstMs": 1366,
+        "stallInduced": false
+      }
+    ],
+    "dc2d4cbac5f72c92c494358a653c0f635613f349ee2f407881711e9bfc57376e": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "dc2d4cbac5f72c92c494358a653c0f635613f349ee2f407881711e9bfc57376e",
+        "displayName": "Polecat.AspNetCore.Testing.stream_event_result_types_tests.both_results_advertise_their_openapi_metadata",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 61,
+        "firstMs": 61,
+        "stallInduced": false
+      }
+    ],
+    "ded2369b853f3cb2dcbe754805cee0907eaf2a5af2cab6b5003ed2d4faaa4b16": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "ded2369b853f3cb2dcbe754805cee0907eaf2a5af2cab6b5003ed2d4faaa4b16",
+        "displayName": "Polecat.AspNetCore.Testing.etag_streaming_tests.stream_aggregate_emits_etag_on_hit",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 93,
+        "firstMs": 93,
+        "stallInduced": false
+      }
+    ],
+    "e5cf94cad0e8e141bd0f73ad325a4c6447f39478ffa8d96ad9b4c4d37a7b68a7": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "e5cf94cad0e8e141bd0f73ad325a4c6447f39478ffa8d96ad9b4c4d37a7b68a7",
+        "displayName": "Polecat.AspNetCore.Testing.etag_streaming_tests.stream_one_returns_304_when_if_none_match_matches",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 75,
+        "firstMs": 75,
+        "stallInduced": false
+      }
+    ],
+    "e61004699295ba75c9712ba435144fc42fe8949a2aa0d44faeaac546b3a3e9a3": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "e61004699295ba75c9712ba435144fc42fe8949a2aa0d44faeaac546b3a3e9a3",
+        "displayName": "Polecat.AspNetCore.Testing.etag_helpers_tests.weak_validator_matches_strong_etag",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 0,
+        "firstMs": 0,
+        "stallInduced": false
+      }
+    ],
+    "e7be959ba933cadc25509df91ba46350a3509cb5a179fe66227ba26a463cb3de": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "e7be959ba933cadc25509df91ba46350a3509cb5a179fe66227ba26a463cb3de",
+        "displayName": "Polecat.AspNetCore.Testing.streaming_etag_hardening_tests.a_304_has_an_empty_body_and_zero_content_length",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 87,
+        "firstMs": 87,
+        "stallInduced": false
+      }
+    ],
+    "eb56ef4ece5abf7da404bd0ae5e2854222baa84733fe8a915845bbd641fb53f0": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "eb56ef4ece5abf7da404bd0ae5e2854222baa84733fe8a915845bbd641fb53f0",
+        "displayName": "Polecat.AspNetCore.Testing.stream_paged_tests.single_page",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 83,
+        "firstMs": 83,
+        "stallInduced": false
+      }
+    ],
+    "f71ad4534864e65f99ff8d9550af81660f4d8c88ccb6718927b3ea0517dae6ab": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "f71ad4534864e65f99ff8d9550af81660f4d8c88ccb6718927b3ea0517dae6ab",
+        "displayName": "Polecat.AspNetCore.Testing.etag_helpers_tests.wildcard_matches",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 0,
+        "firstMs": 0,
+        "stallInduced": false
+      }
+    ],
+    "f7729d4b75aa1fe3e1f82359529b7e48e84a5deb165d3edb1a4fb5401beaecf5": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "f7729d4b75aa1fe3e1f82359529b7e48e84a5deb165d3edb1a4fb5401beaecf5",
+        "displayName": "Polecat.AspNetCore.Testing.streaming_etag_hardening_tests.a_revisioned_documents_etag_round_trips_to_304",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 84,
+        "firstMs": 84,
+        "stallInduced": false
+      }
+    ],
+    "f97da947d589b1f7cd89ce600377bf7af91dc7f936e0324a7cf77c353d74766f": [
+      {
+        "runId": "38959797571.1",
+        "at": "2026-10-16T20:07:52.4618952+00:00",
+        "uid": "f97da947d589b1f7cd89ce600377bf7af91dc7f936e0324a7cf77c353d74766f",
+        "displayName": "Polecat.AspNetCore.Testing.mcp_endpoint_tests.can_list_tools",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 26,
+        "firstMs": 26,
+        "stallInduced": false
+      }
+    ]
+  }
+}
