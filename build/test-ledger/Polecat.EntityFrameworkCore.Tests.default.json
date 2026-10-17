@@ -1,0 +1,539 @@
+{
+  "version": 1,
+  "maxRunsPerTest": 3,
+  "tests": {
+    "021c7ec4ae71527acccf1b41ad51502583b2ece03ca218f47d5330d762a93b61": [
+      {
+        "runId": "38959797626.1",
+        "at": "2026-10-16T20:08:03.3916306+00:00",
+        "uid": "021c7ec4ae71527acccf1b41ad51502583b2ece03ca218f47d5330d762a93b61",
+        "displayName": "Polecat.EntityFrameworkCore.Tests.ef_core_multi_stream_async_tests.multi_stream_projection_aggregates_across_streams",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 2407,
+        "firstMs": 2407,
+        "stallInduced": false
+      }
+    ],
+    "0a298a95c3da8ac612cf1433a17598892b51ec3f406bd555f9e7d5253aa31f99": [
+      {
+        "runId": "38959797626.1",
+        "at": "2026-10-16T20:08:03.3916306+00:00",
+        "uid": "0a298a95c3da8ac612cf1433a17598892b51ec3f406bd555f9e7d5253aa31f99",
+        "displayName": "Polecat.EntityFrameworkCore.Tests.ef_core_multi_stream_live_tests.can_store_events_without_error",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 1527,
+        "firstMs": 1527,
+        "stallInduced": false
+      }
+    ],
+    "10fca032aa32442e157af97939885d1b815000def694d1770ab5d35f99a56af0": [
+      {
+        "runId": "38959797626.1",
+        "at": "2026-10-16T20:08:03.3916306+00:00",
+        "uid": "10fca032aa32442e157af97939885d1b815000def694d1770ab5d35f99a56af0",
+        "displayName": "Polecat.EntityFrameworkCore.Tests.ef_core_single_stream_async_tests.single_stream_projection_writes_ef_core_side_effects",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 2160,
+        "firstMs": 2160,
+        "stallInduced": false
+      }
+    ],
+    "1270b9cbdec4f6dd33eb945cb04268c6fa0c2a6ddaf2e4c10ea94809b8ec0fca": [
+      {
+        "runId": "38959797626.1",
+        "at": "2026-10-16T20:08:03.3916306+00:00",
+        "uid": "1270b9cbdec4f6dd33eb945cb04268c6fa0c2a6ddaf2e4c10ea94809b8ec0fca",
+        "displayName": "Polecat.EntityFrameworkCore.Tests.EfCoreSchemaTests.should_have_correct_fk_schema_with_explicit_schema",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 62,
+        "firstMs": 62,
+        "stallInduced": false
+      }
+    ],
+    "13413cbdfe628c2db4c88ec92fe37437df5ed1c585cc2449a05b6132b6d50925": [
+      {
+        "runId": "38959797626.1",
+        "at": "2026-10-16T20:08:03.3916306+00:00",
+        "uid": "13413cbdfe628c2db4c88ec92fe37437df5ed1c585cc2449a05b6132b6d50925",
+        "displayName": "Polecat.EntityFrameworkCore.Tests.ef_core_single_stream_async_tests.single_stream_projection_handles_multiple_events_in_one_append",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 396,
+        "firstMs": 396,
+        "stallInduced": false
+      }
+    ],
+    "14656207924002ea849a99fc47119eea086b1ecb6100b55f1038f047d8305bf4": [
+      {
+        "runId": "38959797626.1",
+        "at": "2026-10-16T20:08:03.3916306+00:00",
+        "uid": "14656207924002ea849a99fc47119eea086b1ecb6100b55f1038f047d8305bf4",
+        "displayName": "Polecat.EntityFrameworkCore.Tests.EfCoreSchemaTests.should_register_tables_in_fk_dependency_order",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 1,
+        "firstMs": 1,
+        "stallInduced": false
+      }
+    ],
+    "1951cc000a12d5537ec58524c753b1f83bcc6a90be6ed238d7495835e132d8a6": [
+      {
+        "runId": "38959797626.1",
+        "at": "2026-10-16T20:08:03.3916306+00:00",
+        "uid": "1951cc000a12d5537ec58524c753b1f83bcc6a90be6ed238d7495835e132d8a6",
+        "displayName": "Polecat.EntityFrameworkCore.Tests.ef_core_projection_storage_thread_safety_tests.ef_core_storage_declares_itself_not_thread_safe",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 0,
+        "firstMs": 0,
+        "stallInduced": false
+      }
+    ],
+    "19de302d0fe85e20e3a78026f2105152dbf7809a7cfef49c8a4ef5bbf67a29be": [
+      {
+        "runId": "38959797626.1",
+        "at": "2026-10-16T20:08:03.3916306+00:00",
+        "uid": "19de302d0fe85e20e3a78026f2105152dbf7809a7cfef49c8a4ef5bbf67a29be",
+        "displayName": "Polecat.EntityFrameworkCore.Tests.ef_core_multi_stream_inline_tests.multi_stream_projection_aggregates_across_streams",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 90,
+        "firstMs": 90,
+        "stallInduced": false
+      }
+    ],
+    "1d5ba5366dc4000530da957b214e6453a25c4dd14c16f73cef6d3c95c1812931": [
+      {
+        "runId": "38959797626.1",
+        "at": "2026-10-16T20:08:03.3916306+00:00",
+        "uid": "1d5ba5366dc4000530da957b214e6453a25c4dd14c16f73cef6d3c95c1812931",
+        "displayName": "Polecat.EntityFrameworkCore.Tests.ef_core_multi_tenancy_validation_tests.single_stream_should_fail_when_conjoined_but_no_ITenanted",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 1,
+        "firstMs": 1,
+        "stallInduced": false
+      }
+    ],
+    "28df28e753c3dede2ed9e1a6eaf62defa8336988a8b72e6d10cab6146bc48cf3": [
+      {
+        "runId": "38959797626.1",
+        "at": "2026-10-16T20:08:03.3916306+00:00",
+        "uid": "28df28e753c3dede2ed9e1a6eaf62defa8336988a8b72e6d10cab6146bc48cf3",
+        "displayName": "Polecat.EntityFrameworkCore.Tests.ef_core_single_stream_inline_tests.single_stream_projection_evolves_aggregate_with_subsequent_events",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 397,
+        "firstMs": 397,
+        "stallInduced": false
+      }
+    ],
+    "2a468959703331aa792f4e0d8101550cdbe9d3685577299983d632fe321f4f6a": [
+      {
+        "runId": "38959797626.1",
+        "at": "2026-10-16T20:08:03.3916306+00:00",
+        "uid": "2a468959703331aa792f4e0d8101550cdbe9d3685577299983d632fe321f4f6a",
+        "displayName": "Polecat.EntityFrameworkCore.Tests.ef_core_projection_storage_concurrency_tests.daemon_applies_slices_inline_and_never_through_the_concurrent_block",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 2357,
+        "firstMs": 2357,
+        "stallInduced": false
+      }
+    ],
+    "2ab1a2a34eb85a2ba53029841f69f8c4b53c4b2993291c029d09aa14b6eb1f40": [
+      {
+        "runId": "38959797626.1",
+        "at": "2026-10-16T20:08:03.3916306+00:00",
+        "uid": "2ab1a2a34eb85a2ba53029841f69f8c4b53c4b2993291c029d09aa14b6eb1f40",
+        "displayName": "Polecat.EntityFrameworkCore.Tests.ef_core_event_projection_tests.can_project_event_to_ef_core_and_polecat",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 685,
+        "firstMs": 685,
+        "stallInduced": false
+      }
+    ],
+    "2d289beaed5db50fb52d9ec666cbfb68cac0aad2e1eeff4ace17af015f515d46": [
+      {
+        "runId": "38959797626.1",
+        "at": "2026-10-16T20:08:03.3916306+00:00",
+        "uid": "2d289beaed5db50fb52d9ec666cbfb68cac0aad2e1eeff4ace17af015f515d46",
+        "displayName": "Polecat.EntityFrameworkCore.Tests.ef_core_tenanted_inline_tests.different_tenants_get_isolated_data",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 2168,
+        "firstMs": 2168,
+        "stallInduced": false
+      }
+    ],
+    "30712c02b016aec7aa3fec3f34870009c00dd24af6bfa71af1539ffee0cad73c": [
+      {
+        "runId": "38959797626.1",
+        "at": "2026-10-16T20:08:03.3916306+00:00",
+        "uid": "30712c02b016aec7aa3fec3f34870009c00dd24af6bfa71af1539ffee0cad73c",
+        "displayName": "Polecat.EntityFrameworkCore.Tests.ef_core_single_stream_inline_tests.single_stream_projection_writes_aggregate_on_create",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 85,
+        "firstMs": 85,
+        "stallInduced": false
+      }
+    ],
+    "442eeb43a09ab3b2d326c2753a014379b79ec9ac3e0e1f3d8d5a4c02fc17c983": [
+      {
+        "runId": "38959797626.1",
+        "at": "2026-10-16T20:08:03.3916306+00:00",
+        "uid": "442eeb43a09ab3b2d326c2753a014379b79ec9ac3e0e1f3d8d5a4c02fc17c983",
+        "displayName": "Polecat.EntityFrameworkCore.Tests.ef_core_tenanted_inline_tests.tenant_id_is_written_to_ef_core_table",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 656,
+        "firstMs": 656,
+        "stallInduced": false
+      }
+    ],
+    "4b65132b106796776234760f1753914b5309832de0861ecb29dc492d44d6cdc1": [
+      {
+        "runId": "38959797626.1",
+        "at": "2026-10-16T20:08:03.3916306+00:00",
+        "uid": "4b65132b106796776234760f1753914b5309832de0861ecb29dc492d44d6cdc1",
+        "displayName": "Polecat.EntityFrameworkCore.Tests.EfCoreSchemaTests.should_map_columns_from_entity_types",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 0,
+        "firstMs": 0,
+        "stallInduced": false
+      }
+    ],
+    "4ba8530e0937bc8fdac498d2f0f3b51a3c892f64ee8e0a45078466f68e5d3f23": [
+      {
+        "runId": "38959797626.1",
+        "at": "2026-10-16T20:08:03.3916306+00:00",
+        "uid": "4ba8530e0937bc8fdac498d2f0f3b51a3c892f64ee8e0a45078466f68e5d3f23",
+        "displayName": "Polecat.EntityFrameworkCore.Tests.ef_core_single_stream_inline_tests.single_stream_projection_writes_ef_core_side_effects",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 84,
+        "firstMs": 84,
+        "stallInduced": false
+      }
+    ],
+    "4ecf6c77ad884ded70e389f1e725c590ce782d7fd979a6850cf20811f03f2cb6": [
+      {
+        "runId": "38959797626.1",
+        "at": "2026-10-16T20:08:03.3916306+00:00",
+        "uid": "4ecf6c77ad884ded70e389f1e725c590ce782d7fd979a6850cf20811f03f2cb6",
+        "displayName": "Polecat.EntityFrameworkCore.Tests.ef_core_tenanted_inline_tests.subsequent_appends_preserve_tenant_id",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 400,
+        "firstMs": 400,
+        "stallInduced": false
+      }
+    ],
+    "6318874aea9804b29f43620e086247e9ed27ac670fa7f4fc5d7696345fb111d4": [
+      {
+        "runId": "38959797626.1",
+        "at": "2026-10-16T20:08:03.3916306+00:00",
+        "uid": "6318874aea9804b29f43620e086247e9ed27ac670fa7f4fc5d7696345fb111d4",
+        "displayName": "Polecat.EntityFrameworkCore.Tests.Bug_650_efcore_dbcontext_never_disposed.a_session_that_never_commits_still_disposes_its_dbcontext",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 2466,
+        "firstMs": 2466,
+        "stallInduced": false
+      }
+    ],
+    "65ce618a606b5279563003fd2b019577a1054a62108117c1272191cd98b0b453": [
+      {
+        "runId": "38959797626.1",
+        "at": "2026-10-16T20:08:03.3916306+00:00",
+        "uid": "65ce618a606b5279563003fd2b019577a1054a62108117c1272191cd98b0b453",
+        "displayName": "Polecat.EntityFrameworkCore.Tests.ef_core_single_stream_async_tests.single_stream_projection_writes_aggregate_on_create",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 399,
+        "firstMs": 399,
+        "stallInduced": false
+      }
+    ],
+    "6ff4d0b3213e10baa8bcaec6fed0294cf0efc463692568a6e5fb0323e381eb3a": [
+      {
+        "runId": "38959797626.1",
+        "at": "2026-10-16T20:08:03.3916306+00:00",
+        "uid": "6ff4d0b3213e10baa8bcaec6fed0294cf0efc463692568a6e5fb0323e381eb3a",
+        "displayName": "Polecat.EntityFrameworkCore.Tests.ef_core_multi_tenancy_validation_tests.multi_stream_should_fail_when_conjoined_but_no_ITenanted",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 1,
+        "firstMs": 1,
+        "stallInduced": false
+      }
+    ],
+    "7270accf84f5e73fe5ed80683d0ad46ba7d2a26c364b89d5cd362e59e1307d39": [
+      {
+        "runId": "38959797626.1",
+        "at": "2026-10-16T20:08:03.3916306+00:00",
+        "uid": "7270accf84f5e73fe5ed80683d0ad46ba7d2a26c364b89d5cd362e59e1307d39",
+        "displayName": "Polecat.EntityFrameworkCore.Tests.ef_core_tenanted_async_tests.different_tenants_get_isolated_data",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 3515,
+        "firstMs": 3515,
+        "stallInduced": false
+      }
+    ],
+    "72d590c95d1c15851037504607c3c659d3c53546a0dcee92bc3a99b121b88bc5": [
+      {
+        "runId": "38959797626.1",
+        "at": "2026-10-16T20:08:03.3916306+00:00",
+        "uid": "72d590c95d1c15851037504607c3c659d3c53546a0dcee92bc3a99b121b88bc5",
+        "displayName": "Polecat.EntityFrameworkCore.Tests.Bug_650_efcore_dbcontext_never_disposed.every_dbcontext_the_projection_storage_builds_is_disposed",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 2387,
+        "firstMs": 2387,
+        "stallInduced": false
+      }
+    ],
+    "81a80a9e6c41c3f2b3cfc4db1206296c87c07b5a943867b3ea6730ea482c47d5": [
+      {
+        "runId": "38959797626.1",
+        "at": "2026-10-16T20:08:03.3916306+00:00",
+        "uid": "81a80a9e6c41c3f2b3cfc4db1206296c87c07b5a943867b3ea6730ea482c47d5",
+        "displayName": "Polecat.EntityFrameworkCore.Tests.EfCoreSchemaTests.should_respect_ef_core_explicit_schema_and_not_move_tables_to_polecat_schema",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 0,
+        "firstMs": 0,
+        "stallInduced": false
+      }
+    ],
+    "8331eb9ad9545b437260b38d490c3d393220d77110e8f08979f7c5646cf9e31a": [
+      {
+        "runId": "38959797626.1",
+        "at": "2026-10-16T20:08:03.3916306+00:00",
+        "uid": "8331eb9ad9545b437260b38d490c3d393220d77110e8f08979f7c5646cf9e31a",
+        "displayName": "Polecat.EntityFrameworkCore.Tests.EfCoreSchemaTests.should_use_default_schema_for_tables_without_explicit_schema",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 0,
+        "firstMs": 0,
+        "stallInduced": false
+      }
+    ],
+    "88fcf6d8004268c986eaaa9897302057c72f8ef5bc239ab5fa64c7c3d9f2a7f8": [
+      {
+        "runId": "38959797626.1",
+        "at": "2026-10-16T20:08:03.3916306+00:00",
+        "uid": "88fcf6d8004268c986eaaa9897302057c72f8ef5bc239ab5fa64c7c3d9f2a7f8",
+        "displayName": "Polecat.EntityFrameworkCore.Tests.EfCoreSchemaTests.should_map_foreign_keys_from_entity_types",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 1,
+        "firstMs": 1,
+        "stallInduced": false
+      }
+    ],
+    "a480dd4726ec3c60e5c1e504e2100e2c44081e3da2ccc5bdde8bfe90d96da33d": [
+      {
+        "runId": "38959797626.1",
+        "at": "2026-10-16T20:08:03.3916306+00:00",
+        "uid": "a480dd4726ec3c60e5c1e504e2100e2c44081e3da2ccc5bdde8bfe90d96da33d",
+        "displayName": "Polecat.EntityFrameworkCore.Tests.ef_core_multi_stream_inline_tests.multi_stream_projection_handles_subsequent_appends",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 86,
+        "firstMs": 86,
+        "stallInduced": false
+      }
+    ],
+    "adbdda407bfa92987a88ff7ddaadc03f2ecb97a8524a2e9535a4cd1ed7344ef1": [
+      {
+        "runId": "38959797626.1",
+        "at": "2026-10-16T20:08:03.3916306+00:00",
+        "uid": "adbdda407bfa92987a88ff7ddaadc03f2ecb97a8524a2e9535a4cd1ed7344ef1",
+        "displayName": "Polecat.EntityFrameworkCore.Tests.ef_core_multi_stream_async_tests.multi_stream_projection_handles_subsequent_appends",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 758,
+        "firstMs": 758,
+        "stallInduced": false
+      }
+    ],
+    "bc7c9ff40a0f45a361eb833f454891c90f8611a5d52e63be7bd5c3c17c12303f": [
+      {
+        "runId": "38959797626.1",
+        "at": "2026-10-16T20:08:03.3916306+00:00",
+        "uid": "bc7c9ff40a0f45a361eb833f454891c90f8611a5d52e63be7bd5c3c17c12303f",
+        "displayName": "Polecat.EntityFrameworkCore.Tests.ef_core_tenanted_async_tests.tenant_id_is_written_to_ef_core_table",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 388,
+        "firstMs": 388,
+        "stallInduced": false
+      }
+    ],
+    "cca329dc54293b88a61c7de056173f321ed830cd5c04ada231e0762d5226aadb": [
+      {
+        "runId": "38959797626.1",
+        "at": "2026-10-16T20:08:03.3916306+00:00",
+        "uid": "cca329dc54293b88a61c7de056173f321ed830cd5c04ada231e0762d5226aadb",
+        "displayName": "Polecat.EntityFrameworkCore.Tests.EfCoreSchemaTests.should_return_entity_types_in_fk_dependency_order",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 0,
+        "firstMs": 0,
+        "stallInduced": false
+      }
+    ],
+    "d6035df78a772990085056f073cdd33ce9a9b86bd9c0179be13c0ca38fe1e354": [
+      {
+        "runId": "38959797626.1",
+        "at": "2026-10-16T20:08:03.3916306+00:00",
+        "uid": "d6035df78a772990085056f073cdd33ce9a9b86bd9c0179be13c0ca38fe1e354",
+        "displayName": "Polecat.EntityFrameworkCore.Tests.EfCoreSchemaTests.should_register_all_entity_tables_from_db_context",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 0,
+        "firstMs": 0,
+        "stallInduced": false
+      }
+    ],
+    "d782a783580d83125eba30e9d261d6b620838f6994882d0b9a7c55f139ec5fa6": [
+      {
+        "runId": "38959797626.1",
+        "at": "2026-10-16T20:08:03.3916306+00:00",
+        "uid": "d782a783580d83125eba30e9d261d6b620838f6994882d0b9a7c55f139ec5fa6",
+        "displayName": "Polecat.EntityFrameworkCore.Tests.ef_core_multi_tenancy_validation_tests.single_stream_should_pass_without_conjoined_tenancy",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 0,
+        "firstMs": 0,
+        "stallInduced": false
+      }
+    ],
+    "e00272441bd5e5127deca0577006f0760221890d7149476940a7eda50c1f3419": [
+      {
+        "runId": "38959797626.1",
+        "at": "2026-10-16T20:08:03.3916306+00:00",
+        "uid": "e00272441bd5e5127deca0577006f0760221890d7149476940a7eda50c1f3419",
+        "displayName": "Polecat.EntityFrameworkCore.Tests.ef_core_single_stream_live_tests.live_aggregation_builds_aggregate_on_the_fly",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 1963,
+        "firstMs": 1963,
+        "stallInduced": false
+      }
+    ],
+    "e64b6999c8824fd7318cef98db1968c65a3e1b084611d73209931ce70ff802c3": [
+      {
+        "runId": "38959797626.1",
+        "at": "2026-10-16T20:08:03.3916306+00:00",
+        "uid": "e64b6999c8824fd7318cef98db1968c65a3e1b084611d73209931ce70ff802c3",
+        "displayName": "Polecat.EntityFrameworkCore.Tests.ef_core_multi_stream_async_tests.multi_stream_projection_creates_separate_aggregates_per_identity",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 420,
+        "firstMs": 420,
+        "stallInduced": false
+      }
+    ],
+    "e744ebcc9e5d59ece88cd0ac96be9d63a045e84245ad3495127435fe84fd6918": [
+      {
+        "runId": "38959797626.1",
+        "at": "2026-10-16T20:08:03.3916306+00:00",
+        "uid": "e744ebcc9e5d59ece88cd0ac96be9d63a045e84245ad3495127435fe84fd6918",
+        "displayName": "Polecat.EntityFrameworkCore.Tests.ef_core_multi_stream_inline_tests.multi_stream_projection_creates_separate_aggregates_per_identity",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 89,
+        "firstMs": 89,
+        "stallInduced": false
+      }
+    ],
+    "e7ec46ba511ae438b08fd04969efe30751e65a6c6bc97fa4dd6b576b4383069a": [
+      {
+        "runId": "38959797626.1",
+        "at": "2026-10-16T20:08:03.3916306+00:00",
+        "uid": "e7ec46ba511ae438b08fd04969efe30751e65a6c6bc97fa4dd6b576b4383069a",
+        "displayName": "Polecat.EntityFrameworkCore.Tests.ef_core_single_stream_live_tests.live_aggregation_returns_null_for_unknown_stream",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 1440,
+        "firstMs": 1440,
+        "stallInduced": false
+      }
+    ],
+    "ed4392ebcf60b4627d8a8bfc5b19969c425f3c40dda6f42ef6d36e9001d63b8e": [
+      {
+        "runId": "38959797626.1",
+        "at": "2026-10-16T20:08:03.3916306+00:00",
+        "uid": "ed4392ebcf60b4627d8a8bfc5b19969c425f3c40dda6f42ef6d36e9001d63b8e",
+        "displayName": "Polecat.EntityFrameworkCore.Tests.ef_core_single_stream_async_tests.single_stream_projection_evolves_aggregate_with_subsequent_events",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 732,
+        "firstMs": 732,
+        "stallInduced": false
+      }
+    ],
+    "ee6c3daa53ff079a116f849922a1a873761245541a831cd3aeec89af053fe536": [
+      {
+        "runId": "38959797626.1",
+        "at": "2026-10-16T20:08:03.3916306+00:00",
+        "uid": "ee6c3daa53ff079a116f849922a1a873761245541a831cd3aeec89af053fe536",
+        "displayName": "Polecat.EntityFrameworkCore.Tests.ef_core_multi_tenancy_validation_tests.single_stream_should_pass_when_conjoined_with_ITenanted",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 0,
+        "firstMs": 0,
+        "stallInduced": false
+      }
+    ],
+    "f23a0d45f96bf34a773a519545440ad02d7eacfe83f32304fbf2f72e845abcc3": [
+      {
+        "runId": "38959797626.1",
+        "at": "2026-10-16T20:08:03.3916306+00:00",
+        "uid": "f23a0d45f96bf34a773a519545440ad02d7eacfe83f32304fbf2f72e845abcc3",
+        "displayName": "Polecat.EntityFrameworkCore.Tests.ef_core_event_projection_tests.can_project_multiple_events",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 186,
+        "firstMs": 186,
+        "stallInduced": false
+      }
+    ],
+    "f8c2aa270c5c9759715e1c41e5d79b6aa57993ce62d1f3f37a8c374540d85aab": [
+      {
+        "runId": "38959797626.1",
+        "at": "2026-10-16T20:08:03.3916306+00:00",
+        "uid": "f8c2aa270c5c9759715e1c41e5d79b6aa57993ce62d1f3f37a8c374540d85aab",
+        "displayName": "Polecat.EntityFrameworkCore.Tests.ef_core_tenanted_async_tests.subsequent_appends_preserve_tenant_id",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 723,
+        "firstMs": 723,
+        "stallInduced": false
+      }
+    ],
+    "fa1ddfcf4de5d15cc762c33375b0b14f797ce60384a1dd9ce6af8a85bc58701a": [
+      {
+        "runId": "38959797626.1",
+        "at": "2026-10-16T20:08:03.3916306+00:00",
+        "uid": "fa1ddfcf4de5d15cc762c33375b0b14f797ce60384a1dd9ce6af8a85bc58701a",
+        "displayName": "Polecat.EntityFrameworkCore.Tests.ef_core_single_stream_inline_tests.single_stream_projection_handles_multiple_events_in_one_append",
+        "outcome": "CleanPass",
+        "attempts": 1,
+        "totalMs": 116,
+        "firstMs": 116,
+        "stallInduced": false
+      }
+    ]
+  }
+}

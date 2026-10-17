@@ -15,5 +15,5 @@ jobs:
       matrix:
         storage_type: [default, edge]
     with:
-      TEST_PROJECT_PATH: src/Polecat.AspNetCore.Testing/Polecat.AspNetCore.Testing.csproj
+      NUKE_TARGET: CIAspNetCore
       STORAGE_TYPE: ${{ matrix.storage_type }}

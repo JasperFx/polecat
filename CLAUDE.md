@@ -300,6 +300,34 @@ logins, linked servers, Agent jobs.
 Schema names do **not** need scoping — they live inside the catalog, so per-worker databases already
 separate them. That is why `SchemaName = "doc_usage"` appearing in nine files is fine.
 
+### How CI runs the suites: Nuke targets over Bobcat's supervisor
+
+Every test job runs a Nuke target — `CIPolecat`, `CIAspNetCore`, `CIEfCore` (`build/SupervisedTests.cs`)
+— and the workflows only provide SQL Server. The same command works locally:
+
+```
+./build.sh CIPolecat --framework net9.0                     # committed 4 workers, clamped to cores/2
+./build.sh CIPolecat --test-workers 4 --test-filter dcb_    # one slice; a filter matching nothing fails
+./build.sh CIPolecat --disable-test-retry                   # measure without even opted-in retries
+```
+
+- **Lanes are whole test classes** and each lane gets its own catalog, `polecat_w{lane}`, dropped and
+  recreated (with its `Scoped()` siblings) at the start of every run.
+- **Retries are opt-in per test**: `[Trait("Retry", "2")]` buys one more attempt, alone, in a fresh
+  process. A pass on retry is reported as flaky in the job summary and the ledger, never as a clean
+  pass. Anything without the trait fails on its first failure — do not add the trait to make a red
+  test green; add it only when the ledger shows a test passing alone after failing under load, and
+  say so in a comment beside it.
+- **Stalls (a test in flight past 5 minutes) and a 30s heartbeat are reported, never acted on.**
+- **The ledger** (`build/test-ledger/{Project}.{storage}.json`) balances lanes by measured duration.
+  Each CI run uploads its own as the `test-ledger-<target>-<storage>` artifact, and the next run
+  merges the last green main run's. Refresh the committed copy now and then:
+  `gh run download <run id> --pattern 'test-ledger-*' --dir ledgers && ./build.sh UpdateTestLedgers --ledger-source ledgers`.
+  **It balances CI only.** The ledger is keyed by the Microsoft.Testing.Platform test uid, and the
+  same 3,402 tests had zero uids in common between a local Debug run and CI's Release run on
+  /home/runner/work — xUnit v3 derives the uid from the assembly's location. A local run therefore
+  balances by test count, which is harmless; never commit a ledger from a local run.
+
 ## Engineering Principles
 
 - Mirror Marten's public API surface where possible for user familiarity

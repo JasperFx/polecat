@@ -15,12 +15,16 @@ jobs:
       matrix:
         storage_type: [default, edge]
     with:
-      TEST_PROJECT_PATH: src/Polecat.Tests/Polecat.Tests.csproj
+      NUKE_TARGET: CIPolecat
       STORAGE_TYPE: ${{ matrix.storage_type }}
-      # Polecat.Tests is the workflow's critical path by an order of magnitude — ~40 minutes for
-      # `default` and ~26 for `edge`, against ~2 for every other job in the matrix — so this job's
-      # wall clock IS the PR feedback loop. 4 is the tuned local figure; the runner clamps to
-      # ProcessorCount / 2, which is 2 on a 4-vCPU hosted runner that is also hosting SQL Server.
-      # Asking for more than a runner can carry does not fail politely: an oversubscribed fleet
-      # kills the runner itself ("The runner has received a shutdown signal").
+      # Polecat.Tests is the workflow's critical path by an order of magnitude (~3,400 tests against
+      # ~2 minutes for every other job), so this job's wall clock IS the PR feedback loop.
+      #
+      # 4 OVERRIDES the ProcessorCount / 2 clamp (which would make it 2 on a 4-vCPU hosted runner),
+      # and that is a measured decision, not an oversight: the previous runner received `--workers 4`
+      # as an explicit argument, which bypassed its own clamp, so every Polecat CI run from #580 to
+      # JasperFx/bobcat#565 ran 4 SQL Server-backed hosts on a hosted runner — 100 of 100 polecat
+      # workflow runs green, no runner shutdowns. Peak worker RSS is now sampled and printed in the
+      # job summary; if a run ever dies with "The runner has received a shutdown signal", drop this
+      # line and let the clamp decide.
       TEST_WORKERS: 4

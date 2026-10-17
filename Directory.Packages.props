@@ -1369,6 +1369,10 @@
 
         <!-- Build automation -->
         <PackageVersion Include="Nuke.Common" Version="9.0.4" />
+        <!-- The supervised CI runner (build/SupervisedTests.cs). Referenced by build/build.csproj
+             ONLY: it drives the test hosts as worker processes from outside, so no test project and
+             no shipped package takes a reference to Bobcat. JasperFx/bobcat#565. -->
+        <PackageVersion Include="Bobcat.Supervisor" Version="0.60.4" />
     </ItemGroup>
 
     <!-- GHSA-846f-f764-76mx (CVE-2026-84008, high): SignedCms.CheckSignature DoS in

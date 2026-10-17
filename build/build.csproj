@@ -2,6 +2,12 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
+    <!--
+      TargetFrameworks is CLEARED, and that line is load-bearing: the root Directory.Build.props sets
+      it to "net9.0;net10.0" for the whole repo, the plural wins over TargetFramework, and
+      `dotnet run` (build.sh) then refuses with "Your project targets multiple frameworks".
+    -->
+    <TargetFrameworks></TargetFrameworks>
     <TargetFramework>net10.0</TargetFramework>
     <RootNamespace></RootNamespace>
     <NoWarn>CS0649;CS0169;CA1050;CA1822;CA2211;IDE1006</NoWarn>
@@ -12,6 +18,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Bobcat.Supervisor" />
     <PackageReference Include="JasperFx" />
     <PackageReference Include="Microsoft.Data.SqlClient" />
     <PackageReference Include="Nuke.Common" />
