@@ -45,8 +45,7 @@
         "Test",
         "TestAspnetcore",
         "TestEfCore",
-        "TestPolecat",
-        "UpdateTestLedgers"
+        "TestPolecat"
       ]
     },
     "Verbosity": {
@@ -138,10 +137,6 @@
         },
         "Framework": {
           "type": "string"
-        },
-        "LedgerSource": {
-          "type": "string",
-          "description": "Directory of ledger files UpdateTestLedgers folds in (default: artifacts/test-ledger)"
         },
         "Project": {
           "type": "string"

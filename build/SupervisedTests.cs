@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Xml.Linq;
 using Bobcat.Ledger;
 using Bobcat.Resilience;
 using Bobcat.Supervisor;
@@ -11,7 +12,6 @@ using Microsoft.Data.SqlClient;
 using Nuke.Common;
 using Nuke.Common.IO;
 using Nuke.Common.Tools.DotNet;
-using Polecat.Build;
 using Serilog;
 using static Nuke.Common.Tools.DotNet.DotNetTasks;
 
@@ -29,11 +29,13 @@ using static Nuke.Common.Tools.DotNet.DotNetTasks;
 //     the lane's catalog name, so sibling databases do not collide either.
 //   - Retries are opt-in, per test. A failure is reported as a failure unless that test says, in the
 //     code, [Trait("Retry", "2")] — and then it gets one more attempt in a FRESH process, because the
-//     process is the only reset bracket an xUnit test has. A pass on retry is never folded into a
-//     clean pass: it is the flaky ledger.
+//     process is the only reset bracket an xUnit test has. That is Bobcat's DefaultFailurePolicy
+//     since 1.0 (bobcat#661), so no policy of our own is registered. A pass on retry is never folded
+//     into a clean pass: it is the flaky ledger.
 //   - Stalls and the heartbeat are reported, never acted on.
-//   - The committed ledger (build/test-ledger/) balances lanes by measured duration from the first
-//     pass; each run's observations are uploaded so `UpdateTestLedgers` can fold them back in.
+//   - The ledger balances lanes by measured duration. It is a CI artifact, not a committed file:
+//     each run downloads the last green main run's, balances on it, folds its own results in and
+//     uploads it again (test-template.yml). Bobcat 1.0 keys it by display name (bobcat#730).
 //
 // The workflow runs `./build.sh CIPolecat --framework net9.0 --storage default` (or edge) and owns
 // nothing but the services: SQL Server comes from docker compose exactly as before.
@@ -81,14 +83,6 @@ partial class Build
 
     const int MaxRetriesPerRun = 25;
 
-    /// <summary>
-    ///     Observations kept per test. Small because the file is committed: a ledger observation is
-    ///     ~560 bytes of JSON, so Polecat.Tests' ~3,400 tests cost ~1.9 MB per retained run, per server.
-    ///     Three is enough for a median.
-    /// </summary>
-    const int LedgerRunsPerTest = 3;
-
-    static AbsolutePath CommittedLedgers => RootDirectory / "build" / "test-ledger";
     static AbsolutePath LedgerOutput => RootDirectory / "artifacts" / "test-ledger";
     static AbsolutePath ReportOutput => RootDirectory / "artifacts" / "test-reports";
     static AbsolutePath PreviousLedgers => RootDirectory / "previous-ledger";
@@ -114,45 +108,6 @@ partial class Build
     /// <summary>Every supervised suite, one after another — what the three workflows run between them.</summary>
     Target CI => _ => _
         .DependsOn(CIPolecat, CIAspNetCore, CIEfCore);
-
-    /// <summary>
-    ///     Folds run ledgers into the committed ones under build/test-ledger/. The source is
-    ///     <c>--ledger-source &lt;dir&gt;</c> (default: artifacts/test-ledger, what a local run writes);
-    ///     for CI's, download the <c>test-ledger-*</c> artifacts of a green main run into a directory
-    ///     first (<c>gh run download &lt;id&gt; --pattern 'test-ledger-*' --dir ledgers</c>).
-    /// </summary>
-    /// <remarks>
-    ///     A merge, never an overwrite: <see cref="TestLedger.Merge" /> is commutative and idempotent, so
-    ///     folding the same run twice changes nothing and a git conflict on the file is resolved by
-    ///     re-running this against both sides. Tests unseen for 60 days are pruned — renamed or deleted.
-    /// </remarks>
-    Target UpdateTestLedgers => _ => _
-        .Executes(() =>
-        {
-            var source = string.IsNullOrEmpty(LedgerSource) ? LedgerOutput : (AbsolutePath)Path.GetFullPath(LedgerSource);
-            var files = Directory.Exists(source)
-                ? Directory.EnumerateFiles(source, "*.json", SearchOption.AllDirectories)
-                    .Where(x => !x.EndsWith(".report.json", StringComparison.Ordinal))
-                    .ToList()
-                : [];
-
-            if (files.Count == 0) throw new InvalidOperationException($"No ledger files under {source}.");
-
-            var cutoff = DateTimeOffset.UtcNow.AddDays(-60);
-            foreach (var file in files)
-            {
-                var committed = CommittedLedgers / Path.GetFileName(file);
-                var merged = TestLedger.Load(committed, LedgerRunsPerTest)
-                    .Merge(TestLedger.Load(file, LedgerRunsPerTest))
-                    .PruneTestsNotSeenSince(cutoff);
-
-                merged.Save(committed);
-                Log.Information("Ledger {File}: {Tests} test(s)", committed, merged.Tests.Count);
-            }
-        });
-
-    [Parameter("Directory of ledger files UpdateTestLedgers folds in (default: artifacts/test-ledger)")]
-    readonly string LedgerSource;
 
     // ─── The run ───────────────────────────────────────────────────────
 
@@ -231,8 +186,6 @@ partial class Build
             Log = message => Log.Information("  {Message}", message)
         };
 
-        if (!DisableTestRetry) supervisor.AddFailurePolicy(new RetryOptedInTestsInFreshProcess());
-
         Log.Information("  ledger: {Count} measured duration(s) for {Name}", known.Count, ledgerName);
 
         var startedAt = DateTime.UtcNow;
@@ -257,10 +210,11 @@ partial class Build
         recorded.Save(LedgerOutput / ledgerName);
 
         // The TRX dorny/test-reporter reads, where its **/TestResults/*.trx glob already looks. A
-        // supervised run produces none on its own — no single worker knows the whole run.
+        // supervised run produces none on its own — no single worker knows the whole run — so it is
+        // Bobcat's RunReport.WriteTrx (bobcat#699), which replaced build/TrxWriter.cs.
         var trxPath = Path.Combine(Path.GetDirectoryName(executable)!, "TestResults", "test-results.trx");
-        TrxWriter.Write(results, trxPath, executable, startedAt);
-        TrxWriter.VerifyRoundTrip(trxPath, results.Tests.Count);
+        RunReport.WriteTrx(results, trxPath, new TrxOptions { StartedAt = startedAt, Storage = executable });
+        verifyTrx(trxPath, results.Tests.Count);
 
         // The supervisor's own JSON report, uploaded beside the ledger: the primary record of the run,
         // where the ledger is a compaction of it.
@@ -277,22 +231,26 @@ partial class Build
     }
 
     /// <summary>
-    ///     The committed ledger, merged with the last green main run's when the workflow fetched it.
-    ///     Both are advisory: an absent or unreadable ledger degrades lane balancing to test counts
-    ///     and never fails a run.
+    ///     The last green main run's ledger, when the workflow fetched it (test-template.yml). Advisory:
+    ///     an absent or unreadable ledger degrades lane balancing to test counts and never fails a run.
     /// </summary>
+    /// <remarks>
+    ///     Bobcat keeps the newest <see cref="TestLedger.DefaultMaxRunsPerTest" /> runs per test. A
+    ///     ledger written by Bobcat 0.60 (version 1, keyed by uid) is re-keyed by display name on load.
+    /// </remarks>
     TestLedger loadLedger(string name)
     {
-        var ledger = TestLedger.Empty(LedgerRunsPerTest);
+        var ledger = TestLedger.Empty();
 
-        foreach (var candidate in new[] { (string)(CommittedLedgers / name) }
-                     .Concat(Directory.Exists(PreviousLedgers)
-                         ? Directory.EnumerateFiles(PreviousLedgers, name, SearchOption.AllDirectories)
-                         : []))
+        var candidates = Directory.Exists(PreviousLedgers)
+            ? Directory.EnumerateFiles(PreviousLedgers, name, SearchOption.AllDirectories)
+            : [];
+
+        foreach (var candidate in candidates)
         {
             try
             {
-                ledger = ledger.Merge(TestLedger.Load(candidate, LedgerRunsPerTest));
+                ledger = ledger.Merge(TestLedger.Load(candidate));
             }
             catch (Exception e)
             {
@@ -349,9 +307,9 @@ partial class Build
             var md = new StringBuilder();
             md.AppendLine($"## {projectName} ({framework}, {Storage}) — supervised");
             md.AppendLine();
-            md.AppendLine("| Tests | Clean | Passed on retry | Failed | Indeterminate | Worker faults | Stalled | Workers | Wall clock | Peak worker RSS |");
-            md.AppendLine("|---|---|---|---|---|---|---|---|---|---|");
-            md.AppendLine($"| {results.Tests.Count} | {results.CleanPasses.Count} | {results.PassedOnRetry.Count} | {results.Failed.Count} | " +
+            md.AppendLine("| Tests | Clean | Skipped | Passed on retry | Failed | Indeterminate | Worker faults | Stalled | Workers | Wall clock | Peak worker RSS |");
+            md.AppendLine("|---|---|---|---|---|---|---|---|---|---|---|");
+            md.AppendLine($"| {results.Tests.Count} | {results.CleanPasses.Count} | {results.Skipped.Count} | {results.PassedOnRetry.Count} | {results.Failed.Count} | " +
                           $"{results.Indeterminate.Count} | {results.WorkerFaults.Count} | {results.StalledTests.Select(x => x.DisplayName).Distinct().Count()} | " +
                           $"{workers} | {wallClock:mm\\:ss} | {peak} |");
             md.AppendLine();
@@ -461,26 +419,24 @@ partial class Build
     }
 
     /// <summary>
-    ///     The retry policy: a failure is retried — once, alone, in a FRESH process — only when the
-    ///     test opted in with <c>[Trait("Retry", "2")]</c>. Every other failure abstains here and falls
-    ///     through to Bobcat's DefaultFailurePolicy, which fails it.
+    ///     Re-reads the TRX just written and checks it holds one result per test.
     /// </summary>
     /// <remarks>
-    ///     Why not Bobcat's own <c>Retry</c> handling: DefaultFailurePolicy answers a Retry trait with
-    ///     RetryInProcess, a warm retry in the process the failure just polluted. That cannot work for a
-    ///     test whose failure leaves state behind (wolverine-ci-rollout lesson 5), and with
-    ///     ReleaseIdleLanes the lane it would return to may be gone. Out here the process is the only
-    ///     reset bracket an xUnit test has.
+    ///     A short or malformed TRX is silent at dorny/test-reporter (it reports nothing and the job
+    ///     looks fine), so the run that wrote it fails here instead. Bobcat writes one top-level
+    ///     <c>UnitTestResult</c> per test and nests a retried test's attempts as <c>InnerResults</c>,
+    ///     which are not counted.
     /// </remarks>
-    class RetryOptedInTestsInFreshProcess : IFailurePolicy
+    static void verifyTrx(string path, int expectedTests)
     {
-        public Disposition Decide(AttemptContext attempt)
-        {
-            if (attempt.Succeeded || !attempt.RetriesAvailable) return null;
-            if (!attempt.HasTrait(ResilienceTags.Retry)) return null;
+        XNamespace ns = "http://microsoft.com/schemas/VisualStudio/TeamTest/2010";
+        var written = XDocument.Load(path).Root!.Element(ns + "Results")!.Elements(ns + "UnitTestResult").Count();
 
-            return Disposition.RetryInFreshProcess(
-                "opted in with [Trait(\"Retry\", ...)] — retried alone in a fresh process; a pass is reported as flaky");
+        if (written != expectedTests)
+        {
+            throw new InvalidOperationException(
+                $"TRX check failed: {written} result(s) for {expectedTests} test(s) at '{path}'. "
+                + "The CI reporter reads this file; a short or malformed one reports nothing rather than failing.");
         }
     }
 }
