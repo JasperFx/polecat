@@ -314,19 +314,21 @@ Every test job runs a Nuke target — `CIPolecat`, `CIAspNetCore`, `CIEfCore` (`
 - **Lanes are whole test classes** and each lane gets its own catalog, `polecat_w{lane}`, dropped and
   recreated (with its `Scoped()` siblings) at the start of every run.
 - **Retries are opt-in per test**: `[Trait("Retry", "2")]` buys one more attempt, alone, in a fresh
-  process. A pass on retry is reported as flaky in the job summary and the ledger, never as a clean
-  pass. Anything without the trait fails on its first failure — do not add the trait to make a red
-  test green; add it only when the ledger shows a test passing alone after failing under load, and
-  say so in a comment beside it.
+  process. That is Bobcat's own `DefaultFailurePolicy` since 1.0 (bobcat#661), so the build registers
+  no policy of its own; the budget (2 attempts per test, 25 retries per run) is the build's. A pass on
+  retry is reported as flaky in the job summary and the ledger, never as a clean pass. Anything
+  without the trait fails on its first failure — do not add the trait to make a red test green; add it
+  only when the ledger shows a test passing alone after failing under load, and say so in a comment
+  beside it. Never add `RetryWarm=true`: a warm retry reruns in the process the failure polluted.
 - **Stalls (a test in flight past 5 minutes) and a 30s heartbeat are reported, never acted on.**
-- **The ledger** (`build/test-ledger/{Project}.{storage}.json`) balances lanes by measured duration.
-  Each CI run uploads its own as the `test-ledger-<target>-<storage>` artifact, and the next run
-  merges the last green main run's. Refresh the committed copy now and then:
-  `gh run download <run id> --pattern 'test-ledger-*' --dir ledgers && ./build.sh UpdateTestLedgers --ledger-source ledgers`.
-  **It balances CI only.** The ledger is keyed by the Microsoft.Testing.Platform test uid, and the
-  same 3,402 tests had zero uids in common between a local Debug run and CI's Release run on
-  /home/runner/work — xUnit v3 derives the uid from the assembly's location. A local run therefore
-  balances by test count, which is harmless; never commit a ledger from a local run.
+- **The TRX** the reporter reads is Bobcat's `RunReport.WriteTrx` (bobcat#699), checked for one result
+  per test before the run exits — a short TRX reports nothing rather than failing.
+- **The ledger is a CI artifact, never committed.** Each run downloads the last green main run's
+  `test-ledger-<target>-<storage>` artifact, balances lanes on it, folds its own results in and
+  uploads it again (`test-template.yml`). Bobcat keys it by test **display name** (bobcat#730), so it
+  is stable across machines; an older uid-keyed file is re-keyed on load. A local run finds no
+  `previous-ledger/` and balances by test count, which is harmless. To balance a local run, download
+  one into `previous-ledger/`: `gh run download <run id> --pattern 'test-ledger-*' --dir previous-ledger`.
 
 ## Engineering Principles
 

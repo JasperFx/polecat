@@ -60,10 +60,11 @@ jobs:
           echo "SQL Server failed to become healthy"
           exit 1
 
-      # The last green main run's ledger for this target and server, merged with the committed one
-      # (build/test-ledger/) so lanes are balanced by recent measured durations. Best-effort by
-      # design: a first run on a branch, a pruned artifact or a download hiccup costs the freshest
-      # balancing hint and nothing else — the committed ledger still applies.
+      # The last green main run's ledger for this target and server, so lanes are balanced by recent
+      # measured durations. The ledger is a CI artifact only (nothing is committed): each run folds
+      # its own results into the one it fetched and uploads it again below. Best-effort by design: a
+      # pruned artifact or a download hiccup costs one run's balancing, which falls back to test
+      # counts, and nothing else.
       - name: Fetch previous test ledger
         continue-on-error: true
         run: |
@@ -84,8 +85,8 @@ jobs:
           if [ "${{ inputs.TEST_WORKERS }}" != "0" ]; then WORKERS="--test-workers ${{ inputs.TEST_WORKERS }}"; fi
           ./build.sh ${{ inputs.NUKE_TARGET }} --framework net9.0 --storage ${{ inputs.STORAGE_TYPE }} $WORKERS
 
-      # Every run's ledger, red or green, PR or main: the next main run reads main's, and
-      # `./build.sh UpdateTestLedgers --ledger-source <dir>` folds any of them into the committed one.
+      # Every run's ledger, red or green, PR or main — the fetched history plus this run. Only a green
+      # main run's is ever read back, by the next run of this workflow.
       - name: Publish test ledger
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4

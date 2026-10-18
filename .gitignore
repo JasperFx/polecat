@@ -418,3 +418,6 @@ results/
 nuget.config
 NuGet.config
 publish-local-nugets.sh
+
+# The previous run's test ledger, fetched by CI (test-template.yml) or by hand
+previous-ledger/
