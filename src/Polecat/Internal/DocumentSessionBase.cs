@@ -791,52 +791,22 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
 
     private async Task SaveChangesInternalAsync(CancellationToken token)
     {
-        // Call BeforeSaveChangesAsync on all listeners (global then session)
-        foreach (var listener in Options.Listeners)
+        try
         {
-            await listener.BeforeSaveChangesAsync(this, token);
+            await prepareToSaveChangesAsync(token);
+            await _transactional.BeginTransactionAsync(token);
+        }
+        catch
+        {
+            // #783 (marten#5688): FetchForExclusiveWriting / AppendExclusive begin the session's
+            // transaction, and take UPDLOCK, HOLDLOCK on the stream row, before SaveChangesAsync is called.
+            // A save that fails or is cancelled before the `using var tx` below has not taken ownership of
+            // that transaction, so it used to stay open, holding the stream lock, until the session was
+            // disposed. End it here, as a failure after that point does.
+            await abandonOpenTransactionAsync();
+            throw;
         }
 
-        foreach (var listener in _sessionListeners)
-        {
-            await listener.BeforeSaveChangesAsync(this, token);
-        }
-
-        // Ensure document tables exist for pending operations (skip non-document ops like FlatTable)
-        if (_workTracker.Operations.Count > 0)
-        {
-            var typesNeeded = _workTracker.Operations
-                .Select(op => op.DocumentType)
-                .Where(t => t != typeof(object))
-                .Distinct()
-                .Select(t => _providers.GetProvider(t));
-
-            await _tableEnsurer.EnsureTablesAsync(typesNeeded, token);
-        }
-
-        // #219: ensure the event store schema exists before appending — the event-sourcing analogue
-        // of ensuring document tables above. Runs outside the data transaction (it opens its own
-        // connection) and only when there are events to write.
-        if (_workTracker.Streams.Any(s => s.Events.Any()))
-        {
-            await _tableEnsurer.EnsureEventStoreSchemaAsync(token);
-        }
-
-        // #335: tenant-partitioned documents — resolve (and lazily provision, mirroring the event
-        // append path) the partition ordinal for every tenant this flush writes under, BEFORE the
-        // data transaction opens (provisioning runs DDL on its own connection). The document write
-        // SQL then resolves tenant_ordinal server-side from the pc_tenant_partitions registry these
-        // provisions populate; an already-known tenant is a cached no-op.
-        if (Options.Policies.DocumentTenantPartitioningEnabled && _workTracker.Operations.Count > 0)
-        {
-            await _eventGraph.TenantOrdinals.ResolveAsync(TenantId, token);
-            foreach (var adapter in _workTracker.Operations.OfType<Operations.ClosedShapeOperationAdapter>())
-            {
-                await _eventGraph.TenantOrdinals.ResolveAsync(adapter.SessionTenantId, token);
-            }
-        }
-
-        await _transactional.BeginTransactionAsync(token);
         using var tx = _transactional.Transaction!;
         try
         {
@@ -1040,6 +1010,88 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             // at the version the instance reflects, so it would still be correct on a later commit --
             // but a session should not carry a fetch's leftovers past the save that failed.
             _aggregateCacheWrites?.Clear();
+        }
+    }
+
+    /// <summary>
+    ///     The part of a save that runs before its transaction: the listeners' BeforeSaveChangesAsync, and
+    ///     DDL and tenant-ordinal provisioning, which open connections of their own.
+    /// </summary>
+    private async Task prepareToSaveChangesAsync(CancellationToken token)
+    {
+        // Call BeforeSaveChangesAsync on all listeners (global then session)
+        foreach (var listener in Options.Listeners)
+        {
+            await listener.BeforeSaveChangesAsync(this, token);
+        }
+
+        foreach (var listener in _sessionListeners)
+        {
+            await listener.BeforeSaveChangesAsync(this, token);
+        }
+
+        // Ensure document tables exist for pending operations (skip non-document ops like FlatTable)
+        if (_workTracker.Operations.Count > 0)
+        {
+            var typesNeeded = _workTracker.Operations
+                .Select(op => op.DocumentType)
+                .Where(t => t != typeof(object))
+                .Distinct()
+                .Select(t => _providers.GetProvider(t));
+
+            await _tableEnsurer.EnsureTablesAsync(typesNeeded, token);
+        }
+
+        // #219: ensure the event store schema exists before appending — the event-sourcing analogue
+        // of ensuring document tables above. Runs outside the data transaction (it opens its own
+        // connection) and only when there are events to write.
+        if (_workTracker.Streams.Any(s => s.Events.Any()))
+        {
+            await _tableEnsurer.EnsureEventStoreSchemaAsync(token);
+        }
+
+        // #335: tenant-partitioned documents — resolve (and lazily provision, mirroring the event
+        // append path) the partition ordinal for every tenant this flush writes under, BEFORE the
+        // data transaction opens (provisioning runs DDL on its own connection). The document write
+        // SQL then resolves tenant_ordinal server-side from the pc_tenant_partitions registry these
+        // provisions populate; an already-known tenant is a cached no-op.
+        if (Options.Policies.DocumentTenantPartitioningEnabled && _workTracker.Operations.Count > 0)
+        {
+            await _eventGraph.TenantOrdinals.ResolveAsync(TenantId, token);
+            foreach (var adapter in _workTracker.Operations.OfType<Operations.ClosedShapeOperationAdapter>())
+            {
+                await _eventGraph.TenantOrdinals.ResolveAsync(adapter.SessionTenantId, token);
+            }
+        }
+    }
+
+    /// <summary>
+    ///     #783 (marten#5688). Ends a transaction this session began before a save that then failed,
+    ///     whatever the failure was.
+    /// </summary>
+    /// <remarks>
+    ///     Never with the caller's token: when it is already cancelled, <c>DbTransaction.RollbackAsync</c>
+    ///     returns a cancelled task <i>without</i> rolling back, which is the trap that left Marten's
+    ///     transactions open. A rollback that itself fails must not replace the save's own exception, and
+    ///     disposing the transaction is what gives its locks back either way.
+    /// </remarks>
+    private async Task abandonOpenTransactionAsync()
+    {
+        var tx = _transactional.Transaction;
+        if (tx == null) return;
+
+        _transactional.Transaction = null;
+        try
+        {
+            await tx.RollbackAsync(CancellationToken.None);
+        }
+        catch (Exception e)
+        {
+            Logger.LogFailure("Failure trying to roll back after a failed SaveChangesAsync", e);
+        }
+        finally
+        {
+            await tx.DisposeAsync();
         }
     }
 
