@@ -1354,9 +1354,22 @@
                  primary key column counts as NOT NULL instead of being skipped.
                  Every Polecat table declares its primary key, so the gate is the same as for any delta
                  change: the schema suites must stay quiet on existing tables. -->
-        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.45.0" />
-        <PackageVersion Include="Weasel.SqlServer" Version="9.45.0" />
-        <PackageVersion Include="Weasel.Storage" Version="9.45.0" />
+        <!-- Weasel 9.46.0 (from 9.45.0, spanning 9.45.1). ADOPTED as-is, no Polecat code changes.
+             JasperFx floor 2.90.2, which is the pin above.
+
+               * weasel#710 (9.45.1) - Weasel.SqlServer pins the patched System.Security.Cryptography.Pkcs
+                 for GHSA-846f-f764-76mx, at exactly the versions Polecat already pins directly (10.0.13 /
+                 9.0.21), so the two agree and neither is a downgrade.
+               * weasel#724 - MultiCommandDataReader.GetFieldType keeps DbDataReader's trim annotation, so
+                 a trimmed or native publish stops reporting IL2093 against Weasel.Core.
+               * weasel#723 - SchemaMigration re-reads the catalog when
+                 Migrator.IsConcurrentIntrospectionFailure says a read raced a rewrite. Only Firebird
+                 answers true, so inert for Weasel.SqlServer.
+               * INERT: weasel#718 (PostgreSQL partitioned index resume) and weasel#719 (PostgreSQL
+                 advisory lock holder scope; the SQL Server read already filters on DB_ID()). -->
+        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.46.0" />
+        <PackageVersion Include="Weasel.SqlServer" Version="9.46.0" />
+        <PackageVersion Include="Weasel.Storage" Version="9.46.0" />
 
         <!-- Strongly typed IDs. Both generators are test-only: they prove Polecat's value-type id
              support against the two libraries Marten's ValueTypeTests exercise. StronglyTypedId emits
