@@ -289,7 +289,20 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
             }
             catch
             {
-                await tx.RollbackAsync(ct);
+                // #783 (marten#5688): never roll back with `ct`. When it is already cancelled -- a drain
+                // deadline landing beside a real failure -- DbTransaction.RollbackAsync returns a cancelled
+                // task without rolling back, and its TaskCanceledException replaced the exception that
+                // failed the batch. A rollback that fails for any other reason must not replace it either:
+                // `await using` still disposes the transaction and the connection.
+                try
+                {
+                    await tx.RollbackAsync(CancellationToken.None);
+                }
+                catch
+                {
+                    // The original failure below is the one that explains the batch.
+                }
+
                 throw;
             }
         }, (_connectionString, allOps, participants, messageBatch), token);
