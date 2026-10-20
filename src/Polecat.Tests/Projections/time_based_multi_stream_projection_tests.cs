@@ -3,6 +3,8 @@ using JasperFx.Events.Daemon;
 using JasperFx.Events.Projections;
 using Polecat.Projections;
 using Polecat.Tests.Harness;
+using Microsoft.Data.SqlClient;
+using Polecat.TestUtils;
 
 namespace Polecat.Tests.Projections;
 
@@ -151,7 +153,20 @@ public class time_based_multi_stream_projection_tests : IntegrationContext
         // Run the async daemon to catch up
         using var daemon = (IProjectionDaemon)await theStore.BuildProjectionDaemonAsync();
         await daemon.StartAllAsync();
-        await daemon.CatchUpAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
+        var before = await EdgeDiagnosticAsync();
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            await daemon.CatchUpAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
+        }
+        catch (Exception e)
+        {
+            throw new Exception($"EDGE-DIAG catch-up failed after {sw.Elapsed}.\nBEFORE: {before}\nAFTER: {await EdgeDiagnosticAsync()}", e);
+        }
+        if (sw.Elapsed > TimeSpan.FromSeconds(20))
+        {
+            throw new Exception($"EDGE-DIAG catch-up slow: {sw.Elapsed}.\nBEFORE: {before}\nAFTER: {await EdgeDiagnosticAsync()}");
+        }
         await daemon.StopAllAsync();
 
         var currentMonth = DateTime.UtcNow.ToString("yyyy-MM");
@@ -163,6 +178,43 @@ public class time_based_multi_stream_projection_tests : IntegrationContext
         activity.TotalDebits.ShouldBe(75m);
         activity.TotalCredits.ShouldBe(3000m);
         activity.TransactionCount.ShouldBe(2);
+    }
+
+    // TEMPORARY diagnostic for the PR #787 edge-lane hang; never merged.
+    private static async Task<string> EdgeDiagnosticAsync()
+    {
+        try
+        {
+            await using var conn = new SqlConnection(ConnectionSource.ConnectionString);
+            await conn.OpenAsync();
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = """
+                SELECT 'events', COUNT(*), ISNULL(MIN(seq_id),0), ISNULL(MAX(seq_id),0), COUNT(DISTINCT seq_id), COUNT(DISTINCT tenant_id) FROM dbo.pc_events;
+                SELECT name, last_seq_id, CONVERT(varchar(40), last_updated, 127) FROM dbo.pc_event_progression ORDER BY name;
+                SELECT TOP 10 seq_id, next_seq FROM (SELECT seq_id, LEAD(seq_id) OVER (ORDER BY seq_id) AS next_seq FROM dbo.pc_events) g WHERE next_seq - seq_id <> 1 ORDER BY seq_id;
+                SELECT COUNT(*) FROM sys.partitions WHERE object_id = OBJECT_ID('dbo.pc_events') AND index_id IN (0,1);
+                SELECT CONVERT(varchar(40), SYSDATETIMEOFFSET(), 127), DB_NAME();
+                """;
+            var sb = new System.Text.StringBuilder();
+            await using var r = await cmd.ExecuteReaderAsync();
+            var set = 0;
+            do
+            {
+                sb.Append($"[set{set++}]");
+                while (await r.ReadAsync())
+                {
+                    var vals = new object[r.FieldCount];
+                    r.GetValues(vals);
+                    sb.Append(" (").Append(string.Join(",", vals)).Append(')');
+                }
+                sb.Append(' ');
+            } while (await r.NextResultAsync());
+            return sb.ToString();
+        }
+        catch (Exception e)
+        {
+            return "diag failed: " + e.Message;
+        }
     }
 
     [Fact]
