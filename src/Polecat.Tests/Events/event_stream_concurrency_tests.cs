@@ -128,6 +128,39 @@ public class event_stream_concurrency_tests : IntegrationContext
         await Should.ThrowAsync<Polecat.Exceptions.ExistingStreamIdCollisionException>(session2.SaveChangesAsync(TestContext.Current.CancellationToken));
     }
 
+    // #781: every insert-mode append maps error 2627, so asking each queued operation in turn let
+    // the first stream START in the batch claim the collision, whichever stream actually collided.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task duplicate_start_blames_the_stream_that_collided(bool newStreamFirst)
+    {
+        var existing = Guid.NewGuid();
+        theSession.Events.StartStream(existing, new QuestStarted("First"));
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        var fresh = Guid.NewGuid();
+        await using var session2 = theStore.LightweightSession();
+        if (newStreamFirst)
+        {
+            session2.Events.StartStream(fresh, new QuestStarted("New"));
+            session2.Events.StartStream(existing, new QuestStarted("Duplicate"));
+        }
+        else
+        {
+            session2.Events.StartStream(existing, new QuestStarted("Duplicate"));
+            session2.Events.StartStream(fresh, new QuestStarted("New"));
+        }
+
+        var ex = await Should.ThrowAsync<Polecat.Exceptions.ExistingStreamIdCollisionException>(
+            session2.SaveChangesAsync(TestContext.Current.CancellationToken));
+        ex.Id.ShouldBe(existing);
+
+        // And the save rolled back as a whole: the new stream was not created either.
+        await using var query = theStore.QuerySession();
+        (await query.Events.FetchStreamStateAsync(fresh, TestContext.Current.CancellationToken)).ShouldBeNull();
+    }
+
     // ===== Append multiple events in order =====
 
     [Fact]

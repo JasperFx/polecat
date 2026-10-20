@@ -915,13 +915,9 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
                     // flush loops are otherwise mirror images and this hook was only on one of them,
                     // so an operation carrying an IExceptionTransform got its translation when the
                     // daemon ran it and a raw SqlException when a session did.
-                    foreach (var op in operations)
+                    if (BatchExceptionTransforms.TryTransform(ex, batch, operations, out var transformed))
                     {
-                        if (op is JasperFx.Core.Exceptions.IExceptionTransform transform
-                            && transform.TryTransform(ex, out var transformed) && transformed != null)
-                        {
-                            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(transformed).Throw();
-                        }
+                        System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(transformed!).Throw();
                     }
 
                     throw;
@@ -1492,13 +1488,9 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         }
         catch (SqlException ex)
         {
-            foreach (var op in operations)
+            if (BatchExceptionTransforms.TryTransform(ex, batch, operations, out var transformed))
             {
-                if (op is JasperFx.Core.Exceptions.IExceptionTransform transform
-                    && transform.TryTransform(ex, out var transformed) && transformed != null)
-                {
-                    System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(transformed).Throw();
-                }
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(transformed!).Throw();
             }
 
             throw;
