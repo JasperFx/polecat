@@ -129,6 +129,11 @@ public class time_based_multi_stream_projection_tests : IntegrationContext
     {
         await StoreOptions(opts =>
         {
+            // #791: its own schema, not dbo. The daemon catches up to the highest committed seq_id in the
+            // whole events table, and dbo's is shared with every class in the lane and never cleaned. The
+            // gaps earlier tests' rolled-back appends left there held the high-water mark until
+            // CheckNowAsync's 5-minute backstop, on JasperFx 2.90.2 and 2.91.0 alike.
+            opts.DatabaseSchemaName = "monthly_activity_daemon";
             opts.Projections.Add<MonthlyAccountActivityProjection>(ProjectionLifecycle.Async);
         });
 
