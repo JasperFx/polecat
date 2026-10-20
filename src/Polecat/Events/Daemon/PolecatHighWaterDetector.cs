@@ -634,4 +634,113 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
 
         stats.CurrentMark = stats.HighestSequence;
     }
+    // ── #786: operator-driven advance to the committed ceiling ──────────────
+
+    /// <summary>
+    ///     #786: move the store-global HighWaterMark row to the highest COMMITTED seq_id. One MERGE, so
+    ///     the ceiling and the write agree: it carries the same <c>UPDLOCK, HOLDLOCK</c> as
+    ///     <see cref="MarkHighWaterAsync" /> (#500 — every running detector writes this one row), and its
+    ///     <c>WHEN MATCHED AND last_seq_id &lt; @ceiling</c> means it never moves the mark backwards,
+    ///     including past a detector that advanced it between a separate read and write.
+    /// </summary>
+    /// <remarks>
+    ///     <c>MAX(seq_id)</c>, never the IDENTITY's current value: an identity value can belong to an
+    ///     append still in flight, and marking past it skips that append's events for good once it
+    ///     commits (marten#4953). Whatever is still in flight BELOW the committed ceiling is skipped
+    ///     anyway — that is the operation, and why it is an explicit operator action.
+    /// </remarks>
+    internal Task<HighWaterAdvance> AdvanceToCommittedCeilingAsync(CancellationToken token)
+    {
+        return _resilience.ExecuteAsync(static async (state, ct) =>
+        {
+            var (connectionString, events) = state;
+            await using var conn = new SqlConnection(connectionString);
+            await conn.OpenAsync(ct);
+
+            return await advanceRowAsync(conn, events,
+                $"SELECT @ceiling = ISNULL(MAX(seq_id), 0) FROM {events.EventsTableName};",
+                ShardState.HighWaterMark, tenantId: null, ct);
+        }, (_connectionString, _events), token).AsTask();
+    }
+
+    /// <summary>
+    ///     #786, per-tenant partitioned events: move each tenant's <c>HighWaterMark:{tenant}</c> row to
+    ///     the highest committed seq_id in that tenant's partition. A null list means every tenant in
+    ///     the partition registry. The store-global row is not touched: under per-tenant sequences the
+    ///     daemon never reads it, and a MAX across tenants whose numbering overlaps means nothing.
+    /// </summary>
+    internal Task<IReadOnlyList<HighWaterAdvance>> AdvanceTenantsToCommittedCeilingAsync(
+        IReadOnlyCollection<string>? tenantIds, CancellationToken token)
+    {
+        return _resilience.ExecuteAsync(static async (state, ct) =>
+        {
+            var (connectionString, events, requested) = state;
+            await using var conn = new SqlConnection(connectionString);
+            await conn.OpenAsync(ct);
+
+            var tenants = requested?.ToList();
+            if (tenants == null)
+            {
+                tenants = [];
+                await using var list = conn.CreateCommand();
+                list.CommandText = $"SELECT tenant_id FROM {events.TenantPartitionsTableName} ORDER BY tenant_id;";
+                await using var reader = await list.ExecuteReaderAsync(ct);
+                while (await reader.ReadAsync(ct)) tenants.Add(reader.GetString(0));
+            }
+
+            var ceilingSql = $"""
+                SELECT @ceiling = ISNULL(MAX(e.seq_id), 0)
+                FROM {events.EventsTableName} e
+                JOIN {events.TenantPartitionsTableName} p ON e.{events.TenantPartitionManager.Column} = p.ordinal
+                WHERE p.tenant_id = @tenant;
+                """;
+
+            var results = new List<HighWaterAdvance>(tenants.Count);
+            foreach (var tenantId in tenants)
+            {
+                results.Add(await advanceRowAsync(conn, events, ceilingSql, PerTenantHighWaterName(tenantId),
+                    tenantId, ct));
+            }
+
+            return (IReadOnlyList<HighWaterAdvance>)results;
+        }, (_connectionString, _events, tenantIds), token).AsTask();
+    }
+
+    private static async Task<HighWaterAdvance> advanceRowAsync(SqlConnection conn, EventGraph events,
+        string ceilingSql, string name, string? tenantId, CancellationToken ct)
+    {
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"""
+            DECLARE @ceiling bigint;
+            {ceilingSql}
+            DECLARE @advanced TABLE (previous bigint NULL, current_mark bigint NOT NULL);
+
+            MERGE {events.ProgressionTableName} WITH (UPDLOCK, HOLDLOCK) AS target
+            USING (SELECT @name AS name) AS source ON target.name = source.name
+            WHEN MATCHED AND target.last_seq_id < @ceiling THEN
+                UPDATE SET last_seq_id = @ceiling, last_updated = SYSDATETIMEOFFSET()
+            WHEN NOT MATCHED AND @ceiling > 0 THEN
+                INSERT (name, last_seq_id, last_updated) VALUES (@name, @ceiling, SYSDATETIMEOFFSET())
+            OUTPUT ISNULL(deleted.last_seq_id, 0), inserted.last_seq_id INTO @advanced;
+
+            SELECT
+                ISNULL((SELECT TOP 1 previous FROM @advanced),
+                       ISNULL((SELECT last_seq_id FROM {events.ProgressionTableName} WHERE name = @name), 0)),
+                ISNULL((SELECT TOP 1 current_mark FROM @advanced),
+                       ISNULL((SELECT last_seq_id FROM {events.ProgressionTableName} WHERE name = @name), 0)),
+                @ceiling;
+            """;
+        cmd.Parameters.AddVarChar("@name", name);
+        if (tenantId != null) cmd.Parameters.AddVarChar("@tenant", tenantId);
+
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        await reader.ReadAsync(ct);
+        return new HighWaterAdvance(tenantId, reader.GetInt64(0), reader.GetInt64(1), reader.GetInt64(2));
+    }
 }
+
+/// <summary>
+///     #786: what one high-water advance did. <see cref="PreviousMark" /> equals <see cref="NewMark" />
+///     when the mark was already at or past the committed ceiling and nothing was written.
+/// </summary>
+internal sealed record HighWaterAdvance(string? TenantId, long PreviousMark, long NewMark, long CommittedCeiling);

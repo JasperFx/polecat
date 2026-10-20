@@ -1116,6 +1116,65 @@ public class AdvancedOperations
             rollForward: false, dropAged: true, token);
 
     /// <summary>
+    ///     Advance the async daemon's high water mark to the highest committed event sequence, in every
+    ///     database this store reaches. Use with caution: any event below that sequence whose append has
+    ///     not committed yet, and any gap the detector was waiting on, is skipped by every async
+    ///     projection and subscription for good. Meant for jump-starting a daemon whose mark is held
+    ///     behind a gap that will never fill, or for retrofitting async projections onto a large store
+    ///     that has never run them. Mirrors Marten's and Fisher's method of the same name (#786).
+    /// </summary>
+    /// <remarks>
+    ///     The mark only ever moves forward. Under per-tenant partitioned events
+    ///     (<c>Events.UseTenantPartitionedEvents</c>) the daemon tracks one mark per tenant, so this
+    ///     advances <b>every</b> registered tenant's mark to that tenant's own committed ceiling; the
+    ///     store-global row means nothing there and is left alone. A running daemon picks the new mark
+    ///     up on its next detection cycle.
+    /// </remarks>
+    public async Task AdvanceHighWaterMarkToLatestAsync(CancellationToken token = default)
+    {
+        foreach (var database in RollingPartitionDatabases())
+        {
+            await advanceHighWaterMarkAsync(database, tenantId: null, token).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    ///     Advance the high water mark to the highest committed event sequence for one tenant. Under
+    ///     per-tenant partitioned events that is the tenant's own mark; otherwise it is the store-global
+    ///     mark of the database the tenant lives in, which on a single-database store is every tenant's
+    ///     (Marten's and Fisher's behavior). Use with caution — see
+    ///     <see cref="AdvanceHighWaterMarkToLatestAsync(CancellationToken)" />.
+    /// </summary>
+    public async Task AdvanceHighWaterMarkToLatestAsync(string tenantId, CancellationToken token = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(tenantId);
+
+        var database = _store.Options.Tenancy is null or DefaultTenancy
+            ? _store.Database
+            : _store.Options.Tenancy.GetDatabase(tenantId);
+
+        await advanceHighWaterMarkAsync(database, tenantId, token).ConfigureAwait(false);
+    }
+
+    internal async Task<IReadOnlyList<Events.Daemon.HighWaterAdvance>> advanceHighWaterMarkAsync(
+        PolecatDatabase database, string? tenantId, CancellationToken token)
+    {
+        await database.EnsureStorageExistsAsync(typeof(JasperFx.Events.IEvent), token).ConfigureAwait(false);
+
+        var detector = new Events.Daemon.PolecatHighWaterDetector(database.Events, database.ConnectionString,
+            _store.Options.DaemonSettings, NullLogger<Events.Daemon.PolecatHighWaterDetector>.Instance,
+            _resilience);
+
+        if (database.Events.UseTenantPartitionedEvents)
+        {
+            return await detector.AdvanceTenantsToCommittedCeilingAsync(
+                tenantId == null ? null : [tenantId], token).ConfigureAwait(false);
+        }
+
+        return [await detector.AdvanceToCommittedCeilingAsync(token).ConfigureAwait(false)];
+    }
+
+    /// <summary>
     ///     Every database this store can reach — one per tenant under a database-per-tenant tenancy,
     ///     otherwise just the store's own. #514.
     /// </summary>

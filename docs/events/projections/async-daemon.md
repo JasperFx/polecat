@@ -194,6 +194,30 @@ Track daemon progress:
 
 The high water mark detector uses SQL Server's `LEAD()` window function to detect sequence gaps in the event log. This prevents the daemon from processing events out of order when concurrent writers create gaps.
 
+A gap left by an append that rolled back never fills. The detector holds the mark below it until the gap has been held for longer than `DaemonSettings.StaleSequenceThreshold`, then skips it. That age is measured from when the running detector first saw the mark held there, so a daemon restart waits one fresh threshold.
+
+### Advancing the High Water Mark Manually
+
+To move the mark straight to the highest committed event sequence, for example to jump-start a daemon that is held behind a gap, or to retrofit async projections onto a large existing event store:
+
+```cs
+// Every database the store reaches
+await store.Advanced.AdvanceHighWaterMarkToLatestAsync(ct);
+
+// One tenant
+await store.Advanced.AdvanceHighWaterMarkToLatestAsync("tenant-a", ct);
+```
+
+::: warning
+Every event below the new mark that has not committed yet is skipped **permanently** by every async projection and subscription. That includes an append that is still in flight.
+:::
+
+The mark only ever moves forward, and it never moves past the highest committed `seq_id`. With per-tenant partitioned events (`UseTenantPartitionedEvents`), the daemon tracks one mark per tenant:
+- The tenant overload advances that tenant's mark.
+- The overload without a tenant advances every registered tenant's mark.
+
+Without partitioning, there is one mark per database, and the tenant overload advances the mark of the database that tenant lives in. A running daemon picks up the new mark on its next detection cycle.
+
 ## Listening for Daemon Commits
 
 Sometimes you need to run a side effect **after** an aggregate has been durably updated by the async
