@@ -163,6 +163,13 @@ public class per_tenant_rebuild_tests : IAsyncLifetime
         catch (OperationCanceledException)
         {
         }
+        catch (SqlException) when (cts.IsCancellationRequested)
+        {
+            // The token winning the race inside a command that is already executing (seen inside the
+            // rebuild's EnsureStorageExistsAsync schema check) surfaces from SqlClient as "A severe error
+            // occurred on the current command" rather than as a cancellation. Same outcome as above, and
+            // the assertions below are what this test pins.
+        }
 
         // Red's cancelled rebuild left the other tenants' progression completely untouched.
         (await ProgressRowsForTenantAsync("Blue")).ShouldBe(blueBefore);
