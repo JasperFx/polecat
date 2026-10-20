@@ -838,20 +838,35 @@
              DbException.IsTransient, so DocumentStore registers Resilience.SqlServerTransientFailures
              to classify SqlException by error number (wolverine#4986 restarts only transient
              failures).
+             JasperFx 2.91.0 (from 2.90.2). Part of the matched-set rebuild for CritterWatch 1.1.0-rc.2.
+             JasperFx.Events.ComplianceTests' contentFiles are byte-identical to 2.90.2, so nothing to enroll.
+               * jasperfx#1025 - RewindSubscriptionAsync works per tenant under per-tenant event
+                 partitioning. It rewinds each tenant's shard through RewindSubscriptionProgressAsync with
+                 the TENANT identity (Name:All:tenant), which Polecat already accepted: an unregistered
+                 identity falls back to an exact-name row (Marten needed marten#5700 for that half). The
+                 store half Polecat lacked was FindEventStoreFloorAtTimeAsync(timestamp, tenantId), whose
+                 interface default throws, so every per-tenant timestamp rewind failed. PolecatDatabase
+                 overrides it now. Behaviour change inherited: under partitioning, the tenant-less rewind
+                 refuses a non-zero sequenceFloor.
+               * jasperfx#1026 - a tenant that rejoins the polled set is not held at its old high-water mark.
+               * jasperfx#1027/#1028 - the HighWaterAgent survives a failed watchdog restart and restarts on
+                 a stalled mark.
+               * INERT here: jasperfx#1024 (DynamicQuery date text) and jasperfx#1021/#1030 (EmittedEvents
+                 manifest).
              JasperFx 2.90.2 (from 2.90.1): jasperfx#1022, a gracefully stopped subscription agent now releases its 10s heartbeat Timer, which used to root the agent and, through it, the whole store and host — so a process that boots and stops many hosts (test suites) leaked every one.
              JasperFx 2.90.1 (from 2.90.0): jasperfx#1019, the daemon's retry decision for exceptions thrown by projection code also consults TransientFailures, so a fault the store's classifier calls transient is retried rather than dead-lettered under SkipApplyErrors.
              JasperFx 2.90.0 (from 2.89.0): jasperfx#1014/#1017, TombstoneStream(Guid|string) on the
              shared IEventStoreOperations contract plus StreamTombstoningCompliance; Polecat's
              IEventOperations no longer redeclares them (#772). Also jasperfx#1012/#1018, which marks
              TagTypeRegistration.Create with RequiresUnreferencedCode/RequiresDynamicCode. -->
-        <PackageVersion Include="JasperFx" Version="2.90.2" />
-        <PackageVersion Include="JasperFx.Events" Version="2.90.2" />
+        <PackageVersion Include="JasperFx" Version="2.91.0" />
+        <PackageVersion Include="JasperFx.Events" Version="2.91.0" />
         <!--
              The shared cross-store event sourcing compliance suites. Source-only package: the
              suites compile inside Polecat.Tests so JasperFx's aggregate source generator binds
              Polecat's own session types.
         -->
-        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="2.90.2" />
+        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="2.91.0" />
         <!-- Pin the sibling JasperFx packages for parity with Marten 9's matrix
              even though Polecat doesn't currently reference them directly —
              keeps the lockstep matrix coherent when transitive resolution
@@ -859,7 +874,7 @@
              RuntimeCompiler 5.x line is the active continuation of the 4.x
              lineage; do not pin against the parallel stale 2.0.x series. -->
         <PackageVersion Include="JasperFx.RuntimeCompiler" Version="5.0.0" />
-        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.90.2" />
+        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.91.0" />
         <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
@@ -1355,7 +1370,7 @@
                  Every Polecat table declares its primary key, so the gate is the same as for any delta
                  change: the schema suites must stay quiet on existing tables. -->
         <!-- Weasel 9.46.0 (from 9.45.0, spanning 9.45.1). ADOPTED as-is, no Polecat code changes.
-             JasperFx floor 2.90.2, which is the pin above.
+             JasperFx floor 2.90.2, which the pin above satisfies.
 
                * weasel#710 (9.45.1) - Weasel.SqlServer pins the patched System.Security.Cryptography.Pkcs
                  for GHSA-846f-f764-76mx, at exactly the versions Polecat already pins directly (10.0.13 /
@@ -1379,14 +1394,14 @@
         <PackageVersion Include="Vogen" Version="7.0.0" />
 
         <!-- Source generators (matched to JasperFx.Events above) -->
-        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.90.2" />
+        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.91.0" />
 
         <!-- Build automation -->
         <PackageVersion Include="Nuke.Common" Version="9.0.4" />
         <!-- The supervised CI runner (build/SupervisedTests.cs). Referenced by build/build.csproj
              ONLY: it drives the test hosts as worker processes from outside, so no test project and
              no shipped package takes a reference to Bobcat. JasperFx/bobcat#565.
-             1.0.0-rc.1 requires JasperFx/JasperFx.Events 2.90.2 or later, which is exactly the pin
+             1.0.0-rc.1 requires JasperFx/JasperFx.Events 2.90.2 or later, which the pin satisfies
              above, so build/build.csproj needs no VersionOverride. If Bobcat's floor ever passes
              the product's pin, raise it in build/build.csproj with VersionOverride (bobcat's
              docs/compatibility.md), never NoWarn NU1605. -->

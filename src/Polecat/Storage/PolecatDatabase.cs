@@ -714,6 +714,55 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
     }
 
     /// <summary>
+    ///     The floor at <paramref name="timestamp" /> within ONE tenant's events — the earliest seq_id at
+    ///     or after it that belongs to <paramref name="tenantId" />. A null tenant is the store-global
+    ///     floor above.
+    /// </summary>
+    /// <remarks>
+    ///     jasperfx#1025 (JasperFx 2.91.0): under per-tenant event partitioning the daemon rewinds a
+    ///     subscription tenant by tenant, and resolves a timestamp rewind through this overload. Each
+    ///     tenant draws its own sequence there, so the store-global floor is a position in some OTHER
+    ///     tenant's numbering. The interface default throws <see cref="NotSupportedException" /> for a
+    ///     tenant, which made every per-tenant timestamp rewind fail. Mirrors Marten's
+    ///     <c>MartenDatabase.FindEventStoreFloorAtTimeAsync(timestamp, tenantId, token)</c>.
+    /// </remarks>
+    public async Task<long?> FindEventStoreFloorAtTimeAsync(DateTimeOffset timestamp, string? tenantId,
+        CancellationToken token)
+    {
+        if (tenantId == null)
+        {
+            return await FindEventStoreFloorAtTimeAsync(timestamp, token);
+        }
+
+        try
+        {
+            return await _resilience.ExecuteAsync(static async (state, ct) =>
+            {
+                var (connectionString, eventsTable, ts, tenant) = state;
+                await using var conn = new SqlConnection(connectionString);
+                await conn.OpenAsync(ct);
+
+                await using var cmd = conn.CreateCommand();
+                cmd.CommandText = $"""
+                    SELECT MIN(seq_id) FROM {eventsTable}
+                    WHERE timestamp >= @ts AND tenant_id = @tenant_id;
+                    """;
+                cmd.Parameters.AddWithValue("@ts", ts.ToUniversalTime());
+                // #363: tenant_id is varchar, so bind varchar or the predicate scans.
+                cmd.Parameters.AddVarChar("@tenant_id", tenant);
+
+                var result = await cmd.ExecuteScalarAsync(ct);
+                return result is long seq ? (long?)seq : null;
+            }, (_connectionString, _events.EventsTableName, timestamp, tenantId), token);
+        }
+        catch (Exception e) when (MissingStorageDetection.IsMissingStorage(e))
+        {
+            // #677: no events table, so there is no floor to rewind to.
+            return null;
+        }
+    }
+
+    /// <summary>
     ///     #163 Phase 2 — <see cref="ICrossTenantRebuildSource" />: the tenants to rebuild when
     ///     rebuilding <paramref name="projectionName" /> across all tenants. Source of truth is the
     ///     registered partitions in <c>pc_tenant_partitions</c> (every tenant that has appended events
