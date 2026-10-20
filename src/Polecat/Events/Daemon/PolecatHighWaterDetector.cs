@@ -72,6 +72,31 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
 
     public Uri DatabaseUri { get; }
 
+    // #791: when THIS detector first saw the store-global mark held at its current position by a gap.
+    // The stale-gap skip in DetectInSafeZone ages the gap from here. It used to age it from the
+    // HighWaterMark row's last_updated, but #705 re-stamps that column on every detection cycle (it is
+    // liveness, not progress), so on a running daemon the gap never looked older than one polling
+    // interval and an inter-event hole left by a rolled-back append was never skipped — the mark
+    // crawled, or sat, under it. Marten measures the same age the same way (its _stuckGap), and for the
+    // same reason it never trusts last_updated for it: on a store nobody was polling, that column is
+    // arbitrarily old, and a gap that has only just opened would be skipped the moment a daemon starts.
+    // Detector-scoped and in memory, so a restart only means one fresh threshold before a skip.
+    private sealed record HeldMark(long Mark, DateTimeOffset Since);
+
+    private HeldMark? _heldMark;
+
+    private TimeSpan observeHeldMark(HighWaterStatistics stats, long mark)
+    {
+        var held = _heldMark;
+        if (held == null || held.Mark != mark)
+        {
+            held = new HeldMark(mark, stats.Timestamp);
+            _heldMark = held;
+        }
+
+        return stats.Timestamp - held.Since;
+    }
+
     public async Task<HighWaterStatistics> Detect(CancellationToken token)
     {
         var stats = await LoadStatisticsAsync(token);
@@ -82,6 +107,7 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
             // state a monitor cannot otherwise distinguish from abandoned, so the row is re-stamped
             // here rather than returned untouched. Everything below this point has, by definition,
             // found work to do.
+            _heldMark = null;
             await MarkHighWaterAsync(stats.CurrentMark, token);
             return stats;
         }
@@ -90,12 +116,16 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
 
         if (gapSeqId.HasValue)
         {
-            // The gap starts AFTER gapSeqId, so everything up to gapSeqId is contiguous
+            // The gap starts AFTER gapSeqId, so everything up to gapSeqId is contiguous. Start (or
+            // continue) the gap's clock here too, so that by the time the agent has waited out its own
+            // StaleSequenceThreshold and calls DetectInSafeZone, the gap is already that old.
             stats.CurrentMark = gapSeqId.Value;
+            observeHeldMark(stats, gapSeqId.Value);
         }
         else if (maxSeqId.HasValue)
         {
             stats.CurrentMark = maxSeqId.Value;
+            _heldMark = null;
         }
 
         // #705 / jasperfx#924 — UNCONDITIONAL, where this used to be `if (stats.HasChanged)`.
@@ -123,6 +153,7 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
             // state a monitor cannot otherwise distinguish from abandoned, so the row is re-stamped
             // here rather than returned untouched. Everything below this point has, by definition,
             // found work to do.
+            _heldMark = null;
             await MarkHighWaterAsync(stats.CurrentMark, token);
             return stats;
         }
@@ -135,17 +166,20 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
 
         if (gapSeqId.HasValue || hasLeadingGap)
         {
-            // Check if the gap is stale enough to skip
-            if (stats.TryGetStaleAge(out var timeSinceUpdate) &&
-                timeSinceUpdate > _daemonSettings.StaleSequenceThreshold)
+            // Check if the gap is stale enough to skip. #791: aged from when this detector first saw
+            // the mark held here, never from last_updated — see _heldMark.
+            var heldAt = gapSeqId ?? stats.CurrentMark;
+            var age = observeHeldMark(stats, heldAt);
+            if (age > _daemonSettings.StaleSequenceThreshold)
             {
                 _logger.LogWarning(
-                    "Skipping stale gap starting after seq_id {CurrentMark}. High water was last updated {TimeSinceUpdate} ago",
-                    stats.CurrentMark, timeSinceUpdate);
+                    "Skipping stale gap starting after seq_id {HeldAt}. The high water mark has been held there for {Age}",
+                    heldAt, age);
 
                 // Move past the gap to the max available
                 stats.CurrentMark = maxSeqId ?? stats.CurrentMark;
                 stats.IncludesSkipping = true;
+                _heldMark = null;
             }
             else if (gapSeqId.HasValue)
             {
@@ -157,6 +191,7 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
         else if (maxSeqId.HasValue)
         {
             stats.CurrentMark = maxSeqId.Value;
+            _heldMark = null;
         }
 
         // #705 / jasperfx#924 — UNCONDITIONAL, where this used to be `if (stats.HasChanged)`.

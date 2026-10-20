@@ -73,25 +73,76 @@ public class high_water_detector_tests : IntegrationContext
         var seqIds = await InsertContiguousEventsAsync(10);
         await DeleteEventsBySeqIdAsync(seqIds[3], seqIds[4], seqIds[5]);
 
-        // First, run normal detect to set a baseline
-        var detector = CreateDetector();
-        await detector.Detect(CancellationToken.None);
+        // #791: the gap is aged from when this detector first saw the mark held under it, not from
+        // the HighWaterMark row's last_updated, which every detection cycle re-stamps.
+        var detector = CreateDetector(staleSequenceThreshold: TimeSpan.FromMilliseconds(500));
+        (await detector.Detect(CancellationToken.None)).CurrentMark.ShouldBe(seqIds[2]);
 
-        // Now manually set last_updated to be old enough to be stale
-        await using var conn = await OpenConnectionAsync();
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            UPDATE [dbo].[pc_event_progression]
-            SET last_updated = DATEADD(SECOND, -10, SYSDATETIMEOFFSET())
-            WHERE name = 'HighWaterMark';
-            """;
-        await cmd.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+        await Task.Delay(TimeSpan.FromSeconds(1), TestContext.Current.CancellationToken);
 
         var stats = await detector.DetectInSafeZone(CancellationToken.None);
 
         // Should have skipped past the gap to the max
         stats.CurrentMark.ShouldBe(seqIds.Last());
         stats.IncludesSkipping.ShouldBeTrue();
+    }
+
+    /// <summary>
+    ///     #791. A running daemon polls the high water mark every cycle, and since #705 every cycle
+    ///     re-stamps the HighWaterMark row's last_updated, caught up or not. The stale-gap skip used to
+    ///     age a gap from that column, so on a polled store an inter-event gap never got older than one
+    ///     cycle and was never skipped: catch-up waited out its five-minute backstop under it.
+    /// </summary>
+    [Fact]
+    public async Task an_inter_event_gap_is_skipped_while_every_cycle_restamps_the_row()
+    {
+        var seqIds = await InsertContiguousEventsAsync(10);
+        await DeleteEventsBySeqIdAsync(seqIds[3], seqIds[4], seqIds[5]);
+
+        var detector = CreateDetector(staleSequenceThreshold: TimeSpan.FromSeconds(1));
+
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var stats = await detector.DetectInSafeZone(CancellationToken.None);
+        while (stats.CurrentMark < seqIds.Last() && stopwatch.Elapsed < TimeSpan.FromSeconds(10))
+        {
+            // What HighWaterAgent.CheckNowAsync does: DetectInSafeZone on every pass, each of which
+            // re-stamps the row. (Not Detect: it jumps a leading gap outright, which would hide this.)
+            await Task.Delay(TimeSpan.FromMilliseconds(200), TestContext.Current.CancellationToken);
+            stats = await detector.DetectInSafeZone(CancellationToken.None);
+        }
+
+        stats.CurrentMark.ShouldBe(seqIds.Last());
+        stats.IncludesSkipping.ShouldBeTrue();
+        stopwatch.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(10));
+    }
+
+    /// <summary>
+    ///     #791, the other direction: a stale last_updated is no reason to skip. It is what a store
+    ///     nobody was polling looks like, so trusting it would skip a gap that has only just opened —
+    ///     possibly an append still in flight — the moment a daemon starts.
+    /// </summary>
+    [Fact]
+    public async Task a_gap_is_not_skipped_because_the_persisted_row_is_old()
+    {
+        var seqIds = await InsertContiguousEventsAsync(10);
+        await DeleteEventsBySeqIdAsync(seqIds[3], seqIds[4], seqIds[5]);
+
+        var detector = CreateDetector(staleSequenceThreshold: TimeSpan.FromSeconds(30));
+        await detector.Detect(CancellationToken.None);
+
+        await using var conn = await OpenConnectionAsync();
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE [dbo].[pc_event_progression]
+            SET last_updated = DATEADD(HOUR, -1, SYSDATETIMEOFFSET())
+            WHERE name = 'HighWaterMark';
+            """;
+        await cmd.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+
+        var stats = await detector.DetectInSafeZone(CancellationToken.None);
+
+        stats.CurrentMark.ShouldBe(seqIds[2]);
+        stats.IncludesSkipping.ShouldBeFalse();
     }
 
     [Fact]
@@ -114,12 +165,21 @@ public class high_water_detector_tests : IntegrationContext
         ((long)result!).ShouldBe(seqIds.Last());
     }
 
-    private PolecatHighWaterDetector CreateDetector()
+    private PolecatHighWaterDetector CreateDetector(TimeSpan? staleSequenceThreshold = null)
     {
+        var settings = theStore.Options.DaemonSettings;
+        if (staleSequenceThreshold.HasValue)
+        {
+            settings = new JasperFx.Events.Daemon.DaemonSettings
+            {
+                StaleSequenceThreshold = staleSequenceThreshold.Value
+            };
+        }
+
         return new PolecatHighWaterDetector(
             theStore.Database.Events,
             theStore.Options.ConnectionString,
-            theStore.Options.DaemonSettings,
+            settings,
             NullLogger<PolecatHighWaterDetector>.Instance,
             theStore.Options.ResiliencePipeline);
     }
