@@ -957,15 +957,25 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
 
             Logger.RecordSavedChanges(this);
 
+            // #783: everything from here on runs after a COMMIT that has already happened, so none of
+            // it gets the caller's token. A token cancelled now — a client that disconnects as the
+            // response is written, which is what WolverineFx.Http passes in as RequestAborted — would
+            // make any token-honouring listener or the outbox throw, and SaveChangesAsync would report a
+            // committed unit of work as failed while skipping every hook after that one. The daemon's
+            // projection batch made the same call for its own post-commit hooks in #744. A hook that
+            // genuinely fails still fails the call, exactly as before; only cancellation stops reaching
+            // past the commit.
+            var afterCommit = CancellationToken.None;
+
             // Call AfterCommitAsync on all listeners (global then session)
             foreach (var listener in Options.Listeners)
             {
-                await listener.AfterCommitAsync(this, commit, token);
+                await listener.AfterCommitAsync(this, commit, afterCommit);
             }
 
             foreach (var listener in _sessionListeners)
             {
-                await listener.AfterCommitAsync(this, commit, token);
+                await listener.AfterCommitAsync(this, commit, afterCommit);
             }
 
             // #485 / jasperfx#679: the store-agnostic post-commit listeners, after the store-native
@@ -985,17 +995,17 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             // explicitly.
             foreach (var listener in Options.CommitListeners)
             {
-                await listener.AfterCommitAsync(this, commit, token);
+                await listener.AfterCommitAsync(this, commit, afterCommit);
             }
 
             foreach (var listener in _sessionCommitListeners)
             {
-                await listener.AfterCommitAsync(this, commit, token);
+                await listener.AfterCommitAsync(this, commit, afterCommit);
             }
 
             if (_inlineMessageBatch is not null)
             {
-                await _inlineMessageBatch.AfterCommitAsync(token);
+                await _inlineMessageBatch.AfterCommitAsync(afterCommit);
             }
         }
         finally

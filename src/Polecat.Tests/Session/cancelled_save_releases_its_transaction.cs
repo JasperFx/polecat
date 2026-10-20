@@ -19,10 +19,17 @@ namespace Polecat.Tests.Session;
 public class cancelled_save_releases_its_transaction : OneOffConfigurationsContext
 {
     private readonly FailBeforeSave _listener = new();
+    private readonly CancelAfterCommit _cancelAfterCommit = new();
+    private readonly RecordAfterCommit _recordAfterCommit = new();
 
     public override async ValueTask InitializeAsync()
     {
-        ConfigureStore(opts => opts.Listeners.Add(_listener));
+        ConfigureStore(opts =>
+        {
+            opts.Listeners.Add(_listener);
+            opts.Listeners.Add(_cancelAfterCommit);
+            opts.Listeners.Add(_recordAfterCommit);
+        });
         await base.InitializeAsync();
     }
 
@@ -106,6 +113,37 @@ public class cancelled_save_releases_its_transaction : OneOffConfigurationsConte
     }
 
     /// <summary>
+    ///     #783 item 2. A token cancelled AFTER the COMMIT, which is what a client disconnecting as the
+    ///     response goes out looks like when WolverineFx.Http passes in RequestAborted. The post-commit
+    ///     listeners used to get that token, so one that honoured it threw: SaveChangesAsync reported a
+    ///     unit of work that had committed as failed, and every listener after it was skipped.
+    /// </summary>
+    [Fact]
+    public async Task a_token_cancelled_after_the_commit_does_not_fail_the_committed_save()
+    {
+        var token = TestContext.Current.CancellationToken;
+        using var cts = new CancellationTokenSource();
+
+        var doc = new BatchDoc { Id = Guid.NewGuid() };
+        await using var session = theStore.LightweightSession();
+        session.Store(doc);
+
+        _cancelAfterCommit.Arm(cts);
+        _recordAfterCommit.Reset();
+
+        await session.SaveChangesAsync(cts.Token);
+
+        cts.IsCancellationRequested.ShouldBeTrue();
+
+        // The listener after the one that saw the cancellation still ran...
+        _recordAfterCommit.Calls.ShouldBe(1);
+
+        // ...and the save it reported as successful really did commit.
+        await using var query = theStore.QuerySession();
+        (await query.LoadAsync<BatchDoc>(doc.Id, token)).ShouldNotBeNull();
+    }
+
+    /// <summary>
     ///     The daemon's projection batch rolled back with the token it was handed. When that token was
     ///     already cancelled, <c>RollbackAsync</c> threw an <see cref="OperationCanceledException" />
     ///     that replaced the exception which failed the batch, so the shard's failure named a
@@ -177,6 +215,43 @@ public class cancelled_save_releases_its_transaction : OneOffConfigurationsConte
 
         public Task AfterCommitAsync(IDocumentSession session, IChangeSet commit, CancellationToken token)
             => Task.CompletedTask;
+    }
+
+    private sealed class CancelAfterCommit : IDocumentSessionListener
+    {
+        private CancellationTokenSource? _cts;
+
+        public void Arm(CancellationTokenSource cts) => _cts = cts;
+
+        public Task BeforeSaveChangesAsync(IDocumentSession session, CancellationToken token) => Task.CompletedTask;
+
+        public Task AfterCommitAsync(IDocumentSession session, IChangeSet commit, CancellationToken token)
+        {
+            var cts = Interlocked.Exchange(ref _cts, null);
+            if (cts == null) return Task.CompletedTask;
+
+            // The client goes away just after the COMMIT; a well-behaved listener honours its token
+            cts.Cancel();
+            token.ThrowIfCancellationRequested();
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class RecordAfterCommit : IDocumentSessionListener
+    {
+        private int _calls;
+
+        public int Calls => _calls;
+
+        public void Reset() => _calls = 0;
+
+        public Task BeforeSaveChangesAsync(IDocumentSession session, CancellationToken token) => Task.CompletedTask;
+
+        public Task AfterCommitAsync(IDocumentSession session, IChangeSet commit, CancellationToken token)
+        {
+            Interlocked.Increment(ref _calls);
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class CancelBeforeCommit(CancellationTokenSource cts) : ITransactionParticipant
