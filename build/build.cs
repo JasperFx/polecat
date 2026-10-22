@@ -184,25 +184,55 @@ partial class Build : NukeBuild
         .DependsOn(NpmInstall, InstallMdSnippets, DocsBuild)
         .Executes(() => NpmTasks.NpmRun(s => s.SetCommand("deploy")));
 
+    [Parameter("Pack: the package version, e.g. 5.44.0-local.1 (default: <Version> in Directory.Build.props)")]
+    readonly string PackVersion;
+
+    /// <summary>
+    ///     Every shipped package, into ./artifacts, built Release. The same three projects publish.yml
+    ///     packs; a local pack (<c>--pack-version 5.44.0-local.1</c>) is what a consumer on an unreleased
+    ///     train restores from. Fails if any of them did not come out.
+    /// </summary>
+    /// <remarks>
+    ///     It used to name <c>src/Polecat.CodeGeneration</c>, a project that no longer exists (Polecat's
+    ///     source generation comes from JasperFx.Events.SourceGenerator), so every <c>./build.sh Pack</c>
+    ///     died with MSB1009 after packing only Polecat and Polecat.AspNetCore. It also depended on
+    ///     Compile, a Debug build of the whole solution that the Release pack then did again.
+    /// </remarks>
     Target Pack => _ => _
-        .DependsOn(Compile)
+        .DependsOn(Init)
         .Executes(() =>
         {
             var projects = new[]
             {
-                "./src/Polecat",
-                "./src/Polecat.AspNetCore",
-                "./src/Polecat.CodeGeneration",
-                "./src/Polecat.EntityFrameworkCore"
+                "Polecat",
+                "Polecat.AspNetCore",
+                "Polecat.EntityFrameworkCore"
             };
+
+            var output = RootDirectory / "artifacts";
 
             foreach (var project in projects)
             {
                 DotNetPack(s => s
-                    .SetProject(project)
-                    .SetOutputDirectory("./artifacts")
-                    .SetConfiguration(Configuration.Release));
+                    .SetProject(RootDirectory / "src" / project / $"{project}.csproj")
+                    .SetOutputDirectory(output)
+                    .SetConfiguration(Configuration.Release)
+                    .When(_ => !string.IsNullOrEmpty(PackVersion), s => s.SetVersion(PackVersion))
+                    .SetProcessEnvironmentVariable("MSBUILDDISABLENODEREUSE", "1"));
             }
+
+            var packages = output.GlobFiles("*.nupkg").Select(x => x.Name).ToArray();
+            var missing = projects
+                .Where(project => !packages.Any(file =>
+                    System.Text.RegularExpressions.Regex.IsMatch(file, $@"^{System.Text.RegularExpressions.Regex.Escape(project)}\.\d")))
+                .ToArray();
+
+            if (missing.Length > 0)
+            {
+                throw new InvalidOperationException($"Pack produced no package for {string.Join(", ", missing)} (found: {string.Join(", ", packages)})");
+            }
+
+            foreach (var package in packages) Log.Information("  packed {Package}", package);
         });
 
     /// <summary>

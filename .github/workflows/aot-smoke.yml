@@ -40,8 +40,8 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
-      - name: Restore
-        run: dotnet restore src/Polecat.AotSmoke/Polecat.AotSmoke.csproj
-
-      - name: Build (Polecat.AotSmoke — fails on IL2026/IL2046/IL2055/IL2065/IL2067/IL2070/IL2072/IL2075/IL2090/IL2091/IL2111/IL3050/IL3051)
-        run: dotnet build src/Polecat.AotSmoke/Polecat.AotSmoke.csproj -c Release --no-restore
+      # The AotSmoke Nuke target (build/LocalGate.cs) — the same one `./build.sh LocalGate --aot` runs
+      # locally: a Release build of Polecat.AotSmoke, which fails on IL2026/IL2046/IL2055/IL2065/
+      # IL2067/IL2070/IL2072/IL2075/IL2090/IL2091/IL2111/IL3050/IL3051.
+      - name: Build Polecat.AotSmoke (AOT warnings are errors)
+        run: ./build.sh AotSmoke

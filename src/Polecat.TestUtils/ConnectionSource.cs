@@ -45,7 +45,7 @@ public static class ConnectionSource
     ///     of it — so pointing each process at its own catalog does NOT isolate them. Anything a
     ///     test creates on the server has to carry the process's scope in its name, which is what
     ///     this does: <c>Scoped("tenant_a")</c> gives "master_tenant_a" locally and
-    ///     "polecat_w3_tenant_a" under a parallel runner.
+    ///     "polecat_core_w3_tenant_a" under the supervised runner (build/SupervisedTests.cs).
     /// </remarks>
     public static string Scoped(string name) => $"{DatabaseName}_{name}";
 

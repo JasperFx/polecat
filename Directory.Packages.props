@@ -1405,11 +1405,11 @@
         <!-- The supervised CI runner (build/SupervisedTests.cs). Referenced by build/build.csproj
              ONLY: it drives the test hosts as worker processes from outside, so no test project and
              no shipped package takes a reference to Bobcat. JasperFx/bobcat#565.
-             1.0.0-rc.1 requires JasperFx/JasperFx.Events 2.90.2 or later, which the pin satisfies
-             above, so build/build.csproj needs no VersionOverride. If Bobcat's floor ever passes
-             the product's pin, raise it in build/build.csproj with VersionOverride (bobcat's
-             docs/compatibility.md), never NoWarn NU1605. -->
-        <PackageVersion Include="Bobcat.Supervisor" Version="1.0.0-rc.1" />
+             1.0.0-rc.3 carries the local commit-and-push Gate (GateDeclaration, bobcat#729) that
+             the LocalGate target runs. From 1.0.0-rc.2 Bobcat references no JasperFx at all
+             (bobcat#744, docs/compatibility.md), so it puts no JasperFx floor into the build
+             project's restore and build/build.csproj no longer references JasperFx to lift one. -->
+        <PackageVersion Include="Bobcat.Supervisor" Version="1.0.0-rc.3" />
     </ItemGroup>
 
     <!-- GHSA-846f-f764-76mx (CVE-2026-84008, high): SignedCms.CheckSignature DoS in

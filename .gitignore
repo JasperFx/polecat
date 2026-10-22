@@ -421,3 +421,6 @@ publish-local-nugets.sh
 
 # The previous run's test ledger, fetched by CI (test-template.yml) or by hand
 previous-ledger/
+
+# Bobcat gate duration record (LocalGate), per machine
+.bobcat/

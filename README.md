@@ -38,8 +38,9 @@ The fastest possible way to develop with Polecat is to run SQL Server in a Docke
 `docker-compose up -d`. This will run SQL Server with native JSON support required for full Polecat functionality (JSON_OBJECT, GENERATE_SERIES, etc.).
 
 > On Apple Silicon Macs, SQL Server 2025 under Rosetta may crash due to memory constraints.
-> Azure SQL Edge can be used as a fallback for basic development with `docker-compose -f docker-compose.yml -f docker-compose.azure-sql-edge.yml up -d`. 
-> Be aware about limited functionality in this case.
+> SQL Server 2022 can be used as a fallback for basic development with `docker compose -f docker-compose.edge.yml up -d`
+> (port 11435; point `POLECAT_TESTING_DATABASE` at it, or pass `--storage edge` to the Nuke test targets).
+> Be aware about limited functionality in this case: 2022 has no native `json` or `vector` type.
 
 ## Documentation
 
