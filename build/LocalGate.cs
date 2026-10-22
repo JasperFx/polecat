@@ -89,8 +89,11 @@ partial class Build
                 Configuration = Configuration,
                 SkipBuild = SkipBuild,
                 // Per storage leg: SQL Server 2022 and 2025 cost differently, and the record orders
-                // the next run's units.
-                DurationsPath = RootDirectory / ".bobcat" / $"gate-durations.{Storage}.json"
+                // the next run's units. A filtered run keeps none — a slice's seconds recorded as a
+                // suite's duration would order the next full run wrongly.
+                DurationsPath = string.IsNullOrEmpty(TestFilter)
+                    ? RootDirectory / ".bobcat" / $"gate-durations.{Storage}.json"
+                    : null
             };
 
             if (WorkerBudget is { } budget) gate.WorkerBudget = budget;

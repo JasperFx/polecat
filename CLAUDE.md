@@ -107,13 +107,18 @@ Critical path for MVP: Stages 1–5, 7–8, 10–11
   no longer referenced, along with `xunit.runner.visualstudio` and `coverlet.collector`.
 - **Pattern**: Mirror Marten's IntegrationContext base class
 - **Database**: Dockerized SQL Server 2025 on localhost:11433
-- **Never run two test runs at once.** Tests share one SQL Server instance and isolate by
-  `DatabaseSchemaName` inside `master`, not by database, so concurrent runs — a second `dotnet test`,
-  a run started before an earlier one finished, or a run left alive after you killed its parent shell
-  — step on each other's schemas and produce large, scattered, misleading failure sets across
-  unrelated areas (query plans, flat tables, partitioning, subscriptions). Let a run finish, and
-  confirm with `pgrep -f Polecat.Tests` before starting another. A killed run in particular can leave
-  its test host alive and its schemas half-torn-down; drop the leftovers before re-running.
+- **Never run two test runs at once — the supervised targets excepted.** A plain `dotnet test` (or
+  the bare test executable) isolates by `DatabaseSchemaName` inside `master`, not by database, so
+  concurrent runs — a second `dotnet test`, a run started before an earlier one finished, or a run
+  left alive after you killed its parent shell — step on each other's schemas and produce large,
+  scattered, misleading failure sets across unrelated areas (query plans, flat tables, partitioning,
+  subscriptions). Let a run finish, and confirm with `pgrep -f Polecat.Tests` before starting another.
+  A killed run in particular can leave its test host alive and its schemas half-torn-down; drop the
+  leftovers before re-running. The exception is the three supervised suites (`CIPolecat`,
+  `CIAspNetCore`, `CIEfCore`, and `LocalGate`, which runs them together): each suite's lanes have
+  catalogs of their own, `polecat_core_w*`, `polecat_aspnet_w*` and `polecat_efcore_w*`, so one
+  suite may run beside another — but never two runs of the SAME suite, which drop each other's
+  catalogs, and never a plain `dotnet test` beside a `dotnet test`.
 - **Test naming**: snake_case file names (e.g., `start_stream_tests.cs`)
 - **Assertions**: Shouldly (or similar fluent assertions)
 - **Lifecycle**: `IAsyncLifetime` is ValueTask-based and inherits `IAsyncDisposable`. If a class
@@ -290,7 +295,7 @@ every worker on the box, and they will race to create and drop it:
 // WRONG — every worker fights over the same database
 private const string DbA = "polecat_tenant_a";
 
-// RIGHT — "master_tenant_a" locally, "polecat_w3_tenant_a" under a parallel runner
+// RIGHT — "master_tenant_a" locally, "polecat_core_w3_tenant_a" under the supervised runner
 private static readonly string DbA = ConnectionSource.Scoped("tenant_a");
 ```
 
@@ -311,8 +316,18 @@ Every test job runs a Nuke target — `CIPolecat`, `CIAspNetCore`, `CIEfCore` (`
 ./build.sh CIPolecat --disable-test-retry                   # measure without even opted-in retries
 ```
 
-- **Lanes are whole test classes** and each lane gets its own catalog, `polecat_w{lane}`, dropped and
-  recreated (with its `Scoped()` siblings) at the start of every run.
+- **Lanes are whole test classes** and each lane gets its own catalog, named for its suite —
+  `polecat_core_w{lane}` (Polecat.Tests), `polecat_aspnet_w{lane}`, `polecat_efcore_w{lane}` — dropped
+  and recreated (with its `Scoped()` siblings) at the start of every run. A suite drops only its own
+  prefix, which is what lets `LocalGate` run the three at once on one SQL Server (they all used
+  `polecat_w{lane}` until #797, so a second suite would have dropped the first's lane 0 mid-run).
+- **`--skip-build`** reuses hosts already built for the configuration and framework (a shared Release
+  build) instead of building the project again; a missing host is reported with its path.
+- **`--storage edge`** runs against SQL Server 2022 (`docker-compose.edge.yml`, container
+  `polecat-sqlserver-edge`, port **11435**, `--edge-connection-string`) instead of 2025 on 11433. It is
+  the CI matrix's second axis and an opt-in locally. The two servers are separate containers, so both
+  can be up at once; the ledger, the report and the TRX (`bin/<config>/<tfm>/TestResults/test-results.<storage>.trx`)
+  all carry the storage leg, so a default and an edge run never overwrite each other.
 - **Retries are opt-in per test**: `[Trait("Retry", "2")]` buys one more attempt, alone, in a fresh
   process. That is Bobcat's own `DefaultFailurePolicy` since 1.0 (bobcat#661), so the build registers
   no policy of its own; the budget (2 attempts per test, 25 retries per run) is the build's. A pass on
@@ -329,6 +344,59 @@ Every test job runs a Nuke target — `CIPolecat`, `CIAspNetCore`, `CIEfCore` (`
   is stable across machines; an older uid-keyed file is re-keyed on load. A local run finds no
   `previous-ledger/` and balances by test count, which is harmless. To balance a local run, download
   one into `previous-ledger/`: `gh run download <run id> --pattern 'test-ledger-*' --dir previous-ledger`.
+
+### The local commit-and-push gate: `./build.sh LocalGate`
+
+Run this before a push. It is Bobcat's `Gate` (Bobcat.Supervisor 1.0.0-rc.3,
+[local-gates.md](https://github.com/JasperFx/bobcat/blob/main/docs/local-gates.md), #797), declared in
+`build/LocalGate.cs`: it builds once, checks the SQL Server answers, then runs **Polecat.Tests (4
+workers), Polecat.AspNetCore.Testing and Polecat.EntityFrameworkCore.Tests at the same time**, longest
+first, inside one worker budget, and prints one report naming every unit. Each unit's supervisor is
+configured by the same code as its CI target (`configureSupervisor`: the opt-in retry policy, stall
+reporting, the ledger), and leaves the same ledger, TRX and JSON report behind.
+
+```
+docker compose up -d                          # the gate never starts a container
+./build.sh LocalGate                          # newest framework (net10.0), SQL Server 2025
+./build.sh LocalGate --framework all          # net10.0 and net9.0 (or --framework net9.0)
+./build.sh LocalGate --aot                    # plus the aot-smoke and aot-runtime-smoke units
+./build.sh LocalGate --skip-build             # hosts already built for this configuration
+./build.sh LocalGate --worker-budget 6        # hosts at once across every unit (default cores / 2)
+./build.sh LocalGate --test-filter dcb_       # one slice, every suite; matching nothing anywhere fails
+./build.sh LocalGate --storage edge           # SQL Server 2022: docker compose -f docker-compose.edge.yml up -d
+./build.sh AotSmoke                           # a single unit, as its workflow runs it
+./build.sh AotRuntimeSmoke                    # native publish for the host RID, then run it (CI: --aot-runtime linux-x64)
+```
+
+- **No shared `sqlserver` track, on purpose.** A Bobcat track is exclusive, so one track held by
+  all three suites would run them one after the other, which is what `./build.sh CI` already does.
+  What made them collide was names, and the per-suite lane prefixes removed that. The gate declares
+  one track per suite instead, named for its catalogs (`polecat_core_w*`, ...): the three suites
+  overlap, and the two frameworks of one suite (`--framework all`) share its catalogs, so they run one
+  after the other. Each track's preflight runs `SELECT 1`, not a port probe: under x64 emulation the
+  port opens well before the server accepts a login.
+- **The AOT units run after the test suites**, not beside them: a native publish takes every core
+  for a minute or two, and timeouts it caused would be indistinguishable from real failures.
+  `aot-runtime-smoke` gets a catalog of its own, `polecat_aot`.
+- **The gate's duration record** (`.bobcat/gate-durations.<storage>.json`, git-ignored) orders the
+  next run's units; a unit with no record goes first.
+- **The exit code** is the worst unit's: 2 (indeterminate, aborted, never ran) over 1 (failed) over 0.
+  A pass on retry is `~` and exit 0, reported as flaky, never clean. Every unit runs even after one
+  is red.
+- **What it costs on the 18-core development box** (Apple silicon, SQL Server 2025 under x64
+  emulation, Debug, net10.0), measured for #797: **about 15 minutes**, and Polecat.Tests is
+  all of it. A warm run was 14m33s for the three units against 15m52s one after the other
+  (Polecat.Tests 14m24s at 4 workers, Polecat.AspNetCore.Testing 39s, Polecat.EntityFrameworkCore.Tests
+  49s, both finished inside Polecat.Tests' first minute), and `CIPolecat` alone on main took 14m29s on
+  the same box. `--aot` added 24s warm (aot-smoke 4s incremental, aot-runtime-smoke 20s including a
+  14s native publish); expect a few minutes cold. `--framework all` roughly doubles it. The gain is
+  one build, one command and one report, not wall clock: as long as Polecat.Tests is the critical
+  path, concurrency only hides the two small suites under it.
+- **Under local load, Polecat.Tests at 4 workers has a few load-sensitive tests** (SQL Server
+  `Execution Timeout Expired`, and `bluegreen_side_effect_gate_tests`), a different handful each run
+  and none of them reproducible alone. That predates the gate: `CIPolecat` on a clean main worktree
+  failed one of them. Read a red gate's failures before treating them as yours, and rerun the suite
+  alone (`--test-filter`) to tell the two apart.
 
 ## Engineering Principles
 
