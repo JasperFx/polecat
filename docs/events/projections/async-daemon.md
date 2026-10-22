@@ -218,6 +218,24 @@ The mark only ever moves forward, and it never moves past the highest committed 
 
 Without partitioning, there is one mark per database, and the tenant overload advances the mark of the database that tenant lives in. A running daemon picks up the new mark on its next detection cycle.
 
+Tools that work against any Critter Stack store (CritterWatch, for one) use the store-agnostic form on `IEventStore` instead, added in JasperFx 2.92.0:
+
+```cs
+IEventStore eventStore = store;
+var database = (await eventStore.AllDatabases()).Single();
+
+// Read-only: the stored mark, the committed ceiling, and how many sequence numbers would be skipped
+var previews = await eventStore.PreviewHighWaterAdvanceAsync(database, tenantId: null, ct);
+
+// Refuses (RefusedStaleExpectation) if the mark moved after the preview
+var results = await eventStore.AdvanceHighWaterMarkToLatestAsync(
+    database, tenantId: null, expectedCurrentMark: previews[0].CurrentMark, ct);
+```
+
+These are stricter about the tenant than the `Advanced` convenience methods are:
+- Without per-tenant partitioning, a database keeps one mark that every tenant shares, so a named tenant is refused rather than advancing every tenant's events.
+- With partitioning, a null tenant selects every tenant's mark, and `expectedCurrentMark` then needs a named tenant.
+
 ## Listening for Daemon Commits
 
 Sometimes you need to run a side effect **after** an aggregate has been durably updated by the async
