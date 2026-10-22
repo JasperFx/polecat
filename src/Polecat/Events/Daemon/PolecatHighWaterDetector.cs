@@ -634,113 +634,166 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
 
         stats.CurrentMark = stats.HighestSequence;
     }
-    // ── #786: operator-driven advance to the committed ceiling ──────────────
+    // ── #786 / jasperfx#1031: operator-driven advance to the committed ceiling ──────────────
 
     /// <summary>
-    ///     #786: move the store-global HighWaterMark row to the highest COMMITTED seq_id. One MERGE, so
-    ///     the ceiling and the write agree: it carries the same <c>UPDLOCK, HOLDLOCK</c> as
-    ///     <see cref="MarkHighWaterAsync" /> (#500 — every running detector writes this one row), and its
-    ///     <c>WHEN MATCHED AND last_seq_id &lt; @ceiling</c> means it never moves the mark backwards,
-    ///     including past a detector that advanced it between a separate read and write.
+    ///     #786 / jasperfx#1031: preview advancing this database's marks to the committed ceiling. Reads only.
+    ///     <paramref name="tenantIds" /> selects the marks: null for the database's store-global mark, otherwise
+    ///     those tenants' own <c>HighWaterMark:{tenant}</c> marks (per-tenant partitioned events), where an
+    ///     empty list means every tenant in the partition registry.
+    /// </summary>
+    internal Task<IReadOnlyList<HighWaterMarkPreview>> PreviewAdvanceAsync(string databaseIdentifier,
+        IReadOnlyCollection<string>? tenantIds, CancellationToken token)
+        => runPerMarkAsync(databaseIdentifier, tenantIds, token,
+            static (conn, events, database, tenantId, ct) => previewMarkAsync(conn, events, database, tenantId, ct));
+
+    /// <summary>
+    ///     #786 / jasperfx#1031: move the selected marks to the highest COMMITTED seq_id. Each mark is read,
+    ///     checked and written in one transaction holding <c>UPDLOCK, HOLDLOCK</c> on its progression row —
+    ///     the #500 hints every running detector's write takes — so the compare-and-set against
+    ///     <paramref name="expectedCurrentMark" /> cannot lose a race to a detector, and a mark never moves
+    ///     backwards.
     /// </summary>
     /// <remarks>
-    ///     <c>MAX(seq_id)</c>, never the IDENTITY's current value: an identity value can belong to an
-    ///     append still in flight, and marking past it skips that append's events for good once it
-    ///     commits (marten#4953). Whatever is still in flight BELOW the committed ceiling is skipped
-    ///     anyway — that is the operation, and why it is an explicit operator action.
+    ///     <c>MAX(seq_id)</c>, never the IDENTITY's or a tenant sequence's current value: a handed-out value can
+    ///     belong to an append still in flight, and marking past it skips that append's events for good once it
+    ///     commits (marten#4953). Whatever is still in flight BELOW the committed ceiling is skipped anyway —
+    ///     that is the operation, and why it is an explicit operator action.
     /// </remarks>
-    internal Task<HighWaterAdvance> AdvanceToCommittedCeilingAsync(CancellationToken token)
+    internal Task<IReadOnlyList<HighWaterMarkAdvance>> AdvanceToCommittedCeilingAsync(string databaseIdentifier,
+        IReadOnlyCollection<string>? tenantIds, long? expectedCurrentMark, CancellationToken token)
+        => runPerMarkAsync(databaseIdentifier, tenantIds, token,
+            (conn, events, database, tenantId, ct) =>
+                advanceMarkAsync(conn, events, database, tenantId, expectedCurrentMark, ct));
+
+    private Task<IReadOnlyList<T>> runPerMarkAsync<T>(string databaseIdentifier,
+        IReadOnlyCollection<string>? tenantIds, CancellationToken token,
+        Func<SqlConnection, EventGraph, string, string?, CancellationToken, Task<T>> perMark)
     {
         return _resilience.ExecuteAsync(static async (state, ct) =>
         {
-            var (connectionString, events) = state;
+            var (connectionString, events, database, requested, perMark) = state;
             await using var conn = new SqlConnection(connectionString);
             await conn.OpenAsync(ct);
 
-            return await advanceRowAsync(conn, events,
-                $"SELECT @ceiling = ISNULL(MAX(seq_id), 0) FROM {events.EventsTableName};",
-                ShardState.HighWaterMark, tenantId: null, ct);
-        }, (_connectionString, _events), token).AsTask();
+            // null = the store-global mark; otherwise one mark per tenant, all of them when none are named.
+            IReadOnlyList<string?> marks = [null];
+            if (requested != null)
+            {
+                var tenants = requested.ToList();
+                if (tenants.Count == 0)
+                {
+                    await using var list = conn.CreateCommand();
+                    list.CommandText =
+                        $"SELECT tenant_id FROM {events.TenantPartitionsTableName} ORDER BY tenant_id;";
+                    await using var reader = await list.ExecuteReaderAsync(ct);
+                    while (await reader.ReadAsync(ct)) tenants.Add(reader.GetString(0));
+                }
+
+                marks = tenants.Cast<string?>().ToList();
+            }
+
+            var results = new List<T>(marks.Count);
+            foreach (var tenantId in marks)
+            {
+                results.Add(await perMark(conn, events, database, tenantId, ct));
+            }
+
+            return (IReadOnlyList<T>)results;
+        }, (_connectionString, _events, databaseIdentifier, tenantIds, perMark), token).AsTask();
     }
 
     /// <summary>
-    ///     #786, per-tenant partitioned events: move each tenant's <c>HighWaterMark:{tenant}</c> row to
-    ///     the highest committed seq_id in that tenant's partition. A null list means every tenant in
-    ///     the partition registry. The store-global row is not touched: under per-tenant sequences the
-    ///     daemon never reads it, and a MAX across tenants whose numbering overlaps means nothing.
+    ///     The events one mark covers: every event for the store-global mark, or one tenant's partition for a
+    ///     per-tenant mark — keyed on the partition ordinal, which leads the clustered index, as the per-tenant
+    ///     reader is.
     /// </summary>
-    internal Task<IReadOnlyList<HighWaterAdvance>> AdvanceTenantsToCommittedCeilingAsync(
-        IReadOnlyCollection<string>? tenantIds, CancellationToken token)
+    private static string eventsInScope(EventGraph events, string? tenantId) => tenantId == null
+        ? $"FROM {events.EventsTableName} e"
+        : $"""
+            FROM {events.EventsTableName} e
+            JOIN {events.TenantPartitionsTableName} p
+                ON e.{events.TenantPartitionManager.Column} = p.ordinal AND p.tenant_id = @tenant
+            """;
+
+    private static string markName(string? tenantId)
+        => tenantId == null ? ShardState.HighWaterMark : PerTenantHighWaterName(tenantId);
+
+    private static async Task<HighWaterMarkPreview> previewMarkAsync(SqlConnection conn, EventGraph events,
+        string databaseIdentifier, string? tenantId, CancellationToken ct)
     {
-        return _resilience.ExecuteAsync(static async (state, ct) =>
-        {
-            var (connectionString, events, requested) = state;
-            await using var conn = new SqlConnection(connectionString);
-            await conn.OpenAsync(ct);
+        var scope = eventsInScope(events, tenantId);
 
-            var tenants = requested?.ToList();
-            if (tenants == null)
-            {
-                tenants = [];
-                await using var list = conn.CreateCommand();
-                list.CommandText = $"SELECT tenant_id FROM {events.TenantPartitionsTableName} ORDER BY tenant_id;";
-                await using var reader = await list.ExecuteReaderAsync(ct);
-                while (await reader.ReadAsync(ct)) tenants.Add(reader.GetString(0));
-            }
-
-            var ceilingSql = $"""
-                SELECT @ceiling = ISNULL(MAX(e.seq_id), 0)
-                FROM {events.EventsTableName} e
-                JOIN {events.TenantPartitionsTableName} p ON e.{events.TenantPartitionManager.Column} = p.ordinal
-                WHERE p.tenant_id = @tenant;
-                """;
-
-            var results = new List<HighWaterAdvance>(tenants.Count);
-            foreach (var tenantId in tenants)
-            {
-                results.Add(await advanceRowAsync(conn, events, ceilingSql, PerTenantHighWaterName(tenantId),
-                    tenantId, ct));
-            }
-
-            return (IReadOnlyList<HighWaterAdvance>)results;
-        }, (_connectionString, _events, tenantIds), token).AsTask();
-    }
-
-    private static async Task<HighWaterAdvance> advanceRowAsync(SqlConnection conn, EventGraph events,
-        string ceilingSql, string name, string? tenantId, CancellationToken ct)
-    {
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = $"""
-            DECLARE @ceiling bigint;
-            {ceilingSql}
-            DECLARE @advanced TABLE (previous bigint NULL, current_mark bigint NOT NULL);
-
-            MERGE {events.ProgressionTableName} WITH (UPDLOCK, HOLDLOCK) AS target
-            USING (SELECT @name AS name) AS source ON target.name = source.name
-            WHEN MATCHED AND target.last_seq_id < @ceiling THEN
-                UPDATE SET last_seq_id = @ceiling, last_updated = SYSDATETIMEOFFSET()
-            WHEN NOT MATCHED AND @ceiling > 0 THEN
-                INSERT (name, last_seq_id, last_updated) VALUES (@name, @ceiling, SYSDATETIMEOFFSET())
-            OUTPUT ISNULL(deleted.last_seq_id, 0), inserted.last_seq_id INTO @advanced;
-
-            SELECT
-                ISNULL((SELECT TOP 1 previous FROM @advanced),
-                       ISNULL((SELECT last_seq_id FROM {events.ProgressionTableName} WHERE name = @name), 0)),
-                ISNULL((SELECT TOP 1 current_mark FROM @advanced),
-                       ISNULL((SELECT last_seq_id FROM {events.ProgressionTableName} WHERE name = @name), 0)),
-                @ceiling;
+            DECLARE @current bigint = ISNULL(
+                (SELECT last_seq_id FROM {events.ProgressionTableName} WHERE name = @name), 0);
+            DECLARE @ceiling bigint = (SELECT ISNULL(MAX(e.seq_id), 0) {scope});
+            SELECT @current, @ceiling,
+                CASE WHEN @ceiling > @current
+                    THEN (@ceiling - @current) - (SELECT COUNT_BIG(*) {scope} WHERE e.seq_id > @current AND e.seq_id <= @ceiling)
+                    ELSE 0 END;
             """;
-        cmd.Parameters.AddVarChar("@name", name);
+        cmd.Parameters.AddVarChar("@name", markName(tenantId));
         if (tenantId != null) cmd.Parameters.AddVarChar("@tenant", tenantId);
 
         await using var reader = await cmd.ExecuteReaderAsync(ct);
         await reader.ReadAsync(ct);
-        return new HighWaterAdvance(tenantId, reader.GetInt64(0), reader.GetInt64(1), reader.GetInt64(2));
+        return new HighWaterMarkPreview(databaseIdentifier, tenantId, reader.GetInt64(0), reader.GetInt64(1),
+            reader.GetInt64(2));
+    }
+
+    private static async Task<HighWaterMarkAdvance> advanceMarkAsync(SqlConnection conn, EventGraph events,
+        string databaseIdentifier, string? tenantId, long? expectedCurrentMark, CancellationToken ct)
+    {
+        var scope = eventsInScope(events, tenantId);
+
+        await using var cmd = conn.CreateCommand();
+        // XACT_ABORT so an error mid-batch rolls the transaction back rather than leaving it open on a pooled
+        // connection. The UPDLOCK, HOLDLOCK read holds the progression row (or, before it exists, its key
+        // range) until COMMIT, which is what makes check-then-write one step against a detector's MERGE.
+        cmd.CommandText = $"""
+            SET XACT_ABORT ON;
+            BEGIN TRANSACTION;
+
+            DECLARE @current bigint = ISNULL(
+                (SELECT last_seq_id FROM {events.ProgressionTableName} WITH (UPDLOCK, HOLDLOCK) WHERE name = @name), 0);
+            DECLARE @ceiling bigint = (SELECT ISNULL(MAX(e.seq_id), 0) {scope});
+            DECLARE @outcome int;
+
+            IF @expected IS NOT NULL AND @expected <> @current
+                SET @outcome = {(int)HighWaterAdvanceOutcome.RefusedStaleExpectation};
+            ELSE IF @ceiling <= @current
+                SET @outcome = {(int)HighWaterAdvanceOutcome.AlreadyAtCeiling};
+            ELSE
+            BEGIN
+                MERGE {events.ProgressionTableName} WITH (UPDLOCK, HOLDLOCK) AS target
+                USING (SELECT @name AS name) AS source ON target.name = source.name
+                WHEN MATCHED THEN UPDATE SET last_seq_id = @ceiling, last_updated = SYSDATETIMEOFFSET()
+                WHEN NOT MATCHED THEN INSERT (name, last_seq_id, last_updated)
+                    VALUES (@name, @ceiling, SYSDATETIMEOFFSET());
+                SET @outcome = {(int)HighWaterAdvanceOutcome.Advanced};
+            END
+
+            DECLARE @new bigint = CASE WHEN @outcome = {(int)HighWaterAdvanceOutcome.Advanced} THEN @ceiling ELSE @current END;
+            DECLARE @skipped bigint = CASE WHEN @new > @current
+                THEN (@new - @current) - (SELECT COUNT_BIG(*) {scope} WHERE e.seq_id > @current AND e.seq_id <= @new)
+                ELSE 0 END;
+
+            COMMIT TRANSACTION;
+
+            SELECT @outcome, @current, @new, @skipped;
+            """;
+        cmd.Parameters.AddVarChar("@name", markName(tenantId));
+        if (tenantId != null) cmd.Parameters.AddVarChar("@tenant", tenantId);
+        cmd.Parameters.Add(new SqlParameter("@expected", System.Data.SqlDbType.BigInt)
+        {
+            Value = (object?)expectedCurrentMark ?? DBNull.Value
+        });
+
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        await reader.ReadAsync(ct);
+        return new HighWaterMarkAdvance(databaseIdentifier, tenantId, (HighWaterAdvanceOutcome)reader.GetInt32(0),
+            reader.GetInt64(1), reader.GetInt64(2), reader.GetInt64(3));
     }
 }
-
-/// <summary>
-///     #786: what one high-water advance did. <see cref="PreviousMark" /> equals <see cref="NewMark" />
-///     when the mark was already at or past the committed ceiling and nothing was written.
-/// </summary>
-internal sealed record HighWaterAdvance(string? TenantId, long PreviousMark, long NewMark, long CommittedCeiling);

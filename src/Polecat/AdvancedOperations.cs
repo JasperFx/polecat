@@ -1156,22 +1156,15 @@ public class AdvancedOperations
         await advanceHighWaterMarkAsync(database, tenantId, token).ConfigureAwait(false);
     }
 
-    internal async Task<IReadOnlyList<Events.Daemon.HighWaterAdvance>> advanceHighWaterMarkAsync(
+    internal async Task<IReadOnlyList<JasperFx.Events.Daemon.HighWater.HighWaterMarkAdvance>> advanceHighWaterMarkAsync(
         PolecatDatabase database, string? tenantId, CancellationToken token)
     {
-        await database.EnsureStorageExistsAsync(typeof(JasperFx.Events.IEvent), token).ConfigureAwait(false);
-
-        var detector = new Events.Daemon.PolecatHighWaterDetector(database.Events, database.ConnectionString,
-            _store.Options.DaemonSettings, NullLogger<Events.Daemon.PolecatHighWaterDetector>.Instance,
-            _resilience);
-
-        if (database.Events.UseTenantPartitionedEvents)
-        {
-            return await detector.AdvanceTenantsToCommittedCeilingAsync(
-                tenantId == null ? null : [tenantId], token).ConfigureAwait(false);
-        }
-
-        return [await detector.AdvanceToCommittedCeilingAsync(token).ConfigureAwait(false)];
+        // The convenience overloads keep #794's meaning, which is Marten's and Fisher's: on a store with one
+        // mark per database, a named tenant advances its database's mark. The IEventStore contract is
+        // stricter (jasperfx#1031) and refuses that instead — see DocumentStore.HighWaterAdvance.
+        var partitioned = database.Events.UseTenantPartitionedEvents;
+        return await _store.AdvanceHighWaterMarksAsync(database,
+            partitioned ? (tenantId == null ? [] : [tenantId]) : null, null, token).ConfigureAwait(false);
     }
 
     /// <summary>

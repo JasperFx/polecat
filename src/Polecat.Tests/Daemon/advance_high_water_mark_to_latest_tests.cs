@@ -1,5 +1,6 @@
 using JasperFx;
 using JasperFx.Events;
+using JasperFx.Events.Daemon.HighWater;
 using Microsoft.Data.SqlClient;
 using Polecat.Tests.Harness;
 using Polecat.TestUtils;
@@ -65,11 +66,12 @@ public class advance_high_water_mark_to_latest_tests : OneOffConfigurationsConte
         var max = await maxSeqIdAsync();
 
         var first = await theStore.Advanced.advanceHighWaterMarkAsync(theDatabase, null, ct);
+        first.Single().Outcome.ShouldBe(HighWaterAdvanceOutcome.Advanced);
         first.Single().PreviousMark.ShouldBe(0);
         first.Single().NewMark.ShouldBe(max);
-        first.Single().CommittedCeiling.ShouldBe(max);
 
         var second = await theStore.Advanced.advanceHighWaterMarkAsync(theDatabase, null, ct);
+        second.Single().Outcome.ShouldBe(HighWaterAdvanceOutcome.AlreadyAtCeiling);
         second.Single().PreviousMark.ShouldBe(max);
         second.Single().NewMark.ShouldBe(max);
     }
