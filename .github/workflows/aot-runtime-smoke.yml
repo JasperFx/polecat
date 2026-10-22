@@ -75,22 +75,19 @@ jobs:
           echo "SQL Server failed to become healthy"
           exit 1
 
-      # Native publish. Trim and AOT warnings are NOT promoted to errors here, deliberately: this
-      # lane's question is what HAPPENS, and failing the publish on a warning would stop it ever
-      # being asked. aot-smoke is the lane that asserts what is annotated.
-      - name: Publish native (linux-x64)
-        run: |
-          dotnet publish src/Polecat.AotRuntimeSmoke/Polecat.AotRuntimeSmoke.csproj \
-            -c Release -r linux-x64 -o ${{ runner.temp }}/aot
-
+      # The AotRuntimeSmoke Nuke target (build/LocalGate.cs) — the same one `./build.sh LocalGate --aot`
+      # runs locally, where it publishes for the host's RID instead. Native publish for linux-x64, then
+      # the binary runs against SQL Server in a catalog of its own (polecat_aot). Trim and AOT warnings
+      # are NOT promoted to errors, deliberately: this lane's question is what HAPPENS, and failing the
+      # publish on a warning would stop it ever being asked. aot-smoke is the lane that asserts what is
+      # annotated.
+      #
       # The binary prints one line per execution shape — `ok`, `xfail` or `FAIL` — each naming the
       # issue it mirrors or is excluded by, and returns non-zero listing every shape that did not
       # match its declared expectation. So the log says WHICH shape broke rather than only that
       # something did, and it runs every shape rather than stopping at the first failure.
-      - name: Run the native binary against SQL Server
-        env:
-          POLECAT_TESTING_DATABASE: "Server=localhost,11433;User Id=sa;Password=P@55w0rd;Timeout=30;MultipleActiveResultSets=True;Initial Catalog=master;Encrypt=False"
-        run: ${{ runner.temp }}/aot/Polecat.AotRuntimeSmoke
+      - name: Publish native (linux-x64) and run against SQL Server
+        run: ./build.sh AotRuntimeSmoke --aot-runtime linux-x64
 
       - name: Stop SQL Server
         if: always()

@@ -24,6 +24,8 @@
     "ExecutableTarget": {
       "type": "string",
       "enum": [
+        "AotRuntimeSmoke",
+        "AotSmoke",
         "Attach",
         "CI",
         "CIAspNetCore",
@@ -37,6 +39,7 @@
         "Init",
         "InitDb",
         "InstallMdSnippets",
+        "LocalGate",
         "NpmInstall",
         "Pack",
         "PublishDocs",
@@ -119,6 +122,14 @@
   "allOf": [
     {
       "properties": {
+        "Aot": {
+          "type": "boolean",
+          "description": "LocalGate: also run the aot-smoke and aot-runtime-smoke units after the test suites"
+        },
+        "AotRuntime": {
+          "type": "string",
+          "description": "AotRuntimeSmoke: runtime identifier to publish natively for (default: the host's, e.g. osx-arm64)"
+        },
         "Configuration": {
           "type": "string",
           "description": "Configuration to build - Default is 'Debug' (local) or 'Release' (server)",
@@ -135,11 +146,23 @@
           "type": "boolean",
           "description": "Disable the opt-in retries entirely"
         },
+        "EdgeConnectionString": {
+          "type": "string",
+          "description": "SQL Server connection string for --storage edge (docker-compose.edge.yml)"
+        },
         "Framework": {
           "type": "string"
         },
+        "PackVersion": {
+          "type": "string",
+          "description": "Pack: the package version, e.g. 5.44.0-local.1 (default: <Version> in Directory.Build.props)"
+        },
         "Project": {
           "type": "string"
+        },
+        "SkipBuild": {
+          "type": "boolean",
+          "description": "Reuse the test hosts already built for this configuration and framework; build nothing"
         },
         "Solution": {
           "type": "string",
@@ -147,7 +170,7 @@
         },
         "Storage": {
           "type": "string",
-          "description": "The SQL Server the run is against (default | edge); keys the test ledger"
+          "description": "The SQL Server the run is against (default | edge); picks the server and keys the ledger, report and TRX"
         },
         "TestFilter": {
           "type": "string",
@@ -159,6 +182,14 @@
             "null"
           ],
           "description": "Worker processes for a supervised run; overrides the committed count and the ProcessorCount/2 clamp",
+          "format": "int32"
+        },
+        "WorkerBudget": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "LocalGate: worker processes across every unit at once (default ProcessorCount / 2)",
           "format": "int32"
         }
       }

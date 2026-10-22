@@ -38,18 +38,22 @@ jobs:
             9.0.x
             10.0.x
 
+      # `edge` is SQL Server 2022 from the standalone docker-compose.edge.yml (container
+      # polecat-sqlserver-edge, port 11435); `--storage edge` below points the target at it.
       - name: Start SQL Server
         run: |
           if [ "${{ inputs.STORAGE_TYPE }}" = 'edge' ]; then
-            docker compose -f docker-compose.yml -f docker-compose.azure-sql-edge.yml up -d
+            docker compose -f docker-compose.edge.yml up -d
+            echo "SQLSERVER_CONTAINER=polecat-sqlserver-edge" >> "$GITHUB_ENV"
           else
             docker compose up -d
+            echo "SQLSERVER_CONTAINER=polecat-sqlserver" >> "$GITHUB_ENV"
           fi
 
       - name: Wait for SQL Server to be healthy
         run: |
           for i in {1..30}; do
-            STATUS=$(docker inspect --format='{{.State.Health.Status}}' polecat-sqlserver)
+            STATUS=$(docker inspect --format='{{.State.Health.Status}}' "$SQLSERVER_CONTAINER")
             if [ "$STATUS" == "healthy" ]; then
               echo "SQL Server is ready!"
               exit 0
@@ -110,4 +114,6 @@ jobs:
 
       - name: Stop containers
         if: ${{ always() }}
-        run: docker compose down
+        run: |
+          docker compose down
+          docker compose -f docker-compose.edge.yml down

@@ -22,11 +22,14 @@ using static Nuke.Common.Tools.DotNet.DotNetTasks;
 //
 //   - Worker processes, partitioned by test CLASS. xUnit's isolation contract is per class, so a
 //     class's fixtures and static state assume one process; the supervisor never splits one.
-//   - A catalog per lane. Polecat.Tests isolates by DatabaseSchemaName inside ONE catalog, which
-//     separates classes from each other but not two processes from each other — so each worker is
-//     pointed at its own catalog through POLECAT_TESTING_DATABASE (Polecat.TestUtils/ConnectionSource).
-//     Anything a test creates at SERVER scope goes through ConnectionSource.Scoped(), which carries
-//     the lane's catalog name, so sibling databases do not collide either.
+//   - A catalog per lane, and the lanes are the SUITE's. Polecat.Tests isolates by DatabaseSchemaName
+//     inside ONE catalog, which separates classes from each other but not two processes from each
+//     other — so each worker is pointed at its own catalog through POLECAT_TESTING_DATABASE
+//     (Polecat.TestUtils/ConnectionSource). Anything a test creates at SERVER scope goes through
+//     ConnectionSource.Scoped(), which carries the lane's catalog name, so sibling databases do not
+//     collide either. Each suite's catalogs carry its own prefix (polecat_core_w0, polecat_aspnet_w0,
+//     polecat_efcore_w0) and a suite drops only its own, so the three suites can run at the same time
+//     against one SQL Server — which is what the LocalGate target (build/LocalGate.cs) does.
 //   - Retries are opt-in, per test. A failure is reported as a failure unless that test says, in the
 //     code, [Trait("Retry", "2")] — and then it gets one more attempt in a FRESH process, because the
 //     process is the only reset bracket an xUnit test has. That is Bobcat's DefaultFailurePolicy
@@ -38,7 +41,8 @@ using static Nuke.Common.Tools.DotNet.DotNetTasks;
 //     uploads it again (test-template.yml). Bobcat 1.0 keys it by display name (bobcat#730).
 //
 // The workflow runs `./build.sh CIPolecat --framework net9.0 --storage default` (or edge) and owns
-// nothing but the services: SQL Server comes from docker compose exactly as before.
+// nothing but the services: SQL Server comes from docker compose (docker-compose.yml for default,
+// the standalone docker-compose.edge.yml for edge).
 partial class Build
 {
     /// <summary>
@@ -66,12 +70,27 @@ partial class Build
 
     /// <summary>
     ///     Which SQL Server the run is against — the workflow's <c>storage_type</c> matrix axis
-    ///     (<c>default</c> = SQL Server 2025, <c>edge</c> = 2022). It changes nothing about how the
-    ///     tests run; it keys the ledger, because the two servers cost very differently per test and a
-    ///     balancer fed one's durations would plan the other's lanes badly.
+    ///     (<c>default</c> = SQL Server 2025 on 11433 from docker-compose.yml, <c>edge</c> = SQL Server
+    ///     2022 on 11435 from docker-compose.edge.yml). It picks the server (<c>--connection-string</c>
+    ///     or <c>--edge-connection-string</c>, unless POLECAT_TESTING_DATABASE names one) and changes
+    ///     nothing about how the tests run. It also keys the ledger, the run report and the TRX, because
+    ///     the two servers cost very differently per test and a balancer fed one's durations would plan
+    ///     the other's lanes badly, and because a default and an edge run must not overwrite each other.
     /// </summary>
-    [Parameter("The SQL Server the run is against (default | edge); keys the test ledger")]
+    [Parameter("The SQL Server the run is against (default | edge); picks the server and keys the ledger, report and TRX")]
     readonly string Storage = "default";
+
+    [Parameter("SQL Server connection string for --storage edge (docker-compose.edge.yml).")]
+    readonly string EdgeConnectionString =
+        "Server=localhost,11435;User Id=sa;Password=P@55w0rd;Timeout=5;MultipleActiveResultSets=True;Initial Catalog=master;Encrypt=False";
+
+    /// <summary>
+    ///     The caller's promise that the test hosts are already built for this configuration and
+    ///     framework (<c>--skip-build</c>), so a shared Release build is reused instead of rebuilt per
+    ///     target. A missing host is still reported, with the path it was looked for at.
+    /// </summary>
+    [Parameter("Reuse the test hosts already built for this configuration and framework; build nothing")]
+    readonly bool SkipBuild;
 
     /// <summary>
     ///     Two attempts, and only for tests that opted in. That is the previous supervised harness's
@@ -90,29 +109,55 @@ partial class Build
     // ─── CI targets: one per workflow ──────────────────────────────────
 
     /// <summary>
+    ///     One supervised test project: where it is, its committed worker count, and the prefix of its
+    ///     lane catalogs (<c>polecat_{Lanes}_w{lane}</c>). The prefix is what lets the three suites run
+    ///     at the same time on one SQL Server: each one drops and recreates only its own catalogs.
+    /// </summary>
+    sealed record SupervisedSuite(string Lanes, string ProjectPath, int Workers)
+    {
+        public string Name => Path.GetFileNameWithoutExtension(ProjectPath);
+    }
+
+    /// <summary>
     ///     Polecat.Tests — ~3,400 tests and the critical path of every PR by an order of magnitude.
     ///     Four workers is the committed count; the clamp takes it to two on a 4-vCPU runner unless
     ///     the workflow says otherwise (it does — see polecat.yml for the evidence it says it on).
     /// </summary>
+    static readonly SupervisedSuite PolecatTests = new("core", "src/Polecat.Tests/Polecat.Tests.csproj", Workers: 4);
+
+    /// <summary>Two minutes end to end; one worker is parity, and more would buy nothing.</summary>
+    static readonly SupervisedSuite AspNetCoreTests =
+        new("aspnet", "src/Polecat.AspNetCore.Testing/Polecat.AspNetCore.Testing.csproj", Workers: 1);
+
+    /// <summary>Two minutes end to end; one worker is parity, and more would buy nothing.</summary>
+    static readonly SupervisedSuite EfCoreTests =
+        new("efcore", "src/Polecat.EntityFrameworkCore.Tests/Polecat.EntityFrameworkCore.Tests.csproj", Workers: 1);
+
+    /// <summary>Every supervised suite, longest first.</summary>
+    static readonly SupervisedSuite[] Suites = [PolecatTests, AspNetCoreTests, EfCoreTests];
+
     Target CIPolecat => _ => _
-        .Executes(() => RunSupervised("src/Polecat.Tests/Polecat.Tests.csproj", workers: 4));
+        .Executes(() => RunSupervised(PolecatTests));
 
-    /// <summary>Two minutes end to end; one worker is parity, and more would buy nothing.</summary>
     Target CIAspNetCore => _ => _
-        .Executes(() => RunSupervised("src/Polecat.AspNetCore.Testing/Polecat.AspNetCore.Testing.csproj", workers: 1));
+        .Executes(() => RunSupervised(AspNetCoreTests));
 
-    /// <summary>Two minutes end to end; one worker is parity, and more would buy nothing.</summary>
     Target CIEfCore => _ => _
-        .Executes(() => RunSupervised("src/Polecat.EntityFrameworkCore.Tests/Polecat.EntityFrameworkCore.Tests.csproj", workers: 1));
+        .Executes(() => RunSupervised(EfCoreTests));
 
-    /// <summary>Every supervised suite, one after another — what the three workflows run between them.</summary>
+    /// <summary>
+    ///     Every supervised suite, one after another — what the three workflows run between them.
+    ///     LocalGate runs the same three at once.
+    /// </summary>
     Target CI => _ => _
         .DependsOn(CIPolecat, CIAspNetCore, CIEfCore);
 
     // ─── The run ───────────────────────────────────────────────────────
 
-    void RunSupervised(string projectPath, int workers)
+    void RunSupervised(SupervisedSuite suite)
     {
+        var workers = suite.Workers;
+
         // A committed count is tuned on a developer machine; the machine running decides what it can
         // carry (wolverine-ci-rollout lesson 3). Several test hosts beside a database can kill a
         // 4-vCPU hosted runner outright — "The runner has received a shutdown signal" is the runner
@@ -130,63 +175,36 @@ partial class Build
         }
 
         var framework = string.IsNullOrEmpty(Framework) ? "net9.0" : Framework;
-        var projectName = Path.GetFileNameWithoutExtension(projectPath);
+        var projectName = suite.Name;
 
-        DotNetBuild(s => s
-            .SetProjectFile(projectPath)
-            .SetConfiguration(Configuration)
-            .SetFramework(framework));
+        if (SkipBuild)
+        {
+            Log.Information("--skip-build: reusing the {Configuration} {Framework} host of {Project}", Configuration, framework, projectName);
+        }
+        else
+        {
+            DotNetBuild(s => s
+                .SetProjectFile(suite.ProjectPath)
+                .SetConfiguration(Configuration)
+                .SetFramework(framework));
+        }
 
-        var executable = testHostFor(projectPath, framework);
+        var executable = testHostFor(suite.ProjectPath, framework);
 
         Log.Information("=== {Project} ({Framework}, {Storage}): supervised run, {Workers} worker(s){Retry} ===",
             projectName, framework, Storage, workers, DisableTestRetry ? ", retries OFF" : "");
 
-        ensureLaneDatabases(workers);
+        ensureLaneDatabases(suite, workers);
 
-        var factory = new MtpWorkerFactory(executable)
-        {
-            // Discovery and any isolated or fresh-process retry report lane 0, so the catalogs
-            // provisioned equal the workers asked for rather than the processes launched.
-            EnvironmentFor = context => new Dictionary<string, string>
-            {
-                ["POLECAT_TESTING_DATABASE"] = laneConnectionString(context.Lane)
-            }
-        };
-
-        var ledgerName = $"{projectName}.{Storage}.json";
-        var ledger = loadLedger(ledgerName);
-        var known = ledger.KnownDurations();
-
-        var supervisor = new Supervisor(factory)
+        var ledger = loadLedger(ledgerNameFor(suite));
+        var supervisor = new Supervisor(workerFactoryFor(suite, executable))
         {
             MaxParallelWorkers = workers,
-            KnownTestDurations = known.Count > 0 ? known : null,
-
-            TestFilter = string.IsNullOrEmpty(TestFilter)
-                ? null
-                : test => test.DisplayName.Contains(TestFilter, StringComparison.OrdinalIgnoreCase),
-
-            RetryBudget = DisableTestRetry
-                ? RetryBudget.None
-                : new RetryBudget { MaxAttemptsPerTest = MaxAttemptsPerTest, MaxRetriesPerRun = MaxRetriesPerRun },
-
-            // A fresh-process retry with every lane still resident is workers + 1 hosts at once; that
-            // OOM-killed 16GB runners twice in Wolverine's rollout, both times during a retry.
-            ReleaseIdleLanes = true,
-
-            // Report-only, all of them: a test in flight past five minutes is named as it happens, a
-            // progress line every 30s says where a wedged run stopped, and worker RSS is sampled so the
-            // worker count is a measured decision rather than a hope.
-            StallThreshold = TimeSpan.FromMinutes(5),
-            StallAction = StallAction.Report,
-            HeartbeatInterval = TimeSpan.FromSeconds(30),
-            ResourceSampleInterval = TimeSpan.FromSeconds(15),
-
             Log = message => Log.Information("  {Message}", message)
         };
+        configureSupervisor(supervisor, ledger);
 
-        Log.Information("  ledger: {Count} measured duration(s) for {Name}", known.Count, ledgerName);
+        Log.Information("  ledger: {Count} measured duration(s) for {Name}", supervisor.KnownTestDurations?.Count ?? 0, ledgerNameFor(suite));
 
         var startedAt = DateTime.UtcNow;
         var stopwatch = Stopwatch.StartNew();
@@ -200,26 +218,7 @@ partial class Build
                 $"--test-filter '{TestFilter}' matched no test in {projectName}. Refusing to report an empty run as a pass.");
         }
 
-        var runId = Environment.GetEnvironmentVariable("GITHUB_RUN_ID") is { Length: > 0 } ghRun
-            ? $"{ghRun}.{Environment.GetEnvironmentVariable("GITHUB_RUN_ATTEMPT") ?? "1"}"
-            : Guid.NewGuid().ToString("N");
-
-        // Written even for a red run: a failing test still measured something, and the ledger's
-        // flakiness evidence is exactly the runs that did not go cleanly.
-        var recorded = ledger.Record(SupervisorLedger.From(results, runId, DateTimeOffset.UtcNow));
-        recorded.Save(LedgerOutput / ledgerName);
-
-        // The TRX dorny/test-reporter reads, where its **/TestResults/*.trx glob already looks. A
-        // supervised run produces none on its own — no single worker knows the whole run — so it is
-        // Bobcat's RunReport.WriteTrx (bobcat#699), which replaced build/TrxWriter.cs.
-        var trxPath = Path.Combine(Path.GetDirectoryName(executable)!, "TestResults", "test-results.trx");
-        RunReport.WriteTrx(results, trxPath, new TrxOptions { StartedAt = startedAt, Storage = executable });
-        verifyTrx(trxPath, results.Tests.Count);
-
-        // The supervisor's own JSON report, uploaded beside the ledger: the primary record of the run,
-        // where the ledger is a compaction of it.
-        Directory.CreateDirectory(ReportOutput);
-        File.WriteAllText(ReportOutput / $"{projectName}.{Storage}.report.json", RunReport.ToJson(results));
+        var recorded = recordRun(suite, framework, executable, results, startedAt, ledger);
 
         report(projectName, framework, workers, stopwatch.Elapsed, results, recorded);
 
@@ -228,6 +227,86 @@ partial class Build
             throw new InvalidOperationException(
                 $"{projectName} ({framework}, {Storage}): {results.Summarize()} — exit code {results.ExitCode}");
         }
+    }
+
+    /// <summary>
+    ///     Everything a suite's supervisor is told beyond its workers and its log — the same for a CI
+    ///     target and for the suite's unit in LocalGate, so a gate run is the CI run, only overlapped.
+    /// </summary>
+    void configureSupervisor(Supervisor supervisor, TestLedger ledger)
+    {
+        var known = ledger.KnownDurations();
+        supervisor.KnownTestDurations = known.Count > 0 ? known : null;
+
+        supervisor.TestFilter = string.IsNullOrEmpty(TestFilter)
+            ? null
+            : test => test.DisplayName.Contains(TestFilter, StringComparison.OrdinalIgnoreCase);
+
+        // Opt-in retries only: Bobcat's DefaultFailurePolicy retries a test that says
+        // [Trait("Retry", "2")], once, in a fresh process. The budget is the build's.
+        supervisor.RetryBudget = DisableTestRetry
+            ? RetryBudget.None
+            : new RetryBudget { MaxAttemptsPerTest = MaxAttemptsPerTest, MaxRetriesPerRun = MaxRetriesPerRun };
+
+        // A fresh-process retry with every lane still resident is workers + 1 hosts at once; that
+        // OOM-killed 16GB runners twice in Wolverine's rollout, both times during a retry.
+        supervisor.ReleaseIdleLanes = true;
+
+        // Report-only, all of them: a test in flight past five minutes is named as it happens, a
+        // progress line every 30s says where a wedged run stopped, and worker RSS is sampled so the
+        // worker count is a measured decision rather than a hope.
+        supervisor.StallThreshold = TimeSpan.FromMinutes(5);
+        supervisor.StallAction = StallAction.Report;
+        supervisor.HeartbeatInterval = TimeSpan.FromSeconds(30);
+        supervisor.ResourceSampleInterval = TimeSpan.FromSeconds(15);
+    }
+
+    /// <summary>
+    ///     The suite's MTP host, each worker pointed at its own lane catalog. Discovery and any
+    ///     isolated or fresh-process retry report lane 0, so the catalogs provisioned equal the workers
+    ///     asked for rather than the processes launched.
+    /// </summary>
+    MtpWorkerFactory workerFactoryFor(SupervisedSuite suite, string executable) => new(executable)
+    {
+        EnvironmentFor = context => new Dictionary<string, string>
+        {
+            ["POLECAT_TESTING_DATABASE"] = laneConnectionString(suite, context.Lane)
+        }
+    };
+
+    string ledgerNameFor(SupervisedSuite suite) => $"{suite.Name}.{Storage}.json";
+
+    /// <summary>
+    ///     What a finished run leaves behind: the ledger with this run folded in, the TRX the CI
+    ///     reporter reads, and the supervisor's JSON report. Written even for a red run — a failing test
+    ///     still measured something, and the ledger's flakiness evidence is exactly the runs that did
+    ///     not go cleanly.
+    /// </summary>
+    TestLedger recordRun(SupervisedSuite suite, string framework, string executable, SupervisorResults results,
+        DateTime startedAt, TestLedger ledger)
+    {
+        var runId = Environment.GetEnvironmentVariable("GITHUB_RUN_ID") is { Length: > 0 } ghRun
+            ? $"{ghRun}.{Environment.GetEnvironmentVariable("GITHUB_RUN_ATTEMPT") ?? "1"}"
+            : Guid.NewGuid().ToString("N");
+
+        var recorded = ledger.Record(SupervisorLedger.From(results, runId, DateTimeOffset.UtcNow));
+        recorded.Save(LedgerOutput / ledgerNameFor(suite));
+
+        // The TRX dorny/test-reporter reads, where its **/TestResults/*.trx glob already looks. A
+        // supervised run produces none on its own — no single worker knows the whole run — so it is
+        // Bobcat's RunReport.WriteTrx (bobcat#699), which replaced build/TrxWriter.cs. The file name
+        // carries the storage leg, so a default and an edge run of one build do not overwrite each
+        // other; the framework is already in the directory.
+        var trxPath = Path.Combine(Path.GetDirectoryName(executable)!, "TestResults", $"test-results.{Storage}.trx");
+        RunReport.WriteTrx(results, trxPath, new TrxOptions { StartedAt = startedAt, Storage = executable });
+        verifyTrx(trxPath, results.Tests.Count);
+
+        // The supervisor's own JSON report, uploaded beside the ledger: the primary record of the run,
+        // where the ledger is a compaction of it.
+        Directory.CreateDirectory(ReportOutput);
+        File.WriteAllText(ReportOutput / $"{suite.Name}.{framework}.{Storage}.report.json", RunReport.ToJson(results));
+
+        return recorded;
     }
 
     /// <summary>
@@ -360,7 +439,9 @@ partial class Build
         if (!File.Exists(executable))
         {
             throw new InvalidOperationException(
-                $"{executable} does not exist after building {projectPath} for {framework}. The test host is the " +
+                $"{executable} does not exist " +
+                (SkipBuild ? "and --skip-build was given, so nothing built it. " : $"after building {projectPath} for {framework}. ") +
+                "The test host is the " +
                 "xUnit v3 Microsoft.Testing.Platform executable (OutputType=Exe + UseMicrosoftTestingPlatformRunner).");
         }
 
@@ -369,18 +450,27 @@ partial class Build
 
     /// <summary>
     ///     The server-level connection the lane catalogs are created through: POLECAT_TESTING_DATABASE
-    ///     when CI (or a developer) set one, else the <c>--connection-string</c> parameter.
+    ///     when CI (or a developer) set one, else <c>--connection-string</c> for the default storage and
+    ///     <c>--edge-connection-string</c> for <c>--storage edge</c>.
     /// </summary>
-    string serverConnectionString() =>
-        new SqlConnectionStringBuilder(Environment.GetEnvironmentVariable("POLECAT_TESTING_DATABASE") ?? ConnectionString)
-        {
-            InitialCatalog = "master"
-        }.ConnectionString;
+    string serverConnectionString()
+    {
+        var configured = Environment.GetEnvironmentVariable("POLECAT_TESTING_DATABASE") is { Length: > 0 } fromEnvironment
+            ? fromEnvironment
+            : Storage switch
+            {
+                "default" => ConnectionString,
+                "edge" => EdgeConnectionString,
+                _ => throw new ArgumentException($"--storage '{Storage}' is neither 'default' nor 'edge'.")
+            };
 
-    string laneConnectionString(int lane) =>
-        new SqlConnectionStringBuilder(serverConnectionString()) { InitialCatalog = laneDatabase(lane) }.ConnectionString;
+        return new SqlConnectionStringBuilder(configured) { InitialCatalog = "master" }.ConnectionString;
+    }
 
-    static string laneDatabase(int lane) => $"polecat_w{lane}";
+    string laneConnectionString(SupervisedSuite suite, int lane) =>
+        new SqlConnectionStringBuilder(serverConnectionString()) { InitialCatalog = laneDatabase(suite, lane) }.ConnectionString;
+
+    static string laneDatabase(SupervisedSuite suite, int lane) => $"polecat_{suite.Lanes}_w{lane}";
 
     /// <summary>
     ///     One catalog per lane, created before any worker launches — a worker must not race another to
@@ -390,32 +480,54 @@ partial class Build
     ///     Dropped and recreated rather than reused: a catalog holding the previous run's tables is the
     ///     false-green trap (a schema-shape change passes against stale tables locally and fails on CI's
     ///     fresh server). The lane's sibling databases — what <c>ConnectionSource.Scoped()</c> names,
-    ///     <c>polecat_w0_tenant_a</c> — are dropped with it for the same reason.
+    ///     <c>polecat_core_w0_tenant_a</c> — are dropped with it for the same reason.
+    ///     <para>
+    ///     Only THIS suite's catalogs: every name here starts <c>polecat_{suite}_w</c>, so another
+    ///     suite running at the same time on the same server (LocalGate) never loses its lanes.
+    ///     </para>
     /// </remarks>
-    void ensureLaneDatabases(int workers)
+    void ensureLaneDatabases(SupervisedSuite suite, int workers)
+    {
+        // LocalGate starts units concurrently; CREATE DATABASE copies `model` under an exclusive
+        // lock, so the catalogs are provisioned one suite at a time.
+        lock (LaneProvisioning) provisionLanes(suite, workers);
+    }
+
+    static readonly object LaneProvisioning = new();
+
+    void provisionLanes(SupervisedSuite suite, int workers)
     {
         using var connection = new SqlConnection(serverConnectionString());
         connection.Open();
 
         for (var lane = 0; lane < workers; lane++)
         {
-            var name = laneDatabase(lane);
-
-            // Identifiers, not values — they cannot be parameterized. Generated above, never input.
-            using var command = connection.CreateCommand();
-            command.CommandTimeout = 300;
-            command.CommandText = $"""
-                DECLARE @sql nvarchar(max) = N'';
-                SELECT @sql += N'ALTER DATABASE ' + QUOTENAME(name) + N' SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE ' + QUOTENAME(name) + N';'
-                FROM sys.databases
-                WHERE name = N'{name}' OR name LIKE N'{name}[_]%';
-                EXEC sp_executesql @sql;
-                CREATE DATABASE [{name}];
-                """;
-            command.ExecuteNonQuery();
-
-            Log.Information("  lane {Lane} -> {Database}", lane, name);
+            var name = laneDatabase(suite, lane);
+            recreateDatabase(connection, name);
+            Log.Information("  {Suite} lane {Lane} -> {Database}", suite.Name, lane, name);
         }
+    }
+
+    /// <summary>
+    ///     Drops <paramref name="name"/> and every <c>{name}_*</c> sibling, then creates it empty. The
+    ///     sibling match escapes <c>_</c>, which LIKE otherwise reads as "any one character".
+    /// </summary>
+    static void recreateDatabase(SqlConnection connection, string name)
+    {
+        var siblings = name.Replace("_", "[_]") + "[_]%";
+
+        // Identifiers, not values — they cannot be parameterized. Generated in this build, never input.
+        using var command = connection.CreateCommand();
+        command.CommandTimeout = 300;
+        command.CommandText = $"""
+            DECLARE @sql nvarchar(max) = N'';
+            SELECT @sql += N'ALTER DATABASE ' + QUOTENAME(name) + N' SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE ' + QUOTENAME(name) + N';'
+            FROM sys.databases
+            WHERE name = N'{name}' OR name LIKE N'{siblings}';
+            EXEC sp_executesql @sql;
+            CREATE DATABASE [{name}];
+            """;
+        command.ExecuteNonQuery();
     }
 
     /// <summary>
