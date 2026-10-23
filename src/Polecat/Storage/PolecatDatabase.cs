@@ -998,6 +998,146 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
         }
     }
 
+    // ── #813 / jasperfx#809: persisted projection start floors ──────────────────────────────────────
+    //
+    // Over pc_event_projection_floors (EventProjectionFloorsTable), which no teardown or data-cleaning
+    // path touches. Keyed by ShardName.Name without its version, plus the tenant (null stored as '').
+
+    /// <inheritdoc />
+    public async Task<long?> FetchProjectionFloorAsync(string projectionName, string? tenantId,
+        CancellationToken token = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(projectionName);
+
+        // Opted out (the Polecat 5 default): there is no table and so no floor. Answered without a
+        // round trip, because the daemon asks on every shard start.
+        if (!_events.EnableProjectionFloors) return null;
+
+        try
+        {
+            return await _resilience.ExecuteAsync(static async (state, ct) =>
+            {
+                var (connectionString, table, name, tenant) = state;
+                await using var conn = new SqlConnection(connectionString);
+                await conn.OpenAsync(ct);
+
+                await using var cmd = conn.CreateCommand();
+                cmd.CommandText = $"SELECT floor_seq_id FROM {table} WHERE name = @name AND tenant_id = @tenant;";
+                cmd.Parameters.AddVarChar("@name", name);
+                cmd.Parameters.AddVarChar("@tenant", tenant);
+
+                var result = await cmd.ExecuteScalarAsync(ct);
+                return result is long floor ? floor : (long?)null;
+            }, (_connectionString, _events.ProjectionFloorsTableName, projectionName, FloorTenant(tenantId)), token);
+        }
+        catch (Exception e) when (MissingStorageDetection.IsMissingStorage(e))
+        {
+            // The daemon reads the stored floor on EVERY shard start, so a database that has not been
+            // migrated to carry the floors table yet (AutoCreate.None, #267) must read as "no floor" —
+            // which is the truth — rather than fail every projection. The writes below still throw:
+            // silently dropping an operator's floor is worse than refusing it (#677's line).
+            return null;
+        }
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    ///     Insert-if-absent by letting the primary key arbitrate: a racing second insert blocks on the
+    ///     first's key lock, then fails with a duplicate-key error the batch swallows, and both read back
+    ///     the one stored row. No MERGE … HOLDLOCK, whose key-range locks deadlock under exactly this
+    ///     contention (concurrent first starts of one projection across nodes).
+    /// </remarks>
+    public async Task<long> TrySetProjectionFloorAsync(string projectionName, string? tenantId, long floor,
+        CancellationToken token = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(projectionName);
+        AssertProjectionFloorsEnabled(nameof(TrySetProjectionFloorAsync));
+
+        return await _resilience.ExecuteAsync(static async (state, ct) =>
+        {
+            var (connectionString, table, name, tenant, value) = state;
+            await using var conn = new SqlConnection(connectionString);
+            await conn.OpenAsync(ct);
+
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = $"""
+                BEGIN TRY
+                    INSERT INTO {table} (name, tenant_id, floor_seq_id) VALUES (@name, @tenant, @floor);
+                END TRY
+                BEGIN CATCH
+                    IF ERROR_NUMBER() NOT IN (2601, 2627) THROW;
+                END CATCH;
+                SELECT floor_seq_id FROM {table} WHERE name = @name AND tenant_id = @tenant;
+                """;
+            cmd.Parameters.AddVarChar("@name", name);
+            cmd.Parameters.AddVarChar("@tenant", tenant);
+            cmd.Parameters.Add("@floor", System.Data.SqlDbType.BigInt).Value = value;
+
+            var result = await cmd.ExecuteScalarAsync(ct);
+            return Convert.ToInt64(result);
+        }, (_connectionString, _events.ProjectionFloorsTableName, projectionName, FloorTenant(tenantId), floor), token);
+    }
+
+    /// <inheritdoc />
+    public async Task SetProjectionFloorAsync(string projectionName, string? tenantId, long? floor,
+        CancellationToken token = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(projectionName);
+        AssertProjectionFloorsEnabled(nameof(SetProjectionFloorAsync));
+
+        await _resilience.ExecuteAsync(static async (state, ct) =>
+        {
+            var (connectionString, table, name, tenant, value) = state;
+            await using var conn = new SqlConnection(connectionString);
+            await conn.OpenAsync(ct);
+
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = value is null
+                ? $"DELETE FROM {table} WHERE name = @name AND tenant_id = @tenant;"
+                : $"""
+                   UPDATE {table} SET floor_seq_id = @floor, last_updated = SYSDATETIMEOFFSET()
+                   WHERE name = @name AND tenant_id = @tenant;
+                   IF @@ROWCOUNT = 0
+                   BEGIN
+                       BEGIN TRY
+                           INSERT INTO {table} (name, tenant_id, floor_seq_id) VALUES (@name, @tenant, @floor);
+                       END TRY
+                       BEGIN CATCH
+                           IF ERROR_NUMBER() NOT IN (2601, 2627) THROW;
+                           UPDATE {table} SET floor_seq_id = @floor, last_updated = SYSDATETIMEOFFSET()
+                           WHERE name = @name AND tenant_id = @tenant;
+                       END CATCH
+                   END;
+                   """;
+            cmd.Parameters.AddVarChar("@name", name);
+            cmd.Parameters.AddVarChar("@tenant", tenant);
+            if (value is not null)
+            {
+                cmd.Parameters.Add("@floor", System.Data.SqlDbType.BigInt).Value = value.Value;
+            }
+
+            await cmd.ExecuteNonQueryAsync(ct);
+        }, (_connectionString, _events.ProjectionFloorsTableName, projectionName, FloorTenant(tenantId), floor), token);
+    }
+
+    /// <summary>
+    ///     The floor writes need pc_event_projection_floors, which only exists once a store opts in.
+    ///     NotSupportedException rather than a SqlException over a missing table: it is the exception the
+    ///     daemon already reads as "this store has no floor seam", and the message names the switch.
+    /// </summary>
+    private void AssertProjectionFloorsEnabled(string member)
+    {
+        if (_events.EnableProjectionFloors) return;
+
+        throw new NotSupportedException(
+            $"{member} needs persisted projection start floors, which are opt-in in Polecat 5. Set "
+            + "StoreOptions.Events.EnableProjectionFloors = true (this adds the pc_event_projection_floors "
+            + "table) to use AsyncOptions.SubscribeFromFirstRun() or to set a projection's floor.");
+    }
+
+    private static string FloorTenant(string? tenantId)
+        => string.IsNullOrEmpty(tenantId) ? Polecat.Events.Schema.EventProjectionFloorsTable.StoreGlobalTenant : tenantId;
+
     public new async Task EnsureStorageExistsAsync(Type storageType, CancellationToken token)
     {
         // #267: honor AutoCreate.None. When the user opts out of runtime schema management

@@ -403,6 +403,68 @@ public class PolecatDocumentComplianceFixture : DocumentStorageComplianceFixture
     public override bool SupportsDocumentDiagnosticCriteria => true;
 
     /// <summary>
+    ///     #813 / jasperfx#1058 — <c>OrderByMetadata</c> leads the ORDER BY (after the tenant under
+    ///     AllTenants), then any <c>OrderBy</c>, then the id. <c>Created</c> is refused for a type that
+    ///     does not track it; <c>Version</c> is always the numeric column, so it is never refused.
+    /// </summary>
+    public override bool SupportsDocumentMetadataOrdering => true;
+
+    /// <summary>
+    ///     #813 / jasperfx#1059 — <see cref="PolecatDocumentDiagnosticsWriter.UndeleteDocumentAsync" />
+    ///     queues the same operation <c>UndoDeleteWhere</c> does, by id, and moves the version on.
+    /// </summary>
+    public override bool SupportsDocumentUndelete => true;
+
+    // ── #813 / jasperfx#785: SoftDeleteCompliance + DocumentMetadataCompliance ────────────────────
+
+    public override bool SupportsSoftDeleteOperators => true;
+
+    /// <inheritdoc />
+    /// <remarks>
+    ///     Polecat's own markers from <see cref="Polecat.Linq.SoftDeletes.SoftDeletedExtensions" />, in one
+    ///     call over <c>Query&lt;T&gt;()</c>. No filtering here: the parser is what is under test,
+    ///     including its refusal of a marker against a type that is not soft-deleted (#558).
+    /// </remarks>
+    public override Task<IReadOnlyList<T>> QuerySoftDeletedAsync<T>(IDocumentReadOperations session,
+        SoftDeleteFilter filter, CancellationToken token)
+    {
+        var query = session.Query<T>();
+        var filtered = filter.Operator switch
+        {
+            SoftDeleteOperator.MaybeDeleted => Polecat.Linq.SoftDeletes.SoftDeletedExtensions.MaybeDeleted(query),
+            SoftDeleteOperator.IsDeleted => Polecat.Linq.SoftDeletes.SoftDeletedExtensions.IsDeleted(query),
+            SoftDeleteOperator.DeletedSince =>
+                Polecat.Linq.SoftDeletes.SoftDeletedExtensions.DeletedSince(query, filter.At!.Value),
+            SoftDeleteOperator.DeletedBefore =>
+                Polecat.Linq.SoftDeletes.SoftDeletedExtensions.DeletedBefore(query, filter.At!.Value),
+            _ => throw new ArgumentOutOfRangeException(nameof(filter), filter.Operator, null)
+        };
+
+        return MaterializeAsync(filtered, token);
+    }
+
+    public override void UndoDeleteWhere<T>(IDocumentSessionOperations session, Expression<Func<T, bool>> predicate)
+        => PolecatSession(session).UndoDeleteWhere(predicate);
+
+    public override void HardDeleteWhere<T>(IDocumentSessionOperations session, Expression<Func<T, bool>> predicate)
+        => PolecatSession(session).HardDeleteWhere(predicate);
+
+    /// <summary>
+    ///     Neither operation is on the shared session contract (jasperfx#647), so the session the
+    ///     suite holds is Polecat's own, reached by a cast that names what went wrong if it is not.
+    /// </summary>
+    private static IDocumentSession PolecatSession(IDocumentSessionOperations session)
+        => session as IDocumentSession ?? throw new InvalidOperationException(
+            $"Expected a Polecat IDocumentSession, got {session.GetType().FullName}.");
+
+    /// <summary>
+    ///     The session copies its correlation id, causation id and user name onto an <c>ITracked</c>
+    ///     document as it is stored (<c>DocumentSessionBase.SyncMetadata</c>), and Polecat's sessions
+    ///     implement <c>IMetadataContext</c>, so the fixture's default <c>SetSessionMetadata</c> applies.
+    /// </summary>
+    public override bool SupportsTrackedDocuments => true;
+
+    /// <summary>
     ///     Polecat spells the escapes as operators on the queryable —
     ///     <c>Query&lt;T&gt;().AnyTenant()</c> and <c>.TenantIsOneOf(...)</c> in
     ///     <see cref="LinqExtensions" /> — recognized by the LINQ parser as markers rather than

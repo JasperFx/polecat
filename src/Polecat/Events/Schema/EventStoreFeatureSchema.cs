@@ -34,6 +34,14 @@ internal class EventStoreFeatureSchema : FeatureSchemaBase
         yield return _events.BuildEventsTable();
         yield return _events.BuildEventProgressionTable();
 
+        // #813 (jasperfx#809): projection start floors, OPT-IN in Polecat 5
+        // (Events.EnableProjectionFloors) so upgrading adds no table and no schema delta to an existing
+        // store. Planned to become opt-out in Polecat 6.
+        if (_events.EnableProjectionFloors)
+        {
+            yield return _events.BuildEventProjectionFloorsTable();
+        }
+
         // Per-tenant partitioning registry (#163 / polecat#171). Only materialized when the feature is
         // on, so off-flag stores see no schema delta. The registry (pc_tenant_partitions: tenant_id ->
         // ordinal) is owned by the Weasel.SqlServer ManagedTenantPartitions strategy; the physical

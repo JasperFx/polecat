@@ -83,6 +83,12 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
     public bool EnableExtendedProgressionTracking => _options.Events.EnableExtendedProgressionTracking;
 
     /// <summary>
+    ///     #813: whether pc_event_projection_floors is part of the schema. See
+    ///     <see cref="EventStoreOptions.EnableProjectionFloors" />.
+    /// </summary>
+    public bool EnableProjectionFloors => _options.Events.EnableProjectionFloors;
+
+    /// <summary>
     ///     Opt into a performance optimization that directs Polecat to use a session-level
     ///     identity map for aggregates fetched via FetchForWriting() or FetchLatest().
     ///     Subsequent calls to FetchLatest() within the same session will return the cached
@@ -138,6 +144,10 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
 
     internal string ProgressionTableName =>
         Polecat.Internal.SqlEscaping.QualifiedName(DatabaseSchemaName, "pc_event_progression");
+
+    // #813 (jasperfx#809): the persisted projection start floors. See EventProjectionFloorsTable.
+    internal string ProjectionFloorsTableName =>
+        Polecat.Internal.SqlEscaping.QualifiedName(DatabaseSchemaName, Schema.EventProjectionFloorsTable.TableName);
 
     internal string TenantPartitionsTableName =>
         Polecat.Internal.SqlEscaping.QualifiedName(DatabaseSchemaName, "pc_tenant_partitions");
@@ -602,6 +612,11 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
     internal EventProgressionTable BuildEventProgressionTable()
     {
         return new EventProgressionTable(this);
+    }
+
+    internal EventProjectionFloorsTable BuildEventProjectionFloorsTable()
+    {
+        return new EventProjectionFloorsTable(this);
     }
 
     [RequiresUnreferencedCode("Discovers the tag type's inner value by reflecting over its members. Under trimming or Native AOT use RegisterTagType<TTag, TInner>(Func<TTag, TInner>), which builds the registration from TagTypeRegistration.FromUnwrapper<TTag, TInner>.")]

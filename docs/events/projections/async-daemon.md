@@ -380,6 +380,48 @@ documents are fully rebuilt over the entire history. Only `RaiseSideEffects()` o
 (published messages, emitted events, etc.) is held back during the warm-up.
 :::
 
+## Start Floors
+
+A projection can be told not to process history before a point. The point can be a configured
+sequence (`SubscribeFromSequence`), a time (`SubscribeFromTime`), or the moment the projection first
+runs:
+
+```cs
+// Opt in: adds the pc_event_projection_floors table
+opts.Events.EnableProjectionFloors = true;
+
+opts.Projections.Add(new SingleStreamProjection<QuestParty, Guid>(), ProjectionLifecycle.Async,
+    asyncConfiguration: o => o.SubscribeFromFirstRun());
+```
+
+::: warning
+Persisted floors are **opt-in in Polecat 5**, so upgrading adds no table to an existing store. They
+are planned to become opt-out in Polecat 6. Without `EnableProjectionFloors`, every projection starts
+as it always has, `FetchProjectionFloorAsync` returns `null`, and `SubscribeFromFirstRun()` or
+`SetProjectionFloorAsync` fail with a `NotSupportedException` that names the flag.
+:::
+
+`SubscribeFromFirstRun()` pins the high water mark as the projection's **floor** the first time it
+starts and stores it in `pc_event_projection_floors`. Several nodes starting the same projection at once
+all agree on one stored value. Every later start begins at the larger of the stored progress and the
+floor, and a rebuild replays from the floor rather than from 0, because the floor lives in a table that
+rebuild teardown and `Advanced.Clean` do not touch.
+
+A stored floor wins over a code-configured `SubscribeFromSequence` or `SubscribeFromTime` for that
+database, so an operator can fix one database without a deploy:
+
+```cs
+IEventDatabase database = store.Database;
+
+await database.FetchProjectionFloorAsync("QuestParty", tenantId: null);
+await database.SetProjectionFloorAsync("QuestParty", tenantId: null, floor: 1000);
+await database.SetProjectionFloorAsync("QuestParty", tenantId: null, floor: null); // clear it
+```
+
+Floors are keyed by the projection name **without** its version, so a version bump inherits the floor.
+Setting or clearing a floor does not reprocess anything by itself. The next start or rebuild honours
+the new value.
+
 ## Error Handling
 
 The daemon uses Polly resilience pipelines for error handling. See [Resiliency Policies](/configuration/retries) for configuration.

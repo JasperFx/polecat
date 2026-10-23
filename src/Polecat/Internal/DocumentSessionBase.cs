@@ -651,6 +651,41 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             storage.UndeleteFragment, storage.IsConjoined, TenantId, fragment, typeof(T)));
     }
 
+    /// <summary>
+    ///     #813: restore one soft-deleted row by its stored id, for
+    ///     <see cref="PolecatDocumentDiagnosticsWriter.UndeleteDocumentAsync" />. The same
+    ///     <see cref="Operations.UndoDeleteWhereOperation" /> <c>UndoDeleteWhere</c> queues, with an id
+    ///     predicate in place of a parsed LINQ one (the writer has a type name and an id as text, not
+    ///     an expression) and the version moved on. The caller has already refused a type that is not
+    ///     soft-deleted.
+    /// </summary>
+    internal void UndeleteByIdForDiagnostics<T>(object id, System.Data.SqlDbType idType) where T : notnull
+    {
+        assertNotDisposed();
+        var storage = ClosedShapeDeletionStorageFor<T>();
+        _workTracker.Add(new Operations.UndoDeleteWhereOperation(
+            storage.UndeleteFragment, storage.IsConjoined, TenantId, new IdEqualsFragment(id, idType), typeof(T),
+            movesVersion: true));
+    }
+
+    private sealed class IdEqualsFragment : Linq.SqlGeneration.ISqlFragment
+    {
+        private readonly object _id;
+        private readonly System.Data.SqlDbType _type;
+
+        public IdEqualsFragment(object id, System.Data.SqlDbType type)
+        {
+            _id = id;
+            _type = type;
+        }
+
+        public void Apply(Weasel.SqlServer.ICommandBuilder builder)
+        {
+            builder.Append("id = ");
+            builder.AppendParameter(_id, _type);
+        }
+    }
+
     private Linq.SqlGeneration.ISqlFragment ParseDeleteWhere<T>(Expression<Func<T, bool>> predicate) where T : notnull
     {
         // #462: the single entry every *Where deletion passes through before queueing work.

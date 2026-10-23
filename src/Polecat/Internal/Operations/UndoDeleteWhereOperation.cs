@@ -19,15 +19,25 @@ internal class UndoDeleteWhereOperation : IStorageOperation
     private readonly string _tenantId;
     private readonly ISqlFragment _whereFragment;
     private readonly Type _documentType;
+    private readonly bool _movesVersion;
 
+    /// <param name="movesVersion">
+    ///     #813: also move <c>version</c> and <c>last_modified</c> on, as every other write does. Only
+    ///     the diagnostics writer's undelete asks for it: the jasperfx#1059 contract returns the
+    ///     restored document "live, with a new version", so a console holding the deleted row's
+    ///     version can tell the restore happened. <c>UndoDeleteWhere</c> itself keeps its long-standing
+    ///     shape, which leaves both columns alone — changing it would move every revisioned
+    ///     document's revision under an application that never asked.
+    /// </param>
     public UndoDeleteWhereOperation(IOperationFragment undeleteFragment, bool conjoined, string tenantId,
-        ISqlFragment whereFragment, Type documentType)
+        ISqlFragment whereFragment, Type documentType, bool movesVersion = false)
     {
         _undeleteFragment = undeleteFragment;
         _conjoined = conjoined;
         _tenantId = tenantId;
         _whereFragment = whereFragment;
         _documentType = documentType;
+        _movesVersion = movesVersion;
     }
 
     public Type DocumentType => _documentType;
@@ -36,6 +46,11 @@ internal class UndoDeleteWhereOperation : IStorageOperation
     public void ConfigureCommand(ICommandBuilder builder)
     {
         _undeleteFragment.Apply(builder);
+        if (_movesVersion)
+        {
+            builder.Append(", version = version + 1, last_modified = SYSDATETIMEOFFSET()");
+        }
+
         builder.Append(" WHERE ");
         if (_conjoined) // #234
         {

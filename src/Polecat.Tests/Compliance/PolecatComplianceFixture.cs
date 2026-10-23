@@ -108,6 +108,11 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
             UseNativeJsonType = ConnectionSource.SupportsNativeJson
         };
 
+        // #813: start floors are opt-in in Polecat 5, and ProjectionFloorCompliance is what pins them.
+        // Opted in for every compliance store rather than per suite, because the seam has no config
+        // member to ask for it -- the suite just calls the IEventDatabase members.
+        options.Events.EnableProjectionFloors = true;
+
         if (config.MaxConcurrentRebuildsPerDatabase.HasValue)
         {
             options.DaemonSettings.MaxConcurrentRebuildsPerDatabase = config.MaxConcurrentRebuildsPerDatabase;
@@ -490,6 +495,13 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
     ///     second copy of progress.
     /// </summary>
     public override bool SupportsProgressionLastUpdated => true;
+
+    /// <summary>
+    ///     #813 / jasperfx#809 — persisted projection start floors, over pc_event_projection_floors, a
+    ///     table no rebuild teardown or <c>Advanced.Clean</c> path touches. See
+    ///     <c>PolecatDatabase.FetchProjectionFloorAsync</c>.
+    /// </summary>
+    public override bool SupportsProjectionFloors => true;
 
     /// <remarks>
     ///     A FORWARD into Polecat's own documented entry point, deliberately not a re-implementation.
