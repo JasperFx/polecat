@@ -10,7 +10,9 @@ namespace Polecat;
 
 public partial class DocumentStore : IDocumentStoreUsageSource
 {
-    Uri IDocumentStoreUsageSource.Subject => Database.DatabaseUri;
+    // #812: the store's identity, shared with IEventStore.Subject and IDocumentStoreDiagnostics.Subject
+    // so every surface of one store answers with one subject. See DocumentStore.DocumentDiagnostics.cs.
+    Uri IDocumentStoreUsageSource.Subject => ((IEventStore)this).Subject;
 
     /// <summary>
     /// Build a <see cref="DocumentStoreUsage"/> snapshot for monitoring tools
@@ -25,7 +27,7 @@ public partial class DocumentStore : IDocumentStoreUsageSource
         var usage = new DocumentStoreUsage
         {
             Subject = "Polecat.DocumentStore",
-            SubjectUri = Database.DatabaseUri,
+            SubjectUri = ((IDocumentStoreUsageSource)this).Subject,
             Version = GetType().Assembly.GetName().Version?.ToString(),
             // #675: same defect as the event-store descriptor next door — a hard-coded
             // single-database shape on a store that may well have one database per tenant. Both read

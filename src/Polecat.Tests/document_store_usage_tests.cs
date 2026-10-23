@@ -188,6 +188,37 @@ public class document_store_usage_tests
     }
 
     /// <summary>
+    ///     #812. One store, one subject: the document side used to answer with the DATABASE uri
+    ///     (<c>sqlserver://host/db/schema</c>) while the event side answered <c>polecat://main</c>, so
+    ///     a tool pairing the two halves of one store by subject could not. Marten and Fisher give
+    ///     all three surfaces the same value.
+    /// </summary>
+    [Theory]
+    [InlineData("Main", "polecat://main")]
+    [InlineData("Orders", "polecat://orders")]
+    public async Task every_surface_of_one_store_answers_with_the_store_subject(string storeName, string expected)
+    {
+        await using var store = BuildStore(opts =>
+        {
+            opts.StoreName = storeName;
+            opts.DatabaseSchemaName = "doc_usage";
+            opts.Schema.For<AdvSqlDoc>();
+        });
+
+        var subject = new Uri(expected);
+
+        ((IEventStore)store).Subject.ShouldBe(subject);
+        ((JasperFx.Documents.IDocumentStoreDiagnostics)store).Subject.ShouldBe(subject);
+        ((IDocumentStoreUsageSource)store).Subject.ShouldBe(subject);
+
+        var usage = await GetUsageAsync(store);
+        usage.SubjectUri.ShouldBe(subject);
+
+        // The database identity keeps its own surface, and is not the store's.
+        store.Database.DatabaseUri.ShouldNotBe(subject);
+    }
+
+    /// <summary>
     ///     A second defect in the same object, and the reason the fix is the two-argument ctor rather
     ///     than assigning SubjectUri: DisplayName is DERIVED from the subject uri, so hand-building
     ///     the descriptor left every store — ancillary ones included — rendering under the default
