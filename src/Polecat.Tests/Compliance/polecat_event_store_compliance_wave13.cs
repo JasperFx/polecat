@@ -28,3 +28,13 @@ namespace Polecat.Tests.Compliance;
 
 public class polecat_stream_state_query_compliance
     : StreamStateQueryCompliance<PolecatComplianceFixture, IDocumentSession, IQuerySession>;
+
+/*
+ * jasperfx#1073 -- EventDataQueryCompliance, the sibling of StreamStateQueryCompliance on the same read
+ * tier: IReadOnlyEventStore.QueryEventData<T>(), the bodies of one event type across every stream.
+ * Served by the provider behind QueryRawEventDataOnly<T>() (EventLinqQueryProvider over pc_events'
+ * data column, filtered to T's event type name), which now implements IDocumentQueryExecutor too.
+ */
+
+public class polecat_event_data_query_compliance
+    : EventDataQueryCompliance<PolecatComplianceFixture, IDocumentSession, IQuerySession>;

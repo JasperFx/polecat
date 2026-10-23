@@ -18,9 +18,18 @@ namespace Polecat.Events.Linq;
 
 /// <summary>
 ///     IQueryProvider for LINQ queries against the event store.
-///     Supports both QueryAllRawEvents (IEvent) and QueryRawEventDataOnly&lt;T&gt; (event data type).
+///     Supports both QueryAllRawEvents (IEvent) and QueryRawEventDataOnly&lt;T&gt; (event data type),
+///     and through the latter the store-agnostic <c>IReadOnlyEventStore.QueryEventData&lt;T&gt;</c>
+///     (jasperfx#1073).
 /// </summary>
-internal class EventLinqQueryProvider : IPolecatAsyncQueryProvider
+/// <remarks>
+///     Implements the shared <see cref="JasperFx.Events.Documents.IDocumentQueryExecutor" /> hook by
+///     delegating to Polecat's own terminators, exactly as <see cref="StreamStateLinqQueryProvider" />
+///     does, so the JasperFx.Events.Documents extension terminators and
+///     <see cref="PolecatQueryableExtensions" /> are one execution path.
+/// </remarks>
+internal class EventLinqQueryProvider : IPolecatAsyncQueryProvider,
+    JasperFx.Events.Documents.IDocumentQueryExecutor
 {
     private readonly QuerySession _session;
     private readonly EventGraph _events;
@@ -29,6 +38,7 @@ internal class EventLinqQueryProvider : IPolecatAsyncQueryProvider
     private readonly bool _isAllEvents;
     private readonly string? _eventTypeName;
     private readonly Type? _eventDataType;
+    private readonly string? _tenantId;
 
     /// <summary>
     ///     The owning session, surfaced for event-query terminals that need live-session context
@@ -49,11 +59,17 @@ internal class EventLinqQueryProvider : IPolecatAsyncQueryProvider
     }
 
     /// <summary>
-    ///     Create provider for QueryRawEventDataOnly&lt;T&gt;().
+    ///     Create provider for QueryRawEventDataOnly&lt;T&gt;() and QueryEventData&lt;T&gt;(tenantId).
     /// </summary>
+    /// <param name="tenantId">
+    ///     Explicit tenant scope from <c>QueryEventData&lt;T&gt;(tenantId)</c>, already validated by the
+    ///     caller (a non-null tenant on a store with no tenant dimension was refused there). Null falls
+    ///     back to the session's own tenant, matching <see cref="StreamStateLinqQueryProvider" />.
+    /// </param>
     public EventLinqQueryProvider(QuerySession session, EventGraph events,
-        string eventTypeName, Type eventDataType, StoreOptions options)
+        string eventTypeName, Type eventDataType, StoreOptions options, string? tenantId = null)
     {
+        _tenantId = tenantId;
         _session = session;
         _events = events;
         _memberFactory = new EventDataMemberFactory(options);
@@ -119,7 +135,8 @@ internal class EventLinqQueryProvider : IPolecatAsyncQueryProvider
             }
             else
             {
-                parser.Statement.Wheres.Add(new ComparisonFilter("tenant_id", "=", _session.TenantId));
+                parser.Statement.Wheres.Add(
+                    new ComparisonFilter("tenant_id", "=", _tenantId ?? _session.TenantId));
             }
         }
 
@@ -424,4 +441,39 @@ internal class EventLinqQueryProvider : IPolecatAsyncQueryProvider
 
         throw new Polecat.Linq.BadLinqExpressionException($"Cannot determine the element type from: {expression.Type}");
     }
+
+    // The shared JasperFx.Events.Documents terminators dispatch through these four primitives, each
+    // delegating to Polecat's own terminator (jasperfx#1073, as StreamStateLinqQueryProvider does).
+
+    [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
+        Justification = "Polecat's own use of its LINQ async wrappers, which carry [RequiresDynamicCode] since #733. An EXPLICIT interface implementation cannot propagate the annotation -- the interface does not carry one, and annotating only the implementation is IL2046. A consumer is still warned, at the public entry point they call. This records that the path is unsafe and that the diagnostic has nowhere left to go.")]
+    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+        Justification = "Polecat's own use of its LINQ async wrappers, which carry [RequiresDynamicCode] since #733. An EXPLICIT interface implementation cannot propagate the annotation -- the interface does not carry one, and annotating only the implementation is IL2046. A consumer is still warned, at the public entry point they call. This records that the path is unsafe and that the diagnostic has nowhere left to go.")]
+    Task<IReadOnlyList<T>> JasperFx.Events.Documents.IDocumentQueryExecutor.ExecuteToListAsync<T>(
+        IQueryable<T> queryable, CancellationToken token)
+        => queryable.ToListAsync(token);
+
+    [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
+        Justification = "Polecat's own use of its LINQ async wrappers, which carry [RequiresDynamicCode] since #733. An EXPLICIT interface implementation cannot propagate the annotation -- the interface does not carry one, and annotating only the implementation is IL2046. A consumer is still warned, at the public entry point they call. This records that the path is unsafe and that the diagnostic has nowhere left to go.")]
+    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+        Justification = "Polecat's own use of its LINQ async wrappers, which carry [RequiresDynamicCode] since #733. An EXPLICIT interface implementation cannot propagate the annotation -- the interface does not carry one, and annotating only the implementation is IL2046. A consumer is still warned, at the public entry point they call. This records that the path is unsafe and that the diagnostic has nowhere left to go.")]
+    Task<T?> JasperFx.Events.Documents.IDocumentQueryExecutor.ExecuteFirstOrDefaultAsync<T>(
+        IQueryable<T> queryable, CancellationToken token) where T : default
+        => queryable.FirstOrDefaultAsync(token);
+
+    [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
+        Justification = "Polecat's own use of its LINQ async wrappers, which carry [RequiresDynamicCode] since #733. An EXPLICIT interface implementation cannot propagate the annotation -- the interface does not carry one, and annotating only the implementation is IL2046. A consumer is still warned, at the public entry point they call. This records that the path is unsafe and that the diagnostic has nowhere left to go.")]
+    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+        Justification = "Polecat's own use of its LINQ async wrappers, which carry [RequiresDynamicCode] since #733. An EXPLICIT interface implementation cannot propagate the annotation -- the interface does not carry one, and annotating only the implementation is IL2046. A consumer is still warned, at the public entry point they call. This records that the path is unsafe and that the diagnostic has nowhere left to go.")]
+    Task<int> JasperFx.Events.Documents.IDocumentQueryExecutor.ExecuteCountAsync<T>(
+        IQueryable<T> queryable, CancellationToken token)
+        => queryable.CountAsync(token);
+
+    [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
+        Justification = "Polecat's own use of its LINQ async wrappers, which carry [RequiresDynamicCode] since #733. An EXPLICIT interface implementation cannot propagate the annotation -- the interface does not carry one, and annotating only the implementation is IL2046. A consumer is still warned, at the public entry point they call. This records that the path is unsafe and that the diagnostic has nowhere left to go.")]
+    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+        Justification = "Polecat's own use of its LINQ async wrappers, which carry [RequiresDynamicCode] since #733. An EXPLICIT interface implementation cannot propagate the annotation -- the interface does not carry one, and annotating only the implementation is IL2046. A consumer is still warned, at the public entry point they call. This records that the path is unsafe and that the diagnostic has nowhere left to go.")]
+    Task<bool> JasperFx.Events.Documents.IDocumentQueryExecutor.ExecuteAnyAsync<T>(
+        IQueryable<T> queryable, CancellationToken token)
+        => queryable.AnyAsync(token);
 }
