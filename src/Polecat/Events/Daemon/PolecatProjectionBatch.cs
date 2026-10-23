@@ -9,6 +9,7 @@ using Polly;
 using Polecat.Events.Aggregation;
 using Polecat.Internal;
 using Polecat.Internal.Operations;
+using Polecat.Internal.Sessions;
 using Polecat.Services;
 using Polecat.Storage;
 using Weasel.SqlServer;
@@ -221,7 +222,7 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
             var (connectionString, ops, txParticipants, msgBatch) = state;
             await using var conn = new SqlConnection(connectionString);
             await conn.OpenAsync(ct);
-            await using var tx = (SqlTransaction)await conn.BeginTransactionAsync(ct);
+            await using var tx = await SqlTransactionRequests.BeginAsync(conn, ct);
 
             try
             {
@@ -285,7 +286,7 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
                     await msgBatch.BeforeCommitAsync(ct);
                 }
 
-                await tx.CommitAsync(ct);
+                await SqlTransactionRequests.CommitAsync(tx, ct);
             }
             catch
             {
@@ -296,7 +297,7 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
                 // `await using` still disposes the transaction and the connection.
                 try
                 {
-                    await tx.RollbackAsync(CancellationToken.None);
+                    await SqlTransactionRequests.RollbackAsync(tx);
                 }
                 catch
                 {

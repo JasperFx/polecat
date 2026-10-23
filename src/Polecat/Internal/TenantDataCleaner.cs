@@ -1,6 +1,7 @@
 using System.Data;
 using Microsoft.Data.SqlClient;
 using Polly;
+using Polecat.Internal.Sessions;
 
 namespace Polecat.Internal;
 
@@ -67,8 +68,8 @@ internal sealed class TenantDataCleaner
 
             // One transaction: a tenant wipe that fails halfway leaves a tenant that is neither
             // present nor absent, and the caller has no way to tell which tables made it.
-            await using var tx = (SqlTransaction)await conn.BeginTransactionAsync(
-                IsolationLevel.ReadCommitted, ct).ConfigureAwait(false);
+            await using var tx = await SqlTransactionRequests.BeginAsync(
+                conn, IsolationLevel.ReadCommitted, ct).ConfigureAwait(false);
 
             foreach (var table in ordered)
             {
@@ -101,7 +102,7 @@ internal sealed class TenantDataCleaner
                 if (rows > 0) deleted[progressionTable] = rows;
             }
 
-            await tx.CommitAsync(ct).ConfigureAwait(false);
+            await SqlTransactionRequests.CommitAsync(tx, ct).ConfigureAwait(false);
 
             return (IReadOnlyDictionary<string, int>)deleted;
         }, (_tenantId, _connectionString, _schemaName, _progressionTable), token).ConfigureAwait(false);
