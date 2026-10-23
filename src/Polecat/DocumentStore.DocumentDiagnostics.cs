@@ -9,6 +9,7 @@ using JasperFx;
 using JasperFx.Core;
 using JasperFx.Core.Reflection;
 using JasperFx.Documents;
+using JasperFx.Events;
 using JasperFx.Linq;
 using JasperFx.MultiTenancy;
 using Microsoft.Data.SqlClient;
@@ -23,8 +24,15 @@ public partial class DocumentStore : IDocumentStoreDiagnostics
     ///     jasperfx#870 - the store this diagnostics surface reads. Must equal the same store's
     ///     <c>IDocumentStoreUsageSource.Subject</c>, which is why both are this one expression: a
     ///     console pairs the two without a lookup table.
+    ///
+    ///     #812: and that expression is the STORE's identity, <c>polecat://{storename}</c> — the same
+    ///     value <c>IEventStore.Subject</c> returns — not the database URI. One store used to answer
+    ///     with two subjects depending on which interface was asked, so a tool pairing a store's
+    ///     document side with its event side by subject (CritterWatch's "Open in SQL", #1310) found
+    ///     "no such store". Marten and Fisher give all three the same subject. The database identity
+    ///     keeps its own surfaces: <c>Database.DatabaseUri</c> and the database descriptors.
     /// </summary>
-    Uri IDocumentStoreDiagnostics.Subject => Database.DatabaseUri;
+    Uri IDocumentStoreDiagnostics.Subject => ((IEventStore)this).Subject;
 
     /// <summary>
     ///     The mapped document types this store can query. Sub-classes are listed alongside their
