@@ -48,10 +48,15 @@ public partial class DocumentStore : IDocumentStoreDiagnostics
         {
             var rootTypeName = mapping.DocumentType.FullNameInCode();
 
+            // jasperfx#1070: whether a delete through the writer is permanent, known before it is
+            // called. The ROOT's mapping decides it for the whole hierarchy, because the root's table
+            // holds every sub-class row and its is_deleted column is the one a soft delete marks.
+            var isSoftDeleted = mapping.DeleteStyle == DeleteStyle.SoftDelete;
+
             refs.Add(new DocumentTypeRef(
                 rootTypeName,
                 mapping.DocumentType.Name.ToLowerInvariant(),
-                mapping.DatabaseSchemaName));
+                mapping.DatabaseSchemaName) { IsSoftDeleted = isSoftDeleted });
 
             foreach (var sub in mapping.SubClasses)
             {
@@ -62,7 +67,7 @@ public partial class DocumentStore : IDocumentStoreDiagnostics
                 refs.Add(new DocumentTypeRef(
                     sub.DocumentType.FullNameInCode(),
                     sub.Alias,
-                    mapping.DatabaseSchemaName) { RootTypeName = rootTypeName });
+                    mapping.DatabaseSchemaName) { RootTypeName = rootTypeName, IsSoftDeleted = isSoftDeleted });
             }
         }
 

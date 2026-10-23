@@ -415,6 +415,18 @@ public class PolecatDocumentComplianceFixture : DocumentStorageComplianceFixture
     /// </summary>
     public override bool SupportsDocumentUndelete => true;
 
+    /// <summary>
+    ///     jasperfx#1070 — <c>DocumentTypesAsync</c> fills <c>DocumentTypeRef.IsSoftDeleted</c> from the
+    ///     root mapping's <c>DeleteStyle</c>; a sub-class reports its root's.
+    /// </summary>
+    public override bool ReportsDocumentDeleteStyle => true;
+
+    /// <summary>
+    ///     jasperfx#1071 — <see cref="PolecatDocumentDiagnosticsWriter.PreviewDocumentJsonAsync" /> runs
+    ///     the save's own deserialize-and-id-check step, then the serializer call the upsert makes.
+    /// </summary>
+    public override bool SupportsDocumentWritePreview => true;
+
     // ── #813 / jasperfx#785: SoftDeleteCompliance + DocumentMetadataCompliance ────────────────────
 
     public override bool SupportsSoftDeleteOperators => true;

@@ -11,7 +11,8 @@ namespace Polecat;
 
 /// <summary>
 ///     jasperfx#870 — the write half of the diagnostics surface: save one document from JSON, delete
-///     one, restore one soft-deleted one (jasperfx#1059), each with an optional expected-version guard.
+///     one, restore one soft-deleted one (jasperfx#1059), each with an optional expected-version guard,
+///     and preview what a save would store without writing it (jasperfx#1071).
 /// </summary>
 /// <remarks>
 ///     <para>
@@ -58,6 +59,49 @@ public sealed class PolecatDocumentDiagnosticsWriter : IDocumentStoreDiagnostics
             return new DocumentWriteResult(DocumentWriteStatus.ConcurrencyConflict, current);
         }
 
+        var document = ReadDocument(documentType, request);
+
+        await using (var session = OpenSession(request.TenantId))
+        {
+            session.StoreObjects([document]);
+            await session.SaveChangesAsync(token).ConfigureAwait(false);
+        }
+
+        var saved = await CurrentAsync(request.DocumentTypeName, request.Id, request.TenantId, token)
+            .ConfigureAwait(false);
+
+        return new DocumentWriteResult(DocumentWriteStatus.Saved, saved);
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    ///     jasperfx#1071. The save's own <see cref="ReadDocument" /> step, so the refusals are the
+    ///     save's, followed by the same serializer call the document storage makes when it binds the
+    ///     upsert's JSON parameter. No session is opened and nothing is read or written, so neither the
+    ///     version guard nor the document's existence comes into it.
+    /// </remarks>
+    [RequiresUnreferencedCode("Deserializes a document from JSON to a runtime Type through ISerializer.FromJson.")]
+    [RequiresDynamicCode("Deserializes a document from JSON to a runtime Type through ISerializer.FromJson.")]
+    public Task<string> PreviewDocumentJsonAsync(DocumentWriteRequest request, CancellationToken token = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        token.ThrowIfCancellationRequested();
+
+        var documentType = ResolveWritableType(request.DocumentTypeName);
+        var document = ReadDocument(documentType, request);
+
+        return Task.FromResult(_store.Options.Serializer.ToJson(document));
+    }
+
+    /// <summary>
+    ///     The deserialize step a save and a preview share: the store's own serializer reads the JSON as
+    ///     the resolved type, and the id inside it has to agree with the request's. Shared so a preview
+    ///     can never accept what a save would refuse, or the other way round.
+    /// </summary>
+    [RequiresUnreferencedCode("Deserializes a document from JSON to a runtime Type through ISerializer.FromJson.")]
+    [RequiresDynamicCode("Deserializes a document from JSON to a runtime Type through ISerializer.FromJson.")]
+    private object ReadDocument(Type documentType, DocumentWriteRequest request)
+    {
         object document;
         try
         {
@@ -72,16 +116,7 @@ public sealed class PolecatDocumentDiagnosticsWriter : IDocumentStoreDiagnostics
 
         AssertIdAgrees(documentType, document, request.Id);
 
-        await using (var session = OpenSession(request.TenantId))
-        {
-            session.StoreObjects([document]);
-            await session.SaveChangesAsync(token).ConfigureAwait(false);
-        }
-
-        var saved = await CurrentAsync(request.DocumentTypeName, request.Id, request.TenantId, token)
-            .ConfigureAwait(false);
-
-        return new DocumentWriteResult(DocumentWriteStatus.Saved, saved);
+        return document;
     }
 
     /// <inheritdoc />

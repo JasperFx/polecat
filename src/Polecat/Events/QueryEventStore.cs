@@ -96,6 +96,40 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
     }
 
     /// <summary>
+    ///     jasperfx#1073: the bodies of every event stored as exactly <typeparamref name="T" />, across
+    ///     all streams, as a composable <see cref="IQueryable{T}" />. The same provider as
+    ///     <see cref="QueryRawEventDataOnly{T}" /> (filtered to <typeparamref name="T" />'s own event type
+    ///     name, the <c>data</c> column translated through Polecat's document LINQ member resolution, an
+    ///     untranslatable member refused by name), executed through the shared JasperFx.Events.Documents
+    ///     terminators because the provider implements
+    ///     <see cref="JasperFx.Events.Documents.IDocumentQueryExecutor" />.
+    /// </summary>
+    /// <remarks>
+    ///     Like <see cref="QueryRawEventDataOnly{T}" />, rows in an archived stream are left out and
+    ///     upcasting does not apply: naming <typeparamref name="T" /> is the stored-type decision.
+    /// </remarks>
+    /// <param name="tenantId">
+    ///     Optional tenant scope, by the <see cref="QueryStreamStates" /> rule: refused with
+    ///     <see cref="NotSupportedException" /> on a store without conjoined tenancy, so a tenant filter
+    ///     this store cannot honor never silently returns the unscoped set.
+    /// </param>
+    public IQueryable<T> QueryEventData<T>(string? tenantId = null) where T : class
+    {
+        if (tenantId != null && _events.TenancyStyle != TenancyStyle.Conjoined)
+        {
+            throw new NotSupportedException(
+                $"A tenantId was supplied to {nameof(QueryEventData)}<{typeof(T).Name}>, but this event store has " +
+                "no tenant dimension (Events.TenancyStyle is not Conjoined). A tenant filter must be honored or " +
+                "refused, never silently ignored: unscoped results would read as tenant-scoped. See jasperfx#1073.");
+        }
+
+        _events.AddEventType(typeof(T));
+        var eventTypeName = _events.EventMappingFor(typeof(T)).EventTypeName;
+        var provider = new EventLinqQueryProvider(_session, _events, eventTypeName, typeof(T), _options, tenantId);
+        return new PolecatLinqQueryable<T>(provider);
+    }
+
+    /// <summary>
     ///     #256 / #532 (jasperfx#737): query events across all streams with metadata filters,
     ///     inclusive timestamp/sequence windows, multi-type union, DCB tag conditions, and
     ///     pagination — the full JasperFx <see cref="EventQuery" /> surface. All supplied filters
