@@ -481,3 +481,10 @@ docker compose up -d                          # the gate never starts a containe
 - Lean on SQL Server 2025 features (JSON type, modern T-SQL) rather than workarounds
 - **All database command execution must be covered by `StoreOptions.ResiliencePipeline` (Polly).** Prefer executing through a session (`QuerySession` / `IDocumentSession`), whose `Execute*` methods wrap every command in the pipeline automatically. A component that legitimately owns its own connection/transaction (e.g. the async daemon's high-water detector, projection batch, event loader, bulk insert, HiLo sequence) must wrap its work in `Options.ResiliencePipeline.ExecuteAsync(...)` directly. Do **not** open ad-hoc `SqlConnection`s that run commands outside the pipeline.
   - Documented exceptions: one-time schema/DDL via `DocumentTableEnsurer` and Weasel migration (runs at startup), and test-support helpers.
+- **Begin, commit and roll back through `Internal/Sessions/SqlTransactionRequests`, never
+  `conn.BeginTransactionAsync` / `tx.CommitAsync` / `tx.RollbackAsync` directly.** SqlClient implements
+  none of those asynchronously, so each is a synchronous round trip on a thread-pool thread — and on a
+  MARS connection off Windows that wait is completed by a callback queued to the same pool. A burst of
+  saves on a small pool starves itself until a request times out at the *connect* timeout as
+  `SqlException` -2. That surfaced as a racing loser reporting -2 instead of `ConcurrencyException` on a
+  4-vCPU CI runner; `DOTNET_PROCESSOR_COUNT=2` reproduces it locally.

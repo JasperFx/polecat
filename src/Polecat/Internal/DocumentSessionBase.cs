@@ -970,7 +970,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
                 await _inlineMessageBatch.BeforeCommitAsync(token);
             }
 
-            await tx.CommitAsync(token);
+            await SqlTransactionRequests.CommitAsync(tx, token);
 
             // #478: the aggregate write cache is published here and nowhere else. After the commit,
             // so a failed one leaves nothing behind; before the tracker is reset, purely to keep it
@@ -1042,6 +1042,26 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             {
                 await _inlineMessageBatch.AfterCommitAsync(afterCommit);
             }
+        }
+        catch
+        {
+            // Roll back here rather than leaving it to `using var tx`, whose Dispose would issue the
+            // same request synchronously -- on a MARS connection, the thread-pool wait that
+            // SqlTransactionRequests exists to avoid, paid by every session that lost a race. A
+            // transaction that already committed has no connection left and needs nothing.
+            if (tx.Connection is not null)
+            {
+                try
+                {
+                    await SqlTransactionRequests.RollbackAsync(tx);
+                }
+                catch (Exception e)
+                {
+                    Logger.LogFailure("Failure trying to roll back after a failed SaveChangesAsync", e);
+                }
+            }
+
+            throw;
         }
         finally
         {
@@ -1124,7 +1144,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         _transactional.Transaction = null;
         try
         {
-            await tx.RollbackAsync(CancellationToken.None);
+            await SqlTransactionRequests.RollbackAsync(tx);
         }
         catch (Exception e)
         {
