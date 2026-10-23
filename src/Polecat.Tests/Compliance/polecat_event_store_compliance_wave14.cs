@@ -33,5 +33,11 @@ namespace Polecat.Tests.Compliance;
 public class composite_projection_compliance
     : CompositeProjectionCompliance<PolecatComplianceFixture, IDocumentSession, IQuerySession>;
 
+// #813: [Obsolete] as of JasperFx 2.93 and removed in 3.0 (jasperfx#727) -- it cannot build its own
+// precondition on Polecat (the second, differently-tenanted append is refused with
+// ExistingStreamIdCollisionException), so it skips here, as the comment above already records. Kept
+// enrolled until 3.0 removes the class; the warning is suppressed rather than the enrollment dropped.
+#pragma warning disable CS0618
 public class single_tenanted_event_slicing_compliance
     : SingleTenantedEventSlicingCompliance<PolecatComplianceFixture, IDocumentSession, IQuerySession>;
+#pragma warning restore CS0618

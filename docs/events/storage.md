@@ -47,6 +47,23 @@ Async daemon progress tracking:
 | `last_seq_id` | `bigint` | Last processed sequence ID |
 | `last_updated` | `datetimeoffset` | Last update timestamp |
 
+## pc_event_projection_floors
+
+Created only when `StoreOptions.Events.EnableProjectionFloors` is `true` (opt-in in Polecat 5).
+
+Persisted projection start floors: the sequence below which a projection has no meaningful
+history. Written by `AsyncOptions.SubscribeFromFirstRun()` on a projection's first start, or by an
+operator through `IEventDatabase.SetProjectionFloorAsync`. A floor lives in its own table so it survives
+a rebuild's teardown and every `Advanced.Clean` call. See
+[Start floors](/events/projections/async-daemon#start-floors).
+
+| Column | Type | Description |
+| :--- | :--- | :--- |
+| `name` | `varchar(200)` | Projection name, without its version (PK) |
+| `tenant_id` | `varchar(250)` | Tenant, or the empty string for a store-global floor (PK) |
+| `floor_seq_id` | `bigint` | The floor sequence |
+| `last_updated` | `datetimeoffset` | Last update timestamp |
+
 ## Event Type Naming
 
 Polecat converts .NET event type names to snake_case for storage:

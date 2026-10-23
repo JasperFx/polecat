@@ -164,19 +164,24 @@ public partial class DocumentStore : IDocumentStoreDiagnostics
         var table = mapping.QualifiedTableName;
         var selection = SelectionFor(mapping);
 
+        // #813 (jasperfx#1058): resolved before anything else is decided, so a column this type cannot
+        // order by is refused before a connection opens rather than silently dropped.
+        var metadataOrder = MetadataOrderingFor(mapping, options.OrderByMetadata);
+
         // Under AllTenants the page orders by tenant FIRST, so a page boundary cannot repeat or skip a
-        // row as tenants interleave.
-        var order = conjoined && options.AllTenants ? "tenant_id, id" : "id";
+        // row as tenants interleave. A metadata key comes next, and the id breaks every remaining tie.
+        var tenantFirst = conjoined && options.AllTenants;
+        var order = (tenantFirst ? "tenant_id, " : "") + (metadataOrder == null ? "" : metadataOrder + ", ") + "id";
 
         if (options.HasCriteria())
         {
             // Translated BEFORE a connection is opened: a refusal costs no round trip.
             var criteria = await TranslateCriteriaForDiagnosticsAsync(requestedType, mapping, options)
                 .ConfigureAwait(false);
-            var tenantFirst = conjoined && options.AllTenants;
 
             return await QueryWithCriteriaAsync(mapping, options, criteria, tenantId, $"{table}{where}", selection,
-                tenantFirst, conditions.Count > 0, Bind, offset, pageNumber, pageSize, token).ConfigureAwait(false);
+                tenantFirst, metadataOrder, conditions.Count > 0, Bind, offset, pageNumber, pageSize, token)
+                .ConfigureAwait(false);
         }
 
         await using var conn = new SqlConnection(ConnectionStringFor(tenantId));
@@ -243,8 +248,8 @@ public partial class DocumentStore : IDocumentStoreDiagnostics
     /// </remarks>
     private async Task<DocumentQueryResult> QueryWithCriteriaAsync(Storage.DocumentMapping mapping,
         DocumentQueryOptions options, Linq.SqlGeneration.Statement criteria, string? tenantId, string fromAndWhere,
-        string selection, bool tenantFirst, bool hasConditions, Action<SqlParameterCollection> bind, int offset,
-        int pageNumber, int pageSize, CancellationToken token)
+        string selection, bool tenantFirst, string? metadataOrder, bool hasConditions,
+        Action<SqlParameterCollection> bind, int offset, int pageNumber, int pageSize, CancellationToken token)
     {
         await using var conn = new SqlConnection(ConnectionStringFor(tenantId));
         await conn.OpenAsync(token).ConfigureAwait(false);
@@ -259,7 +264,8 @@ public partial class DocumentStore : IDocumentStoreDiagnostics
         var rows = new List<StoredDocument>();
         await using (var page = BuildCriteriaBatch(conn, options, $"select {selection} from {fromAndWhere}", criteria,
                          hasConditions, bind,
-                         orderBy: builder => AppendCriteriaOrdering(builder, criteria, tenantFirst, offset, pageSize)))
+                         orderBy: builder => AppendCriteriaOrdering(builder, criteria, tenantFirst, metadataOrder, offset,
+                             pageSize)))
         {
             await using var reader = await page.ExecuteReaderAsync(token).ConfigureAwait(false);
             while (await reader.ReadAsync(token).ConfigureAwait(false))
@@ -311,10 +317,13 @@ public partial class DocumentStore : IDocumentStoreDiagnostics
     }
 
     private static void AppendCriteriaOrdering(Weasel.SqlServer.BatchBuilder builder,
-        Linq.SqlGeneration.Statement criteria, bool tenantFirst, int offset, int pageSize)
+        Linq.SqlGeneration.Statement criteria, bool tenantFirst, string? metadataOrder, int offset, int pageSize)
     {
         builder.Append(" order by ");
         if (tenantFirst) builder.Append("tenant_id, ");
+
+        // jasperfx#1058: the metadata key leads, and the query's own ordering breaks its ties.
+        if (metadataOrder != null) builder.Append(metadataOrder + ", ");
 
         if (criteria.OrderBys.Count == 0)
         {
@@ -339,6 +348,38 @@ public partial class DocumentStore : IDocumentStoreDiagnostics
         }
 
         builder.Append($" offset {offset} rows fetch next {pageSize} rows only");
+    }
+
+    /// <summary>
+    ///     #813 (jasperfx#1058): the ORDER BY key for <see cref="DocumentQueryOptions.OrderByMetadata" />,
+    ///     or null when none was asked for. Every column here is fixed text chosen from an enum, never
+    ///     caller input.
+    /// </summary>
+    /// <remarks>
+    ///     <c>version</c> is always the numeric <c>bigint</c> column (Decision D2) — the one
+    ///     <see cref="StoredDocument.Version" /> reports — even for a Guid-versioned type, whose Guid
+    ///     lives in <c>guid_version</c>; so Version always has an order here. <c>created_at</c> exists on
+    ///     every table, but this surface reports it only where the mapping tracks it, and ordering by a
+    ///     column that every row reports as null would be ordering by something the caller cannot see —
+    ///     refused instead, as the contract asks.
+    /// </remarks>
+    private static string? MetadataOrderingFor(Storage.DocumentMapping mapping, DocumentMetadataOrder? order)
+    {
+        if (order == null) return null;
+
+        var column = order.Field switch
+        {
+            DocumentMetadataField.LastModified => "last_modified",
+            DocumentMetadataField.Version => "version",
+            DocumentMetadataField.Created when mapping.Metadata.CreatedAt.Enabled => "created_at",
+            DocumentMetadataField.Created => throw new DocumentCriteriaNotSupportedException(
+                nameof(DocumentQueryOptions.OrderByMetadata),
+                $"'{mapping.DocumentType.FullNameInCode()}' does not track its created time."),
+            _ => throw new DocumentCriteriaNotSupportedException(nameof(DocumentQueryOptions.OrderByMetadata),
+                $"'{order.Field}' is not a metadata column Polecat can order by.")
+        };
+
+        return order.Descending ? column + " desc" : column;
     }
 
     private static System.Reflection.MethodInfo? _translateCriteria;

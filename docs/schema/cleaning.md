@@ -34,6 +34,10 @@ This cleans:
 - `pc_streams` -- All stream metadata
 - `pc_event_progression` -- All daemon progression
 
+It deliberately leaves `pc_event_projection_floors` alone. A projection's start floor is
+configuration about where its history begins, so it outlives a data reset, just as it outlives a
+rebuild.
+
 ## Usage in Tests
 
 Cleaning is most commonly used in integration test setup:

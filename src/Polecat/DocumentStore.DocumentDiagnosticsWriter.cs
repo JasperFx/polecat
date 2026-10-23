@@ -1,15 +1,17 @@
 using System;
+using System.Data;
 using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
 using JasperFx.Core.Reflection;
 using JasperFx.Documents;
+using Polecat.Storage;
 
 namespace Polecat;
 
 /// <summary>
 ///     jasperfx#870 — the write half of the diagnostics surface: save one document from JSON, delete
-///     one, both with an optional expected-version guard.
+///     one, restore one soft-deleted one (jasperfx#1059), each with an optional expected-version guard.
 /// </summary>
 /// <remarks>
 ///     <para>
@@ -112,6 +114,73 @@ public sealed class PolecatDocumentDiagnosticsWriter : IDocumentStoreDiagnostics
         }
 
         return new DocumentWriteResult(DocumentWriteStatus.Deleted);
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    ///     #813 (jasperfx#1059). Queues the same <c>UndoDeleteWhereOperation</c> that
+    ///     <see cref="IDocumentOperations.UndoDeleteWhere{T}" /> does, through an ordinary session, with
+    ///     an id predicate and the version moved on so the restored row reads as a new write.
+    /// </remarks>
+    [RequiresUnreferencedCode("Closes the session's undelete over a runtime document type.")]
+    [RequiresDynamicCode("Closes the session's undelete over a runtime document type.")]
+    public async Task<DocumentWriteResult> UndeleteDocumentAsync(DocumentUndeleteRequest request,
+        CancellationToken token = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var documentType = ResolveWritableType(request.DocumentTypeName);
+        var mapping = _store.Options.Providers.GetProvider(documentType).Mapping;
+
+        // A hard-deleting type has nothing to restore. Answered rather than thrown, so a console can
+        // offer the action per type without guarding the call.
+        if (mapping.DeleteStyle != DeleteStyle.SoftDelete)
+        {
+            return new DocumentWriteResult(DocumentWriteStatus.NotSupported);
+        }
+
+        var current = await CurrentAsync(request.DocumentTypeName, request.Id, request.TenantId, token)
+            .ConfigureAwait(false);
+
+        // A live row is NotFound too: an undelete that did nothing must not look like one that did.
+        if (current == null || !current.IsDeleted)
+        {
+            return new DocumentWriteResult(DocumentWriteStatus.NotFound);
+        }
+
+        if (IsStale(request.ExpectedVersion, current))
+        {
+            return new DocumentWriteResult(DocumentWriteStatus.ConcurrencyConflict, current);
+        }
+
+        var (typedId, idType) = TypedId(mapping.InnerIdType, request.Id);
+
+        await using (var session = OpenSession(request.TenantId))
+        {
+            typeof(Internal.DocumentSessionBase)
+                .GetMethod(nameof(Internal.DocumentSessionBase.UndeleteByIdForDiagnostics),
+                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                .MakeGenericMethod(documentType)
+                .Invoke(session, [typedId, idType]);
+            await session.SaveChangesAsync(token).ConfigureAwait(false);
+        }
+
+        var restored = await CurrentAsync(request.DocumentTypeName, request.Id, request.TenantId, token)
+            .ConfigureAwait(false);
+
+        return new DocumentWriteResult(DocumentWriteStatus.Undeleted, restored);
+    }
+
+    private static (object Id, SqlDbType Type) TypedId(Type innerIdType, string id)
+    {
+        var type = Nullable.GetUnderlyingType(innerIdType) ?? innerIdType;
+
+        if (type == typeof(Guid)) return (Guid.Parse(id), SqlDbType.UniqueIdentifier);
+        if (type == typeof(int)) return (int.Parse(id), SqlDbType.Int);
+        if (type == typeof(long)) return (long.Parse(id), SqlDbType.BigInt);
+
+        // VarChar rather than NVarChar, so the comparison does not CONVERT_IMPLICIT the column (#363).
+        return (id, SqlDbType.VarChar);
     }
 
     private IDocumentSession OpenSession(string? tenantId)

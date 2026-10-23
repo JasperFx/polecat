@@ -724,6 +724,26 @@ public class EventStoreOptions : IEventStoreInstrumentation
     public bool EnableExtendedProgressionTracking { get; set; }
 
     /// <summary>
+    ///     #813 (jasperfx#809): opt into persisted projection start floors, stored in
+    ///     <c>pc_event_projection_floors</c>. Required by <c>AsyncOptions.SubscribeFromFirstRun()</c> and by
+    ///     an operator's <c>IEventDatabase.SetProjectionFloorAsync</c>.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         <b>Default false in Polecat 5</b>, so taking this version adds no table and no schema delta
+    ///         to an existing store — an <c>AutoCreate.None</c> database keeps matching its configuration.
+    ///         Planned to become opt-out (default true) in Polecat 6.
+    ///     </para>
+    ///     <para>
+    ///         Off, the daemon still asks for each shard's stored floor on every start and is told "none"
+    ///         without a round trip, so no projection behaves differently. Only the two floor WRITES are
+    ///         refused, with a <see cref="NotSupportedException" /> naming this flag, rather than failing on
+    ///         a missing table.
+    ///     </para>
+    /// </remarks>
+    public bool EnableProjectionFloors { get; set; }
+
+    /// <summary>
     ///     <see cref="JasperFx.Events.IEventStoreInstrumentation" /> surface (jasperfx#424). The
     ///     storage-agnostic toggle CritterWatch uses to enable extended projection-daemon monitoring
     ///     without referencing Polecat types. Backed by <see cref="EnableExtendedProgressionTracking" />.
