@@ -338,7 +338,9 @@ public partial class DocumentStore
         // #148: run through a QuerySession so the command is covered by Options.ResiliencePipeline (Polly),
         // like the rest of the explorer read path. The e.tenant_id predicate below — not the session's own
         // tenant — does the scoping, matching how the other explorer reads run raw SQL over every tenant.
-        await using var session = (Internal.QuerySession)QuerySession();
+        // #819: the database it was given (it used to be ignored here), and never a default-tenant
+        // session — see ExplorerSession.
+        await using var session = ExplorerSession(database);
         await using var cmd = new SqlCommand();
 
         var sb = new StringBuilder();
@@ -755,13 +757,29 @@ public partial class DocumentStore
             nameof(database));
 
     /// <summary>
-    ///     Opens the session an explorer read runs on: the database it was given, or the store's
-    ///     default routing when it was given none.
+    ///     Opens the session an explorer read runs on: the database it was given, or the store's one
+    ///     database when it was given none.
     /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         #819 (CritterWatch#1464): this used to open <c>QuerySession()</c> — a DEFAULT-TENANT
+    ///         session — when no database was named, and a conjoined store with
+    ///         <see cref="StoreOptions.DefaultTenantUsageEnabled" /> off refused it before any SQL ran.
+    ///         Every explorer read runs its own raw SQL and scopes it with its own <c>tenant_id</c>
+    ///         predicate (or, store-wide, deliberately none), so the session's tenant never reaches a
+    ///         row: it is only the connection and the resilience pipeline. Binding it to the database
+    ///         (<see cref="SessionOptions.ForDatabase(PolecatDatabase)" />, which is
+    ///         <see cref="SessionOptions.AllowAnyTenant" />) says exactly that.
+    ///     </para>
+    ///     <para>
+    ///         A null database only reaches here on a single-database store — every caller either
+    ///         passed <see cref="RequireSingleDatabase" />, fanned out, or resolved the tenant's
+    ///         database through <see cref="DatabaseForTenant" /> — so <see cref="SingleDatabase" /> is
+    ///         the same database the default session used to resolve.
+    ///     </para>
+    /// </remarks>
     private Internal.QuerySession ExplorerSession(PolecatDatabase? database) =>
-        (Internal.QuerySession)(database == null
-            ? QuerySession()
-            : QuerySession(SessionOptions.ForDatabase(database)));
+        (Internal.QuerySession)QuerySession(SessionOptions.ForDatabase(database ?? SingleDatabase));
 
     /// <summary>
     ///     The store-global recent-streams listing on a multi-database store. This is the one explorer

@@ -427,6 +427,20 @@ public class PolecatDocumentComplianceFixture : DocumentStorageComplianceFixture
     /// </summary>
     public override bool SupportsDocumentWritePreview => true;
 
+    /// <summary>
+    ///     jasperfx#1077 — a CorrelationId / CausationId / LastModifiedBy filter on a type whose mapping does not
+    ///     capture the column is refused through the shared <c>AssertMetadataFiltersAreCaptured</c>, with the
+    ///     queried type's ROOT mapping's flags. It used to be dropped, returning the unfiltered page.
+    /// </summary>
+    public override bool RefusesUncapturedMetadataFilters => true;
+
+    /// <summary>
+    ///     jasperfx#1078 — <c>ExplainDocumentQueryAsync</c> executes the page statement <c>QueryDocumentsAsync</c>
+    ///     builds under <c>SET STATISTICS XML ON</c> inside a rolled-back transaction and reads the actual
+    ///     showplan (Engine "SqlServer", IsActual).
+    /// </summary>
+    public override bool SupportsDocumentQueryExplain => true;
+
     // ── #813 / jasperfx#785: SoftDeleteCompliance + DocumentMetadataCompliance ────────────────────
 
     public override bool SupportsSoftDeleteOperators => true;

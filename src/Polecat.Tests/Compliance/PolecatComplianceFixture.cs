@@ -599,6 +599,14 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
     /// </remarks>
     public override bool SupportsDisablingDefaultTenant => true;
 
+    /// <summary>
+    ///     jasperfx#1079 — <c>IEventStore.QueryStreamStatesForAllTenants()</c> reads <c>pc_streams</c> with no
+    ///     tenant predicate through a session bound to the store's database
+    ///     (<c>SessionOptions.ForDatabase</c>, <c>AllowAnyTenant</c>), never a default-tenant one, and every
+    ///     <c>StreamState</c> carries the row's <c>tenant_id</c>. A multi-database store refuses.
+    /// </summary>
+    public override bool SupportsAllTenantStreamStates => true;
+
     /// <remarks>
     ///     Straight through Polecat's own tenancy rather than by matching
     ///     <see cref="IEventDatabase.Identifier" /> against the config's logical name — the logical

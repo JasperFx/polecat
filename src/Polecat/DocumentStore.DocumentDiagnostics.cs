@@ -56,7 +56,12 @@ public partial class DocumentStore : IDocumentStoreDiagnostics
             refs.Add(new DocumentTypeRef(
                 rootTypeName,
                 mapping.DocumentType.Name.ToLowerInvariant(),
-                mapping.DatabaseSchemaName) { IsSoftDeleted = isSoftDeleted });
+                mapping.DatabaseSchemaName)
+            {
+                IsSoftDeleted = isSoftDeleted,
+                // jasperfx#1082: names the projection AggregateDocumentJsonAsync rebuilds this type through.
+                SingleStreamProjection = SingleStreamProjectionFor(mapping.DocumentType)?.Name
+            });
 
             foreach (var sub in mapping.SubClasses)
             {
@@ -77,158 +82,44 @@ public partial class DocumentStore : IDocumentStoreDiagnostics
     async Task<DocumentQueryResult> IDocumentStoreDiagnostics.QueryDocumentsAsync(
         string documentTypeName, DocumentQueryOptions options, CancellationToken token)
     {
-        // jasperfx#928: AllTenants together with a named tenant is a contradiction, not a precedence
-        // question. Asserted first so it cannot be resolved by accident further down.
-        options.AssertValidTenantScope();
-
-        var resolved = ResolveForDiagnostics(documentTypeName);
-        if (resolved == null)
+        var query = await PrepareDiagnosticsQueryAsync(documentTypeName, options).ConfigureAwait(false);
+        if (query == null)
         {
             // An unknown type name reads as an empty page rather than failing.
             return new DocumentQueryResult(Array.Empty<StoredDocument>(), 0, options.PageNumber, options.PageSize);
         }
 
-        var (mapping, requestedType) = resolved.Value;
-
-        var pageNumber = Math.Max(1, options.PageNumber);
-        var pageSize = Math.Max(1, options.PageSize);
-        var offset = (pageNumber - 1) * pageSize;
-
-        var tenantId = DocumentQueryOptions.NormalizeTenantId(options.TenantId);
-        var conjoined = mapping.TenancyStyle == TenancyStyle.Conjoined;
-
-        // AllTenants on a conjoined store means NO tenant predicate; on a single-tenanted type every
-        // row already is the whole set. Database-per-tenant would have to fan out, which this surface
-        // does not do - refused rather than answered with one database's rows as if they were all.
-        if (options.AllTenants
-            && Options.Tenancy != null
-            && Options.Tenancy.Cardinality != JasperFx.Descriptors.DatabaseCardinality.Single)
+        if (query.MatchesNothing)
         {
-            throw new DocumentCriteriaNotSupportedException(nameof(DocumentQueryOptions.AllTenants),
-                "This store keeps a database per tenant, and document diagnostics read one database. "
-                + "Query each tenant by TenantId instead.");
+            return new DocumentQueryResult(Array.Empty<StoredDocument>(), 0, query.PageNumber, query.PageSize);
         }
 
-        var conditions = new List<string>();
-        var parameters = new List<Action<SqlParameterCollection>>();
-
-        if (options.IdEquals.IsNotEmpty())
-        {
-            // jasperfx#870: convert to the STORED identity type instead of casting the column to text.
-            // The old `cast(id as nvarchar(max)) = @id` could not use the primary-key index, and an
-            // upper-case Guid missed.
-            if (!TryBindId(mapping, options.IdEquals!, out var bind))
-            {
-                // An id that cannot be the stored type matches nothing - an empty page, not an error.
-                return new DocumentQueryResult(Array.Empty<StoredDocument>(), 0, pageNumber, pageSize);
-            }
-
-            conditions.Add("id = @id");
-            parameters.Add(bind!);
-        }
-
-        if (conjoined && !options.AllTenants)
-        {
-            var effective = tenantId ?? DefaultTenantId();
-            conditions.Add("tenant_id = @tenant");
-            parameters.Add(p => p.AddVarChar("@tenant", effective));
-        }
-
-        // Hierarchies: naming a sub-class returns only its rows; naming the root returns every row in
-        // the table, because each of those rows IS a root.
-        var filterByDocType = mapping.IsHierarchy() && requestedType != mapping.DocumentType;
-        if (filterByDocType)
-        {
-            var alias = mapping.AliasFor(requestedType);
-            conditions.Add("doc_type = @doc_type");
-            parameters.Add(p => p.AddVarChar("@doc_type", alias));
-        }
-
-        if (mapping.DeleteStyle == DeleteStyle.SoftDelete && !options.IncludeSoftDeleted)
-        {
-            conditions.Add("is_deleted = 0");
-        }
-
-        if (options.CorrelationId != null && mapping.Metadata.CorrelationId.Enabled)
-        {
-            conditions.Add("correlation_id = @correlation");
-            parameters.Add(p => p.AddVarChar("@correlation", options.CorrelationId!));
-        }
-
-        if (options.CausationId != null && mapping.Metadata.CausationId.Enabled)
-        {
-            conditions.Add("causation_id = @causation");
-            parameters.Add(p => p.AddVarChar("@causation", options.CausationId!));
-        }
-
-        if (options.LastModifiedBy != null && mapping.Metadata.LastModifiedBy.Enabled)
-        {
-            conditions.Add("last_modified_by = @last_modified_by");
-            parameters.Add(p => p.AddVarChar("@last_modified_by", options.LastModifiedBy!));
-        }
-
-        var where = conditions.Count > 0 ? " where " + string.Join(" and ", conditions) : "";
-
-        void Bind(SqlParameterCollection collection)
-        {
-            foreach (var p in parameters) p(collection);
-        }
-
-        var table = mapping.QualifiedTableName;
-        var selection = SelectionFor(mapping);
-
-        // #813 (jasperfx#1058): resolved before anything else is decided, so a column this type cannot
-        // order by is refused before a connection opens rather than silently dropped.
-        var metadataOrder = MetadataOrderingFor(mapping, options.OrderByMetadata);
-
-        // Under AllTenants the page orders by tenant FIRST, so a page boundary cannot repeat or skip a
-        // row as tenants interleave. A metadata key comes next, and the id breaks every remaining tie.
-        var tenantFirst = conjoined && options.AllTenants;
-        var order = (tenantFirst ? "tenant_id, " : "") + (metadataOrder == null ? "" : metadataOrder + ", ") + "id";
-
-        if (options.HasCriteria())
-        {
-            // Translated BEFORE a connection is opened: a refusal costs no round trip.
-            var criteria = await TranslateCriteriaForDiagnosticsAsync(requestedType, mapping, options)
-                .ConfigureAwait(false);
-
-            return await QueryWithCriteriaAsync(mapping, options, criteria, tenantId, $"{table}{where}", selection,
-                tenantFirst, metadataOrder, conditions.Count > 0, Bind, offset, pageNumber, pageSize, token)
-                .ConfigureAwait(false);
-        }
-
-        await using var conn = new SqlConnection(ConnectionStringFor(tenantId));
+        await using var conn = new SqlConnection(query.ConnectionString);
         await conn.OpenAsync(token).ConfigureAwait(false);
 
         long total;
-        await using (var countCmd = conn.CreateCommand())
+        await using (var count = query.BuildCount(conn))
         {
-            countCmd.CommandText = $"select count_big(*) from {table}{where}";
-            Bind(countCmd.Parameters);
-            total = Convert.ToInt64(await countCmd.ExecuteScalarAsync(token).ConfigureAwait(false));
+            total = Convert.ToInt64(await count.ExecuteScalarAsync(token).ConfigureAwait(false));
         }
 
         var rows = new List<StoredDocument>();
-        await using (var cmd = conn.CreateCommand())
+        await using (var page = query.BuildPage(conn))
         {
-            cmd.CommandText =
-                $"select {selection} from {table}{where} " +
-                $"order by {order} offset {offset} rows fetch next {pageSize} rows only";
-            Bind(cmd.Parameters);
-
-            await using var reader = await cmd.ExecuteReaderAsync(token).ConfigureAwait(false);
+            await using var reader = await page.ExecuteReaderAsync(token).ConfigureAwait(false);
             while (await reader.ReadAsync(token).ConfigureAwait(false))
             {
-                rows.Add(ReadStoredDocument(reader, mapping));
+                rows.Add(ReadStoredDocument(reader, query.Mapping));
             }
         }
 
-        return new DocumentQueryResult(rows, total, pageNumber, pageSize);
+        return new DocumentQueryResult(rows, total, query.PageNumber, query.PageSize);
     }
 
     /// <summary>
-    ///     jasperfx#869 — the page and total for a query that carries <see cref="DocumentQueryOptions.Where" />
-    ///     and/or <see cref="DocumentQueryOptions.OrderBy" />.
+    ///     The count and page statements <see cref="IDocumentStoreDiagnostics.QueryDocumentsAsync" /> runs, built
+    ///     once so that <see cref="IDocumentStoreDiagnostics.ExplainDocumentQueryAsync" /> explains exactly the
+    ///     statement the query executes — and refuses exactly what it refuses.
     /// </summary>
     /// <remarks>
     ///     <para>
@@ -259,35 +150,189 @@ public partial class DocumentStore : IDocumentStoreDiagnostics
     ///         equal keys still page deterministically — and the id alone without an ordering.
     ///     </para>
     /// </remarks>
-    private async Task<DocumentQueryResult> QueryWithCriteriaAsync(Storage.DocumentMapping mapping,
-        DocumentQueryOptions options, Linq.SqlGeneration.Statement criteria, string? tenantId, string fromAndWhere,
-        string selection, bool tenantFirst, string? metadataOrder, bool hasConditions,
-        Action<SqlParameterCollection> bind, int offset, int pageNumber, int pageSize, CancellationToken token)
+    private sealed class DiagnosticsPageQuery
     {
-        await using var conn = new SqlConnection(ConnectionStringFor(tenantId));
-        await conn.OpenAsync(token).ConfigureAwait(false);
+        public required Storage.DocumentMapping Mapping { get; init; }
+        public required string ConnectionString { get; init; }
+        public required int PageNumber { get; init; }
+        public required int PageSize { get; init; }
 
-        long total;
-        await using (var count = BuildCriteriaBatch(conn, options, $"select count_big(*) from {fromAndWhere}",
-                         criteria, hasConditions, bind, orderBy: null))
+        /// <summary>An <c>IdEquals</c> that cannot be the stored identity type: no statement runs at all.</summary>
+        public bool MatchesNothing { get; init; }
+
+        public Func<SqlConnection, SqlBatch> BuildCount { get; init; } = null!;
+        public Func<SqlConnection, SqlBatch> BuildPage { get; init; } = null!;
+    }
+
+    /// <summary>
+    ///     Every refusal and every condition of the document query, decided before a connection opens. Null for
+    ///     an unknown type name.
+    /// </summary>
+    private async Task<DiagnosticsPageQuery?> PrepareDiagnosticsQueryAsync(string documentTypeName,
+        DocumentQueryOptions options)
+    {
+        // jasperfx#928: AllTenants together with a named tenant is a contradiction, not a precedence
+        // question. Asserted first so it cannot be resolved by accident further down.
+        options.AssertValidTenantScope();
+
+        var resolved = ResolveForDiagnostics(documentTypeName);
+        if (resolved == null) return null;
+
+        var (mapping, requestedType) = resolved.Value;
+
+        // jasperfx#1077: a metadata filter on a column this type's table does not have used to be
+        // skipped, which returned the unfiltered page and total as though they were filtered. The ROOT's
+        // mapping answers for a sub-class, because its table holds the sub-class's rows.
+        options.AssertMetadataFiltersAreCaptured(requestedType.FullNameInCode(),
+            mapping.Metadata.CorrelationId.Enabled,
+            mapping.Metadata.CausationId.Enabled,
+            mapping.Metadata.LastModifiedBy.Enabled);
+
+        var pageNumber = Math.Max(1, options.PageNumber);
+        var pageSize = Math.Max(1, options.PageSize);
+        var offset = (pageNumber - 1) * pageSize;
+
+        var tenantId = DocumentQueryOptions.NormalizeTenantId(options.TenantId);
+        var conjoined = mapping.TenancyStyle == TenancyStyle.Conjoined;
+
+        // AllTenants on a conjoined store means NO tenant predicate; on a single-tenanted type every
+        // row already is the whole set. Database-per-tenant would have to fan out, which this surface
+        // does not do - refused rather than answered with one database's rows as if they were all.
+        if (options.AllTenants
+            && Options.Tenancy != null
+            && Options.Tenancy.Cardinality != JasperFx.Descriptors.DatabaseCardinality.Single)
         {
-            total = Convert.ToInt64(await count.ExecuteScalarAsync(token).ConfigureAwait(false));
+            throw new DocumentCriteriaNotSupportedException(nameof(DocumentQueryOptions.AllTenants),
+                "This store keeps a database per tenant, and document diagnostics read one database. "
+                + "Query each tenant by TenantId instead.");
         }
 
-        var rows = new List<StoredDocument>();
-        await using (var page = BuildCriteriaBatch(conn, options, $"select {selection} from {fromAndWhere}", criteria,
-                         hasConditions, bind,
-                         orderBy: builder => AppendCriteriaOrdering(builder, criteria, tenantFirst, metadataOrder, offset,
-                             pageSize)))
+        var conditions = new List<string>();
+        var parameters = new List<Action<SqlParameterCollection>>();
+        var matchesNothing = false;
+
+        if (options.IdEquals.IsNotEmpty())
         {
-            await using var reader = await page.ExecuteReaderAsync(token).ConfigureAwait(false);
-            while (await reader.ReadAsync(token).ConfigureAwait(false))
+            // jasperfx#870: convert to the STORED identity type instead of casting the column to text.
+            // The old `cast(id as nvarchar(max)) = @id` could not use the primary-key index, and an
+            // upper-case Guid missed.
+            if (TryBindId(mapping, options.IdEquals!, out var bind))
             {
-                rows.Add(ReadStoredDocument(reader, mapping));
+                conditions.Add("id = @id");
+                parameters.Add(bind!);
+            }
+            else
+            {
+                // An id that cannot be the stored type matches nothing - an empty page, not an error.
+                matchesNothing = true;
             }
         }
 
-        return new DocumentQueryResult(rows, total, pageNumber, pageSize);
+        if (conjoined && !options.AllTenants)
+        {
+            var effective = tenantId ?? DefaultTenantId();
+            conditions.Add("tenant_id = @tenant");
+            parameters.Add(p => p.AddVarChar("@tenant", effective));
+        }
+
+        // Hierarchies: naming a sub-class returns only its rows; naming the root returns every row in
+        // the table, because each of those rows IS a root.
+        var filterByDocType = mapping.IsHierarchy() && requestedType != mapping.DocumentType;
+        if (filterByDocType)
+        {
+            var alias = mapping.AliasFor(requestedType);
+            conditions.Add("doc_type = @doc_type");
+            parameters.Add(p => p.AddVarChar("@doc_type", alias));
+        }
+
+        if (mapping.DeleteStyle == DeleteStyle.SoftDelete && !options.IncludeSoftDeleted)
+        {
+            conditions.Add("is_deleted = 0");
+        }
+
+        // Captured, or refused above.
+        if (options.CorrelationId != null)
+        {
+            conditions.Add("correlation_id = @correlation");
+            parameters.Add(p => p.AddVarChar("@correlation", options.CorrelationId!));
+        }
+
+        if (options.CausationId != null)
+        {
+            conditions.Add("causation_id = @causation");
+            parameters.Add(p => p.AddVarChar("@causation", options.CausationId!));
+        }
+
+        if (options.LastModifiedBy != null)
+        {
+            conditions.Add("last_modified_by = @last_modified_by");
+            parameters.Add(p => p.AddVarChar("@last_modified_by", options.LastModifiedBy!));
+        }
+
+        var where = conditions.Count > 0 ? " where " + string.Join(" and ", conditions) : "";
+
+        void Bind(SqlParameterCollection collection)
+        {
+            foreach (var p in parameters) p(collection);
+        }
+
+        var table = mapping.QualifiedTableName;
+        var selection = SelectionFor(mapping);
+
+        // #813 (jasperfx#1058): resolved before anything else is decided, so a column this type cannot
+        // order by is refused before a connection opens rather than silently dropped.
+        var metadataOrder = MetadataOrderingFor(mapping, options.OrderByMetadata);
+
+        // Under AllTenants the page orders by tenant FIRST, so a page boundary cannot repeat or skip a
+        // row as tenants interleave. A metadata key comes next, and the id breaks every remaining tie.
+        var tenantFirst = conjoined && options.AllTenants;
+        var order = (tenantFirst ? "tenant_id, " : "") + (metadataOrder == null ? "" : metadataOrder + ", ") + "id";
+
+        if (options.HasCriteria())
+        {
+            // Translated BEFORE a connection is opened: a refusal costs no round trip.
+            var criteria = await TranslateCriteriaForDiagnosticsAsync(requestedType, mapping, options)
+                .ConfigureAwait(false);
+            var fromAndWhere = $"{table}{where}";
+            var hasConditions = conditions.Count > 0;
+
+            return new DiagnosticsPageQuery
+            {
+                Mapping = mapping,
+                ConnectionString = ConnectionStringFor(tenantId),
+                PageNumber = pageNumber,
+                PageSize = pageSize,
+                MatchesNothing = matchesNothing,
+                BuildCount = conn => BuildCriteriaBatch(conn, options, $"select count_big(*) from {fromAndWhere}",
+                    criteria, hasConditions, Bind, orderBy: null),
+                BuildPage = conn => BuildCriteriaBatch(conn, options, $"select {selection} from {fromAndWhere}",
+                    criteria, hasConditions, Bind,
+                    orderBy: builder => AppendCriteriaOrdering(builder, criteria, tenantFirst, metadataOrder, offset,
+                        pageSize))
+            };
+        }
+
+        return new DiagnosticsPageQuery
+        {
+            Mapping = mapping,
+            ConnectionString = ConnectionStringFor(tenantId),
+            PageNumber = pageNumber,
+            PageSize = pageSize,
+            MatchesNothing = matchesNothing,
+            BuildCount = conn => PlainBatch(conn, $"select count_big(*) from {table}{where}", Bind),
+            BuildPage = conn => PlainBatch(conn,
+                $"select {selection} from {table}{where} " +
+                $"order by {order} offset {offset} rows fetch next {pageSize} rows only", Bind)
+        };
+    }
+
+    private static SqlBatch PlainBatch(SqlConnection conn, string sql, Action<SqlParameterCollection> bind)
+    {
+        var batch = new SqlBatch(conn);
+        var command = new SqlBatchCommand(sql);
+        bind(command.Parameters);
+        batch.BatchCommands.Add(command);
+        return batch;
     }
 
     /// <summary>

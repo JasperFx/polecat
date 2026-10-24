@@ -283,6 +283,49 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
     }
 
     /// <summary>
+    ///     jasperfx#1079: every tenant's streams as one queryable, with no tenant predicate and without
+    ///     ever opening a default-tenant session.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         The session is bound to the store's one database with
+    ///         <see cref="SessionOptions.ForDatabase(PolecatDatabase)" /> (<see cref="SessionOptions.AllowAnyTenant" />),
+    ///         the same way the async daemon and the explorer reads open theirs, so a conjoined store with
+    ///         <see cref="StoreOptions.DefaultTenantUsageEnabled" /> off answers instead of refusing. The
+    ///         session's tenant never reaches the SQL: the provider adds no tenant predicate in this mode,
+    ///         and each row reports its own <see cref="StreamState.TenantId" />. Single-tenanted events
+    ///         read exactly what the tenant-less <c>QueryStreamStates()</c> reads, because every row there
+    ///         is the default tenant's.
+    ///     </para>
+    ///     <para>
+    ///         A store with more than one database refuses. An <see cref="IQueryable{T}" /> composed with
+    ///         ordering, <c>Skip</c> and <c>Take</c> has no faithful fan-out short of reading every database
+    ///         whole and re-applying the query in memory, and answering from one database would read as all
+    ///         of them — the failure the contract rules out.
+    ///     </para>
+    ///     <para>
+    ///         Like <see cref="IEventStore.OpenReadOnlyEventStore()" />, the returned queryable holds its
+    ///         session for its own lifetime; the session's connection lifetime opens and closes a pooled
+    ///         connection per command, so nothing is held between executions.
+    ///     </para>
+    /// </remarks>
+    IQueryable<StreamState> IEventStore.QueryStreamStatesForAllTenants()
+    {
+        if (!IsSingleDatabase)
+        {
+            throw new NotSupportedException(
+                $"{nameof(IEventStore.QueryStreamStatesForAllTenants)} is not supported on this Polecat store, whose " +
+                $"DatabaseCardinality is {Options.Tenancy!.Cardinality}: the streams live in more than one database, " +
+                "and answering from one of them would read as every tenant's. Open " +
+                $"{nameof(IEventStore.OpenReadOnlyEventStore)}(tenantId) per tenant instead (jasperfx#1079).");
+        }
+
+        var session = (Internal.QuerySession)QuerySession(SessionOptions.ForDatabase(SingleDatabase));
+        var provider = new Events.Linq.StreamStateLinqQueryProvider(session, Events, tenantId: null, allTenants: true);
+        return new Linq.PolecatLinqQueryable<StreamState>(provider);
+    }
+
+    /// <summary>
     ///     #572: the UNTYPED compaction entry point, whose whole contract is "resolve the aggregate
     ///     type from stream state" — the only form available to a caller holding a runtime
     ///     <see cref="Type" /> rather than a compile-time <c>T</c>. Polecat had the typed execution

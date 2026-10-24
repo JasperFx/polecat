@@ -43,12 +43,15 @@ public partial class DocumentStore : IDocumentStoreUsageSource
             // the store was actually configured with -- so a console reading the descriptor to
             // interpret stored JSON was told the wrong thing for every store using string enums, and
             // told it confidently. The serializer has exposed both of these all along; the descriptor
-            // simply never asked. Falls back only for a custom ISerializer, which genuinely cannot be
-            // interrogated.
+            // simply never asked.
+            //
+            // polecat#820: a custom ISerializer genuinely cannot be interrogated, and the fallback here
+            // used to report "AsInteger" / "CamelCase" for it anyway -- the same confident guess #706
+            // removed, one branch over. The contract spells "unknown" as empty.
             EnumStorage = (Options.Serializer as Serialization.Serializer)?.EnumStorage.ToString()
-                          ?? "AsInteger",
+                          ?? string.Empty,
             SerializerCasing = (Options.Serializer as Serialization.Serializer)?.Casing.ToString()
-                               ?? "CamelCase"
+                               ?? string.Empty
         };
 
         // Polecat doesn't have a parallel set of code-generation properties on
@@ -132,6 +135,12 @@ public partial class DocumentStore : IDocumentStoreUsageSource
     {
         var ddl = WriteSchemaCreationDdl(mapping, migrator);
 
+        // jasperfx#1081: the indexes are read off the same Weasel table model the DDL is rendered from, so
+        // the list is complete exactly when that model could be built. It used to be built from
+        // mapping.Indexes alone and silently missed the JSON index; reporting "complete" over that list
+        // would have told a console an indexed type reads every row.
+        var table = TryBuildDocumentTable(mapping);
+
         // Polecat's `mapping.Alias` is the polymorphic doc-type discriminator
         // column value (defaults to "base"), not the table-name suffix.
         // Convert the type name so the descriptor's `Alias` field carries
@@ -161,24 +170,16 @@ public partial class DocumentStore : IDocumentStoreUsageSource
             // can say whether a filter on a member can use an index without parsing Ddl. Both come
             // from the same DocumentIndex declarations the table is built from, which is what keeps
             // them from drifting from the schema they describe.
-            Indexes = mapping.Indexes.Select(index => new DocumentIndexDescriptor
-            {
-                Name = index.GetIndexName(mapping.TableName),
-                IsUnique = index.IsUnique,
-                Predicate = index.Predicate,
-                Members = index.JsonPaths.ToArray(),
-                Columns = index.JsonPaths
-                    .Select(path => Storage.DocumentIndex.ColumnNameForPath(path, index.Casing))
-                    .ToArray()
-            }).ToList(),
+            Indexes = BuildIndexDescriptors(mapping, table, out var indexesReported),
+            IndexesReported = indexesReported,
 
             // A Polecat index's persisted computed column IS the duplicated field: it lifts a JSON
             // member into a real column, which is exactly what a console needs to know to predict
             // whether a filter reads a column or the JSON body.
             DuplicatedFields = mapping.Indexes
-                .SelectMany(index => index.JsonPaths.Select(path => new DuplicatedFieldDescriptor
+                .SelectMany(index => index.JsonPaths.Select((path, i) => new DuplicatedFieldDescriptor
                 {
-                    MemberPath = path,
+                    MemberPath = MemberPathFor(path, index.MemberChains, i),
                     ColumnName = Storage.DocumentIndex.ColumnNameForPath(path, index.Casing),
                     DbType = index.SqlTypeByPath.TryGetValue(path, out var sqlType)
                         ? sqlType
@@ -187,7 +188,96 @@ public partial class DocumentStore : IDocumentStoreUsageSource
                 .GroupBy(x => x.ColumnName, StringComparer.OrdinalIgnoreCase)
                 .Select(g => g.First())
                 .ToList(),
+
+            // jasperfx#1081: every duplicated column Polecat has is an index's computed column, read from
+            // the same declarations the table model adds them from — complete whenever that model built.
+            // (A foreign key's computed column is not reported: it holds a reference id, not a member a
+            // console would filter on, and it is the same set either way for a type with no foreign key.)
+            DuplicatedFieldsReported = table != null,
+
+            // jasperfx#1077: which metadata columns THIS type's table has, so a console offers only the
+            // filters this type can honour (the store-level DocumentMetadata answers "any type").
+            Metadata = new DocumentMetadataCapabilities
+            {
+                StoreType = "Polecat",
+                Version = true,
+                LastModified = true,
+                // #234: only a conjoined table carries tenant_id.
+                TenantId = mapping.TenancyStyle == JasperFx.MultiTenancy.TenancyStyle.Conjoined,
+                SoftDelete = mapping.DeleteStyle == JasperFx.DeleteStyle.SoftDelete,
+                CorrelationId = mapping.Metadata.CorrelationId.Enabled,
+                CausationId = mapping.Metadata.CausationId.Enabled,
+                LastModifiedBy = mapping.Metadata.LastModifiedBy.Enabled
+            }
         };
+    }
+
+    /// <summary>
+    ///     polecat#820 (jasperfx#870 §5): <see cref="DocumentIndexDescriptor.Members" /> and
+    ///     <see cref="DuplicatedFieldDescriptor.MemberPath" /> are member paths "dotted and in declaration
+    ///     casing" (<c>ShipTo.City</c>), which is what a console matches a predicate's members against. They
+    ///     were reported as the rendered JSON path (<c>$.shipTo.city</c>), which matched nothing. An index
+    ///     declared from a lambda keeps the member chain it came from (#510); a hand-written JSON path has none
+    ///     and is reported as written, because its declaration casing is unknowable.
+    /// </summary>
+    private static string[] MemberPathsFor(string[] jsonPaths, System.Reflection.MemberInfo[][]? chains)
+        => jsonPaths.Select((path, i) => MemberPathFor(path, chains, i)).ToArray();
+
+    private static string MemberPathFor(string jsonPath, System.Reflection.MemberInfo[][]? chains, int index)
+        => chains != null && index < chains.Length && chains[index].Length > 0
+            ? string.Join(".", chains[index].Select(m => m.Name))
+            : jsonPath;
+
+    private static DocumentTable? TryBuildDocumentTable(Storage.DocumentMapping mapping)
+    {
+        try
+        {
+            return new DocumentTable(mapping);
+        }
+        catch (Exception)
+        {
+            // The DDL beside it reports the same failure as text; here it means "not reported".
+            return null;
+        }
+    }
+
+    /// <summary>
+    ///     jasperfx#1081: one descriptor per secondary index the table model declares — the computed-column
+    ///     indexes with their member paths, and the SQL Server 2025 JSON index over <c>data</c>.
+    ///     <paramref name="reported" /> is true only when every modeled index is in the list.
+    /// </summary>
+    private static List<DocumentIndexDescriptor> BuildIndexDescriptors(Storage.DocumentMapping mapping,
+        DocumentTable? table, out bool reported)
+    {
+        var descriptors = mapping.Indexes.Select(index => new DocumentIndexDescriptor
+        {
+            Name = index.GetIndexName(mapping.TableName),
+            IsUnique = index.IsUnique,
+            Predicate = index.Predicate,
+            Members = MemberPathsFor(index.JsonPaths, index.MemberChains),
+            Columns = index.JsonPaths
+                .Select(path => Storage.DocumentIndex.ColumnNameForPath(path, index.Casing))
+                .ToArray()
+        }).ToList();
+
+        if (mapping.JsonIndexes.Count == 1)
+        {
+            var jsonIndex = mapping.JsonIndexes[0];
+            descriptors.Add(new DocumentIndexDescriptor
+            {
+                Name = jsonIndex.GetIndexName(mapping.TableName),
+                // A JSON index with no paths indexes the whole document.
+                Members = MemberPathsFor(jsonIndex.JsonPaths, jsonIndex.MemberChains),
+                Columns = ["data"],
+                Method = "JSON"
+            });
+        }
+
+        reported = table != null
+                   && table.Indexes.All(modeled =>
+                       descriptors.Any(d => string.Equals(d.Name, modeled.Name, StringComparison.OrdinalIgnoreCase)));
+
+        return descriptors;
     }
 
     /// <summary>

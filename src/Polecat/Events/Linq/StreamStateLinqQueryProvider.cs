@@ -42,13 +42,21 @@ internal class StreamStateLinqQueryProvider : IPolecatAsyncQueryProvider,
     ///     caller (a non-null tenant on a store with no tenant dimension was refused there). Null
     ///     falls back to the session's own tenant, matching every other pc_streams read.
     /// </param>
-    public StreamStateLinqQueryProvider(QuerySession session, EventGraph events, string? tenantId)
+    /// <param name="allTenants">
+    ///     jasperfx#1079: no tenant predicate at all — every tenant's streams. The session is then only
+    ///     the connection, never a tenant scope.
+    /// </param>
+    public StreamStateLinqQueryProvider(QuerySession session, EventGraph events, string? tenantId,
+        bool allTenants = false)
     {
         _session = session;
         _events = events;
         _tenantId = tenantId;
+        _allTenants = allTenants;
         _memberFactory = new StreamStateMemberFactory(events);
     }
+
+    private readonly bool _allTenants;
 
     [UnconditionalSuppressMessage("Trimming", "IL2046",
         Justification = "IQueryProvider.CreateQuery(Expression) lacks RUC; the AOT-safe entry is the generic CreateQuery<TElement>(Expression).")]
@@ -91,13 +99,15 @@ internal class StreamStateLinqQueryProvider : IPolecatAsyncQueryProvider,
         // Tenant scope: the explicit QueryStreamStates(tenantId) argument wins; otherwise the
         // session's own tenant, exactly like FetchStreamStateAsync — unless the query opted out
         // via AnyTenant()/TenantIsOneOf().
+        // jasperfx#1079: the every-tenant form adds no tenant predicate of its own, but an explicit
+        // TenantIsOneOf() still narrows it.
         if (!parser.IsAnyTenant)
         {
             if (parser.TenantIds != null)
             {
                 parser.Statement.Wheres.Add(new TenantInFilter(parser.TenantIds));
             }
-            else
+            else if (!_allTenants)
             {
                 parser.Statement.Wheres.Add(
                     new ComparisonFilter("tenant_id", "=", _tenantId ?? _session.TenantId));

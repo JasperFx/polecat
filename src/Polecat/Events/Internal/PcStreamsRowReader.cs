@@ -68,7 +68,11 @@ internal static class PcStreamsRowReader
             // jasperfx#740: the compaction watermark, appended LAST in SelectColumns so the
             // positional reads above (and ReadStreamSummary / ReadStreamMetadata) keep their
             // ordinals across the schema addition.
-            CompactedVersion = reader.GetInt64(7)
+            CompactedVersion = reader.GetInt64(7),
+            // jasperfx#1079: every pc_streams row carries its tenant — conjoined rows their own, and a
+            // single-tenanted store's column defaults to the default tenant id — so the row says whose
+            // stream it is, which is what tells two rows apart in the every-tenant read.
+            TenantId = reader.IsDBNull(5) ? JasperFx.StorageConstants.DefaultTenantId : reader.GetString(5)
         };
 
         if (!reader.IsDBNull(1))

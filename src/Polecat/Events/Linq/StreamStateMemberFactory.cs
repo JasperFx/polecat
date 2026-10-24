@@ -41,13 +41,18 @@ internal class StreamStateMemberFactory : IMemberResolver
             nameof(StreamState.CompactedVersion) =>
                 new QueryableMember("compacted_version", "compacted_version", typeof(long),
                     locatorSqlType: "bigint"),
+            // jasperfx#1079: the tenant is a translatable member like every other one, so the every-tenant
+            // read can be narrowed (or ordered) by it.
+            nameof(StreamState.TenantId) =>
+                new QueryableMember(JasperFx.StorageConstants.TenantIdColumn, JasperFx.StorageConstants.TenantIdColumn,
+                    typeof(string), locatorSqlType: "varchar(250)"),
             _ => throw new Polecat.Linq.BadLinqExpressionException(
                 $"Polecat cannot translate the member '{expression.Member.DeclaringType?.Name}.{expression.Member.Name}' " +
                 $"in a stream state query. Translatable members are the public properties of {nameof(StreamState)}: " +
                 $"{nameof(StreamState.Id)}, {nameof(StreamState.Key)}, {nameof(StreamState.Version)}, " +
                 $"{nameof(StreamState.AggregateType)}, {nameof(StreamState.LastTimestamp)}, " +
                 $"{nameof(StreamState.Created)}, {nameof(StreamState.IsArchived)}, " +
-                $"{nameof(StreamState.CompactedVersion)}.")
+                $"{nameof(StreamState.CompactedVersion)}, {nameof(StreamState.TenantId)}.")
         };
     }
 

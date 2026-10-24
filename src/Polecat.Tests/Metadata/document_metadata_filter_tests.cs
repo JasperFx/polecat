@@ -9,9 +9,9 @@ namespace Polecat.Tests.Metadata;
 
 /// <summary>
 /// #256: exact-match metadata filters on <see cref="IDocumentStoreDiagnostics.QueryDocumentsAsync"/>
-/// (parity with marten#4791). Each of CorrelationId / CausationId / LastModifiedBy is honored only
-/// when the option is set AND the document mapping enables that opt-in column (#241/#243) — a WHERE on
-/// a column that doesn't exist would throw, so a disabled column silently drops the filter.
+/// (parity with marten#4791). Each of CorrelationId / CausationId / LastModifiedBy is honored when the
+/// document mapping enables that opt-in column (#241/#243), and refused with
+/// DocumentCriteriaNotSupportedException when it does not (jasperfx#1077) — it used to be dropped.
 ///
 /// Seeding: 8 docs covering every combination of correlation ∈ {c0,c1} × causation ∈ {u0,u1} ×
 /// last_modified_by ∈ {b0,b1}, indexed 0..7 by the (corr,caus,lmb) binary tuple.
@@ -122,12 +122,17 @@ public class document_metadata_filter_tests
         result.DocumentsJson.Count.ShouldBe(0);
     }
 
+    /// <summary>
+    /// jasperfx#1077: a metadata filter on a column this type does not capture used to be dropped, so the
+    /// query returned the unfiltered page and total — indistinguishable from a filter that matched every
+    /// row. It is refused now, naming the criterion, before any SQL runs.
+    /// </summary>
     [Theory]
-    [InlineData(false, true, true, "correlation")]
-    [InlineData(true, false, true, "causation")]
-    [InlineData(true, true, false, "lastmodifiedby")]
-    public async Task filter_is_silently_ignored_when_its_column_is_disabled(
-        bool enableCorr, bool enableCaus, bool enableLmb, string which)
+    [InlineData(false, true, true, "correlation", nameof(DocumentQueryOptions.CorrelationId))]
+    [InlineData(true, false, true, "causation", nameof(DocumentQueryOptions.CausationId))]
+    [InlineData(true, true, false, "lastmodifiedby", nameof(DocumentQueryOptions.LastModifiedBy))]
+    public async Task filter_on_a_column_the_type_does_not_capture_is_refused(
+        bool enableCorr, bool enableCaus, bool enableLmb, string which, string criterion)
     {
         await using var store = await CreateStoreAsync($"doc256_off_{which}", enableCorr, enableCaus, enableLmb);
         await SeedMatrixAsync(store);
@@ -140,28 +145,27 @@ public class document_metadata_filter_tests
             _ => new DocumentQueryOptions(1, 100) { LastModifiedBy = "b0" }
         };
 
-        var result = await QueryAsync(store, options);
-
-        result.TotalCount.ShouldBe(8); // disabled column → filter dropped → all rows
+        var ex = await Should.ThrowAsync<DocumentCriteriaNotSupportedException>(() => QueryAsync(store, options));
+        ex.Criterion.ShouldBe(criterion);
+        ex.Message.ShouldContain(typeof(DiagMetaDoc).Name);
     }
 
     [Fact]
-    public async Task disabled_filter_does_not_suppress_an_enabled_one()
+    public async Task an_uncaptured_filter_is_refused_even_beside_captured_ones()
     {
-        // causation disabled, correlation + lmb enabled. Setting all three must still narrow via the
-        // enabled columns and silently ignore the disabled causation filter.
+        // causation disabled, correlation + lmb enabled. The two honored filters used to narrow the page
+        // while the third was dropped without a word; the whole query is refused instead.
         await using var store = await CreateStoreAsync("doc256_mixed", true, false, true);
         await SeedMatrixAsync(store);
 
-        var result = await QueryAsync(store, new DocumentQueryOptions(1, 100)
-        {
-            CorrelationId = "c0",  // honored
-            CausationId = "u0",     // ignored (disabled)
-            LastModifiedBy = "b0"   // honored
-        });
-
-        result.TotalCount.ShouldBe(2);
-        result.DocumentsJson.Select(NameOf).ShouldBe(new[] { NameForIndex(0), NameForIndex(2) }, ignoreOrder: true);
+        var ex = await Should.ThrowAsync<DocumentCriteriaNotSupportedException>(() => QueryAsync(store,
+            new DocumentQueryOptions(1, 100)
+            {
+                CorrelationId = "c0",
+                CausationId = "u0",
+                LastModifiedBy = "b0"
+            }));
+        ex.Criterion.ShouldBe(nameof(DocumentQueryOptions.CausationId));
     }
 
     [Fact]
