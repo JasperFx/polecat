@@ -1395,9 +1395,33 @@
                  answers true, so inert for Weasel.SqlServer.
                * INERT: weasel#718 (PostgreSQL partitioned index resume) and weasel#719 (PostgreSQL
                  advisory lock holder scope; the SQL Server read already filters on DB_ID()). -->
-        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.46.0" />
-        <PackageVersion Include="Weasel.SqlServer" Version="9.46.0" />
-        <PackageVersion Include="Weasel.Storage" Version="9.46.0" />
+        <!-- Weasel 9.47.0 (from 9.46.0, spanning 9.46.1). ADOPTED as-is, no Polecat code changes, but
+             the one additive piece is worth a look rather than a shrug, for a reason specific to Polecat.
+
+               * weasel#747 - the two Quick event-storage descriptors gain AppendEventSqlReturnsSequence.
+                 A dialect that sets it is asserting its per-event AppendEventSqlSuffix ends in a clause
+                 returning seq_id, and Weasel.Storage then wraps the operation so PostprocessAsync writes
+                 that value onto IEvent.Sequence. The flag defaults to false, so Polecat's dialect gets
+                 exactly the 9.46.0 operation until it opts in; nothing changes on this bump.
+                 Why it is worth reading anyway: the problem it fixes is that on the per-event
+                 QuickAppendEventWithVersion route (a stream starting, or an existing stream with
+                 ExpectedVersionOnServer set) seq_id came from a server-side sequence that nothing read
+                 back, so the event kept Sequence 0 and the tombstone batch a failed unit of work writes
+                 SKIPPED it, leaving the numbers it drew permanently unfilled. That was reported against
+                 Marten (marten#5454), where Quick is one append mode among several. QuickAppend is
+                 Polecat's only append mode, so if Polecat's own per-event route leaves Sequence 0 the
+                 same gap is reachable here, and by a wider door. Not verified from this side yet, and
+                 not a regression this bump introduces - it is a pre-existing shape the new seam now makes
+                 fixable. Worth a Polecat-side check of what its per-event append binds for seq_id and
+                 whether anything reads it back.
+               * INERT: both 9.46.1 fixes are Weasel.Postgresql only - weasel#730 (ForeignKey.TryToCorrectForLink
+                 corrupted a key when several databases migrated in parallel over shared Table instances,
+                 which PostgreSQL rejected with 42830) and weasel#732 (a partition's child index name was
+                 truncated into its suffix past 63 bytes, so two partitions collided). Neither file ships
+                 in Weasel.SqlServer. -->
+        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.47.0" />
+        <PackageVersion Include="Weasel.SqlServer" Version="9.47.0" />
+        <PackageVersion Include="Weasel.Storage" Version="9.47.0" />
 
         <!-- Strongly typed IDs. Both generators are test-only: they prove Polecat's value-type id
              support against the two libraries Marten's ValueTypeTests exercise. StronglyTypedId emits
