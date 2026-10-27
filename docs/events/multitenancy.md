@@ -90,8 +90,7 @@ This is an advanced, opt-in option for large multi-tenanted event stores where a
 event sequence becomes a scalability bottleneck. It builds on conjoined event tenancy by giving each
 tenant its own event numbering, so a tenant-scoped projection rebuild doesn't have to pay for a
 database-wide event-sequence scan. Tracked in
-[polecat#163](https://github.com/JasperFx/polecat/issues/163) /
-[CritterStack #209](https://github.com/JasperFx/CritterWatch/issues/209).
+[polecat#163](https://github.com/JasperFx/polecat/issues/163).
 :::
 
 By default every tenant shares the global `seq_id BIGINT IDENTITY` on `pc_events`. With
@@ -157,7 +156,7 @@ await CrossTenantRebuild.RebuildEverywhereAsync(
 ```
 
 A tenant-scoped rebuild never pays for a database-wide event scan and never disturbs other tenants —
-exactly the [#209](https://github.com/JasperFx/CritterWatch/issues/209) win for very large
+exactly the win this design exists for in very large
 multi-tenanted stores.
 
 ::: warning
