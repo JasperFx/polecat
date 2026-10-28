@@ -358,16 +358,13 @@ Polecat 4 consumes the 2026-wave release-candidate line for the shared substrate
 | `JasperFx` | `1.31.0` | `2.0.0-rc.3` |
 | `JasperFx.Events` | `1.36.0` | `2.0.0-rc.3` |
 | `JasperFx.Events.SourceGenerator` | `1.4.0` | `2.0.0-rc.3` |
-| `JasperFx.RuntimeCompiler` *(transitive, but pin centrally for matrix coherence)* | *(no equivalent)* | `5.0.0-rc.3` |
 | `JasperFx.SourceGeneration` *(transitive, but pin centrally)* | *(no equivalent)* | `2.0.0-rc.3` |
 | `Weasel.SqlServer` | `8.15.2` | `9.0.0-alpha.8` |
 | `Weasel.EntityFrameworkCore` | `8.15.2` | `9.0.0-alpha.8` |
 
-Polecat 4 itself is at `4.0.0-rc.2` (the consolidation wave converged through an alpha series into the rc line). The five `JasperFx.*` packages move as a matrix and must be pinned to the **same** rc together; the two `Weasel.*` packages share their own version and currently trail one wave behind on `alpha.8` (the rc.3 line resolves cleanly against them). Keep all seven in one renovate/dependabot group. Expect a final tick to the matched `9.0`/`2.0` GA set as the 2026 wave closes out.
+Polecat 4 itself is at `4.0.0-rc.2` (the consolidation wave converged through an alpha series into the rc line). The four `JasperFx.*` packages move as a matrix and must be pinned to the **same** rc together; the two `Weasel.*` packages share their own version and currently trail one wave behind on `alpha.8` (the rc.3 line resolves cleanly against them). Keep all six in one renovate/dependabot group. Expect a final tick to the matched `9.0`/`2.0` GA set as the 2026 wave closes out.
 
-::: warning
-Pin the **`5.x` line** of `JasperFx.RuntimeCompiler` — that's the active continuation of the 4.x lineage. A parallel `2.0.x` series exists on NuGet but is **stale**; don't pin against it.
-:::
+Polecat does not need `JasperFx.RuntimeCompiler`, directly or transitively: projection dispatch is source-generated. Don't add it to your pins on Polecat's account.
 
 Target frameworks (`net9.0;net10.0`) are unchanged from late Polecat 3.x; .NET 8 was already dropped before Polecat 3.2.
 
