@@ -26,13 +26,13 @@ internal class TransactionalConnection : IAlwaysConnectedLifetime
     public async ValueTask BeginTransactionAsync(CancellationToken token)
     {
         await EnsureConnectionOpenAsync(token);
-        Transaction ??= (SqlTransaction)await _connection!.BeginTransactionAsync(token);
+        Transaction ??= await SqlTransactionRequests.BeginAsync(_connection!, token);
     }
 
     public async ValueTask BeginTransactionAsync(IsolationLevel isolationLevel, CancellationToken token)
     {
         await EnsureConnectionOpenAsync(token);
-        Transaction ??= (SqlTransaction)await _connection!.BeginTransactionAsync(isolationLevel, token);
+        Transaction ??= await SqlTransactionRequests.BeginAsync(_connection!, isolationLevel, token);
     }
 
     private async ValueTask EnsureConnectionOpenAsync(CancellationToken token)

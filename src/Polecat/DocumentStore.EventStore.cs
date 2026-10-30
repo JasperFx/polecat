@@ -21,6 +21,7 @@ using Polecat.Storage;
 using Polecat.Subscriptions;
 
 using Polecat.Internal;
+using Polecat.Internal.Sessions;
 namespace Polecat;
 
 public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession>,
@@ -969,7 +970,7 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
                 // #180: do the whole tenant teardown in one transaction so a cancellation can only leave
                 // it fully applied or fully rolled back — never a half-reset (progression deleted but
                 // docs kept, or vice versa). pc_event_progression therefore stays consistent on cancel.
-                await using var tx = (SqlTransaction)await conn.BeginTransactionAsync(ct);
+                await using var tx = await SqlTransactionRequests.BeginAsync(conn, ct);
 
                 foreach (var identity in identities)
                 {
@@ -998,7 +999,7 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
                     await delDocs.ExecuteNonQueryAsync(ct);
                 }
 
-                await tx.CommitAsync(ct);
+                await SqlTransactionRequests.CommitAsync(tx, ct);
             }, (connStr, Events.ProgressionTableName, shardIdentities, publishedTableNames, tenantId,
                 Options.Events.TenancyStyle == TenancyStyle.Conjoined), token);
         }
