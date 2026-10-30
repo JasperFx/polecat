@@ -878,14 +878,14 @@
              event, and a Create taking object, a supertype or an interface owns the null-snapshot case
              instead of failing to compile with CS8120. jasperfx#1083/#1084 (2.96.0) change how an
              Event Model source disagreement is reported. No compliance suite changed. -->
-        <PackageVersion Include="JasperFx" Version="2.96.1" />
-        <PackageVersion Include="JasperFx.Events" Version="2.96.1" />
+        <PackageVersion Include="JasperFx" Version="2.97.0" />
+        <PackageVersion Include="JasperFx.Events" Version="2.97.0" />
         <!--
              The shared cross-store event sourcing compliance suites. Source-only package: the
              suites compile inside Polecat.Tests so JasperFx's aggregate source generator binds
              Polecat's own session types.
         -->
-        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="2.96.1" />
+        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="2.97.0" />
         <!-- Pin the sibling JasperFx packages for parity with Marten 9's matrix
              even though Polecat doesn't currently reference them directly —
              keeps the lockstep matrix coherent when transitive resolution
@@ -893,7 +893,7 @@
              JasperFx.RuntimeCompiler is deliberately NOT pinned: nothing in Polecat references it,
              directly or transitively (projection dispatch is source-generated, and Polecat.AotSmoke
              proves a consumer builds without it), so a pin only invited needless bumps. -->
-        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.96.1" />
+        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.97.0" />
         <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
@@ -1401,9 +1401,9 @@
                  answers true, so inert for Weasel.SqlServer.
                * INERT: weasel#718 (PostgreSQL partitioned index resume) and weasel#719 (PostgreSQL
                  advisory lock holder scope; the SQL Server read already filters on DB_ID()). -->
-        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.46.0" />
-        <PackageVersion Include="Weasel.SqlServer" Version="9.46.0" />
-        <PackageVersion Include="Weasel.Storage" Version="9.46.0" />
+        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.47.1" />
+        <PackageVersion Include="Weasel.SqlServer" Version="9.47.1" />
+        <PackageVersion Include="Weasel.Storage" Version="9.47.1" />
 
         <!-- Strongly typed IDs. Both generators are test-only: they prove Polecat's value-type id
              support against the two libraries Marten's ValueTypeTests exercise. StronglyTypedId emits
@@ -1413,7 +1413,7 @@
         <PackageVersion Include="Vogen" Version="7.0.0" />
 
         <!-- Source generators (matched to JasperFx.Events above) -->
-        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.96.1" />
+        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.97.0" />
 
         <!-- Build automation -->
         <PackageVersion Include="Nuke.Common" Version="9.0.4" />
