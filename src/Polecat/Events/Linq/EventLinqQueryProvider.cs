@@ -49,8 +49,9 @@ internal class EventLinqQueryProvider : IPolecatAsyncQueryProvider,
     /// <summary>
     ///     Create provider for QueryAllRawEvents().
     /// </summary>
-    public EventLinqQueryProvider(QuerySession session, EventGraph events)
+    public EventLinqQueryProvider(QuerySession session, EventGraph events, string? tenantId = null)
     {
+        _tenantId = tenantId;
         _session = session;
         _events = events;
         _memberFactory = new EventMemberFactory();
