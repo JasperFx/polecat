@@ -1,5 +1,13 @@
 # MCP Server
 
+::: warning Deprecated
+`MapPolecatMcp` in `Polecat.AspNetCore` is deprecated (`[Obsolete]`) and will be removed in the next
+major version. It duplicates the `Polecat.Mcp` package, which is built on the official
+ModelContextProtocol SDK and exposes its endpoint through `MapPolecatMcpServer`. Both methods default
+to the route `/polecat/mcp`, so mapping both fails at runtime on the duplicate route. Migrate to
+`Polecat.Mcp`.
+:::
+
 Polecat ships with a built-in [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) server that exposes your event store configuration as read-only tools. This lets AI assistants and agents introspect your Polecat setup for diagnostics, code generation guidance, and operational visibility.
 
 The MCP server uses the **Streamable HTTP** transport (stateless POST-based JSON-RPC) and is implemented as ASP.NET Core Minimal API endpoints in the `Polecat.AspNetCore` package.

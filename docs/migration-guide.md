@@ -1,5 +1,13 @@
 # Migration Guide
 
+## Deprecation: `MapPolecatMcp`
+
+`Polecat.AspNetCore`'s built-in `MapPolecatMcp()` is now `[Obsolete]` and will be **removed in the
+next major version** ([polecat#821](https://github.com/JasperFx/polecat/issues/821)). It duplicates
+the `Polecat.Mcp` package, which is built on the official ModelContextProtocol SDK. Replace the call
+with `MapPolecatMcpServer()` from `Polecat.Mcp`; both default to `/polecat/mcp`, and `RequireAuthorization(...)`
+chains the same way. Do not map both on one host: they share a route.
+
 ## Key Changes in 5.30.0
 
 Polecat 5.30 adopts the shared vector and hybrid search surface from `JasperFx.Events.Vectors`
