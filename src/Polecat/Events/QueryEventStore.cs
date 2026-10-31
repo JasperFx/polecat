@@ -68,6 +68,32 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
     }
 
     /// <summary>
+    ///     jasperfx#1094: the event envelope (sequence, stream, timestamp, event type, correlation and
+    ///     causation ids, tenant) as a plain <see cref="IQueryable{T}" /> of <see cref="IEvent" />, so a
+    ///     store-agnostic tool can filter and order events by metadata with LINQ. The same provider as
+    ///     <see cref="QueryAllRawEvents" />; an untranslatable member throws naming it, and the shared
+    ///     JasperFx.Events.Documents terminators work on the result because the provider implements
+    ///     <see cref="JasperFx.Events.Documents.IDocumentQueryExecutor" />.
+    /// </summary>
+    /// <param name="tenantId">
+    ///     Optional tenant scope, by the <see cref="QueryStreamStates" /> rule: refused with
+    ///     <see cref="NotSupportedException" /> on a store without conjoined tenancy.
+    /// </param>
+    public IQueryable<IEvent> QueryRawEvents(string? tenantId = null)
+    {
+        if (tenantId != null && _events.TenancyStyle != TenancyStyle.Conjoined)
+        {
+            throw new NotSupportedException(
+                $"A tenantId was supplied to {nameof(QueryRawEvents)}, but this event store has no tenant " +
+                "dimension (Events.TenancyStyle is not Conjoined). A tenant filter must be honored or " +
+                "refused, never silently ignored: unscoped results would read as tenant-scoped. See jasperfx#1094.");
+        }
+
+        var provider = new EventLinqQueryProvider(_session, _events, tenantId);
+        return new PolecatLinqQueryable<IEvent>(provider);
+    }
+
+    /// <summary>
     ///     jasperfx#740 (#534): the streams table as a real <see cref="IQueryable{T}"/> of
     ///     <see cref="StreamState"/> — the read surface behind the Stream Compaction Policies
     ///     (<c>AggregateType == typeof(X) &amp;&amp; Version - CompactedVersion &gt; N &amp;&amp;
