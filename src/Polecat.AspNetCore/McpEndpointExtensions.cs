@@ -32,6 +32,7 @@ public static class McpEndpointExtensions
     /// <param name="endpoints">The endpoint route builder</param>
     /// <param name="pattern">The route prefix for MCP endpoints. Defaults to "/polecat/mcp".</param>
     /// <returns>A <see cref="RouteGroupBuilder"/> for further configuration (e.g. RequireAuthorization)</returns>
+    [Obsolete("The built-in MCP endpoint is deprecated and will be removed in the next major version. It duplicates the Polecat.Mcp package (built on the official ModelContextProtocol SDK, shipped with CritterWatch), which maps the same default route. Use MapPolecatMcpServer from Polecat.Mcp instead.")]
     public static RouteGroupBuilder MapPolecatMcp(
         this IEndpointRouteBuilder endpoints,
         string pattern = "/polecat/mcp")

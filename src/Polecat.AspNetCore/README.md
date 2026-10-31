@@ -24,8 +24,9 @@ app.MapGet("/orders/{id:guid}", (Guid id, HttpContext context, IQuerySession ses
 `long` — as an HTTP ETag and checks incoming `If-None-Match` headers, so a caller can be told
 `304 Not Modified` without you reloading the aggregate.
 
-**MCP endpoints.** `MapPolecatMcp` exposes the event store over the Model Context Protocol for
-agent-driven exploration of streams and events.
+**MCP endpoints (deprecated).** `MapPolecatMcp` exposes the event store over the Model Context
+Protocol for agent-driven exploration of streams and events. It is marked `[Obsolete]` and will be
+removed in the next major version; use `MapPolecatMcpServer` from the `Polecat.Mcp` package instead.
 
 ## Requirements
 
