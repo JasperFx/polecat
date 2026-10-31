@@ -5,7 +5,7 @@ using Weasel.SqlServer;
 
 namespace Polecat.Internal.Operations;
 
-internal class TombstoneStreamOperation : IStorageOperation
+internal class TombstoneStreamOperation : IStorageOperation, Weasel.Storage.NoDataReturnedCall
 {
     private readonly EventGraph _events;
     private readonly object _streamId;

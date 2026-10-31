@@ -251,14 +251,7 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
                         try
                         {
                             var exceptions = new List<Exception>();
-                            for (var i = 0; i < ops.Count; i++)
-                            {
-                                await ops[i].PostprocessAsync(reader, exceptions, ct);
-                                if (i < ops.Count - 1)
-                                {
-                                    await reader.NextResultAsync(ct);
-                                }
-                            }
+                            await OperationResultSets.ApplyAsync(reader, ops, exceptions, ct);
 
                             if (exceptions.Count > 0)
                             {

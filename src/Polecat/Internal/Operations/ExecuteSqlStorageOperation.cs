@@ -5,7 +5,7 @@ using Weasel.SqlServer;
 
 namespace Polecat.Internal.Operations;
 
-internal class ExecuteSqlStorageOperation : IStorageOperation
+internal class ExecuteSqlStorageOperation : IStorageOperation, Weasel.Storage.NoDataReturnedCall
 {
     private readonly string _commandText;
     private readonly object[] _parameterValues;

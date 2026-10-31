@@ -14,7 +14,7 @@ namespace Polecat.Internal.Operations;
 ///     a hand-written <c>DocumentMapping</c> template. Serves both <c>DeleteWhere</c>
 ///     (soft-or-hard per the type) and <c>HardDeleteWhere</c> (the hard fragment).
 /// </summary>
-internal class DeleteWhereOperation : IStorageOperation
+internal class DeleteWhereOperation : IStorageOperation, Weasel.Storage.NoDataReturnedCall
 {
     private readonly IOperationFragment _fragment;
     private readonly bool _conjoined;

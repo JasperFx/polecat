@@ -14,7 +14,7 @@ namespace Polecat.Events.Protected;
 ///     <c>(Version - CompactedVersion)</c> measures un-compacted growth. A never-compacted stream
 ///     keeps the column's NOT NULL DEFAULT 0.
 /// </summary>
-internal class SetCompactedVersionOperation : Polecat.Internal.IStorageOperation
+internal class SetCompactedVersionOperation : Polecat.Internal.IStorageOperation, Weasel.Storage.NoDataReturnedCall
 {
     private readonly EventGraph _events;
     private readonly object _streamId;

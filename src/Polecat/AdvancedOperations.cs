@@ -173,21 +173,7 @@ public class AdvancedOperations
                 var exceptions = new List<Exception>();
                 await using (var reader = await batch.ExecuteReaderAsync(ct))
                 {
-                    for (var i = 0; i < operations.Count; i++)
-                    {
-                        await operations[i].PostprocessAsync(reader, exceptions, ct);
-                        if (i < operations.Count - 1)
-                        {
-                            await reader.NextResultAsync(ct);
-                        }
-                    }
-
-                    // Drain remaining result sets so any per-command batch error surfaces —
-                    // SQL Server raises a unique/FK error only when the reader advances into
-                    // that command's result set (the closed-shape draining gotcha).
-                    while (await reader.NextResultAsync(ct))
-                    {
-                    }
+                    await Polecat.Internal.Operations.OperationResultSets.ApplyAsync(reader, operations, exceptions, ct);
                 }
 
                 // The insert-only operation raises DocumentAlreadyExistsException when the row

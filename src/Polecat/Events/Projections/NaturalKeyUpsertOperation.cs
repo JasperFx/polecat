@@ -33,7 +33,8 @@ namespace Polecat.Events.Projections;
 ///         identifier for a later stream.
 ///     </para>
 /// </remarks>
-internal class NaturalKeyUpsertOperation : Polecat.Internal.IStorageOperation, IExceptionTransform
+internal class NaturalKeyUpsertOperation : Polecat.Internal.IStorageOperation, IExceptionTransform,
+    Weasel.Storage.NoDataReturnedCall
 {
     /// <summary>
     ///     User-defined SQL error number the guard raises. Above the 50000 floor <c>THROW</c>
@@ -76,10 +77,12 @@ internal class NaturalKeyUpsertOperation : Polecat.Internal.IStorageOperation, I
             + $"THEN UPDATE SET {streamColumn} = source.{streamColumn}, is_archived = 0";
 
         // Detected in SQL rather than by reading a MERGE OUTPUT row back in PostprocessAsync,
-        // deliberately. The flush loop advances the reader one result set per queued operation, and
-        // a MERGE that emits OUTPUT rows does not line up with that walk -- an operation that reads
-        // rows here lands on a neighbour's result set and reports a conflict for a key that never
-        // had one. @@ROWCOUNT needs no result set at all and is read in the same batch that set it.
+        // deliberately. It was first written that way because the flush loop used to advance the
+        // reader once per queued operation, and a reading operation landed on a neighbour's result
+        // set and reported a conflict for a key that never had one (#831 is what that same walk went
+        // on to do to every versioned document write). OperationResultSets has fixed the walk, but
+        // the guard is still the better shape: @@ROWCOUNT needs no result set at all, it is read in
+        // the same batch that set it, and it keeps this operation a NoDataReturnedCall.
         var guard =
             $"IF @@ROWCOUNT = 0 THROW {DuplicateNaturalKeyErrorNumber}, 'Natural key already mapped to a different live stream', 1;";
 

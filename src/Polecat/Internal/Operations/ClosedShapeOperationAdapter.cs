@@ -13,7 +13,8 @@ namespace Polecat.Internal.Operations;
 ///     call can forward, and surfaces Document/DocumentId for change-set/eject semantics.
 ///     Retires with the bespoke currency in E2e.
 /// </summary>
-internal sealed class ClosedShapeOperationAdapter : IStorageOperation, IDocumentStorageOperation
+internal sealed class ClosedShapeOperationAdapter : IStorageOperation, IDocumentStorageOperation,
+    IStorageOperationAdapter
 {
     private readonly Weasel.Storage.IStorageOperation _inner;
     private readonly IStorageSession _session;
@@ -26,6 +27,8 @@ internal sealed class ClosedShapeOperationAdapter : IStorageOperation, IDocument
         Document = document;
         DocumentId = documentId;
     }
+
+    Weasel.Storage.IStorageOperation IStorageOperationAdapter.Inner => _inner;
 
     public object Document { get; }
     public object? DocumentId { get; }

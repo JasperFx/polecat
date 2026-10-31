@@ -34,7 +34,7 @@ namespace Polecat.Events.Projections;
 ///         exactly the same set of dead rows after teardown.
 ///     </para>
 /// </remarks>
-internal class NaturalKeyRetireOperation : Polecat.Internal.IStorageOperation
+internal class NaturalKeyRetireOperation : Polecat.Internal.IStorageOperation, Weasel.Storage.NoDataReturnedCall
 {
     private readonly string _tableName;
     private readonly object _currentNaturalKeyValue;

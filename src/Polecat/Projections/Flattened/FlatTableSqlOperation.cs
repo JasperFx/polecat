@@ -10,7 +10,7 @@ namespace Polecat.Projections.Flattened;
 /// <summary>
 ///     A storage operation that executes a flat table MERGE or DELETE statement.
 /// </summary>
-internal class FlatTableSqlOperation : Polecat.Internal.IStorageOperation
+internal class FlatTableSqlOperation : Polecat.Internal.IStorageOperation, Weasel.Storage.NoDataReturnedCall
 {
     private readonly string _sql;
     private readonly IEvent _source;

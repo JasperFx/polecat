@@ -11,7 +11,7 @@ namespace Polecat.Internal.Operations;
 ///     when conjoined). #273 doc-side convergence — the SQL prefix + tenancy come from the shared
 ///     closed-shape storage, not from <c>DocumentMapping</c>.
 /// </summary>
-internal class UnDeleteByIdOperation : IStorageOperation
+internal class UnDeleteByIdOperation : IStorageOperation, Weasel.Storage.NoDataReturnedCall
 {
     private readonly IOperationFragment _undeleteFragment;
     private readonly bool _conjoined;

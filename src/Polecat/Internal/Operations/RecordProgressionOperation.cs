@@ -10,7 +10,7 @@ namespace Polecat.Internal.Operations;
 ///     UPDATE (Floor > 0, so the row is already there), and extended tracking adds the heartbeat
 ///     column. The SET clause is shared by both shapes.
 /// </summary>
-internal class RecordProgressionOperation : IStorageOperation
+internal class RecordProgressionOperation : IStorageOperation, Weasel.Storage.NoDataReturnedCall
 {
     private readonly string _progressionTableName;
     private readonly string _name;
