@@ -17,8 +17,58 @@ namespace Polecat.Events.Daemon;
 ///     the high water mark in pc_event_progression.
 ///     All SQL execution is wrapped with Polly resilience.
 /// </summary>
+/// <remarks>
+///     <para>
+///         <b>#833: every read of pc_events here names its own locking, on purpose.</b> With no hint the
+///         detector's behaviour was decided by a database setting. <c>READ_COMMITTED_SNAPSHOT</c> off made
+///         the read block on an uncommitted row, which is what the design was silently relying on. On, which
+///         is the Azure SQL Database default, an in-flight append was simply a hole, and a hole directly above
+///         the mark was invisible, so the mark stepped over it and the event was never projected.
+///     </para>
+///     <para>
+///         <see cref="CommittedRows" /> and <see cref="PhysicalRows" /> together answer the question the old
+///         read could not: is a hole dead, or is an append still filling it? See
+///         <see cref="findSkipTargetAsync" />.
+///     </para>
+/// </remarks>
 internal class PolecatHighWaterDetector : IHighWaterDetector
 {
+    /// <summary>
+    ///     #833: committed rows only, never waiting for a writer, on every database setting.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         <b>Why not <c>READCOMMITTEDLOCK</c> alone</b>, which would restore the blocking the design
+    ///         relied on. It is the simplest correct read, but it waits behind every open append for as long
+    ///         as that append stays open, on either database setting. A cycle stuck in that wait does not
+    ///         re-stamp the mark's liveness (#705), and at the command timeout it throws, out of
+    ///         <c>CheckNowAsync</c> and so out of <c>CatchUpAsync</c>. <c>READPAST</c> gets the same
+    ///         independence from the database setting without any of that: a locked row is left out, so it
+    ///         reads as a hole, which holds the mark instead of stopping the detector.
+    ///     </para>
+    ///     <para>
+    ///         <c>READCOMMITTEDLOCK</c> stays beside <c>READPAST</c> because Microsoft documents the pair as
+    ///         the form to use under <c>READ_COMMITTED_SNAPSHOT</c>, and a read this load-bearing should say
+    ///         outright that it is a locking read. <c>ROWLOCK</c> because a scan that takes page locks would
+    ///         skip a whole page for one locked row; that only delays the mark, but there is no reason to pay
+    ///         it. Measured on SQL Server 2025: the same rows with <c>READ_COMMITTED_SNAPSHOT</c> on and off, and
+    ///         under optimized locking, where the writer holds only its transaction lock and no row lock.
+    ///     </para>
+    ///     <para>
+    ///         What <c>READPAST</c> cannot step past is a TABLE lock. Polecat's own appends write one
+    ///         single-row INSERT per event, which stays well under the escalation threshold, but a foreign
+    ///         bulk load holding <c>TABLOCK</c> would block this read until the command timeout.
+    ///     </para>
+    /// </remarks>
+    private const string CommittedRows = "WITH (READCOMMITTEDLOCK, READPAST, ROWLOCK)";
+
+    /// <summary>
+    ///     #833: every row physically present, committed or not. Only ever compared with
+    ///     <see cref="CommittedRows" /> to find an append in flight, and never the source of a mark: a mark
+    ///     read from here could pass an append that then rolls back. See <see cref="findSkipTargetAsync" />.
+    /// </summary>
+    private const string PhysicalRows = "WITH (READUNCOMMITTED)";
+
     private readonly EventGraph _events;
     private readonly string _connectionString;
     private readonly DaemonSettings _daemonSettings;
@@ -81,20 +131,27 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
     // same reason it never trusts last_updated for it: on a store nobody was polling, that column is
     // arbitrarily old, and a gap that has only just opened would be skipped the moment a daemon starts.
     // Detector-scoped and in memory, so a restart only means one fresh threshold before a skip.
-    private sealed record HeldMark(long Mark, DateTimeOffset Since);
+    //
+    // #833: Ceiling is the highest seq_id known to exist when the mark was first seen held. Everything up
+    // to it had been handed out by then, so by the time the threshold has passed, a value at or below it
+    // with no row behind it is dead rather than merely unwritten. A skip goes no higher than this: a value
+    // allocated a moment ago can have no row YET, and that hole is not evidence of anything.
+    private sealed record HeldMark(long Mark, DateTimeOffset Since, long Ceiling);
 
     private HeldMark? _heldMark;
 
-    private TimeSpan observeHeldMark(HighWaterStatistics stats, long mark)
+    private HeldMark observeHeldMark(HighWaterStatistics stats, long mark, long lowestAbove)
     {
         var held = _heldMark;
         if (held == null || held.Mark != mark)
         {
-            held = new HeldMark(mark, stats.Timestamp);
+            // HighestSequence was read before the walk that found this gap, so it can be behind it. Without
+            // lowestAbove the ceiling could sit at the mark itself and the gap could never be skipped.
+            held = new HeldMark(mark, stats.Timestamp, Math.Max(stats.HighestSequence, lowestAbove));
             _heldMark = held;
         }
 
-        return stats.Timestamp - held.Since;
+        return held;
     }
 
     public async Task<HighWaterStatistics> Detect(CancellationToken token)
@@ -112,21 +169,9 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
             return stats;
         }
 
-        var (gapSeqId, _, maxSeqId) = await DetectGapAsync(stats.CurrentMark + 1, token);
-
-        if (gapSeqId.HasValue)
-        {
-            // The gap starts AFTER gapSeqId, so everything up to gapSeqId is contiguous. Start (or
-            // continue) the gap's clock here too, so that by the time the agent has waited out its own
-            // StaleSequenceThreshold and calls DetectInSafeZone, the gap is already that old.
-            stats.CurrentMark = gapSeqId.Value;
-            observeHeldMark(stats, gapSeqId.Value);
-        }
-        else if (maxSeqId.HasValue)
-        {
-            stats.CurrentMark = maxSeqId.Value;
-            _heldMark = null;
-        }
+        // Starts (or continues) the clock of any gap it stops at, so that by the time the agent has waited
+        // out its own StaleSequenceThreshold and calls DetectInSafeZone, the gap is already that old.
+        await advanceToGapAsync(stats, token);
 
         // #705 / jasperfx#924 — UNCONDITIONAL, where this used to be `if (stats.HasChanged)`.
         // ShardState.LastUpdated is liveness, not progress: a monitor has to be able to tell "caught
@@ -158,39 +203,33 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
             return stats;
         }
 
-        var start = stats.CurrentMark + 1;
-        var (gapSeqId, minSeqId, maxSeqId) = await DetectGapAsync(start, token);
+        var held = await advanceToGapAsync(stats, token);
 
-        // Detect "leading gap": no inter-event gap, but first event in range > start
-        var hasLeadingGap = gapSeqId == null && minSeqId.HasValue && minSeqId.Value > start;
-
-        if (gapSeqId.HasValue || hasLeadingGap)
+        // #791: aged from when this detector first saw the mark held here, never from last_updated. See
+        // _heldMark.
+        if (held != null && stats.Timestamp - held.Since > _daemonSettings.StaleSequenceThreshold)
         {
-            // Check if the gap is stale enough to skip. #791: aged from when this detector first saw
-            // the mark held here, never from last_updated — see _heldMark.
-            var heldAt = gapSeqId ?? stats.CurrentMark;
-            var age = observeHeldMark(stats, heldAt);
-            if (age > _daemonSettings.StaleSequenceThreshold)
+            var target = await FindSkipTargetAsync(held.Mark, held.Ceiling, token);
+            if (target.HasValue)
             {
                 _logger.LogWarning(
-                    "Skipping stale gap starting after seq_id {HeldAt}. The high water mark has been held there for {Age}",
-                    heldAt, age);
+                    "Skipping stale gap starting after seq_id {HeldAt}. The high water mark has been held there since {Since}, with no append in flight below {Target}",
+                    held.Mark, held.Since, target.Value);
 
-                // Move past the gap to the max available
-                stats.CurrentMark = maxSeqId ?? stats.CurrentMark;
+                stats.CurrentMark = target.Value;
                 stats.IncludesSkipping = true;
-                _heldMark = null;
             }
-            else if (gapSeqId.HasValue)
+            else
             {
-                // The gap starts AFTER gapSeqId, so everything up to gapSeqId is contiguous
-                stats.CurrentMark = gapSeqId.Value;
+                // #833: not stuck, waiting. This is the state the read used to block in with
+                // READ_COMMITTED_SNAPSHOT off; HighWaterAgent's stall watchdog warns if it goes on.
+                _logger.LogInformation(
+                    "The high water mark is held after seq_id {HeldAt} by an append that is still in flight",
+                    held.Mark);
             }
-            // If only a leading gap exists and it's not stale, don't advance
-        }
-        else if (maxSeqId.HasValue)
-        {
-            stats.CurrentMark = maxSeqId.Value;
+
+            // Either way this observation is finished with, so the next one takes a fresh ceiling and the
+            // check above runs once per threshold rather than on every cycle of a long-held mark.
             _heldMark = null;
         }
 
@@ -219,7 +258,7 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
 
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = $"""
-                SELECT ISNULL(MAX(seq_id), 0) FROM {events.EventsTableName};
+                SELECT ISNULL(MAX(seq_id), 0) FROM {events.EventsTableName} {CommittedRows};
                 SELECT last_seq_id, last_updated FROM {events.ProgressionTableName}
                     WHERE name = 'HighWaterMark';
                 """;
@@ -249,55 +288,179 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
         }, (_connectionString, _events), token);
     }
 
-    internal async Task<(long? GapSeqId, long? MinSeqId, long? MaxSeqId)> DetectGapAsync(long start,
+    /// <summary>
+    ///     Move <paramref name="stats" /> as far as it can go without crossing a hole, and report the gap
+    ///     that stopped it, if one did.
+    /// </summary>
+    /// <remarks>
+    ///     <b>A leading gap is checked first, and it is the case that lost events (#833).</b> The walk compares
+    ///     each row with the next, so a hole directly above the mark has no row below it to be compared with,
+    ///     and the rows above it look contiguous. It used to fall through to <c>MAX(seq_id)</c>. Marten fixed the
+    ///     same shape as marten#4964, with <c>HoldBeforeLeadingGap</c>.
+    /// </remarks>
+    private async Task<HeldMark?> advanceToGapAsync(HighWaterStatistics stats, CancellationToken token)
+    {
+        var mark = stats.CurrentMark;
+        var run = await ReadContiguousRunAsync(mark, token);
+
+        if (await hasLeadingGapAsync(stats, run, token))
+        {
+            return observeHeldMark(stats, mark, run.First!.Value);
+        }
+
+        if (run.Next.HasValue)
+        {
+            // The gap starts AFTER run.End, so everything up to it is contiguous.
+            stats.CurrentMark = run.End!.Value;
+            return observeHeldMark(stats, run.End.Value, run.Next.Value);
+        }
+
+        if (run.End.HasValue)
+        {
+            stats.CurrentMark = run.End.Value;
+        }
+
+        _heldMark = null;
+        return null;
+    }
+
+    /// <summary>
+    ///     Is there a hole between the mark and the lowest committed row above it?
+    /// </summary>
+    /// <remarks>
+    ///     A store with no mark yet has no floor to protect. Its events may simply start above 1, after a failed
+    ///     first append or once the table has been emptied, because IDENTITY is not reset by either. The hole
+    ///     only counts there if an append is actually in it, which is what keeps the very first appends on a
+    ///     new store safe. Same rule, and same reasoning, as <see cref="advancePerTenantMarkAsync" />.
+    /// </remarks>
+    private async Task<bool> hasLeadingGapAsync(HighWaterStatistics stats, ContiguousRun run,
         CancellationToken token)
+    {
+        if (run.First is not { } first || first <= stats.CurrentMark + 1) return false;
+
+        return stats.LastMark > 0 || await FindSkipTargetAsync(stats.CurrentMark, first, token) != first;
+    }
+
+    /// <summary>
+    ///     The first contiguous run of committed rows matching <paramref name="predicate" />: where it starts
+    ///     (<see cref="ContiguousRun.First" />), where it ends (<see cref="ContiguousRun.End" />), and the
+    ///     next committed row after it, if a hole follows (<see cref="ContiguousRun.Next" />).
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         <b>One scan, not one statement.</b> This replaces three separate readings (first gap, MIN,
+    ///         MAX) which could disagree. A single statement is a single snapshot only on row versions; with
+    ///         <see cref="CommittedRows" /> each table reference in a statement is a separate walk of the
+    ///         table at a separate moment. Then a walk that finished at 5 and a <c>MAX</c> that ran after it
+    ///         and saw 9 would move the mark to 9 over whatever is in flight at 6. All three values here come
+    ///         from the same rows of the same scan, so they cannot disagree, and the mark never moves on the
+    ///         strength of a height.
+    ///     </para>
+    ///     <para>
+    ///         <c>TOP (1)</c> rather than an aggregate because it stops at the first hole. A held mark can
+    ///         have a long way above it. Measured on 300,000 rows with a gap near the mark: 397 logical reads
+    ///         against 26,407 for the same three values as <c>MIN</c>/<c>MAX</c>.
+    ///     </para>
+    /// </remarks>
+    private static string contiguousRunSql(EventGraph events, string predicate) => $"""
+        SELECT TOP (1) r.first_seq, r.seq_id AS run_end, r.next_seq
+        FROM (
+            SELECT e.seq_id,
+                MIN(e.seq_id) OVER (ORDER BY e.seq_id ROWS UNBOUNDED PRECEDING) AS first_seq,
+                LEAD(e.seq_id) OVER (ORDER BY e.seq_id) AS next_seq
+            FROM {events.EventsTableName} e {CommittedRows}
+            WHERE {predicate}
+        ) r
+        WHERE r.next_seq IS NULL OR r.next_seq - r.seq_id > 1
+        ORDER BY r.seq_id
+        """;
+
+    internal async Task<ContiguousRun> ReadContiguousRunAsync(long mark, CancellationToken token)
     {
         return await _resilience.ExecuteAsync(static async (state, ct) =>
         {
-            var (connectionString, events, startSeq) = state;
+            var (connectionString, events, markValue) = state;
             await using var conn = new SqlConnection(connectionString);
             await conn.OpenAsync(ct);
 
             await using var cmd = conn.CreateCommand();
-            cmd.CommandText = $"""
-                SELECT TOP 1 seq_id FROM (
-                    SELECT seq_id, LEAD(seq_id) OVER (ORDER BY seq_id) AS next_seq
-                    FROM {events.EventsTableName} WHERE seq_id >= @start
-                ) ct WHERE next_seq IS NOT NULL AND next_seq - seq_id > 1;
-
-                SELECT MIN(seq_id) FROM {events.EventsTableName} WHERE seq_id >= @start;
-
-                SELECT MAX(seq_id) FROM {events.EventsTableName} WHERE seq_id >= @start;
-                """;
-
-            cmd.Parameters.AddWithValue("@start", startSeq);
-
-            long? gapSeqId = null;
-            long? minSeqId = null;
-            long? maxSeqId = null;
+            cmd.CommandText = contiguousRunSql(events, "e.seq_id > @mark") + ";";
+            cmd.Parameters.AddWithValue("@mark", markValue);
 
             await using var reader = await cmd.ExecuteReaderAsync(ct);
+            if (!await reader.ReadAsync(ct)) return default;
 
-            // First result: gap detection between consecutive events
-            if (await reader.ReadAsync(ct) && !reader.IsDBNull(0))
-            {
-                gapSeqId = reader.GetInt64(0);
-            }
+            return new ContiguousRun(reader.GetInt64(0), reader.GetInt64(1),
+                reader.IsDBNull(2) ? null : reader.GetInt64(2));
+        }, (_connectionString, _events, mark), token);
+    }
 
-            // Second result: min seq_id in range
-            if (await reader.NextResultAsync(ct) && await reader.ReadAsync(ct) && !reader.IsDBNull(0))
-            {
-                minSeqId = reader.GetInt64(0);
-            }
+    internal async Task<long?> FindSkipTargetAsync(long mark, long ceiling, CancellationToken token)
+    {
+        return await _resilience.ExecuteAsync(static async (state, ct) =>
+        {
+            var (connectionString, events, markValue, ceilingValue) = state;
+            await using var conn = new SqlConnection(connectionString);
+            await conn.OpenAsync(ct);
 
-            // Third result: max seq_id in range
-            if (await reader.NextResultAsync(ct) && await reader.ReadAsync(ct) && !reader.IsDBNull(0))
-            {
-                maxSeqId = reader.GetInt64(0);
-            }
+            return await findSkipTargetAsync(conn, events, null, markValue, ceilingValue, ct);
+        }, (_connectionString, _events, mark, ceiling), token);
+    }
 
-            return (gapSeqId, minSeqId, maxSeqId);
-        }, (_connectionString, _events, start), token);
+    /// <summary>
+    ///     #833: how far the mark may safely skip from <paramref name="mark" />. The highest committed seq_id no
+    ///     higher than <paramref name="ceiling" /> and below every append still in flight, or null if there
+    ///     is none, which means the mark has to stay where it is.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         <b>This is what makes skipping safe.</b> Holding at a gap is the easy half; a gap left by a rollback
+    ///         is permanent here, because IDENTITY and sequence values are burned and Polecat writes no
+    ///         tombstones, so the mark has to get past it. But a hole that is merely old is not necessarily
+    ///         dead, and the default threshold is only three seconds: long enough for a large
+    ///         <c>SaveChangesAsync</c> or a transaction the application holds open. Age alone would hand exactly
+    ///         the same data loss back, three seconds later.
+    ///     </para>
+    ///     <para>
+    ///         An append in flight is a row that <see cref="PhysicalRows" /> can see and
+    ///         <see cref="CommittedRows" /> cannot. Its row exists from the moment its INSERT runs, inside
+    ///         the statement that allocates the seq_id, so the only hole this cannot see into is a value
+    ///         allocated and not yet inserted. The ceiling closes that for the store-global mark. A row can
+    ///         also read as in flight because a transaction is updating or deleting it (archiving, masking,
+    ///         compaction), which holds the mark a little longer and is harmless.
+    ///     </para>
+    ///     <para>
+    ///         Deliberately not one scan, unlike <see cref="contiguousRunSql" />, and it does not need to be: the
+    ///         two views can only disagree about a row that changed state between them, and each direction of
+    ///         that is safe. A row committed in between reads as committed; a row rolled back reads as gone.
+    ///     </para>
+    /// </remarks>
+    private static async Task<long?> findSkipTargetAsync(SqlConnection conn, EventGraph events, int? ordinal,
+        long mark, long ceiling, CancellationToken ct)
+    {
+        string inScope(string alias) =>
+            ordinal == null ? "" : $" AND {alias}.{events.TenantPartitionManager.Column} = @ordinal";
+
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"""
+            SELECT MAX(c.seq_id)
+            FROM {events.EventsTableName} c {CommittedRows}
+            WHERE c.seq_id > @mark AND c.seq_id <= @ceiling{inScope("c")}
+              AND c.seq_id < ISNULL((
+                  SELECT MIN(p.seq_id)
+                  FROM {events.EventsTableName} p {PhysicalRows}
+                  WHERE p.seq_id > @mark AND p.seq_id <= @ceiling{inScope("p")}
+                    AND NOT EXISTS (
+                        SELECT 1 FROM {events.EventsTableName} r {CommittedRows}
+                        WHERE r.seq_id = p.seq_id{inScope("r")})
+              ), 9223372036854775807);
+            """;
+        cmd.Parameters.AddWithValue("@mark", mark);
+        cmd.Parameters.AddWithValue("@ceiling", ceiling);
+        if (ordinal != null) cmd.Parameters.AddWithValue("@ordinal", ordinal.Value);
+
+        var result = await cmd.ExecuteScalarAsync(ct);
+        return result is long target ? target : null;
     }
 
     internal async Task MarkHighWaterAsync(long mark, CancellationToken token)
@@ -445,12 +608,12 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
     }
 
     /// <summary>
-    ///     One round-trip vectorized per-tenant high-water read. For each requested tenant it resolves
-    ///     the tenant's partition ordinal, then reads from <c>pc_events</c> itself:
-    ///     the committed height (<c>MAX(seq_id)</c> within that tenant's partition), the first
-    ///     contiguity gap above the persisted mark, and the lowest committed seq_id above it — plus the
-    ///     persisted <c>HighWaterMark:{tenant}</c> row. LEFT JOINs keep a row per input tenant even
-    ///     before its partition or progression row exists.
+    ///     One round-trip vectorized per-tenant high-water read, plus one more per tenant that is held at a
+    ///     gap and has gone stale. For each requested tenant it resolves the tenant's partition ordinal,
+    ///     then reads from <c>pc_events</c> itself: the committed height (<c>MAX(seq_id)</c> within that
+    ///     tenant's partition) and the first contiguous run above the persisted mark — plus the persisted
+    ///     <c>HighWaterMark:{tenant}</c> row. LEFT JOINs keep a row per input tenant even before its
+    ///     partition or progression row exists.
     /// </summary>
     /// <remarks>
     ///     <para>
@@ -471,6 +634,11 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
     ///         never projected; and once a persisted row exists, a reader that seeded the mark from it
     ///         and stopped would freeze at that value forever (marten#4867). The walk is predicated on
     ///         <c>seq_id &gt; mark</c>, so a caught-up tenant touches no rows.
+    ///     </para>
+    ///     <para>
+    ///         <b>#833: the height and the walk are two scans, so the height moves no mark.</b> Under
+    ///         <see cref="CommittedRows" /> they run at different moments and may disagree, so the mark comes
+    ///         from the walk alone. See <see cref="contiguousRunSql" />.
     ///     </para>
     ///     <para>
     ///         Both APPLYs key on <c>tenant_ordinal</c> rather than <c>tenant_id</c>: it is the physical
@@ -504,8 +672,10 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
                     ISNULL(prog.last_seq_id, 0) AS last_seq_id,
                     prog.last_updated,
                     ISNULL(hi.max_seq_id, 0)    AS max_seq_id,
-                    lo.min_above,
-                    walk.gap_edge
+                    p.ordinal,
+                    run.first_seq,
+                    run.run_end,
+                    run.next_seq
                 FROM inputs i
                 LEFT JOIN {events.TenantPartitionsTableName} p
                     ON p.tenant_id = i.tenant_id
@@ -513,53 +683,51 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
                     ON prog.name = @prefix + i.tenant_id
                 OUTER APPLY (
                     SELECT MAX(e.seq_id) AS max_seq_id
-                    FROM {events.EventsTableName} e
+                    FROM {events.EventsTableName} e {CommittedRows}
                     WHERE e.{ordinal} = p.ordinal
                 ) hi
                 OUTER APPLY (
-                    SELECT TOP 1 e.seq_id AS min_above
-                    FROM {events.EventsTableName} e
-                    WHERE e.{ordinal} = p.ordinal AND e.seq_id > ISNULL(prog.last_seq_id, 0)
-                    ORDER BY e.seq_id
-                ) lo
-                OUTER APPLY (
-                    SELECT TOP 1 g.seq_id AS gap_edge
-                    FROM (
-                        SELECT e.seq_id, LEAD(e.seq_id) OVER (ORDER BY e.seq_id) AS next_seq
-                        FROM {events.EventsTableName} e
-                        WHERE e.{ordinal} = p.ordinal AND e.seq_id > ISNULL(prog.last_seq_id, 0)
-                    ) g
-                    WHERE g.next_seq IS NOT NULL AND g.next_seq - g.seq_id > 1
-                    ORDER BY g.seq_id
-                ) walk;
+                    {contiguousRunSql(events, $"e.{ordinal} = p.ordinal AND e.seq_id > ISNULL(prog.last_seq_id, 0)")}
+                ) run;
                 """;
             cmd.Parameters.AddWithValue("@tenants", tenantsJson);
             cmd.Parameters.AddVarChar("@prefix", PerTenantHighWaterPrefix);
 
-            var results = new List<HighWaterStatistics>();
-            await using var reader = await cmd.ExecuteReaderAsync(ct);
-            while (await reader.ReadAsync(ct))
+            var readings = new List<(HighWaterStatistics Stats, ContiguousRun Run, int? Partition)>();
+            await using (var reader = await cmd.ExecuteReaderAsync(ct))
             {
-                var tenantId = reader.GetString(0);
-                var lastSeqId = reader.GetInt64(1);
-                DateTimeOffset? lastUpdated = reader.IsDBNull(2) ? null : reader.GetDateTimeOffset(2);
-                var maxSeqId = reader.GetInt64(3);
-                long? minAbove = reader.IsDBNull(4) ? null : reader.GetInt64(4);
-                long? gapEdge = reader.IsDBNull(5) ? null : reader.GetInt64(5);
-
-                var stats = new HighWaterStatistics
+                while (await reader.ReadAsync(ct))
                 {
-                    TenantId = tenantId,
-                    HighestSequence = maxSeqId,
-                    LastMark = lastSeqId,
-                    SafeStartMark = lastSeqId,
-                    CurrentMark = lastSeqId,
-                    LastUpdated = lastUpdated,
-                    Timestamp = DateTimeOffset.UtcNow
-                };
+                    var tenantId = reader.GetString(0);
+                    var lastSeqId = reader.GetInt64(1);
+                    DateTimeOffset? lastUpdated = reader.IsDBNull(2) ? null : reader.GetDateTimeOffset(2);
+                    var maxSeqId = reader.GetInt64(3);
+                    int? partition = reader.IsDBNull(4) ? null : reader.GetInt32(4);
+                    long? first = reader.IsDBNull(5) ? null : reader.GetInt64(5);
+                    long? end = reader.IsDBNull(6) ? null : reader.GetInt64(6);
+                    long? next = reader.IsDBNull(7) ? null : reader.GetInt64(7);
 
-                AdvancePerTenantMark(stats, minAbove, gapEdge, staleThreshold, logger);
+                    var stats = new HighWaterStatistics
+                    {
+                        TenantId = tenantId,
+                        HighestSequence = maxSeqId,
+                        LastMark = lastSeqId,
+                        SafeStartMark = lastSeqId,
+                        CurrentMark = lastSeqId,
+                        LastUpdated = lastUpdated,
+                        Timestamp = DateTimeOffset.UtcNow
+                    };
 
+                    readings.Add((stats, new ContiguousRun(first, end, next), partition));
+                }
+            }
+
+            // After the reader is closed: a connection string need not enable MARS, and a tenant held at a gap
+            // has to go back to the database on this same connection.
+            var results = new List<HighWaterStatistics>(readings.Count);
+            foreach (var (stats, run, partition) in readings)
+            {
+                await advancePerTenantMarkAsync(conn, events, stats, run, partition, staleThreshold, logger, ct);
                 results.Add(stats);
             }
 
@@ -584,16 +752,29 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
     ///         "never advances" for a subtler permanent stall, which is not a fix.
     ///     </para>
     ///     <para>
-    ///         <b>A tenant with no persisted mark cannot have a leading gap.</b> Before the first mark
-    ///         is written there is no floor to protect, so committed events starting above seq_id 1 —
-    ///         which is simply where that tenant's numbering began, or what a failed first append left
-    ///         behind — are not a hole to wait on. Treating them as one strands such a tenant at zero
+    ///         <b>A tenant with no persisted mark has a leading gap only if an append is in it.</b> Before
+    ///         the first mark is written there is no floor to protect, so committed events starting above
+    ///         seq_id 1 — which is simply where that tenant's numbering began, or what a failed first append
+    ///         left behind — are not a hole to wait on. Treating them as one strands such a tenant at zero
     ///         permanently, because staleness is measured from <c>last_updated</c> and a tenant that has
     ///         never persisted a mark has no <c>last_updated</c> to age.
     ///     </para>
+    ///     <para>
+    ///         <b>#833: staleness is not enough to skip, and here it means less than it looks.</b>
+    ///         <c>last_updated</c> is stamped only when a tenant's mark advances, so this "age" is the time
+    ///         since the tenant last moved, not the age of the gap. A tenant idle for longer than the threshold
+    ///         reads as stale on its first sight of a brand new gap. The store-global path stopped trusting that
+    ///         column for this in #791, and the same change is wanted here, but
+    ///         <c>a_gap_that_never_fills_is_skipped_once_the_tenant_goes_stale</c> pins the first-sight skip.
+    ///         So <see cref="findSkipTargetAsync" /> is what protects a tenant: a stale reading skips only what
+    ///         no in-flight row is in the way of. Unlike the store-global mark there is no observed ceiling to
+    ///         bound it, so what is left is a value allocated and not yet inserted, the instant between the
+    ///         allocation and the row, on the first poll that sees an idle tenant move.
+    ///     </para>
     /// </remarks>
-    private static void AdvancePerTenantMark(HighWaterStatistics stats, long? minAbove, long? gapEdge,
-        TimeSpan staleThreshold, ILogger logger)
+    private static async Task advancePerTenantMarkAsync(SqlConnection conn, EventGraph events,
+        HighWaterStatistics stats, ContiguousRun run, int? partition, TimeSpan staleThreshold, ILogger logger,
+        CancellationToken ct)
     {
         // Caught up: the persisted mark already equals the committed height.
         if (stats.CurrentMark == stats.HighestSequence)
@@ -601,39 +782,50 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
             return;
         }
 
-        var start = stats.CurrentMark + 1;
-        var hasPersistedMark = stats.LastMark > 0;
+        // A leading gap is "nothing committed at mark + 1, but something committed above it" — an append in
+        // flight, or one that rolled back, at the bottom of the range. Relative to a mark we actually
+        // persisted that is always a hole; see the remarks for one we did not.
+        var mark = stats.CurrentMark;
+        var hasLeadingGap = run.First is { } first && first > mark + 1 &&
+                            (stats.LastMark > 0 ||
+                             await findSkipTargetAsync(conn, events, partition, mark, first, ct) != first);
 
-        // A leading gap is "nothing committed at `start`, but something committed above it" — an append
-        // in flight, or one that rolled back, at the bottom of the range. It only means anything
-        // relative to a mark we actually persisted; see the remarks.
-        var hasLeadingGap = hasPersistedMark && gapEdge == null && minAbove.HasValue && minAbove.Value > start;
-
-        if (gapEdge.HasValue || hasLeadingGap)
+        if (!hasLeadingGap && run.Next == null)
         {
-            if (stats.TryGetStaleAge(out var timeSinceUpdate) && timeSinceUpdate > staleThreshold)
-            {
-                logger.LogWarning(
-                    "Tenant {TenantId}: skipping stale gap starting after seq_id {CurrentMark}. Its high water was last updated {TimeSinceUpdate} ago",
-                    stats.TenantId, stats.CurrentMark, timeSinceUpdate);
-
-                stats.CurrentMark = stats.HighestSequence;
-                stats.IncludesSkipping = true;
-                return;
-            }
-
-            if (gapEdge.HasValue)
-            {
-                // The gap opens AFTER gapEdge, so everything up to gapEdge is contiguous.
-                stats.CurrentMark = gapEdge.Value;
-            }
-
-            // A leading gap that is not yet stale: hold and let the append land.
+            // Nothing above the mark, but a mark above the height follows it down: a tenant removed and added
+            // back restarts its sequence below its old row. The height is never what moves a mark UP.
+            stats.CurrentMark = run.End ?? Math.Min(mark, stats.HighestSequence);
             return;
         }
 
-        stats.CurrentMark = stats.HighestSequence;
+        // The gap opens AFTER run.End, so everything up to it is contiguous. A leading gap stays at the mark.
+        var heldAt = hasLeadingGap ? mark : run.End!.Value;
+        stats.CurrentMark = heldAt;
+
+        if (stats.TryGetStaleAge(out var timeSinceUpdate) && timeSinceUpdate > staleThreshold)
+        {
+            var above = hasLeadingGap ? run.First!.Value : run.Next!.Value;
+            var target = await findSkipTargetAsync(conn, events, partition, heldAt,
+                Math.Max(stats.HighestSequence, above), ct);
+
+            if (target.HasValue)
+            {
+                logger.LogWarning(
+                    "Tenant {TenantId}: skipping stale gap starting after seq_id {HeldAt}, with no append in flight below {Target}. Its high water was last updated {TimeSinceUpdate} ago",
+                    stats.TenantId, heldAt, target.Value, timeSinceUpdate);
+
+                stats.CurrentMark = target.Value;
+                stats.IncludesSkipping = true;
+            }
+            else
+            {
+                logger.LogInformation(
+                    "Tenant {TenantId}: the high water mark is held after seq_id {HeldAt} by an append that is still in flight",
+                    stats.TenantId, heldAt);
+            }
+        }
     }
+
     // ── #786 / jasperfx#1031: operator-driven advance to the committed ceiling ──────────────
 
     /// <summary>
@@ -797,3 +989,12 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
             reader.GetInt64(1), reader.GetInt64(2), reader.GetInt64(3));
     }
 }
+
+/// <summary>
+///     #833: what one scan of the committed rows above a mark found. See
+///     <see cref="PolecatHighWaterDetector" />'s <c>contiguousRunSql</c>.
+/// </summary>
+/// <param name="First">The lowest committed seq_id above the mark, or null if there is none.</param>
+/// <param name="End">The last seq_id of the contiguous run that starts at <paramref name="First" />.</param>
+/// <param name="Next">The next committed seq_id after a hole, or null if the run reaches the height.</param>
+internal readonly record struct ContiguousRun(long? First, long? End, long? Next);

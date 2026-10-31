@@ -106,7 +106,7 @@ public class high_water_detector_tests : IntegrationContext
         while (stats.CurrentMark < seqIds.Last() && stopwatch.Elapsed < TimeSpan.FromSeconds(10))
         {
             // What HighWaterAgent.CheckNowAsync does: DetectInSafeZone on every pass, each of which
-            // re-stamps the row. (Not Detect: it jumps a leading gap outright, which would hide this.)
+            // re-stamps the row. (Not Detect: it never crosses a gap, which is the safe zone's job. #833.)
             await Task.Delay(TimeSpan.FromMilliseconds(200), TestContext.Current.CancellationToken);
             stats = await detector.DetectInSafeZone(CancellationToken.None);
         }
