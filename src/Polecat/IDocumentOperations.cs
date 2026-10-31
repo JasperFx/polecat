@@ -141,7 +141,8 @@ public interface IDocumentOperations : IQuerySession, IDocumentWriteOperations
     ///     operations by what each operation declares, a queued statement is declared as returning
     ///     none, and Polecat cannot see inside the text — so rows from a <c>SELECT</c>, an
     ///     <c>OUTPUT</c> clause or a procedure would be read by the next versioned write in the same
-    ///     batch as its own.
+    ///     batch as its own. <c>SaveChangesAsync</c> therefore throws and rolls back when such a
+    ///     statement shares a batch with a document write.
     /// </remarks>
     void QueueSqlCommand(string sql, params object[] parameterValues);
 }

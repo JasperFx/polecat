@@ -634,6 +634,61 @@ public class mixed_batch_result_set_alignment_tests(mixed_batch_store fixture) :
         (await query.LoadAsync<Bystander>(plain.Id, Ct)).ShouldBeNull();
     }
 
+    // #831: nothing can see inside a queued statement, so rows it returns push every later write onto
+    // the wrong result set. The stale write below would read "1" as its own row and report success.
+    [Fact]
+    public async Task a_queued_select_ahead_of_a_stale_write_fails_loudly_and_commits_nothing()
+    {
+        var doc = await SeedVersionedAsync();
+
+        await using var stale = theStore.LightweightSession();
+        var staleCopy = (await stale.LoadAsync<VersionedDoc>(doc.Id, Ct)).ShouldNotBeNull();
+
+        await using (var winner = theStore.LightweightSession())
+        {
+            var fresh = (await winner.LoadAsync<VersionedDoc>(doc.Id, Ct)).ShouldNotBeNull();
+            fresh.Name = "winner";
+            winner.Store(fresh);
+            await winner.SaveChangesAsync(Ct);
+        }
+
+        var plain = new Bystander { Id = Guid.NewGuid(), Name = "stored" };
+        staleCopy.Name = "stale";
+        stale.QueueSqlCommand("SELECT 1");
+        stale.Store(staleCopy);
+        stale.Store(plain);
+
+        var ex = await Should.ThrowAsync<Exception>(() => stale.SaveChangesAsync(Ct));
+        ex.ShouldNotBeOfType<SqlException>();
+
+        await using var query = theStore.QuerySession();
+        (await query.LoadAsync<VersionedDoc>(doc.Id, Ct)).ShouldNotBeNull().Name.ShouldBe("winner");
+        (await query.LoadAsync<Bystander>(plain.Id, Ct)).ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task a_queued_select_with_a_document_write_names_the_statement_that_caused_it()
+    {
+        var plain = new Bystander { Id = Guid.NewGuid(), Name = "stored" };
+
+        await using var session = theStore.LightweightSession();
+        session.QueueSqlCommand("SELECT 1");
+        session.Store(plain);
+
+        var ex = await Should.ThrowAsync<InvalidOperationException>(() => session.SaveChangesAsync(Ct));
+        ex.Message.ShouldContain(nameof(IDocumentOperations.QueueSqlCommand));
+    }
+
+    [Fact]
+    public async Task a_queued_select_with_nothing_reading_a_result_set_is_harmless()
+    {
+        await using var session = theStore.LightweightSession();
+        session.QueueSqlCommand("SELECT 1");
+        session.Delete<Bystander>(Guid.NewGuid());
+
+        await session.SaveChangesAsync(Ct);
+    }
+
     public class Bystander
     {
         public Guid Id { get; set; }

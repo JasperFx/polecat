@@ -52,6 +52,7 @@ internal static class OperationResultSets
     {
         // The reader opens on the first result set in the batch, wherever in the batch that is.
         var onOwnResultSet = true;
+        var anOperationOwnsAResultSet = false;
 
         for (var i = 0; i < operations.Count; i++)
         {
@@ -65,6 +66,7 @@ internal static class OperationResultSets
 
             await operation.PostprocessAsync(reader, exceptions, token).ConfigureAwait(false);
             onOwnResultSet = false;
+            anOperationOwnsAResultSet = true;
         }
 
         // #273 E2b: drain the reader past every remaining result set. SQL Server surfaces a
@@ -72,8 +74,24 @@ internal static class OperationResultSets
         // that command. The walk above stops ON the last result set any operation owns, so without
         // this a failed command at or behind that point would sit unconsumed, be swallowed by
         // DisposeAsync, and the transaction would commit around it.
+        var surplusResultSets = 0;
         while (await reader.NextResultAsync(token).ConfigureAwait(false))
         {
+            surplusResultSets++;
+        }
+
+        // A set nobody declared came from a statement queued with QueueSqlCommand, which is what
+        // pushes every later write onto the wrong set. A stale write then reads somebody else's row
+        // and reports success, so this has to be loud, and it throws inside the transaction so the
+        // batch rolls back. Only after the drain, because a SQL error in the batch is the better
+        // answer. A batch where no operation reads a result set has nothing to misread, so it passes.
+        if (anOperationOwnsAResultSet && surplusResultSets > 0)
+        {
+            throw new InvalidOperationException(
+                $"This batch returned {surplusResultSets} more result set(s) than its operations declare, so a "
+                + "concurrency check may have read another statement's rows. A statement queued with "
+                + "QueueSqlCommand must not return a result set: remove its SELECT or OUTPUT clause, or run it "
+                + "outside the session.");
         }
     }
 }
