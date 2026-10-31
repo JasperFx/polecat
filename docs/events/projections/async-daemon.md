@@ -196,6 +196,14 @@ The high water mark detector uses SQL Server's `LEAD()` window function to detec
 
 A gap left by an append that rolled back never fills. The detector holds the mark below it until the gap has been held for longer than `DaemonSettings.StaleSequenceThreshold`, then skips it. That age is measured from when the running detector first saw the mark held there, so a daemon restart waits one fresh threshold.
 
+### Open Transactions and READ_COMMITTED_SNAPSHOT
+
+An append that is still in flight holds the mark as well, and `StaleSequenceThreshold` does not release it. Only a gap with nothing in it is skipped, so an event is not lost however long its transaction stays open. The cost is that a transaction that appends events and then stays open holds back every async projection and subscription on that database until it commits or rolls back, so keep those transactions short. `HighWaterAgent` logs a warning if the mark sits still for longer than `DaemonSettings.HighWaterProgressStallThreshold` with committed events above it.
+
+The detector behaves the same on every database setting, including `READ_COMMITTED_SNAPSHOT`, which is on by default in Azure SQL Database, and optimized locking. It says how to read `pc_events` in its own queries rather than taking that from the database, and it never waits for an open transaction, so detection keeps running while the mark is held.
+
+To release a mark held by a transaction you do not expect to finish, use `AdvanceHighWaterMarkToLatestAsync` below. Any event still in flight below the new mark will not be read by the daemon if its transaction commits later.
+
 ### Advancing the High Water Mark Manually
 
 To move the mark straight to the highest committed event sequence, for example to jump-start a daemon that is held behind a gap, or to retrofit async projections onto a large existing event store:

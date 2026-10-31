@@ -55,8 +55,10 @@ public class catch_up_passes_a_stale_gap_tests : OneOffConfigurationsContext
 
         // Deliberately not StartAllAsync first. CatchUpAsync stops every agent before it runs
         // CheckNowAsync, so the only detection left is the DetectInSafeZone loop. A running agent's own
-        // Detect() steps over a gap it finds just above the mark without waiting, which is what made the
-        // hang intermittent: it only showed when the agent had not got there first.
+        // Detect() used to step over a gap it found just above the mark without waiting, which is what made
+        // the hang intermittent: it only showed when the agent had not got there first. It holds there now
+        // (#833), so a leading gap takes this same route; catch_up_passes_a_rolled_back_append_above_the_mark
+        // pins that one.
         using var daemon = await theStore.BuildProjectionDaemonAsync();
 
         // The default StaleSequenceThreshold is 3s. Before #791 this took CheckNowAsync's full five
