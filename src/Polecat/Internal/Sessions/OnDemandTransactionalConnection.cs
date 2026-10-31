@@ -1,6 +1,7 @@
 using System.Data;
 using System.Data.Common;
 using Microsoft.Data.SqlClient;
+using Polly;
 
 namespace Polecat.Internal.Sessions;
 
@@ -44,11 +45,15 @@ internal sealed class OnDemandTransactionalConnection : IAlwaysConnectedLifetime
     private readonly TransactionalConnection _pinned;
     private readonly AutoClosingLifetime _pooled;
 
-    public OnDemandTransactionalConnection(ConnectionFactory connectionFactory, int commandTimeout)
+    public OnDemandTransactionalConnection(ConnectionFactory connectionFactory, int commandTimeout,
+        IsolationLevel isolationLevel, ResiliencePipeline resilience)
     {
-        _pinned = new TransactionalConnection(connectionFactory, commandTimeout);
+        _pinned = new TransactionalConnection(connectionFactory, commandTimeout, isolationLevel, resilience);
         _pooled = new AutoClosingLifetime(connectionFactory, commandTimeout);
         CommandTimeout = commandTimeout;
+
+        // A session that holds a transaction has none of the unpinned commands this type exists for.
+        _isPinned = _pinned.HoldsTransactionForSession;
     }
 
     public int CommandTimeout { get; }
@@ -77,17 +82,17 @@ internal sealed class OnDemandTransactionalConnection : IAlwaysConnectedLifetime
         }
     }
 
+    public bool HoldsTransactionForSession => _pinned.HoldsTransactionForSession;
+
     public async ValueTask BeginTransactionAsync(CancellationToken token)
     {
         _isPinned = true;
         await _pinned.BeginTransactionAsync(token);
     }
 
-    public async ValueTask BeginTransactionAsync(IsolationLevel isolationLevel, CancellationToken token)
-    {
-        _isPinned = true;
-        await _pinned.BeginTransactionAsync(isolationLevel, token);
-    }
+    public void AssertTransactionIsUsable() => _pinned.AssertTransactionIsUsable();
+
+    public void MarkSessionUnusable(Exception cause) => _pinned.MarkSessionUnusable(cause);
 
     public Task<int> ExecuteAsync(SqlCommand command, CancellationToken token)
         => _isPinned ? _pinned.ExecuteAsync(command, token) : _pooled.ExecuteAsync(command, token);

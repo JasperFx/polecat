@@ -60,6 +60,21 @@ public class SessionOptions
     /// <summary>
     ///     Override the transaction isolation level for this session.
     /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         Honoured by every document session, however it is opened, for every transaction it
+    ///         begins (#844). At anything but <see cref="IsolationLevel.ReadCommitted" /> the session
+    ///         also runs its reads inside a transaction, because that is what makes <c>Snapshot</c> and
+    ///         <c>Serializable</c> mean anything: each commit ends one and the next command begins the
+    ///         next, so a read and the save that follows it are one transaction. Dispose such a session
+    ///         promptly, since it holds that transaction open between commands.
+    ///     </para>
+    ///     <para>
+    ///         ⚠️ A <b>query</b> session never opens a transaction, whatever this says: each read takes
+    ///         its own connection and runs in autocommit at <c>ReadCommitted</c>. For reads that share
+    ///         a snapshot, use a document session at the level you want.
+    ///     </para>
+    /// </remarks>
     public IsolationLevel IsolationLevel { get; set; } = IsolationLevel.ReadCommitted;
 
     /// <summary>

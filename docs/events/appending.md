@@ -103,6 +103,13 @@ opts.OnException<JasperFx.Events.StreamLockedException>()
 The message is re-handled from the top, so the exclusive read happens again against the state the
 winning transaction left behind.
 
+**After a deadlock, the session that lost it is finished.** Its transaction was rolled back and its
+locks went with it, including any earlier stream it had locked, and the decisions you made under those
+locks no longer hold. Anything further on that session throws `SessionTransactionUnusableException`
+and writes nothing, so open a new one. A lock timeout is different: only the failed statement is
+aborted, the transaction and its other locks survive, and the session can carry on. See
+[When SQL Server ends the transaction](/configuration/retries#when-sql-server-ends-the-transaction).
+
 ## Enforcing Consistency Without Appending Events
 
 In some command handling scenarios, your business logic may evaluate the current aggregate state and decide that no new events need to be emitted. By default, if no events are appended to the stream returned by `FetchForWriting()`, Polecat will not perform any concurrency check when `SaveChangesAsync()` is called. This means that if another process has modified the stream between your fetch and save, you won't know about it.

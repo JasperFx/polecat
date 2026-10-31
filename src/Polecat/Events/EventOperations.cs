@@ -688,11 +688,18 @@ internal class EventOperations : QueryEventStore, IEventOperations
     ///     promise nor anything a Wolverine <c>OnException&lt;StreamLockedException&gt;</c> policy can
     ///     match. Walking the chain covers both shapes: the direct throw, and a wrapper added by a
     ///     caller-supplied resilience pipeline.
+    ///     <para>
+    ///         #832: the walk stops at <see cref="Exceptions.SessionTransactionUnusableException" />.
+    ///         Its inner exception can be the deadlock that ended the session, but it says this session
+    ///         is finished, not that a stream is locked and worth trying again on the same session.
+    ///     </para>
     /// </remarks>
     private static SqlException? FindLockFailure(Exception e)
     {
         for (var current = e; current != null; current = current.InnerException)
         {
+            if (current is Exceptions.SessionTransactionUnusableException) return null;
+
             if (current is SqlException { Number: 1222 or 1205 } sql)
             {
                 return sql;
