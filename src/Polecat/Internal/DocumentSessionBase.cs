@@ -903,23 +903,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
                 {
                     var exceptions = new List<Exception>();
                     await using var reader = await ExecuteReaderAsync(batch, token);
-                    for (var i = 0; i < operations.Count; i++)
-                    {
-                        await operations[i].PostprocessAsync(reader, exceptions, token);
-                        if (i < operations.Count - 1)
-                        {
-                            await reader.NextResultAsync(token);
-                        }
-                    }
-
-                    // #273 E2b: drain the reader past every remaining result set. SQL Server
-                    // surfaces a per-command batch error (unique index 2601, FK 547, ...) only
-                    // when the reader ADVANCES into that command's result set — and the shared
-                    // unversioned upsert is deliberately fire-and-forget, so without draining
-                    // the error would sit unconsumed and be swallowed by DisposeAsync.
-                    while (await reader.NextResultAsync(token))
-                    {
-                    }
+                    await Operations.OperationResultSets.ApplyAsync(reader, operations, exceptions, token);
 
                     if (exceptions.Count == 1)
                     {
@@ -1538,18 +1522,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         try
         {
             await using var reader = await ExecuteReaderAsync(batch, token);
-            for (var i = 0; i < operations.Count; i++)
-            {
-                await operations[i].PostprocessAsync(reader, exceptions, token);
-                if (i < operations.Count - 1)
-                {
-                    await reader.NextResultAsync(token);
-                }
-            }
-
-            while (await reader.NextResultAsync(token))
-            {
-            }
+            await Operations.OperationResultSets.ApplyAsync(reader, operations, exceptions, token);
         }
         catch (SqlException ex)
         {

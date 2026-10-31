@@ -6,7 +6,7 @@ using Weasel.SqlServer;
 
 namespace Polecat.Events.Protected;
 
-internal class ReplaceEventOperation : Polecat.Internal.IStorageOperation
+internal class ReplaceEventOperation : Polecat.Internal.IStorageOperation, Weasel.Storage.NoDataReturnedCall
 {
     private readonly EventGraph _events;
     private readonly long _sequence;

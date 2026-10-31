@@ -16,7 +16,7 @@ namespace Polecat.Patching;
     Justification = "Class-level: serializes patch values via ISerializer.ToJson when building the JSON_MODIFY() command. Document types are preserved at registration; AOT consumers supply a source-generator-backed ISerializer impl per the AOT publishing guide.")]
 [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
     Justification = "Class-level: ISerializer.ToJson is annotated RDC for the same reason as IL2026 above. AOT consumers supply a source-generator-backed ISerializer impl.")]
-internal class PatchOperation : Polecat.Internal.IStorageOperation
+internal class PatchOperation : Polecat.Internal.IStorageOperation, Weasel.Storage.NoDataReturnedCall
 {
     private readonly DocumentMapping _mapping;
     private readonly List<Action<ICommandBuilder>> _actions;

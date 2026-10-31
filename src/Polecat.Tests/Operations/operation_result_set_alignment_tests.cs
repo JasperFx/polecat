@@ -11,39 +11,43 @@ using Weasel.Storage;
 namespace Polecat.Tests.Operations;
 
 /// <summary>
-///     polecat#442, the marten#5210 class. Marten's batch executor <em>skips</em>
-///     <c>NextResultAsync()</c> for operations marked <see cref="NoDataReturnedCall" />; when such an
-///     operation's SQL actually returned a result set the reader silently misaligned and every
-///     subsequent operation in the batch read the wrong one — a failure that surfaces far from its cause.
+///     polecat#442 (the marten#5210 class) and #831. These pin the facts
+///     <c>OperationResultSets.ApplyAsync</c>, the one walk over a batch's result sets, is built on.
 ///     <para>
-///         Polecat's reader loops (<c>DocumentSessionBase.SaveChangesAsync</c> and
-///         <c>PolecatProjectionBatch</c>) do <b>not</b> branch on the marker — they call
-///         <c>NextResultAsync</c> once per operation, unconditionally — so Marten's exact mechanism
-///         cannot occur here. What holds the batches together instead is a pair of invariants that are
-///         just as easy to break silently, and this class pins both.
+///         <b>A batch does not hold one result set per operation.</b> SQL Server's batch reader surfaces
+///         only <em>real</em> result sets. A pure-DML command contributes none at all, however many
+///         statements it holds (<c>TombstoneStreamOperation</c>'s two DELETEs are still zero), and the
+///         reader moves straight past it. Every document write contributes exactly one, through its
+///         <c>OUTPUT</c> or the full-text variant's trailing <c>SELECT</c>, even when a guard refused the
+///         write and the set is empty. Measured for pure DML below, and for every operation shape in
+///         <c>operation_result_set_census_tests</c>.
 ///     </para>
 ///     <para>
-///         <b>Invariant A: an operation in the document batch contributes ZERO result sets.</b>
-///         Contrary to what the unconditional <c>NextResultAsync</c> loop suggests, SQL Server's batch
-///         reader surfaces only <em>real</em> result sets — a pure-DML command contributes none at all,
-///         however many statements it holds (<c>TombstoneStreamOperation</c>'s two DELETEs are still
-///         zero). Every <c>NextResultAsync</c> in that loop therefore returns <c>false</c> harmlessly.
-///         The moment one operation's SQL returns rows, it supplies a result set that the loop then
-///         steps <em>past</em> on behalf of the next operation, and reads land on the wrong set: exactly
-///         the marten#5210 shape, arrived at from the other direction. Measured per operation below.
+///         <b>So the walk is driven by a declaration, and the declaration has to be true.</b> An
+///         operation marked <see cref="NoDataReturnedCall" /> gets no turn; every other operation owns
+///         one result set. That makes Marten's exact mechanism possible here too: if a marked
+///         operation's SQL returned rows, every operation behind it would read the wrong set, which
+///         is a failure that surfaces far from its cause. This class holds the marker to the SQL.
 ///     </para>
 ///     <para>
-///         <b>Invariant B: the operations that actually read in <c>PostprocessAsync</c> never share a
-///         batch with ones that do not.</b> There are two —
-///         <c>PolecatQuickAppendEventsOperation</c> (reading back <c>IEvent.Sequence</c>) and
-///         <c>AssertDcbConsistencyOperation</c> — and both run in their own batch:
-///         <c>SaveChangesAsync</c> executes the DCB assertions first, then
+///         This remark used to say the opposite. It claimed that "an operation in the document batch
+///         contributes ZERO result sets" and that the operations which read in
+///         <c>PostprocessAsync</c> never shared a batch with ones that did not, which was the
+///         justification for calling <c>NextResultAsync</c> once per operation. Neither was true of the
+///         operations that matter: a versioned upsert reads in <c>PostprocessAsync</c> and sits in the
+///         document batch beside everything else, and in the async daemon's batch the event appends do
+///         too. That is what #831 was.
+///     </para>
+///     <para>
+///         What does hold is narrower: a <em>session</em> runs its event appends in their own batch.
+///         <c>SaveChangesAsync</c> executes the DCB boundary phase, then
 ///         <c>ProcessStreamsClosedShapeAsync</c>, and only then the document operations. Pinned
 ///         end-to-end below by a session that writes documents and appends events together.
 ///     </para>
 ///     <para>
 ///         A reflection sweep makes a newly added <see cref="NoDataReturnedCall" /> type fail this class
-///         until someone audits its SQL.
+///         until someone audits its SQL. <c>operation_result_set_census_tests</c> has the sweep for the
+///         opposite mistake, an operation that returns nothing and was not marked.
 ///     </para>
 /// </summary>
 public class operation_result_set_alignment_tests : IAsyncLifetime
@@ -102,9 +106,9 @@ public class operation_result_set_alignment_tests : IAsyncLifetime
     };
 
     /// <summary>
-    ///     Invariant A, measured. One operation, then a sentinel command: count how many result sets the
-    ///     reader walks through before reaching the sentinel. That count IS the number the operation
-    ///     contributed, and for a pure-DML operation it has to be zero.
+    ///     The zero half of the declaration, measured. One operation, then a sentinel command: count how
+    ///     many result sets the reader walks through before reaching the sentinel. That count IS the
+    ///     number the operation contributed, and for a pure-DML operation it has to be zero.
     /// </summary>
     [Theory]
     [MemberData(nameof(Operations))]
@@ -147,11 +151,8 @@ public class operation_result_set_alignment_tests : IAsyncLifetime
     }
 
     /// <summary>
-    ///     Invariant B, end-to-end. Documents and events written by the SAME session must both land, and
-    ///     the appended events must come back carrying their assigned sequences. That only holds while
-    ///     <c>PolecatQuickAppendEventsOperation</c> — the one document-path operation that reads a result
-    ///     set — runs in its own batch rather than sharing the document batch, where the unconditional
-    ///     <c>NextResultAsync</c> of every preceding non-returning operation would step past its rows.
+    ///     A session's appends run in their own batch. Documents and events written by the SAME session
+    ///     must both land, and the appended events must come back carrying their assigned sequences.
     /// </summary>
     [Fact]
     public async Task events_and_documents_in_one_session_do_not_share_a_reader()
@@ -161,8 +162,8 @@ public class operation_result_set_alignment_tests : IAsyncLifetime
 
         await using (var session = _store.LightweightSession())
         {
-            // Queued FIRST, so that if the two batches were ever merged these non-returning operations
-            // would sit ahead of the append and consume its result set on its behalf.
+            // Queued FIRST, ahead of the append, so that this also holds if the two batches are ever
+            // merged: the walk has to keep the append's result set apart from these upserts' sets.
             session.Store(new AlignmentDoc { Id = docId, Name = "first" });
             session.Store(new AlignmentDoc { Id = Guid.NewGuid(), Name = "second" });
             session.Delete<AlignmentDoc>(Guid.NewGuid());
@@ -198,7 +199,30 @@ public class operation_result_set_alignment_tests : IAsyncLifetime
 
             // A change-set projection of a deletion that already happened. It is never configured into
             // a command -- it exists only so IChangeSet can report what was deleted.
-            "Polecat.Services.ChangeSet+Deletion"
+            "Polecat.Services.ChangeSet+Deletion",
+
+            // #831. Every one of these is plain DML with no OUTPUT clause and no trailing SELECT, and
+            // operation_result_set_census_tests measures each against a sentinel.
+            "Polecat.Events.Operations.AssignTagWhereOperation",
+            "Polecat.Events.Projections.NaturalKeyArchiveOperation",
+            "Polecat.Events.Projections.NaturalKeyRetireOperation",
+            "Polecat.Events.Projections.NaturalKeyUpsertOperation",
+            "Polecat.Events.Protected.DeleteEventsOperation",
+            "Polecat.Events.Protected.OverwriteEventOperation",
+            "Polecat.Events.Protected.ReplaceEventOperation",
+            "Polecat.Events.Protected.SetCompactedVersionOperation",
+            "Polecat.Internal.Operations.DeleteWhereOperation",
+            "Polecat.Internal.Operations.RecordProgressionOperation",
+            "Polecat.Internal.Operations.SetStreamArchivedOperation",
+            "Polecat.Internal.Operations.TombstoneStreamOperation",
+            "Polecat.Internal.Operations.UnDeleteByIdOperation",
+            "Polecat.Internal.Operations.UndoDeleteWhereOperation",
+            "Polecat.Patching.PatchOperation",
+            "Polecat.Projections.Flattened.FlatTableSqlOperation",
+
+            // Declared as returning nothing because QueueSqlCommand's contract says so. This is the one
+            // entry that rests on the caller rather than on SQL we can read: see IDocumentOperations.
+            "Polecat.Internal.Operations.ExecuteSqlStorageOperation"
         };
 
         var discovered = typeof(DocumentStore).Assembly

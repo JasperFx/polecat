@@ -9,7 +9,7 @@ namespace Polecat.Internal.Operations;
 ///     Flips <c>is_archived</c> on a stream and all of its events. Archive and un-archive differ only
 ///     in the flag value, so both ride this one operation (polecat#318).
 /// </summary>
-internal class SetStreamArchivedOperation : IStorageOperation
+internal class SetStreamArchivedOperation : IStorageOperation, Weasel.Storage.NoDataReturnedCall
 {
     private readonly EventGraph _events;
     private readonly object _streamId;

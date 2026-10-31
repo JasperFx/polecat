@@ -136,5 +136,12 @@ public interface IDocumentOperations : IQuerySession, IDocumentWriteOperations
     ///     Registers a SQL command to be executed with the underlying unit of work as part of the batched command.
     ///     The '?' character is used as a placeholder for positional parameters.
     /// </summary>
+    /// <remarks>
+    ///     The statement must not return a result set. A batch's result sets are matched to its
+    ///     operations by what each operation declares, a queued statement is declared as returning
+    ///     none, and Polecat cannot see inside the text — so rows from a <c>SELECT</c>, an
+    ///     <c>OUTPUT</c> clause or a procedure would be read by the next versioned write in the same
+    ///     batch as its own.
+    /// </remarks>
     void QueueSqlCommand(string sql, params object[] parameterValues);
 }

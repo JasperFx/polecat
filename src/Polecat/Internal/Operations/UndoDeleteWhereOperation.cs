@@ -12,7 +12,7 @@ namespace Polecat.Internal.Operations;
 ///     matching the tenant + LINQ predicate. #273 doc-side convergence — the SQL prefix + tenancy
 ///     come from the shared closed-shape storage, not from <c>DocumentMapping</c>.
 /// </summary>
-internal class UndoDeleteWhereOperation : IStorageOperation
+internal class UndoDeleteWhereOperation : IStorageOperation, Weasel.Storage.NoDataReturnedCall
 {
     private readonly IOperationFragment _undeleteFragment;
     private readonly bool _conjoined;
