@@ -18,11 +18,12 @@ internal static class StreamCompactingExecution
     /// <summary>
     ///     Drive the compaction against a Polecat <see cref="DocumentSessionBase"/>:
     ///     fetch the events to be replaced, build a <see cref="Compacted{T}"/>
-    ///     snapshot via the aggregator, optionally invoke the archiver (if the
-    ///     request's <see cref="StreamCompactingRequest{T}.Archiver"/> closes the
-    ///     generic over Polecat's <see cref="IDocumentOperations"/>), then write the
-    ///     replacement event and delete the originals through the session's work
-    ///     tracker.
+    ///     snapshot via the aggregator, invoke the request's
+    ///     <see cref="StreamCompactingRequest{T}.Archiver"/> if there is one, then write
+    ///     the replacement event and delete the originals through the session's work
+    ///     tracker. A stream that folds to no aggregate is left alone, and an archiver
+    ///     Polecat cannot call refuses the compaction, because either way the events
+    ///     cannot be got back afterward.
     /// </summary>
     internal static async Task ExecuteAsync<T>(this StreamCompactingRequest<T> request, DocumentSessionBase session)
         where T : class
@@ -56,6 +57,12 @@ internal static class StreamCompactingExecution
         var aggregate = await aggregator.BuildAsync(events, session, default, request.CancellationToken)
             .ConfigureAwait(false);
 
+        // A stream deleted by its own aggregate (ShouldDelete), at this cutoff if the request set one.
+        // There is no state to snapshot, so going on would swap the whole history for a Compacted<T>
+        // holding null. The stream is left as it is, the archiver included, because it has not been told
+        // about anything that is going to happen.
+        if (aggregate is null) return;
+
         // 4. Optional archiving. The lifted IEventsArchiver marker is non-generic
         //    so the data class doesn't have to flow a TOperations parameter; the
         //    product downcasts to the closed-generic at execution time.
@@ -67,7 +74,8 @@ internal static class StreamCompactingExecution
         //    the type any JasperFx-generic caller -- the compliance suites included -- will hand
         //    us, while hand-written Polecat archivers have historically used IDocumentOperations.
         //    Matching only one of the two made the other silently skip archiving and then delete
-        //    the events anyway, which is the exact opposite of what this hook is for.
+        //    the events anyway, which is the exact opposite of what this hook is for, so anything
+        //    that matches neither is refused rather than skipped.
         if (request.Archiver is IEventsArchiver<IDocumentSession> sessionArchiver)
         {
             await sessionArchiver.MaybeArchiveAsync(session, request, events, request.CancellationToken)
@@ -78,9 +86,14 @@ internal static class StreamCompactingExecution
             await archiver.MaybeArchiveAsync(session, request, events, request.CancellationToken)
                 .ConfigureAwait(false);
         }
+        else if (request.Archiver is not null)
+        {
+            throw new InvalidOperationException(
+                $"{request.Archiver.GetType().FullName} cannot archive these events, because Polecat can only call an archiver closed over {typeof(IDocumentSession).FullName} or {typeof(IDocumentOperations).FullName}. Nothing was compacted.");
+        }
 
         // 5. Replace the last event with the Compacted<T> snapshot
-        var compacted = new Compacted<T>(aggregate!,
+        var compacted = new Compacted<T>(aggregate,
             request.StreamId ?? Guid.Empty, request.StreamKey ?? string.Empty);
 
         var graph = session.Options.EventGraph;
