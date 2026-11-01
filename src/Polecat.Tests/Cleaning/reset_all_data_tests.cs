@@ -1,5 +1,8 @@
 using JasperFx;
+using JasperFx.Events;
+using JasperFx.Events.Tags;
 using Polecat.Linq;
+using Polecat.Tests.Events;
 using Polecat.Tests.Harness;
 using Shouldly;
 
@@ -86,6 +89,41 @@ public class reset_all_data_tests
         // DeleteAllEventData clears the events.
         await store.Advanced.Clean.DeleteAllEventDataAsync(TestContext.Current.CancellationToken);
         (await store.Advanced.FetchEventStoreStatistics(TestContext.Current.CancellationToken)).EventCount.ShouldBe(0);
+    }
+
+    /// <summary>
+    ///     #865: <c>pc_dcb_tag_version</c> holds tag values as text and has no foreign key for a delete of
+    ///     the events to cascade through, so a clean that finds its tables by name has to name it.
+    /// </summary>
+    [Fact]
+    public async Task clean_all_event_data_takes_the_dcb_tag_versions()
+    {
+        const string schema = "reset_tag_versions";
+        using var store = DocumentStore.For(opts =>
+        {
+            opts.Connection(ConnectionSource.ConnectionString);
+            opts.DatabaseSchemaName = schema;
+            opts.AutoCreateSchemaObjects = AutoCreate.All;
+            opts.UseNativeJsonType = ConnectionSource.SupportsNativeJson;
+            opts.Events.AddEventType<StudentEnrolled>();
+            opts.Events.RegisterTagType<CourseId>("reset_course").ForAggregate<StudentCourseEnrollment>();
+        });
+        await store.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
+
+        await using (var session = store.LightweightSession())
+        {
+            var enrolled = session.Events.BuildEvent(new StudentEnrolled("Alice", "Math"));
+            enrolled.WithTag(new CourseId(Guid.NewGuid()));
+            session.Events.Append(Guid.NewGuid(), enrolled);
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        var countSql = $"SELECT COUNT(*) FROM [{schema}].[pc_dcb_tag_version]";
+        ((int)(await TestSchema.QueryAsync(countSql)).Single()[0]).ShouldBeGreaterThan(0);
+
+        await store.Advanced.CleanAllEventDataAsync(TestContext.Current.CancellationToken);
+
+        ((int)(await TestSchema.QueryAsync(countSql)).Single()[0]).ShouldBe(0);
     }
 
     [Fact]

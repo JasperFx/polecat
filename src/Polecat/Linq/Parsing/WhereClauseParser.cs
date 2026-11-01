@@ -42,18 +42,24 @@ internal class WhereClauseParser
         _additionalParsers = additionalParsers;
     }
 
-    public ISqlFragment Parse(Expression expression)
+    public ISqlFragment Parse(Expression expression) => ParsePredicate(ClrOnlyMembers.Normalize(expression));
+
+    private ISqlFragment ParsePredicate(Expression expression)
     {
+        // #840: no document in it, so it is decided here and SQL only hears the answer.
+        // !captured.HasValue || x.Age != captured was refused, and captured == null too.
+        if (TryEvaluate(expression, out var known))
+        {
+            return known ? new WhereFragment("1=1") : new WhereFragment("1=0");
+        }
+
         return expression switch
         {
             BinaryExpression binary => ParseBinary(binary),
             UnaryExpression { NodeType: ExpressionType.Not } unary => ParseNot(unary),
-            UnaryExpression { NodeType: ExpressionType.Convert } unary => Parse(unary.Operand),
+            UnaryExpression { NodeType: ExpressionType.Convert } unary => ParsePredicate(unary.Operand),
             MethodCallExpression methodCall => ParseMethodCall(methodCall),
             MemberExpression member when IsBooleanMember(member) => ParseBooleanMember(member, true),
-            ConstantExpression { Value: bool boolValue } => boolValue
-                ? new WhereFragment("1=1")
-                : new WhereFragment("1=0"),
             _ => throw new BadLinqExpressionException(
                 $"Polecat cannot translate '{expression}' to a SQL WHERE clause ({expression.NodeType}, "
                 + $"{expression.GetType().Name}). A predicate is built from member comparisons "
@@ -87,12 +93,14 @@ internal class WhereClauseParser
 
     private ISqlFragment ParseBinary(BinaryExpression binary)
     {
+        if (TryShortCircuit(binary) is { } reduced) return ParsePredicate(reduced);
+
         // Logical operators: AND, OR
         if (binary.NodeType == ExpressionType.AndAlso)
-            return new CompoundWhereFragment("AND", Parse(binary.Left), Parse(binary.Right));
+            return new CompoundWhereFragment("AND", ParsePredicate(binary.Left), ParsePredicate(binary.Right));
 
         if (binary.NodeType == ExpressionType.OrElse)
-            return new CompoundWhereFragment("OR", Parse(binary.Left), Parse(binary.Right));
+            return new CompoundWhereFragment("OR", ParsePredicate(binary.Left), ParsePredicate(binary.Right));
 
         // Comparison operators: ==, !=, <, >, <=, >=
         if (Operators.TryGetValue(binary.NodeType, out var op))
@@ -136,17 +144,6 @@ internal class WhereClauseParser
         if (TryParseMethodTransform(binary.Right, binary.Left, ReverseOperator(op), out transformFragment))
         {
             return transformFragment!;
-        }
-
-        // Handle string.Length: x.Name.Length == 5
-        if (TryParseMemberProperty(binary.Left, binary.Right, op, out var memberPropFragment))
-        {
-            return memberPropFragment!;
-        }
-
-        if (TryParseMemberProperty(binary.Right, binary.Left, ReverseOperator(op), out memberPropFragment))
-        {
-            return memberPropFragment!;
         }
 
         // Try to resolve: left=member, right=value
@@ -196,23 +193,6 @@ internal class WhereClauseParser
             fragment = new ComparisonFilter(funcLocator.FullLocator, op, value);
         }
 
-        return true;
-    }
-
-    private bool TryParseMemberProperty(Expression memberSide, Expression valueSide, string op,
-        out ISqlFragment? fragment)
-    {
-        fragment = null;
-
-        var unwrapped = StripConvert(memberSide);
-        if (unwrapped is not MemberExpression { Member.Name: "Length" } lengthExpr) return false;
-        if (lengthExpr.Expression is not MemberExpression innerMember) return false;
-        if (!IsDocumentMember(innerMember)) return false;
-        if (innerMember.Type != typeof(string)) return false;
-
-        var member = _memberFactory.ResolveMember(innerMember);
-        var value = ExtractValue(valueSide);
-        fragment = new FunctionComparisonFilter("LEN", member.RawLocator, op, value!);
         return true;
     }
 
@@ -294,6 +274,12 @@ internal class WhereClauseParser
 
     private ISqlFragment BuildComparisonFilter(IQueryableMember member, object? value, string op)
     {
+        // x.N.HasValue == false is IS NULL, like !x.N.HasValue, rather than a comparison over a CASE.
+        if (member is HasValueMember hasValue && value is bool expected)
+        {
+            return hasValue.Is(op == "=" ? expected : !expected);
+        }
+
         // Handle null comparisons
         if (value == null)
         {
@@ -320,7 +306,7 @@ internal class WhereClauseParser
         _negations++;
         try
         {
-            return new NotFragment(Parse(operand));
+            return new NotFragment(ParsePredicate(operand));
         }
         finally
         {
@@ -330,17 +316,14 @@ internal class WhereClauseParser
 
     private ISqlFragment ParseBooleanMember(MemberExpression memberExpr, bool expectedValue)
     {
+        var resolvedMember = _memberFactory.ResolveMember(memberExpr);
+
         // Handle Nullable<T>.HasValue → IS NULL / IS NOT NULL
-        if (memberExpr.Member.Name == "HasValue" && memberExpr.Expression is MemberExpression nullableExpr
-            && Nullable.GetUnderlyingType(nullableExpr.Type) != null)
+        if (resolvedMember is HasValueMember hasValue)
         {
-            var member = _memberFactory.ResolveMember(nullableExpr);
-            return expectedValue
-                ? new WhereFragment($"{member.RawLocator} IS NOT NULL")
-                : new WhereFragment($"{member.RawLocator} IS NULL");
+            return hasValue.Is(expectedValue);
         }
 
-        var resolvedMember = _memberFactory.ResolveMember(memberExpr);
         var value = resolvedMember.ConvertValue(expectedValue);
         return new ComparisonFilter(resolvedMember.TypedLocator, "=", value!);
     }
@@ -371,8 +354,10 @@ internal class WhereClauseParser
         if (expression is ConstantExpression constant)
             return constant.Value;
 
-        // Closure variable: field on a captured closure object
-        if (expression is MemberExpression { Expression: ConstantExpression closureObj } memberExpr)
+        // Closure variable: field on a captured closure object. A Nullable<T> constant is left to the
+        // compiled path: it boxes to null or to a bare T, and neither is a target for its own getters.
+        if (expression is MemberExpression { Expression: ConstantExpression closureObj } memberExpr
+            && Nullable.GetUnderlyingType(closureObj.Type) == null)
         {
             return memberExpr.Member switch
             {
@@ -396,7 +381,64 @@ internal class WhereClauseParser
     {
         var lambda = Expression.Lambda(expression);
         var compiled = lambda.Compile();
-        return compiled.DynamicInvoke();
+
+        try
+        {
+            return compiled.DynamicInvoke();
+        }
+        catch (TargetInvocationException e) when (e.InnerException != null)
+        {
+            // An empty captured Nullable's .Value is the usual one.
+            throw new BadLinqExpressionException(
+                $"Polecat could not evaluate '{expression}' while translating the query: "
+                + e.InnerException.Message, e.InnerException);
+        }
+    }
+
+    /// <summary>
+    ///     The value of a boolean expression with no query parameter in it, which can be worked out now
+    ///     rather than translated. <c>captured.HasValue</c> is the usual one.
+    /// </summary>
+    internal static bool TryEvaluate(Expression expression, out bool value)
+    {
+        value = false;
+
+        if (expression.Type != typeof(bool) || ParameterFinder.ReferencesParameter(expression)) return false;
+
+        value = (bool)ExtractValue(expression)!;
+        return true;
+    }
+
+    /// <summary>
+    ///     What is left of <c>left &amp;&amp; right</c> or <c>left || right</c> when <c>left</c> can be
+    ///     evaluated now, or null when it cannot. The right side of a decided operator is not touched:
+    ///     in <c>!captured.HasValue || x.Age != captured.Value</c> it cannot even be evaluated when the
+    ///     left side has already answered, which is the reason the guard was written.
+    /// </summary>
+    internal static Expression? TryShortCircuit(BinaryExpression binary)
+    {
+        if (binary.NodeType is not (ExpressionType.AndAlso or ExpressionType.OrElse)) return null;
+        if (!TryEvaluate(binary.Left, out var left)) return null;
+
+        return left == (binary.NodeType == ExpressionType.AndAlso) ? binary.Right : Expression.Constant(left);
+    }
+
+    private sealed class ParameterFinder : ExpressionVisitor
+    {
+        private bool _found;
+
+        public static bool ReferencesParameter(Expression expression)
+        {
+            var finder = new ParameterFinder();
+            finder.Visit(expression);
+            return finder._found;
+        }
+
+        protected override Expression VisitParameter(ParameterExpression node)
+        {
+            _found = true;
+            return node;
+        }
     }
 
     private static bool IsDocumentMember(MemberExpression expression)

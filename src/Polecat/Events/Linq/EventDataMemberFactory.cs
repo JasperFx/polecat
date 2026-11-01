@@ -4,6 +4,7 @@ using System.Text.Json;
 using Polecat.Internal;
 using Polecat.Linq.Members;
 using Polecat.Serialization;
+using Polecat.Storage;
 using Weasel.Core;
 
 namespace Polecat.Events.Linq;
@@ -35,9 +36,9 @@ internal class EventDataMemberFactory : IMemberResolver
 
     public IQueryableMember ResolveMember(MemberExpression expression)
     {
-        var jsonPath = BuildJsonPath(expression);
-        var memberType = GetMemberType(expression.Member);
-        return CreateMember(jsonPath, memberType);
+        // #840: the same rule as MemberFactory, because an event body is JSON too.
+        return ClrOnlyMembers.TryTranslate(expression, ResolveMember)
+               ?? CreateMember(BuildJsonPath(expression), GetMemberType(expression.Member));
     }
 
     private IQueryableMember CreateMember(string jsonPath, Type memberType)
@@ -68,22 +69,7 @@ internal class EventDataMemberFactory : IMemberResolver
     }
 
     private string BuildJsonPath(MemberExpression expression)
-    {
-        var segments = new List<string>();
-        var current = expression;
-
-        while (current != null)
-        {
-            segments.Insert(0, GetJsonPropertyName(current.Member.Name));
-
-            if (current.Expression is ParameterExpression)
-                break;
-
-            current = current.Expression as MemberExpression;
-        }
-
-        return "$." + string.Join(".", segments);
-    }
+        => "$." + string.Join(".", ClrOnlyMembers.JsonKeys(expression).Select(x => GetJsonPropertyName(x.Name)));
 
     private string GetJsonPropertyName(string clrPropertyName)
     {
@@ -102,17 +88,5 @@ internal class EventDataMemberFactory : IMemberResolver
         };
     }
 
-    private static string? GetSqlType(Type type)
-    {
-        if (type == typeof(int)) return "int";
-        if (type == typeof(long)) return "bigint";
-        if (type == typeof(short)) return "smallint";
-        if (type == typeof(double)) return "float";
-        if (type == typeof(decimal)) return "decimal(18,6)";
-        if (type == typeof(float)) return "real";
-        if (type == typeof(Guid)) return "uniqueidentifier";
-        if (type == typeof(DateTime)) return "datetime2";
-        if (type == typeof(DateTimeOffset)) return "datetimeoffset";
-        return null;
-    }
+    private static string? GetSqlType(Type type) => SqlTypeMap.For(type);
 }

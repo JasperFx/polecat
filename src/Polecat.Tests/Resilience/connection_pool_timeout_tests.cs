@@ -664,26 +664,49 @@ internal static class PoolTimeouts
     /// <summary>
     ///     Exhaust a <c>Max Pool Size=1</c> pool and hand back exactly what SqlClient raises.
     /// </summary>
+    /// <remarks>
+    ///     #889. SqlClient's pruning timer, every 30s once the process is four minutes old, retires any
+    ///     pool with a count of zero, and a new pool counts nothing until its first login has finished.
+    ///     A tick during the holder's login leaves it on a retired pool and the second open quietly
+    ///     builds another, which says nothing about exhausted pools, so that setup is thrown away.
+    ///     Failing to throw on every attempt still fails: the timer cannot land on all of them.
+    /// </remarks>
     public static async Task<InvalidOperationException> CaptureAsync(CancellationToken token,
         bool synchronousOpen = false)
     {
-        var connectionString = LimitedPool(maxPoolSize: 1);
+        const int setupAttempts = 3;
 
-        await using var holder = new SqlConnection(connectionString);
-        await holder.OpenAsync(token);
-
-        await using var second = new SqlConnection(connectionString);
-
-        return await Should.ThrowAsync<InvalidOperationException>(async () =>
+        for (var attempt = 1; ; attempt++)
         {
-            if (synchronousOpen)
+            var connectionString = LimitedPool(maxPoolSize: 1);
+
+            await using var holder = new SqlConnection(connectionString);
+            await holder.OpenAsync(token);
+
+            await using var second = new SqlConnection(connectionString);
+
+            var opened = false;
+
+            try
             {
-                second.Open();
+                return await Should.ThrowAsync<InvalidOperationException>(async () =>
+                {
+                    if (synchronousOpen)
+                    {
+                        second.Open();
+                    }
+                    else
+                    {
+                        await second.OpenAsync(token);
+                    }
+
+                    opened = true;
+                });
             }
-            else
+            catch (ShouldAssertException) when (opened && attempt < setupAttempts)
             {
-                await second.OpenAsync(token);
+                // Round again on a new pool
             }
-        });
+        }
     }
 }

@@ -89,6 +89,8 @@ outgrow the default `varchar(250)`.
 ::: warning Only predicates
 `Select(x => x.Text)`, `OrderBy`, `GroupBy` and `Distinct` over a string member still read through plain
 `JSON_VALUE`, so a value over 4000 characters reads as `NULL` there. To get one back, select the document.
+
+`x.Text.Length` reads the value in full everywhere it can, so it's right past 4000 characters in a `Where`, `Select`, `OrderBy` and in an aggregate over the whole query. On `nvarchar(max)` storage, a `GroupBy` key or an aggregate over a group reads through plain `JSON_VALUE`, so the length is `NULL` there past 4000 characters. SQL Server won't take the full read in those two places.
 :::
 
 ## Case Sensitivity

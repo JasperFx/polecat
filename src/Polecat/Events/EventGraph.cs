@@ -181,6 +181,14 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
     internal bool TagRowsCascadeWithEvents => !UseArchivedStreamPartitioning;
 
     /// <summary>
+    ///     Whether deleting a <c>pc_streams</c> row takes its natural key rows through the lookup table's
+    ///     foreign key. True everywhere except under conjoined tenancy, where the table has no foreign key
+    ///     (see <see cref="Schema.NaturalKeyTable" />) and whatever deletes a stream has to delete its
+    ///     lookup rows itself, or the key stays mapped to a stream that no longer exists (#865).
+    /// </summary>
+    internal bool NaturalKeyRowsCascadeWithStreams => TenancyStyle != TenancyStyle.Conjoined;
+
+    /// <summary>
     ///     The join between a tag row and its event. <c>seq_id</c> alone does not identify an event: under
     ///     <see cref="UseTenantPartitionedEvents" /> every tenant numbers its own events from 1, so a bare
     ///     join reads across tenants (#842). Everything that joins the two goes through this.
