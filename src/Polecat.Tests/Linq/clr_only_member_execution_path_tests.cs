@@ -393,6 +393,8 @@ public class clr_only_member_execution_path_tests : OneOffConfigurationsContext
     [Fact]
     public async Task to_json_array_with_a_projection_of_translated_members()
     {
+        Assert.SkipUnless(ConnectionSource.SupportsNativeJson, "This server has no native json type.");
+
         await using var query = await SeededAsync();
 
         var json = await query.Query<ClrOnlyPathDoc>().OrderBy(x => x.Name)
@@ -425,6 +427,8 @@ public class clr_only_member_execution_path_tests : OneOffConfigurationsContext
     [Fact]
     public async Task stream_paged_with_a_projection_of_translated_members()
     {
+        Assert.SkipUnless(ConnectionSource.SupportsNativeJson, "This server has no native json type.");
+
         await using var query = await SeededAsync();
 
         using var stream = new MemoryStream();
@@ -446,7 +450,11 @@ public class clr_only_member_execution_path_tests : OneOffConfigurationsContext
         var ex = await Should.ThrowAsync<BadLinqExpressionException>(() =>
             query.Query<ClrOnlyPathDoc>().Select(x => new { x.Created.Ticks }).ToJsonArrayAsync(Token));
 
-        ex.Message.ShouldContain("exists only in .NET");
+        // Without native json no projection can be streamed at all, which is refused before the member is read
+        if (ConnectionSource.SupportsNativeJson)
+        {
+            ex.Message.ShouldContain("exists only in .NET");
+        }
     }
 
     [Fact]
