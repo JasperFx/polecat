@@ -171,7 +171,8 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
                         .Where(t => t != typeof(object))
                         .Distinct()
                         .Select(t => _store.GetProvider(t));
-                    await tableEnsurer.EnsureTablesAsync(providers, token);
+                    // Not inside a transaction: the batch only opens one further down.
+                    await tableEnsurer.EnsureTablesAsync(providers, insideTransaction: false, token);
 
                     allOps.AddRange(workTracker.Operations);
                 }

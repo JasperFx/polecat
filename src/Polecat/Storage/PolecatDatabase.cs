@@ -1138,6 +1138,8 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
     private static string FloorTenant(string? tenantId)
         => string.IsNullOrEmpty(tenantId) ? Polecat.Events.Schema.EventProjectionFloorsTable.StoreGlobalTenant : tenantId;
 
+    private volatile bool _storageEnsured;
+
     public new async Task EnsureStorageExistsAsync(Type storageType, CancellationToken token)
     {
         // #267: honor AutoCreate.None. When the user opts out of runtime schema management
@@ -1153,7 +1155,31 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
             return;
         }
 
-        await ApplyAllConfiguredChangesToDatabaseAsync(ct: token);
+        // #868: this runs on every high water health probe and every projection rebuild as well as at
+        // daemon startup, so without this each of those would queue for the migration lock, and hold it
+        // through a full catalog comparison, to learn what this process already knows.
+        if (_storageEnsured)
+        {
+            return;
+        }
+
+        // #868: the same lock a startup migration and a session's first use take. This used to pass no
+        // lock at all, so the daemon and a session's first write met on a fresh schema and the loser
+        // failed with "There is already an object named 'fk_pc_events_stream_id' in the database".
+        // Nothing here can run inside a session's transaction: every caller is the daemon, a high water
+        // operation or a health check, and the apply opens its own connection.
+        var migrationLock = _options.BuildMigrationLock();
+        await ApplyAllConfiguredChangesToDatabaseAsync(migrationLock, ct: token);
+
+        // Not unconditionally: under ContinueOnFailures a loser returns as if nothing needed doing, and it
+        // has not looked.
+        _storageEnsured = migrationLock.Attained;
+    }
+
+    public override void ResetSchemaExistenceChecks()
+    {
+        _storageEnsured = false;
+        base.ResetSchemaExistenceChecks();
     }
 
     /// <summary>

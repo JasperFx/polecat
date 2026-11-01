@@ -230,7 +230,13 @@ internal partial class QuerySession : IQuerySession, JasperFx.Events.IEventTenan
     ///     #219: ensure the event store schema exists on the fly before an event read/write.
     /// </summary>
     internal Task EnsureEventStoreSchemaAsync(CancellationToken token)
-        => _tableEnsurer.EnsureEventStoreSchemaAsync(token);
+        => _tableEnsurer.EnsureEventStoreSchemaAsync(HasOpenTransaction, token);
+
+    /// <summary>
+    ///     Whether this session has a transaction open, which is what decides whether a schema ensure on
+    ///     its behalf may wait for the migration lock (#868).
+    /// </summary>
+    internal bool HasOpenTransaction => _lifetime.HasOpenTransaction;
 
     /// <summary>
     ///     Provision a document's table on demand for a read that does not go through LINQ or the
@@ -240,7 +246,7 @@ internal partial class QuerySession : IQuerySession, JasperFx.Events.IEventTenan
     ///     because the ensurer checks it rather than this method.
     /// </summary>
     internal Task EnsureDocumentTableAsync(Type documentType, CancellationToken token)
-        => _tableEnsurer.EnsureTableAsync(_providers.GetProvider(documentType), token);
+        => _tableEnsurer.EnsureTableAsync(_providers.GetProvider(documentType), HasOpenTransaction, token);
 
     public Task<bool> CheckExistsAsync<T>(long id, CancellationToken token = default) where T : class
         => CheckExistsInternalAsync<T>(id, TenantId, token);
@@ -258,7 +264,7 @@ internal partial class QuerySession : IQuerySession, JasperFx.Events.IEventTenan
     {
         assertNotDisposed();
         var provider = _providers.GetProvider<T>();
-        await _tableEnsurer.EnsureTableAsync(provider, token);
+        await _tableEnsurer.EnsureTableAsync(provider, HasOpenTransaction, token);
 
         await using var cmd = new SqlCommand();
 
@@ -331,7 +337,7 @@ internal partial class QuerySession : IQuerySession, JasperFx.Events.IEventTenan
     {
         assertNotDisposed();
         var provider = _providers.GetProvider<T>();
-        await _tableEnsurer.EnsureTableAsync(provider, token);
+        await _tableEnsurer.EnsureTableAsync(provider, HasOpenTransaction, token);
 
         // #273 E2a/E2e: all document loads route through the closed-shape storage layer
         // (shared selectors + dialect commands over the descriptor); subclass types resolve
@@ -371,7 +377,7 @@ internal partial class QuerySession : IQuerySession, JasperFx.Events.IEventTenan
     {
         assertNotDisposed();
         var provider = _providers.GetProvider<T>();
-        await _tableEnsurer.EnsureTableAsync(provider, token);
+        await _tableEnsurer.EnsureTableAsync(provider, HasOpenTransaction, token);
 
         var storage = (Polecat.Storage.ClosedShape.IPolecatObjectStorage<T>)
             ((Weasel.Storage.IStorageSession)this).StorageFor<T>();
@@ -389,7 +395,7 @@ internal partial class QuerySession : IQuerySession, JasperFx.Events.IEventTenan
         if (ids.Count == 0) return [];
 
         var provider = _providers.GetProvider<T>();
-        await _tableEnsurer.EnsureTableAsync(provider, token);
+        await _tableEnsurer.EnsureTableAsync(provider, HasOpenTransaction, token);
 
         var storage = (Polecat.Storage.ClosedShape.IPolecatObjectStorage<T>)
             ((Weasel.Storage.IStorageSession)this).StorageFor<T>();
@@ -403,7 +409,7 @@ internal partial class QuerySession : IQuerySession, JasperFx.Events.IEventTenan
         if (ids.Count == 0) return [];
 
         var provider = _providers.GetProvider<T>();
-        await _tableEnsurer.EnsureTableAsync(provider, token);
+        await _tableEnsurer.EnsureTableAsync(provider, HasOpenTransaction, token);
 
         // #273 E2a/E2e: all document loads route through the closed-shape storage layer.
         var storage = (Polecat.Storage.ClosedShape.IPolecatObjectStorage<T>)
@@ -465,7 +471,7 @@ internal partial class QuerySession : IQuerySession, JasperFx.Events.IEventTenan
     {
         assertNotDisposed();
         var provider = _providers.GetProvider<T>();
-        await _tableEnsurer.EnsureTableAsync(provider, token);
+        await _tableEnsurer.EnsureTableAsync(provider, HasOpenTransaction, token);
 
         await using var cmd = new SqlCommand();
 

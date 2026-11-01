@@ -114,7 +114,7 @@ public class AdvancedOperations
 
         // Ensure the table exists
         var ensurer = _store.ResolveTableEnsurer(tenantId);
-        await ensurer.EnsureTableAsync(provider, token);
+        await ensurer.EnsureTableAsync(provider, insideTransaction: false, token);
 
         // #335: tenant-partitioned documents — provision the tenant's partition ordinal before the
         // bulk MERGEs resolve it server-side from the registry (cached no-op for known tenants).
@@ -243,7 +243,7 @@ public class AdvancedOperations
         var mapping = provider.Mapping;
 
         var ensurer = _store.ResolveTableEnsurer(tenantId);
-        await ensurer.EnsureTableAsync(provider, token);
+        await ensurer.EnsureTableAsync(provider, insideTransaction: false, token);
 
         // #335: tenant-partitioned documents — provision the tenant's partition ordinal before the
         // version-checked MERGEs resolve it server-side from the registry.
@@ -452,6 +452,14 @@ public class AdvancedOperations
         foreach (var connectionString in AllDatabaseConnectionStrings())
         {
             await CompletelyRemoveAllForDatabaseAsync(connectionString, token);
+        }
+
+        // #868: the schema a database remembers ensuring has just been dropped, so the next daemon has to
+        // build it again rather than trust the memo.
+        _store.Database.ResetSchemaExistenceChecks();
+        foreach (var database in _store.Options.Tenancy?.AllDatabases() ?? [])
+        {
+            database.ResetSchemaExistenceChecks();
         }
     }
 
@@ -685,7 +693,7 @@ public class AdvancedOperations
 
         foreach (var connectionString in AllDatabaseConnectionStrings())
         {
-            await _store.EnsurerFor(connectionString).EnsureTableAsync(provider, token);
+            await _store.EnsurerFor(connectionString).EnsureTableAsync(provider, insideTransaction: false, token);
 
             await Storage.FullText.FullTextIndexRebuild.RebuildAsync(connectionString, provider.Mapping, batchSize,
                 _store.Options.CommandTimeout, _resilience, token);
