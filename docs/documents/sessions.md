@@ -65,8 +65,30 @@ await using var session = await store.OpenSessionAsync(new SessionOptions
 This is particularly useful for:
 
 - Exclusive writing patterns (pessimistic locking)
-- Custom isolation levels
 - Ensuring a transaction is active before any operations
+
+## Isolation Levels
+
+`SessionOptions.IsolationLevel` works the same on every document session, however it was opened:
+
+```cs
+await using var session = store.LightweightSession(new SessionOptions
+{
+    IsolationLevel = IsolationLevel.Serializable
+});
+```
+
+Every transaction the session runs uses that level, not just the first. At anything but the default
+`ReadCommitted`, reads run inside a transaction too, so a read and the save that follows it are one
+transaction. It stays open between commands, so keep these sessions short.
+
+A query session never opens a transaction, so the option has no effect on it. See
+[What the isolation level covers](/configuration/retries#what-the-isolation-level-covers), including
+the warning about document writes under `Snapshot`.
+
+If SQL Server rolls back a transaction the session was relying on, the session refuses all further work
+with `SessionTransactionUnusableException`. See
+[When SQL Server ends the transaction](/configuration/retries#when-sql-server-ends-the-transaction).
 
 ## Unit of Work
 

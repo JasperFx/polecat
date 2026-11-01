@@ -314,9 +314,12 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         }
     }
 
+    /// <remarks>
+    ///     #832: this used to return early whenever <c>Transaction</c> was set, which is how a transaction
+    ///     the server had rolled back passed for an open one. The lifetime tells them apart.
+    /// </remarks>
     internal async Task BeginTransactionAsync(CancellationToken token)
     {
-        if (_transactional.Transaction != null) return;
         await _transactional.BeginTransactionAsync(token);
     }
 
@@ -826,23 +829,34 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
 
     private async Task SaveChangesInternalAsync(CancellationToken token)
     {
+        bool reliesOnTransaction;
         try
         {
+            // #832: before any listener or DDL runs on behalf of a save that cannot happen.
+            _transactional.AssertTransactionIsUsable();
             await prepareToSaveChangesAsync(token);
+
+            // Was the caller already relying on this transaction before the save? An exclusive fetch's
+            // lock or a Snapshot session's view of the data is that, and neither comes back if the server
+            // ends the transaction. A transaction the save itself is about to begin holds nothing the
+            // caller has seen, so losing it fails this save and nothing else.
+            reliesOnTransaction = _transactional.Transaction != null || _transactional.HoldsTransactionForSession;
+
             await _transactional.BeginTransactionAsync(token);
         }
-        catch
+        catch (Exception e)
         {
             // #783 (marten#5688): FetchForExclusiveWriting / AppendExclusive begin the session's
             // transaction, and take UPDLOCK, HOLDLOCK on the stream row, before SaveChangesAsync is called.
             // A save that fails or is cancelled before the `using var tx` below has not taken ownership of
             // that transaction, so it used to stay open, holding the stream lock, until the session was
             // disposed. End it here, as a failure after that point does.
-            await abandonOpenTransactionAsync();
+            await abandonOpenTransactionAsync(e);
             throw;
         }
 
         using var tx = _transactional.Transaction!;
+        var committed = false;
         try
         {
             // gh-515: the DCB boundary check, run BEFORE the events are inserted so this session's own
@@ -956,6 +970,13 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
 
             await SqlTransactionRequests.CommitAsync(tx, token);
 
+            // #832: cleared here rather than in the finally. A committed SqlTransaction reports a null
+            // Connection exactly as a dead one does, so a post-commit hook that reads through this session
+            // must not find it still in place. #844: and the read it makes on a Serializable or Snapshot
+            // session begins the next transaction, which the finally must leave alone.
+            committed = true;
+            _transactional.Transaction = null;
+
             // #478: the aggregate write cache is published here and nowhere else. After the commit,
             // so a failed one leaves nothing behind; before the tracker is reset, purely to keep it
             // beside the other post-commit work.
@@ -1027,7 +1048,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
                 await _inlineMessageBatch.AfterCommitAsync(afterCommit);
             }
         }
-        catch
+        catch (Exception failure)
         {
             // Roll back here rather than leaving it to `using var tx`, whose Dispose would issue the
             // same request synchronously -- on a MARS connection, the thread-pool wait that
@@ -1044,12 +1065,22 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
                     Logger.LogFailure("Failure trying to roll back after a failed SaveChangesAsync", e);
                 }
             }
+            else if (!committed && reliesOnTransaction)
+            {
+                // #832: the server ended it, and with it whatever the caller was relying on. Clearing
+                // Transaction below would otherwise let the next save begin a clean transaction and
+                // quietly carry on without the lock or the snapshot.
+                _transactional.MarkSessionUnusable(failure);
+            }
 
             throw;
         }
         finally
         {
-            _transactional.Transaction = null;
+            if (ReferenceEquals(_transactional.Transaction, tx))
+            {
+                _transactional.Transaction = null;
+            }
 
             // Drop anything a failed commit left enlisted. Harmless either way -- an entry is stored
             // at the version the instance reflects, so it would still be correct on a later commit --
@@ -1119,8 +1150,13 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     ///     returns a cancelled task <i>without</i> rolling back, which is the trap that left Marten's
     ///     transactions open. A rollback that itself fails must not replace the save's own exception, and
     ///     disposing the transaction is what gives its locks back either way.
+    ///     <para>
+    ///         #832: a transaction open at this point was begun before the save, so the caller was relying
+    ///         on it. If the server has already ended it there is nothing to roll back, and the session
+    ///         must not forget that it happened.
+    ///     </para>
     /// </remarks>
-    private async Task abandonOpenTransactionAsync()
+    private async Task abandonOpenTransactionAsync(Exception cause)
     {
         var tx = _transactional.Transaction;
         if (tx == null) return;
@@ -1128,7 +1164,14 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         _transactional.Transaction = null;
         try
         {
-            await SqlTransactionRequests.RollbackAsync(tx);
+            if (tx.Connection is null)
+            {
+                _transactional.MarkSessionUnusable(cause);
+            }
+            else
+            {
+                await SqlTransactionRequests.RollbackAsync(tx);
+            }
         }
         catch (Exception e)
         {

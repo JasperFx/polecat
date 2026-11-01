@@ -1,5 +1,6 @@
 using System.Data;
 using Microsoft.Data.SqlClient;
+using Polecat.Exceptions;
 
 namespace Polecat.Resilience;
 
@@ -30,6 +31,15 @@ namespace Polecat.Resilience;
 ///         <see cref="IsolationLevel.ReadCommitted" /> that <see cref="DocumentStore" /> uses when
 ///         nothing else is asked for.
 ///     </para>
+///     <para>
+///         <b>A strategy on this pipeline retries one command, not a unit of work (#832).</b> That is
+///         fine for a read outside any transaction. It can never be fine for a command whose
+///         transaction the failure rolled back, because everything before that command went with it.
+///         The error number cannot tell those two apart, so the protection is lower down: the replay
+///         is refused with <see cref="SessionTransactionUnusableException" /> rather than run outside
+///         its transaction, and this predicate answers true for that refusal, so a strategy that
+///         asks stops there.
+///     </para>
 /// </remarks>
 public static class PolecatRetryPredicates
 {
@@ -46,8 +56,9 @@ public static class PolecatRetryPredicates
     public const int LockRequestTimeout = 1222;
 
     /// <summary>
-    ///     True when replaying the unit of work that raised <paramref name="exception" /> could
-    ///     commit a lost update, so a retry strategy must not handle it.
+    ///     True when replaying the command that raised <paramref name="exception" /> could commit a
+    ///     lost update, or when the replay has already been refused because the session's transaction
+    ///     is gone, so a retry strategy must not handle it.
     /// </summary>
     /// <remarks>
     ///     Walks the whole exception chain, for the same reason
@@ -65,6 +76,11 @@ public static class PolecatRetryPredicates
 
         for (Exception? current = exception; current is not null; current = current.InnerException)
         {
+            if (current is SessionTransactionUnusableException)
+            {
+                return true;
+            }
+
             if (current is SqlException sql && IsUnsafeToReplay(sql.Number, isolationLevel))
             {
                 return true;
@@ -87,11 +103,13 @@ public static class PolecatRetryPredicates
     ///     </para>
     ///     <para>
     ///         <b>1205 and 1222 fork on the level.</b> At <see cref="IsolationLevel.ReadCommitted" />
-    ///         a replay re-reads current data, so it is the ordinary safe retry. Under
-    ///         <c>Snapshot</c> or <c>Serializable</c> the operations being replayed were derived from
-    ///         a snapshot the replay will not re-take, which is marten#5528's mechanism reached
-    ///         through a different error number. Marten's issue explicitly leaves this case named
-    ///         rather than guessed, and naming it is what this fork does.
+    ///         a read outside a transaction simply reads current data again, so it is the ordinary
+    ///         safe retry. So is a lock timeout inside one: 1222 aborts the statement and leaves the
+    ///         transaction open. Under <c>Snapshot</c> or <c>Serializable</c> the operations being
+    ///         replayed were derived from a snapshot the replay will not re-take, which is
+    ///         marten#5528's mechanism reached through a different error number. Marten's issue
+    ///         explicitly leaves this case named rather than guessed, and naming it is what this
+    ///         fork does.
     ///     </para>
     ///     <para>
     ///         Note 1222 is separately excluded from <c>ConnectionFactory.TransientSqlErrors</c>,

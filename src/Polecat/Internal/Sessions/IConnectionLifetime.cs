@@ -1,4 +1,3 @@
-using System.Data;
 using System.Data.Common;
 using Microsoft.Data.SqlClient;
 
@@ -25,6 +24,26 @@ internal interface IAlwaysConnectedLifetime : IConnectionLifetime
 {
     SqlConnection Connection { get; }
     SqlTransaction? Transaction { get; set; }
+
+    /// <summary>
+    ///     True for a session at anything but <c>ReadCommitted</c>: every command runs inside a
+    ///     transaction, at that level, whoever began it (#844).
+    /// </summary>
+    bool HoldsTransactionForSession { get; }
+
+    /// <summary>
+    ///     Begin a transaction at the session's isolation level, unless one is already open.
+    /// </summary>
     ValueTask BeginTransactionAsync(CancellationToken token);
-    ValueTask BeginTransactionAsync(IsolationLevel isolationLevel, CancellationToken token);
+
+    /// <summary>
+    ///     Throw <see cref="Exceptions.SessionTransactionUnusableException" /> if the transaction this
+    ///     session is inside has been ended by the server, or the session has been marked unusable (#832).
+    /// </summary>
+    void AssertTransactionIsUsable();
+
+    /// <summary>
+    ///     Refuse all further work on this session, because the transaction it was relying on is gone.
+    /// </summary>
+    void MarkSessionUnusable(Exception cause);
 }

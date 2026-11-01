@@ -446,10 +446,12 @@ public class StoreOptions
     ///     Replace the default Polly resilience pipeline with a custom one.
     /// </summary>
     /// <remarks>
-    ///     ⚠️ <b>A retry strategy added here replays a unit of work that has already been
-    ///     computed</b>, not the application code that computed it — so it must not handle a
-    ///     snapshot update conflict (3960), and under a <c>Snapshot</c> or <c>Serializable</c>
-    ///     session it must not handle a deadlock or lock timeout either. Compose
+    ///     ⚠️ <b>A retry strategy added here replays one command of a unit of work that has
+    ///     already been computed</b>, not the application code that computed it — so it must not
+    ///     handle a snapshot update conflict (3960), under a <c>Snapshot</c> or <c>Serializable</c>
+    ///     session it must not handle a deadlock or lock timeout either, and it cannot do anything
+    ///     useful with a deadlock inside a transaction at any level, because that transaction is
+    ///     gone (#832). Compose
     ///     <see cref="Resilience.PolecatRetryPredicates.IsUnsafeToReplay(Exception, System.Data.IsolationLevel)" />
     ///     into your <c>ShouldHandle</c>. The full reasoning, and what it cost Marten
     ///     (marten#5528, a silently lost write), is on

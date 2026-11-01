@@ -257,7 +257,8 @@ public partial class DocumentStore : IDocumentStore
         var factory = ResolveConnectionFactory(options);
         var ensurer = ResolveTableEnsurer(options);
         var timeout = options.Timeout ?? Options.CommandTimeout;
-        var lifetime = new TransactionalConnection(factory, timeout);
+        var lifetime = new TransactionalConnection(
+            factory, timeout, options.IsolationLevel, Options.ResiliencePipeline);
         return new LightweightSession(
             Options,
             lifetime,
@@ -301,7 +302,8 @@ public partial class DocumentStore : IDocumentStore
         var factory = ResolveConnectionFactory(options);
         var ensurer = ResolveTableEnsurer(options);
         var timeout = options.Timeout ?? Options.CommandTimeout;
-        var lifetime = new OnDemandTransactionalConnection(factory, timeout);
+        var lifetime = new OnDemandTransactionalConnection(
+            factory, timeout, options.IsolationLevel, Options.ResiliencePipeline);
         return new LightweightSession(
             Options,
             lifetime,
@@ -333,7 +335,8 @@ public partial class DocumentStore : IDocumentStore
         var factory = ResolveConnectionFactory(options);
         var ensurer = ResolveTableEnsurer(options);
         var timeout = options.Timeout ?? Options.CommandTimeout;
-        var lifetime = new TransactionalConnection(factory, timeout);
+        var lifetime = new TransactionalConnection(
+            factory, timeout, options.IsolationLevel, Options.ResiliencePipeline);
         return new IdentityMapDocumentSession(
             Options,
             lifetime,
@@ -386,11 +389,12 @@ public partial class DocumentStore : IDocumentStore
         var factory = ResolveConnectionFactory(options);
         var ensurer = ResolveTableEnsurer(options);
         var timeout = options.Timeout ?? Options.CommandTimeout;
-        var lifetime = new TransactionalConnection(factory, timeout);
+        var lifetime = new TransactionalConnection(
+            factory, timeout, options.IsolationLevel, Options.ResiliencePipeline);
 
-        if (options.IsolationLevel != System.Data.IsolationLevel.ReadCommitted)
+        if (lifetime.HoldsTransactionForSession)
         {
-            await lifetime.BeginTransactionAsync(options.IsolationLevel, token);
+            await lifetime.BeginTransactionAsync(token);
         }
 
         return options.Tracking switch
