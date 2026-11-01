@@ -1191,15 +1191,57 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         // append path) the partition ordinal for every tenant this flush writes under, BEFORE the
         // data transaction opens (provisioning runs DDL on its own connection). The document write
         // SQL then resolves tenant_ordinal server-side from the pc_tenant_partitions registry these
-        // provisions populate; an already-known tenant is a cached no-op.
-        if (Options.Policies.DocumentTenantPartitioningEnabled && _workTracker.Operations.Count > 0)
+        // provisions populate; an already-known tenant is a cached no-op. #864: an inline projection's
+        // operations do not exist yet, they are queued inside the transaction, so its streams' tenants
+        // have to be taken from the streams or the write finds no registry row.
+        var projectsInline = _inlineProjections.Length > 0 && _workTracker.Streams.Any(s => s.Events.Any());
+        if (Options.Policies.DocumentTenantPartitioningEnabled && (_workTracker.Operations.Count > 0 || projectsInline))
         {
             await _eventGraph.TenantOrdinals.ResolveAsync(TenantId, token);
             foreach (var adapter in _workTracker.Operations.OfType<Operations.ClosedShapeOperationAdapter>())
             {
                 await _eventGraph.TenantOrdinals.ResolveAsync(adapter.SessionTenantId, token);
             }
+
+            if (projectsInline)
+            {
+                foreach (var stream in _workTracker.Streams.Where(s => s.Events.Any()))
+                {
+                    await _eventGraph.TenantOrdinals.ResolveAsync(stream.TenantId, token);
+                }
+            }
         }
+
+        // #864: the event half of the same rule. Provisioning a new tenant SPLITs pc_streams on a
+        // connection of its own, which needs a schema-modification lock, so it cannot wait until the
+        // append planner's locking read has taken that table: the SPLIT would wait on this save's own
+        // transaction until it timed out, and Weasel catches that per table and carries on, leaving the
+        // row in another tenant's partition. Every stream's tenant and not just the session's, because
+        // ForTenant puts others in the same save.
+        if (_eventGraph.UseTenantPartitionedEvents)
+        {
+            foreach (var stream in _workTracker.Streams.Where(s => s.Events.Any()))
+            {
+                await _eventGraph.TenantSequences.ResolveAsync(stream.TenantId, token);
+            }
+        }
+    }
+
+    /// <summary>
+    ///     #864: provision a tenant ahead of a stream read whose locks outlast it, which the start of the
+    ///     save is too late for. An exclusive read holds its lock from here to the commit, and so does any
+    ///     read in a session that holds its transaction open at Serializable or Repeatable Read. A Snapshot
+    ///     session takes no such lock, but DDL after its first read fails its next one.
+    /// </summary>
+    internal async Task ProvisionEventTenantBeforeHoldingLocksAsync(string tenantId, bool exclusive,
+        CancellationToken token)
+    {
+        if (!_eventGraph.UseTenantPartitionedEvents) return;
+        if (!exclusive && !_transactional.HoldsTransactionForSession) return;
+
+        // Provisioning is what reads pc_tenant_partitions, so the schema has to be there first
+        await EnsureEventStoreSchemaAsync(token);
+        await _eventGraph.TenantSequences.ResolveAsync(tenantId, token);
     }
 
     /// <summary>
