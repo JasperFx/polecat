@@ -89,7 +89,7 @@ except the batched DCB tag query, which materializes synchronously and throws `U
 |---|---|
 | **Applies to** | `FetchStreamAsync`, live aggregation, `FetchForWriting` / `FetchLatest`, the async daemon and every subscription, `QueryAllRawEvents()`, batched stream fetches, DCB tag queries, projection replay |
 | **Does not apply to** | `QueryRawEventDataOnly<T>()` — it never builds an `IEvent`, and by naming `T` the caller has already made the decision an upcaster would make |
-| **Never touches** | the **write** path. Upcasting is a read-time transformation; nothing rewrites `pc_events`. |
+| **Never touches** | the **write** path. Upcasting is a read-time transformation; nothing rewrites `pc_events` on its behalf. [Masking](#masking-an-upcast-event) rewrites a row, and stores what it read. |
 
 An upcast event keeps reporting the **stored** name in `IEvent.EventTypeName` while
 `IEvent.EventType` and `IEvent.Data` are the new type. That is deliberate: the alias is a fact about
@@ -115,3 +115,80 @@ Upcasting does not apply to rows written by an
 [`IEventBinarySerializer`](/events/binary-serialization). The shared payload contract is a JSON one —
 both accessors presuppose a JSON body — so a binary row has nothing a transformation can read and
 keeps its ordinary binary read path.
+
+## Masking an upcast event
+
+`ApplyEventDataMasking` reads an event the way everything else does, so an upcast row reaches your
+masking rules as its **new** type. Register the rule against that type:
+
+```csharp
+opts.Events.Upcast<RoomBooked, RoomReserved>(old => new RoomReserved(old.RoomId, old.Guest, "legacy"));
+opts.Events.AddMaskingRuleForProtectedInformation<RoomReserved>(e => e with { Guest = "****" });
+```
+
+::: warning A rule against the old type never runs
+Rows are masked as what they read as, so a rule registered against `RoomBooked` here matches nothing.
+The pass reports success and the protected value stays in the row.
+:::
+
+The masked row is stored the way an append of the new type would be: the new shape, with `type` and
+`dotnet_type` both moved to the new type. It is no longer an upcast row, which has consequences:
+
+- `IEvent.EventTypeName` reports the new name for that row, and anything keyed on the stored name
+  (`QueryRawEventDataOnly<T>()`, DCB conditions) now sees it as the new type.
+- Any member of the old shape that the upcaster dropped is gone from the row. For an erasure that is
+  usually the point, but it is not reversible.
+- Keep the upcaster registered for as long as other rows need it. Only the rows a rule matched have
+  moved.
+
+::: warning A same-name upcaster has nowhere to move the row to
+When the stored name **is** the new type's own alias (`opts.Events.Upcast<RoomReserved>(json => ...)`,
+the "same name, older JSON schema" form), the masked row stays an upcast source and the next read runs
+the upcaster over the new shape. Native appends of the new type are in the same position, so such an
+upcaster already has to accept both shapes; one that does not will fail on masked rows too.
+:::
+
+### Rows masked by Polecat 5.47 or earlier
+
+Earlier versions rewrote the payload but not the row's `type` or `dotnet_type`, leaving the new shape
+under the old name. Upgrading does not repair those rows, and how they read depends on the upcaster:
+
+| Upcaster | How the row reads |
+|---|---|
+| Renames no member | Correctly. The mask survived by luck, and the row needs no repair to read. |
+| Typed, renames a member | Upcast a second time, so every renamed member is `null` — the mask included |
+| Raw JSON that insists on a member (`GetProperty`) | The read throws, so the whole stream is unreadable |
+| New type is binary | The read throws, or the event silently disappears if the old CLR type is gone |
+
+The correct payload is still in the row, under the wrong name, so **the repair is to move the name**.
+This is lossless, and it is a one-statement data fix:
+
+```sql
+-- JSON: pick out the damaged rows by a member only the NEW shape has. The name is the one your
+-- serializer wrote, and Polecat's default is camelCase.
+UPDATE dbo.pc_events
+SET type = 'room_reserved',
+    dotnet_type = 'MyApp.RoomReserved, MyApp'  -- PolecatEventType.DotNetTypeName
+WHERE type = 'room_booked'
+  AND JSON_PATH_EXISTS(data, '$.source') = 1;
+
+-- Binary target: the new shape's bytes are what mark the row. This assumes the old type was
+-- never itself stored as binary.
+UPDATE dbo.pc_events
+SET type = 'room_reserved',
+    dotnet_type = 'MyApp.RoomReserved, MyApp'
+WHERE type = 'room_booked'
+  AND bdata IS NOT NULL;
+```
+
+::: danger Do not re-run masking to repair a row that renamed anything
+A second masking pass reads through the upcaster, which is what produces the `null`s. It puts back
+the member the rule assigns, and writes the row with every *other* renamed member `null` — destroying
+values that were still sitting in the row. A rule that reads the member it masks throws on the `null`
+instead, and writes nothing. A row the read path cannot hydrate, which covers the last two cases in
+the table, cannot be re-masked at all.
+:::
+
+Repair before compacting. Compaction folds what it reads into the snapshot and deletes the rows it
+folded, so it makes a misread value permanent. Masking never re-runs a projection, so rebuild any
+projection that read these rows after repairing them.

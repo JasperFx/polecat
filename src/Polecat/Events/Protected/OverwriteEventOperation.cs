@@ -48,6 +48,24 @@ internal class OverwriteEventOperation : Polecat.Internal.IStorageOperation, Wea
             builder.AppendParameter(_serializedBdata);
         }
 
+        // #843: the payload is the event's type NOW, which for an upcast event is not the type the row
+        // was stored under, so the row's identity has to move with it. Left under the source name, the
+        // next read upcasts the new shape a second time and every renamed member comes back empty (or,
+        // for a strict raw-JSON upcaster, the stream stops being readable). A binary target fails the
+        // same way by a different route: non-null bdata switches upcasting off, so the stale
+        // dotnet_type decides the read and the target's bytes meet the source type.
+        //
+        // Both columns, always: `type` decides whether a read upcasts, and dotnet_type decides the CLR
+        // type everywhere else and is the daemon loader's allow list -- moving only `type` turns the
+        // row into one no projection of the new type is ever handed. Writing the mask back in the
+        // stored shape is not an alternative: an upcast is one-way, and the old CLR type may be gone.
+        // The same type SerializeEventBdata resolved, so the identity and the data/bdata split agree.
+        var mapping = _events.EventMappingFor(_event.EventType ?? _event.Data.GetType());
+        builder.Append(", type = ");
+        builder.AppendParameter(mapping.EventTypeName);
+        builder.Append(", dotnet_type = ");
+        builder.AppendParameter(mapping.DotNetTypeName);
+
         if (_serializedHeaders != null)
         {
             builder.Append(", headers = ");
