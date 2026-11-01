@@ -83,14 +83,34 @@ public class EnlistingProjection(ITransactionParticipant participant) : IProject
     }
 }
 
+/// <summary>
+///     A participant of its own for every attempt at a batch, so one attempt's log can't be mistaken for
+///     another's. A real EF projection builds a new one per batch in the same way.
+/// </summary>
+public class EnlistingEachAttemptProjection : IProjection
+{
+    public ConcurrentQueue<RecordingParticipant> Enlisted { get; } = new();
+
+    public Task ApplyAsync(IDocumentSession operations, IReadOnlyList<IEvent> events,
+        CancellationToken cancellation)
+    {
+        var participant = new RecordingParticipant();
+        Enlisted.Enqueue(participant);
+        operations.AddTransactionParticipant(participant);
+        return Task.CompletedTask;
+    }
+}
+
 public class EnlistingSubscription : SubscriptionBase
 {
-    public static RecordingParticipant Participant = new();
+    public static ConcurrentQueue<RecordingParticipant> Enlisted = new();
 
     public override Task<IChangeListener> ProcessEventsAsync(EventRange page, ISubscriptionController controller,
         IDocumentOperations operations, CancellationToken cancellationToken)
     {
-        ((IDocumentSession)operations).AddTransactionParticipant(Participant);
+        var participant = new RecordingParticipant();
+        Enlisted.Enqueue(participant);
+        ((IDocumentSession)operations).AddTransactionParticipant(participant);
         return Task.FromResult<IChangeListener>(NullChangeListener.Instance);
     }
 }
@@ -117,16 +137,33 @@ public class projection_batch_owns_its_transaction_participants : OneOffConfigur
         await session.SaveChangesAsync(Ct);
     }
 
+    /// <summary>
+    ///     <c>WaitForProjectionAsync</c> starts the agents and then catches up, which stops them and builds
+    ///     new ones, so a started agent can get as far as enlisting and be abandoned. An abandoned batch
+    ///     disposes what it holds and runs none of it, and the attempt that commits runs it exactly once.
+    /// </summary>
+    private static void ShouldHaveCommittedOnce(ConcurrentQueue<RecordingParticipant> enlisted)
+    {
+        var attempts = enlisted.ToArray();
+
+        attempts.Last().Log.ShouldBe([RecordingParticipant.RanBeforeCommit, RecordingParticipant.Disposed]);
+
+        foreach (var abandoned in attempts.SkipLast(1))
+        {
+            abandoned.Log.ShouldBe([RecordingParticipant.Disposed]);
+        }
+    }
+
     [Fact]
     public async Task a_participant_outlives_the_session_that_enlisted_it()
     {
-        var participant = new RecordingParticipant();
-        ConfigureStore(opts => opts.Projections.Add(new EnlistingProjection(participant), ProjectionLifecycle.Async));
+        var projection = new EnlistingEachAttemptProjection();
+        ConfigureStore(opts => opts.Projections.Add(projection, ProjectionLifecycle.Async));
 
         await AppendAnEventAsync();
         await theStore.WaitForProjectionAsync();
 
-        participant.Log.ShouldBe([RecordingParticipant.RanBeforeCommit, RecordingParticipant.Disposed]);
+        ShouldHaveCommittedOnce(projection.Enlisted);
     }
 
     [Fact]
@@ -148,14 +185,14 @@ public class projection_batch_owns_its_transaction_participants : OneOffConfigur
     [Fact]
     public async Task a_composite_member_gets_the_same_treatment()
     {
-        var participant = new RecordingParticipant();
+        var projection = new EnlistingEachAttemptProjection();
         ConfigureStore(opts => opts.Projections.CompositeProjectionFor("Enlisting", composite =>
-            composite.Add(new EnlistingProjection(participant))));
+            composite.Add(projection)));
 
         await AppendAnEventAsync();
         await theStore.WaitForProjectionAsync();
 
-        participant.Log.ShouldBe([RecordingParticipant.RanBeforeCommit, RecordingParticipant.Disposed]);
+        ShouldHaveCommittedOnce(projection.Enlisted);
     }
 
     [Fact]
@@ -191,13 +228,13 @@ public class projection_batch_owns_its_transaction_participants : OneOffConfigur
     [Fact]
     public async Task a_subscriptions_participant_runs_and_is_disposed()
     {
-        var participant = EnlistingSubscription.Participant = new RecordingParticipant();
+        var enlisted = EnlistingSubscription.Enlisted = new ConcurrentQueue<RecordingParticipant>();
         ConfigureStore(opts => opts.Projections.Subscribe<EnlistingSubscription>());
 
         await AppendAnEventAsync();
         await theStore.WaitForProjectionAsync();
 
-        participant.Log.ShouldBe([RecordingParticipant.RanBeforeCommit, RecordingParticipant.Disposed]);
+        ShouldHaveCommittedOnce(enlisted);
     }
 
     /// <summary>
