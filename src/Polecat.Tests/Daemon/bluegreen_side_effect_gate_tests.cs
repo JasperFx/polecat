@@ -82,7 +82,7 @@ public partial class bluegreen_side_effect_gate_tests : IAsyncLifetime
         {
             var newLabels = await AppendStreamsAsync(v3, "new", 2);
 
-            await v3.WaitForProjectionAsync();
+            await RunGatedAgentToHighWaterAsync(v3);
 
             // Headline assertion: V3 fired side effects ONLY for the 2 new events — the 3 prior events
             // were replayed with side effects suppressed during the blue/green warm-up.
@@ -97,6 +97,35 @@ public partial class bluegreen_side_effect_gate_tests : IAsyncLifetime
             var all = await query.Query<GateSnap>().ToListAsync(TestContext.Current.CancellationToken);
             all.Count.ShouldBe(5);
         }
+    }
+
+    // #856: not WaitForProjectionAsync, which ends in CatchUpAsync. That stops the running agents and
+    // replays through a fresh agent that never resolves the gate mark, so this test passed only when the
+    // gated agent beat the stop. Nor WaitForNonStaleData, which also waits on the prior version's row (#857).
+    private static async Task RunGatedAgentToHighWaterAsync(DocumentStore store)
+    {
+        var token = TestContext.Current.CancellationToken;
+        var shard = store.Options.Projections.AllShards().Single().Name.Identity;
+        var highWater = await store.Database.FetchHighestEventSequenceNumber(token);
+
+        using var daemon = await store.BuildProjectionDaemonAsync();
+        await daemon.StartAllAsync();
+
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(30);
+        while (true)
+        {
+            var progress = await store.Database.AllProjectionProgress(token);
+            if (progress.Any(x => x.ShardName == shard && x.Sequence >= highWater)) break;
+
+            if (DateTimeOffset.UtcNow > deadline)
+            {
+                throw new TimeoutException($"{shard} did not reach {highWater}");
+            }
+
+            await Task.Delay(50, token);
+        }
+
+        await daemon.StopAllAsync();
     }
 
     private static async Task DropSchemaTablesAsync(string schema)
