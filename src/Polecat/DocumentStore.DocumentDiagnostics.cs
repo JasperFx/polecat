@@ -737,18 +737,6 @@ public partial class DocumentStore : IDocumentStoreDiagnostics
 /// </remarks>
 internal static class DiagnosticsCriteria
 {
-    private static readonly HashSet<Type> _dateAndTimeTypes =
-        [typeof(DateTime), typeof(DateTimeOffset), typeof(DateOnly), typeof(TimeOnly), typeof(TimeSpan)];
-
-    internal const string DateMemberRefusal =
-        "reads a member of a date or time value (PlacedAt.Year, Created.Date, Duration.TotalMinutes), which Polecat translates as a JSON path into the stored text, so it matches nothing. Compare the whole value with a range instead: PlacedAt >= @0 and PlacedAt < @1.";
-
-    internal const string NullableValueRefusal =
-        "reads .Value of a nullable member, which Polecat translates as a JSON path, so it matches nothing. Compare the member itself (ShippedAt > @0 — a null never matches), or test it with .HasValue.";
-
-    internal const string CollectionSizeRefusal =
-        "reads the Count or Length of a collection, which Polecat translates as a JSON path, so it matches nothing. Polecat cannot filter or order on a collection's size; Tags.Contains(@0) is supported.";
-
     internal const string EnumRangeRefusal =
         "compares an enum with <, <=, > or >=, but this store keeps enums as their NAMES, so it would compare the names alphabetically rather than the values. Use = or 'in @0' with the members you want.";
 
@@ -757,16 +745,6 @@ internal static class DiagnosticsCriteria
 
     /// <summary>The refusals that hold for every Polecat store.</summary>
     internal static DynamicQueryPolicy Policy { get; } = DynamicQueryPolicy.Default.WithRules(
-        DynamicQueryShapeRules.For(node =>
-            node is System.Linq.Expressions.MemberExpression { Expression: { } owner } && _dateAndTimeTypes.Contains(owner.Type)
-                ? DateMemberRefusal
-                : null),
-        DynamicQueryShapeRules.For(node =>
-            node is System.Linq.Expressions.MemberExpression { Expression: { } owner, Member.Name: "Value" }
-            && Nullable.GetUnderlyingType(owner.Type) is not null
-                ? NullableValueRefusal
-                : null),
-        DynamicQueryShapeRules.NoCollectionSizeProperty(CollectionSizeRefusal),
         // Three-valued logic: NULL <> 'x' is unknown, so `Note != "x"`, `not (Note = "x")` and
         // `not Note.Contains("x")` drop every row whose member is null where the text read as C# keeps
         // them. Measured on Polecat (3 of 7 rows) before the shared rule existed; the guarded forms

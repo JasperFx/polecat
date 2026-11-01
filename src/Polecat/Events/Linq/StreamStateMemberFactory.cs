@@ -24,6 +24,9 @@ internal class StreamStateMemberFactory : IMemberResolver
 
     public IQueryableMember ResolveMember(MemberExpression expression)
     {
+        // #840: the switch below goes by name alone, so x.Id.Version would read the version column.
+        if (ClrOnlyMembers.TryTranslate(expression, ResolveMember) is { } clrOnly) return clrOnly;
+
         // Id and Key are the same column under the two identity styles, exactly like
         // StreamId/StreamKey on the events queryable.
         return expression.Member.Name switch

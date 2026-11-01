@@ -152,7 +152,7 @@ internal class LinqQueryParser : ExpressionVisitor
 
     public void Parse(Expression expression)
     {
-        Visit(expression);
+        Visit(ClrOnlyMembers.Normalize(expression));
         AssertSoftDeleteOperatorIsLegal();
     }
 
@@ -733,8 +733,37 @@ internal class LinqQueryParser : ExpressionVisitor
                     $"Polecat cannot translate the {mode}() selector '{lambda.Body}' to SQL. Aggregate over "
                     + "a document member, e.g. Sum(x => x.Amount).");
 
-            AggregationMember = _memberFactory.ResolveMember(memberExpr);
+            var member = _memberFactory.ResolveMember(memberExpr);
+
+            if (member is ComputedMember { IsSubquery: true })
+            {
+                AggregateOverDerivedTable(member, mode);
+                return;
+            }
+
+            AggregationMember = member;
         }
+    }
+
+    /// <summary>
+    ///     SQL Server will not aggregate over a subquery in place (Msg 130), so a collection's Count is
+    ///     selected row by row and the aggregate runs over that, as it does for the groups of a GroupBy.
+    /// </summary>
+    private void AggregateOverDerivedTable(IQueryableMember member, SingleValueMode mode)
+    {
+        const string column = GroupBySelectBuilder.ScalarColumn;
+
+        Statement.SelectColumns = $"{member.TypedLocator} AS {column}";
+        Statement.OuterAggregate = mode switch
+        {
+            SingleValueMode.Sum => $"ISNULL(SUM({column}), 0)",
+            SingleValueMode.Min => $"MIN({column})",
+            SingleValueMode.Max => $"MAX({column})",
+            _ => $"AVG(CAST({column} AS float))"
+        };
+
+        // A derived table may only carry an ORDER BY that decides which rows it holds.
+        if (!Statement.Limit.HasValue && !Statement.Offset.HasValue) Statement.OrderBys.Clear();
     }
 
     /// <summary>
