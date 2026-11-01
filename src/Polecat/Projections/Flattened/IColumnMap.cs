@@ -1,3 +1,4 @@
+using System.Globalization;
 using Polecat.Internal;
 
 namespace Polecat.Projections.Flattened;
@@ -168,6 +169,10 @@ internal class SetIntValueMap : IColumnMap
     public string ColumnName { get; }
     public bool RequiresInput => false;
 
-    public string UpdateExpression(string paramName) => $"{SqlEscaping.QuoteIdentifier(ColumnName)} = {_value}";
-    public string InsertExpression(string paramName) => _value.ToString();
+    public string UpdateExpression(string paramName) => $"{SqlEscaping.QuoteIdentifier(ColumnName)} = {Literal}";
+    public string InsertExpression(string paramName) => Literal;
+
+    // #848: this lands in SQL text, and a culture's negative sign is not always a hyphen. sv-SE writes
+    // U+2212, which T-SQL refuses.
+    private string Literal => _value.ToString(CultureInfo.InvariantCulture);
 }

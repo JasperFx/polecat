@@ -120,8 +120,7 @@ internal partial class QuerySession : IAdvancedSql
 
         while (await dbReader.ReadAsync(token))
         {
-            var value = reader1.ReadValue(dbReader, 0);
-            yield return value == null ? default! : (T)Convert.ChangeType(value, typeof(T));
+            yield return CastResult<T>(reader1.ReadValue(dbReader, 0));
         }
 
         Logger.LogSuccess(commandText);

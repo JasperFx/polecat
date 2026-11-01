@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using System.Linq.Expressions;
 using System.Reflection;
 using Polecat.Linq.Members;
@@ -256,7 +257,11 @@ internal class WhereClauseParser
                 var member = _memberFactory.ResolveMember(me);
                 var divisor = ExtractValue(modulo.Right);
                 var value = ExtractValue(binary.Right);
-                fragment = new WhereFragment($"({member.TypedLocator} % {divisor}) {op} {value}");
+
+                // These two are written into the SQL rather than bound, so they have to be SQL's
+                // numbers and not the culture's (#848): de-DE would write 2,5 and sv-SE U+2212 for -1.
+                fragment = new WhereFragment(string.Create(CultureInfo.InvariantCulture,
+                    $"({member.TypedLocator} % {divisor}) {op} {value}"));
                 return true;
             }
         }
@@ -271,7 +276,8 @@ internal class WhereClauseParser
                 var divisor = ExtractValue(moduloR.Right);
                 var value = ExtractValue(binary.Left);
                 var reversedOp = ReverseOperator(op);
-                fragment = new WhereFragment($"({member.TypedLocator} % {divisor}) {reversedOp} {value}");
+                fragment = new WhereFragment(string.Create(CultureInfo.InvariantCulture,
+                    $"({member.TypedLocator} % {divisor}) {reversedOp} {value}"));
                 return true;
             }
         }

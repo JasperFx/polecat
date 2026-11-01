@@ -1,5 +1,6 @@
 using System.Data.Common;
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using JasperFx;
 using Polecat.Metadata;
 using Polecat.Serialization;
@@ -28,12 +29,16 @@ internal abstract class AdvancedSqlResultReader
     ///     raw-SQL item. Tries the direct cast first so a document or JSON object — already the right
     ///     type — passes straight through, and only falls back to <see cref="Convert.ChangeType(object, Type)" />
     ///     for the scalar widening cases (an <c>int</c> column read into a <c>long</c>, say).
+    ///     <para>
+    ///         #848: invariant, because the value can be text. <c>JSON_VALUE</c> always returns text,
+    ///         and under de-DE a period is the group separator, so "1.5" would quietly read as 15.
+    ///     </para>
     /// </remarks>
     public static T Cast<T>(object? value)
     {
         if (value == null) return default!;
         if (value is T typed) return typed;
-        return (T)Convert.ChangeType(value, typeof(T));
+        return (T)Convert.ChangeType(value, typeof(T), CultureInfo.InvariantCulture);
     }
 
     public static AdvancedSqlResultReader ForType(Type type, ISerializer serializer, DocumentProviderRegistry? providers)
