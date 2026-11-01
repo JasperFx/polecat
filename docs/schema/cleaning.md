@@ -33,6 +33,8 @@ This cleans:
 - `pc_events` -- All event records
 - `pc_streams` -- All stream metadata
 - `pc_event_progression` -- All daemon progression
+- `pc_natural_key_*` -- All natural key lookups
+- `pc_event_tag_*` and `pc_dcb_tag_version` -- All DCB tag rows and boundary counters
 
 It deliberately leaves `pc_event_projection_floors` alone. A projection's start floor is
 configuration about where its history begins, so it outlives a data reset, just as it outlives a

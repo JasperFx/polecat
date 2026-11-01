@@ -42,10 +42,13 @@ internal class NaturalKeyTable : Table
         if (isConjoined)
         {
             // NOTE: Composite FK to pc_streams is intentionally omitted for conjoined tenancy.
-            // Weasel.SqlServer's ForeignKey sorts ColumnNames/LinkedNames alphabetically,
-            // which breaks the column mapping when the PK order (tenant_id, id) doesn't match
-            // alphabetical order (id, tenant_id). Referential integrity is enforced by the
-            // event store's application logic (stream is always inserted before events).
+            // It was first ruled out because Weasel.SqlServer's ForeignKey sorted its column
+            // lists, which it no longer does. It stays out because adding one now is a migration
+            // that fails on any row orphaned by a tombstone before #865, and because under
+            // UseTenantPartitionedEvents the pc_streams key also has a tenant_ordinal this table
+            // does not carry. Referential integrity is enforced by the event store's application
+            // logic (stream is always inserted before events), and nothing cascades: see
+            // EventGraph.NaturalKeyRowsCascadeWithStreams.
         }
         else
         {

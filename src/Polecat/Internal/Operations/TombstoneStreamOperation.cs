@@ -38,6 +38,25 @@ internal class TombstoneStreamOperation : IStorageOperation, Weasel.Storage.NoDa
             }
         }
 
+        // #865: the same gap for the natural key tables, which have no foreign key under conjoined
+        // tenancy. A row left here keeps the key mapped to a stream that is gone, so reusing the key is
+        // refused as a duplicate of a live stream.
+        if (!_events.NaturalKeyRowsCascadeWithStreams)
+        {
+            var streamColumn = _events.StreamIdentity == JasperFx.Events.StreamIdentity.AsGuid
+                ? "stream_id"
+                : "stream_key";
+
+            foreach (var definition in _events.NaturalKeyDefinitions())
+            {
+                builder.Append($"""
+                    DELETE FROM {_events.NaturalKeyTableName(definition.AggregateType)}
+                    WHERE {streamColumn} = @id AND tenant_id = @tenant_id;
+
+                    """);
+            }
+        }
+
         builder.Append($"""
             DELETE FROM {_events.EventsTableName}
             WHERE stream_id = @id AND tenant_id = @tenant_id;

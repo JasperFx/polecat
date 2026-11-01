@@ -466,6 +466,34 @@ public class tenant_partitioned_tag_tests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task a_tombstoned_streams_natural_key_can_be_reused()
+    {
+        using var store = await CreateNaturalKeyStoreAsync();
+        await store.Advanced.AddPolecatManagedTenantsAsync(Ct, "alpha", "beta");
+
+        var tombstoned = Guid.NewGuid();
+
+        await using (var session = SessionFor(store, "alpha"))
+        {
+            session.Events.StartStream(tombstoned, new NkOrderCreated(new OrderNumber("K"), "A"));
+            await session.SaveChangesAsync(Ct);
+        }
+
+        await StartOrderAsync(store, "beta", "K");
+
+        await using (var session = SessionFor(store, "alpha"))
+        {
+            session.Events.TombstoneStream(tombstoned);
+            await session.SaveChangesAsync(Ct);
+        }
+
+        (await NaturalKeyRowsAsync("alpha")).ShouldBe(0);
+        (await NaturalKeyRowsAsync("beta")).ShouldBe(1);
+
+        await StartOrderAsync(store, "alpha", "K");
+    }
+
+    [Fact]
     public async Task a_hard_delete_erases_the_natural_key_values_of_that_tenant_only()
     {
         using var store = await CreateNaturalKeyStoreAsync();
