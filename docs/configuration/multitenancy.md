@@ -93,6 +93,9 @@ With separate database tenancy:
 - Sessions automatically route to the correct database based on tenant ID
 - The async daemon runs independently per tenant database: `AddAsyncDaemon(...)` starts one daemon
   per tenant database, each tracking its own high-water mark and projection progress
+- `AddAsyncDaemon(...)` reads the tenant list once, at startup. With `MultiTenantedMasterTable()`, use
+  `AddProjectionCoordinator(...)` if tenants are added while the host runs, because it re-reads the
+  master table on every leadership cycle and starts agents for the new tenant
 
 ### No default tenant is required
 
