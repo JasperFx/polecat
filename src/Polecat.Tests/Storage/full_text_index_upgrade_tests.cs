@@ -60,6 +60,11 @@ public class full_text_index_upgrade_tests: OneOffConfigurationsContext
 
     private static void Declare(StoreOptions opts, bool nativeJson)
     {
+        if (nativeJson)
+        {
+            Assert.SkipUnless(ConnectionSource.SupportsNativeJson, "This server has no native json type.");
+        }
+
         opts.UseNativeJsonType = nativeJson;
         opts.Schema.For<Article>().FullTextIndex(x => x.Body);
     }
