@@ -22,6 +22,7 @@ internal class AutoClosingLifetime : IConnectionLifetime
 
     public int CommandTimeout { get; }
     public ConnectionFactory ConnectionFactory => _connectionFactory;
+    public bool HasOpenTransaction => false;
 
     public async Task<int> ExecuteAsync(SqlCommand command, CancellationToken token)
     {

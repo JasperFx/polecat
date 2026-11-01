@@ -106,7 +106,7 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
     private async Task<ParsedQuery> PrepareAsync(Expression expression, CancellationToken token)
     {
         var query = Parse(expression, TenantIdForFilter);
-        await _tableEnsurer.EnsureTableAsync(query.Provider, token);
+        await _tableEnsurer.EnsureTableAsync(query.Provider, _session.HasOpenTransaction, token);
 
         if (query.Parser.NonStaleDataTimeout is { } timeout)
         {
@@ -726,8 +726,8 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
         // Resolve providers for both sides
         var outerProvider = _providers.GetProvider(joinData.OuterElementType);
         var innerProvider = _providers.GetProvider(joinData.InnerElementType);
-        await _tableEnsurer.EnsureTableAsync(outerProvider, token);
-        await _tableEnsurer.EnsureTableAsync(innerProvider, token);
+        await _tableEnsurer.EnsureTableAsync(outerProvider, _session.HasOpenTransaction, token);
+        await _tableEnsurer.EnsureTableAsync(innerProvider, _session.HasOpenTransaction, token);
 
         var outerMapping = outerProvider.Mapping;
         var innerMapping = innerProvider.Mapping;
