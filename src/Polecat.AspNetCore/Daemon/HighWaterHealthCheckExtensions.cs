@@ -98,6 +98,59 @@ public static class HighWaterHealthCheckExtensions
     }
 
     /// <summary>
+    ///     #847 / marten#5705: the same check for an ancillary store registered with
+    ///     <c>AddPolecatStore&lt;TStore&gt;()</c>. The parameterless overload checks the default
+    ///     <see cref="IDocumentStore" />, which is not registered at all when an application uses only
+    ///     separate stores, and with a default store present leaves this one unchecked. This overload probes
+    ///     <typeparamref name="TStore" /> and, with <paramref name="autoRestart" />, restarts through that
+    ///     store's own <see cref="Polecat.Events.Daemon.Coordination.IProjectionCoordinator{T}" />.
+    ///     <para>
+    ///         Call it once per store. Each store gets its own check, named
+    ///         <c>HighWaterHealthCheck:&lt;store type&gt;</c>, with its own settings, so registering it
+    ///         never changes the default store's check.
+    ///     </para>
+    /// </summary>
+    /// <typeparam name="TStore">The store's marker interface, as passed to <c>AddPolecatStore&lt;TStore&gt;()</c>.</typeparam>
+    /// <param name="builder"><see cref="IHealthChecksBuilder" /></param>
+    /// <param name="staleThreshold">See the non-generic overload. Defaults to 30 seconds.</param>
+    /// <param name="minimumGap">See the non-generic overload. Defaults to 1.</param>
+    /// <param name="autoRestart">See the non-generic overload. Defaults to <c>false</c>.</param>
+    public static IHealthChecksBuilder AddPolecatHighWaterHealthCheck<TStore>(
+        this IHealthChecksBuilder builder,
+        TimeSpan? staleThreshold = null,
+        long minimumGap = 1,
+        bool autoRestart = false
+    ) where TStore : class, IDocumentStore
+    {
+        // The settings travel with this store's registration rather than through the
+        // HighWaterHealthCheckSettings singleton, which belongs to the default store's check. Adding to that
+        // singleton here would silently re-configure the default check, or another store's.
+        var settings = new HighWaterHealthCheckSettings(staleThreshold ?? TimeSpan.FromSeconds(30), minimumGap,
+            autoRestart);
+
+        // The tracker does too, which is where this parts from Marten. Marten shares one, relying on its
+        // database identifier being the store's name. PolecatDatabase's identifier is the constant "Polecat"
+        // on every single-database store, so two stores would read and reset each other's stuck-mark clock.
+        // A health check is rebuilt for every probe, so the one that lasts is this closure's.
+        var tracker = new HighWaterStateTracker();
+
+        builder.Services.TryAddSingleton(TimeProvider.System);
+        return builder.Add(new HealthCheckRegistration(
+            HighWaterHealthCheckNameFor<TStore>(),
+            services => ActivatorUtilities.CreateInstance<HighWaterHealthCheck<TStore>>(services, settings, tracker),
+            failureStatus: null,
+            tags: new[] { "Polecat", "AsyncDaemon", "HighWater", typeof(TStore).Name }
+        ));
+    }
+
+    /// <summary>
+    ///     #847 / marten#5705: the name a store's high-water check is registered under, so a caller filtering
+    ///     health check results can find it.
+    /// </summary>
+    public static string HighWaterHealthCheckNameFor<TStore>() where TStore : class, IDocumentStore =>
+        $"{nameof(HighWaterHealthCheck)}:{typeof(TStore).Name}";
+
+    /// <summary>
     ///     DI-injected settings for <see cref="HighWaterHealthCheck" />.
     /// </summary>
     public record HighWaterHealthCheckSettings(TimeSpan StaleThreshold, long MinimumGap, bool AutoRestart = false);
@@ -114,6 +167,24 @@ public static class HighWaterHealthCheckExtensions
             new();
 
         public ConcurrentDictionary<string, DateTimeOffset> Restarts { get; } = new();
+    }
+
+    /// <summary>
+    ///     #847 / marten#5705: the health check for an ancillary store registered with
+    ///     <c>AddPolecatStore&lt;TStore&gt;()</c>. Probes <typeparamref name="TStore" /> and restarts through its
+    ///     <see cref="Polecat.Events.Daemon.Coordination.IProjectionCoordinator{T}" />.
+    /// </summary>
+    public class HighWaterHealthCheck<TStore>: HighWaterHealthCheck where TStore : class, IDocumentStore
+    {
+        public HighWaterHealthCheck(TStore store, HighWaterHealthCheckSettings settings, TimeProvider timeProvider,
+            HighWaterStateTracker tracker, IServiceProvider services)
+            : base(store, settings, timeProvider, tracker, services)
+        {
+        }
+
+        /// <inheritdoc />
+        protected override IProjectionCoordinator? resolveCoordinator(IServiceProvider services) =>
+            services.GetService<Polecat.Events.Daemon.Coordination.IProjectionCoordinator<TStore>>();
     }
 
     /// <summary>
@@ -288,6 +359,14 @@ public static class HighWaterHealthCheckExtensions
             _tracker.Restarts.TryRemove(databaseIdentifier, out _);
         }
 
+        /// <summary>
+        ///     The coordinator <c>autoRestart</c> asks for this store's daemon. The default store's check uses
+        ///     the unmarked <see cref="IProjectionCoordinator" />; an ancillary store's check uses its own
+        ///     (#847 / marten#5705).
+        /// </summary>
+        protected virtual IProjectionCoordinator? resolveCoordinator(IServiceProvider services) =>
+            services.GetService<IProjectionCoordinator>();
+
         // polecat#341 item 1: opt-in remediation. Ask the local coordinator's daemon to restart the
         // high-water poll loop for this database — loop only, never advancing the mark. Best-effort and
         // capped to once per staleness window so the (faster) health-check cadence can't thrash a loop
@@ -307,7 +386,7 @@ public static class HighWaterHealthCheckExtensions
                 return " An auto-restart was already attempted within the current staleness window.";
             }
 
-            var coordinator = _services.GetService<IProjectionCoordinator>();
+            var coordinator = resolveCoordinator(_services);
             if (coordinator is null)
             {
                 return " (autoRestart is enabled but no IProjectionCoordinator is registered to restart the agent.)";
