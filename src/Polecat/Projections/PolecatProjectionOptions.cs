@@ -37,6 +37,7 @@ public class PolecatProjectionOptions
             .Where(x => x.Lifecycle == ProjectionLifecycle.Inline)
             .SelectMany(x => x.PublishedTypes())
             .Distinct()
+            .Where(t => !_storeOptions!.CustomProjectionStorageProviders.ContainsKey(t))
             .Select(t => _storeOptions!.Providers.GetProvider(t))
             .ToArray());
     }
@@ -236,6 +237,14 @@ public class PolecatProjectionOptions
     ///         <see cref="StoreOptions.Providers" /> is not wired until then either. Same discipline as
     ///         <see cref="BuildInlineProjections" /> above, which the store wraps in a <c>Lazy</c> for the
     ///         same reason.
+    ///     </para>
+    ///     <para>
+    ///         #846: types with custom projection storage are excluded, for the reason given on
+    ///         <c>ConfiguredDocumentProviders.MaterializeConfigured</c>: an EF Core projection's document
+    ///         lives in a <c>DbContext</c>, not in a <c>pc_doc_*</c> table. This list missed that rule, so
+    ///         the first save to reach an EF projection created a table nothing uses, and did it from
+    ///         inside the save's transaction on a connection of its own, which at <c>Max Pool Size=1</c>
+    ///         could never open.
     ///     </para>
     /// </remarks>
     internal DocumentProvider[] InlineProjectedProviders => _inlineProjectedProviders.Value;

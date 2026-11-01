@@ -9,8 +9,8 @@ namespace Polecat.EntityFrameworkCore.Tests;
 ///     #650: the leak this exists to catch is counted here rather than in
 ///     <c>sys.dm_exec_sessions</c> on purpose. The reported symptom is a leaked connection per
 ///     batch, but that only surfaces when the context owns its connection — on Polecat's SQL Server
-///     path the placeholder is never opened, so a backend count would report nothing while the
-///     defect underneath was fully present. Counting construction against disposal pins the defect
+///     path EF closes the connection again after each read, so a backend count would report nothing
+///     while the defect underneath was fully present. Counting construction against disposal pins the defect
 ///     itself: no pool timing, no sampling, no dependence on the server.
 /// </remarks>
 public class DisposalTrackingDbContext : TestDbContext

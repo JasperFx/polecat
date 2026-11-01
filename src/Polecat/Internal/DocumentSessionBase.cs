@@ -256,6 +256,45 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     internal SqlTransaction? ActiveTransaction => _transactional.Transaction;
 
     /// <summary>
+    ///     Refuse to go on if the transaction this session is inside has been ended by the server.
+    /// </summary>
+    internal void AssertTransactionIsUsable() => _transactional.AssertTransactionIsUsable();
+
+    /// <summary>
+    ///     Run a command that does not go through this session's lifetime but belongs to its unit of
+    ///     work: today, what an EF Core <c>DbContext</c> does on the session's behalf (#846).
+    /// </summary>
+    /// <remarks>
+    ///     Such a command runs on this session's connection and inside its transaction without ever
+    ///     passing through <see cref="TransactionalConnection" />, so it would otherwise get neither of
+    ///     the two things that type's callers rely on. One is the resilience pipeline. The other is
+    ///     #832's check, and that one matters more here: <c>SqlCommand</c> quietly drops a completed
+    ///     transaction, so a read or a flush arriving after the server ended the transaction would run
+    ///     in autocommit. The check sits inside the pipeline for the reason given on
+    ///     <see cref="TransactionalConnection" />: a retry strategy replays the lambda, so the replay
+    ///     meets the check too.
+    /// </remarks>
+    internal ValueTask<T> ExecuteInUnitOfWorkAsync<T>(Func<CancellationToken, ValueTask<T>> command,
+        CancellationToken token)
+    {
+        return Options.ResiliencePipeline.ExecuteAsync(static (state, t) =>
+        {
+            state.session.AssertTransactionIsUsable();
+            return state.command(t);
+        }, (session: this, command), token);
+    }
+
+    /// <inheritdoc cref="ExecuteInUnitOfWorkAsync{T}" />
+    internal T ExecuteInUnitOfWork<T>(Func<T> command)
+    {
+        return Options.ResiliencePipeline.Execute(static state =>
+        {
+            state.session.AssertTransactionIsUsable();
+            return state.command();
+        }, (session: this, command));
+    }
+
+    /// <summary>
     ///     Transaction participants registered on this session.
     ///     Exposed internally for batch access by the async daemon.
     /// </summary>

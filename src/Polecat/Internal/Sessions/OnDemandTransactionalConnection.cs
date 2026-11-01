@@ -57,6 +57,7 @@ internal sealed class OnDemandTransactionalConnection : IAlwaysConnectedLifetime
     }
 
     public int CommandTimeout { get; }
+    public ConnectionFactory ConnectionFactory => _pinned.ConnectionFactory;
 
     /// <summary>
     ///     True once a transaction has been begun (or assigned), after which every command runs on the

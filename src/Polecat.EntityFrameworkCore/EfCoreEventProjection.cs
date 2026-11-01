@@ -2,6 +2,7 @@ using System.Diagnostics.CodeAnalysis;
 using JasperFx.Events;
 using JasperFx.Events.Projections;
 using Microsoft.EntityFrameworkCore;
+using Polecat.Internal;
 using Polecat.Projections;
 
 namespace Polecat.EntityFrameworkCore;
@@ -38,7 +39,7 @@ public abstract class EfCoreEventProjection<
                 "EfCoreEventProjection requires a connection string. Register via EfCoreProjectionExtensions.");
         }
 
-        var (dbContext, placeholder) = EfCoreDbContextFactory.Create<TDbContext>(_connectionString);
+        var (dbContext, placeholder) = EfCoreDbContextFactory.CreateFor<TDbContext>(operations, _connectionString);
 
         foreach (var @event in events)
         {
@@ -48,7 +49,8 @@ public abstract class EfCoreEventProjection<
         if (operations is ITransactionParticipantRegistrar registrar)
         {
             registrar.AddTransactionParticipant(
-                new DbContextTransactionParticipant<TDbContext>(dbContext, placeholder));
+                new DbContextTransactionParticipant<TDbContext>(dbContext, placeholder,
+                    operations as DocumentSessionBase));
         }
     }
 

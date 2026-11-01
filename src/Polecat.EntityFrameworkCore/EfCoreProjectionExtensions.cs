@@ -154,14 +154,13 @@ public static class EfCoreProjectionExtensions
 
         options.CustomProjectionStorageProviders[typeof(TDoc)] = (session, tenantId) =>
         {
-            var connectionString = options.ConnectionString;
-            var (dbContext, placeholder) = EfCoreDbContextFactory.Create<TDbContext>(connectionString);
+            var (dbContext, placeholder) = EfCoreDbContextFactory.CreateFor<TDbContext>(session);
 
             // Register the participant so the DbContext flushes in the same transaction
             session.AddTransactionParticipant(
-                new DbContextTransactionParticipant<TDbContext>(dbContext, placeholder));
+                new DbContextTransactionParticipant<TDbContext>(dbContext, placeholder, session));
 
-            return new EfCoreProjectionStorage<TDoc, TId, TDbContext>(dbContext, tenantId);
+            return new EfCoreProjectionStorage<TDoc, TId, TDbContext>(dbContext, tenantId, session);
         };
     }
 }

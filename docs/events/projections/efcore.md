@@ -142,10 +142,23 @@ await store.Database.ApplyAllConfiguredChangesToDatabaseAsync();
 
 ## How It Works
 
-1. Polecat creates a placeholder `SqlConnection` and `DbContext` for each projection batch
-2. During `SaveChangesAsync`, the placeholder connection is swapped for the real connection and transaction
-3. `DbContext.SaveChangesAsync()` is called as a `ITransactionParticipant` within Polecat's transaction
-4. Both Polecat document operations and EF Core changes commit atomically
+1. Polecat creates a `DbContext` for each projection batch
+2. `DbContext.SaveChangesAsync()` is called as a `ITransactionParticipant` within Polecat's transaction
+3. Both Polecat document operations and EF Core changes commit atomically
+
+Where the `DbContext` reads depends on the projection's lifecycle:
+
+| Mode | Reads run on |
+| :--- | :--- |
+| Inline | The session's own connection, inside its transaction, so the read sees what the session has written and a save needs one pooled connection however many reads it makes |
+| Async | A connection to the database the daemon is working, opened around each read and closed again, so a batch holds nothing between reads |
+| Live | The same, for the session's database, unless the session already has a transaction open, in which case the read joins it |
+
+Commands the `DbContext` runs on Polecat's behalf go through `StoreOptions.ResiliencePipeline` along with everything else: loading a projected entity, and the flush itself. The one thing Polecat cannot wrap is a query your own projection code issues against the `DbContext` it was handed.
+
+::: warning
+An inline projection's `DbContext` shares a connection with the session, so on a connection without `MultipleActiveResultSets=True` it cannot have a reader open while the session runs a command, or the other way round. Materialize a query (`ToListAsync()` and friends) before using the other one, rather than running one inside a loop over the other.
+:::
 
 ## Registration
 
@@ -167,7 +180,7 @@ EF Core projections support all lifecycle modes:
 
 ## Tenanted Projections
 
-EF Core projections work with multi-tenancy -- the DbContext receives the correct connection for the tenant's database.
+EF Core projections work with multi-tenancy -- the DbContext reads and writes through the session's connection to the tenant's database, including under database-per-tenant and master-table tenancy. The entity tables have to exist in every tenant database for that to work.
 
 ::: tip
 The `ITransactionParticipant` pattern ensures that EF Core's `SaveChanges` runs within Polecat's transaction boundary, providing atomic consistency between event-sourced projections and EF Core-managed tables.

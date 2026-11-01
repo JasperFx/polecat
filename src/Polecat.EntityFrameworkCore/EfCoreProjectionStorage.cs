@@ -2,6 +2,7 @@ using System.Diagnostics.CodeAnalysis;
 using JasperFx.Events;
 using JasperFx.Events.Daemon;
 using Microsoft.EntityFrameworkCore;
+using Polecat.Internal;
 
 namespace Polecat.EntityFrameworkCore;
 
@@ -33,12 +34,38 @@ internal class EfCoreProjectionStorage<
     where TDbContext : DbContext
 {
     private readonly TDbContext _dbContext;
+    private readonly DocumentSessionBase? _session;
     private readonly SemaphoreSlim _dbContextLock = new(1, 1);
 
-    public EfCoreProjectionStorage(TDbContext dbContext, string tenantId)
+    public EfCoreProjectionStorage(TDbContext dbContext, string tenantId, DocumentSessionBase? session = null)
     {
         _dbContext = dbContext;
         TenantId = tenantId;
+        _session = session;
+    }
+
+    /// <summary>
+    ///     #846: every read this storage makes belongs to the session's unit of work, on whichever
+    ///     connection the context was given, so it gets what the session's own commands get.
+    /// </summary>
+    /// <remarks>
+    ///     <see cref="IProjectionStorage{TDoc,TId}.Store(TDoc)" /> and <c>Delete</c> are synchronous
+    ///     members of the JasperFx contract, so their reads have to be too. That is no longer a pool
+    ///     question: inside a transaction they run on the connection the session already holds.
+    /// </remarks>
+    private TDoc? Find(object?[] key)
+    {
+        return _session == null
+            ? _dbContext.Find<TDoc>(key)
+            : _session.ExecuteInUnitOfWork(() => _dbContext.Find<TDoc>(key));
+    }
+
+    /// <inheritdoc cref="Find" />
+    private ValueTask<TDoc?> FindAsync(object?[] key, CancellationToken token)
+    {
+        return _session == null
+            ? _dbContext.FindAsync<TDoc>(key, token)
+            : _session.ExecuteInUnitOfWorkAsync(t => _dbContext.FindAsync<TDoc>(key, t), token);
     }
 
     /// <summary>
@@ -155,7 +182,7 @@ internal class EfCoreProjectionStorage<
         _dbContextLock.Wait();
         try
         {
-            var existing = _dbContext.Find<TDoc>(identity);
+            var existing = Find([identity]);
             if (existing != null)
                 _dbContext.Remove(existing);
         }
@@ -203,7 +230,7 @@ internal class EfCoreProjectionStorage<
         await _dbContextLock.WaitAsync(cancellation);
         try
         {
-            return (await _dbContext.FindAsync<TDoc>([id], cancellation))!;
+            return (await FindAsync([id], cancellation))!;
         }
         finally
         {
@@ -220,7 +247,7 @@ internal class EfCoreProjectionStorage<
             var dict = new Dictionary<TId, TDoc>();
             foreach (var id in identities)
             {
-                var doc = await _dbContext.FindAsync<TDoc>([id], cancellationToken);
+                var doc = await FindAsync([id], cancellationToken);
                 if (doc != null)
                 {
                     dict[id] = doc;
@@ -265,7 +292,7 @@ internal class EfCoreProjectionStorage<
                     var keyValues = pk.Properties
                         .Select(p => entry.Property(p.Name).CurrentValue)
                         .ToArray();
-                    var existing = _dbContext.Find<TDoc>(keyValues);
+                    var existing = Find(keyValues);
                     if (existing != null)
                     {
                         var existingEntry = _dbContext.Entry(existing);

@@ -66,12 +66,13 @@ public abstract class EfCoreMultiStreamProjection<
             return base.DetermineActionAsync(session, snapshot, identity, identitySetter, events, cancellation);
         }
 
-        var (dbContext, placeholder) = EfCoreDbContextFactory.Create<TDbContext>(_connectionString);
+        var (dbContext, placeholder) = EfCoreDbContextFactory.CreateFor<TDbContext>(session, _connectionString);
 
         if (session is ITransactionParticipantRegistrar registrar)
         {
             registrar.AddTransactionParticipant(
-                new DbContextTransactionParticipant<TDbContext>(dbContext, placeholder));
+                new DbContextTransactionParticipant<TDbContext>(dbContext, placeholder,
+                    session as DocumentSessionBase));
 
             return ValueTask.FromResult(Apply(snapshot, identity, events, dbContext));
         }
@@ -94,7 +95,7 @@ public abstract class EfCoreMultiStreamProjection<
     }
 
     private async ValueTask<(TDoc?, ActionType)> DisposeAfterApplying(TDoc? snapshot, TId identity,
-        IReadOnlyList<IEvent> events, TDbContext dbContext, SqlConnection placeholder)
+        IReadOnlyList<IEvent> events, TDbContext dbContext, SqlConnection? placeholder)
     {
         try
         {
@@ -103,7 +104,7 @@ public abstract class EfCoreMultiStreamProjection<
         finally
         {
             await dbContext.DisposeAsync();
-            await placeholder.DisposeAsync();
+            if (placeholder != null) await placeholder.DisposeAsync();
         }
     }
 

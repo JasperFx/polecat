@@ -10,6 +10,13 @@ namespace Polecat.Internal.Sessions;
 internal interface IConnectionLifetime : IAsyncDisposable, IDisposable
 {
     int CommandTimeout { get; }
+
+    /// <summary>
+    ///     What this lifetime opens connections from, which under database-per-tenant tenancy is the
+    ///     only thing that knows the tenant's database (#846).
+    /// </summary>
+    ConnectionFactory ConnectionFactory { get; }
+
     Task<int> ExecuteAsync(SqlCommand command, CancellationToken token);
     Task<object?> ExecuteScalarAsync(SqlCommand command, CancellationToken token);
     Task<DbDataReader> ExecuteReaderAsync(SqlCommand command, CancellationToken token);
