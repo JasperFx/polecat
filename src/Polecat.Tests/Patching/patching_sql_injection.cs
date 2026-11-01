@@ -87,23 +87,51 @@ public class patching_sql_injection
         sql.ShouldNotContain($"append $.{MaliciousKey}'");
     }
 
-    [Fact]
-    public void rename_property_escapes_both_paths()
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void rename_property_escapes_both_paths(bool nativeJson)
     {
-        var sql = Render(PatchOperation.RenameProperty(MaliciousKey, "newName", isScalarType: true));
+        var sql = Render(PatchOperation.RenameProperty(MaliciousKey, "newName", nativeJson));
 
         sql.ShouldContain(EscapedKey);
         sql.ShouldNotContain($"$.{MaliciousKey}'");
     }
 
-    [Fact]
-    public void duplicate_property_escapes_source_and_destination_paths()
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void rename_property_escapes_the_key_it_looks_up(bool nativeJson)
+    {
+        // #876: the source's kind is read by matching its key, which is a literal of its own.
+        var sql = Render(PatchOperation.RenameProperty("parent." + MaliciousKey, "parent.newName", nativeJson));
+
+        sql.ShouldContain($"j.[key] = N'{EscapedKey}'");
+        sql.ShouldNotContain($"N'{MaliciousKey}'");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void duplicate_property_escapes_source_and_destination_paths(bool nativeJson)
     {
         var sql = Render(PatchOperation.DuplicateProperty(
-            MaliciousKey, new[] { MaliciousKey }, isScalarType: true));
+            MaliciousKey, new[] { MaliciousKey }, nativeJson));
 
         sql.ShouldContain(EscapedKey);
         sql.ShouldNotContain($"$.{MaliciousKey}'");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void set_dict_key_if_not_exists_escapes_both_the_dictionary_path_and_the_runtime_key(bool nativeJson)
+    {
+        var sql = Render(PatchOperation.SetDictKeyIfNotExists("attributes", MaliciousKey,
+            PatchOperation.SetDictKey("attributes", MaliciousKey, "{}"), nativeJson));
+
+        sql.ShouldContain($"'$.attributes.{EscapedKey}'");
+        sql.ShouldNotContain($"'$.attributes.{MaliciousKey}'");
     }
 
     // A legitimate key that happens to contain an apostrophe now round-trips as data rather than
