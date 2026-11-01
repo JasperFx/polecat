@@ -8,7 +8,7 @@ namespace Polecat.Linq.Parsing;
 ///     One projected column of a "simple" <c>Select()</c> projection: the emitted JSON key and the
 ///     SQL locator that produces its value.
 /// </summary>
-internal sealed record SimpleProjectionColumn(string JsonKey, string Locator, Type MemberType);
+internal sealed record SimpleProjectionColumn(string JsonKey, string Locator, Type MemberType, string? SqlType);
 
 /// <summary>
 ///     Detects whether a <c>Select()</c> projection is "simple" — composed only of (optionally
@@ -96,7 +96,13 @@ internal static class SelectProjectionAnalyzer
         if (!IsScalar(member.MemberType)) return null;
 
         var key = memberFactory.FormatProjectedKey(projectionMember);
-        return new SimpleProjectionColumn(key, member.TypedLocator, member.MemberType);
+
+        // A bool's locator is the bare JSON_VALUE, which yields the text 'true'. Compared against a
+        // string that is what a predicate wants; written into a JSON object it would be a quoted string
+        // that no bool member can read back. As a bit it is written as the JSON literal.
+        var locator = member.IsBoolean ? $"CAST({member.TypedLocator} AS bit)" : member.TypedLocator;
+
+        return new SimpleProjectionColumn(key, locator, member.MemberType, member.LocatorSqlType);
     }
 
     private static bool IsRootedAtParameter(MemberExpression expression)
@@ -110,7 +116,7 @@ internal static class SelectProjectionAnalyzer
         return current is ParameterExpression;
     }
 
-    private static bool IsScalar(Type type)
+    internal static bool IsScalar(Type type)
     {
         var underlying = Nullable.GetUnderlyingType(type) ?? type;
         return underlying.IsPrimitive
@@ -128,7 +134,7 @@ internal static class SelectProjectionAnalyzer
     // Strip no-op / safe / widening conversions (marten#5031 fixed behavior): boxing to object,
     // widening numeric conversions, enum <-> underlying, and non-null -> nullable. Bail (leave the
     // node in place, so the caller treats the projection as non-simple) on lossy/narrowing casts.
-    private static Expression StripSafeConvert(Expression expression)
+    internal static Expression StripSafeConvert(Expression expression)
     {
         while (expression is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } convert)
         {

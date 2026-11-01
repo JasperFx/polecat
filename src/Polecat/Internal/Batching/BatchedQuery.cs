@@ -91,7 +91,7 @@ internal class BatchedQuery : IBatchedQuery
             throw new InvalidOperationException(
                 "QueryListPlan can only be used with Polecat queryables from session.Query<T>().");
 
-        var statement = provider.BuildStatement(queryable.Expression, _session.TenantId);
+        var statement = provider.BuildBatchedStatement(queryable.Expression, _session.TenantId);
         var item = new QueryListBatchItem<T>(statement, _session.Serializer);
         AddItem(item);
         return item.Result;

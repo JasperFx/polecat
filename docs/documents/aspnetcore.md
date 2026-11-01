@@ -241,4 +241,8 @@ app.MapPost("/issues",
 (no deserialize/reserialize). `StreamMany<T>` and `StreamAggregate<T>` materialize via the
 regular query/projection path and serialize through `System.Text.Json`. All of them eliminate
 the endpoint boilerplate (null-check, status code, content type, OpenAPI metadata).
+
+`StreamMany<T>`, `StreamPaged<T>` and `StreamPagedByCursor<T>` honor a `Select()`: a page is what the
+query selected, server-side, so a projection can keep a field out of the response. `StreamOne<T>` is
+the exception. Its ETag belongs to the document, so it always streams the whole document.
 :::

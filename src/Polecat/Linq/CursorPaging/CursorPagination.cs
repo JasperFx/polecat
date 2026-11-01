@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Polecat.Linq.Members;
 using Polecat.Linq.SqlGeneration;
+using Weasel.SqlServer;
 
 namespace Polecat.Linq.CursorPaging;
 
@@ -11,6 +12,22 @@ namespace Polecat.Linq.CursorPaging;
 ///     Values are typed on <em>decode</em> by the server-side ordering key type (the cursor never
 ///     dictates types) and enter the query as bound parameters — no injection.
 /// </summary>
+/// <remarks>
+///     <para>
+///         <b>NULL ordering: SQL Server's own, pinned.</b> A NULL key sorts first ascending and last
+///         descending, so paging goes through the same plain <c>ORDER BY</c> every other query uses and
+///         keeps its index. Marten sorts the other way, as PostgreSQL does, and a cursor from one store
+///         never reaches the other. The rows a page hands back are the ones the seek predicate finds
+///         after the previous page, so the predicate has to follow that order exactly (#838):
+///     </para>
+///     <list type="table">
+///         <listheader><term>Last key</term><description>What comes after it</description></listheader>
+///         <item><term>ascending, value</term><description><c>k &gt; v</c></description></item>
+///         <item><term>ascending, NULL</term><description><c>k IS NOT NULL</c></description></item>
+///         <item><term>descending, value</term><description><c>k &lt; v OR k IS NULL</c></description></item>
+///         <item><term>descending, NULL</term><description>nothing on this key</description></item>
+///     </list>
+/// </remarks>
 internal static class CursorPagination
 {
     private const string Version = "v1:";
@@ -40,6 +57,13 @@ internal static class CursorPagination
             throw new InvalidOperationException(
                 "Keyset (cursor) pagination requires the terminal ordering key to be the unique document identity member (Id) so the ordering is a total order. End your ordering with ThenBy(x => x.Id) (or OrderBy(x => x.Id)).");
         }
+
+        // Asked here, on page 1, rather than left to the next request's decode. Otherwise a client gets
+        // a first page and a cursor that can never be redeemed (#838).
+        foreach (var (member, _) in orderBy)
+        {
+            CursorKeyType.For(member);
+        }
     }
 
     /// <summary>
@@ -61,12 +85,10 @@ internal static class CursorPagination
     ///         <c>cursor_codec_tests</c> pins that per type against <see cref="JsonSerializer" /> itself.
     ///     </para>
     ///     <para>
-    ///         The set is exactly what <see cref="ConvertSlot" /> can decode. A key of any other type was
-    ///         always refused — on the NEXT request, by decode — and that boundary stays where it was: such
-    ///         a value is written as a string, so the next request still fails with the same message from the
-    ///         same place. ⚠️ NOT as null, which reads as the obvious placeholder and is wrong:
-    ///         <see cref="ConvertSlot" /> answers a null slot before it checks the type, so a null would
-    ///         decode quietly instead of being refused.
+    ///         Anything else the reader hands back is written as a string. That is how a <c>time</c> key
+    ///         travels, as a <see cref="TimeSpan" />, and <see cref="CursorKeyType" /> reads it back from
+    ///         one. ⚠️ NOT as null, which reads as the obvious placeholder and is wrong: a null slot means
+    ///         a NULL key, so the next page would seek from the wrong place.
     ///     </para>
     /// </remarks>
     public static string Encode(IReadOnlyList<object?> keyValues)
@@ -104,8 +126,7 @@ internal static class CursorPagination
             case DateTimeOffset x: writer.WriteStringValue(x); break;
             case DateTime x: writer.WriteStringValue(x); break;
 
-            // Not decodable, so decode refuses it on the next request, as it always has. A string, not a
-            // null: see the remarks on Encode.
+            // A string, not a null: see the remarks on Encode.
             default: writer.WriteStringValue(value.ToString()); break;
         }
     }
@@ -151,7 +172,7 @@ internal static class CursorPagination
         var values = new object?[slots.Length];
         for (var i = 0; i < slots.Length; i++)
         {
-            values[i] = ConvertSlot(slots[i], orderBy[i].Member.MemberType);
+            values[i] = ConvertSlot(slots[i], orderBy[i].Member, cursor);
         }
 
         return values;
@@ -159,10 +180,11 @@ internal static class CursorPagination
 
     /// <summary>
     ///     Builds the composite keyset seek predicate for the values of the previous page's last row:
-    ///     <c>(k0 op0 v0) OR (k0 = v0 AND k1 op1 v1) OR …</c> where <c>opN</c> is <c>&gt;</c> for an
-    ///     ascending key and <c>&lt;</c> for a descending one. Every value enters as a bound
-    ///     parameter, and each locator is the exact <see cref="IQueryableMember.TypedLocator"/> used
-    ///     in the ORDER BY so the seek boundary lines up with the sort.
+    ///     <c>(k0 after v0) OR (k0 = v0 AND k1 after v1) OR …</c>, where "after" follows the sort order
+    ///     in the remarks on this class and a NULL value compares with <c>IS NULL</c>. Every value enters
+    ///     as a bound parameter of the key's exact type, and each locator is the exact
+    ///     <see cref="IQueryableMember.TypedLocator"/> used in the ORDER BY so the seek boundary lines
+    ///     up with the sort.
     /// </summary>
     public static ISqlFragment BuildSeekPredicate(
         IReadOnlyList<(IQueryableMember Member, bool Descending)> orderBy, object?[] values)
@@ -171,20 +193,67 @@ internal static class CursorPagination
 
         for (var i = 0; i < orderBy.Count; i++)
         {
-            // Clause i: (k0 = v0 AND … AND k[i-1] = v[i-1] AND k[i] op v[i])
-            ISqlFragment? clause = null;
-            for (var j = 0; j <= i; j++)
+            // Nothing sorts after a NULL on a descending key, so this key cannot advance the seek.
+            var clause = After(orderBy[i].Member, orderBy[i].Descending, values[i]);
+            if (clause is null) continue;
+
+            // Clause i: (k0 = v0 AND … AND k[i-1] = v[i-1] AND k[i] after v[i])
+            for (var j = i - 1; j >= 0; j--)
             {
-                var locator = orderBy[j].Member.TypedLocator;
-                var op = j < i ? "=" : (orderBy[j].Descending ? "<" : ">");
-                ISqlFragment comparison = new ComparisonFilter(locator, op, values[j]!);
-                clause = clause is null ? comparison : new CompoundWhereFragment("AND", clause, comparison);
+                clause = new CompoundWhereFragment("AND", Tied(orderBy[j].Member, values[j]), clause);
             }
 
-            predicate = predicate is null ? clause! : new CompoundWhereFragment("OR", predicate, clause!);
+            predicate = predicate is null ? clause : new CompoundWhereFragment("OR", predicate, clause);
         }
 
         return predicate!;
+    }
+
+    private static ISqlFragment Tied(IQueryableMember member, object? value)
+    {
+        return value is null
+            ? new WhereFragment($"{member.TypedLocator} IS NULL")
+            : new SeekComparison(member, "=", value);
+    }
+
+    private static ISqlFragment? After(IQueryableMember member, bool descending, object? value)
+    {
+        if (value is null)
+        {
+            return descending ? null : new WhereFragment($"{member.TypedLocator} IS NOT NULL");
+        }
+
+        if (!descending) return new SeekComparison(member, ">", value);
+
+        return new CompoundWhereFragment("OR", new SeekComparison(member, "<", value),
+            new WhereFragment($"{member.TypedLocator} IS NULL"));
+    }
+
+    /// <summary>
+    ///     <c>locator op @p</c> with the parameter typed exactly as the locator. See
+    ///     <see cref="CursorKeyType" />.
+    /// </summary>
+    private sealed class SeekComparison : ISqlFragment
+    {
+        private readonly string _locator;
+        private readonly CursorKeyType _type;
+        private readonly string _op;
+        private readonly object _value;
+
+        public SeekComparison(IQueryableMember member, string op, object value)
+        {
+            _locator = member.TypedLocator;
+            _type = CursorKeyType.For(member);
+            _op = op;
+            _value = value;
+        }
+
+        public void Apply(ICommandBuilder builder)
+        {
+            builder.Append(_locator);
+            builder.Append($" {_op} ");
+            _type.ApplyTo(builder.AppendParameter(_value));
+        }
     }
 
     // Read-side values arrive already normalized to CLR primitives / Guid / DateTimeOffset, which STJ
@@ -192,27 +261,26 @@ internal static class CursorPagination
     private static object? NormalizeForCursor(object? value) =>
         value is DBNull ? null : value;
 
-    private static object? ConvertSlot(JsonElement slot, Type memberType)
+    private static object? ConvertSlot(JsonElement slot, IQueryableMember member, string cursor)
     {
-        var target = Nullable.GetUnderlyingType(memberType) ?? memberType;
+        if (slot.ValueKind == JsonValueKind.Null)
+        {
+            // Every other key can legitimately be NULL. The identity cannot, so this was not issued here.
+            return member is IdMember ? throw MalformedSlot(cursor, null) : null;
+        }
 
-        if (slot.ValueKind == JsonValueKind.Null) return null;
-
-        if (target == typeof(Guid)) return slot.GetGuid();
-        if (target == typeof(string)) return slot.GetString();
-        if (target == typeof(int)) return slot.GetInt32();
-        if (target == typeof(long)) return slot.GetInt64();
-        if (target == typeof(short)) return slot.GetInt16();
-        if (target == typeof(byte)) return slot.GetByte();
-        if (target == typeof(bool)) return slot.GetBoolean();
-        if (target == typeof(decimal)) return slot.GetDecimal();
-        if (target == typeof(double)) return slot.GetDouble();
-        if (target == typeof(float)) return slot.GetSingle();
-        if (target == typeof(DateTimeOffset)) return slot.GetDateTimeOffset();
-        if (target == typeof(DateTime)) return slot.GetDateTime();
-
-        throw new BadLinqExpressionException(
-            $"Keyset (cursor) pagination does not support an ordering key of type '{memberType.Name}'. " +
-            "Order by primitive/Guid/DateTime(Offset) keys with the document identity as the terminal key.");
+        // ⚠️ A cursor is client input. A slot of the wrong shape is a bad request rather than a fault,
+        // and StreamPagedByCursor turns only an ArgumentException into a 400.
+        try
+        {
+            return CursorKeyType.For(member).Read(slot);
+        }
+        catch (Exception ex) when (ex is FormatException or InvalidOperationException or OverflowException)
+        {
+            throw MalformedSlot(cursor, ex);
+        }
     }
+
+    private static ArgumentException MalformedSlot(string cursor, Exception? inner)
+        => new("Malformed cursor payload.", nameof(cursor), inner);
 }

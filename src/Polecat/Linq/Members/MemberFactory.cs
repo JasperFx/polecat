@@ -68,6 +68,12 @@ internal class MemberFactory : IMemberResolver
     /// </summary>
     public string FormatProjectedKey(MemberInfo member) => GetJsonPropertyName(member);
 
+    /// <summary>
+    ///     The JSON key for a bare name, a positional constructor parameter having no
+    ///     <see cref="MemberInfo" /> to read an attribute from.
+    /// </summary>
+    public string FormatProjectedKey(string name) => _namingPolicy?.ConvertName(name) ?? name;
+
     private IQueryableMember CreateMember(string jsonPath, Type memberType)
     {
         var rawLocator = $"JSON_VALUE(data, '{jsonPath}')";

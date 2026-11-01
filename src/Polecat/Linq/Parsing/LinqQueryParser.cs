@@ -52,9 +52,21 @@ internal class LinqQueryParser : ExpressionVisitor
     public LambdaExpression? GroupByKeySelector { get; private set; }
 
     /// <summary>
-    ///     HAVING expressions collected from Where() after GroupBy().
+    ///     Predicates that apply to the groups: a Where() after GroupBy(), or the inline predicate of
+    ///     a terminal like Count(...). They become HAVING clauses. The lambda stays whole because its
+    ///     parameter is what tells a grouping from the Select() projection it may be written against.
     /// </summary>
-    public List<Expression> GroupByHavingExpressions { get; } = [];
+    public List<LambdaExpression> GroupByHavingPredicates { get; } = [];
+
+    /// <summary>
+    ///     Orderings applied after GroupBy(), over the grouping or over the Select() projection.
+    /// </summary>
+    public List<(LambdaExpression Selector, bool Descending)> GroupByOrderings { get; } = [];
+
+    /// <summary>
+    ///     The selector of a Sum/Min/Max/Average applied after GroupBy().Select(...).
+    /// </summary>
+    public LambdaExpression? GroupByAggregateSelector { get; private set; }
 
     /// <summary>
     ///     Whether Distinct() was applied.
@@ -217,28 +229,16 @@ internal class LinqQueryParser : ExpressionVisitor
                 HandleWhere(node);
                 break;
             case "OrderBy":
-                if (GroupJoinData != null)
-                    HandleGroupJoinOrderBy(node, descending: false, replace: true);
-                else
-                    HandleOrderBy(node, descending: false, replace: true);
+                HandleOrdering(node, descending: false, replace: true);
                 break;
             case "OrderByDescending":
-                if (GroupJoinData != null)
-                    HandleGroupJoinOrderBy(node, descending: true, replace: true);
-                else
-                    HandleOrderBy(node, descending: true, replace: true);
+                HandleOrdering(node, descending: true, replace: true);
                 break;
             case "ThenBy":
-                if (GroupJoinData != null)
-                    HandleGroupJoinOrderBy(node, descending: false, replace: false);
-                else
-                    HandleOrderBy(node, descending: false, replace: false);
+                HandleOrdering(node, descending: false, replace: false);
                 break;
             case "ThenByDescending":
-                if (GroupJoinData != null)
-                    HandleGroupJoinOrderBy(node, descending: true, replace: false);
-                else
-                    HandleOrderBy(node, descending: true, replace: false);
+                HandleOrdering(node, descending: true, replace: false);
                 break;
             case "Take":
                 HandleTake(node);
@@ -286,9 +286,7 @@ internal class LinqQueryParser : ExpressionVisitor
                 HandleAggregation(node, SingleValueMode.Average);
                 break;
             case "Select" when GroupByKeySelector != null:
-                // For GroupBy queries, just store the select expression;
-                // the GroupBy execution path in the provider handles projection.
-                SelectExpression = GetLambda(node.Arguments[1]);
+                HandleGroupBySelect(node);
                 break;
             case "Select":
                 HandleSelect(node);
@@ -468,15 +466,59 @@ internal class LinqQueryParser : ExpressionVisitor
 
     private void HandleGroupBy(MethodCallExpression node)
     {
+        // SQL groups the whole filtered table before it orders or pages, so any of these in front of
+        // the GroupBy cannot mean what the LINQ says. A Take(5) would page the groups rather than
+        // group five rows, and an OrderBy has no column left to order by once the rows are grouped.
+        if (SelectExpression != null || Statement.OrderBys.Count > 0 || Statement.Limit.HasValue
+            || Statement.Offset.HasValue || IsDistinct)
+        {
+            throw new BadLinqExpressionException(
+                "Polecat cannot translate a Select, OrderBy, Take, Skip or Distinct in front of a GroupBy, "
+                + "because SQL Server groups the filtered rows first. Only Where can come before GroupBy; "
+                + "order and page the groups after it.");
+        }
+
         GroupByKeySelector = GetLambda(node.Arguments[1]);
     }
 
     private void HandleGroupByWhere(MethodCallExpression node)
     {
-        // Where() after GroupBy() becomes a HAVING clause.
-        // Store the expression body for later resolution in the provider.
-        var predicate = GetLambda(node.Arguments[1]);
-        GroupByHavingExpressions.Add(predicate.Body);
+        // Where() after GroupBy() becomes a HAVING clause, resolved once the Select() is known.
+        GroupByHavingPredicates.Add(GetLambda(node.Arguments[1]));
+    }
+
+    private void HandleGroupBySelect(MethodCallExpression node)
+    {
+        // Stored rather than translated: the GroupBy builder needs the key selector and the whole
+        // chain in hand first, and the Select can sit either side of an ordering or a HAVING.
+        if (SelectExpression != null)
+        {
+            throw new BadLinqExpressionException(
+                "Polecat cannot translate a second Select after GroupBy(...).Select(...). Project "
+                + "everything in the one Select, and shape the rest in memory after ToListAsync().");
+        }
+
+        SelectExpression = GetLambda(node.Arguments[1]);
+    }
+
+    private void HandleOrdering(MethodCallExpression node, bool descending, bool replace)
+    {
+        if (GroupJoinData != null)
+        {
+            HandleGroupJoinOrderBy(node, descending, replace);
+        }
+        else if (GroupByKeySelector != null)
+        {
+            // The key is a grouping or a projected shape rather than a document member, so it means
+            // nothing until the GroupBy builder has the projection. Resolving it here as a member
+            // would quietly order by a JSON path that does not exist.
+            if (replace) GroupByOrderings.Clear();
+            GroupByOrderings.Add((GetLambda(node.Arguments[1]), descending));
+        }
+        else
+        {
+            HandleOrderBy(node, descending, replace);
+        }
     }
 
     private void HandleWhere(MethodCallExpression node)
@@ -565,6 +607,13 @@ internal class LinqQueryParser : ExpressionVisitor
 
     private void HandleDistinctBy(MethodCallExpression node)
     {
+        if (GroupByKeySelector != null)
+        {
+            throw new BadLinqExpressionException(
+                "Polecat cannot translate DistinctBy after GroupBy. Group by the key directly, or use "
+                + "Distinct() on a projection of the group key.");
+        }
+
         // DistinctBy(keySelector). SQL Server has no DISTINCT ON, so we resolve the key to a SQL
         // locator and let Statement emit a ROW_NUMBER() windowed subquery. The source visit
         // (Arguments[0]) ran before this case, so a preceding Select(...) has already populated
@@ -650,6 +699,14 @@ internal class LinqQueryParser : ExpressionVisitor
         if (node.Arguments.Count > 1)
         {
             var predicate = GetLambda(node.Arguments[1]);
+
+            // After a GroupBy it filters the groups, exactly as a Where there does.
+            if (GroupByKeySelector != null)
+            {
+                GroupByHavingPredicates.Add(predicate);
+                return;
+            }
+
             var fragment = _whereParser.Parse(predicate.Body);
             Statement.Wheres.Add(fragment);
         }
@@ -663,6 +720,14 @@ internal class LinqQueryParser : ExpressionVisitor
         if (node.Arguments.Count > 1)
         {
             var lambda = GetLambda(node.Arguments[1]);
+
+            // After a GroupBy the selector reads the projection, which is not a document member.
+            if (GroupByKeySelector != null)
+            {
+                GroupByAggregateSelector = lambda;
+                return;
+            }
+
             var memberExpr = StripConvert(lambda.Body) as MemberExpression
                 ?? throw new BadLinqExpressionException(
                     $"Polecat cannot translate the {mode}() selector '{lambda.Body}' to SQL. Aggregate over "
