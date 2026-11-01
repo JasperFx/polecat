@@ -3,7 +3,7 @@
 ::: warning Native AOT works, with one documented exception and a contract you have to meet
 A natively-published application can construct a store, migrate its schema, write and read
 documents, use strong-typed document ids, append and read events, aggregate streams live, and run the
-LINQ surface. **36 shapes are measured in CI.** 34 pass, and the two expected failures are a `GroupBy`
+LINQ surface. **39 shapes are measured in CI.** 37 pass, and the two expected failures are a `GroupBy`
 projected into an **anonymous type** ([#743](https://github.com/JasperFx/polecat/issues/743)), which
 cannot work, and an **unregistered** strong-typed id, kept as the control that proves registering one
 is required.
@@ -80,7 +80,7 @@ on shapes that work. Neither the presence nor the absence of a warning is eviden
 ## How far it gets today
 
 Measured, not estimated — `Polecat.AotRuntimeSmoke` publishes native and runs against a real SQL
-Server. **36 shapes, 34 of which pass.** The two that do not are a `GroupBy` projected into an anonymous
+Server. **39 shapes, 37 of which pass.** The two that do not are a `GroupBy` projected into an anonymous
 type (#743) and, deliberately, a strong-typed id nobody registered (#751); everything else below works.
 
 | | native |
@@ -95,13 +95,14 @@ type (#743) and, deliberately, a strong-typed id nobody registered (#751); every
 | `Query<T>()` — LINQ reads, enum comparisons, child-collection filters | ✅ |
 | `Count` / `Any` / `Sum` / `Min` / `Average` — the scalar aggregates | ✅ |
 | `GroupBy`, including a value-type key, projected into a **named** type | ✅ |
+| `Count(predicate)` inside a `GroupBy`, ordering and paging the groups, and `Count`/`First` over them | ✅ |
 | `GroupJoin(...).SelectMany(...)` | ✅ |
 | a `where` value from a **method call**, a **member chain** or an **array literal** | ✅ |
 | `Select` of a member — a `string`, an `enum`, a `Guid` id; on documents and on `QueryAllRawEvents()` | ✅ (5.37: value types fixed) |
 | `Select` into a named type, or into an **anonymous** type without a `GroupBy` | ✅ |
 | `Distinct`, `OrderBy`/`ThenBy`/`Skip`/`Take`, `FirstOrDefault`, `SingleOrDefault`, string `StartsWith`/`Contains` | ✅ |
 | `ToPagedListAsync`, `ToJsonArrayAsync` | ✅ |
-| `ToJsonPageByCursorAsync` — keyset cursor paging | ✅ (5.37: fixed) |
+| `ToJsonPageByCursorAsync` — keyset cursor paging, including a `Select()` and an enum key | ✅ (5.37: fixed) |
 | `ModifiedSince` / `CreatedSince` | ✅ |
 | soft deletes — the default filter, `MaybeDeleted`, `IsDeleted`, `DeletedSince` | ✅ |
 | a `GroupBy` projected into an **anonymous type** | ❌ [#743](https://github.com/JasperFx/polecat/issues/743) |

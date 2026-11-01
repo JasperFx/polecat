@@ -159,10 +159,43 @@ var results = await session.Query<LinqTarget>()
 ### Supported Aggregates
 
 - `g.Count()` / `g.LongCount()` -- `COUNT(*)`
+- `g.Count(x => x.Age > 30)` / `g.LongCount(...)` -- `COUNT(CASE WHEN ... THEN 1 END)`, with the predicate's values bound as parameters
 - `g.Sum(x => x.Property)` -- `SUM(property)`
 - `g.Min(x => x.Property)` -- `MIN(property)`
 - `g.Max(x => x.Property)` -- `MAX(property)`
 - `g.Average(x => x.Property)` -- `AVG(property)`
+
+Any of these, and `g.Key`, can be used in a `Select`, in a `Where` after the `GroupBy`, and in an ordering.
+
+### Ordering and Paging Groups
+
+An ordering after `GroupBy` can address the group, or the member of the `Select` projection, or the
+scalar a `Select` produced, and `Skip` and `Take` page the groups:
+
+```cs
+var page = await session.Query<LinqTarget>()
+    .GroupBy(x => x.Color)
+    .Select(g => new { Color = g.Key, Total = g.Sum(x => x.Age) })
+    .OrderByDescending(x => x.Total)
+    .Skip(10).Take(10)
+    .ToListAsync();
+```
+
+A `Skip` with no ordering pages by the group key. `Select`, `OrderBy`, `Take`, `Skip` and `Distinct` are
+refused in front of a `GroupBy`, because SQL Server groups the filtered rows first and they could not mean
+what the LINQ says. Only `Where` goes there.
+
+### Terminal Operators
+
+`CountAsync` and `LongCountAsync` count the groups, not the rows, and `AnyAsync` asks whether there are
+any. Those three do not need a `Select`. `FirstAsync`, `SingleAsync`, `LastAsync` and their `OrDefault`
+forms return one group's projection, and `SumAsync`, `MinAsync`, `MaxAsync` and `AverageAsync` aggregate a
+projected value across the groups. An inline predicate filters the groups, as a `Where` there does.
+
+`ToJsonArrayAsync` streams a projected object directly. The other raw JSON operations read whole documents
+and refuse a `GroupBy`. A `Select` after the `Select` is refused, as is `DistinctBy`.
+
+`GroupBy` needs `JSON_OBJECT`, so SQL Server 2022 or later, for any projection into an object.
 
 ## CountBy(), AggregateBy(), and Index() (.NET 9)
 

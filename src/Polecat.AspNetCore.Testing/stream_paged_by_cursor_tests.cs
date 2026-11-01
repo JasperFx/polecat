@@ -97,6 +97,22 @@ public class stream_paged_by_cursor_tests : IAsyncLifetime
         all.ShouldBe([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
     }
 
+    [Theory]
+    [InlineData("[3,\"not-a-guid\"]")]                                       // the Id key
+    [InlineData("[\"three\",\"6f9619ff-8b86-d011-b42d-00cf4fc964ff\"]")]       // the Number key
+    public async Task a_malformed_cursor_slot_is_a_bad_request(string payload)
+    {
+        // #838: a slot that fails to bind used to escape as a FormatException, which is a 500. A
+        // cursor is client input, so a value the server never issued is the client's error.
+        var cursor = "v1:" + Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(payload));
+
+        await _host.Scenario(s =>
+        {
+            s.Get.Url($"/api/issues/paged-cursor/3?cursor={Uri.EscapeDataString(cursor)}");
+            s.StatusCodeShouldBe(400);
+        });
+    }
+
     [Fact]
     public async Task last_page_has_null_cursor_and_no_header()
     {

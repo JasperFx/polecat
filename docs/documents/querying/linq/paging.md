@@ -93,6 +93,13 @@ end of the set.
   order*, so pagination can never skip or duplicate rows across ties. End your ordering with
   `.ThenBy(x => x.Id)` (or order by `Id` alone). A non-identity terminal key is rejected.
 - Mixed ascending/descending orderings are supported; the seek predicate flips direction per key.
+- **A key has to be a scalar.** Numbers, strings, `bool`, `Guid`, enums in either storage mode, `DateTime`,
+  `DateTimeOffset`, `DateOnly`, `TimeOnly` and strong-typed ids all work. Ordering by an object or a
+  collection is refused on the first page, rather than handing out a cursor that cannot be redeemed.
+- **A `Select()` is honored.** A page is the projected JSON, the same as `ToJsonArrayAsync`, and an ordering
+  key does not have to be one of the projected members. A projection that cannot be translated to a
+  server-side JSON object, such as a scalar or a method call, is refused.
+- **A malformed cursor is an `ArgumentException`**, which `StreamPagedByCursor<T>` answers with a 400.
 
 ### How it works
 
@@ -101,7 +108,11 @@ Polecat composes a keyset seek predicate
 **same** SQL locators as the `ORDER BY` so the seek boundary lines up with the sort. The last
 row's sort-key values are carried in an opaque, versioned (`v1:`) base64-JSON cursor. Cursor
 values are **typed on decode** by the query's ordering key types (the cursor never dictates
-types) and enter the query as **bound parameters** — no injection.
+types) and enter the query as **bound parameters** of the key's exact SQL type, so a `datetime2`
+seek keeps every digit — no injection.
+
+`NULL` keys sort where SQL Server sorts them: **first ascending, and last descending**. Every row
+arrives exactly once, and an ordering stays a plain `ORDER BY` that an index can serve.
 
 ::: tip SQL Server ordering
 String seeks use the column's collation and `uniqueidentifier` (`Guid`) seeks use SQL Server's

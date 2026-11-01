@@ -1,9 +1,9 @@
 using System.Linq.Expressions;
 using Polecat.Batching;
+using Polecat.Linq;
 using Polecat.Linq.Members;
 using Polecat.Linq.Parsing;
 using Polecat.Linq.SqlGeneration;
-using Polecat.Metadata;
 using Polecat.Serialization;
 
 namespace Polecat.Internal.Batching;
@@ -83,17 +83,7 @@ internal class BatchedQueryable<T> : IBatchedQueryable<T> where T : class
             statement.Wheres.Add(fragment);
         }
 
-        // Tenant filter — #234: only conjoined tables carry a tenant_id column.
-        if (_provider.Mapping.TenancyStyle == TenancyStyle.Conjoined)
-        {
-            statement.Wheres.Add(new ComparisonFilter("tenant_id", "=", _tenantId));
-        }
-
-        // Soft delete filter
-        if (_provider.Mapping.DeleteStyle == DeleteStyle.SoftDelete)
-        {
-            statement.Wheres.Add(new LiteralSqlFragment("is_deleted = 0"));
-        }
+        statement.Wheres.AddRange(ImplicitFilters.For(_provider.Mapping, typeof(T), _tenantId));
 
         return statement;
     }
