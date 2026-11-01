@@ -349,8 +349,8 @@ public class StoreOptions
     internal bool ShouldApplyChangesOnStartup { get; set; }
 
     /// <summary>
-    ///     How long a replica waits for the global migration lock before giving up, when schema
-    ///     changes are applied on startup. Defaults to 30 seconds.
+    ///     How long anything provisioning this store's schema waits for the global migration lock before
+    ///     giving up. Defaults to 30 seconds.
     /// </summary>
     /// <remarks>
     ///     <para>
@@ -375,8 +375,27 @@ public class StoreOptions
     ///     <c>ContinueOnFailures</c> starts it against the schema the winner is applying, and the
     ///     default <c>FailFast</c> aborts.
     ///     </para>
+    ///     <para>
+    ///     #868: despite the name, this is not only about startup any more. The daemon's schema ensure and
+    ///     a session's first use of the event store or of a document table take the same lock, so they
+    ///     cannot collide with a migration or with each other, and they wait this long as well. A process
+    ///     that has seen its schema ensured asks for nothing again, and <c>AutoCreate.None</c> never asks.
+    ///     A session that has a transaction open never waits, whatever this says: see
+    ///     <see cref="Internal.SchemaMigrationLock.HoldForFirstUseAsync" /> for why.
+    ///     </para>
+    ///     <para>
+    ///     ⚠️ The wait is also capped by the connection's command timeout, because the lock request is an
+    ///     ordinary command: 30 seconds unless the connection string sets <c>Command Timeout</c>. A value
+    ///     above that has no effect until the connection string is raised to match.
+    ///     </para>
     /// </remarks>
     public TimeSpan StartupMigrationLockTimeout { get; set; } = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    ///     The lock everything provisioning this store's schema serializes on (#664, #868).
+    /// </summary>
+    internal Internal.SchemaMigrationLock BuildMigrationLock() =>
+        new(DatabaseSchemaName, StartupMigrationLockTimeout);
 
     /// <summary>
     ///     Internal access to the document provider registry. Set by DocumentStore during construction.

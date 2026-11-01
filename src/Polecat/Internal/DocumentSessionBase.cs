@@ -377,7 +377,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
 
     internal async Task EnsureTableForProviderAsync(DocumentProvider provider, CancellationToken token)
     {
-        await _tableEnsurer.EnsureTablesAsync([provider], token);
+        await _tableEnsurer.EnsureTablesAsync([provider], HasOpenTransaction, token);
     }
 
     public void Store<T>(T document) where T : notnull
@@ -923,18 +923,15 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             // Apply inline projections — projected document ops are queued into _workTracker
             if (_inlineProjections.Length > 0 && _workTracker.Streams.Count > 0)
             {
-                // Pre-create document tables for projected types that projections may query. #548: this
-                // set comes entirely from configuration, so it is computed once per store and cached
-                // rather than re-derived from Projections.All on every save.
-                await _tableEnsurer.EnsureTablesAsync(Options.Projections.InlineProjectedProviders, token);
-
                 var streams = _workTracker.Streams.ToList();
                 foreach (var projection in _inlineProjections)
                 {
                     await projection.ApplyAsync(this, streams, token);
                 }
 
-                // Ensure document tables exist for any additional projected types
+                // Ensure document tables exist for any additional projected types. #868: this is the one
+                // ensure a save cannot move ahead of its transaction, because the types are only known
+                // once the projections have run, and it is why the ensure has to be told it is inside one.
                 if (_workTracker.Operations.Count > 0)
                 {
                     var newTypes = _workTracker.Operations
@@ -942,7 +939,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
                         .Where(t => t != typeof(object))
                         .Distinct()
                         .Select(t => _providers.GetProvider(t));
-                    await _tableEnsurer.EnsureTablesAsync(newTypes, token);
+                    await _tableEnsurer.EnsureTablesAsync(newTypes, HasOpenTransaction, token);
                 }
             }
 
@@ -1167,15 +1164,27 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
                 .Distinct()
                 .Select(t => _providers.GetProvider(t));
 
-            await _tableEnsurer.EnsureTablesAsync(typesNeeded, token);
+            await _tableEnsurer.EnsureTablesAsync(typesNeeded, HasOpenTransaction, token);
+        }
+
+        // Pre-create document tables for projected types that projections may query. #548: this set comes
+        // entirely from configuration, so it is computed once per store and cached rather than re-derived
+        // from Projections.All on every save. #868: it used to run inside the save's transaction, after
+        // the appends, where it could not wait for the migration lock. Nothing about it needs to be there.
+        if (_inlineProjections.Length > 0 && _workTracker.Streams.Count > 0)
+        {
+            await _tableEnsurer.EnsureTablesAsync(Options.Projections.InlineProjectedProviders, HasOpenTransaction,
+                token);
         }
 
         // #219: ensure the event store schema exists before appending — the event-sourcing analogue
         // of ensuring document tables above. Runs outside the data transaction (it opens its own
-        // connection) and only when there are events to write.
+        // connection) and only when there are events to write. "Outside" means not in the transaction this
+        // save begins. One begun earlier, by AppendExclusive or FetchForExclusiveWriting, is still open
+        // here, which is why this says so (#868).
         if (_workTracker.Streams.Any(s => s.Events.Any()))
         {
-            await _tableEnsurer.EnsureEventStoreSchemaAsync(token);
+            await _tableEnsurer.EnsureEventStoreSchemaAsync(HasOpenTransaction, token);
         }
 
         // #335: tenant-partitioned documents — resolve (and lazily provision, mirroring the event

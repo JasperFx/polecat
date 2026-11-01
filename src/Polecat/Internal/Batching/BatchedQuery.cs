@@ -125,11 +125,11 @@ internal class BatchedQuery : IBatchedQuery
         if (_items.Count == 0) return;
 
         // Ensure tables exist for all involved document types
-        await _tableEnsurer.EnsureTablesAsync(_involvedProviders, token);
+        await _tableEnsurer.EnsureTablesAsync(_involvedProviders, _session.HasOpenTransaction, token);
 
         if (_needsEventStore)
         {
-            await _tableEnsurer.EnsureEventStoreSchemaAsync(token);
+            await _tableEnsurer.EnsureEventStoreSchemaAsync(_session.HasOpenTransaction, token);
         }
 
         // Build the combined batch (connection-less; lifetime sets it at execution)

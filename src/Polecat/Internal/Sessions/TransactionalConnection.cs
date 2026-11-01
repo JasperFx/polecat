@@ -55,6 +55,7 @@ internal class TransactionalConnection : IAlwaysConnectedLifetime
     public ConnectionFactory ConnectionFactory => _connectionFactory;
     public SqlConnection Connection => _connection ?? throw new InvalidOperationException("Connection not yet opened.");
     public SqlTransaction? Transaction { get; set; }
+    public bool HasOpenTransaction => Transaction != null;
     public bool HoldsTransactionForSession => _isolationLevel != IsolationLevel.ReadCommitted;
 
     public async ValueTask BeginTransactionAsync(CancellationToken token)

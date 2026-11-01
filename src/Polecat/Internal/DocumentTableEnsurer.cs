@@ -64,7 +64,15 @@ internal class DocumentTableEnsurer
     /// </summary>
     internal int SchemaEnsureExecutions => Volatile.Read(ref _schemaEnsureExecutions);
 
-    public async Task EnsureTableAsync(DocumentProvider provider, CancellationToken token)
+    /// <param name="provider">The document type whose table is needed.</param>
+    /// <param name="insideTransaction">
+    ///     Whether the caller has a transaction open on its own connection, from
+    ///     <c>IConnectionLifetime.HasOpenTransaction</c>. Required rather than defaulted, because a caller
+    ///     that gets this wrong can stall a session for the whole lock timeout: see
+    ///     <see cref="SchemaMigrationLock.HoldForFirstUseAsync" />.
+    /// </param>
+    /// <param name="token"></param>
+    public async Task EnsureTableAsync(DocumentProvider provider, bool insideTransaction, CancellationToken token)
     {
         var docType = provider.Mapping.DocumentType;
 
@@ -94,6 +102,13 @@ internal class DocumentTableEnsurer
 
             await using var conn = _connectionFactory.Create();
             await conn.OpenAsync(token);
+
+            // #868: serialized against the daemon and against other stores and processes. The semaphore
+            // above only keeps this ensurer from racing itself. Always taken in that order, semaphore then
+            // lock, and nothing here waits on a semaphore while it holds the lock.
+            await using var migrationLock = await SchemaMigrationLock.HoldForFirstUseAsync(
+                _options, conn, insideTransaction, token);
+            if (migrationLock is null) return;
 
             var migrator = new SqlServerMigrator();
 
@@ -215,10 +230,11 @@ internal class DocumentTableEnsurer
         }
 
         // Create foreign keys (deferred — referenced tables must exist first)
-        await EnsureForeignKeysAsync(provider, token);
+        await EnsureForeignKeysAsync(provider, insideTransaction, token);
     }
 
-    private async Task EnsureForeignKeysAsync(DocumentProvider provider, CancellationToken token)
+    private async Task EnsureForeignKeysAsync(DocumentProvider provider, bool insideTransaction,
+        CancellationToken token)
     {
         if (provider.Mapping.ForeignKeys.Count == 0) return;
         if (_fksEnsured.ContainsKey(provider.Mapping.DocumentType)) return;
@@ -229,7 +245,7 @@ internal class DocumentTableEnsurer
         foreach (var fk in provider.Mapping.ForeignKeys)
         {
             var refProvider = _providerRegistry.GetProvider(fk.ReferenceDocumentType);
-            await EnsureTableAsync(refProvider, token);
+            await EnsureTableAsync(refProvider, insideTransaction, token);
         }
 
         await _semaphore.WaitAsync(token);
@@ -239,6 +255,11 @@ internal class DocumentTableEnsurer
 
             await using var conn = _connectionFactory.Create();
             await conn.OpenAsync(token);
+
+            // #868: a new constraint is DDL like any other. See EnsureTableAsync.
+            await using var migrationLock = await SchemaMigrationLock.HoldForFirstUseAsync(
+                _options, conn, insideTransaction, token);
+            if (migrationLock is null) return;
 
             // #684: re-diff the table WITH its constraints, now that every referenced table exists. The
             // first pass built it with `includeForeignKeys: false`, so the constraints are all this delta
@@ -369,11 +390,12 @@ internal class DocumentTableEnsurer
         await cmd.ExecuteNonQueryAsync(token);
     }
 
-    public async Task EnsureTablesAsync(IEnumerable<DocumentProvider> providers, CancellationToken token)
+    public async Task EnsureTablesAsync(IEnumerable<DocumentProvider> providers, bool insideTransaction,
+        CancellationToken token)
     {
         foreach (var provider in providers)
         {
-            await EnsureTableAsync(provider, token);
+            await EnsureTableAsync(provider, insideTransaction, token);
         }
     }
 
@@ -386,7 +408,13 @@ internal class DocumentTableEnsurer
     ///     analogue of EnsureTableAsync for documents. Idempotent and applied once per process; a
     ///     no-op under AutoCreate.None so the user's manual-schema opt-out is respected.
     /// </summary>
-    public async Task EnsureEventStoreSchemaAsync(CancellationToken token)
+    /// <param name="insideTransaction">
+    ///     Whether the caller has a transaction open on its own connection. See
+    ///     <see cref="EnsureTableAsync" />. A real way to get here: <c>AppendExclusive</c> takes a stream
+    ///     lock in a transaction, and only then does the save reach this.
+    /// </param>
+    /// <param name="token"></param>
+    public async Task EnsureEventStoreSchemaAsync(bool insideTransaction, CancellationToken token)
     {
         if (_eventStoreEnsured) return;
 
@@ -403,6 +431,15 @@ internal class DocumentTableEnsurer
 
             await using var conn = _connectionFactory.Create();
             await conn.OpenAsync(token);
+
+            // #868: the semaphore above covers this ensurer in this process. The daemon applies this same
+            // schema through PolecatDatabase.EnsureStorageExistsAsync, so without this a session's first
+            // write and the daemon both read an empty catalog, and whoever ran second failed with
+            // "There is already an object named 'fk_pc_events_stream_id' in the database". A loser waits
+            // here, then the diff below finds the schema already there and comes out empty.
+            await using var migrationLock = await SchemaMigrationLock.HoldForFirstUseAsync(
+                _options, conn, insideTransaction, token);
+            if (migrationLock is null) return;
 
             var migrator = new SqlServerMigrator();
 

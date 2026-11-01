@@ -17,6 +17,12 @@ internal interface IConnectionLifetime : IAsyncDisposable, IDisposable
     /// </summary>
     ConnectionFactory ConnectionFactory { get; }
 
+    /// <summary>
+    ///     Whether a transaction is open on this lifetime right now, which is to say whether it may be
+    ///     holding locks that something else could be waiting on (#868).
+    /// </summary>
+    bool HasOpenTransaction { get; }
+
     Task<int> ExecuteAsync(SqlCommand command, CancellationToken token);
     Task<object?> ExecuteScalarAsync(SqlCommand command, CancellationToken token);
     Task<DbDataReader> ExecuteReaderAsync(SqlCommand command, CancellationToken token);
