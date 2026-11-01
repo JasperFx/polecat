@@ -170,6 +170,12 @@ public class per_tenant_rebuild_tests : IAsyncLifetime
             // occurred on the current command" rather than as a cancellation. Same outcome as above, and
             // the assertions below are what this test pins.
         }
+        catch (InvalidOperationException) when (cts.IsCancellationRequested)
+        {
+            // SqlClient's third form, seen in the same schema check: a command cancelled before it has
+            // reached the server fails with a bare InvalidOperationException, "Operation cancelled by
+            // user." (#895). Same outcome again.
+        }
 
         // Red's cancelled rebuild left the other tenants' progression completely untouched.
         (await ProgressRowsForTenantAsync("Blue")).ShouldBe(blueBefore);

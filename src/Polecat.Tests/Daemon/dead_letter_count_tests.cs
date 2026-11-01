@@ -55,9 +55,11 @@ public class dead_letter_count_tests : OneOffConfigurationsContext
     [Fact]
     public async Task records_and_counts_dead_letters_per_shard()
     {
+        // The harness's own schema, which it drops before every run. Clearing the dead letters is not
+        // enough on a schema that survives: the last run's poison event is still in pc_events, so the
+        // daemon applies it again and the count climbs by one per run (#884).
         ConfigureStore(opts =>
         {
-            opts.DatabaseSchemaName = "dead_letters";
             opts.Projections.Errors.SkipApplyErrors = true;
             opts.Projections.RebuildErrors.SkipApplyErrors = true;
             opts.Projections.Add<PoisonEventProjection>(ProjectionLifecycle.Async);
