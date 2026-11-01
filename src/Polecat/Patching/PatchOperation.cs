@@ -1,5 +1,6 @@
 using System.Data.Common;
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using Polecat.Internal;
 using Polecat.Serialization;
 using Weasel.Core;
@@ -61,6 +62,17 @@ internal class PatchOperation : Polecat.Internal.IStorageOperation, Weasel.Stora
     ///     quote characters, so escaping only single quotes leaves legitimate nested paths intact.
     /// </summary>
     internal static string EscapePath(string path) => SqlEscaping.LiteralBody(path);
+
+    /// <summary>
+    ///     The sort position of an inserted element, as the second column of its row. Existing elements
+    ///     sit at the odd positions, so an even one lands before the element at the same index.
+    /// </summary>
+    /// <remarks>
+    ///     #848: it is written into the SQL, and a negative index is allowed, so it cannot use the
+    ///     culture's negative sign. sv-SE writes U+2212, which T-SQL refuses.
+    /// </remarks>
+    private static string SortOrderLiteral(int index)
+        => string.Create(CultureInfo.InvariantCulture, $", {index * 2}");
 
     internal static Action<ICommandBuilder> SetScalar(string jsonPath, object? value)
     {
@@ -207,7 +219,7 @@ internal class PatchOperation : Polecat.Internal.IStorageOperation, Weasel.Stora
             builder.Append("UNION ALL ");
             builder.Append("SELECT ");
             builder.AppendParameter(isComplex ? jsonElement! : serializer.ToJson(element));
-            builder.Append($", {index * 2}");
+            builder.Append(SortOrderLiteral(index));
             builder.Append(") t");
             builder.Append(") + ']', '[]')");
             builder.Append("))");
@@ -239,7 +251,7 @@ internal class PatchOperation : Polecat.Internal.IStorageOperation, Weasel.Stora
                 builder.Append("UNION ALL ");
                 builder.Append("SELECT ");
                 builder.AppendParameter(serializer.ToJson(element));
-                builder.Append($", {index.Value * 2}");
+                builder.Append(SortOrderLiteral(index.Value));
                 builder.Append(") t");
                 builder.Append(") + ']', '[]')");
                 builder.Append("))");
@@ -276,7 +288,8 @@ internal class PatchOperation : Polecat.Internal.IStorageOperation, Weasel.Stora
                 builder.Append(
                     $"SELECT j.value as val, CAST(j.[key] AS int) * 2 + 1 as sort_order FROM OPENJSON(JSON_QUERY(data, '$.{jsonPath}')) j ");
                 builder.Append("UNION ALL ");
-                builder.Append($"SELECT {paramName}, {index.Value * 2}");
+                builder.Append($"SELECT {paramName}");
+                builder.Append(SortOrderLiteral(index.Value));
                 builder.Append(") t");
                 builder.Append(") + ']', '[]')");
                 builder.Append("))");

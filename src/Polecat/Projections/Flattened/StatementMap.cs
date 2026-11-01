@@ -253,8 +253,12 @@ public class StatementMap<TEvent> : IFlatTableEventHandler
 
     private static string ToSnakeCase(string name)
     {
+        // Invariant (#848): under tr-TR, InvoiceId would otherwise become ınvoice_id, and two hosts in
+        // different cultures would disagree about a column.
         return string.Concat(name.Select((c, i) =>
-            i > 0 && char.IsUpper(c) ? "_" + char.ToLower(c) : char.ToLower(c).ToString()));
+            i > 0 && char.IsUpper(c)
+                ? "_" + char.ToLowerInvariant(c)
+                : char.ToLowerInvariant(c).ToString()));
     }
 
     private static string MapToSqlType(Type type)

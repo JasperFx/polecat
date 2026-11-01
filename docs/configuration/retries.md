@@ -56,11 +56,32 @@ the hooks below invite the retry — so the rule is:
 | **3960** | snapshot isolation update conflict | rolled back | **never** — only the application can resolve it, by re-reading and recomputing |
 | **1205** | deadlock victim | rolled back | **never inside a transaction**, at any level: the work before this command is gone, and replaying the command cannot bring it back. Outside one (a plain read), yes at `ReadCommitted`; **no** under `Snapshot` / `Serializable` |
 | **1222** | lock request timeout | **stays open**, only the statement is aborted | yes at `ReadCommitted`; **no** under `Snapshot` / `Serializable`, where it replays stale-snapshot work |
+| *no number* | connection pool timeout, raised as a plain `InvalidOperationException` | there isn't one: no connection was obtained, so nothing ran | yes at every level, [but think about it first](#connection-pool-timeouts) |
 
 `PolecatRetryPredicates` encodes that table so you do not have to carry the numbers. An error number
 cannot tell the two rows of 1205 apart, so at `ReadCommitted` the predicate answers "safe" for a
 deadlock and the protection sits below it, as described next. That costs one attempt: the replay is
 refused, the predicate answers "unsafe" for the refusal, and the retry stops there.
+
+### Connection pool timeouts
+
+When every pooled connection is in use and `Connect Timeout` runs out, SqlClient raises a plain
+`InvalidOperationException` with no `SqlException` or `TimeoutException` inside it. A strategy that
+handles only `SqlException` will not retry it, and the connection-open retry in the table at the top of
+this page does not see it either.
+
+A retry is safe, because nothing ran. It may still not be what you want: every attempt has already
+waited out the whole `Connect Timeout`, 15 seconds by default, and a pool timeout means the application
+is out of capacity, which a retry adds to rather than relieves. If you do retry one, keep the attempts
+few and the delay long.
+
+The async daemon does not retry it. A projection that hits a pool timeout does not dead-letter the
+event, whatever `SkipApplyErrors` says. The shard pauses with `ShardFailure.IsTransient` set, so a
+supervisor knows it is worth restarting, and a restart picks up from the shard's persisted progress
+without losing anything. If nothing in your application supervises the daemon, the shard stays paused
+until something restarts it, as it does after any other failure. Wolverine's managed subscription
+distribution is one such supervisor. Several slices timing out together are the exception: the daemon
+gets them as a group with no single event to blame, and builds the batch again in place.
 
 ```cs
 using Polecat.Resilience;

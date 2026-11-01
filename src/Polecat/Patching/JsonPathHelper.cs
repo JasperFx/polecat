@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using System.Linq.Expressions;
 using System.Reflection;
 using System.Text.Json;
@@ -50,10 +51,12 @@ internal static class JsonPathHelper
             case MethodCallExpression methodCall when IsDictionaryIndexer(methodCall):
                 // Dictionary indexer: x.Dict["key"] or x.Dict[variable]
                 CollectSegments(methodCall.Object!, segments, namingPolicy);
-                var key = EvaluateExpression(methodCall.Arguments[0]);
-                segments.Add(FormatName(
-                    key?.ToString() ?? throw new InvalidOperationException("Dictionary key cannot be null."),
-                    namingPolicy));
+                var key = EvaluateExpression(methodCall.Arguments[0])
+                          ?? throw new InvalidOperationException("Dictionary key cannot be null.");
+
+                // Invariant (#848): System.Text.Json writes a dictionary key the invariant way, so
+                // that is the spelling in the document whatever culture this host is in.
+                segments.Add(FormatName(Convert.ToString(key, CultureInfo.InvariantCulture)!, namingPolicy));
                 break;
 
             case ParameterExpression:

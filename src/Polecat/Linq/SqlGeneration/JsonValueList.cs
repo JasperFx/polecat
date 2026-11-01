@@ -1,5 +1,6 @@
 using System.Buffers;
 using System.Collections;
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using Weasel.SqlServer;
@@ -200,8 +201,15 @@ internal static class JsonValueList
             case float f: writer.WriteNumberValue(f); break;
             case DateTimeOffset dto: writer.WriteStringValue(dto); break;
             case DateTime dt: writer.WriteStringValue(dt); break;
-            case DateOnly date: writer.WriteStringValue(date.ToString("yyyy-MM-dd")); break;
-            case TimeOnly time: writer.WriteStringValue(time.ToString("HH:mm:ss.fffffff")); break;
+            // Invariant, both of them (#848). A custom format still takes its calendar and its time
+            // separator from the culture, so th-TH writes 2569 for this year and fi-FI writes 14.30.15,
+            // and the OPENJSON column then matches nothing rather than failing.
+            case DateOnly date:
+                writer.WriteStringValue(date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
+                break;
+            case TimeOnly time:
+                writer.WriteStringValue(time.ToString("HH:mm:ss.fffffff", CultureInfo.InvariantCulture));
+                break;
             case Enum e: writer.WriteNumberValue(Convert.ToInt64(e)); break;
             default:
                 // Deliberately a refusal rather than ToString(). A type nobody has typed the OPENJSON
