@@ -278,6 +278,20 @@ public class operation_result_set_census_tests : OneOffConfigurationsContext
             return BuildAppend(s);
         });
 
+        // #834: a stream too big for one command is several operations, and every one of them owns a
+        // set of its own, including the ones that have no stream row to write.
+        await using (var session = (DocumentSessionBase)theStore.LightweightSession())
+        {
+            session.Events.Append(streamId,
+                Enumerable.Range(0, 600).Select(i => (object)new CensusHappened(i)).ToArray());
+
+            var slices = await session.BuildRaisedEventAppendsAsync(session.WorkTracker.Streams.ToList(), Ct);
+            slices.Count.ShouldBe(3);
+
+            await check("Append first slice", session, slices[0]);
+            await check("Append later slice", session, slices[1]);
+        }
+
         disagreements.ShouldBeEmpty();
     }
 

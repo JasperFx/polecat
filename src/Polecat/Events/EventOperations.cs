@@ -2,7 +2,6 @@ using System.Data.Common;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using System.Reflection;
-using System.Text;
 using JasperFx.Core.Reflection;
 using JasperFx.Events;
 using JasperFx.Events.Aggregation;
@@ -1287,88 +1286,13 @@ internal class EventOperations : QueryEventStore, IEventOperations
 
     public async Task<bool> EventsExistAsync(EventTagQuery query, CancellationToken cancellation = default)
     {
-        var conditions = query.Conditions;
-        if (conditions.Count == 0)
-            throw new ArgumentException("EventTagQuery must have at least one condition.");
+        await using var batch = new SqlBatch();
+        var builder = new BatchBuilder(batch);
+        WriteEventsExistSql(builder, _events, query, _tenantId);
+        builder.Compile();
 
-        var distinctTagTypes = conditions.Select(c => c.TagType).Distinct().ToList();
-        var schema = _events.DatabaseSchemaName;
-
-        var sb = new StringBuilder();
-        sb.Append("SELECT CASE WHEN EXISTS (SELECT 1 FROM ");
-
-        var first = true;
-        for (var i = 0; i < distinctTagTypes.Count; i++)
-        {
-            var tagType = distinctTagTypes[i];
-            var registration = _events.FindTagType(tagType)
-                               ?? throw new InvalidOperationException(
-                                   $"Tag type '{tagType.Name}' is not registered.");
-
-            var alias = $"t{i}";
-            if (first)
-            {
-                sb.Append($"{_events.TagTableName(registration)} {alias}");
-                first = false;
-            }
-            else
-            {
-                sb.Append($" INNER JOIN {_events.TagTableName(registration)} {alias} ON t0.seq_id = {alias}.seq_id");
-            }
-        }
-
-        // Join to pc_events only if we need event type filtering
-        var hasEventTypeFilter = conditions.Any(c => c.EventType != null);
-        if (hasEventTypeFilter)
-        {
-            // #665: through SqlEscaping, like the TagTableName(...) calls elsewhere in this file,
-            // rather than hand-bracketed.
-            sb.Append($" INNER JOIN {Polecat.Internal.SqlEscaping.QualifiedName(schema, "pc_events")} e ON t0.seq_id = e.seq_id");
-        }
-
-        sb.Append(" WHERE (");
-        await using var cmd = new SqlCommand();
-        var paramIndex = 0;
-
-        for (var i = 0; i < conditions.Count; i++)
-        {
-            if (i > 0) sb.Append(" OR ");
-
-            var condition = conditions[i];
-            var tagIndex = distinctTagTypes.IndexOf(condition.TagType);
-            var registration = _events.FindTagType(condition.TagType)!;
-            var value = registration.ExtractValue(condition.TagValue);
-
-            sb.Append($"(t{tagIndex}.value = @p{paramIndex}");
-            cmd.Parameters.AddIdParameter($"@p{paramIndex}", value);
-            paramIndex++;
-
-            if (condition.EventType != null)
-            {
-                sb.Append($" AND e.type = @p{paramIndex}");
-                var eventTypeName = _events.EventMappingFor(condition.EventType).EventTypeName;
-                cmd.Parameters.AddVarChar($"@p{paramIndex}", eventTypeName);
-                paramIndex++;
-            }
-
-            sb.Append(')');
-        }
-
-        sb.Append(')');
-
-        // Filter by tenant_id for conjoined tenancy
-        if (_events.TenancyStyle == TenancyStyle.Conjoined)
-        {
-            sb.Append($" AND t0.tenant_id = @p{paramIndex}");
-            cmd.Parameters.AddVarChar($"@p{paramIndex}", _tenantId);
-            paramIndex++;
-        }
-
-        sb.Append(") THEN 1 ELSE 0 END");
-        cmd.CommandText = sb.ToString();
-
-        var result = await _sessionBase.ExecuteScalarAsync(cmd, cancellation);
-        return result is int intVal && intVal == 1;
+        await using var reader = await _sessionBase.ExecuteReaderAsync(batch, cancellation);
+        return await reader.ReadAsync(cancellation) && reader.GetInt32(0) == 1;
     }
 
     public async Task<IReadOnlyList<IEvent>> QueryByTagsAsync(EventTagQuery query,
@@ -1378,78 +1302,15 @@ internal class EventOperations : QueryEventStore, IEventOperations
         if (conditions.Count == 0)
             throw new ArgumentException("EventTagQuery must have at least one condition.");
 
-        var distinctTagTypes = conditions.Select(c => c.TagType).Distinct().ToList();
-        var schema = _events.DatabaseSchemaName;
         var eventOptions = _events.EventOptions;
 
-        // Build SELECT columns matching the event reader format
-        // #388: composed by PcEventsRowReader rather than spelled out here — this projection has to
-        // stay in lockstep with the canonical one (which now carries bdata at ordinal 10), and two
-        // hand-written copies of the same column list is exactly how that stops being true.
-        var selectColumns = Internal.PcEventsRowReader.ComposeSelectColumnsWithAlias(eventOptions, "e");
-
-        var sb = new StringBuilder();
-        sb.Append($"SELECT {selectColumns} FROM {Polecat.Internal.SqlEscaping.QualifiedName(schema, "pc_events")} e");
-
-        // LEFT JOINs to tag tables. The WHERE clause OR-combines the per-condition tag predicates,
-        // so an event that carries only one of several queried tag types (the normal DCB case where
-        // different streams emit differently-tagged events) must still be returned. An INNER JOIN to
-        // every distinct tag table would instead require each event to carry *all* queried tag types,
-        // collapsing any cross-tag-type OR query to zero rows.
-        for (var i = 0; i < distinctTagTypes.Count; i++)
-        {
-            var tagType = distinctTagTypes[i];
-            var registration = _events.FindTagType(tagType)
-                               ?? throw new InvalidOperationException(
-                                   $"Tag type '{tagType.Name}' is not registered.");
-
-            sb.Append($" LEFT JOIN {_events.TagTableName(registration)} t{i} ON e.seq_id = t{i}.seq_id");
-        }
-
-        // WHERE clause
-        sb.Append(" WHERE (");
-        var paramIndex = 0;
-        await using var cmd = new SqlCommand();
-
-        for (var i = 0; i < conditions.Count; i++)
-        {
-            if (i > 0) sb.Append(" OR ");
-
-            var condition = conditions[i];
-            var tagIndex = distinctTagTypes.IndexOf(condition.TagType);
-            var registration = _events.FindTagType(condition.TagType)!;
-            var value = registration.ExtractValue(condition.TagValue);
-
-            sb.Append($"(t{tagIndex}.value = @p{paramIndex}");
-            cmd.Parameters.AddIdParameter($"@p{paramIndex}", value);
-            paramIndex++;
-
-            if (condition.EventType != null)
-            {
-                sb.Append($" AND e.type = @p{paramIndex}");
-                var eventTypeName = _events.EventMappingFor(condition.EventType).EventTypeName;
-                cmd.Parameters.AddVarChar($"@p{paramIndex}", eventTypeName);
-                paramIndex++;
-            }
-
-            sb.Append(')');
-        }
-
-        sb.Append(')');
-
-        // Filter by tenant_id for conjoined tenancy
-        if (_events.TenancyStyle == TenancyStyle.Conjoined)
-        {
-            sb.Append($" AND e.tenant_id = @p{paramIndex}");
-            cmd.Parameters.AddVarChar($"@p{paramIndex}", _tenantId);
-            paramIndex++;
-        }
-
-        sb.Append(" ORDER BY e.seq_id");
-        cmd.CommandText = sb.ToString();
+        await using var batch = new SqlBatch();
+        var builder = new BatchBuilder(batch);
+        WriteTagQuerySql(builder, _events, query, _tenantId);
+        builder.Compile();
 
         var results = new List<IEvent>();
-        await using var dbReader = await _sessionBase.ExecuteReaderAsync(cmd, cancellation);
+        await using var dbReader = await _sessionBase.ExecuteReaderAsync(batch, cancellation);
         var reader = dbReader.AsSqlDataReader();
 
         while (await reader.ReadAsync(cancellation))
@@ -1542,9 +1403,13 @@ internal class EventOperations : QueryEventStore, IEventOperations
         // for why the order is load-bearing and not an accident of how this method grew.
         var targets = DcbTagVersionCapture.TargetsFor(_events, query);
         Dictionary<(string, string), long> capturedByKey;
-        await using (var captureCommand = DcbTagVersionCapture.BuildCommand(_events, targets, _tenantId))
-        await using (var captureReader = await _sessionBase.ExecuteReaderAsync(captureCommand, cancellation))
+        await using (var capture = new SqlBatch())
         {
+            var builder = new BatchBuilder(capture);
+            DcbTagVersionCapture.WriteSql(builder, _events, targets, _tenantId);
+            builder.Compile();
+
+            await using var captureReader = await _sessionBase.ExecuteReaderAsync(capture, cancellation);
             capturedByKey = await DcbTagVersionCapture.ReadAsync(captureReader, cancellation);
         }
 
@@ -1633,38 +1498,64 @@ internal class EventOperations : QueryEventStore, IEventOperations
         }
 
         builder.Append(" WHERE (");
-        for (var i = 0; i < conditions.Count; i++)
-        {
-            if (i > 0) builder.Append(" OR ");
-
-            var condition = conditions[i];
-            var tagIndex = distinctTagTypes.IndexOf(condition.TagType);
-            var registration = eventGraph.FindTagType(condition.TagType)!;
-            var value = registration.ExtractValue(condition.TagValue);
-
-            builder.Append($"(t{tagIndex}.value = ");
-            builder.AppendParameter(value, value is string ? System.Data.SqlDbType.VarChar : null);
-
-            if (condition.EventType != null)
-            {
-                builder.Append(" AND e.type = ");
-                var eventTypeName = eventGraph.EventMappingFor(condition.EventType).EventTypeName;
-                builder.AppendParameter(eventTypeName, System.Data.SqlDbType.VarChar);
-            }
-
-            builder.Append(")");
-        }
-
+        TagConditionSql.Append(builder, eventGraph, conditions, distinctTagTypes);
         builder.Append(")");
 
         // Filter by tenant_id for conjoined tenancy
         if (eventGraph.TenancyStyle == TenancyStyle.Conjoined && tenantId != null)
         {
             builder.Append(" AND e.tenant_id = ");
-            builder.AppendParameter(tenantId, System.Data.SqlDbType.VarChar);
+            TagConditionSql.AppendVarChar(builder, tenantId);
         }
 
         builder.Append(" ORDER BY e.seq_id");
+    }
+
+    /// <summary>
+    /// Build the existence check for a tag query into a command builder.
+    /// Shared between direct queries and batch queries.
+    /// </summary>
+    internal static void WriteEventsExistSql(ICommandBuilder builder, EventGraph eventGraph, EventTagQuery query,
+        string tenantId)
+    {
+        var conditions = query.Conditions;
+        if (conditions.Count == 0)
+            throw new ArgumentException("EventTagQuery must have at least one condition.");
+
+        var distinctTagTypes = conditions.Select(c => c.TagType).Distinct().ToList();
+
+        builder.Append("SELECT CASE WHEN EXISTS (SELECT 1 FROM ");
+
+        for (var i = 0; i < distinctTagTypes.Count; i++)
+        {
+            var tagType = distinctTagTypes[i];
+            var registration = eventGraph.FindTagType(tagType)
+                               ?? throw new InvalidOperationException(
+                                   $"Tag type '{tagType.Name}' is not registered.");
+
+            builder.Append(i == 0
+                ? $"{eventGraph.TagTableName(registration)} t0"
+                : $" INNER JOIN {eventGraph.TagTableName(registration)} t{i} ON t0.seq_id = t{i}.seq_id");
+        }
+
+        // Join to pc_events only if we need event type filtering
+        if (conditions.Any(c => c.EventType != null))
+        {
+            builder.Append($" INNER JOIN {eventGraph.EventsTableName} e ON t0.seq_id = e.seq_id");
+        }
+
+        builder.Append(" WHERE (");
+        TagConditionSql.Append(builder, eventGraph, conditions, distinctTagTypes);
+        builder.Append(")");
+
+        // Filter by tenant_id for conjoined tenancy
+        if (eventGraph.TenancyStyle == TenancyStyle.Conjoined)
+        {
+            builder.Append(" AND t0.tenant_id = ");
+            TagConditionSql.AppendVarChar(builder, tenantId);
+        }
+
+        builder.Append(") THEN 1 ELSE 0 END");
     }
 
     /// <summary>

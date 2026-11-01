@@ -1,8 +1,6 @@
-using System.Data;
 using System.Data.Common;
 using JasperFx.Events.Tags;
-using Microsoft.Data.SqlClient;
-using Polecat.Internal;
+using Polecat.Linq.SqlGeneration;
 using Weasel.SqlServer;
 
 namespace Polecat.Events.Dcb;
@@ -58,50 +56,51 @@ internal static class DcbTagVersionCapture
         return targets;
     }
 
-    public static SqlCommand BuildCommand(EventGraph events,
-        IReadOnlyList<(string TagTable, string TagValue)> targets, string tenantId)
-    {
-        var cmd = new SqlCommand();
-        var sql = new System.Text.StringBuilder();
-
-        sql.Append("select tag_table, tag_value, version from ");
-        sql.Append(events.DcbTagVersionTableName);
-        sql.Append(" where tenant_id = @tenant and (");
-
-        cmd.Parameters.AddVarChar("@tenant", tenantId);
-
-        for (var i = 0; i < targets.Count; i++)
-        {
-            if (i > 0) sql.Append(" or ");
-            sql.Append("(tag_table = @t").Append(i).Append(" and tag_value = @v").Append(i).Append(')');
-            cmd.Parameters.AddVarChar($"@t{i}", targets[i].TagTable);
-            cmd.Parameters.AddVarChar($"@v{i}", targets[i].TagValue);
-        }
-
-        sql.Append(')');
-        cmd.CommandText = sql.ToString();
-
-        return cmd;
-    }
-
-    /// <summary>The batched-query flavour of <see cref="BuildCommand" />, writing into a shared builder.</summary>
+    /// <summary>
+    ///     The read of every <paramref name="targets" /> row, for both the direct and the batched
+    ///     <c>FetchForWritingByTags</c>.
+    /// </summary>
+    /// <remarks>
+    ///     #834: a target costs two parameters, so this was the first wall a large boundary hit, at
+    ///     half the tags of the events read that follows it. Over the threshold each tag table's values
+    ///     travel as one JSON array; see <see cref="TagConditionSql" />.
+    /// </remarks>
     public static void WriteSql(ICommandBuilder builder, EventGraph events,
         IReadOnlyList<(string TagTable, string TagValue)> targets, string tenantId)
     {
         builder.Append("select tag_table, tag_value, version from ");
         builder.Append(events.DcbTagVersionTableName);
         builder.Append(" where tenant_id = ");
-        builder.AppendParameter(tenantId, SqlDbType.VarChar);
+        TagConditionSql.AppendVarChar(builder, tenantId);
         builder.Append(" and (");
 
-        for (var i = 0; i < targets.Count; i++)
+        if (JsonValueList.ShouldBindAsJsonArray(builder, targets.Count * 2))
         {
-            if (i > 0) builder.Append(" or ");
-            builder.Append("(tag_table = ");
-            builder.AppendParameter(targets[i].TagTable, SqlDbType.VarChar);
-            builder.Append(" and tag_value = ");
-            builder.AppendParameter(targets[i].TagValue, SqlDbType.VarChar);
-            builder.Append(")");
+            var first = true;
+            foreach (var table in targets.GroupBy(x => x.TagTable))
+            {
+                if (!first) builder.Append(" or ");
+                first = false;
+
+                builder.Append("(tag_table = ");
+                TagConditionSql.AppendVarChar(builder, table.Key);
+                builder.Append(" and ");
+                JsonValueList.AppendInClause(builder, "tag_value", table.Select(x => x.TagValue).ToArray(),
+                    "varchar(8000)", value => value);
+                builder.Append(")");
+            }
+        }
+        else
+        {
+            for (var i = 0; i < targets.Count; i++)
+            {
+                if (i > 0) builder.Append(" or ");
+                builder.Append("(tag_table = ");
+                TagConditionSql.AppendVarChar(builder, targets[i].TagTable);
+                builder.Append(" and tag_value = ");
+                TagConditionSql.AppendVarChar(builder, targets[i].TagValue);
+                builder.Append(")");
+            }
         }
 
         builder.Append(")");
