@@ -173,6 +173,37 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
         => Polecat.Internal.SqlEscaping.QualifiedName(DatabaseSchemaName, TagTableNameFor(registration));
 
     /// <summary>
+    ///     Whether deleting a <c>pc_events</c> row takes its tag rows through the tag table's foreign key.
+    ///     True everywhere except under <see cref="UseArchivedStreamPartitioning" />, where the tag tables
+    ///     have no foreign key (see <see cref="Schema.EventTagTable" />) and whatever deletes events has
+    ///     to delete their tag rows itself, or they are orphaned (#841).
+    /// </summary>
+    internal bool TagRowsCascadeWithEvents => !UseArchivedStreamPartitioning;
+
+    /// <summary>
+    ///     The join between a tag row and its event. <c>seq_id</c> alone does not identify an event: under
+    ///     <see cref="UseTenantPartitionedEvents" /> every tenant numbers its own events from 1, so a bare
+    ///     join reads across tenants (#842). Everything that joins the two goes through this.
+    /// </summary>
+    internal string TagToEventJoin(string tagAlias, string eventAlias)
+    {
+        var join = $"{eventAlias}.seq_id = {tagAlias}.seq_id";
+
+        if (TenancyStyle == TenancyStyle.Conjoined)
+        {
+            join += $" AND {eventAlias}.tenant_id = {tagAlias}.tenant_id";
+        }
+
+        if (UseTenantPartitionedEvents)
+        {
+            var ordinal = TenantPartitionManager.Column;
+            join += $" AND {eventAlias}.{ordinal} = {tagAlias}.{ordinal}";
+        }
+
+        return join;
+    }
+
+    /// <summary>
     ///     The unqualified <c>pc_natural_key_*</c> lookup table name for a <c>[NaturalKey]</c> aggregate.
     /// </summary>
     /// <remarks>

@@ -362,10 +362,41 @@ CREATE TABLE [dbo].[pc_event_tag_student] (
     value uniqueidentifier NOT NULL,
     seq_id bigint NOT NULL,
     CONSTRAINT pk_pc_event_tag_student PRIMARY KEY (value, seq_id),
-    CONSTRAINT fk_pc_event_tag_student_events
+    CONSTRAINT fk_pc_event_tag_student_seq_id
         FOREIGN KEY (seq_id) REFERENCES [dbo].[pc_events](seq_id) ON DELETE CASCADE
 );
+
+CREATE INDEX ix_pc_event_tag_student_seq_id ON [dbo].[pc_event_tag_student] (seq_id);
 ```
+
+The primary key answers "which events carry this tag". The index answers the opposite question, which
+every delete from `pc_events` asks through the foreign key. A store whose tag tables predate it gets it
+from its next schema migration as a plain `CREATE INDEX`, which holds a lock on the tag table while it
+builds. To avoid that on a large table, build it yourself first with `ONLINE = ON` under the same name and
+columns, and the migration leaves it alone.
+
+The table's shape follows the event store's:
+
+| Configuration | Difference |
+| :--- | :--- |
+| `TenancyStyle.Conjoined` | `tenant_id` joins the primary key |
+| `UseTenantPartitionedEvents` | Also carries `tenant_ordinal`, and the foreign key is on `(seq_id, tenant_ordinal)`, because `seq_id` is numbered per tenant. The tag table itself is not partitioned |
+| `UseArchivedStreamPartitioning` | `is_archived` joins the primary key and there is no foreign key. Polecat deletes the tag rows itself wherever it deletes events |
+
+### Archived Events
+
+`QueryByTagsAsync`, `EventsExistAsync`, `AggregateByTagsAsync` and `FetchForWritingByTags` leave out
+archived events, as every other event query does. Archiving or un-archiving a stream also moves the
+consistency counter of each tag on its events, so it conflicts with a boundary that read those tags: the
+boundary's decision was made from a set of events that has since changed.
+
+The event store explorer's tag lookup (`IEventStore.QueryByTagsAsync`) still shows archived events,
+because it is a diagnostic surface, like its stream reads.
+
+::: warning
+Through 5.47.0 these reads included archived events, so an application that relied on that will see
+fewer events and may see `EventsExistAsync` answer `false`.
+:::
 
 ### Consistency Check
 

@@ -1450,7 +1450,10 @@ internal class EventOperations : QueryEventStore, IEventOperations
         var isConjoined = _events.TenancyStyle == TenancyStyle.Conjoined;
         var op = new AssignTagWhereOperation(
             schema, registration, value, whereFragment, isConjoined, _tenantId,
-            useArchivedPartitioning: _events.UseArchivedStreamPartitioning);
+            useArchivedPartitioning: _events.UseArchivedStreamPartitioning,
+            tenantOrdinalColumn: _events.UseTenantPartitionedEvents
+                ? _events.TenantPartitionManager.Column
+                : null);
         _workTracker.Add(op);
     }
 
@@ -1466,49 +1469,20 @@ internal class EventOperations : QueryEventStore, IEventOperations
     }
 
     /// <summary>
-    /// Build tag query SELECT columns and FROM/JOIN/WHERE SQL into a command builder.
-    /// Shared between direct queries and batch queries.
+    /// Build the events a tag query matches into a command builder, in sequence order, each exactly
+    /// once. Shared between direct queries and batch queries.
     /// </summary>
     internal static void WriteTagQuerySql(ICommandBuilder builder, EventGraph eventGraph, EventTagQuery query, string? tenantId = null)
     {
-        var conditions = query.Conditions;
-        var distinctTagTypes = conditions.Select(c => c.TagType).Distinct().ToList();
-        var schema = eventGraph.DatabaseSchemaName;
-        var eventOptions = eventGraph.EventOptions;
-
         // #388: composed by PcEventsRowReader rather than spelled out here — this projection has to
         // stay in lockstep with the canonical one (which now carries bdata at ordinal 10), and two
         // hand-written copies of the same column list is exactly how that stops being true.
-        var selectColumns = Internal.PcEventsRowReader.ComposeSelectColumnsWithAlias(eventOptions, "e");
+        var selectColumns = Internal.PcEventsRowReader.ComposeSelectColumnsWithAlias(eventGraph.EventOptions, "e");
 
-        builder.Append($"SELECT {selectColumns} FROM {Polecat.Internal.SqlEscaping.QualifiedName(schema, "pc_events")} e");
-
-        // LEFT JOIN (not INNER) so an event carrying only one of several queried tag types still
-        // matches the OR'd WHERE clause below. INNER JOIN would require each event to carry *all*
-        // queried tag types, collapsing any cross-tag-type OR query (the normal DCB boundary case)
-        // to zero rows.
-        for (var i = 0; i < distinctTagTypes.Count; i++)
-        {
-            var tagType = distinctTagTypes[i];
-            var registration = eventGraph.FindTagType(tagType)
-                               ?? throw new InvalidOperationException(
-                                   $"Tag type '{tagType.Name}' is not registered.");
-
-            builder.Append($" LEFT JOIN {eventGraph.TagTableName(registration)} t{i} ON e.seq_id = t{i}.seq_id");
-        }
-
-        builder.Append(" WHERE (");
-        TagConditionSql.Append(builder, eventGraph, conditions, distinctTagTypes);
-        builder.Append(")");
-
-        // Filter by tenant_id for conjoined tenancy
-        if (eventGraph.TenancyStyle == TenancyStyle.Conjoined && tenantId != null)
-        {
-            builder.Append(" AND e.tenant_id = ");
-            TagConditionSql.AppendVarChar(builder, tenantId);
-        }
-
-        builder.Append(" ORDER BY e.seq_id");
+        builder.Append($"SELECT {selectColumns} FROM (");
+        TagConditionSql.AppendEventKeys(builder, eventGraph, query, tenantId);
+        builder.Append($") m INNER JOIN {eventGraph.EventsTableName} e ON {eventGraph.TagToEventJoin("m", "e")}");
+        builder.Append(" WHERE e.is_archived = 0 ORDER BY e.seq_id");
     }
 
     /// <summary>
@@ -1518,43 +1492,11 @@ internal class EventOperations : QueryEventStore, IEventOperations
     internal static void WriteEventsExistSql(ICommandBuilder builder, EventGraph eventGraph, EventTagQuery query,
         string tenantId)
     {
-        var conditions = query.Conditions;
-        if (conditions.Count == 0)
+        if (query.Conditions.Count == 0)
             throw new ArgumentException("EventTagQuery must have at least one condition.");
 
-        var distinctTagTypes = conditions.Select(c => c.TagType).Distinct().ToList();
-
-        builder.Append("SELECT CASE WHEN EXISTS (SELECT 1 FROM ");
-
-        for (var i = 0; i < distinctTagTypes.Count; i++)
-        {
-            var tagType = distinctTagTypes[i];
-            var registration = eventGraph.FindTagType(tagType)
-                               ?? throw new InvalidOperationException(
-                                   $"Tag type '{tagType.Name}' is not registered.");
-
-            builder.Append(i == 0
-                ? $"{eventGraph.TagTableName(registration)} t0"
-                : $" INNER JOIN {eventGraph.TagTableName(registration)} t{i} ON t0.seq_id = t{i}.seq_id");
-        }
-
-        // Join to pc_events only if we need event type filtering
-        if (conditions.Any(c => c.EventType != null))
-        {
-            builder.Append($" INNER JOIN {eventGraph.EventsTableName} e ON t0.seq_id = e.seq_id");
-        }
-
-        builder.Append(" WHERE (");
-        TagConditionSql.Append(builder, eventGraph, conditions, distinctTagTypes);
-        builder.Append(")");
-
-        // Filter by tenant_id for conjoined tenancy
-        if (eventGraph.TenancyStyle == TenancyStyle.Conjoined)
-        {
-            builder.Append(" AND t0.tenant_id = ");
-            TagConditionSql.AppendVarChar(builder, tenantId);
-        }
-
+        builder.Append("SELECT CASE WHEN EXISTS (");
+        TagConditionSql.AppendLiveMatches(builder, eventGraph, query, tenantId);
         builder.Append(") THEN 1 ELSE 0 END");
     }
 

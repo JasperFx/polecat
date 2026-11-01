@@ -28,4 +28,19 @@ internal static class TagValueStringifier
             _ => value.ToString() ?? string.Empty
         };
     }
+
+    /// <summary>
+    ///     <see cref="Stringify" /> as a SQL expression over a <c>pc_event_tag_*.value</c> column, for a
+    ///     statement that has to reach <c>pc_dcb_tag_version</c> rows from the tag rows themselves. The
+    ///     two have to produce the same string or the statement lands on a row nobody reads.
+    /// </summary>
+    public static string ToSql(Type simpleType, string column)
+    {
+        if (simpleType == typeof(string)) return column;
+
+        // CONVERT renders a uniqueidentifier in upper case, and Guid.ToString("d") in lower.
+        if (simpleType == typeof(Guid)) return $"LOWER(CONVERT(varchar(36), {column}))";
+
+        return $"CONVERT(varchar(20), {column})";
+    }
 }

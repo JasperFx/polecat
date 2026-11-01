@@ -1,3 +1,4 @@
+using System.Data;
 using System.Diagnostics.CodeAnalysis;
 using System.Text;
 using JasperFx;
@@ -687,17 +688,23 @@ public class AdvancedOperations
         var events = _store.Events;
         var schema = events.DatabaseSchemaName;
 
-        // #665: hand-bracketed, and the third line is the double-position case SqlEscaping's own
+        // #665: hand-bracketed, and the third statement is the double-position case SqlEscaping's own
         // remarks single out — pc_events appears as an IDENTIFIER on line 1 and inside a STRING
-        // LITERAL as IDENT_CURRENT's argument on line 3, so that one needs both escapes, in that
+        // LITERAL as OBJECT_ID's argument further down, so that one needs both escapes, in that
         // order. The issue's inventory listed the three EventOperations sites and missed these.
+        //
+        // #842: sys.identity_columns rather than IDENT_CURRENT, which answers with the seed on a table
+        // that has never had a row, so an empty store reported a sequence number of 1. last_value is
+        // null until the first insert. Under per-tenant partitioning seq_id is not an IDENTITY and
+        // there is no store-wide sequence, so no row comes back and this stays at 0.
         var eventsTable = Internal.SqlEscaping.QualifiedName(schema, "pc_events");
         var streamsTable = Internal.SqlEscaping.QualifiedName(schema, "pc_streams");
 
         var sql = $"""
             SELECT COUNT(*) FROM {eventsTable};
             SELECT COUNT(*) FROM {streamsTable};
-            SELECT ISNULL(IDENT_CURRENT({Internal.SqlEscaping.Literal(eventsTable)}), 0);
+            SELECT ISNULL(CONVERT(bigint, last_value), 0) FROM sys.identity_columns
+            WHERE object_id = OBJECT_ID({Internal.SqlEscaping.Literal(eventsTable)});
             """;
 
         var statistics = new Events.EventStoreStatistics();
@@ -753,7 +760,7 @@ public class AdvancedOperations
 
     /// <summary>
     ///     Delete all rows from event store tables (pc_events, pc_streams, pc_event_progression)
-    ///     and all natural key tables (pc_natural_key_*).
+    ///     and all natural key and DCB tag tables (pc_natural_key_*, pc_event_tag_*).
     /// </summary>
     public async Task CleanAllEventDataAsync(CancellationToken token = default)
     {
@@ -787,12 +794,15 @@ public class AdvancedOperations
             // so a reset leaves no stale projected rows (mirrors the natural-key table cleanup below).
             await DeleteFlatTablesAsync(conn, flatTableNames, ct);
 
-            // Delete natural key tables first (they reference streams)
+            // Delete natural key tables first (they reference streams), and the tag tables with them.
+            // #841: a tag table reaches its events through a cascading foreign key, except under archived
+            // partitioning where it has none and its rows would be left behind.
             await using (var findCmd = conn.CreateCommand())
             {
                 findCmd.CommandText = $"""
                     SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES
-                    WHERE TABLE_SCHEMA = @schema AND TABLE_NAME LIKE 'pc_natural_key_%'
+                    WHERE TABLE_SCHEMA = @schema
+                      AND (TABLE_NAME LIKE 'pc_natural_key_%' OR TABLE_NAME LIKE 'pc_event_tag_%')
                     ORDER BY TABLE_NAME;
                     """;
                 findCmd.Parameters.AddWithValue("@schema", schemaName);
@@ -930,6 +940,15 @@ public class AdvancedOperations
     ///     released ordinals also drop their per-tenant <c>pc_events_sequence_{ordinal}</c> under
     ///     <c>Events.UseTenantPartitionedEvents</c>, and the removed tenants are evicted from the
     ///     in-process caches so a later write re-provisions instead of stamping a stale ordinal.
+    ///     <para>
+    ///     Under <c>Events.UseTenantPartitionedEvents</c>, a tenant whose ordinal is released also loses
+    ///     its <c>pc_event_progression</c> rows, whichever <paramref name="behavior" /> is passed: its
+    ///     sequence restarts at 1 if it comes back, so a surviving high-water mark would hide its new
+    ///     events from every async projection. <see cref="TenantDropBehavior.DeleteData" /> additionally
+    ///     removes what is keyed by tenant but lives outside the partitions: its
+    ///     <c>pc_natural_key_*</c> and <c>pc_dcb_tag_version</c> rows. Its <c>pc_event_tag_*</c> rows go
+    ///     with its events. A tenant sharing an ordinal keeps all of this, as it keeps its events.
+    ///     </para>
     /// </summary>
     public async Task RemovePolecatManagedTenantsAsync(
         string[] tenantIds, TenantDropBehavior behavior, CancellationToken token = default)
@@ -957,6 +976,10 @@ public class AdvancedOperations
         if (events.UseTenantPartitionedEvents && released.Length > 0)
         {
             await DropTenantSequencesAsync(events, released, token).ConfigureAwait(false);
+
+            await DeleteReleasedTenantRowsAsync(events,
+                captured.Where(x => released.Contains(x.Value)).Select(x => x.Key).ToArray(),
+                behavior, token).ConfigureAwait(false);
         }
 
         foreach (var tenantId in captured.Keys)
@@ -1191,6 +1214,83 @@ public class AdvancedOperations
         return events.UseTenantPartitionedEvents && ordinals.Count > 0
             ? events.TenantSequences.EnsureSequencesForOrdinalsAsync(ordinals.Values, token)
             : Task.CompletedTask;
+    }
+
+    /// <summary>
+    ///     What a released tenant leaves behind outside the managed tables (#842). Weasel's drop only
+    ///     knows the tables partitioned by tenant, and neither of these is.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         Natural key tables have no foreign key under conjoined tenancy, so nothing else ever
+    ///         removes their rows: the tenant could not reuse a key it no longer has a stream for, and
+    ///         the values themselves outlived a delete someone may be relying on for erasure.
+    ///         <c>pc_dcb_tag_version</c> holds the tenant's tag values as text for the same reason.
+    ///     </para>
+    ///     <para>
+    ///         Tables are discovered rather than walked from configuration, for the reason
+    ///         <see cref="Internal.TenantDataCleaner" /> gives: a tenant removal that misses a table a
+    ///         different deployment configured is worse than one that fails.
+    ///     </para>
+    /// </remarks>
+    private async Task DeleteReleasedTenantRowsAsync(Events.EventGraph events, string[] tenantIds,
+        TenantDropBehavior behavior, CancellationToken token)
+    {
+        await _resilience.ExecuteAsync(static async (state, ct) =>
+        {
+            var (connectionString, schema, progressionTable, tenants, deleteData) = state;
+
+            await using var conn = new SqlConnection(connectionString);
+            await conn.OpenAsync(ct).ConfigureAwait(false);
+
+            var tables = new List<string>();
+            if (deleteData)
+            {
+                await using var find = conn.CreateCommand();
+                find.CommandText = $"""
+                    SELECT t.name
+                    FROM sys.tables t
+                    JOIN sys.schemas s ON t.schema_id = s.schema_id
+                    JOIN sys.columns c ON c.object_id = t.object_id
+                    WHERE s.name = @schema AND c.name = 'tenant_id'
+                      AND (t.name LIKE 'pc[_]natural[_]key[_]%' OR t.name = {Internal.SqlEscaping.Literal(Events.Schema.DcbTagVersionTable.TableName)})
+                    ORDER BY t.name;
+                    """;
+                find.Parameters.Add("@schema", SqlDbType.NVarChar, 128).Value = schema;
+
+                await using var reader = await find.ExecuteReaderAsync(ct).ConfigureAwait(false);
+                while (await reader.ReadAsync(ct).ConfigureAwait(false))
+                {
+                    tables.Add(reader.GetString(0));
+                }
+            }
+
+            await using var tx = await Internal.Sessions.SqlTransactionRequests.BeginAsync(
+                conn, IsolationLevel.ReadCommitted, ct).ConfigureAwait(false);
+
+            foreach (var tenantId in tenants)
+            {
+                foreach (var table in tables)
+                {
+                    await using var delete = conn.CreateCommand();
+                    delete.Transaction = tx;
+                    delete.CommandText =
+                        $"DELETE FROM {Internal.SqlEscaping.QualifiedName(schema, table)} WHERE tenant_id = @tenant;";
+                    delete.Parameters.Add("@tenant", SqlDbType.VarChar, 250).Value = tenantId;
+                    await delete.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+                }
+
+                await using var progression = conn.CreateCommand();
+                progression.Transaction = tx;
+                progression.CommandText = Internal.TenantDataCleaner.ProgressionDeleteSql(progressionTable);
+                progression.Parameters.Add("@suffix", SqlDbType.VarChar, 500).Value =
+                    Internal.TenantDataCleaner.ProgressionNameSuffix(tenantId);
+                await progression.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+            }
+
+            await Internal.Sessions.SqlTransactionRequests.CommitAsync(tx, ct).ConfigureAwait(false);
+        }, (_store.Options.ConnectionString, events.DatabaseSchemaName, events.ProgressionTableName, tenantIds,
+            behavior == TenantDropBehavior.DeleteData), token).ConfigureAwait(false);
     }
 
     /// <summary>
