@@ -40,18 +40,26 @@ public abstract class EfCoreEventProjection<
         }
 
         var (dbContext, placeholder) = EfCoreDbContextFactory.CreateFor<TDbContext>(operations, _connectionString);
+        var participant = new DbContextTransactionParticipant<TDbContext>(dbContext, placeholder,
+            operations as DocumentSessionBase);
 
-        foreach (var @event in events)
+        try
         {
-            await ProjectAsync(@event, dbContext, operations, cancellation);
+            foreach (var @event in events)
+            {
+                await ProjectAsync(@event, dbContext, operations, cancellation);
+            }
+        }
+        catch
+        {
+            // #870: nothing else knows this context exists yet. It is not registered first because
+            // it now holds the changes of a batch that failed part way, and a session can outlive
+            // that failure: a second save on it would flush them beside its own attempt's.
+            await participant.DisposeAsync();
+            throw;
         }
 
-        if (operations is ITransactionParticipantRegistrar registrar)
-        {
-            registrar.AddTransactionParticipant(
-                new DbContextTransactionParticipant<TDbContext>(dbContext, placeholder,
-                    operations as DocumentSessionBase));
-        }
+        operations.AddTransactionParticipant(participant);
     }
 
     internal void SetConnectionString(string connectionString)

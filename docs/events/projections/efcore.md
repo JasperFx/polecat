@@ -79,6 +79,24 @@ public class AuditEfProjection : EfCoreEventProjection
 }
 ```
 
+### Rebuilding an Event Projection
+
+A rebuild replays every event, and Polecat doesn't know which EF tables your projection writes. An event projection that inserts rows therefore fails with a primary key `DbUpdateException` when it replays over rows that are already there. Declare the tables it writes so that a rebuild empties them first:
+
+```cs
+public class OrderDetailProjection : EfCoreEventProjection<AppDbContext>
+{
+    public OrderDetailProjection()
+    {
+        Options.DeleteDataInTableOnTeardown("dbo.ef_order_details");
+    }
+
+    // ...
+}
+```
+
+The same applies to any rewind that replays events the projection has already written.
+
 ## Schema Migration with AddEntityTablesFromDbContext
 
 By default, EF Core entity tables must be created separately (e.g., via `dotnet ef database update` or `Database.GenerateCreateScript()`). If you want Polecat's Weasel migration pipeline to manage your EF Core entity tables alongside Polecat's own schema objects, use `AddEntityTablesFromDbContext`:

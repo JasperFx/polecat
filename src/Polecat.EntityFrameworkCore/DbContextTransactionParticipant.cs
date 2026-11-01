@@ -15,9 +15,11 @@ namespace Polecat.EntityFrameworkCore;
 ///     batch by <c>RegisterEfCoreStorage</c>'s storage factory, and
 ///     <c>IProjectionStorage&lt;,&gt;</c> declares no disposal contract at all — so the storage
 ///     that holds the context has nothing to hook. This participant is the one object in the graph
-///     whose lifetime already matches the context's: it is registered on the session that owns the
-///     batch, and <c>DocumentSessionBase.DisposeAsync</c> drains its participants exactly once, on
-///     the success path and the failure path alike.
+///     whose lifetime already matches the context's: it belongs to whatever commits the transaction,
+///     and that owner drains its participants exactly once, on the success path and the failure path
+///     alike. Inline, the owner is the session and the drain is <c>DocumentSessionBase.DisposeAsync</c>.
+///     In the async daemon it is <c>PolecatProjectionBatch</c>, because the daemon can dispose a tenant
+///     session well before the batch commits (#867).
 ///     </para>
 ///     <para>
 ///     A placeholder connection, when there is one, is released eagerly at the end of
