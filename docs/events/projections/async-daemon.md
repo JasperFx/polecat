@@ -39,9 +39,21 @@ builder.Services.AddPolecat(opts =>
 ```
 
 ::: tip
-Async projections do **not** run unless you call `AddAsyncDaemon(...)`. Use
-`DaemonMode.Solo` for single-node deployments and `DaemonMode.HotCold` for
-multi-node deployments where only one host should own each projection shard.
+Async projections do **not** run unless the host starts a daemon. Use
+`AddAsyncDaemon(DaemonMode.Solo)` for single-node deployments and
+`AddProjectionCoordinator(DaemonMode.HotCold)` for multi-node deployments where
+only one host should own each projection shard.
+:::
+
+::: warning AddAsyncDaemon does not elect a leader
+`AddAsyncDaemon(DaemonMode.HotCold)` is not how to run hot/cold. `AddAsyncDaemon` starts
+every shard on every node and takes no lock, whichever mode it is given, so two nodes
+using it both run every shard. The [shard lock](#the-hotcold-shard-lock) belongs to
+`AddProjectionCoordinator`.
+
+The coordinator also does two things `AddAsyncDaemon` does not: it restarts a shard that
+paused after a failure, and it finds tenants added to a master table while the host runs.
+Pick one of the two registrations, not both.
 :::
 
 ## Daemon Settings
@@ -124,8 +136,8 @@ another node had taken it over.
 
 ## The HotCold Shard Lock
 
-Under `DaemonMode.HotCold`, each node takes a SQL Server `sp_getapplock` per shard set to decide which node
-runs it. Those holds are **session-scoped**: when SQL Server ends a node's session — a failover, a gateway
+Under `AddProjectionCoordinator(DaemonMode.HotCold)`, each node takes a SQL Server `sp_getapplock` per shard set
+to decide which node runs it. Those holds are **session-scoped**: when SQL Server ends a node's session — a failover, a gateway
 reconfiguration, a killed session — every lock goes with it. So the lock runs a monitor that periodically asks
 SQL Server which of its locks it still holds, and drops the ones it has lost so the daemon stops those shards
 instead of running them alongside the node that took them over.
@@ -243,6 +255,44 @@ var results = await eventStore.AdvanceHighWaterMarkToLatestAsync(
 These are stricter about the tenant than the `Advanced` convenience methods are:
 - Without per-tenant partitioning, a database keeps one mark that every tenant shares, so a named tenant is refused rather than advancing every tenant's events.
 - With partitioning, a null tenant selects every tenant's mark, and `expectedCurrentMark` then needs a named tenant.
+
+### Health Check
+
+`AddPolecatHighWaterHealthCheck()`, from `Polecat.AspNetCore`, reports Unhealthy when the mark sits unchanged
+with later events piling up past it for longer than `staleThreshold`, which means no node is advancing it. With
+`autoRestart`, an Unhealthy result also restarts the high-water agent's poll loop. That goes through the local
+projection coordinator, so it needs `AddProjectionCoordinator`. Under `AddAsyncDaemon` the check still reports,
+and says it found no coordinator to restart.
+
+```cs
+builder.Services.AddHealthChecks()
+    .AddPolecatHighWaterHealthCheck(staleThreshold: TimeSpan.FromSeconds(30), autoRestart: true);
+```
+
+That checks the default store registered with `AddPolecat()`. For a store registered with
+`AddPolecatStore<TStore>()`, use the generic overload, which probes that store and restarts through that store's
+own coordinator:
+
+```cs
+builder.Services.AddPolecat(opts =>
+    {
+        // ...
+    })
+    .AddProjectionCoordinator<IInvoicingStore>(DaemonMode.HotCold);
+
+builder.Services.AddPolecatStore<IInvoicingStore>(opts =>
+{
+    // ...
+});
+
+builder.Services.AddHealthChecks()
+    .AddPolecatHighWaterHealthCheck<IInvoicingStore>(
+        staleThreshold: TimeSpan.FromSeconds(30),
+        autoRestart: true);
+```
+
+Call it once per store. Each store's check is registered under its own name, `HighWaterHealthCheck:IInvoicingStore`,
+with its own settings, so it can sit beside the default store's check.
 
 ## Listening for Daemon Commits
 

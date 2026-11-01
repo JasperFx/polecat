@@ -723,10 +723,11 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
 
         await db.EnsureStorageExistsAsync(typeof(IEvent), CancellationToken.None);
 
+        // #847: the detector shares the daemon's logger. It used to get a LoggerFactory of its own with no
+        // providers, so "Skipping stale gap", the only trace a skip leaves, went nowhere on this path.
         var connStr = db.ConnectionString;
         var detector = new PolecatHighWaterDetector(Events, connStr,
-            Options.DaemonSettings, new Logger<PolecatHighWaterDetector>(new LoggerFactory()),
-            Options.ResiliencePipeline);
+            Options.DaemonSettings, logger, Options.ResiliencePipeline);
 
         return new PolecatProjectionDaemon(this, db, logger, detector);
     }
@@ -869,6 +870,94 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
             }
         }, (connStr, Events.ProgressionTableName, identities, sequenceFloor, filter.Where,
             filter.Parameters), token);
+
+        await deleteDeadLettersBeingReplayedAsync((PolecatDatabase)database, subscriptionName, sequenceFloor ?? 0,
+            token);
+    }
+
+    /// <summary>
+    ///     #847: everything at or above a rewind's floor replays, so a dead letter up there is rewritten if
+    ///     the event still fails and is stale if it no longer does. Mirrors the
+    ///     <c>DeleteWhere&lt;DeadLetterEvent&gt;</c> in Marten's <c>RewindSubscriptionProgressAsync</c>.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         Runs after the progression write rather than beside it in one transaction, which is the one
+    ///         difference from Marten. If this fails, the rewind stands and the only cost is a stale row,
+    ///         which is today's behaviour. The other order could lose a dead letter for an event that is
+    ///         never replayed.
+    ///     </para>
+    ///     <para>
+    ///         Scoped from <see cref="DeadLetterScopeFor" />, not Marten's bare
+    ///         <c>ProjectionName == subscriptionName</c>, because the daemon's per-agent paths pass a shard
+    ///         identity there, which no <see cref="DeadLetterEvent.ProjectionName" /> equals.
+    ///     </para>
+    ///     <para>
+    ///         A missing table means nothing was ever dead-lettered here (#677), and under
+    ///         <see cref="AutoCreate.None" /> nothing would have created one. That cannot fail a rewind.
+    ///     </para>
+    /// </remarks>
+    private async Task deleteDeadLettersBeingReplayedAsync(PolecatDatabase database, string subscriptionName,
+        long floor, CancellationToken token)
+    {
+        var (projectionName, shardKey, tenantId) = DeadLetterScopeFor(subscriptionName);
+
+        await using var session = LightweightSession(SessionOptions.ForDatabase(database));
+
+        if (tenantId != null)
+        {
+            session.DeleteWhere<DeadLetterEvent>(x => x.ProjectionName == projectionName && x.ShardName == shardKey
+                && x.TenantId == tenantId && x.EventSequence >= floor);
+        }
+        else if (shardKey != null)
+        {
+            session.DeleteWhere<DeadLetterEvent>(x => x.ProjectionName == projectionName && x.ShardName == shardKey
+                && x.EventSequence >= floor);
+        }
+        else
+        {
+            session.DeleteWhere<DeadLetterEvent>(x => x.ProjectionName == projectionName
+                && x.EventSequence >= floor);
+        }
+
+        try
+        {
+            await session.SaveChangesAsync(token).ConfigureAwait(false);
+        }
+        catch (Exception e) when (MissingStorageDetection.IsMissingStorage(e))
+        {
+            // Nothing to clear. See the remarks.
+        }
+    }
+
+    /// <summary>
+    ///     Which dead letters a rewind of <paramref name="subscriptionName" /> reaches. A dead letter records
+    ///     the parts of a <see cref="ShardName" /> and never its identity, so the name a rewind is handed has
+    ///     to be read back into those parts: a registered shard's identity is that shard, a projection's name
+    ///     is all of its shards, and anything else may be a per-tenant identity (<c>Name:All:tenant</c>),
+    ///     which <see cref="ProgressionShardsFor" /> does not enumerate.
+    /// </summary>
+    /// <remarks>
+    ///     The tenant has to survive. Under per-tenant event partitioning a floor is a position in one
+    ///     tenant's own sequence, so the same number in another tenant is a different event.
+    /// </remarks>
+    private (string ProjectionName, string? ShardKey, string? TenantId) DeadLetterScopeFor(string subscriptionName)
+    {
+        var shards = ProgressionShardsFor(subscriptionName);
+
+        if (shards.FirstOrDefault(x => x.Identity == subscriptionName) is { } exact)
+        {
+            return (exact.Name, exact.ShardKey, null);
+        }
+
+        if (shards.Length > 0)
+        {
+            return (shards[0].Name, null, null);
+        }
+
+        return ShardName.TryParse(subscriptionName, out var parsed)
+            ? (parsed!.Name, parsed.ShardKey, parsed.TenantId)
+            : (subscriptionName, null, null);
     }
 
     async Task IEventStore<IDocumentSession, IQuerySession>.RewindAgentProgressAsync(

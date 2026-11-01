@@ -107,7 +107,9 @@ public class PolecatConfigurationExpression
     public PolecatConfigurationExpression AddProjectionCoordinator<T>(DaemonMode mode)
         where T : class, IDocumentStore
     {
-        Services.ConfigurePolecat(opts => opts.DaemonSettings.AsyncMode = mode);
+        // #847: T's own options. The non-generic ConfigurePolecat is the DEFAULT store's chain, so this
+        // used to leave T Disabled, whose coordinator has no distributor and starts nothing.
+        Services.ConfigurePolecat<T>(opts => opts.DaemonSettings.AsyncMode = mode);
         EnsureActivatorIsRegistered();
 
         Services.AddSingleton<Polecat.Events.Daemon.Coordination.IProjectionCoordinator<T>>(sp =>

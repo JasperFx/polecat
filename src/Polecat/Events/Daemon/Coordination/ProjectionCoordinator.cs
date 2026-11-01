@@ -34,9 +34,11 @@ internal class ProjectionCoordinator : ProjectionCoordinatorBase, IProjectionCoo
     private readonly StoreOptions _options;
     private readonly ILoggerFactory _loggerFactory;
 
-    // Per-database daemon cache. Kept in the subclass per the base's contract
-    // (each store keeps its own cache + concurrency model); the coordinator loop
-    // is single-threaded so a plain dictionary is sufficient.
+    // Per-database daemon cache. Kept in the subclass per the base's contract (each store keeps its own
+    // cache + concurrency model). Every access takes the dictionary's lock: the coordinator loop is
+    // single-threaded but it is not the only caller. DaemonForDatabase is public and a health check's
+    // autoRestart and #591's status read both reach it, and under a dynamic tenancy the set grows while
+    // they do, so an unguarded read in the loop's own pause check could throw and end the loop for good.
     private readonly Dictionary<string, PolecatProjectionDaemon> _daemons = new();
 
     public ProjectionCoordinator(DocumentStore store, ILoggerFactory? loggerFactory = null)
@@ -70,13 +72,23 @@ internal class ProjectionCoordinator : ProjectionCoordinatorBase, IProjectionCoo
     }
 
     protected override IReadOnlyList<IProjectionDaemon> ResolvedDaemons()
-        => _daemons.Values.Cast<IProjectionDaemon>().ToList();
+    {
+        lock (_daemons)
+        {
+            return _daemons.Values.Cast<IProjectionDaemon>().ToList();
+        }
+    }
 
     // marten#5055: StopAsync disposes everything ResolvedDaemons() hands back, so the cache must be
     // purged too — otherwise a second Pause/Stop fans StopAllAsync out over disposed daemons and a
-    // later ResumeAsync hands back a dead instance instead of building a fresh one. No lock needed
-    // for the same reason the dictionary is unsynchronized (see the _daemons declaration above).
-    protected override void ClearResolvedDaemons() => _daemons.Clear();
+    // later ResumeAsync hands back a dead instance instead of building a fresh one.
+    protected override void ClearResolvedDaemons()
+    {
+        lock (_daemons)
+        {
+            _daemons.Clear();
+        }
+    }
 
     public override IProjectionDaemon DaemonForMainDatabase()
     {
@@ -104,12 +116,16 @@ internal class ProjectionCoordinator : ProjectionCoordinatorBase, IProjectionCoo
 
     private PolecatProjectionDaemon DaemonFor(PolecatDatabase database)
     {
-        if (!_daemons.TryGetValue(database.Identifier, out var daemon))
+        lock (_daemons)
         {
-            daemon = database.StartProjectionDaemon(_store, _loggerFactory);
-            _daemons[database.Identifier] = daemon;
+            if (!_daemons.TryGetValue(database.Identifier, out var daemon))
+            {
+                daemon = database.StartProjectionDaemon(_store, _loggerFactory);
+                _daemons[database.Identifier] = daemon;
+            }
+
+            return daemon;
         }
-        return daemon;
     }
 
     /// <summary>
@@ -139,8 +155,8 @@ internal class ProjectionCoordinator : ProjectionCoordinatorBase, IProjectionCoo
 
     private static IProjectionDistributor? BuildDistributor(DocumentStore store, ILoggerFactory loggerFactory)
     {
-        // Mirrors Marten's pick: tenancy with multiple databases →
-        // MultiTenantedProjectionDistributor; single-database tenancy →
+        // Mirrors Marten's pick: tenancy with multiple databases, static or
+        // dynamic → MultiTenantedProjectionDistributor; single-database tenancy →
         // SingleTenantProjectionDistributor (per-shard hot-cold locks via
         // sp_getapplock).
         //
@@ -189,11 +205,19 @@ internal class ProjectionCoordinator : ProjectionCoordinatorBase, IProjectionCoo
         // agents.
         var distributesAgentsPerTenant = ((IEventStore)store).DistributesAgentsPerTenant;
 
-        if (cardinality == DatabaseCardinality.StaticMultiple)
+        // #847: DynamicMultiple belongs here too. It used to fall through to the single-database
+        // distributor below, whose AllDatabases().Single() threw on every cycle with none or several
+        // tenants, so master table tenancy never started an agent. Everything below the Single check is
+        // "more than one database", which is what this distributor is for.
+        if (cardinality != DatabaseCardinality.Single)
         {
             return new MultiTenantedProjectionDistributor(
-                databaseSource: () => ValueTask.FromResult<IReadOnlyList<IProjectionDatabase>>(
-                    options.Tenancy?.AllDatabases().Cast<IProjectionDatabase>().ToList() ?? []),
+                // BuildDatabasesAsync rather than AllDatabases(): a dynamic tenancy re-reads its master
+                // table there, and this runs on every leadership cycle, so that is how a tenant added
+                // while the host runs is found. AllDatabases() only answers from what is already cached.
+                databaseSource: async () =>
+                    (await options.Tenancy!.BuildDatabasesAsync().ConfigureAwait(false))
+                    .Cast<IProjectionDatabase>().ToList(),
                 allShards: allShards,
                 lockFactory: lockFactory,
                 setFactory: setFactory,
