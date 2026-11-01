@@ -723,10 +723,11 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
 
         await db.EnsureStorageExistsAsync(typeof(IEvent), CancellationToken.None);
 
+        // #847: the detector shares the daemon's logger. It used to get a LoggerFactory of its own with no
+        // providers, so "Skipping stale gap", the only trace a skip leaves, went nowhere on this path.
         var connStr = db.ConnectionString;
         var detector = new PolecatHighWaterDetector(Events, connStr,
-            Options.DaemonSettings, new Logger<PolecatHighWaterDetector>(new LoggerFactory()),
-            Options.ResiliencePipeline);
+            Options.DaemonSettings, logger, Options.ResiliencePipeline);
 
         return new PolecatProjectionDaemon(this, db, logger, detector);
     }

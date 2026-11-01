@@ -72,11 +72,11 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
     private readonly EventGraph _events;
     private readonly string _connectionString;
     private readonly DaemonSettings _daemonSettings;
-    private readonly ILogger<PolecatHighWaterDetector> _logger;
+    private readonly ILogger _logger;
     private readonly ResiliencePipeline _resilience;
 
     public PolecatHighWaterDetector(EventGraph events, string connectionString,
-        DaemonSettings daemonSettings, ILogger<PolecatHighWaterDetector> logger,
+        DaemonSettings daemonSettings, ILogger logger,
         ResiliencePipeline resilience)
     {
         _events = events;
