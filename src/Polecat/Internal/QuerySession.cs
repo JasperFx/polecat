@@ -124,6 +124,12 @@ internal partial class QuerySession : IQuerySession, JasperFx.Events.IEventTenan
     internal StoreOptions Options { get; }
 
     /// <summary>
+    ///     What this session's commands connect through: the tenant's database, not necessarily the
+    ///     one behind <see cref="StoreOptions.ConnectionString" /> (#846).
+    /// </summary>
+    internal ConnectionFactory ConnectionFactory => _lifetime.ConnectionFactory;
+
+    /// <summary>
     ///     The event store's tenancy style, for the shared single-stream projection base.
     /// </summary>
     /// <remarks>

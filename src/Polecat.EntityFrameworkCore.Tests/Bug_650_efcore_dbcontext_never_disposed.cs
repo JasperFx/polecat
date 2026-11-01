@@ -49,8 +49,8 @@ public class TrackedOrderAggregate : EfCoreSingleStreamProjection<Order, Disposa
 /// </summary>
 /// <remarks>
 ///     These count construction against disposal rather than backends in
-///     <c>sys.dm_exec_sessions</c>. On Polecat's SQL Server path the placeholder connection is never
-///     opened, so a backend count would have reported nothing while the context leak was fully
+///     <c>sys.dm_exec_sessions</c>. EF Core closes a connection it opened as soon as each read
+///     finishes, so a backend count would have reported nothing while the context leak was fully
 ///     present — the connection-counting version of this test passes on unfixed code and proves
 ///     nothing. Each fact also asserts a context was actually BUILT, so it cannot pass vacuously by
 ///     never exercising the path.

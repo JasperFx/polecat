@@ -67,13 +67,14 @@ public abstract class EfCoreSingleStreamProjection<
 
         // No EF-backed storage arrived, so build a DbContext just for this call. Live aggregation
         // takes this route on every AggregateStreamAsync.
-        var (dbContext, placeholder) = EfCoreDbContextFactory.Create<TDbContext>(_connectionString);
+        var (dbContext, placeholder) = EfCoreDbContextFactory.CreateFor<TDbContext>(session, _connectionString);
 
         // Register participant so DbContext flushes in same transaction — and so something owns it.
         if (session is ITransactionParticipantRegistrar registrar)
         {
             registrar.AddTransactionParticipant(
-                new DbContextTransactionParticipant<TDbContext>(dbContext, placeholder));
+                new DbContextTransactionParticipant<TDbContext>(dbContext, placeholder,
+                    session as DocumentSessionBase));
 
             return ValueTask.FromResult(Apply(snapshot, identity, events, session, dbContext));
         }
@@ -98,7 +99,7 @@ public abstract class EfCoreSingleStreamProjection<
     }
 
     private async ValueTask<(TDoc?, ActionType)> DisposeAfterApplying(TDoc? snapshot, Guid identity,
-        IReadOnlyList<IEvent> events, IQuerySession session, TDbContext dbContext, SqlConnection placeholder)
+        IReadOnlyList<IEvent> events, IQuerySession session, TDbContext dbContext, SqlConnection? placeholder)
     {
         try
         {
@@ -107,7 +108,7 @@ public abstract class EfCoreSingleStreamProjection<
         finally
         {
             await dbContext.DisposeAsync();
-            await placeholder.DisposeAsync();
+            if (placeholder != null) await placeholder.DisposeAsync();
         }
     }
 

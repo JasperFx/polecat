@@ -1,12 +1,12 @@
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
+using Polecat.Internal;
 
 namespace Polecat.EntityFrameworkCore;
 
 /// <summary>
-///     Transaction participant that swaps a DbContext's placeholder connection
-///     to Polecat's real connection/transaction before commit, then calls
-///     DbContext.SaveChangesAsync() within the same atomic transaction.
+///     Transaction participant that enlists a DbContext in the transaction Polecat is about to
+///     commit, then calls DbContext.SaveChangesAsync() within it.
 /// </summary>
 /// <remarks>
 ///     <para>
@@ -20,12 +20,13 @@ namespace Polecat.EntityFrameworkCore;
 ///     the success path and the failure path alike.
 ///     </para>
 ///     <para>
-///     The placeholder connection is released eagerly at the end of
+///     A placeholder connection, when there is one, is released eagerly at the end of
 ///     <see cref="BeforeCommitAsync" /> — it is provably finished with there, having just been
 ///     swapped out — but the context is NOT. It is still reachable by an inline projection whose
 ///     session has not ended, so tearing it down there would be a behaviour change rather than a
 ///     leak fix. Release is idempotent so the success path's eager call and disposal do not
-///     double-dispose.
+///     double-dispose. A context attached to the session's transaction has no placeholder, because
+///     the connection it uses belongs to the session (#846); see <see cref="EfCoreDbContextFactory" />.
 ///     </para>
 ///     <para>
 ///     <see cref="IAsyncDisposable" /> only, where Marten's twin also implements
@@ -36,14 +37,20 @@ namespace Polecat.EntityFrameworkCore;
 internal class DbContextTransactionParticipant<TDbContext> : ITransactionParticipant, IAsyncDisposable
     where TDbContext : DbContext
 {
-    private readonly SqlConnection _placeholderConnection;
+    private readonly SqlConnection? _placeholderConnection;
+    private readonly DocumentSessionBase? _session;
     private bool _released;
     private bool _disposed;
 
-    public DbContextTransactionParticipant(TDbContext dbContext, SqlConnection placeholderConnection)
+    /// <param name="dbContext">The context to flush, and to own.</param>
+    /// <param name="placeholderConnection">The connection to release, if the context has its own.</param>
+    /// <param name="session">The session the context was built for.</param>
+    public DbContextTransactionParticipant(TDbContext dbContext, SqlConnection? placeholderConnection,
+        DocumentSessionBase? session = null)
     {
         DbContext = dbContext;
         _placeholderConnection = placeholderConnection;
+        _session = session;
     }
 
     /// <summary>
@@ -53,17 +60,41 @@ internal class DbContextTransactionParticipant<TDbContext> : ITransactionPartici
 
     public async Task BeforeCommitAsync(SqlConnection connection, SqlTransaction transaction, CancellationToken token)
     {
-        // Swap DbContext to Polecat's real connection and transaction
+        // Point the context at this transaction, whatever it was pointing at before: the placeholder
+        // on the first attempt of a daemon batch, the previous attempt's dead connection on a retry
+        // of one, or on a session that saves twice, the transaction its first save already committed.
+        // A context already attached to this very transaction goes round the same way, and EF takes
+        // all of those without complaint. The one thing it refuses is a transaction whose connection
+        // has gone, so a dead one fails here, loudly, rather than flushing in autocommit.
         DbContext.Database.SetDbConnection(connection);
         await DbContext.Database.UseTransactionAsync(transaction, token);
 
-        // Flush EF Core changes within Polecat's transaction
-        await DbContext.SaveChangesAsync(token);
+        if (_session != null && ReferenceEquals(transaction, _session.ActiveTransaction))
+        {
+            // The session's own commit. Polecat does not re-run this block, so nothing can arrive
+            // back here wanting these changes again, and accepting them now is what stops the next
+            // save on this session from writing them twice. A flush on the session's connection is
+            // not inside anybody's pipeline yet, so this is where it gets one.
+            await _session.ExecuteInUnitOfWorkAsync(
+                t => new ValueTask<int>(DbContext.SaveChangesAsync(acceptAllChangesOnSuccess: true, t)), token);
+        }
+        else
+        {
+            // #846, the twin of marten#5603. This is the daemon's batch, and this method is running
+            // INSIDE the block PolecatProjectionBatch.ExecuteAsync hands to the resilience pipeline,
+            // on a connection and a transaction that block owns. So the flush is covered already, and
+            // it must not accept: plain SaveChangesAsync(token) marks every entry Unchanged the moment
+            // its statements run, before anything has committed. A failure between here and the
+            // commit rolls those rows back and the pipeline replays the block, into a change tracker
+            // that believes it has nothing left to write, so attempt 2 commits the progression
+            // without the rows. Marten accepts in an AfterCommitAsync hook; there is no need for one
+            // here, because this context dies with the batch and is never flushed after its commit.
+            await DbContext.SaveChangesAsync(acceptAllChangesOnSuccess: false, token);
+        }
 
-        // Release the placeholder connection (never actually opened for SQL Server) now that it has
-        // been swapped out. Idempotent, because disposal releases it too — this line used to be the
-        // ONLY release, so a projection that threw while applying, an optimistic-concurrency failure
-        // in SaveChangesAsync, or a throw from anywhere above skipped it entirely.
+        // Idempotent, because disposal releases it too — this line used to be the ONLY release, so a
+        // projection that threw while applying, an optimistic-concurrency failure in SaveChangesAsync,
+        // or a throw from anywhere above skipped it entirely.
         await ReleaseAsync();
     }
 
@@ -72,7 +103,11 @@ internal class DbContextTransactionParticipant<TDbContext> : ITransactionPartici
         if (_released) return;
 
         _released = true;
-        await _placeholderConnection.DisposeAsync();
+
+        if (_placeholderConnection != null)
+        {
+            await _placeholderConnection.DisposeAsync();
+        }
     }
 
     public async ValueTask DisposeAsync()
