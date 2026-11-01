@@ -3,6 +3,7 @@ using JasperFx.Events;
 using Polecat.Batching;
 using Polecat.Linq;
 using Polecat.Linq.CursorPaging;
+using Polecat.TestUtils;
 using Polecat.Tests.Harness;
 
 namespace Polecat.Tests.Linq;
@@ -134,6 +135,101 @@ public class clr_only_member_execution_path_tests : OneOffConfigurationsContext
             .Select(g => g.Key).OrderBy(x => x).ToListAsync(Token);
 
         lengths.ShouldBe([3, 6]);
+    }
+
+    // #835 reads a string in full, which runs past 4000 characters, and which is a subquery on nvarchar(max)
+    // storage. So Length has to be right past the limit, and still be a legal GROUP BY key.
+    private async Task<IQuerySession> SeededWithLongNameAsync(bool nativeJson)
+    {
+        if (nativeJson)
+        {
+            Assert.SkipUnless(ConnectionSource.SupportsNativeJson, "This server has no native json type.");
+        }
+
+        ConfigureStore(opts => opts.UseNativeJsonType = nativeJson);
+
+        await using (var session = theStore.LightweightSession())
+        {
+            session.Store(Ann, new ClrOnlyPathDoc { Id = Guid.NewGuid(), Name = new string('x', 5000), N = 9 });
+            await session.SaveChangesAsync(Token);
+        }
+
+        return theStore.QuerySession();
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task a_length_past_4000_characters_is_filtered_on(bool nativeJson)
+    {
+        await using var query = await SeededWithLongNameAsync(nativeJson);
+
+        (await query.Query<ClrOnlyPathDoc>().Where(x => x.Name.Length == 5000).Select(x => x.N).ToListAsync(Token))
+            .ShouldBe([9]);
+        (await query.Query<ClrOnlyPathDoc>().Where(x => x.Name.Length > 4000).Select(x => x.N).ToListAsync(Token))
+            .ShouldBe([9]);
+        (await query.Query<ClrOnlyPathDoc>().Where(x => x.Name.Length != 5000).Select(x => x.N).ToListAsync(Token))
+            .ShouldBe([Ann.N]);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task a_length_past_4000_characters_is_selected_and_ordered_by(bool nativeJson)
+    {
+        await using var query = await SeededWithLongNameAsync(nativeJson);
+
+        (await query.Query<ClrOnlyPathDoc>().OrderByDescending(x => x.Name.Length).Select(x => x.Name.Length)
+                .ToListAsync(Token))
+            .ShouldBe([5000, 3]);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task a_length_past_4000_characters_is_aggregated(bool nativeJson)
+    {
+        await using var query = await SeededWithLongNameAsync(nativeJson);
+
+        (await query.Query<ClrOnlyPathDoc>().MaxAsync(x => x.Name.Length, Token)).ShouldBe(5000);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task a_length_is_a_group_key_on_either_storage(bool nativeJson)
+    {
+        if (nativeJson)
+        {
+            Assert.SkipUnless(ConnectionSource.SupportsNativeJson, "This server has no native json type.");
+        }
+
+        ConfigureStore(opts => opts.UseNativeJsonType = nativeJson);
+
+        await using (var session = theStore.LightweightSession())
+        {
+            session.Store(Ann, Bob, Cal);
+            await session.SaveChangesAsync(Token);
+        }
+
+        await using var query = theStore.QuerySession();
+
+        var lengths = await query.Query<ClrOnlyPathDoc>().GroupBy(x => x.Name.Length)
+            .Select(g => new ClrOnlyKeyCount { Year = g.Key, Count = g.Count() })
+            .OrderBy(x => x.Year).ToListAsync(Token);
+
+        lengths.Select(x => (x.Year, x.Count)).ShouldBe([(3, 2), (6, 1)]);
+    }
+
+    [RequiresNativeJsonFact(true)]
+    public async Task a_length_past_4000_characters_is_a_group_key_on_native_storage()
+    {
+        await using var query = await SeededWithLongNameAsync(nativeJson: true);
+
+        var lengths = await query.Query<ClrOnlyPathDoc>().GroupBy(x => x.Name.Length)
+            .Select(g => g.Key).OrderBy(x => x).ToListAsync(Token);
+
+        lengths.ShouldBe([3, 5000]);
     }
 
     [Fact]

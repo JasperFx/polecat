@@ -2,6 +2,7 @@ using System.Collections;
 using System.Linq.Expressions;
 using System.Reflection;
 using System.Text.Json.Serialization;
+using Polecat.Internal;
 using Polecat.Linq.Parsing;
 
 namespace Polecat.Linq.Members;
@@ -130,14 +131,15 @@ internal static class ClrOnlyMembers
     }
 
     /// <summary>
-    ///     Refuses <paramref name="member" /> where SQL Server does not allow a subquery. Its message
-    ///     names the position, because the alternative is Msg 130 or Msg 144 from the server.
+    ///     Refuses <paramref name="member" /> where SQL Server does not allow a subquery, unless it has a
+    ///     form without one. The message names the position, because the alternative is Msg 130 or Msg 144
+    ///     from the server.
     /// </summary>
     public static IQueryableMember AssertNoSubquery(IQueryableMember member, string position)
     {
-        if (member is ComputedMember { IsSubquery: true })
+        if (member is ComputedMember { IsSubquery: true } computed)
         {
-            throw new BadLinqExpressionException(
+            return computed.WithoutSubquery ?? throw new BadLinqExpressionException(
                 $"Polecat cannot translate a collection's Count or Length {position}: it needs a subquery "
                 + "over the stored JSON, and SQL Server does not allow one there. Filter or order by it, or "
                 + "materialize the query and finish the work in memory.");
@@ -207,10 +209,24 @@ internal static class ClrOnlyMembers
     /// <summary>
     ///     <c>DATALENGTH</c> rather than <c>LEN</c>, which ignores trailing spaces. The cast makes it
     ///     two bytes per UTF-16 unit, which is what <see cref="string.Length" /> counts, for a
-    ///     <c>varchar</c> id column as much as for <c>JSON_VALUE</c>.
+    ///     <c>varchar</c> id column as much as for <c>JSON_VALUE</c>. It has to be <c>nvarchar(max)</c>
+    ///     because the read underneath is the full one (#835), and <c>DATALENGTH</c> of that is a
+    ///     <c>bigint</c>, hence the outer cast.
     /// </summary>
+    /// <remarks>
+    ///     On <c>nvarchar(max)</c> storage the full read is a subquery. A <c>GROUP BY</c> key and an
+    ///     aggregate over a group can't hold one, so those two read through <c>JSON_VALUE</c>, the same
+    ///     as a string member does there: <c>NULL</c> past 4000 characters.
+    /// </remarks>
     private static IQueryableMember StringLength(MemberExpression expression, IQueryableMember text)
-        => new ComputedMember($"(DATALENGTH(CAST({text.RawLocator} AS nvarchar(4000))) / 2)", expression.Type, "int");
+    {
+        string length(string locator) => $"CAST(DATALENGTH(CAST({locator} AS nvarchar(max))) / 2 AS int)";
+
+        return SqlText.IsSubquery(text.RawLocator)
+            ? new ComputedMember(length(text.RawLocator), expression.Type, "int", isSubquery: true,
+                withoutSubquery: new ComputedMember(length(text.TypedLocator), expression.Type, "int"))
+            : new ComputedMember(length(text.RawLocator), expression.Type, "int");
+    }
 
     /// <summary>
     ///     Reads the part out of the stored value, which keeps its offset, so a

@@ -74,6 +74,12 @@ internal static class SqlText
             : $"(SELECT pc_value FROM OPENJSON({dataColumn}) WITH (pc_value nvarchar(max) '{jsonPath}'))";
 
     /// <summary>
+    ///     Whether a locator is the <c>OPENJSON</c> form of <see cref="UnlimitedJsonString" />, which SQL
+    ///     Server refuses as a <c>GROUP BY</c> key and inside an aggregate.
+    /// </summary>
+    internal static bool IsSubquery(string locator) => locator.StartsWith("(SELECT ", StringComparison.Ordinal);
+
+    /// <summary>
     ///     An expression matched by the characters it holds rather than by what the database's collation
     ///     says they are equivalent to.
     /// </summary>

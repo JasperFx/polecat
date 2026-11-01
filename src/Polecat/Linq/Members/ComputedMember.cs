@@ -6,12 +6,14 @@ namespace Polecat.Linq.Members;
 /// </summary>
 internal sealed class ComputedMember : IQueryableMember
 {
-    public ComputedMember(string locator, Type memberType, string sqlType, bool isSubquery = false)
+    public ComputedMember(string locator, Type memberType, string sqlType, bool isSubquery = false,
+        ComputedMember? withoutSubquery = null)
     {
         TypedLocator = locator;
         MemberType = memberType;
         LocatorSqlType = sqlType;
         IsSubquery = isSubquery;
+        WithoutSubquery = withoutSubquery;
     }
 
     public Type MemberType { get; }
@@ -25,6 +27,11 @@ internal sealed class ComputedMember : IQueryableMember
     ///     aggregate.
     /// </summary>
     public bool IsSubquery { get; }
+
+    /// <summary>
+    ///     What to use where a subquery isn't allowed, when there is such a form.
+    /// </summary>
+    public ComputedMember? WithoutSubquery { get; }
 
     /// <summary>
     ///     <c>DayOfWeek</c> is the one computed value with an enum on the CLR side, compared as its number.
