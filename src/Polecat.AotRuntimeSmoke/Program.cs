@@ -419,6 +419,36 @@ await Shape("LINQ GroupBy with an ANONYMOUS projection", "polecat#743", async ()
     _ = grouped.Count;
 }, Expectation.FailsWith("JsonTypeInfo metadata for type"));
 
+// polecat#837. A bound predicate inside the projection, an ordering on an aggregate and the terminal
+// operators are all new reasons to reach for a generic at runtime, so they are measured. ReadOneGroupAsync
+// is closed over TResult at the call site precisely so that FirstAsync does not have to.
+await Shape("LINQ GroupBy with a Count(predicate), ordered and paged", "polecat#837", async () =>
+{
+    await using var scope = host.Services.CreateAsyncScope();
+    var session = scope.ServiceProvider.GetRequiredService<IDocumentSession>();
+    var title = "smoke-test";
+    var grouped = await session.Query<Quest>()
+        .GroupBy(q => q.Difficulty)
+        .Select(g => new DifficultyTally { Key = g.Key, Count = g.Count(q => q.Title == title) })
+        .OrderByDescending(x => x.Count)
+        .Skip(0).Take(5)
+        .ToListAsync();
+    if (grouped.Count == 0) throw new InvalidOperationException("no groups came back");
+});
+
+await Shape("LINQ GroupBy terminals: Count, First, and First of a value type", "polecat#837", async () =>
+{
+    await using var scope = host.Services.CreateAsyncScope();
+    var session = scope.ServiceProvider.GetRequiredService<IDocumentSession>();
+    var groups = session.Query<Quest>().GroupBy(q => q.Difficulty);
+
+    var count = await groups.Select(g => g.Key).CountAsync();
+    if (count == 0) throw new InvalidOperationException("no groups came back");
+
+    _ = await groups.Select(g => new DifficultyTally { Key = g.Key, Count = g.Count() }).FirstAsync();
+    _ = await groups.Select(g => g.Count()).OrderByDescending(x => x).FirstAsync();
+});
+
 await Shape("LINQ GroupJoin", "polecat#743", async () =>
 {
     await using var scope = host.Services.CreateAsyncScope();
@@ -560,6 +590,26 @@ await Shape("ToJsonPageByCursorAsync (cursor paging)", "polecat#743", async () =
     var session = scope.ServiceProvider.GetRequiredService<IDocumentSession>();
     var page = await session.Query<Quest>().OrderBy(q => q.Id).ToJsonPageByCursorAsync(null, 10);
     _ = page;
+});
+
+// polecat#836/#838: no generic in sight, because a projected page is built server-side and never
+// deserialized, which is why an anonymous type is fine here when it is not in a GroupBy.
+await Shape("ToJsonPageByCursorAsync with a Select() over an enum key, page 2", "polecat#838", async () =>
+{
+    await using var scope = host.Services.CreateAsyncScope();
+    var session = scope.ServiceProvider.GetRequiredService<IDocumentSession>();
+
+    // A second document, so that there is a page 2 for the cursor to reach.
+    session.Store(new Quest { Id = Guid.NewGuid(), Title = "smoke-page-2", Difficulty = Difficulty.Easy });
+    await session.SaveChangesAsync();
+
+    var first = await session.Query<Quest>().OrderBy(q => q.Difficulty).ThenBy(q => q.Id)
+        .Select(q => new { q.Id, q.Title }).ToJsonPageByCursorAsync(null, 1);
+    if (first.NextCursor is null) throw new InvalidOperationException("expected a second page");
+
+    var second = await session.Query<Quest>().OrderBy(q => q.Difficulty).ThenBy(q => q.Id)
+        .Select(q => new { q.Id, q.Title }).ToJsonPageByCursorAsync(first.NextCursor, 1);
+    if (second.Count != 1) throw new InvalidOperationException($"page 2 held {second.Count} rows");
 });
 
 await Shape("ToJsonArrayAsync", "polecat#743", async () =>

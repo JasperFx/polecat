@@ -65,24 +65,70 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
     private string TenantIdForFilter => _tenantOverride ?? _session.TenantId;
 
     /// <summary>
-    ///     Whether <paramref name="mapping" />'s table is conjoined, and therefore whether this query
-    ///     shape gets an implicit <c>tenant_id</c> filter. Only conjoined tables have the column, so on
-    ///     a single-tenanted one there is nothing to filter and <c>AnyTenant()</c> /
-    ///     <c>TenantIsOneOf()</c> are no-ops (#234).
+    ///     A parsed query carrying its implicit filters. See <see cref="Parse" />.
+    /// </summary>
+    private readonly record struct ParsedQuery(
+        LinqQueryParser Parser, MemberFactory Members, DocumentProvider Provider, Type DocumentType);
+
+    /// <summary>
+    ///     The one road into a statement: parses <paramref name="expression" /> and applies the
+    ///     <see cref="ImplicitFilters" />, so an execution path cannot end up with a statement that
+    ///     lacks them (#836).
     /// </summary>
     /// <remarks>
-    ///     ⚠️ <b>Per MAPPING, not per store.</b> This read <c>Options.Events.TenancyStyle</c> until #682,
-    ///     which was correct only while document tenancy was store-wide and inherited from the event
-    ///     store. Once <c>Schema.For&lt;T&gt;().MultiTenanted()</c> existed, a conjoined document in a
-    ///     single-tenanted store got its <c>tenant_id</c> column and its composite key and then had
-    ///     <b>no filter applied to any LINQ shape</b> — every tenant reading every other tenant's rows,
-    ///     while the keyed load path (which always went through the mapping) stayed correctly scoped.
-    ///     That asymmetry is what <c>DocumentConjoinedTenancyCompliance</c> caught, and it is the reason
-    ///     this is a method over a mapping rather than a property over the session: a JOIN can now have
-    ///     a conjoined side and a single-tenanted one, so there is no single answer for a query.
+    ///     A join is the exception, because its filters have two tables to go to.
+    ///     <see cref="ExecuteGroupJoinAsync{TResult}" /> asks <see cref="ImplicitFilters" /> for each side.
     /// </remarks>
-    private static bool IsConjoinedTenancy(DocumentMapping mapping)
-        => mapping.TenancyStyle == TenancyStyle.Conjoined;
+    private ParsedQuery Parse(Expression expression, string tenantId)
+    {
+        var documentType = FindDocumentType(expression);
+        var provider = _providers.GetProvider(documentType);
+
+        var memberFactory = new MemberFactory(_session.Options, provider.Mapping);
+        var parser = new LinqQueryParser(memberFactory, provider.Mapping.QualifiedTableName,
+            SoftDeleteTarget.For(provider.Mapping));
+        parser.Parse(expression);
+
+        if (parser.GroupJoinData == null)
+        {
+            parser.Statement.Wheres.AddRange(
+                ImplicitFilters.For(provider.Mapping, documentType, _tenantOverride ?? tenantId, parser));
+        }
+
+        return new ParsedQuery(parser, memberFactory, provider, documentType);
+    }
+
+    /// <summary>
+    ///     <see cref="Parse" /> for a query that is about to run: makes sure the table exists and
+    ///     honors <c>QueryForNonStaleData()</c>, which is an implicit promise like the filters but a
+    ///     wait rather than a predicate. Every path that executes a query starts here.
+    /// </summary>
+    private async Task<ParsedQuery> PrepareAsync(Expression expression, CancellationToken token)
+    {
+        var query = Parse(expression, TenantIdForFilter);
+        await _tableEnsurer.EnsureTableAsync(query.Provider, token);
+
+        if (query.Parser.NonStaleDataTimeout is { } timeout)
+        {
+            await WaitForNonStaleDataAsync(timeout, token);
+        }
+
+        return query;
+    }
+
+    /// <summary>
+    ///     Refuses a shape a path has no SQL for. These paths read <c>Statement</c> and nothing else,
+    ///     so a GroupBy or a join would otherwise be dropped and the rows of the table returned.
+    /// </summary>
+    private static void AssertNotGroupedOrJoined(LinqQueryParser parser, string operation)
+    {
+        if (parser.GroupByKeySelector != null || parser.GroupJoinData != null)
+        {
+            throw new BadLinqExpressionException(
+                $"{operation} has no translation for a GroupBy or a GroupJoin, whose rows are not documents. "
+                + "Materialize the query with ToListAsync() instead.");
+        }
+    }
 
     // IL2046 — IQueryProvider.CreateQuery(Expression) is not annotated [RUC]/[RDC]
     // in the BCL, but the only AOT-safe implementation is the generic
@@ -129,40 +175,53 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
     }
 
     internal Statement BuildStatement(Expression expression, string tenantId)
-    {
-        var documentType = FindDocumentType(expression);
-        var provider = _providers.GetProvider(documentType);
+        => BuildStatement(Parse(expression, tenantId));
 
-        var memberFactory = new MemberFactory(_session.Options, provider.Mapping);
-        var parser = new LinqQueryParser(memberFactory, provider.Mapping.QualifiedTableName,
-            SoftDeleteTarget.For(provider.Mapping));
-        parser.Parse(expression);
+    /// <summary>
+    ///     <see cref="BuildStatement(Expression, string)" /> for a query joining a batch, which runs
+    ///     alongside the others without this provider's read path.
+    /// </summary>
+    internal Statement BuildBatchedStatement(Expression expression, string tenantId)
+    {
+        var query = Parse(expression, tenantId);
+
+        if (query.Parser.NonStaleDataTimeout.HasValue)
+        {
+            throw new BadLinqExpressionException(
+                "QueryForNonStaleData() cannot join a batched query, which has no point at which to wait. "
+                + "Run the query on its own.");
+        }
+
+        if (query.Parser.GroupByKeySelector != null)
+        {
+            throw new BadLinqExpressionException(
+                "A GroupBy cannot join a batched query, whose rows are read as documents. Run the query "
+                + "on its own.");
+        }
+
+        return BuildStatement(query);
+    }
+
+    private static Statement BuildStatement(ParsedQuery query)
+    {
+        var parser = query.Parser;
+
+        if (parser.GroupJoinData != null)
+        {
+            throw new BadLinqExpressionException(
+                "A GroupJoin has no single statement to render, so it cannot be used with ToSql() or a "
+                + "batched query.");
+        }
+
+        if (parser.GroupByKeySelector != null)
+        {
+            new GroupBySelectBuilder(query.Members).ApplyTo(parser);
+            return parser.Statement;
+        }
 
         ApplySingleValueMode(parser);
 
         if (parser.IsDistinct) parser.Statement.IsDistinct = true;
-
-        // #234: single-tenant tables have no tenant_id column, so no implicit tenant filter is
-        // applied — every document is under the default tenant. Explicit AnyTenant()/TenantIsOneOf()
-        // are likewise no-ops there. Only conjoined stores filter by tenant_id.
-        if (!parser.IsAnyTenant && IsConjoinedTenancy(provider.Mapping))
-        {
-            if (parser.TenantIds != null)
-            {
-                parser.Statement.Wheres.Add(new TenantInFilter(parser.TenantIds));
-            }
-            else
-            {
-                parser.Statement.Wheres.Add(new ComparisonFilter("tenant_id", "=", tenantId));
-            }
-        }
-
-        if (provider.Mapping.DeleteStyle == DeleteStyle.SoftDelete && !parser.IsMaybeDeleted)
-        {
-            parser.Statement.Wheres.Add(new LiteralSqlFragment(parser.IsDeletedOnly ? "is_deleted = 1" : "is_deleted = 0"));
-        }
-
-        ApplyModifiedFilters(parser);
 
         return parser.Statement;
     }
@@ -219,42 +278,20 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
 
     internal async Task<string> ExecuteJsonArrayAsync(Expression expression, CancellationToken token)
     {
-        var documentType = FindDocumentType(expression);
-        var provider = _providers.GetProvider(documentType);
-        await _tableEnsurer.EnsureTableAsync(provider, token);
+        var query = await PrepareAsync(expression, token);
+        var parser = query.Parser;
 
-        var memberFactory = new MemberFactory(_session.Options, provider.Mapping);
-        var parser = new LinqQueryParser(memberFactory, provider.Mapping.QualifiedTableName,
-            SoftDeleteTarget.For(provider.Mapping));
-        parser.Parse(expression);
-
-        // Choose the streamed columns. A whole-document query streams the raw `data` column. A
-        // Select(...) projection must translate to a server-side JSON object (#358) — otherwise
-        // streaming would silently ignore the projection and return the raw documents. A projection
-        // that isn't a simple, translatable member shape can't be streamed and throws a clear error
-        // rather than producing wrong JSON.
-        parser.Statement.SelectColumns = ResolveStreamingSelectColumns(parser, memberFactory);
-
-        if (parser.IsDistinct) parser.Statement.IsDistinct = true;
-
-        if (!parser.IsAnyTenant && IsConjoinedTenancy(provider.Mapping))
+        if (parser.GroupByKeySelector != null && parser.GroupJoinData == null)
         {
-            if (parser.TenantIds != null)
-            {
-                parser.Statement.Wheres.Add(new TenantInFilter(parser.TenantIds));
-            }
-            else
-            {
-                parser.Statement.Wheres.Add(new ComparisonFilter("tenant_id", "=", TenantIdForFilter));
-            }
+            ApplyStreamedGrouping(query);
         }
-
-        if (provider.Mapping.DeleteStyle == DeleteStyle.SoftDelete && !parser.IsMaybeDeleted)
+        else
         {
-            parser.Statement.Wheres.Add(new LiteralSqlFragment(parser.IsDeletedOnly ? "is_deleted = 1" : "is_deleted = 0"));
-        }
+            AssertNotGroupedOrJoined(parser, nameof(JsonQueryExtensions.ToJsonArrayAsync));
+            parser.Statement.SelectFragment = ResolveStreamingSelect(parser, query.Members);
 
-        ApplyModifiedFilters(parser);
+            if (parser.IsDistinct) parser.Statement.IsDistinct = true;
+        }
 
         await using var batch = new SqlBatch();
         var builder = new BatchBuilder(batch);
@@ -285,37 +322,15 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
     internal async Task<(string Json, long Version)?> ExecuteJsonFirstWithVersionAsync(
         Expression expression, CancellationToken token)
     {
-        var documentType = FindDocumentType(expression);
-        var provider = _providers.GetProvider(documentType);
-        await _tableEnsurer.EnsureTableAsync(provider, token);
-
-        var memberFactory = new MemberFactory(_session.Options, provider.Mapping);
-        var parser = new LinqQueryParser(memberFactory, provider.Mapping.QualifiedTableName,
-            SoftDeleteTarget.For(provider.Mapping));
-        parser.Parse(expression);
+        var query = await PrepareAsync(expression, token);
+        var parser = query.Parser;
+        AssertNotGroupedOrJoined(parser, nameof(JsonQueryExtensions.ToJsonFirstWithVersionAsync));
 
         // Read the persisted JSON and the version column together — one round trip, no reserialize.
+        // A Select() does not change that: the ETag belongs to the document, which is what the
+        // streaming_etag_hardening_tests pin.
         parser.Statement.SelectColumns = "data, version";
         parser.Statement.Limit = 1;
-
-        if (!parser.IsAnyTenant && IsConjoinedTenancy(provider.Mapping))
-        {
-            if (parser.TenantIds != null)
-            {
-                parser.Statement.Wheres.Add(new TenantInFilter(parser.TenantIds));
-            }
-            else
-            {
-                parser.Statement.Wheres.Add(new ComparisonFilter("tenant_id", "=", TenantIdForFilter));
-            }
-        }
-
-        if (provider.Mapping.DeleteStyle == DeleteStyle.SoftDelete && !parser.IsMaybeDeleted)
-        {
-            parser.Statement.Wheres.Add(new LiteralSqlFragment(parser.IsDeletedOnly ? "is_deleted = 1" : "is_deleted = 0"));
-        }
-
-        ApplyModifiedFilters(parser);
 
         await using var batch = new SqlBatch();
         var builder = new BatchBuilder(batch);
@@ -355,41 +370,20 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
                 "pageSize must be greater than or equal to 1.");
         }
 
-        var documentType = FindDocumentType(expression);
-        var provider = _providers.GetProvider(documentType);
-        await _tableEnsurer.EnsureTableAsync(provider, token);
+        var query = await PrepareAsync(expression, token);
+        var parser = query.Parser;
+        AssertNotGroupedOrJoined(parser, nameof(JsonQueryExtensions.StreamPagedJsonArray));
 
-        var memberFactory = new MemberFactory(_session.Options, provider.Mapping);
-        var parser = new LinqQueryParser(memberFactory, provider.Mapping.QualifiedTableName,
-            SoftDeleteTarget.For(provider.Mapping));
-        parser.Parse(expression);
-
-        // Ride the total-rows window column alongside the raw data column so the total comes back
-        // on the same round trip as the page. COUNT(*) OVER() returns int on SQL Server.
-        parser.Statement.SelectColumns = "data, COUNT(*) OVER() AS total_rows";
+        // Ride the total-rows window column alongside the page so the total comes back on the same
+        // round trip. COUNT(*) OVER() returns int on SQL Server. The page itself is whatever the query
+        // selects: a Select() here used to be dropped, which handed back the whole document, and a
+        // projection is the ordinary way to keep a member out of a response (#836).
+        parser.Statement.SelectFragment = new CompositeSqlFragment(
+            ResolveStreamingSelect(parser, query.Members), ", COUNT(*) OVER() AS total_rows");
         parser.Statement.Offset = (pageNumber - 1) * pageSize;
         parser.Statement.Limit = pageSize;
 
         if (parser.IsDistinct) parser.Statement.IsDistinct = true;
-
-        if (!parser.IsAnyTenant && IsConjoinedTenancy(provider.Mapping))
-        {
-            if (parser.TenantIds != null)
-            {
-                parser.Statement.Wheres.Add(new TenantInFilter(parser.TenantIds));
-            }
-            else
-            {
-                parser.Statement.Wheres.Add(new ComparisonFilter("tenant_id", "=", TenantIdForFilter));
-            }
-        }
-
-        if (provider.Mapping.DeleteStyle == DeleteStyle.SoftDelete && !parser.IsMaybeDeleted)
-        {
-            parser.Statement.Wheres.Add(new LiteralSqlFragment(parser.IsDeletedOnly ? "is_deleted = 1" : "is_deleted = 0"));
-        }
-
-        ApplyModifiedFilters(parser);
 
         await using var batch = new SqlBatch();
         var builder = new BatchBuilder(batch);
@@ -444,27 +438,23 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
                 "pageSize must be greater than or equal to 1.");
         }
 
-        var documentType = FindDocumentType(expression);
-        var provider = _providers.GetProvider(documentType);
-        await _tableEnsurer.EnsureTableAsync(provider, token);
-
-        var memberFactory = new MemberFactory(_session.Options, provider.Mapping);
-        var parser = new LinqQueryParser(memberFactory, provider.Mapping.QualifiedTableName,
-            SoftDeleteTarget.For(provider.Mapping));
-        parser.Parse(expression);
+        var query = await PrepareAsync(expression, token);
+        var parser = query.Parser;
+        AssertNotGroupedOrJoined(parser, nameof(CursorPagingQueryableExtensions.ToJsonPageByCursorAsync));
 
         var orderBy = parser.OrderByMembers;
         CursorPagination.ValidateOrdering(orderBy);
 
-        // Select the raw data column plus each ordering-key column (aliased) so the cursor is built
-        // from the last row without hydrating the document.
-        var select = new StringBuilder("data");
+        // Select the page's JSON plus each ordering-key column (aliased) so the cursor is built from
+        // the last row without hydrating the document. The page is whatever the query selects, so a
+        // Select() used to hide a field keeps hiding it (#836); the keys ride alongside it unprojected.
+        var select = new List<object>(orderBy.Count + 1) { ResolveStreamingSelect(parser, query.Members) };
         for (var i = 0; i < orderBy.Count; i++)
         {
-            select.Append(", ").Append(orderBy[i].Member.TypedLocator).Append(" AS __pc_k").Append(i);
+            select.Add($", {orderBy[i].Member.TypedLocator} AS __pc_k{i}");
         }
 
-        parser.Statement.SelectColumns = select.ToString();
+        parser.Statement.SelectFragment = new CompositeSqlFragment(select.ToArray());
 
         // Fetch one extra row to detect whether a next page exists.
         parser.Statement.Limit = pageSize + 1;
@@ -475,25 +465,6 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
             parser.Statement.Wheres.Add(CursorPagination.BuildSeekPredicate(orderBy, values));
         }
 
-        if (!parser.IsAnyTenant && IsConjoinedTenancy(provider.Mapping))
-        {
-            if (parser.TenantIds != null)
-            {
-                parser.Statement.Wheres.Add(new TenantInFilter(parser.TenantIds));
-            }
-            else
-            {
-                parser.Statement.Wheres.Add(new ComparisonFilter("tenant_id", "=", TenantIdForFilter));
-            }
-        }
-
-        if (provider.Mapping.DeleteStyle == DeleteStyle.SoftDelete && !parser.IsMaybeDeleted)
-        {
-            parser.Statement.Wheres.Add(new LiteralSqlFragment(parser.IsDeletedOnly ? "is_deleted = 1" : "is_deleted = 0"));
-        }
-
-        ApplyModifiedFilters(parser);
-
         await using var batch = new SqlBatch();
         var builder = new BatchBuilder(batch);
         parser.Statement.Apply(builder);
@@ -501,53 +472,54 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
 
         await using var reader = await _session.ExecuteReaderAsync(batch, token);
 
-        var items = new List<string>(pageSize + 1);
-        var lastKeyValues = new List<object?[]>(pageSize + 1);
+        var page = new StringBuilder("[");
+        var count = 0;
+        var hasMore = false;
+        object?[]? lastKeys = null;
         while (await reader.ReadAsync(token))
         {
-            items.Add(reader.GetString(0));
-
-            var keys = new object?[orderBy.Count];
-            for (var i = 0; i < orderBy.Count; i++)
+            // The probe row: there is a next page, and nothing of the row itself is needed.
+            if (count == pageSize)
             {
-                keys[i] = reader.IsDBNull(i + 1) ? null : reader.GetValue(i + 1);
+                hasMore = true;
+                break;
             }
 
-            lastKeyValues.Add(keys);
+            if (count > 0) page.Append(',');
+            page.Append(reader.GetString(0));
+            count++;
+
+            // Only the last row of the page can seed the cursor, so only its keys are read.
+            if (count == pageSize)
+            {
+                lastKeys = new object?[orderBy.Count];
+                for (var i = 0; i < orderBy.Count; i++)
+                {
+                    lastKeys[i] = reader.IsDBNull(i + 1) ? null : reader.GetValue(i + 1);
+                }
+            }
         }
 
-        // If the probe row came back, there is a next page. Trim to pageSize and build the cursor
-        // from the last kept row's sort-key values.
-        var hasMore = items.Count > pageSize;
-        var count = hasMore ? pageSize : items.Count;
+        page.Append(']');
 
-        var sb = new StringBuilder("[");
-        for (var i = 0; i < count; i++)
-        {
-            if (i > 0) sb.Append(',');
-            sb.Append(items[i]);
-        }
+        var nextCursor = hasMore ? CursorPagination.Encode(lastKeys!) : null;
 
-        sb.Append(']');
-
-        var nextCursor = hasMore ? CursorPagination.Encode(lastKeyValues[count - 1]) : null;
-
-        return new CursorPageResult(sb.ToString(), count, nextCursor);
+        return new CursorPageResult(page.ToString(), count, nextCursor);
     }
 
     /// <summary>
-    ///     Resolves the SELECT columns for a raw-JSON streaming query (#358). No projection → the
-    ///     raw <c>data</c> column. A simple <c>Select(x =&gt; new { … })</c> projection of document
-    ///     members → a server-side <c>JSON_OBJECT(...)</c> (native-JSON / SQL Server 2025 only). Any
+    ///     Resolves the select list for a raw-JSON streaming query (#358). No projection → the raw
+    ///     <c>data</c> column. A simple <c>Select(x =&gt; new { … })</c> projection of document members →
+    ///     a server-side <see cref="JsonObjectFragment" /> (native-JSON / SQL Server 2025 only). Any
     ///     other projection (scalar select, method calls, arithmetic, non-native store, …) cannot be
     ///     streamed faithfully and throws <see cref="BadLinqExpressionException"/> rather than
     ///     silently returning the raw documents.
     /// </summary>
-    private string ResolveStreamingSelectColumns(LinqQueryParser parser, MemberFactory memberFactory)
+    private ISqlFragment ResolveStreamingSelect(LinqQueryParser parser, MemberFactory memberFactory)
     {
         if (parser.SelectExpression is null)
         {
-            return "data";
+            return new LiteralSqlFragment("data");
         }
 
         var columns = _session.Options.UseNativeJsonType
@@ -564,131 +536,37 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
                 "instead of a JSON-streaming call.");
         }
 
-        return BuildJsonObjectSelect(columns);
+        var members = columns.Select(column => new JsonObjectMember(column.JsonKey,
+            new LiteralSqlFragment(column.Locator), column.MemberType, column.SqlType));
+
+        return new CompositeSqlFragment(new JsonObjectFragment(members), " AS data");
     }
 
     /// <summary>
-    ///     Emits a native SQL Server JSON object for a simple projection. Keys honor the serializer
-    ///     naming policy / <c>[JsonPropertyName]</c>; values come from each member's typed JSON
-    ///     locator, so numbers stay numbers and strings stay quoted.
+    ///     A grouped query streamed as JSON: its rows already are JSON objects when it projects one.
     /// </summary>
-    /// <remarks>
-    ///     <para>
-    ///         ⚠️ <b>Whether a SQL NULL becomes <c>"key": null</c> or no key at all is decided PER
-    ///         MEMBER, from the CLR type (#722), and neither answer is right for both.</b>
-    ///     </para>
-    ///     <para>
-    ///         This used to be one <c>JSON_OBJECT(...)</c> on the default <c>NULL ON NULL</c>, which
-    ///         emitted <c>"key": null</c> for a key that is simply ABSENT from the stored document —
-    ///         the ordinary case of a document type that gained a property after rows were written.
-    ///         A consumer deserializing that into a non-nullable value type throws, while the same
-    ///         stored document loads fine as a whole document and the same member projects fine on
-    ///         its own, which is what made it confusing to diagnose (marten#5461).
-    ///     </para>
-    ///     <para>
-    ///         ⚠️ <b>And <c>ABSENT ON NULL</c> is not the fix — that is marten#5499.</b> Stripping
-    ///         every null turned a <c>DateOnly?</c> that was LEGITIMATELY stored as null into an
-    ///         absent key, trading a throw for a silently different value. <c>JSON_VALUE</c> cannot
-    ///         tell absent from present-and-null — both are SQL NULL — so no single object-level
-    ///         setting can be correct for both shapes.
-    ///     </para>
-    ///     <para>
-    ///         So the members are split by what their CLR type can represent:
-    ///     </para>
-    ///     <list type="bullet">
-    ///         <item>
-    ///             a <b>nullable or reference</b> member keeps <c>"key": null</c>, because null is a
-    ///             value it can hold and a consumer may distinguish it from absence;
-    ///         </item>
-    ///         <item>
-    ///             a <b>non-nullable value type</b> has the key omitted, because null is a value it
-    ///             CANNOT hold — absence deserializes to the CLR default, which is the only
-    ///             representable answer and the one the whole-document read already gives.
-    ///         </item>
-    ///     </list>
-    ///     <para>
-    ///         <b><c>JSON_MODIFY</c> in lax mode is what makes that per-member.</b> Setting a key to
-    ///         a NULL value in lax mode DELETES it, and sets it when the value is non-null — exactly
-    ///         the conditional-omit this needs, with no per-type default literal to get wrong and no
-    ///         string surgery over two objects. The nullable members form the base
-    ///         <c>JSON_OBJECT</c>, which keeps its nulls; each non-nullable member is layered on.
-    ///     </para>
-    ///     <para>
-    ///         ⚠️ Two consequences worth knowing. The emitted <b>key order changes</b> — nullable
-    ///         members first, then the rest — which is not semantically meaningful in JSON and which
-    ///         System.Text.Json does not care about, but which a test asserting exact JSON text would
-    ///         see. And a projection of N non-nullable members nests N <c>JSON_MODIFY</c> calls rather
-    ///         than one <c>JSON_OBJECT</c>; the alternative was a per-CLR-type default literal
-    ///         (<c>CAST(0 AS bit)</c>, <c>'0001-01-01'</c>, an enum with no zero member …), which is a
-    ///         long tail where every entry is a silent wrong answer if it is wrong — the exact class
-    ///         of bug this is fixing.
-    ///     </para>
-    ///     <para>
-    ///         The last row of #722's truth table — a key present as null projected into a
-    ///         non-nullable value type — comes out as the CLR default rather than a throw. That is
-    ///         deliberate and is what the issue calls "arguably correct to throw on anyway": nothing
-    ///         distinguishes it from absence at the SQL layer, so it gets absence's answer.
-    ///     </para>
-    /// </remarks>
-    private static string BuildJsonObjectSelect(IReadOnlyList<SimpleProjectionColumn> columns)
+    private static void ApplyStreamedGrouping(ParsedQuery query)
     {
-        var preserveNull = new List<SimpleProjectionColumn>(columns.Count);
-        var omitWhenNull = new List<SimpleProjectionColumn>(columns.Count);
+        var grouping = new GroupBySelectBuilder(query.Members);
+        grouping.ApplyTo(query.Parser);
 
-        foreach (var column in columns)
+        if (!grouping.ReadsJson)
         {
-            (CanRepresentNull(column.MemberType) ? preserveNull : omitWhenNull).Add(column);
+            throw new BadLinqExpressionException(
+                "A GroupBy can only be streamed as raw JSON when its Select(...) projects an object, "
+                + "e.g. Select(g => new { g.Key, Count = g.Count() }). Materialize a scalar projection with "
+                + "ToListAsync() instead.");
         }
-
-        var sb = new StringBuilder("JSON_OBJECT(");
-        for (var i = 0; i < preserveNull.Count; i++)
-        {
-            if (i > 0) sb.Append(", ");
-            sb.Append('\'').Append(SqlEscaping.LiteralBody(preserveNull[i].JsonKey)).Append("': ");
-            sb.Append(preserveNull[i].Locator);
-        }
-
-        sb.Append(')');
-
-        var json = sb.ToString();
-
-        foreach (var column in omitWhenNull)
-        {
-            // Lax mode (the default, and NOT spelled out: 'lax' is implied and SQL Server accepts the
-            // bare path) deletes the key when the value is NULL. The key is quoted so a naming policy
-            // or [JsonPropertyName] that produced a space or a dot cannot change which path this is.
-            json = $"JSON_MODIFY({json}, '$.\"{JsonPathKey(column.JsonKey)}\"', {column.Locator})";
-        }
-
-        return json + " AS data";
     }
-
-    /// <summary>
-    ///     Whether <c>null</c> is a value this member's CLR type can hold — a reference type or a
-    ///     <see cref="Nullable{T}" />. See the remarks on <see cref="BuildJsonObjectSelect" />.
-    /// </summary>
-    private static bool CanRepresentNull(Type memberType)
-        => !memberType.IsValueType || Nullable.GetUnderlyingType(memberType) != null;
-
-    /// <summary>
-    ///     A JSON key escaped for use inside a double-quoted <c>JSON_MODIFY</c> path, which is then
-    ///     itself inside a SQL string literal.
-    /// </summary>
-    private static string JsonPathKey(string key)
-        => SqlEscaping.LiteralBody(key).Replace("\"", "\\\"");
 
     [RequiresDynamicCode("LINQ-to-SQL execution closes ListQueryHandler<>/DeserializingSelector<>/etc. over the document type via Type.MakeGenericType.")]
     [RequiresUnreferencedCode("LINQ-to-SQL execution reflects over the document type (Activator.CreateInstance on handler types, MethodInfo.Invoke on HandleAsync). AOT consumers must preserve handler + document members through DAM or source generation.")]
     public async Task<TResult> ExecuteAsync<TResult>(Expression expression, CancellationToken token)
     {
-        var documentType = FindDocumentType(expression);
-        var provider = _providers.GetProvider(documentType);
-        await _tableEnsurer.EnsureTableAsync(provider, token);
-
-        var memberFactory = new MemberFactory(_session.Options, provider.Mapping);
-        var parser = new LinqQueryParser(memberFactory, provider.Mapping.QualifiedTableName,
-            SoftDeleteTarget.For(provider.Mapping));
-        parser.Parse(expression);
+        var query = await PrepareAsync(expression, token);
+        var parser = query.Parser;
+        var provider = query.Provider;
+        var documentType = query.DocumentType;
 
         // Route to GroupJoin execution if detected
         if (parser.GroupJoinData != null)
@@ -699,13 +577,7 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
         // Route to GroupBy execution if detected
         if (parser.GroupByKeySelector != null)
         {
-            return await ExecuteGroupByAsync<TResult>(parser, memberFactory, provider.Mapping, token);
-        }
-
-        // Wait for non-stale projection data if requested
-        if (parser.NonStaleDataTimeout.HasValue)
-        {
-            await WaitForNonStaleDataAsync(parser.NonStaleDataTimeout.Value, token);
+            return await ExecuteGroupByAsync<TResult>(query, token);
         }
 
         // Apply single-value mode to Statement
@@ -716,47 +588,6 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
         {
             parser.Statement.IsDistinct = true;
         }
-
-        // Add tenant filter (unless AnyTenant was called)
-        if (!parser.IsAnyTenant && IsConjoinedTenancy(provider.Mapping))
-        {
-            if (parser.TenantIds != null)
-            {
-                // TenantIsOneOf: tenant_id IN (...)
-                var tenantIn = new TenantInFilter(parser.TenantIds);
-                parser.Statement.Wheres.Add(tenantIn);
-            }
-            else
-            {
-                parser.Statement.Wheres.Add(
-                    new ComparisonFilter("tenant_id", "=", TenantIdForFilter));
-            }
-        }
-
-        // Add soft delete filter for soft-deleted types (unless overridden by LINQ extensions)
-        if (provider.Mapping.DeleteStyle == DeleteStyle.SoftDelete && !parser.IsMaybeDeleted)
-        {
-            if (parser.IsDeletedOnly)
-            {
-                parser.Statement.Wheres.Add(new LiteralSqlFragment("is_deleted = 1"));
-            }
-            else
-            {
-                parser.Statement.Wheres.Add(new LiteralSqlFragment("is_deleted = 0"));
-            }
-
-            if (parser.DeletedSinceTimestamp.HasValue)
-            {
-                parser.Statement.Wheres.Add(new ComparisonFilter("deleted_at", ">=", parser.DeletedSinceTimestamp.Value));
-            }
-
-            if (parser.DeletedBeforeTimestamp.HasValue)
-            {
-                parser.Statement.Wheres.Add(new ComparisonFilter("deleted_at", "<", parser.DeletedBeforeTimestamp.Value));
-            }
-        }
-
-        ApplyModifiedFilters(parser);
 
         // Materialization shape (#273 E2d/E2e). Whole-document queries ride the closed-shape
         // QueryOnly storage: SELECT columns come from the shared select clause (data first,
@@ -773,13 +604,6 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
             parser.Statement.SelectColumns = string.Join(", ", sharedSelectClause.SelectFields());
         }
 
-        // Add doc_type filter for subclass queries
-        if (isHierarchy && documentType != provider.Mapping.DocumentType)
-        {
-            var alias = provider.Mapping.AliasFor(documentType);
-            parser.Statement.Wheres.Add(new ComparisonFilter("doc_type", "=", alias));
-        }
-
         // Build SQL and execute via BatchBuilder/SqlBatch
         await using var batch = new SqlBatch();
         var builder = new BatchBuilder(batch);
@@ -794,58 +618,11 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
 
     [RequiresDynamicCode("GroupBy execution closes GroupByListHandler<>/ScalarListHandler<> over the projected type via Type.MakeGenericType.")]
     [RequiresUnreferencedCode("GroupBy execution reflects over handler types (Activator.CreateInstance + MethodInfo.Invoke).")]
-    private async Task<TResult> ExecuteGroupByAsync<TResult>(
-        LinqQueryParser parser, MemberFactory memberFactory, DocumentMapping mapping, CancellationToken token)
+    private async Task<TResult> ExecuteGroupByAsync<TResult>(ParsedQuery query, CancellationToken token)
     {
-        var builder2 = new GroupBySelectBuilder(memberFactory, _session.Options);
-
-        if (parser.SelectExpression != null)
-        {
-            builder2.Build(parser.GroupByKeySelector!, parser.SelectExpression);
-        }
-        else
-        {
-            throw new BadLinqExpressionException(
-                "GroupBy must be followed by a Select() projection.");
-        }
-
-        // Apply GROUP BY columns
-        foreach (var col in builder2.GroupByColumns)
-        {
-            parser.Statement.GroupByColumns.Add(col);
-        }
-
-        // Apply SELECT columns
-        parser.Statement.SelectColumns = builder2.SelectColumns;
-
-        // Apply HAVING clauses
-        if (parser.GroupByHavingExpressions.Count > 0)
-        {
-            // We need the grouping parameter from the Where lambda to resolve aggregates.
-            // The expressions were stored as lambda bodies; find the grouping parameter.
-            // The parameter comes from the original Where() lambda, but we only stored the body.
-            // We need to find the IGrouping parameter by examining the expression tree.
-            var groupingParam = FindGroupingParameterInExpression(parser.GroupByHavingExpressions[0]);
-
-            foreach (var havingExpr in parser.GroupByHavingExpressions)
-            {
-                var fragment = builder2.ResolveHaving(havingExpr, groupingParam!);
-                parser.Statement.HavingClauses.Add(fragment);
-            }
-        }
-
-        // Add tenant filter
-        if (!parser.IsAnyTenant && IsConjoinedTenancy(mapping))
-        {
-            if (parser.TenantIds != null)
-            {
-                parser.Statement.Wheres.Add(new TenantInFilter(parser.TenantIds));
-            }
-            else
-            {
-                parser.Statement.Wheres.Add(new ComparisonFilter("tenant_id", "=", TenantIdForFilter));
-            }
-        }
+        var parser = query.Parser;
+        var grouping = new GroupBySelectBuilder(query.Members);
+        grouping.ApplyTo(parser);
 
         // Build SQL and execute
         await using var batch = new SqlBatch();
@@ -855,15 +632,70 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
 
         await using var reader = await _session.ExecuteReaderAsync(batch, token);
 
-        // Check if the select is a complex JSON projection or scalar
-        if (builder2.SelectColumns.EndsWith(" as data"))
+        switch (parser.ValueMode)
         {
-            // Deserialize JSON results
-            return await InvokeGroupByListHandlerAsync<TResult>(reader, parser.SelectExpression!, token);
+            case null:
+                // Check if the select is a complex JSON projection or scalar
+                return grouping.ReadsJson
+                    ? await InvokeGroupByListHandlerAsync<TResult>(reader, parser.SelectExpression!, token)
+                    : await InvokeScalarListHandlerAsync<TResult>(reader, token);
+
+            case SingleValueMode.Any:
+                return (TResult)(object)await new AnyHandler().HandleAsync(reader, token);
+
+            case SingleValueMode.Count:
+            case SingleValueMode.LongCount:
+            case SingleValueMode.Sum:
+            case SingleValueMode.Min:
+            case SingleValueMode.Max:
+            case SingleValueMode.Average:
+                return await new ScalarHandler<TResult>().HandleAsync(reader, token);
+
+            default:
+                return await ReadOneGroupAsync<TResult>(reader, parser.ValueMode.Value, grouping.ReadsJson, token);
+        }
+    }
+
+    /// <summary>
+    ///     First, Single and Last over groups. Reads the row directly rather than through a handler, so
+    ///     nothing has to be closed over <typeparamref name="TResult" /> at runtime.
+    /// </summary>
+    [RequiresDynamicCode("Deserializes a projected row via ISerializer.FromJson.")]
+    [RequiresUnreferencedCode("Deserializes a projected row via ISerializer.FromJson.")]
+    private async Task<TResult> ReadOneGroupAsync<TResult>(
+        DbDataReader reader, SingleValueMode mode, bool readsJson, CancellationToken token)
+    {
+        if (!await reader.ReadAsync(token))
+        {
+            if (mode is SingleValueMode.First or SingleValueMode.Single or SingleValueMode.Last)
+            {
+                throw new InvalidOperationException("Sequence contains no elements");
+            }
+
+            return default!;
         }
 
-        // Scalar select (g.Key or g.Count())
-        return await InvokeScalarListHandlerAsync<TResult>(reader, token);
+        TResult result;
+        if (readsJson)
+        {
+            result = _session.Serializer.FromJson<TResult>(reader.GetString(0));
+        }
+        else if (await reader.IsDBNullAsync(0, token))
+        {
+            result = default!;
+        }
+        else
+        {
+            var targetType = Nullable.GetUnderlyingType(typeof(TResult)) ?? typeof(TResult);
+            result = (TResult)ScalarConversion.Convert(reader.GetValue(0), targetType);
+        }
+
+        if (mode is SingleValueMode.Single or SingleValueMode.SingleOrDefault && await reader.ReadAsync(token))
+        {
+            throw new InvalidOperationException("Sequence contains more than one element");
+        }
+
+        return result;
     }
 
     [RequiresDynamicCode("Closes GroupByListHandler<> over TResult's element type via Type.MakeGenericType.")]
@@ -883,29 +715,6 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
         var handler = (QueryHandlers.IQueryHandler)Activator.CreateInstance(handlerType, _session.Serializer)!;
 
         return (TResult)(await handler.HandleAsObjectAsync(reader, token).ConfigureAwait(false))!;
-    }
-
-    private static System.Linq.Expressions.ParameterExpression? FindGroupingParameterInExpression(
-        Expression expression)
-    {
-        var finder = new GroupingParameterFinder();
-        finder.Visit(expression);
-        return finder.Parameter;
-    }
-
-    private class GroupingParameterFinder : ExpressionVisitor
-    {
-        public System.Linq.Expressions.ParameterExpression? Parameter { get; private set; }
-
-        protected override Expression VisitParameter(System.Linq.Expressions.ParameterExpression node)
-        {
-            if (Parameter == null && node.Type.IsGenericType
-                && node.Type.GetGenericTypeDefinition() == typeof(IGrouping<,>))
-            {
-                Parameter = node;
-            }
-            return base.VisitParameter(node);
-        }
     }
 
     [RequiresDynamicCode("GroupJoin execution closes JoinListHandler<,,> + Func<,,> over outer/inner/result types via Type.MakeGenericType.")]
@@ -948,42 +757,29 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
             IsLeftJoin = joinData.IsLeftJoin
         };
 
-        // Add tenant filters, one side at a time. Since #682 the two sides of a join can disagree
-        // about tenancy -- a conjoined document joined to a single-tenanted lookup table is the
-        // ordinary case -- and only a conjoined side has a tenant_id column to filter on. Filtering
-        // the single-tenanted side would name a column that is not there.
-        if (!parser.IsAnyTenant)
-        {
-            if (IsConjoinedTenancy(outerMapping))
-            {
-                joinStatement.OuterWheres.Add(parser.TenantIds != null
-                    ? new TenantInFilter(parser.TenantIds, "outer_t.tenant_id")
-                    : new ComparisonFilter("outer_t.tenant_id", "=", TenantIdForFilter));
-            }
+        // The implicit filters go on one side at a time: since #682 the two sides of a join can
+        // disagree about tenancy -- a conjoined document joined to a single-tenanted lookup table is the
+        // ordinary case -- and each side has its own soft deletes and its own subclass. The inner side
+        // can carry operators of its own, but AnyTenant()/TenantIsOneOf() on the outer side has always
+        // covered the whole query.
+        var inner = ParseInnerSource(joinData, innerMapping, innerMemberFactory);
+        var innerTenancy = parser.IsAnyTenant || parser.TenantIds != null ? parser : inner;
 
-            if (IsConjoinedTenancy(innerMapping))
-            {
-                joinStatement.InnerWheres.Add(parser.TenantIds != null
-                    ? new TenantInFilter(parser.TenantIds, "inner_t.tenant_id")
-                    : new ComparisonFilter("inner_t.tenant_id", "=", TenantIdForFilter));
-            }
-        }
-
-        // Add soft delete filters for both sides
-        if (outerMapping.DeleteStyle == DeleteStyle.SoftDelete)
-        {
-            joinStatement.OuterWheres.Add(new LiteralSqlFragment("outer_t.is_deleted = 0"));
-        }
-        if (innerMapping.DeleteStyle == DeleteStyle.SoftDelete)
-        {
-            joinStatement.InnerWheres.Add(new LiteralSqlFragment("inner_t.is_deleted = 0"));
-        }
+        joinStatement.OuterWheres.AddRange(ImplicitFilters.For(outerMapping, joinData.OuterElementType,
+            TenantIdForFilter, parser, alias: "outer_t"));
+        joinStatement.InnerWheres.AddRange(ImplicitFilters.For(innerMapping, joinData.InnerElementType,
+            TenantIdForFilter, inner, innerTenancy, alias: "inner_t"));
 
         // Add any WHERE clauses from the outer source (captured by parser before GroupJoin).
         // These use bare column names (data, id) — wrap them with aliasing for outer_t.
         foreach (var where in parser.Statement.Wheres)
         {
             joinStatement.OuterWheres.Add(new AliasedSqlFragment(where, "outer_t"));
+        }
+
+        foreach (var where in inner.Statement.Wheres)
+        {
+            joinStatement.InnerWheres.Add(new AliasedSqlFragment(where, "inner_t"));
         }
 
         // Handle Count/First/Single terminal operators
@@ -1078,6 +874,28 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
             joinData.OuterElementType, joinData.InnerElementType,
             rewrittenSelector, joinData.IsLeftJoin,
             reader, parser.ValueMode, token);
+    }
+
+    /// <summary>
+    ///     Parses the operators on the inner side of a join, which used to be read for its element
+    ///     type and otherwise dropped, so a <c>Where</c> there filtered nothing.
+    /// </summary>
+    private static LinqQueryParser ParseInnerSource(
+        GroupJoinData joinData, DocumentMapping innerMapping, MemberFactory innerMemberFactory)
+    {
+        var inner = new LinqQueryParser(innerMemberFactory, innerMapping.QualifiedTableName,
+            SoftDeleteTarget.For(innerMapping));
+        inner.Parse(joinData.InnerSourceExpression);
+
+        if (inner.Statement.Limit.HasValue || inner.Statement.Offset.HasValue || inner.ValueMode.HasValue
+            || inner.SelectExpression != null || inner.GroupByKeySelector != null || inner.GroupJoinData != null)
+        {
+            throw new BadLinqExpressionException(
+                "The inner side of a GroupJoin can only filter: a Take, Skip, Select or GroupBy there has "
+                + "no place in the JOIN. Apply those after the join.");
+        }
+
+        return inner;
     }
 
     /// <summary>
@@ -1615,29 +1433,6 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
         }
 
         throw new BadLinqExpressionException($"Cannot determine the element type from: {expression.Type}");
-    }
-
-    private static void ApplyModifiedFilters(LinqQueryParser parser)
-    {
-        if (parser.ModifiedSinceTimestamp.HasValue)
-        {
-            parser.Statement.Wheres.Add(new ComparisonFilter("last_modified", ">=", parser.ModifiedSinceTimestamp.Value));
-        }
-
-        if (parser.ModifiedBeforeTimestamp.HasValue)
-        {
-            parser.Statement.Wheres.Add(new ComparisonFilter("last_modified", "<", parser.ModifiedBeforeTimestamp.Value));
-        }
-
-        if (parser.CreatedSinceTimestamp.HasValue)
-        {
-            parser.Statement.Wheres.Add(new ComparisonFilter("created_at", ">=", parser.CreatedSinceTimestamp.Value));
-        }
-
-        if (parser.CreatedBeforeTimestamp.HasValue)
-        {
-            parser.Statement.Wheres.Add(new ComparisonFilter("created_at", "<", parser.CreatedBeforeTimestamp.Value));
-        }
     }
 
     private async Task WaitForNonStaleDataAsync(TimeSpan timeout, CancellationToken token)

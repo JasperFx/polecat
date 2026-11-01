@@ -9,6 +9,13 @@ internal class Statement
 {
     public string FromTable { get; set; } = "";
     public string SelectColumns { get; set; } = "data";
+
+    /// <summary>
+    ///     When set, the select list instead of <see cref="SelectColumns" />. A select list that has to
+    ///     bind a parameter, like <c>COUNT(CASE WHEN x &gt; @p0 THEN 1 END)</c>, cannot be a string.
+    /// </summary>
+    public ISqlFragment? SelectFragment { get; set; }
+
     public List<ISqlFragment> Wheres { get; } = [];
     public List<OrderByClause> OrderBys { get; } = [];
     public int? Limit { get; set; }
@@ -25,8 +32,25 @@ internal class Statement
     /// </summary>
     public string? DistinctByLocator { get; set; }
 
+    /// <summary>
+    ///     When set, this statement becomes a derived table and the query is this aggregate over it.
+    ///     That is what counting the groups of a grouped query takes, because <c>COUNT(*)</c> in its
+    ///     own select list would count the rows of each group instead.
+    /// </summary>
+    public string? OuterAggregate { get; set; }
+
     public void Apply(ICommandBuilder builder)
     {
+        if (OuterAggregate != null)
+        {
+            builder.Append("SELECT ");
+            builder.Append(OuterAggregate);
+            builder.Append(" FROM (");
+            ApplyInner(builder);
+            builder.Append(") AS __pc_groups");
+            return;
+        }
+
         if (IsExistsWrapper)
         {
             builder.Append("SELECT CASE WHEN EXISTS (");
@@ -56,7 +80,7 @@ internal class Statement
             builder.Append($"TOP({Limit.Value}) ");
         }
 
-        builder.Append(SelectColumns);
+        AppendSelectList(builder);
         builder.Append(" FROM ");
         builder.Append(FromTable);
 
@@ -124,10 +148,10 @@ internal class Statement
             builder.Append($"TOP({Limit.Value}) ");
         }
 
-        builder.Append(SelectColumns);
+        AppendSelectList(builder);
 
         builder.Append(" FROM (SELECT ");
-        builder.Append(SelectColumns);
+        AppendSelectList(builder);
         builder.Append(", ROW_NUMBER() OVER (PARTITION BY ");
         builder.Append(DistinctByLocator!);
         builder.Append(" ORDER BY ");
@@ -183,6 +207,18 @@ internal class Statement
         return string.Join(", ", OrderBys.Select(o => o.Descending ? $"{o.Literal} DESC" : o.Literal));
     }
 
+    private void AppendSelectList(ICommandBuilder builder)
+    {
+        if (SelectFragment != null)
+        {
+            SelectFragment.Apply(builder);
+        }
+        else
+        {
+            builder.Append(SelectColumns);
+        }
+    }
+
     private void AppendWheres(ICommandBuilder builder)
     {
         if (Wheres.Count == 0) return;
@@ -204,8 +240,15 @@ internal class Statement
         }
     }
 
+    /// <summary>
+    ///     Whether this is one aggregate over the whole table, where an ORDER BY means nothing and SQL
+    ///     Server rejects it. A GROUP BY yields a row per group, so the same select list can be ordered
+    ///     (#837): <c>Select(g =&gt; g.Count()).OrderByDescending(x =&gt; x)</c> lost its ordering here.
+    /// </summary>
     private bool IsAggregateSelect()
     {
+        if (GroupByColumns.Count > 0) return false;
+
         return SelectColumns.StartsWith("COUNT(", StringComparison.OrdinalIgnoreCase)
                || SelectColumns.StartsWith("CAST(COUNT(", StringComparison.OrdinalIgnoreCase)
                || SelectColumns.StartsWith("SUM(", StringComparison.OrdinalIgnoreCase)
