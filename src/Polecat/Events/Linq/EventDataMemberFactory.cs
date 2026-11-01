@@ -1,6 +1,7 @@
 using System.Linq.Expressions;
 using System.Reflection;
 using System.Text.Json;
+using Polecat.Internal;
 using Polecat.Linq.Members;
 using Polecat.Serialization;
 using Weasel.Core;
@@ -15,10 +16,12 @@ internal class EventDataMemberFactory : IMemberResolver
 {
     private readonly JsonNamingPolicy? _namingPolicy;
     private readonly EnumStorage _enumStorage;
+    private readonly bool _useReturning;
 
     public EventDataMemberFactory(StoreOptions options)
     {
         _enumStorage = options.Serializer.EnumStorage;
+        _useReturning = options.UseNativeJsonType;
 
         if (options.Serializer is Serializer s)
         {
@@ -57,7 +60,11 @@ internal class EventDataMemberFactory : IMemberResolver
             ? $"CAST({rawLocator} AS {sqlType})"
             : rawLocator;
 
-        return new QueryableMember(rawLocator, typedLocator, memberType);
+        // #835: the same read the document side uses, because the text predicates are shared.
+        return underlying == typeof(string)
+            ? new QueryableMember(SqlText.UnlimitedJsonString("data", jsonPath, _useReturning), typedLocator,
+                memberType, textCapacity: SqlText.JsonValueCapacity)
+            : new QueryableMember(rawLocator, typedLocator, memberType);
     }
 
     private string BuildJsonPath(MemberExpression expression)

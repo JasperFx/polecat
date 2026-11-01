@@ -29,6 +29,21 @@ internal static class SqlTypeMap
     }
 
     /// <summary>
+    ///     #835: how many characters a character type holds — 250 for <c>varchar(250)</c> — or
+    ///     <see cref="int.MaxValue" /> for <c>max</c> and for any type this cannot read a width from, so
+    ///     an index declared with an unusual <see cref="DocumentIndex.SqlType" /> keeps being used.
+    /// </summary>
+    public static int TextCapacity(string sqlType)
+    {
+        var open = sqlType.IndexOf('(');
+        var close = sqlType.IndexOf(')');
+
+        return open > 0 && close > open && int.TryParse(sqlType[(open + 1)..close], out var width)
+            ? width
+            : int.MaxValue;
+    }
+
+    /// <summary>
     ///     True when the SQL type is a date/time family that needs a deterministic CONVERT(..., 126)
     ///     (rather than CAST) to be usable in a PERSISTED computed column. CAST of a string to a
     ///     date/time type is non-deterministic and cannot be persisted.

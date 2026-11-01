@@ -17,10 +17,10 @@ namespace Polecat.Storage;
 ///     </para>
 ///     <para>
 ///         <b>JSON_QUERY, not JSON_VALUE.</b> Every other computed column in Polecat extracts a
-///         scalar through <c>JSON_VALUE</c>, which truncates at 4000 characters — a 768-float array
-///         is several times that, so the scalar form cannot carry an embedding at all. Only
-///         <c>JSON_QUERY</c> returns the array intact. That is why this is its own type rather than
-///         a <see cref="DocumentIndex" /> with a different SQL type.
+    ///         scalar through <c>JSON_VALUE</c>, which does not truncate: in lax mode it answers NULL for
+    ///         a value over 4000 characters and for an array of any size, so the scalar form cannot
+    ///         carry an embedding at all. Only <c>JSON_QUERY</c> returns the array intact. That is why
+    ///         this is its own type rather than a <see cref="DocumentIndex" /> with a different SQL type.
 ///     </para>
 ///     <para>
 ///         <b>No index is created, deliberately.</b> SQL Server will not build a NONCLUSTERED index

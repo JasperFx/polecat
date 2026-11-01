@@ -56,15 +56,41 @@ namespace Polecat.Storage.FullText;
 public class FullTextIndex
 {
     /// <summary>
+    ///     The width of the <c>term</c> column. A longer token is clipped to this on both sides, so it
+    ///     can neither fail the write nor stop being findable.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         #835: nothing used to bound a token, so one that overflowed the column — a base64 blob,
+    ///         a long identifier — failed the whole save, inside the trigger, as a truncation error
+    ///         naming a table the caller never wrote to.
+    ///     </para>
+    ///     <para>
+    ///         <b>Clipped rather than dropped, and the two differ.</b> Dropping would let the save
+    ///         succeed and leave a value the document does contain unfindable with no error, which is
+    ///         the failure the rest of #835 is about. PostgreSQL drops, with a notice nobody reads.
+    ///         Clipping both sides keeps "search for what is in the document" true. The cost is that
+    ///         two tokens sharing their first 255 characters match each other, which is the right way
+    ///         round for a search.
+    ///     </para>
+    /// </remarks>
+    internal const int MaxTermLength = 255;
+
+    /// <summary>
     ///     The characters a token is split on, beyond whitespace. Everything here is mapped to a
     ///     space before splitting, so <c>"quick,brown"</c> is two terms rather than one.
     /// </summary>
     /// <remarks>
     ///     <para>
     ///         Kept as one string because <c>TRANSLATE</c> takes a from/to pair of EQUAL length — a
-    ///         mismatch is Msg 9828 at schema time, and <c>LEN</c> cannot be used to measure it because
-    ///         <c>LEN</c> ignores trailing spaces. The replacement is built with
-    ///         <c>REPLICATE(N' ', DATALENGTH(@p)/2)</c> for that reason.
+    ///         mismatch is Msg 9828 at write time, and <c>LEN</c> cannot be used to measure it because
+    ///         <c>LEN</c> ignores trailing spaces. <see cref="TokenizeClause" /> renders the replacement
+    ///         from C# for that reason.
+    ///     </para>
+    ///     <para>
+    ///         #839: whitespace is not in this string because it is <see cref="SqlText.Whitespace" />,
+    ///         which the LINQ predicates share. It used to be nowhere: both tokenizers split on U+0020
+    ///         alone, so <c>"quick\nbrown"</c> was one term and neither word could be found.
     ///     </para>
     ///     <para>
     ///         ⚠️ <b><c>%</c>, <c>_</c>, <c>[</c> and <c>]</c> are load-bearing here, beyond being
@@ -81,7 +107,8 @@ public class FullTextIndex
 
     /// <summary>
     ///     Tokenize a search string the same way the trigger tokenizes a document: lowercase, split on
-    ///     whitespace and on <see cref="Punctuation" />, empties dropped.
+    ///     whitespace and on <see cref="Punctuation" />, empties dropped, each clipped to
+    ///     <see cref="MaxTermLength" />.
     /// </summary>
     /// <remarks>
     ///     <b>This and the T-SQL in <c>TokenizeClause</c> have to agree, and nothing but a test makes
@@ -97,12 +124,14 @@ public class FullTextIndex
         var buffer = text.ToCharArray();
         for (var i = 0; i < buffer.Length; i++)
         {
-            if (Punctuation.Contains(buffer[i])) buffer[i] = ' ';
+            if (char.IsWhiteSpace(buffer[i]) || Punctuation.Contains(buffer[i])) buffer[i] = ' ';
         }
 
         return new string(buffer)
             .ToLowerInvariant()
-            .Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .Select(x => x.Length > MaxTermLength ? x[..MaxTermLength] : x)
+            .ToArray();
     }
 
     internal FullTextIndex(string jsonPath, MemberInfo[]? memberChain,
@@ -152,12 +181,28 @@ public class FullTextIndex
 
     /// <summary>
     ///     The stored term for a token row: <c>s.value</c> from <see cref="TokenizeClause" />, wrapped in
-    ///     the schema's <c>pc_porter_stem</c> for a Porter index.
+    ///     the schema's <c>pc_porter_stem</c> for a Porter index, clipped to <see cref="MaxTermLength" />.
     /// </summary>
-    internal string TermExpression(DocumentMapping mapping) =>
-        Tokenizer == FullTextTokenizer.Porter
+    /// <remarks>
+    ///     <para>
+    ///         An explicit <c>CONVERT</c> because it truncates silently where the implicit conversion of
+    ///         an <c>INSERT</c> raises Msg 2628, and because it clips by the column's own measure: in a
+    ///         UTF-8 collation <c>varchar(255)</c> is 255 bytes, which <c>LEFT(x, 255)</c> can overflow.
+    ///     </para>
+    ///     <para>
+    ///         Whether the clip comes before or after the stem makes no difference, which is why
+    ///         <see cref="Tokenize" /> can clip first: <c>pc_porter_stem</c> and
+    ///         <see cref="PorterStemmer" /> both leave anything over 64 characters alone.
+    ///     </para>
+    /// </remarks>
+    internal string TermExpression(DocumentMapping mapping)
+    {
+        var term = Tokenizer == FullTextTokenizer.Porter
             ? PorterStemFunction.Call(mapping.DatabaseSchemaName, "s.value")
             : "s.value";
+
+        return $"CONVERT(varchar({MaxTermLength}), {term})";
+    }
 
     /// <summary>
     ///     The JSON path the text is read from, re-rendered under the store's serializer naming
@@ -217,6 +262,24 @@ public class FullTextIndex
     ///         documents produces an index matching nothing — no error, no rows, just a search that
     ///         quietly answers empty.
     ///     </para>
+    ///     <para>
+    ///         ⚠️ <b>Repairing an existing index is not this statement's job, and it is held back from
+    ///         doing so</b> (#835, #839). Two kinds of document are out of date after a tokenizer change.
+    ///         One with SOME tokens is invisible here, however wrong they are:
+    ///         <c>"quick\nbrown fox"</c> keeps its stale <c>quick\nbrown</c> until it is next written.
+    ///         One with NONE, like a member over 4000 characters, is exactly what <c>NOT EXISTS</c> finds,
+    ///         and left alone this would tokenize all of them, in one statement, inside whichever request
+    ///         happened to touch the type first. Measured: 8,000 such documents of 5,000 characters ran
+    ///         into the 30 second command timeout, the statement rolled back, and the next request began
+    ///         the same doomed attempt, so the type stayed unusable. Even 2,000 took 28 seconds.
+    ///     </para>
+    ///     <para>
+    ///         So once a member has tokens, the bare <c>JSON_VALUE</c> below keeps this to what it could
+    ///         always reach, and those documents wait for
+    ///         <see cref="AdvancedOperations.RebuildFullTextIndexAsync{T}(CancellationToken)" />, which is batched and is
+    ///         something an operator chooses to run. A member with no tokens at all is a new declaration
+    ///         or a changed tokenizer, where the promise above applies and every document is covered.
+    ///     </para>
     /// </remarks>
     internal static string[] BackfillStatements(DocumentMapping mapping, IReadOnlyList<FullTextIndex> indexes)
     {
@@ -225,6 +288,7 @@ public class FullTextIndex
         var docTable = SqlEscaping.QualifiedName(mapping.DatabaseSchemaName, mapping.TableName);
         var ftTable = SqlEscaping.QualifiedName(mapping.DatabaseSchemaName, TableNameFor(mapping));
         var tenant = TenantColumn(mapping);
+        var nativeJson = DocumentIndex.UsesNativeJson(mapping);
 
         // #642: rows under a key no declared index produces any more -- an index whose tokenizer
         // changed, or one that was removed -- are cleared first. The rows they hold were tokenized by a
@@ -234,14 +298,38 @@ public class FullTextIndex
 
         return indexes.Select(x =>
             $"""
+             DECLARE @established bit = IIF(EXISTS (SELECT 1 FROM {ftTable} WHERE member = {SqlEscaping.Literal(x.TokenKey)}), 1, 0);
              INSERT INTO {ftTable} (doc_id, tenant_id, member, term, pos)
-             SELECT i.id, {tenant}, {SqlEscaping.Literal(x.TokenKey)}, {x.TermExpression(mapping)}, s.ordinal
+             SELECT i.id, {tenant}, {SqlEscaping.Literal(x.TokenKey)}, {x.TermExpression(mapping)}, {PositionExpression(mapping)}
              FROM {docTable} i
-             {x.TokenizeClause("i")}
+             {x.TokenizeClause("i", nativeJson)}
+             AND (@established = 0 OR JSON_VALUE(i.data, '{x.JsonPath}') IS NOT NULL)
              AND NOT EXISTS (SELECT 1 FROM {ftTable} ft
                              WHERE ft.doc_id = i.id AND ft.tenant_id = {tenant}
                                AND ft.member = {SqlEscaping.Literal(x.TokenKey)});
              """).Prepend(cleanup).ToArray();
+    }
+
+    /// <summary>
+    ///     A term's position among the document's terms, which is what a phrase search compares.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         Numbered after the empties are dropped rather than read from <c>s.ordinal</c>, which counts
+    ///         them. Every separator is mapped to a space, so two in a row leave an empty entry between
+    ///         the words and a gap in the ordinals, and <c>quick</c> and <c>brown</c> stopped being
+    ///         adjacent in <c>"quick, brown"</c>. #839 made that matter more: a CRLF is two separators, so
+    ///         a phrase would have crossed <c>\n</c> and not <c>\r\n</c>.
+    ///     </para>
+    ///     <para>
+    ///         Partitioned by document because both of its callers read many at once. The sort adds 7% of
+    ///         CPU to a pass over a million tokens (6368ms against 6809ms).
+    ///     </para>
+    /// </remarks>
+    internal static string PositionExpression(DocumentMapping mapping)
+    {
+        var document = mapping.TenancyStyle == TenancyStyle.Conjoined ? "i.tenant_id, i.id" : "i.id";
+        return $"ROW_NUMBER() OVER (PARTITION BY {document} ORDER BY s.ordinal)";
     }
 
     /// <summary>
@@ -277,27 +365,44 @@ public class FullTextIndex
         mapping.TenancyStyle == TenancyStyle.Conjoined ? " AND ft.tenant_id = d.tenant_id" : "";
 
     /// <summary>
-    ///     <c>CROSS APPLY STRING_SPLIT(...)</c> over the member's text, lowercased and with
-    ///     punctuation mapped to spaces. <c>STRING_SPLIT</c>'s third argument is what supplies
+    ///     <c>CROSS APPLY STRING_SPLIT(...)</c> over the member's text, lowercased and with whitespace
+    ///     and punctuation mapped to spaces. <c>STRING_SPLIT</c>'s third argument is what supplies
     ///     <c>ordinal</c>, and the position is what makes a phrase search possible at all — storing
     ///     it now rather than later keeps that from becoming a schema migration.
     /// </summary>
-    internal string TokenizeClause(string alias)
+    /// <remarks>
+    ///     <para>
+    ///         #835: the member is read through <see cref="SqlText.UnlimitedJsonString" />. This used to
+    ///         be <c>CAST(JSON_VALUE(...) AS nvarchar(max))</c>, which looks unlimited and is not: the
+    ///         cast applies after <c>JSON_VALUE</c> has already answered NULL, so a member over 4000
+    ///         characters produced zero tokens and no error. Full-text search is aimed at long text.
+    ///     </para>
+    ///     <para>
+    ///         #839: <c>TRANSLATE</c> runs under a binary collation so that it maps exactly the characters
+    ///         <see cref="Tokenize" /> maps; see <see cref="SqlText.BinaryCollated" />. <c>LOWER</c> then
+    ///         runs back under the database's collation, as it always has.
+    ///     </para>
+    ///     <para>
+    ///         ⚠️ <b>This text is stored in the trigger and compared against <c>sys.sql_modules</c>, so a
+    ///         change here is a schema change.</b> Every existing trigger reports <c>Update</c> and is
+    ///         replaced on the next migration, which is safe, but it does nothing for tokens already
+    ///         stored. See <see cref="BackfillStatements" />.
+    ///     </para>
+    /// </remarks>
+    internal string TokenizeClause(string alias, bool nativeJson)
     {
         // The replacement is rendered from C# rather than computed in SQL. TRANSLATE demands its
         // second and third arguments be the same LENGTH, and deriving that in T-SQL is a trap from
         // both ends: LEN ignores trailing spaces, and DATALENGTH counts bytes — so the /2 that is
         // right for an N-prefixed literal is wrong for the plain one SqlEscaping.Literal emits, and
         // the failure is Msg 9828 at write time, inside the trigger, where it is least expected.
-        var punct = SqlEscaping.Literal(Punctuation);
-        var spaces = SqlEscaping.Literal(new string(' ', Punctuation.Length));
+        var separators = $"{SqlEscaping.Literal(Punctuation)}+{SqlText.WhitespaceExpression}";
+        var spaces = $"REPLICATE(N' ', {Punctuation.Length + SqlText.Whitespace.Length})";
+        var text = SqlText.BinaryCollated(SqlText.UnlimitedJsonString($"{alias}.data", JsonPath, nativeJson));
 
         return $"""
                 CROSS APPLY STRING_SPLIT(
-                    LOWER(TRANSLATE(
-                        CAST(JSON_VALUE({alias}.data, '{JsonPath}') AS nvarchar(max)),
-                        {punct},
-                        {spaces})), N' ', 1) s
+                    LOWER({SqlText.DatabaseCollated($"TRANSLATE({text}, {separators}, {spaces})")}), N' ', 1) s
                 WHERE LEN(s.value) > 0
                 """;
     }

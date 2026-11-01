@@ -19,6 +19,9 @@ internal class ObjectEquals : IMethodCallParser
     }
 
     public ISqlFragment Parse(IMemberResolver memberFactory, MethodCallExpression expression)
+        => Parse(memberFactory, expression, positive: false);
+
+    public ISqlFragment Parse(IMemberResolver memberFactory, MethodCallExpression expression, bool positive)
     {
         var member = memberFactory.ResolveMember((MemberExpression)expression.Object!);
         var value = WhereClauseParser.ExtractValue(expression.Arguments[0]);
@@ -29,6 +32,6 @@ internal class ObjectEquals : IMethodCallParser
         }
 
         var convertedValue = member.ConvertValue(value);
-        return new ComparisonFilter(member.TypedLocator, "=", convertedValue!);
+        return new ComparisonFilter(member.ComparisonLocator("=", positive, value), "=", convertedValue!);
     }
 }

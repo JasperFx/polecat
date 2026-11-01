@@ -73,8 +73,8 @@ public class vector_search_tests: OneOffConfigurationsContext
     [Fact]
     public void the_column_expression_uses_json_query_not_json_value()
     {
-        // JSON_VALUE truncates at 4000 characters, which a 768-float array is several times over, so
-        // the scalar form every other computed column here uses cannot carry an embedding at all.
+        // JSON_VALUE answers NULL for an array, of any size, so the scalar form every other computed
+        // column here uses cannot carry an embedding at all.
         var index = new VectorIndex("$.embedding", null, 768, DistanceFunction.Cosine);
 
         index.ColumnExpression().ShouldBe("CAST(JSON_QUERY(data, '$.embedding') AS VECTOR(768))");

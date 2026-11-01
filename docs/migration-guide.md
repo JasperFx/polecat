@@ -8,6 +8,49 @@ the `Polecat.Mcp` package, which is built on the official ModelContextProtocol S
 with `MapPolecatMcpServer()` from `Polecat.Mcp`; both default to `/polecat/mcp`, and `RequireAuthorization(...)`
 chains the same way. Do not map both on one host: they share a route.
 
+## Upgrading past 5.47.0: string predicates and full-text tokens
+
+[polecat#835](https://github.com/JasperFx/polecat/issues/835) and
+[polecat#839](https://github.com/JasperFx/polecat/issues/839) fixed how string members over 4000
+characters and whitespace are read. Nothing needs changing in your code, but if you use full-text search
+there is one step to take.
+
+### Rebuild your full-text indexes
+
+The tokenizer now splits on every whitespace character rather than only a space, and clips a token to 255
+characters rather than failing the save. It lives in the maintenance trigger, so this is a schema change:
+
+- The trigger is replaced by your next migration, or on first use under `AutoCreate.CreateOrUpdate` or
+  above. The token table does not change. Under `AutoCreate.None`, apply it with `db-patch`.
+- A document with **some tokens** keeps them until it is next written, however stale. `"quick\nbrown fox"`
+  still holds the single term `quick\nbrown`, and a search for `brown` does not find it.
+- A document with **no tokens** for a member, which is what a member over 4000 characters used to produce,
+  stays that way too, so it is not found until it is next written.
+
+So once the schema change is applied, run this once for each type with a full-text index:
+
+```csharp
+await store.Advanced.RebuildFullTextIndexAsync<Article>();
+```
+
+It is explicit because it can be a lot of work, and that work should not land on the first request after
+a deployment. See [Rebuilding the index](/documents/querying/full-text-search#rebuilding-the-index). The same
+rebuild is what makes a phrase search find `quick brown` in an older document holding `quick, brown`.
+
+### Queries that now answer differently
+
+These were wrong and are now what .NET says, so anything that had come to depend on them will see a change:
+
+| Predicate | Value | Before | Now |
+| --- | --- | --- | --- |
+| `string.IsNullOrEmpty(x.Text)` | spaces only | matched | no match |
+| `string.IsNullOrEmpty(x.Text)` | over 4000 characters | matched | no match |
+| `string.IsNullOrWhiteSpace(x.Text)` | tabs or line breaks only | no match | matches |
+| `x.Text == null` | over 4000 characters | matched | no match |
+| `x.Text != "a"`, `!(x.Text == "a")` | over 4000 characters | no match | matches |
+| `x.Text.Contains("a")` and friends | over 4000 characters | no match | matches |
+| `x.Code.Trim() == "ABC"` | `"\tABC\n"` | no match | matches |
+
 ## Key Changes in 5.30.0
 
 Polecat 5.30 adopts the shared vector and hybrid search surface from `JasperFx.Events.Vectors`

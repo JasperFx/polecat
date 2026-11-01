@@ -618,6 +618,80 @@ public class AdvancedOperations
         }
     }
 
+    /// <summary>
+    ///     Re-tokenize every document of type <typeparamref name="T" />, replacing what the full-text
+    ///     index holds for it with what the current tokenizer produces.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         <b>Run this once after upgrading past #835 and #839, if you have full-text indexes.</b> The
+    ///         tokenizer changed, and a document written earlier keeps what it was written with until it
+    ///         is written again. <c>"quick\nbrown fox"</c> still holds the one term <c>quick\nbrown</c>,
+    ///         and a member over 4000 characters still holds no terms at all, so neither is found. Nothing
+    ///         else repairs them, on purpose: re-tokenizing can be far too much work for the request that
+    ///         happens to touch the type first. See the remarks on
+    ///         <c>FullTextIndex.BackfillStatements</c> for what that cost when it was tried.
+    ///     </para>
+    ///     <para>
+    ///         Documents and their metadata are untouched, searches keep working throughout, and it is
+    ///         safe to run on a live store and to run again. It costs a pass of the trigger over the
+    ///         table, in batches. Under a database-per-tenant tenancy it covers every database.
+    ///     </para>
+    /// </remarks>
+    /// <param name="token">Cancels between batches. What already ran stays done, so run it again.</param>
+    /// <exception cref="InvalidOperationException">
+    ///     <typeparamref name="T" /> declares no full-text index, or the database still holds a trigger
+    ///     from an older version, which is what happens under <c>AutoCreate.None</c> until the schema
+    ///     change has been applied.
+    /// </exception>
+    public Task RebuildFullTextIndexAsync<T>(CancellationToken token = default)
+        => RebuildFullTextIndexAsync(typeof(T), Storage.FullText.FullTextIndexRebuild.DefaultBatchSize, token);
+
+    /// <summary>
+    ///     <see cref="RebuildFullTextIndexAsync{T}(CancellationToken)" /> with a batch size of your own,
+    ///     for documents long enough that a batch of the default size runs out of
+    ///     <see cref="StoreOptions.CommandTimeout" />.
+    /// </summary>
+    /// <param name="batchSize">How many documents to re-tokenize in one transaction.</param>
+    /// <param name="token">Cancels between batches. What already ran stays done, so run it again.</param>
+    public Task RebuildFullTextIndexAsync<T>(int batchSize, CancellationToken token = default)
+        => RebuildFullTextIndexAsync(typeof(T), batchSize, token);
+
+    /// <summary>
+    ///     The non-generic twin of <see cref="RebuildFullTextIndexAsync{T}(CancellationToken)" />, for a
+    ///     caller holding a <see cref="Type" /> and walking several document types.
+    /// </summary>
+    /// <param name="documentType">The document type whose full-text index is rebuilt.</param>
+    /// <param name="token">Cancels between batches. What already ran stays done, so run it again.</param>
+    public Task RebuildFullTextIndexAsync(Type documentType, CancellationToken token = default)
+        => RebuildFullTextIndexAsync(documentType, Storage.FullText.FullTextIndexRebuild.DefaultBatchSize, token);
+
+    /// <summary>
+    ///     <see cref="RebuildFullTextIndexAsync(Type, CancellationToken)" /> with a batch size of your own.
+    /// </summary>
+    /// <param name="documentType">The document type whose full-text index is rebuilt.</param>
+    /// <param name="batchSize">How many documents to re-tokenize in one transaction.</param>
+    /// <param name="token">Cancels between batches. What already ran stays done, so run it again.</param>
+    public async Task RebuildFullTextIndexAsync(Type documentType, int batchSize, CancellationToken token = default)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(batchSize);
+
+        var provider = _store.GetProvider(documentType);
+        if (provider.Mapping.FullTextIndexes.Count == 0)
+        {
+            throw new InvalidOperationException(
+                $"'{documentType.Name}' declares no full-text index, so there is nothing to rebuild.");
+        }
+
+        foreach (var connectionString in AllDatabaseConnectionStrings())
+        {
+            await _store.EnsurerFor(connectionString).EnsureTableAsync(provider, token);
+
+            await Storage.FullText.FullTextIndexRebuild.RebuildAsync(connectionString, provider.Mapping, batchSize,
+                _store.Options.CommandTimeout, _resilience, token);
+        }
+    }
+
     private async Task CleanForDatabaseAsync(string connStr, Type documentType, CancellationToken token = default)
 {
         var provider = _store.GetProvider(documentType);
