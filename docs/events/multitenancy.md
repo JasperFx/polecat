@@ -135,6 +135,18 @@ blue.Events.StartStream(blueStream, new QuestStarted("Blue")); // Blue seq_id 1 
 await blue.SaveChangesAsync();
 ```
 
+A tenant's first write provisions it before the save opens its transaction, because splitting a
+partition needs a schema-modification lock on `pc_streams` that it could not get behind a lock the same
+session holds. `FetchForExclusiveWriting` provisions before it takes its lock, for the same reason, and
+so do `FetchForWriting` and `FetchManyForWriting` in a Serializable, Repeatable Read or Snapshot session.
+
+Two things can't be reordered that way, because the lock is taken before Polecat knows the tenant will
+be written to: an exclusive fetch or `AppendExclusive` for one tenant followed by a write through
+`ForTenant` to a new one, and a plain event read in a Serializable or Repeatable Read session followed by
+a tenant's first append. Either one waits for the command timeout and leaves the tenant's partitions
+unsplit. A plain read in a Snapshot session followed by a tenant's first append fails instead, with SQL
+Server's error 3961. Onboard those tenants first with `store.Advanced.AddPolecatManagedTenantsAsync`.
+
 ### Tenant-aware async daemon
 
 The asynchronous projection daemon is per-tenant aware under this flag. Rather than one database-wide

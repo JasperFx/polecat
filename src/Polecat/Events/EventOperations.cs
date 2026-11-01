@@ -319,6 +319,8 @@ internal class EventOperations : QueryEventStore, IEventOperations
     {
         if (streamIds.Length == 0) return [];
 
+        await _sessionBase.ProvisionEventTenantBeforeHoldingLocksAsync(_tenantId, exclusive: false, cancellation);
+
         // ---- round trip 1: every stream's version ----
         var states = await fetchManyStreamStatesAsync(streamIds, cancellation);
 
@@ -820,6 +822,8 @@ internal class EventOperations : QueryEventStore, IEventOperations
     private async Task<IEventStream<T>> FetchForWritingInternal<T>(object streamId, bool forExclusive,
         long? expectedVersion, CancellationToken cancellation) where T : class
     {
+        await _sessionBase.ProvisionEventTenantBeforeHoldingLocksAsync(_tenantId, forExclusive, cancellation);
+
         if (forExclusive)
         {
             await _sessionBase.BeginTransactionAsync(cancellation);

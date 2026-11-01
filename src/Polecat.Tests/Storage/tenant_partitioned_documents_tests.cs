@@ -1,6 +1,9 @@
 using JasperFx;
+using JasperFx.Events.Projections;
 using Polecat.Linq;
+using Polecat.Projections;
 using Polecat.Tests.Harness;
+using Polecat.Tests.Projections;
 using Polecat.TestUtils;
 using Weasel.Core;
 using Weasel.SqlServer.Tables.Partitioning;
@@ -393,5 +396,42 @@ public class tenant_partitioned_documents_tests : IAsyncLifetime
         ((int)rows[0][1]).ShouldBe(ordinal);
         ((int)rows[0][2]).ShouldBe(ordinal);
         ((int)rows[0][3]).ShouldBe(ordinal);
+    }
+
+    /// <summary>
+    ///     #864: an inline projection queues its document inside the save's transaction, after the tenant
+    ///     pass, so a save holding nothing but events used to skip that pass and the write found no
+    ///     registry row. The events here are not partitioned, so nothing else provisions the tenant.
+    /// </summary>
+    [Fact]
+    public async Task an_inline_projected_document_provisions_an_unseen_tenant()
+    {
+        using var store = CreateStore(opts => opts.Projections.Snapshot<QuestParty>(SnapshotLifecycle.Inline));
+
+        var streamId = Guid.NewGuid();
+        await using (var session = store.LightweightSession(new SessionOptions { TenantId = "Newcomer" }))
+        {
+            session.Events.StartStream(streamId, new QuestStarted("Quest"));
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        await using var query = store.QuerySession(new SessionOptions { TenantId = "Newcomer" });
+        (await query.LoadAsync<QuestParty>(streamId, TestContext.Current.CancellationToken)).ShouldNotBeNull();
+    }
+
+    [Fact]
+    public async Task an_inline_projected_document_provisions_an_unseen_tenant_through_a_tenant_view()
+    {
+        using var store = CreateStore(opts => opts.Projections.Snapshot<QuestParty>(SnapshotLifecycle.Inline));
+
+        var streamId = Guid.NewGuid();
+        await using (var session = store.LightweightSession(new SessionOptions { TenantId = "Incumbent" }))
+        {
+            session.ForTenant("Newcomer").Events.StartStream(streamId, new QuestStarted("Quest"));
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        await using var query = store.QuerySession(new SessionOptions { TenantId = "Newcomer" });
+        (await query.LoadAsync<QuestParty>(streamId, TestContext.Current.CancellationToken)).ShouldNotBeNull();
     }
 }
