@@ -18,6 +18,7 @@ When a stream is archived:
 - `FetchStreamAsync` excludes the archived stream
 - The async daemon's event loader skips archived events
 - Attempting to append to an archived stream throws `ArchivedStreamException`
+- `ApplyEventDataMasking` still reaches it, because archiving a stream doesn't erase it
 
 The append refusal is raised at `SaveChangesAsync()`, when Polecat reads the stream's state, and it
 names the way back:
@@ -28,6 +29,19 @@ names the way back:
 `Polecat.Exceptions.ArchivedStreamException` derives from `JasperFx.Events.ArchivedStreamException`,
 so store-agnostic code can catch the shared type. (It replaces
 `InvalidStreamException`, which is now obsolete and never thrown.)
+
+::: warning
+Masking reaches archived streams from every source: both kinds of `IncludeStream`, and `IncludeEvents`
+unless your filter rules them out itself with `IsArchived`.
+
+Before this was fixed, masking left archived rows out, so protected data stayed in place while the pass
+reported success. If you relied on masking for data that was archived when you ran it, run the same
+`ApplyEventDataMasking` call again after upgrading. That also runs your rules again over everything the
+first pass reached, so if a rule isn't safe to run twice, such as one that draws a new pseudonym, add
+`x.IsArchived` to the filter of an `IncludeEvents` that still names the same subject, like
+`IncludeEvents(x => x.StreamId == streamId && x.IsArchived)`. Never use `x.IsArchived` as the whole
+filter for this, which masks every archived event in the store.
+:::
 
 ## Unarchiving a Stream
 
@@ -120,6 +134,20 @@ deletes and the compaction watermark all land on `SaveChangesAsync()`.
 Compaction `DELETE`s the events it folds. What survives is the snapshot inside the marker, so an
 aggregate that cannot be rebuilt from that snapshot alone cannot be rebuilt at all. Use
 `StreamCompactingRequest<T>.Archiver` to copy the events somewhere first if you need them.
+:::
+
+An archiver can be closed over either `IDocumentOperations` or `IDocumentSession`. If you set one that
+Polecat cannot call, `CompactStreamAsync` throws an `InvalidOperationException` and nothing is
+compacted, because the alternative is deleting the events without archiving them.
+
+::: warning
+A stream that folds to no aggregate is left alone. That is a stream deleted by its own aggregate
+through `ShouldDelete`, at the cutoff you asked for if you set one. `CompactStreamAsync` queues nothing
+for it, doesn't call the archiver, and doesn't record a compaction watermark.
+
+Before this was fixed, compacting such a stream replaced its whole history with a `Compacted<T>` event
+holding a null snapshot, and nothing threw. The deleted events can only come back from a backup, or
+from wherever your archiver copied them to.
 :::
 
 ### Compacting without a compile-time type
