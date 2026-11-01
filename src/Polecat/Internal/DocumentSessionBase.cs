@@ -40,6 +40,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     private readonly IReadOnlyList<JasperFx.Events.Documents.IDocumentCommitListener> _sessionCommitListeners;
     private readonly IAlwaysConnectedLifetime _transactional;
     private readonly List<ITransactionParticipant> _transactionParticipants = new();
+    private ITransactionParticipantRegistrar? _participantOwner;
     private EventOperations? _eventOperations;
 
     protected DocumentSessionBase(
@@ -294,35 +295,47 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         }, (session: this, command));
     }
 
-    /// <summary>
-    ///     Transaction participants registered on this session.
-    ///     Exposed internally for batch access by the async daemon.
-    /// </summary>
-    internal IReadOnlyList<ITransactionParticipant> TransactionParticipants => _transactionParticipants;
-
     public void AddTransactionParticipant(ITransactionParticipant participant)
     {
+        if (_participantOwner != null)
+        {
+            _participantOwner.AddTransactionParticipant(participant);
+            return;
+        }
+
         _transactionParticipants.Add(participant);
+    }
+
+    /// <summary>
+    ///     Send every participant registered on this session to <paramref name="owner" />, which will
+    ///     commit this session's work in its place and is what has to run and dispose them.
+    /// </summary>
+    internal void HandParticipantsTo(ITransactionParticipantRegistrar owner)
+    {
+        _participantOwner = owner;
     }
 
     /// <summary>
     ///     Drain the transaction participants, then dispose the session itself.
     /// </summary>
     /// <remarks>
-    ///     #650: a participant may own resources whose lifetime is the session's — Polecat.EntityFrameworkCore's
+    ///     #650: a participant may own resources whose lifetime is its transaction's — Polecat.EntityFrameworkCore's
     ///     <c>DbContextTransactionParticipant</c> owns the <c>DbContext</c> an EF Core projection's storage was
     ///     built around, and nothing disposed it on any path. <c>ITransactionParticipant</c> declares no disposal
     ///     contract, so this only reaches the ones that opt into <see cref="IAsyncDisposable" />; the rest are
     ///     untouched.
     ///     <para>
-    ///     Here rather than in the async daemon's batch because participants hang off the SESSION, and the
-    ///     session is what both callers dispose: <c>PolecatProjectionBatch.DisposeAsync</c> disposes its sessions
-    ///     (success and failure alike), and an inline projection's session is disposed by whoever opened it. One
-    ///     hook covers both, where a batch-only hook would have left the inline path leaking.
+    ///     A participant belongs to whatever commits its transaction. This session owns the ones it will commit
+    ///     itself, which is the inline path, and whoever opened the session disposes it. A session working for
+    ///     <c>PolecatProjectionBatch</c> holds none: the batch commits, so <see cref="HandParticipantsTo" /> sends
+    ///     them there and <c>PolecatProjectionBatch.DisposeAsync</c> drains them (#867). That cannot be left to
+    ///     this method, because disposing the session does not mean the commit has happened. JasperFx disposes
+    ///     an event projection's session as soon as <c>ApplyAsync</c> returns, and draining there lost the
+    ///     participant and every write it was carrying.
     ///     </para>
     ///     <para>
-    ///     Draining is idempotent through <see cref="QuerySession.DisposeAsync" />'s own disposed guard, and a
-    ///     throw from one participant must not strand the others, so each is disposed independently.
+    ///     Draining is idempotent because the list is cleared, and a throw from one participant must not strand
+    ///     the others, so each is disposed independently.
     ///     </para>
     /// </remarks>
     public override async ValueTask DisposeAsync()

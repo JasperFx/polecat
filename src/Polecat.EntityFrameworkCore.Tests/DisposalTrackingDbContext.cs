@@ -24,6 +24,15 @@ public class DisposalTrackingDbContext : TestDbContext
         Interlocked.Increment(ref _created);
     }
 
+    /// <summary>
+    ///     For a subclass, whose options arrive closed over its own type.
+    /// </summary>
+    protected DisposalTrackingDbContext(DbContextOptions options)
+        : base(Rebuild(options))
+    {
+        Interlocked.Increment(ref _created);
+    }
+
     public static int Created => Volatile.Read(ref _created);
     public static int Disposed => Volatile.Read(ref _disposed);
 
@@ -31,7 +40,7 @@ public class DisposalTrackingDbContext : TestDbContext
     ///     The base ctor takes <c>DbContextOptions&lt;TestDbContext&gt;</c>, and EF Core hands a
     ///     subclass its own closed options type. Re-wrapping is the whole of the adaptation.
     /// </summary>
-    private static DbContextOptions<TestDbContext> Rebuild(DbContextOptions<DisposalTrackingDbContext> options)
+    private static DbContextOptions<TestDbContext> Rebuild(DbContextOptions options)
     {
         var builder = new DbContextOptionsBuilder<TestDbContext>();
         foreach (var extension in options.Extensions)

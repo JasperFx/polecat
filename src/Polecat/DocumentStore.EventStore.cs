@@ -1107,7 +1107,10 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
         ShardExecutionMode mode, CancellationToken token)
     {
         var polecatDatabase = (PolecatDatabase)database;
-        var batch = new PolecatProjectionBatch(this, Events, polecatDatabase, mode);
+
+        // #867: disposed after the session below, and it has to be disposed at all now that any
+        // transaction participant the subscription enlists belongs to the batch.
+        await using var batch = new PolecatProjectionBatch(this, Events, polecatDatabase, mode);
         await batch.RecordProgress(range);
 
         // Create a session the subscription can use for reads/writes, and register it with the

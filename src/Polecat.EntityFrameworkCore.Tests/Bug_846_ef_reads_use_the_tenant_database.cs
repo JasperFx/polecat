@@ -366,14 +366,13 @@ public class Bug_846_ef_reads_use_the_tenant_database : IClassFixture<Bug_846_Te
 
     /// <summary>
     ///     The same read under the daemon, which reaches this projection with a session and no
-    ///     transaction.
+    ///     transaction, and the write it goes on to make.
     /// </summary>
     /// <remarks>
-    ///     Seeds the row and asserts on the READ, stopping short of what the projection then writes.
-    ///     That is deliberate. The daemon disposes an event projection's session as soon as
-    ///     <c>ApplyAsync</c> returns, which drains its transaction participants before the batch
-    ///     collects them, so an async <c>EfCoreEventProjection</c>'s EF writes are never flushed at
-    ///     all, on any tenancy. That is a separate defect from the one under test here.
+    ///     This used to stop at the read, because the daemon disposes an event projection's session
+    ///     as soon as <c>ApplyAsync</c> returns and that drained the participant before the batch
+    ///     collected it, so the write was never flushed on any tenancy. #867 fixed that, so the row
+    ///     has to have changed in the database the read reached, and only there.
     /// </remarks>
     [Fact]
     public async Task an_async_event_projection_reads_the_tenant_database()
@@ -407,6 +406,65 @@ public class Bug_846_ef_reads_use_the_tenant_database : IClassFixture<Bug_846_Te
         await RunDaemonAsync(store, TenantB);
 
         projection.FollowUpsThatFoundTheirRow.ShouldBe(1);
+
+        var row = await QueryRowAsync(Bug_846_TenantDatabases.TenantB,
+            "SELECT status, is_shipped FROM ef_order_details WHERE id = @id", orderId);
+
+        row.ShouldNotBeNull();
+        row["status"].ShouldBe("Shipped");
+        row["is_shipped"].ShouldBe(true);
+
+        (await QueryRowAsync(Bug_846_TenantDatabases.Main,
+            "SELECT status FROM ef_order_details WHERE id = @id", orderId)).ShouldBeNull();
+    }
+
+    /// <summary>
+    ///     #867: a new row, under database-per-tenant tenancy. The batch's transaction belongs to the
+    ///     database the daemon is working, so each tenant's row has to land in that tenant's database
+    ///     and nowhere else, and neither of them in the store's own.
+    /// </summary>
+    [Fact]
+    public async Task an_async_event_projection_writes_each_tenants_row_to_its_own_database()
+    {
+        using var store = DocumentStore.For(opts =>
+        {
+            Configure(opts, "ef867_ep_async_db");
+            AddStaticTenants(opts);
+            opts.Projections.Add<OrderDetailFollowUpProjection, TestDbContext>(
+                opts, new OrderDetailFollowUpProjection(), ProjectionLifecycle.Async);
+        });
+
+        await ApplyToAllAsync(store);
+
+        var orderForA = Guid.NewGuid();
+        var orderForB = Guid.NewGuid();
+
+        await using (var session = store.LightweightSession(TenantA))
+        {
+            session.Events.StartStream(orderForA, new OrderPlaced(orderForA, "tenant a", 10m, 1));
+            await session.SaveChangesAsync(Ct);
+        }
+
+        await using (var session = store.LightweightSession(TenantB))
+        {
+            session.Events.StartStream(orderForB, new OrderPlaced(orderForB, "tenant b", 20m, 2));
+            await session.SaveChangesAsync(Ct);
+        }
+
+        await RunDaemonAsync(store, TenantA);
+        await RunDaemonAsync(store, TenantB);
+
+        const string sql = "SELECT customer_name FROM ef_order_details WHERE id = @id";
+
+        (await QueryRowAsync(Bug_846_TenantDatabases.TenantA, sql, orderForA)).ShouldNotBeNull()
+            ["customer_name"].ShouldBe("tenant a");
+        (await QueryRowAsync(Bug_846_TenantDatabases.TenantB, sql, orderForB)).ShouldNotBeNull()
+            ["customer_name"].ShouldBe("tenant b");
+
+        (await QueryRowAsync(Bug_846_TenantDatabases.TenantB, sql, orderForA)).ShouldBeNull();
+        (await QueryRowAsync(Bug_846_TenantDatabases.TenantA, sql, orderForB)).ShouldBeNull();
+        (await QueryRowAsync(Bug_846_TenantDatabases.Main, sql, orderForA)).ShouldBeNull();
+        (await QueryRowAsync(Bug_846_TenantDatabases.Main, sql, orderForB)).ShouldBeNull();
     }
 
     /// <summary>

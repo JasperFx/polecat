@@ -22,7 +22,8 @@ namespace Polecat.Events.Daemon;
 ///     Thread-safe: composite projections may call SessionForTenant concurrently.
 ///     All SQL execution is wrapped with Polly resilience.
 /// </summary>
-internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuerySession>
+internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuerySession>,
+    ITransactionParticipantRegistrar
 {
     private readonly DocumentStore _store;
     private readonly EventGraph _events;
@@ -32,6 +33,9 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
     private readonly ResiliencePipeline _resilience;
     private readonly ConcurrentBag<IDocumentSession> _sessions = new();
     private readonly ConcurrentQueue<Weasel.Storage.IStorageOperation> _progressOps = new();
+
+    // #867: held here and not on the sessions, because this batch is what commits. See AdoptSession.
+    private readonly ConcurrentQueue<ITransactionParticipant> _participants = new();
 
     // #420: StreamActions a projection raised events onto, captured by the three IProjectionBatch
     // append members and turned into append operations during ExecuteAsync.
@@ -76,10 +80,8 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
         // is safe here precisely because this batch never commits through these sessions: it drains
         // their work trackers below and executes every operation on one connection of its own. See
         // DocumentStore.LightweightSessionWithoutHeldConnection.
-        var session = _store.LightweightSessionWithoutHeldConnection(
-            SessionOptions.ForDatabase(tenantId, _database));
-        _sessions.Add(session);
-        return session;
+        return AdoptSession(_store.LightweightSessionWithoutHeldConnection(
+            SessionOptions.ForDatabase(tenantId, _database)));
     }
 
     /// <summary>
@@ -88,7 +90,40 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
     /// </summary>
     internal void RegisterSession(IDocumentSession session)
     {
+        AdoptSession(session);
+    }
+
+    /// <summary>
+    ///     Take in a session whose work this batch will commit, along with whatever transaction
+    ///     participants it picks up.
+    /// </summary>
+    /// <remarks>
+    ///     #867: a participant belongs to whatever commits its transaction, and for these sessions that
+    ///     is this batch. They used to keep their own, and JasperFx disposes a session as soon as an
+    ///     event projection's <c>ApplyAsync</c> returns (<c>ProjectionExecution</c>, and
+    ///     <c>CompositeIProjectionExecution</c> here), which drained them long before the commit below
+    ///     went looking. The aggregate runner happens to hold its session to the end of the batch, so
+    ///     only event projections lost their participants, silently, while the progression moved past
+    ///     the events. Mirrors Marten, whose ProjectionDocumentSession forwards to ProjectionUpdateBatch.
+    /// </remarks>
+    private IDocumentSession AdoptSession(IDocumentSession session)
+    {
+        if (session is DocumentSessionBase sessionBase)
+        {
+            sessionBase.HandParticipantsTo(this);
+        }
+
         _sessions.Add(session);
+        return session;
+    }
+
+    /// <summary>
+    ///     Enlist <paramref name="participant" /> in this batch's commit. This batch disposes it, on
+    ///     every path, in <see cref="DisposeAsync" />.
+    /// </summary>
+    public void AddTransactionParticipant(ITransactionParticipant participant)
+    {
+        _participants.Enqueue(participant);
     }
 
     public ValueTask RecordProgress(EventRange range)
@@ -173,7 +208,7 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
             .ToList();
         Commit = new ChangeSet(allOps, streams);
 
-        if (allOps.Count == 0 && !_sessions.Any(s => s is DocumentSessionBase sb && sb.TransactionParticipants.Any()))
+        if (allOps.Count == 0 && _participants.IsEmpty)
         {
             return;
         }
@@ -192,8 +227,7 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
             {
                 // #683: same reasoning as SessionForTenant -- this batch drains and executes, so the
                 // session has no commit of its own to be atomic and no reason to pin a connection.
-                listenerSession = _store.LightweightSessionWithoutHeldConnection(new SessionOptions());
-                _sessions.Add(listenerSession);
+                listenerSession = AdoptSession(_store.LightweightSessionWithoutHeldConnection(new SessionOptions()));
             }
 
             // BeforeCommit runs before the DB commit → "at least once". A throw here aborts the batch
@@ -204,11 +238,9 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
             }
         }
 
-        // Collect transaction participants outside the lambda
-        var participants = _sessions
-            .OfType<DocumentSessionBase>()
-            .SelectMany(s => s.TransactionParticipants)
-            .ToList();
+        // Collect transaction participants outside the lambda. Only after the BeforeCommit listeners
+        // above, which may have enlisted one, and a retry of the lambda replays this same list.
+        var participants = _participants.ToList();
 
         // Snapshot the message batch (may be null when no projection in this
         // batch published a message). Passed via state into the resilience
@@ -552,13 +584,44 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
         return dispatch(batch, message, metadata);
     }
 
+    /// <summary>
+    ///     Dispose the participants this batch owns, then its sessions.
+    /// </summary>
+    /// <remarks>
+    ///     #650 / #867: JasperFx disposes a batch on every route out of it, commit or failure, and this
+    ///     is the one point a participant is known to be finished with. Dequeuing makes it safe to get
+    ///     here twice, which a failing composite member does: it disposes the batch it shares and the
+    ///     composite disposes that batch again. A throw from one participant must not strand the
+    ///     others, or the sessions.
+    /// </remarks>
     public async ValueTask DisposeAsync()
     {
         _messageBatchGate.Dispose();
 
+        List<Exception>? failures = null;
+
+        while (_participants.TryDequeue(out var participant))
+        {
+            if (participant is not IAsyncDisposable disposable) continue;
+
+            try
+            {
+                await disposable.DisposeAsync();
+            }
+            catch (Exception e)
+            {
+                (failures ??= []).Add(e);
+            }
+        }
+
         foreach (var session in _sessions)
         {
             await session.DisposeAsync();
+        }
+
+        if (failures is not null)
+        {
+            throw failures.Count == 1 ? failures[0] : new AggregateException(failures);
         }
     }
 }
