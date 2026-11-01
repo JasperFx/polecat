@@ -28,6 +28,9 @@ internal class EventMemberFactory : IMemberResolver
 
     public IQueryableMember ResolveMember(MemberExpression expression)
     {
+        // #840: this table is looked up by name alone, so e.Id.Version would read the version column.
+        if (ClrOnlyMembers.TryTranslate(expression, ResolveMember) is { } clrOnly) return clrOnly;
+
         var propName = expression.Member.Name;
 
         if (!EventColumns.TryGetValue(propName, out var mapping))

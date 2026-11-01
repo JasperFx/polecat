@@ -31,7 +31,7 @@ namespace Polecat.Linq.Parsing;
 internal class GroupBySelectBuilder
 {
     /// <summary>The name a scalar group value goes by, because a derived table needs a named column.</summary>
-    private const string ScalarColumn = "__pc_v";
+    internal const string ScalarColumn = "__pc_v";
 
     private readonly MemberFactory _memberFactory;
     private readonly WhereClauseParser _predicates;
@@ -111,7 +111,7 @@ internal class GroupBySelectBuilder
                 var memberExpr = newExpr.Arguments[i] as MemberExpression
                     ?? throw new BadLinqExpressionException(
                         $"GroupBy composite key member must be a property, got: {newExpr.Arguments[i]}");
-                var member = _memberFactory.ResolveMember(memberExpr);
+                var member = ClrOnlyMembers.AssertNoSubquery(_memberFactory.ResolveMember(memberExpr), "in a GroupBy key");
                 _compositeKey[parameters[i].Name!] = KeyValue(member);
                 GroupByColumns.Add(member.TypedLocator);
             }
@@ -119,7 +119,7 @@ internal class GroupBySelectBuilder
         else if (body is MemberExpression memberBody)
         {
             _isCompositeKey = false;
-            var member = _memberFactory.ResolveMember(memberBody);
+            var member = ClrOnlyMembers.AssertNoSubquery(_memberFactory.ResolveMember(memberBody), "in a GroupBy key");
             _simpleKey = KeyValue(member);
             GroupByColumns.Add(member.TypedLocator);
         }
@@ -276,6 +276,21 @@ internal class GroupBySelectBuilder
             && innerMember.Expression == grouping)
         {
             var propName = compositeAccess.Member.Name;
+
+            if (!_isCompositeKey)
+            {
+                // A nullable key is stored as its value, so this is the key with its nulls unchanged.
+                if (propName == nameof(Nullable<int>.Value) && Nullable.GetUnderlyingType(innerMember.Type) != null)
+                {
+                    return _simpleKey;
+                }
+
+                throw new BadLinqExpressionException(
+                    $"Polecat cannot translate '{expr}' in a GroupBy: the key is one value, and SQL has nothing "
+                    + $"to read {propName} from once the rows are grouped. Group by the member you want "
+                    + "instead (x => x.CreatedAt.Year), or project g.Key and finish the work in memory.");
+            }
+
             if (_compositeKey.TryGetValue(propName, out var info))
             {
                 return info;
@@ -322,7 +337,7 @@ internal class GroupBySelectBuilder
             var body = LinqQueryParser.StripConvert(lambda.Body);
             if (body is MemberExpression memberExpr)
             {
-                var member = _memberFactory.ResolveMember(memberExpr);
+                var member = ClrOnlyMembers.AssertNoSubquery(_memberFactory.ResolveMember(memberExpr), $"inside {name}()");
                 return name switch
                 {
                     "Sum" => Aggregate($"ISNULL(SUM({member.TypedLocator}), 0)"),
@@ -363,6 +378,11 @@ internal class GroupBySelectBuilder
     /// </summary>
     public ISqlFragment ResolveHaving(Expression expression, ParameterExpression groupingParam)
     {
+        if (WhereClauseParser.TryEvaluate(expression, out var known))
+        {
+            return new WhereFragment(known ? "1=1" : "1=0");
+        }
+
         if (expression is BinaryExpression binary)
         {
             return ResolveHavingBinary(binary, groupingParam);
@@ -375,6 +395,8 @@ internal class GroupBySelectBuilder
 
     private ISqlFragment ResolveHavingBinary(BinaryExpression binary, ParameterExpression groupingParam)
     {
+        if (WhereClauseParser.TryShortCircuit(binary) is { } reduced) return ResolveHaving(reduced, groupingParam);
+
         if (binary.NodeType == ExpressionType.AndAlso)
         {
             var left = ResolveHaving(binary.Left, groupingParam);

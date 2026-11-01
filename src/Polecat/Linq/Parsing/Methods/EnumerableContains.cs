@@ -73,6 +73,15 @@ internal class EnumerableContains : IMethodCallParser
             return expression.Arguments[0] is MemberExpression me && IsDocumentMember(me);
         }
 
+        // #840: C# 14 binds x.Arr.Contains("a") on an array to MemoryExtensions, with the array inside
+        // an implicit conversion to ReadOnlySpan<T>. .NET 10 adds an optional comparer, which a plain
+        // call leaves null. A comparer that is really there has no SQL.
+        if (expression.Method.DeclaringType == typeof(MemoryExtensions) && expression.Arguments.Count >= 2
+            && (expression.Arguments.Count == 2 || expression.Arguments[2] is ConstantExpression { Value: null }))
+        {
+            return UnwrapToMember(expression.Arguments[0]) is MemberExpression me && IsDocumentMember(me);
+        }
+
         return false;
     }
 
@@ -90,8 +99,8 @@ internal class EnumerableContains : IMethodCallParser
         }
         else
         {
-            // Static: Enumerable.Contains(x.Tags, "value")
-            collectionMember = (MemberExpression)expression.Arguments[0];
+            // Static: Enumerable.Contains(x.Tags, "value") or MemoryExtensions.Contains(x.Tags, "value")
+            collectionMember = (MemberExpression)UnwrapToMember(expression.Arguments[0]);
             valueExpr = expression.Arguments[1];
         }
 
@@ -158,18 +167,25 @@ internal class EnumerableContains : IMethodCallParser
 
     private static Expression UnwrapToMember(Expression expression)
     {
-        // Strip Convert (including implicit span conversions)
-        while (expression is UnaryExpression { NodeType: ExpressionType.Convert } unary)
-            expression = unary.Operand;
-
-        // Strip method call conversions (e.g., ReadOnlySpan<T>.op_Implicit)
-        if (expression is MethodCallExpression call && call.Arguments.Count == 1
-            && call.Method.Name is "op_Implicit" or "op_Explicit")
+        // Convert and op_Implicit can come in either order, and C# 14 emits both for an array:
+        // op_Implicit(Convert(x.Tags, String[]))
+        while (true)
         {
-            expression = call.Arguments[0];
-        }
+            switch (expression)
+            {
+                case UnaryExpression { NodeType: ExpressionType.Convert } unary:
+                    expression = unary.Operand;
+                    break;
 
-        return expression;
+                // ReadOnlySpan<T>.op_Implicit and friends
+                case MethodCallExpression { Method.Name: "op_Implicit" or "op_Explicit", Arguments.Count: 1 } call:
+                    expression = call.Arguments[0];
+                    break;
+
+                default:
+                    return expression;
+            }
+        }
     }
 
     private static string ExtractJsonPath(string rawLocator)

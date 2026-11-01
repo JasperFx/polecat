@@ -1173,6 +1173,9 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
 
         var statement = parser.Statement;
 
+        // Already an aggregate over a derived table: see LinqQueryParser.AggregateOverDerivedTable.
+        if (statement.OuterAggregate != null) return;
+
         switch (parser.ValueMode)
         {
             case SingleValueMode.First:

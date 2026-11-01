@@ -56,9 +56,10 @@ internal class MemberFactory : IMemberResolver
                 Storage.DocumentTable.SqlTypeForIdentity(_mapping.InnerIdType));
         }
 
-        var jsonPath = BuildJsonPath(expression);
-        var memberType = GetMemberType(expression.Member);
-        return CreateMember(jsonPath, memberType);
+        // #840: a member that exists only in .NET has no JSON key, so it is translated or refused here,
+        // where every execution path comes through, rather than becoming a path that is always missing.
+        return ClrOnlyMembers.TryTranslate(expression, ResolveMember)
+               ?? CreateMember(BuildJsonPath(expression), GetMemberType(expression.Member));
     }
 
     /// <summary>
@@ -185,22 +186,7 @@ internal class MemberFactory : IMemberResolver
     internal static bool SupportsReturning(string sqlType) => sqlType != "uniqueidentifier";
 
     private string BuildJsonPath(MemberExpression expression)
-    {
-        var segments = new List<string>();
-        var current = expression;
-
-        while (current != null)
-        {
-            segments.Insert(0, GetJsonPropertyName(current.Member));
-
-            if (current.Expression is ParameterExpression)
-                break;
-
-            current = current.Expression as MemberExpression;
-        }
-
-        return "$." + string.Join(".", segments);
-    }
+        => "$." + string.Join(".", ClrOnlyMembers.JsonKeys(expression).Select(GetJsonPropertyName));
 
     /// <summary>
     ///     #270: resolves the JSON key for a member exactly as System.Text.Json serializes it — an
