@@ -39,6 +39,7 @@ internal class EventLinqQueryProvider : IPolecatAsyncQueryProvider,
     private readonly string? _eventTypeName;
     private readonly Type? _eventDataType;
     private readonly string? _tenantId;
+    private readonly bool _includeArchived;
 
     /// <summary>
     ///     The owning session, surfaced for event-query terminals that need live-session context
@@ -49,9 +50,15 @@ internal class EventLinqQueryProvider : IPolecatAsyncQueryProvider,
     /// <summary>
     ///     Create provider for QueryAllRawEvents().
     /// </summary>
-    public EventLinqQueryProvider(QuerySession session, EventGraph events, string? tenantId = null)
+    /// <param name="includeArchived">
+    ///     Leave archived events in rather than adding the default <c>is_archived = 0</c>. A predicate
+    ///     naming IsArchived is applied either way.
+    /// </param>
+    public EventLinqQueryProvider(QuerySession session, EventGraph events, string? tenantId = null,
+        bool includeArchived = false)
     {
         _tenantId = tenantId;
+        _includeArchived = includeArchived;
         _session = session;
         _events = events;
         _memberFactory = new EventMemberFactory();
@@ -141,8 +148,8 @@ internal class EventLinqQueryProvider : IPolecatAsyncQueryProvider,
             }
         }
 
-        // Add is_archived = 0 filter by default (unless MaybeArchived was called)
-        if (!parser.IsMaybeDeleted)
+        // Add is_archived = 0 filter by default
+        if (!_includeArchived && !parser.IsMaybeDeleted)
         {
             parser.Statement.Wheres.Add(new LiteralSqlFragment("is_archived = 0"));
         }

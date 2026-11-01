@@ -43,13 +43,13 @@ public class EventDataMasking : IEventDataMasking
 
     public IEventDataMasking IncludeStream(Guid streamId)
     {
-        _sources.Add((s, t) => s.Events.FetchStreamAsync(streamId, token: t));
+        _sources.Add((s, t) => eventsOf(s).FetchStreamIncludingArchivedAsync(streamId, t));
         return this;
     }
 
     public IEventDataMasking IncludeStream(string streamKey)
     {
-        _sources.Add((s, t) => s.Events.FetchStreamAsync(streamKey, token: t));
+        _sources.Add((s, t) => eventsOf(s).FetchStreamIncludingArchivedAsync(streamKey, t));
         return this;
     }
 
@@ -57,7 +57,7 @@ public class EventDataMasking : IEventDataMasking
     {
         _sources.Add(async (s, t) =>
         {
-            var raw = await s.Events.FetchStreamAsync(streamId, token: t).ConfigureAwait(false);
+            var raw = await eventsOf(s).FetchStreamIncludingArchivedAsync(streamId, t).ConfigureAwait(false);
             return raw.Where(filter).ToList();
         });
         return this;
@@ -67,7 +67,7 @@ public class EventDataMasking : IEventDataMasking
     {
         _sources.Add(async (s, t) =>
         {
-            var raw = await s.Events.FetchStreamAsync(streamKey, token: t).ConfigureAwait(false);
+            var raw = await eventsOf(s).FetchStreamIncludingArchivedAsync(streamKey, t).ConfigureAwait(false);
             return raw.Where(filter).ToList();
         });
         return this;
@@ -79,7 +79,7 @@ public class EventDataMasking : IEventDataMasking
         Justification = "Polecat's own use of its LINQ async wrappers, which carry [RequiresDynamicCode] since #733. This member cannot propagate the annotation -- it implements a JasperFx interface that does not carry one, and annotating an implementation alone is IL2046. A CONSUMER is still warned, at the public entry point they call. ⚠️ This is NOT the suppression #733 removed: that one asserted the path was SAFE. This one records that the path is unsafe and that the diagnostic has nowhere to go from here. Upstream: annotate the JasperFx interface.")]
     public IEventDataMasking IncludeEvents(Expression<Func<IEvent, bool>> filter)
     {
-        _sources.Add((s, t) => s.Events.QueryAllRawEvents().Where(filter).ToListAsync(t));
+        _sources.Add((s, t) => eventsOf(s).QueryAllRawEventsIncludingArchived().Where(filter).ToListAsync(t));
         return this;
     }
 
@@ -117,6 +117,12 @@ public class EventDataMasking : IEventDataMasking
 
         await session.SaveChangesAsync(token).ConfigureAwait(false);
     }
+
+    // Archiving a stream takes it out of the normal reads and leaves it on disk, so masking has to reach it.
+    // The public reads leave archived rows out, which found nothing, erased nothing and reported success,
+    // so every source here goes through the store's own reads that keep them. A filter naming IsArchived
+    // still narrows IncludeEvents, so it can still rule them back out.
+    private static QueryEventStore eventsOf(IDocumentSession session) => (QueryEventStore)session.Events;
 
     internal IDocumentSession BuildSession()
     {
