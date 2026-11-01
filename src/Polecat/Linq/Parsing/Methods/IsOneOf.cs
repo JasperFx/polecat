@@ -18,6 +18,9 @@ internal class IsOneOf : IMethodCallParser
     }
 
     public ISqlFragment Parse(IMemberResolver memberFactory, MethodCallExpression expression)
+        => Parse(memberFactory, expression, positive: false);
+
+    public ISqlFragment Parse(IMemberResolver memberFactory, MethodCallExpression expression, bool positive)
     {
         // IsOneOf is an extension method: first arg is the member, second is the values
         var memberExpr = expression.Arguments[0];
@@ -32,7 +35,7 @@ internal class IsOneOf : IMethodCallParser
         var member = memberFactory.ResolveMember(me);
         var values = ExtractValues(valuesExpr);
 
-        return new InFilter(member.TypedLocator, member, values);
+        return new InFilter(member.ListLocator(positive, values), member, values);
     }
 
     private static IList ExtractValues(Expression expression)
@@ -89,8 +92,12 @@ internal class InFilter : ISqlFragment
         // JsonValueList.AppendInClause for why reading it beats inferring it in both directions.
         if (JsonValueList.ShouldBindAsJsonArray(builder, _values.Count))
         {
-            JsonValueList.AppendInClause(builder, _locator, _values, _member.LocatorSqlType,
-                _member.ConvertValue);
+            // #835: the type read off the member describes TypedLocator. When this list is compared
+            // through the full read instead, the unpacked column has to be as wide as that read, or
+            // the very value that sent it there comes back out of OPENJSON truncated or NULL.
+            var sqlType = _locator == _member.TypedLocator ? _member.LocatorSqlType : "nvarchar(max)";
+
+            JsonValueList.AppendInClause(builder, _locator, _values, sqlType, _member.ConvertValue);
             return;
         }
 

@@ -12,16 +12,20 @@ internal class SqlFunctionLocator : ISqlFragment
     public string Function { get; }
     public string InnerLocator { get; }
 
-    public SqlFunctionLocator(string function, string innerLocator)
+    /// <summary>What follows the call, such as a <c>COLLATE</c> clause.</summary>
+    public string Suffix { get; }
+
+    public SqlFunctionLocator(string function, string innerLocator, string suffix = "")
     {
         Function = function;
         InnerLocator = innerLocator;
+        Suffix = suffix;
     }
 
     /// <summary>
     ///     The full SQL expression (e.g., "LOWER(JSON_VALUE(data, '$.name'))").
     /// </summary>
-    public string FullLocator => $"{Function}({InnerLocator})";
+    public string FullLocator => $"{Function}({InnerLocator}){Suffix}";
 
     public void Apply(ICommandBuilder builder)
     {

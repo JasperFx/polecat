@@ -46,13 +46,14 @@ internal class FullTextTrigger: Trigger
         var ftTable = SqlEscaping.QualifiedName(mapping.DatabaseSchemaName, FullTextIndex.TableNameFor(mapping));
         var tenant = FullTextIndex.TenantColumn(mapping);
         var deletedTenant = FullTextIndex.DeletedTenantPredicate(mapping);
+        var nativeJson = DocumentIndex.UsesNativeJson(mapping);
 
         // One SELECT per declared member, fused into a single INSERT.
         var legs = string.Join("\n    UNION ALL\n", indexes.Select(x =>
             $"""
-                 SELECT i.id, {tenant}, {SqlEscaping.Literal(x.TokenKey)}, {x.TermExpression(mapping)}, s.ordinal
+                 SELECT i.id, {tenant}, {SqlEscaping.Literal(x.TokenKey)}, {x.TermExpression(mapping)}, {FullTextIndex.PositionExpression(mapping)}
                  FROM inserted i
-                 {x.TokenizeClause("i")}
+                 {x.TokenizeClause("i", nativeJson)}
              """));
 
         return $"""

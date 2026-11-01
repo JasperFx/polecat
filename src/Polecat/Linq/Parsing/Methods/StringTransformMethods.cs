@@ -1,4 +1,5 @@
 using System.Linq.Expressions;
+using Polecat.Internal;
 using Polecat.Linq.Members;
 using Polecat.Linq.SqlGeneration;
 
@@ -61,20 +62,19 @@ internal class StringTrim : IMethodCallParser
     public ISqlFragment Parse(IMemberResolver memberFactory, MethodCallExpression expression)
     {
         var member = memberFactory.ResolveMember((MemberExpression)expression.Object!);
-        var function = expression.Method.Name switch
+        var binary = SqlText.BinaryCollated(member.RawLocator);
+
+        // #839: the argument-less LTRIM and RTRIM strip U+0020 and nothing else, where .NET strips every
+        // whitespace character. A binary collation because TRIM matches through the collation, and the
+        // collation goes back afterwards because this result is what the query compares with, and a
+        // Trim() should not turn a case-insensitive database's comparison case-sensitive.
+        return expression.Method.Name switch
         {
-            "Trim" => "LTRIM(RTRIM",
-            "TrimStart" => "LTRIM",
-            "TrimEnd" => "RTRIM",
-            _ => "LTRIM(RTRIM"
+            "TrimStart" => new SqlFunctionLocator("LTRIM", $"{binary}, {SqlText.WhitespaceExpression}", DatabaseDefault),
+            "TrimEnd" => new SqlFunctionLocator("RTRIM", $"{binary}, {SqlText.WhitespaceExpression}", DatabaseDefault),
+            _ => new SqlFunctionLocator("TRIM", $"{SqlText.WhitespaceExpression} FROM {binary}", DatabaseDefault)
         };
-
-        if (expression.Method.Name == "Trim")
-        {
-            // LTRIM(RTRIM(x)) — needs double wrapping
-            return new SqlFunctionLocator("LTRIM", $"RTRIM({member.RawLocator})");
-        }
-
-        return new SqlFunctionLocator(function, member.RawLocator);
     }
+
+    private const string DatabaseDefault = " COLLATE DATABASE_DEFAULT";
 }

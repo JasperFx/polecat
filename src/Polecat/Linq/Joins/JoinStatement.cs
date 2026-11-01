@@ -116,8 +116,11 @@ internal class JoinStatement
     /// </summary>
     public static string AliasLocator(string locator, string alias)
     {
-        // Replace "JSON_VALUE(data," with "JSON_VALUE(alias.data,"
-        var result = locator.Replace("JSON_VALUE(data,", $"JSON_VALUE({alias}.data,");
+        // Replace "JSON_VALUE(data," with "JSON_VALUE(alias.data,", and the OPENJSON read a string
+        // member uses on nvarchar(max) storage (#835), which is otherwise ambiguous in a join.
+        var result = locator
+            .Replace("JSON_VALUE(data,", $"JSON_VALUE({alias}.data,")
+            .Replace("OPENJSON(data)", $"OPENJSON({alias}.data)");
 
         // Replace bare "id" with "alias.id" (but not inside JSON paths or CAST)
         if (result == "id")

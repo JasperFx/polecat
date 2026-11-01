@@ -189,8 +189,8 @@ existing rows.
 
 ::: warning
 `JSON_QUERY`, not `JSON_VALUE`. Every other computed column in Polecat extracts a scalar through
-`JSON_VALUE`, which truncates at 4000 characters. A 768-float array is several times that, so the
-scalar form cannot carry an embedding at all.
+`JSON_VALUE`, which answers `NULL` for a value over 4000 characters and for an array of any size, so
+the scalar form cannot carry an embedding at all.
 :::
 
 ## The one real limit: no approximate index

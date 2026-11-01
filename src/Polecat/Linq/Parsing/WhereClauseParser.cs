@@ -28,6 +28,13 @@ internal class WhereClauseParser
     private readonly IMemberResolver _memberFactory;
     private readonly IReadOnlyList<IMethodCallParser>? _additionalParsers;
 
+    // #835: how many NOTs enclose the expression being parsed. A comparison that reads UNKNOWN drops its
+    // row either way, which is only the right answer when nothing above it negates the comparison, and
+    // that NOT can be any number of levels up. See QueryableMemberExtensions.ComparisonLocator.
+    private int _negations;
+
+    private bool IsPositive => _negations == 0;
+
     public WhereClauseParser(IMemberResolver memberFactory,
         IReadOnlyList<IMethodCallParser>? additionalParsers = null)
     {
@@ -64,7 +71,7 @@ internal class WhereClauseParser
             foreach (var additional in _additionalParsers)
             {
                 if (additional.Matches(expression))
-                    return additional.Parse(_memberFactory, expression);
+                    return additional.Parse(_memberFactory, expression, IsPositive);
             }
         }
 
@@ -75,7 +82,7 @@ internal class WhereClauseParser
                 + "Otherwise run the query as raw SQL through session.AdvancedSql.QueryAsync<T>(...), or "
                 + "materialize it and filter in memory.");
 
-        return parser.Parse(_memberFactory, expression);
+        return parser.Parse(_memberFactory, expression, IsPositive);
     }
 
     private ISqlFragment ParseBinary(BinaryExpression binary)
@@ -296,7 +303,7 @@ internal class WhereClauseParser
         }
 
         var convertedValue = member.ConvertValue(value);
-        return new ComparisonFilter(member.TypedLocator, op, convertedValue!);
+        return new ComparisonFilter(member.ComparisonLocator(op, IsPositive, value), op, convertedValue!);
     }
 
     private ISqlFragment ParseNot(UnaryExpression unary)
@@ -310,8 +317,15 @@ internal class WhereClauseParser
         }
 
         // !(expression) — negate the inner expression
-        var inner = Parse(operand);
-        return new NotFragment(inner);
+        _negations++;
+        try
+        {
+            return new NotFragment(Parse(operand));
+        }
+        finally
+        {
+            _negations--;
+        }
     }
 
     private ISqlFragment ParseBooleanMember(MemberExpression memberExpr, bool expectedValue)

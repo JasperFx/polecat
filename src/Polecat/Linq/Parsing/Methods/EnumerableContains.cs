@@ -45,6 +45,9 @@ internal class EnumerableContains : IMethodCallParser
     }
 
     public ISqlFragment Parse(IMemberResolver memberFactory, MethodCallExpression expression)
+        => Parse(memberFactory, expression, positive: false);
+
+    public ISqlFragment Parse(IMemberResolver memberFactory, MethodCallExpression expression, bool positive)
     {
         // Check if this is a collection property contains: x.Tags.Contains("value")
         if (IsCollectionPropertyContains(expression))
@@ -53,7 +56,7 @@ internal class EnumerableContains : IMethodCallParser
         }
 
         // Otherwise it's list.Contains(x.Prop) → IN clause
-        return ParseListContainsMember(memberFactory, expression);
+        return ParseListContainsMember(memberFactory, expression, positive);
     }
 
     private static bool IsCollectionPropertyContains(MethodCallExpression expression)
@@ -102,7 +105,7 @@ internal class EnumerableContains : IMethodCallParser
     }
 
     private static ISqlFragment ParseListContainsMember(
-        IMemberResolver memberFactory, MethodCallExpression expression)
+        IMemberResolver memberFactory, MethodCallExpression expression, bool positive)
     {
         Expression memberExpr;
         Expression listExpr;
@@ -137,7 +140,7 @@ internal class EnumerableContains : IMethodCallParser
         var list = new List<object?>();
         foreach (var item in enumerable) list.Add(item);
 
-        return new InFilter(member.TypedLocator, member, list);
+        return new InFilter(member.ListLocator(positive, list), member, list);
     }
 
     /// <summary>

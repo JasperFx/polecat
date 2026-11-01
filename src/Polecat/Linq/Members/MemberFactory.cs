@@ -3,6 +3,7 @@ using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using JasperFx.Core.Reflection;
+using Polecat.Internal;
 using Polecat.Serialization;
 using Polecat.Storage;
 using Weasel.Core;
@@ -117,9 +118,24 @@ internal class MemberFactory : IMemberResolver
             locatorSqlType = indexedSqlType;
         }
 
+        // #835: RawLocator is what the text predicates are built on, and a bare JSON_VALUE answers NULL
+        // past 4000 characters, so a string member's raw read has to be the full one. TypedLocator stays
+        // exactly as computed above: it is what an index matches, and what ORDER BY and GROUP BY use, and
+        // the nvarchar(max)-storage form of the full read is a subquery GROUP BY refuses. The predicates
+        // that may use it are chosen by QueryableMemberExtensions.ComparisonLocator.
+        int? textCapacity = null;
+        if (storedType == typeof(string))
+        {
+            rawLocator = SqlText.UnlimitedJsonString("data", jsonPath, _useReturning);
+            textCapacity = locatorSqlType == null
+                ? SqlText.JsonValueCapacity
+                : SqlTypeMap.TextCapacity(locatorSqlType);
+        }
+
         return valueType != null
-            ? new ValueTypeMember(rawLocator, typedLocator, memberType, valueType, locatorSqlType)
-            : new QueryableMember(rawLocator, typedLocator, memberType, locatorSqlType: locatorSqlType);
+            ? new ValueTypeMember(rawLocator, typedLocator, memberType, valueType, locatorSqlType, textCapacity)
+            : new QueryableMember(rawLocator, typedLocator, memberType, locatorSqlType: locatorSqlType,
+                textCapacity: textCapacity);
     }
 
     private bool TryGetIndexedLocator(string jsonPath, Type underlying, out string locator,

@@ -248,6 +248,58 @@ var hits = await session.Query<Article>()
     .ToListAsync();
 ```
 
+## Long text and long tokens
+
+A member is indexed in full, however long it is. Long text is what full-text search is for.
+
+A single token is capped at 255 characters, the width of the term column. A longer one, like a base64
+blob or a long identifier with no separators in it, is clipped to its first 255 characters, and a search
+term is clipped the same way, so searching for the whole value still finds the document. The cost is that
+two tokens sharing their first 255 characters match each other. Clipping is deliberate: dropping the token
+would save the document and leave a value it does contain unfindable, with no error.
+
+What separates terms is every character .NET's `char.IsWhiteSpace` accepts, plus the punctuation list.
+The stored position counts terms rather than characters, so a phrase search finds `quick brown` in
+`quick, brown` and across a line break.
+
+## Rebuilding the index
+
+Stored tokens are only ever as good as the tokenizer that wrote them. When the tokenizer changes, as it
+did for line breaks and tabs, new writes pick that up straight away and existing documents keep what they
+have until they are next written. Rebuild to bring them up to date:
+
+```csharp
+await store.Advanced.RebuildFullTextIndexAsync<Article>();
+```
+
+It writes each row back unchanged, which fires the maintaining trigger, so there is one tokenizer in the
+system rather than two, and a concurrent write to the same document is ordinary row locking rather than a
+race. The document, its version and its timestamps do not change, searches keep working while it runs, and
+it is safe to run on a live store or to run again. Cancelling stops between batches and what ran stays
+done. Under database-per-tenant tenancy it covers every database.
+
+A batch is one transaction and has `CommandTimeout` to finish. The default of 100 documents suits documents
+of several thousand characters: over 5,000 character documents it took about 2.3 seconds a batch, and 8,000
+of them took about three minutes. For much longer documents, lower it with
+`RebuildFullTextIndexAsync<Article>(batchSize: 10)`.
+
+Polecat does not do this for you at startup, and that is on purpose. A document with some tokens looks
+finished to the backfill however stale they are, because telling otherwise means re-tokenizing it to
+compare. A document with none, like a member over 4000 characters written by an older version, would be
+visible to it, but the backfill is one statement running inside whichever request touches the type first:
+over 8,000 such documents it hit the command timeout and rolled back, so every later request would have
+done the same. Work on that scale should be something you schedule rather than something a deployment does
+to you, and the rebuild is batched for that reason.
+
+Declaring a new index, or changing an index's tokenizer, is different: there is nothing to preserve, so the
+backfill covers every document, however long.
+
+::: warning Apply the schema change first
+The tokenizer is in the trigger. Under `AutoCreate.None` nothing replaces an older trigger, and rebuilding
+through it would recreate the tokens you are getting rid of, so the rebuild refuses with an
+`InvalidOperationException` until `db-patch` or `ApplyAllConfiguredChangesToDatabaseAsync()` has been run.
+:::
+
 ## An empty search matches nothing
 
 A search whose text has no terms — empty, whitespace, or punctuation alone — returns no documents

@@ -44,7 +44,7 @@ internal class FullTextTokenTable: Table
         // styles. See FullTextIndex.TenantColumn.
         AddColumn(JasperFx.StorageConstants.TenantIdColumn, "varchar(250)").NotNull();
         AddColumn("member", "varchar(200)").NotNull();
-        AddColumn("term", "varchar(255)").NotNull();
+        AddColumn("term", $"varchar({FullTextIndex.MaxTermLength})").NotNull();
         AddColumn("pos", "int").NotNull();
 
         // (term, doc_id) leading, covering everything a search projects: the hot path is "find the

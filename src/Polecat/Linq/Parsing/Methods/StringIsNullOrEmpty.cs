@@ -1,4 +1,5 @@
 using System.Linq.Expressions;
+using Polecat.Internal;
 using Polecat.Linq.Members;
 using Polecat.Linq.SqlGeneration;
 
@@ -25,14 +26,17 @@ internal class StringIsNullOrEmpty : IMethodCallParser
         {
             var member = memberFactory.ResolveMember(memberExpr);
 
-            if (expression.Method.Name == "IsNullOrWhiteSpace")
-            {
-                return new WhereFragment(
-                    $"({member.RawLocator} IS NULL OR LTRIM(RTRIM({member.RawLocator})) = '')");
-            }
+            var value = expression.Method.Name == "IsNullOrWhiteSpace"
+                ? SqlText.Trim(member.RawLocator)
+                : member.RawLocator;
 
-            return new WhereFragment(
-                $"({member.RawLocator} IS NULL OR {member.RawLocator} = '')");
+            // #839: DATALENGTH, not `= ''` and not LEN. `=` pads with trailing spaces, so it calls "   "
+            // empty; the default collation gives some characters no weight at all, so it calls U+FEFF
+            // empty too; and LEN ignores trailing spaces. Only the byte count means what .NET means.
+            //
+            // ISNULL folds "absent" and "empty" into one comparison, so the document is parsed once
+            // rather than twice, and so the predicate is never UNKNOWN, which keeps a negation honest.
+            return new WhereFragment($"ISNULL(DATALENGTH({value}), 0) = 0");
         }
 
         throw new BadLinqExpressionException(
