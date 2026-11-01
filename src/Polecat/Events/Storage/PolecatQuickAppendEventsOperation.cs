@@ -27,7 +27,9 @@ internal enum StreamWriteMode
 ///     <c>QuickAppendEventsOperation</c>. SQL Server has no array-parameter server function, so this
 ///     emits one self-contained command per stream: the stream-row write (via the descriptor's
 ///     insert/update-version closure), one <c>INSERT INTO pc_events ... OUTPUT inserted.seq_id INTO
-///     @table</c> per event, and a single trailing <c>SELECT</c> of the assigned <c>seq_id</c>s.
+///     @table</c> per event, and a single trailing <c>SELECT</c> of the assigned <c>seq_id</c>s. A
+///     stream too big for one command is written by several of these; see
+///     <see cref="SplitToFit" />.
 /// </summary>
 /// <remarks>
 ///     <para>
@@ -54,12 +56,17 @@ internal sealed class PolecatQuickAppendEventsOperation
     private readonly EventGraph _graph;
     private readonly QuickEventStorageDescriptor _descriptor;
 
+    // #834: the run of Stream.Events this operation writes. The whole stream, unless SplitToFit cut it.
+    private int _firstEvent;
+    private int _eventCount;
+
     public PolecatQuickAppendEventsOperation(EventGraph graph, QuickEventStorageDescriptor descriptor,
         StreamAction stream)
     {
         _graph = graph;
         _descriptor = descriptor;
         Stream = stream;
+        _eventCount = stream.Events.Count;
     }
 
     public StreamAction Stream { get; }
@@ -84,6 +91,127 @@ internal sealed class PolecatQuickAppendEventsOperation
 
     public OperationRole Role() => OperationRole.Events;
 
+    /// <summary>
+    ///     #834: this append as however many operations it takes to keep each one's command within
+    ///     <paramref name="budget" /> parameters. An append that already fits comes back as itself, so
+    ///     an ordinary save has exactly the one command it always had. Call it after the planner has
+    ///     set <see cref="Mode" /> and the partition properties, because every slice carries them.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         <b>The limit belongs to a command, not to a batch.</b> Measured on SQL Server 2025:
+    ///         one <c>SqlBatch</c> carrying 100 commands of 2000 parameters each runs, while one
+    ///         command of 2099 is refused with error 8003. Each command is an <c>sp_executesql</c>
+    ///         call, whose statement and parameter declaration take two of the 2100. So a stream only
+    ///         has to become more commands, and they all travel in the batch this append was already
+    ///         in: same round trip, same transaction, however large the save.
+    ///     </para>
+    ///     <para>
+    ///         <b>A slice is a whole operation rather than a second command inside this one</b>,
+    ///         because two things depend on there being exactly one command per operation.
+    ///         <see cref="Polecat.Internal.Operations.OperationResultSets" /> gives each operation one
+    ///         result set, and each slice has one, the trailing <c>SELECT</c> of its own
+    ///         <c>@pc_appended_seqs</c>, which is scoped to its command. And
+    ///         <see cref="Polecat.Internal.BatchExceptionTransforms" /> finds the operation behind a
+    ///         SQL error by matching the failing command's index, which is what lets a collision in a
+    ///         later stream name that stream rather than this one.
+    ///     </para>
+    ///     <para>
+    ///         Only the first slice writes the stream row, and it writes the stream's final version,
+    ///         which the planner has already worked out. The later slices run inside the same
+    ///         transaction, so the row's lock and its version are both already in place. Every slice
+    ///         keeps <see cref="Mode" />, so a 2627 from any of them maps as it did from the one
+    ///         command they replace.
+    ///     </para>
+    ///     <para>
+    ///         ⚠️ <b>A slice always takes at least one event</b>, so an event that needs more than the
+    ///         budget by itself still goes out whole and SQL Server refuses it. That is past 1043 tags
+    ///         on one event, or 521 under conjoined tenancy, and it cannot be cut here: its tag rows
+    ///         read the <c>seq_id</c> from a table variable that only exists in its own command.
+    ///     </para>
+    /// </remarks>
+    internal IReadOnlyList<PolecatQuickAppendEventsOperation> SplitToFit(int budget)
+    {
+        var perEvent = ParametersPerEvent();
+        var events = Stream.Events;
+
+        List<PolecatQuickAppendEventsOperation>? slices = null;
+        var first = 0;
+        var bound = ParametersForStreamRow();
+
+        for (var i = 0; i < events.Count; i++)
+        {
+            var cost = perEvent + ParametersForTags(events[i]);
+
+            if (i > first && bound + cost > budget)
+            {
+                (slices ??= new List<PolecatQuickAppendEventsOperation>()).Add(Slice(first, i - first));
+                first = i;
+                bound = 0;
+            }
+
+            bound += cost;
+        }
+
+        if (slices is null) return [this];
+
+        slices.Add(Slice(first, events.Count - first));
+        return slices;
+    }
+
+    private PolecatQuickAppendEventsOperation Slice(int firstEvent, int eventCount)
+        => new(_graph, _descriptor, Stream)
+        {
+            Mode = Mode,
+            PartitionOrdinal = PartitionOrdinal,
+            PartitionSequenceName = PartitionSequenceName,
+            _firstEvent = firstEvent,
+            _eventCount = eventCount
+        };
+
+    private bool WritesStreamRow => _firstEvent == 0;
+
+    // These three restate what ConfigureCommand binds. appending_past_the_parameter_limit_tests holds
+    // them against the parameters a real builder ends up with, for every column toggle, so a column
+    // added below without a change here fails there rather than at 2100 in someone's production save.
+    private int ParametersPerEvent()
+    {
+        var options = _graph.EventOptions;
+
+        // id, stream_id, version, data, bdata, type, tenant_id, dotnet_type
+        var count = 8;
+        if (_graph.UseTenantPartitionedEvents) count++;
+        if (options.EnableCorrelationId) count++;
+        if (options.EnableCausationId) count++;
+        if (options.EnableHeaders) count++;
+        if (options.EnableUserName) count++;
+
+        return count;
+    }
+
+    private int ParametersForStreamRow()
+    {
+        var partitioned = _graph.UseTenantPartitionedEvents ? 1 : 0;
+        if (Mode == StreamWriteMode.Insert)
+        {
+            // id, type, version, tenant_id
+            return 4 + partitioned;
+        }
+
+        // version, id, expected version, and the tenant when conjoined
+        var conjoined = _graph.TenancyStyle == JasperFx.MultiTenancy.TenancyStyle.Conjoined ? 1 : 0;
+        return 3 + conjoined + partitioned;
+    }
+
+    private int ParametersForTags(IEvent @event)
+    {
+        if (_graph.TagTypes.Count == 0 || @event.Tags is not { Count: > 0 } tags) return 0;
+
+        // WriteTagInserts binds the value (and the tenant, when conjoined) in both the guard and the insert.
+        var perTag = _graph.TenancyStyle == JasperFx.MultiTenancy.TenancyStyle.Conjoined ? 4 : 2;
+        return perTag * tags.Count;
+    }
+
     public void ConfigureCommand(Weasel.Core.ICommandBuilder builder, IStorageSession session)
     {
         var partitioned = _graph.UseTenantPartitionedEvents;
@@ -99,8 +227,18 @@ internal sealed class PolecatQuickAppendEventsOperation
         // DCB tag writes need the just-inserted event's seq_id; captured per event via
         // SCOPE_IDENTITY() (seq_id is IDENTITY on this path — per-tenant partitioning, which uses a
         // sequence instead, is rejected above).
-        var writesTags = _graph.TagTypes.Count > 0
-            && Stream.Events.Any(e => e.Tags is { Count: > 0 });
+        var events = Stream.Events;
+        var lastEvent = _firstEvent + _eventCount;
+
+        var writesTags = false;
+        if (_graph.TagTypes.Count > 0)
+        {
+            for (var i = _firstEvent; i < lastEvent && !writesTags; i++)
+            {
+                writesTags = events[i].Tags is { Count: > 0 };
+            }
+        }
+
         if (writesTags)
         {
             builder.Append("declare ");
@@ -109,19 +247,25 @@ internal sealed class PolecatQuickAppendEventsOperation
         }
 
         // Stream row write reuses the dialect's descriptor closures so the SQL stays in one place.
-        if (Mode == StreamWriteMode.Insert)
-            _descriptor.ConfigureInsertStreamCommand(builder, Stream);
-        else
-            _descriptor.ConfigureUpdateStreamVersionCommand(builder, Stream);
-        builder.Append(";");
+        if (WritesStreamRow)
+        {
+            if (Mode == StreamWriteMode.Insert)
+                _descriptor.ConfigureInsertStreamCommand(builder, Stream);
+            else
+                _descriptor.ConfigureUpdateStreamVersionCommand(builder, Stream);
+            builder.Append(";");
+        }
 
         var options = _graph.EventOptions;
         var conjoined = _graph.TenancyStyle == JasperFx.MultiTenancy.TenancyStyle.Conjoined;
         var archivePartitioned = _graph.UseArchivedStreamPartitioning;
 
+        // The ordinal is the event's position in THIS command, because that is what the identity
+        // column of this command's own @pc_appended_seqs numbers.
         var ordinal = 0;
-        foreach (var @event in Stream.Events)
+        for (var eventIndex = _firstEvent; eventIndex < lastEvent; eventIndex++)
         {
+            var @event = events[eventIndex];
             ordinal++;
             builder.Append("insert into ");
             builder.Append(_graph.EventsTableName);
@@ -320,10 +464,11 @@ internal sealed class PolecatQuickAppendEventsOperation
 
     public async Task PostprocessAsync(DbDataReader reader, IList<Exception> exceptions, CancellationToken token)
     {
-        // Single result set (the trailing SELECT), one row per event in append order.
+        // Single result set (the trailing SELECT), one row per event of this operation in append order.
         var events = Stream.Events;
-        var i = 0;
-        while (i < events.Count && await reader.ReadAsync(token).ConfigureAwait(false))
+        var i = _firstEvent;
+        var lastEvent = _firstEvent + _eventCount;
+        while (i < lastEvent && await reader.ReadAsync(token).ConfigureAwait(false))
         {
             events[i].Sequence = await reader.GetFieldValueAsync<long>(0, token).ConfigureAwait(false);
             i++;

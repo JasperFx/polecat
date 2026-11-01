@@ -471,14 +471,27 @@ internal abstract class PolecatDocumentStorage<TDoc, TId>
             return;
         }
 
-        builder.Append(" WHERE id IN (");
-        for (var i = 0; i < ids.Count; i++)
+        builder.Append(" WHERE ");
+
+        // #834: the batched flavour of a load that LoadManyAsync has bound as one JSON array since
+        // #363. This copy bound one parameter per id, so it alone was refused past 2098 ids.
+        if (Polecat.Linq.SqlGeneration.JsonValueList.ShouldBindAsJsonArray(builder, ids.Count))
         {
-            if (i > 0) builder.Append(", ");
-            builder.AppendParameter(ids[i], ids[i] is string ? System.Data.SqlDbType.VarChar : null);
+            Polecat.Linq.SqlGeneration.JsonValueList.AppendInClause(builder, "id", ids.ToArray(),
+                DocumentTable.SqlTypeForIdentity(_mapping.InnerIdType), value => value);
+        }
+        else
+        {
+            builder.Append("id IN (");
+            for (var i = 0; i < ids.Count; i++)
+            {
+                if (i > 0) builder.Append(", ");
+                builder.AppendParameter(ids[i], ids[i] is string ? System.Data.SqlDbType.VarChar : null);
+            }
+
+            builder.Append(")");
         }
 
-        builder.Append(")");
         AppendBatchLoadFilters(builder, tenantId);
     }
 

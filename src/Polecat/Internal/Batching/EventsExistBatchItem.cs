@@ -22,75 +22,7 @@ internal class EventsExistBatchItem : IBatchQueryItem
     public Task<bool> Result => _tcs.Task;
 
     public void WriteSql(ICommandBuilder builder)
-    {
-        var conditions = _query.Conditions;
-        if (conditions.Count == 0)
-            throw new ArgumentException("EventTagQuery must have at least one condition.");
-
-        var distinctTagTypes = conditions.Select(c => c.TagType).Distinct().ToList();
-
-        builder.Append("SELECT CASE WHEN EXISTS (SELECT 1 FROM ");
-
-        var first = true;
-        for (var i = 0; i < distinctTagTypes.Count; i++)
-        {
-            var tagType = distinctTagTypes[i];
-            var registration = _eventGraph.FindTagType(tagType)
-                               ?? throw new InvalidOperationException(
-                                   $"Tag type '{tagType.Name}' is not registered.");
-
-            var alias = $"t{i}";
-            if (first)
-            {
-                builder.Append($"{_eventGraph.TagTableName(registration)} {alias}");
-                first = false;
-            }
-            else
-            {
-                builder.Append($" INNER JOIN {_eventGraph.TagTableName(registration)} {alias} ON t0.seq_id = {alias}.seq_id");
-            }
-        }
-
-        var hasEventTypeFilter = conditions.Any(c => c.EventType != null);
-        if (hasEventTypeFilter)
-        {
-            builder.Append($" INNER JOIN {_eventGraph.EventsTableName} e ON t0.seq_id = e.seq_id");
-        }
-
-        builder.Append(" WHERE (");
-        for (var i = 0; i < conditions.Count; i++)
-        {
-            if (i > 0) builder.Append(" OR ");
-
-            var condition = conditions[i];
-            var tagIndex = distinctTagTypes.IndexOf(condition.TagType);
-            var registration = _eventGraph.FindTagType(condition.TagType)!;
-            var value = registration.ExtractValue(condition.TagValue);
-
-            builder.Append($"(t{tagIndex}.value = ");
-            builder.AppendParameter(value, value is string ? System.Data.SqlDbType.VarChar : null);
-
-            if (condition.EventType != null)
-            {
-                builder.Append(" AND e.type = ");
-                var eventTypeName = _eventGraph.EventMappingFor(condition.EventType).EventTypeName;
-                builder.AppendParameter(eventTypeName, System.Data.SqlDbType.VarChar);
-            }
-
-            builder.Append(")");
-        }
-
-        builder.Append(")");
-
-        // Filter by tenant_id for conjoined tenancy
-        if (_eventGraph.TenancyStyle == TenancyStyle.Conjoined)
-        {
-            builder.Append(" AND t0.tenant_id = ");
-            builder.AppendParameter(_tenantId, System.Data.SqlDbType.VarChar);
-        }
-
-        builder.Append(") THEN 1 ELSE 0 END");
-    }
+        => EventOperations.WriteEventsExistSql(builder, _eventGraph, _query, _tenantId);
 
     public async Task ReadResultSetAsync(DbDataReader reader, CancellationToken token)
     {

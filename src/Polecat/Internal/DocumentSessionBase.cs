@@ -1283,7 +1283,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             {
                 AssignEventMetadataForClosedShape(stream, 0);
                 stream.Version = stream.Events.Count;
-                ops.Add(QuickAppendEventsClosedShape(storage, isGuid, stream,
+                ops.AddRange(QuickAppendEventsClosedShape(storage, isGuid, stream,
                     Polecat.Events.Storage.StreamWriteMode.Insert, partitionOrdinal, partitionSequenceName));
             }
             else
@@ -1311,7 +1311,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
                     ? Polecat.Events.Storage.StreamWriteMode.Update
                     : Polecat.Events.Storage.StreamWriteMode.Insert;
                 if (exists) stream.ExpectedVersionOnServer ??= currentVersion;
-                ops.Add(QuickAppendEventsClosedShape(storage, isGuid, stream, mode,
+                ops.AddRange(QuickAppendEventsClosedShape(storage, isGuid, stream, mode,
                     partitionOrdinal, partitionSequenceName));
             }
         }
@@ -1375,7 +1375,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
                 ? Polecat.Events.Storage.StreamWriteMode.Update
                 : Polecat.Events.Storage.StreamWriteMode.Insert;
 
-            ops.Add(QuickAppendEventsClosedShape(storage, isGuid, stream, mode,
+            ops.AddRange(QuickAppendEventsClosedShape(storage, isGuid, stream, mode,
                 partitionOrdinal, partitionSequenceName));
         }
 
@@ -1390,7 +1390,9 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         return (storage.Ordinal, storage.SequenceName);
     }
 
-    private static Weasel.Storage.IStorageOperation QuickAppendEventsClosedShape(
+    // #834: more than one operation when the stream is too big for one command, in the order they
+    // have to run. Both append paths come through here, which is what covers the daemon's raised events.
+    private static IReadOnlyList<Polecat.Events.Storage.PolecatQuickAppendEventsOperation> QuickAppendEventsClosedShape(
         object storage, bool isGuid, StreamAction stream, Polecat.Events.Storage.StreamWriteMode mode,
         int? partitionOrdinal, string? partitionSequenceName)
     {
@@ -1400,7 +1402,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         op.Mode = mode;
         op.PartitionOrdinal = partitionOrdinal;
         op.PartitionSequenceName = partitionSequenceName;
-        return op;
+        return op.SplitToFit(Polecat.Linq.SqlGeneration.JsonValueList.Budget);
     }
 
     private void AssignEventMetadataForClosedShape(StreamAction stream, long baseVersion)

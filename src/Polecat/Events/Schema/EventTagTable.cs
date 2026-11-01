@@ -60,7 +60,7 @@ internal class EventTagTable : Table
         PrimaryKeyName = $"pk_pc_event_tag_{registration.TableSuffix}";
     }
 
-    private static string SqlServerTypeFor(Type type)
+    internal static string SqlServerTypeFor(Type type)
     {
         if (type == typeof(Guid)) return "uniqueidentifier";
         if (type == typeof(string)) return "varchar(250)";
