@@ -44,7 +44,7 @@ internal static class ScalarConversion
                 : wrapper.Builder!.Invoke(null, [inner])!;
         }
 
-        return System.Convert.ChangeType(value, targetType);
+        return System.Convert.ChangeType(value, targetType, CultureInfo.InvariantCulture);
     }
 
     /// <summary>

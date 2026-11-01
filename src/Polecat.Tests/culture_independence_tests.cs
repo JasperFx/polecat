@@ -2,6 +2,7 @@ using System.Linq.Expressions;
 using System.Text.Json;
 using JasperFx.Events.Projections;
 using Polecat.Linq;
+using Polecat.Linq.QueryHandlers;
 using Polecat.Linq.SqlGeneration;
 using Polecat.Patching;
 using Polecat.Projections.Flattened;
@@ -279,6 +280,18 @@ public class culture_independence_tests : OneOffConfigurationsContext
         (await query.Query<CultureDoc>().Select(x => x.Ratio).ToListAsync(Ct)).ShouldBe([2.5]);
         (await query.Query<CultureDoc>().MaxAsync(x => x.Price, Ct)).ShouldBe(1.5m);
         (await query.Query<CultureDoc>().SumAsync(x => x.Price, Ct)).ShouldBe(1.5m);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("de-DE")]
+    public void a_scalar_that_arrives_as_text_converts_the_same_on_every_host(string culture)
+    {
+        using var scope = CultureScope.Formatting(culture);
+
+        // A typed locator casts on the server, as the fact above shows, so text only reaches this
+        // conversion from a column that isn't one
+        ScalarConversion.Convert("1.5", typeof(decimal)).ShouldBe(1.5m);
     }
 
     [Theory]
