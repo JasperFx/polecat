@@ -198,16 +198,13 @@ public class document_diagnostics_criteria_tests
     }
 
     [Fact]
-    public async Task a_date_part_is_refused_and_the_range_it_suggests_works()
+    public async Task a_date_part_and_the_range_it_used_to_suggest_agree()
     {
         await using var store = await CriteriaShapes.CreateStoreAsync("gh869_dates", EnumStorage.AsInteger);
         await CriteriaShapes.SeedAsync(store);
 
-        var ex = await Should.ThrowAsync<DocumentCriteriaNotSupportedException>(() =>
-            ((IDocumentStoreDiagnostics)store).QueryDocumentsAsync(typeof(CriteriaOrder).FullName!,
-                new DocumentQueryOptions(1, 10) { Where = "PlacedAt.Year = 2025" }, TestContext.Current.CancellationToken));
-        ex.Criterion.ShouldBe(nameof(DocumentQueryOptions.Where));
-        ex.Message.ShouldContain(DiagnosticsCriteria.DateMemberRefusal);
+        var part = await ((IDocumentStoreDiagnostics)store).QueryDocumentsAsync(typeof(CriteriaOrder).FullName!,
+            new DocumentQueryOptions(1, 10) { Where = "PlacedAt.Year = 2025" }, TestContext.Current.CancellationToken);
 
         var range = await ((IDocumentStoreDiagnostics)store).QueryDocumentsAsync(typeof(CriteriaOrder).FullName!,
             new DocumentQueryOptions(1, 10)
@@ -217,6 +214,7 @@ public class document_diagnostics_criteria_tests
             }, TestContext.Current.CancellationToken);
 
         var expected = CriteriaShapes.Documents().Where(x => x.PlacedAt.Year == 2025).Select(x => x.Id.ToString());
+        part.Documents.Select(x => x.Id).ShouldBe(expected, ignoreOrder: true);
         range.Documents.Select(x => x.Id).ShouldBe(expected, ignoreOrder: true);
     }
 

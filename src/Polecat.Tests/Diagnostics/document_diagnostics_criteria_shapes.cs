@@ -117,9 +117,7 @@ public class document_diagnostics_criteria_shapes : IClassFixture<CriteriaShapeS
 
     private static readonly string[] PolicyRefusals =
     [
-        DiagnosticsCriteria.DateMemberRefusal, DiagnosticsCriteria.NullableValueRefusal,
-        DiagnosticsCriteria.CollectionSizeRefusal, DiagnosticsCriteria.EnumRangeRefusal,
-        DiagnosticsCriteria.EnumOrderingRefusal,
+        DiagnosticsCriteria.EnumRangeRefusal, DiagnosticsCriteria.EnumOrderingRefusal,
 
         // DynamicQueryShapeRules.SqlNullSemantics(), JasperFx's own text.
         "the database leaves rows where it is null OUT"
