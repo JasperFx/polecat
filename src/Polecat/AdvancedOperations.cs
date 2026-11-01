@@ -842,7 +842,7 @@ public class AdvancedOperations
 
     /// <summary>
     ///     Delete all rows from event store tables (pc_events, pc_streams, pc_event_progression)
-    ///     and all natural key and DCB tag tables (pc_natural_key_*, pc_event_tag_*).
+    ///     and all natural key and DCB tag tables (pc_natural_key_*, pc_event_tag_*, pc_dcb_tag_version).
     /// </summary>
     public async Task CleanAllEventDataAsync(CancellationToken token = default)
     {
@@ -879,12 +879,16 @@ public class AdvancedOperations
             // Delete natural key tables first (they reference streams), and the tag tables with them.
             // #841: a tag table reaches its events through a cascading foreign key, except under archived
             // partitioning where it has none and its rows would be left behind.
+            // #865: pc_dcb_tag_version has no foreign key at all, and keeps tag values as text. Keeping its
+            // counters is only worth it while a boundary could still be in flight against them, which a
+            // wipe of every stream in every tenant has already ended.
             await using (var findCmd = conn.CreateCommand())
             {
                 findCmd.CommandText = $"""
                     SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES
                     WHERE TABLE_SCHEMA = @schema
-                      AND (TABLE_NAME LIKE 'pc_natural_key_%' OR TABLE_NAME LIKE 'pc_event_tag_%')
+                      AND (TABLE_NAME LIKE 'pc_natural_key_%' OR TABLE_NAME LIKE 'pc_event_tag_%'
+                        OR TABLE_NAME = {SqlEscaping.Literal(Events.Schema.DcbTagVersionTable.TableName)})
                     ORDER BY TABLE_NAME;
                     """;
                 findCmd.Parameters.AddWithValue("@schema", schemaName);
