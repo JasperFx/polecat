@@ -84,6 +84,8 @@ session.Patch<Order>(orderId)
     .Rename("oldPropertyName", x => x.NewPropertyName);
 ```
 
+If a document has no `oldPropertyName`, its `NewPropertyName` is left as it is, so a rename can safely run again over documents that already have the new shape.
+
 ### Delete a Property
 
 ```cs

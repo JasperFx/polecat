@@ -48,6 +48,26 @@ internal class PatchOperation : Polecat.Internal.IStorageOperation, Weasel.Stora
 
     public Task PostprocessAsync(DbDataReader reader, IList<Exception> exceptions, CancellationToken token) => Task.CompletedTask;
 
+    // OPENJSON's [type] column
+    private const int JsonKindString = 1;
+    private const int JsonKindNumber = 2;
+    private const int JsonKindBoolean = 3;
+
+    /// <summary>
+    ///     Stands in for a number or a bool until its text replaces it. See
+    ///     <see cref="WriteMemberValue" />. A fixed value rather than a new one per patch, so the SQL stays
+    ///     the same text and reuses its plan.
+    /// </summary>
+    private const string LiteralPlaceholder = "pc_patch_literal_6f1d0c3ae2b84d7f9a51c0e47b2d8f36";
+
+    /// <summary>
+    ///     The array element in OPENJSON row <c>j</c>, as the JSON it was, for building an array back up
+    ///     out of its rows. <c>j.value</c> alone is not that: a string comes back without its quotes or
+    ///     its escapes, and a JSON null comes back as a SQL NULL, which <c>STRING_AGG</c> drops.
+    /// </summary>
+    private const string ElementAsJson =
+        "CASE j.[type] WHEN 0 THEN N'null' WHEN 1 THEN N'\"' + STRING_ESCAPE(j.value, 'json') + N'\"' ELSE j.value END";
+
     // --- Static helpers for building JSON_MODIFY expressions ---
 
     /// <summary>
@@ -102,7 +122,7 @@ internal class PatchOperation : Polecat.Internal.IStorageOperation, Weasel.Stora
         return builder =>
         {
             builder.Append(
-                $"JSON_MODIFY(data, '$.{jsonPath}', CAST(JSON_VALUE(data, '$.{jsonPath}') AS {sqlType}) + ");
+                $"JSON_MODIFY(data, '$.{jsonPath}', ISNULL(CAST(JSON_VALUE(data, '$.{jsonPath}') AS {sqlType}), 0) + ");
             builder.AppendParameter(increment);
             builder.Append(")");
         };
@@ -114,7 +134,7 @@ internal class PatchOperation : Polecat.Internal.IStorageOperation, Weasel.Stora
         return builder =>
         {
             builder.Append(
-                $"JSON_MODIFY(data, '$.{jsonPath}', CAST(CAST(JSON_VALUE(data, '$.{jsonPath}') AS {sqlType}) + CAST(");
+                $"JSON_MODIFY(data, '$.{jsonPath}', CAST(ISNULL(CAST(JSON_VALUE(data, '$.{jsonPath}') AS {sqlType}), 0) + CAST(");
             builder.AppendParameter(increment);
             builder.Append($" AS {sqlType}) AS {sqlType}))");
         };
@@ -142,17 +162,18 @@ internal class PatchOperation : Polecat.Internal.IStorageOperation, Weasel.Stora
         };
     }
 
-    internal static Action<ICommandBuilder> AppendIfNotExistsScalar(string jsonPath, object element)
+    internal static Action<ICommandBuilder> AppendIfNotExistsScalar(string jsonPath, object element, string elementText)
     {
         jsonPath = EscapePath(jsonPath);
         return builder =>
         {
             builder.Append($"CASE WHEN NOT EXISTS (SELECT 1 FROM OPENJSON(JSON_QUERY(data, '$.{jsonPath}')) ");
             builder.Append("WHERE value = CAST(");
-            builder.AppendParameter(element);
-            var paramName = "@" + builder.LastParameterName!;
+            builder.AppendParameter(elementText);
             builder.Append($" AS nvarchar(max))) ");
-            builder.Append($"THEN JSON_MODIFY(data, 'append $.{jsonPath}', {paramName}) ELSE data END");
+            builder.Append($"THEN JSON_MODIFY(data, 'append $.{jsonPath}', ");
+            builder.AppendParameter(element);
+            builder.Append(") ELSE data END");
         };
     }
 
@@ -182,17 +203,18 @@ internal class PatchOperation : Polecat.Internal.IStorageOperation, Weasel.Stora
         };
     }
 
-    internal static Action<ICommandBuilder> SetDictKeyIfNotExists(string dictPath, string key, string jsonValue)
+    internal static Action<ICommandBuilder> SetDictKeyIfNotExists(string dictPath, string key,
+        Action<ICommandBuilder> set, bool nativeJson)
     {
         dictPath = EscapePath(dictPath);
         key = EscapePath(key);
+        var scalar = SqlText.UnlimitedJsonString("data", $"$.{dictPath}.{key}", nativeJson);
         return builder =>
         {
-            builder.Append($"CASE WHEN JSON_VALUE(data, '$.{dictPath}.{key}') IS NULL AND ");
-            builder.Append($"JSON_QUERY(data, '$.{dictPath}.{key}') IS NULL ");
-            builder.Append($"THEN JSON_MODIFY(data, '$.{dictPath}.{key}', JSON_QUERY(");
-            builder.AppendParameter(jsonValue);
-            builder.Append(")) ELSE data END");
+            builder.Append($"CASE WHEN {scalar} IS NULL AND ");
+            builder.Append($"JSON_QUERY(data, '$.{dictPath}.{key}') IS NULL THEN ");
+            set(builder);
+            builder.Append(" ELSE data END");
         };
     }
 
@@ -215,7 +237,7 @@ internal class PatchOperation : Polecat.Internal.IStorageOperation, Weasel.Stora
                 "SELECT STRING_AGG(t.val, ',') WITHIN GROUP (ORDER BY t.sort_order) ");
             builder.Append("FROM (");
             builder.Append(
-                $"SELECT j.value as val, CAST(j.[key] AS int) * 2 + 1 as sort_order FROM OPENJSON(JSON_QUERY(data, '$.{jsonPath}')) j ");
+                $"SELECT {ElementAsJson} as val, CAST(j.[key] AS int) * 2 + 1 as sort_order FROM OPENJSON(JSON_QUERY(data, '$.{jsonPath}')) j ");
             builder.Append("UNION ALL ");
             builder.Append("SELECT ");
             builder.AppendParameter(isComplex ? jsonElement! : serializer.ToJson(element));
@@ -226,16 +248,15 @@ internal class PatchOperation : Polecat.Internal.IStorageOperation, Weasel.Stora
         };
     }
 
-    internal static Action<ICommandBuilder> InsertIfNotExistsScalar(string jsonPath, object element, int? index,
-        ISerializer serializer)
+    internal static Action<ICommandBuilder> InsertIfNotExistsScalar(string jsonPath, object element, string elementText,
+        int? index, ISerializer serializer)
     {
         jsonPath = EscapePath(jsonPath);
         return builder =>
         {
             builder.Append($"CASE WHEN NOT EXISTS (SELECT 1 FROM OPENJSON(JSON_QUERY(data, '$.{jsonPath}')) ");
             builder.Append("WHERE value = CAST(");
-            builder.AppendParameter(element);
-            var valParam = "@" + builder.LastParameterName!;
+            builder.AppendParameter(elementText);
             builder.Append(" AS nvarchar(max))) THEN ");
 
             if (index.HasValue)
@@ -247,7 +268,7 @@ internal class PatchOperation : Polecat.Internal.IStorageOperation, Weasel.Stora
                     "SELECT STRING_AGG(t.val, ',') WITHIN GROUP (ORDER BY t.sort_order) ");
                 builder.Append("FROM (");
                 builder.Append(
-                    $"SELECT j.value as val, CAST(j.[key] AS int) * 2 + 1 as sort_order FROM OPENJSON(JSON_QUERY(data, '$.{jsonPath}')) j ");
+                    $"SELECT {ElementAsJson} as val, CAST(j.[key] AS int) * 2 + 1 as sort_order FROM OPENJSON(JSON_QUERY(data, '$.{jsonPath}')) j ");
                 builder.Append("UNION ALL ");
                 builder.Append("SELECT ");
                 builder.AppendParameter(serializer.ToJson(element));
@@ -258,7 +279,9 @@ internal class PatchOperation : Polecat.Internal.IStorageOperation, Weasel.Stora
             }
             else
             {
-                builder.Append($"JSON_MODIFY(data, 'append $.{jsonPath}', {valParam})");
+                builder.Append($"JSON_MODIFY(data, 'append $.{jsonPath}', ");
+                builder.AppendParameter(element);
+                builder.Append(")");
             }
 
             builder.Append(" ELSE data END");
@@ -286,7 +309,7 @@ internal class PatchOperation : Polecat.Internal.IStorageOperation, Weasel.Stora
                     "SELECT STRING_AGG(t.val, ',') WITHIN GROUP (ORDER BY t.sort_order) ");
                 builder.Append("FROM (");
                 builder.Append(
-                    $"SELECT j.value as val, CAST(j.[key] AS int) * 2 + 1 as sort_order FROM OPENJSON(JSON_QUERY(data, '$.{jsonPath}')) j ");
+                    $"SELECT {ElementAsJson} as val, CAST(j.[key] AS int) * 2 + 1 as sort_order FROM OPENJSON(JSON_QUERY(data, '$.{jsonPath}')) j ");
                 builder.Append("UNION ALL ");
                 builder.Append($"SELECT {paramName}");
                 builder.Append(SortOrderLiteral(index.Value));
@@ -303,7 +326,7 @@ internal class PatchOperation : Polecat.Internal.IStorageOperation, Weasel.Stora
         };
     }
 
-    internal static Action<ICommandBuilder> RemoveScalarFirst(string jsonPath, object element)
+    internal static Action<ICommandBuilder> RemoveScalarFirst(string jsonPath, string elementText)
     {
         jsonPath = EscapePath(jsonPath);
         return builder =>
@@ -312,21 +335,21 @@ internal class PatchOperation : Polecat.Internal.IStorageOperation, Weasel.Stora
             builder.Append("COALESCE(");
             builder.Append("'[' + (");
             builder.Append(
-                "SELECT STRING_AGG(j.value, ',') WITHIN GROUP (ORDER BY CAST(j.[key] AS int)) ");
+                $"SELECT STRING_AGG({ElementAsJson}, ',') WITHIN GROUP (ORDER BY CAST(j.[key] AS int)) ");
             builder.Append($"FROM OPENJSON(JSON_QUERY(data, '$.{jsonPath}')) j ");
-            builder.Append("WHERE CAST(j.[key] AS int) != (");
+            builder.Append("WHERE CAST(j.[key] AS int) != ISNULL((");
             builder.Append(
                 $"SELECT MIN(CAST(j2.[key] AS int)) FROM OPENJSON(JSON_QUERY(data, '$.{jsonPath}')) j2 ");
             builder.Append("WHERE j2.value = CAST(");
-            builder.AppendParameter(element);
+            builder.AppendParameter(elementText);
             builder.Append(" AS nvarchar(max))");
-            builder.Append(")");
+            builder.Append("), -1)");
             builder.Append(") + ']', '[]')");
             builder.Append("))");
         };
     }
 
-    internal static Action<ICommandBuilder> RemoveScalarAll(string jsonPath, object element)
+    internal static Action<ICommandBuilder> RemoveScalarAll(string jsonPath, string elementText)
     {
         jsonPath = EscapePath(jsonPath);
         return builder =>
@@ -335,10 +358,10 @@ internal class PatchOperation : Polecat.Internal.IStorageOperation, Weasel.Stora
             builder.Append("COALESCE(");
             builder.Append("'[' + (");
             builder.Append(
-                "SELECT STRING_AGG(j.value, ',') WITHIN GROUP (ORDER BY CAST(j.[key] AS int)) ");
+                $"SELECT STRING_AGG({ElementAsJson}, ',') WITHIN GROUP (ORDER BY CAST(j.[key] AS int)) ");
             builder.Append($"FROM OPENJSON(JSON_QUERY(data, '$.{jsonPath}')) j ");
-            builder.Append("WHERE j.value != CAST(");
-            builder.AppendParameter(element);
+            builder.Append("WHERE j.value IS NULL OR j.value != CAST(");
+            builder.AppendParameter(elementText);
             builder.Append(" AS nvarchar(max))");
             builder.Append(") + ']', '[]')");
             builder.Append("))");
@@ -354,14 +377,14 @@ internal class PatchOperation : Polecat.Internal.IStorageOperation, Weasel.Stora
             builder.Append("COALESCE(");
             builder.Append("'[' + (");
             builder.Append(
-                "SELECT STRING_AGG(j.value, ',') WITHIN GROUP (ORDER BY CAST(j.[key] AS int)) ");
+                $"SELECT STRING_AGG({ElementAsJson}, ',') WITHIN GROUP (ORDER BY CAST(j.[key] AS int)) ");
             builder.Append($"FROM OPENJSON(JSON_QUERY(data, '$.{jsonPath}')) j ");
-            builder.Append("WHERE CAST(j.[key] AS int) != (");
+            builder.Append("WHERE CAST(j.[key] AS int) != ISNULL((");
             builder.Append(
                 $"SELECT MIN(CAST(j2.[key] AS int)) FROM OPENJSON(JSON_QUERY(data, '$.{jsonPath}')) j2 ");
             builder.Append("WHERE j2.value = ");
             builder.AppendParameter(jsonElement);
-            builder.Append(")");
+            builder.Append("), -1)");
             builder.Append(") + ']', '[]')");
             builder.Append("))");
         };
@@ -376,9 +399,9 @@ internal class PatchOperation : Polecat.Internal.IStorageOperation, Weasel.Stora
             builder.Append("COALESCE(");
             builder.Append("'[' + (");
             builder.Append(
-                "SELECT STRING_AGG(j.value, ',') WITHIN GROUP (ORDER BY CAST(j.[key] AS int)) ");
+                $"SELECT STRING_AGG({ElementAsJson}, ',') WITHIN GROUP (ORDER BY CAST(j.[key] AS int)) ");
             builder.Append($"FROM OPENJSON(JSON_QUERY(data, '$.{jsonPath}')) j ");
-            builder.Append("WHERE j.value != ");
+            builder.Append("WHERE j.value IS NULL OR j.value != ");
             builder.AppendParameter(jsonElement);
             builder.Append(") + ']', '[]')");
             builder.Append("))");
@@ -398,40 +421,83 @@ internal class PatchOperation : Polecat.Internal.IStorageOperation, Weasel.Stora
         return builder => { builder.Append($"JSON_MODIFY(data, '$.{jsonPath}', NULL)"); };
     }
 
-    internal static Action<ICommandBuilder> RenameProperty(string oldJsonPath, string newJsonPath, bool isScalarType)
+    internal static Action<ICommandBuilder> RenameProperty(string oldJsonPath, string newJsonPath, bool nativeJson)
     {
         oldJsonPath = EscapePath(oldJsonPath);
         newJsonPath = EscapePath(newJsonPath);
-        return builder =>
-        {
-            builder.Append($"JSON_MODIFY(JSON_MODIFY(data, '$.{newJsonPath}', ");
-            var jsonFunc = isScalarType ? "JSON_VALUE" : "JSON_QUERY";
-            builder.Append($"{jsonFunc}(data, '$.{oldJsonPath}')), ");
-            builder.Append($"'$.{oldJsonPath}', NULL)");
-        };
+
+        // A source that isn't there leaves the destination alone. This is the second run of a migration,
+        // or a document already in the new shape, and writing the NULL would delete the renamed value.
+        var removeOld = $"JSON_MODIFY(data, '$.{oldJsonPath}', NULL)";
+        var sql = WriteMemberValue(oldJsonPath, nativeJson, removeOld,
+            value => $"JSON_MODIFY(JSON_MODIFY(data, '$.{newJsonPath}', {value}), '$.{oldJsonPath}', NULL)");
+
+        return builder => builder.Append(sql);
     }
 
-    internal static Action<ICommandBuilder> DuplicateProperty(string sourcePath, string[] destPaths, bool isScalarType)
+    internal static Action<ICommandBuilder> DuplicateProperty(string sourcePath, string[] destPaths, bool nativeJson)
     {
         sourcePath = EscapePath(sourcePath);
         destPaths = Array.ConvertAll(destPaths, EscapePath);
-        return builder =>
-        {
-            for (var i = 0; i < destPaths.Length; i++)
-            {
-                builder.Append("JSON_MODIFY(");
-            }
 
-            builder.Append("data");
+        string writeAll(string value) => destPaths.Aggregate("data",
+            (json, destination) => $"JSON_MODIFY({json}, '$.{destination}', {value})");
 
-            for (var i = 0; i < destPaths.Length; i++)
-            {
-                builder.Append($", '$.{destPaths[i]}', ");
+        // The serializer leaves a null member out, so a missing source is a null one, and copying a
+        // null over the destinations is what was asked for.
+        var sql = WriteMemberValue(sourcePath, nativeJson, writeAll("NULL"), writeAll);
 
-                var jsonFunc = isScalarType ? "JSON_VALUE" : "JSON_QUERY";
-                builder.Append($"{jsonFunc}(data, '$.{sourcePath}'))");
-            }
-        };
+        return builder => builder.Append(sql);
+    }
+
+    /// <summary>
+    ///     Writes the value at <paramref name="escapedPath" /> somewhere else in the document, as the
+    ///     same JSON it is now.
+    /// </summary>
+    /// <param name="escapedPath">The source, already through <see cref="EscapePath" />.</param>
+    /// <param name="nativeJson">How <c>data</c> is stored. See <see cref="SqlText.UnlimitedJsonString" />.</param>
+    /// <param name="whenMissing">The document to end up with when the source is absent or JSON null.</param>
+    /// <param name="write">The <c>JSON_MODIFY</c> that writes a value, given the expression for it.</param>
+    /// <remarks>
+    ///     <para>
+    ///         ⚠️ <b>The kind has to come from the document, not from the CLR member.</b> One read cannot
+    ///         cover all of these, because <c>JSON_MODIFY</c> decides what to store from the type of its
+    ///         argument. Given <c>nvarchar</c> it stores a JSON string, so a bare <c>JSON_VALUE</c> turns
+    ///         5 into "5" and <c>true</c> into "true", and that document then fails to load. Given a
+    ///         <c>JSON_QUERY</c> it stores a fragment, but <c>JSON_QUERY</c> answers NULL for anything
+    ///         that isn't an object or array. A CLR type cannot pick between them: <c>IsScalarType</c>
+    ///         calls <see cref="TimeSpan" />, <see cref="Uri" /> and <c>byte[]</c> complex, each is
+    ///         stored as a JSON string, and an <see cref="object" /> member can hold anything.
+    ///     </para>
+    ///     <para>
+    ///         There is no argument that stores a number or a bool from its text. <c>JSON_QUERY</c>
+    ///         refuses a bare <c>5</c> as malformed, <c>CAST(... AS json)</c> doesn't exist on SQL Server
+    ///         2022, and casting to <c>decimal</c> or <c>float</c> changes the value: <c>long.MaxValue</c>
+    ///         loses digits as a float, 1.10 loses its scale, and <c>JSON_MODIFY</c> renders a float to
+    ///         16 significant digits, which is one short of a double. So those two kinds are written as
+    ///         <see cref="LiteralPlaceholder" /> and the text of the value is put in its place.
+    ///     </para>
+    /// </remarks>
+    private static string WriteMemberValue(string escapedPath, bool nativeJson, string whenMissing,
+        Func<string, string> write)
+    {
+        var path = $"$.{escapedPath}";
+
+        var separator = escapedPath.LastIndexOf('.');
+        var parent = separator < 0 ? "$" : $"$.{escapedPath[..separator]}";
+        var key = escapedPath[(separator + 1)..];
+
+        // The same limit on every kind: JSON_QUERY has none, and for a number or a bool the unlimited
+        // string read answers exactly the text that is stored.
+        var fragment = $"JSON_QUERY(data, '{path}')";
+        var text = SqlText.UnlimitedJsonString("data", path, nativeJson);
+        var kind = $"(SELECT j.[type] FROM OPENJSON(data, '{parent}') j WHERE j.[key] = N'{key}')";
+
+        return $"CASE WHEN {fragment} IS NOT NULL THEN {write(fragment)} "
+               + $"WHEN {kind} = {JsonKindString} THEN {write(text)} "
+               + $"WHEN {kind} IN ({JsonKindNumber}, {JsonKindBoolean}) THEN "
+               + $"REPLACE(CAST({write($"N'{LiteralPlaceholder}'")} AS nvarchar(max)), N'\"{LiteralPlaceholder}\"', {text}) "
+               + $"ELSE {whenMissing} END";
     }
 
     internal static bool IsScalarType(Type type)
