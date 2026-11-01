@@ -14,7 +14,8 @@ namespace Polecat.Events.Operations;
 ///   SELECT @value, e.seq_id FROM [schema].[pc_events] e
 ///   WHERE {where}
 ///   AND NOT EXISTS (SELECT 1 FROM [schema].[pc_event_tag_{suffix}] x WHERE x.value = @value AND x.seq_id = e.seq_id)
-/// For conjoined tenancy, includes tenant_id in INSERT and NOT EXISTS check.
+/// For conjoined tenancy, includes tenant_id in INSERT and NOT EXISTS check, and tags only the session
+/// tenant's events: under per-tenant sequences the same seq_id exists in every tenant (#842).
 /// </summary>
 internal class AssignTagWhereOperation : Polecat.Internal.IStorageOperation, Weasel.Storage.NoDataReturnedCall
 {
@@ -24,11 +25,16 @@ internal class AssignTagWhereOperation : Polecat.Internal.IStorageOperation, Wea
     private readonly ISqlFragment _whereFragment;
     private readonly bool _isConjoined;
     private readonly bool _useArchivedPartitioning;
+    private readonly string? _tenantOrdinalColumn;
     private readonly string? _tenantId;
 
+    /// <param name="tenantOrdinalColumn">
+    ///     The partition column under per-tenant partitioning, which a tag row needs for its foreign key
+    ///     to <c>pc_events</c>. Null otherwise.
+    /// </param>
     public AssignTagWhereOperation(string schemaName, ITagTypeRegistration registration, object value,
         ISqlFragment whereFragment, bool isConjoined = false, string? tenantId = null,
-        bool useArchivedPartitioning = false)
+        bool useArchivedPartitioning = false, string? tenantOrdinalColumn = null)
     {
         _schemaName = schemaName;
         _registration = registration;
@@ -37,6 +43,7 @@ internal class AssignTagWhereOperation : Polecat.Internal.IStorageOperation, Wea
         _isConjoined = isConjoined;
         _tenantId = tenantId;
         _useArchivedPartitioning = useArchivedPartitioning;
+        _tenantOrdinalColumn = tenantOrdinalColumn;
     }
 
     public Type DocumentType => typeof(IEvent);
@@ -48,58 +55,49 @@ internal class AssignTagWhereOperation : Polecat.Internal.IStorageOperation, Wea
             _schemaName, EventGraph.TagTableNameFor(_registration));
         var eventsTable = Polecat.Internal.SqlEscaping.QualifiedName(_schemaName, "pc_events");
 
-        // When pc_events is partitioned by is_archived the tag table also carries
-        // is_archived (PK + FK columns) — see EventTagTable. Carry the source row's
-        // is_archived through into the tag insert so the FK matches and an event
-        // that's already been archived doesn't lose its tag rows.
-        if (_isConjoined && _useArchivedPartitioning)
+        builder.Append($"INSERT INTO {tagTable} (value");
+        if (_isConjoined) builder.Append(", tenant_id");
+        builder.Append(", seq_id");
+        if (_tenantOrdinalColumn != null) builder.Append($", {_tenantOrdinalColumn}");
+
+        // When pc_events is partitioned by is_archived the tag table also carries is_archived, in its
+        // primary key -- see EventTagTable. Carry the source row's flag through so an event that's
+        // already been archived doesn't lose its tag rows.
+        if (_useArchivedPartitioning) builder.Append(", is_archived");
+
+        builder.Append(") SELECT ");
+        builder.AppendParameter(_value);
+        if (_isConjoined)
         {
-            builder.Append($"INSERT INTO {tagTable} (value, tenant_id, seq_id, is_archived) SELECT ");
-            builder.AppendParameter(_value);
             builder.Append(", ");
             builder.AppendParameter(_tenantId!);
-            builder.Append($", e.seq_id, e.is_archived FROM {eventsTable} e WHERE ");
-            _whereFragment.Apply(builder);
-            builder.Append($" AND NOT EXISTS (SELECT 1 FROM {tagTable} x WHERE x.value = ");
-            builder.AppendParameter(_value);
+        }
+
+        builder.Append(", e.seq_id");
+        if (_tenantOrdinalColumn != null) builder.Append($", e.{_tenantOrdinalColumn}");
+        if (_useArchivedPartitioning) builder.Append(", e.is_archived");
+
+        builder.Append($" FROM {eventsTable} e WHERE ");
+        _whereFragment.Apply(builder);
+
+        if (_isConjoined)
+        {
+            builder.Append(" AND e.tenant_id = ");
+            builder.AppendParameter(_tenantId!, System.Data.SqlDbType.VarChar);
+        }
+
+        // is_archived is deliberately left out of this check even though it is in the tag table's key.
+        // The flag on a tag row goes stale when its stream is archived, so matching on it would write a
+        // second row for an event that already carries the tag.
+        builder.Append($" AND NOT EXISTS (SELECT 1 FROM {tagTable} x WHERE x.value = ");
+        builder.AppendParameter(_value);
+        if (_isConjoined)
+        {
             builder.Append(" AND x.tenant_id = ");
             builder.AppendParameter(_tenantId!);
-            builder.Append(" AND x.seq_id = e.seq_id AND x.is_archived = e.is_archived);");
         }
-        else if (_isConjoined)
-        {
-            builder.Append($"INSERT INTO {tagTable} (value, tenant_id, seq_id) SELECT ");
-            builder.AppendParameter(_value);
-            builder.Append(", ");
-            builder.AppendParameter(_tenantId!);
-            builder.Append($", e.seq_id FROM {eventsTable} e WHERE ");
-            _whereFragment.Apply(builder);
-            builder.Append($" AND NOT EXISTS (SELECT 1 FROM {tagTable} x WHERE x.value = ");
-            builder.AppendParameter(_value);
-            builder.Append(" AND x.tenant_id = ");
-            builder.AppendParameter(_tenantId!);
-            builder.Append(" AND x.seq_id = e.seq_id);");
-        }
-        else if (_useArchivedPartitioning)
-        {
-            builder.Append($"INSERT INTO {tagTable} (value, seq_id, is_archived) SELECT ");
-            builder.AppendParameter(_value);
-            builder.Append($", e.seq_id, e.is_archived FROM {eventsTable} e WHERE ");
-            _whereFragment.Apply(builder);
-            builder.Append($" AND NOT EXISTS (SELECT 1 FROM {tagTable} x WHERE x.value = ");
-            builder.AppendParameter(_value);
-            builder.Append(" AND x.seq_id = e.seq_id AND x.is_archived = e.is_archived);");
-        }
-        else
-        {
-            builder.Append($"INSERT INTO {tagTable} (value, seq_id) SELECT ");
-            builder.AppendParameter(_value);
-            builder.Append($", e.seq_id FROM {eventsTable} e WHERE ");
-            _whereFragment.Apply(builder);
-            builder.Append($" AND NOT EXISTS (SELECT 1 FROM {tagTable} x WHERE x.value = ");
-            builder.AppendParameter(_value);
-            builder.Append(" AND x.seq_id = e.seq_id);");
-        }
+
+        builder.Append(" AND x.seq_id = e.seq_id);");
     }
 
     public Task PostprocessAsync(DbDataReader reader, IList<Exception> exceptions, CancellationToken token)

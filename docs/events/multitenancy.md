@@ -194,7 +194,11 @@ foreach (var (table, rows) in deleted)
 
 It works on **any** conjoined store, partitioned or not, which is the difference from
 `RemovePolecatManagedTenantsAsync(..., TenantDropBehavior.DeleteData)` — that one requires managed
-partitioning and drops a partition rather than deleting rows.
+partitioning and drops a partition rather than deleting rows. Under `UseTenantPartitionedEvents` it also
+takes the tenant's DCB tag rows, `pc_dcb_tag_version` rows and natural-key lookups. Whichever
+`TenantDropBehavior` you pass, a removed tenant loses its `pc_event_progression` rows, because its event
+sequence restarts at 1 if it comes back. A tenant still sharing an ordinal with another keeps all of this,
+as it keeps its events.
 
 Three things worth knowing before you call it:
 

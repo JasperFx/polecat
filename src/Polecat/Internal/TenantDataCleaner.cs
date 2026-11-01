@@ -84,20 +84,12 @@ internal sealed class TenantDataCleaner
                 if (rows > 0) deleted[table] = rows;
             }
 
-            // pc_event_progression has no tenant_id — a tenant's rows are identified by their NAME.
-            // Two shapes: the per-tenant high-water row "HighWaterMark:{tenant}" (polecat#697) and a
-            // per-tenant projection shard "{Projection}:{Slice}:{tenant}". Both end in ":{tenant}",
-            // so one suffix match covers them, with LIKE metacharacters in the tenant id escaped —
-            // a tenant literally named "%" must not delete every other tenant's progression.
             await using (var progression = conn.CreateCommand())
             {
                 progression.Transaction = tx;
-                progression.CommandText = $"""
-                    IF OBJECT_ID({SqlEscaping.Literal(progressionTable)}, 'U') IS NOT NULL
-                    DELETE FROM {progressionTable} WHERE name LIKE @suffix ESCAPE '\';
-                    """;
+                progression.CommandText = ProgressionDeleteSql(progressionTable);
                 progression.Parameters.Add("@suffix", SqlDbType.VarChar, 500).Value =
-                    "%:" + EscapeLikePattern(tenantId);
+                    ProgressionNameSuffix(tenantId);
                 var rows = await progression.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
                 if (rows > 0) deleted[progressionTable] = rows;
             }
@@ -107,6 +99,24 @@ internal sealed class TenantDataCleaner
             return (IReadOnlyDictionary<string, int>)deleted;
         }, (_tenantId, _connectionString, _schemaName, _progressionTable), token).ConfigureAwait(false);
     }
+
+    /// <summary>
+    ///     Deletes a tenant's <c>pc_event_progression</c> rows, given <see cref="ProgressionNameSuffix" />
+    ///     as <c>@suffix</c>. That table has no <c>tenant_id</c>, so its rows are identified by their NAME.
+    ///     Two shapes: the per-tenant high-water row <c>HighWaterMark:{tenant}</c> (polecat#697) and a
+    ///     per-tenant projection shard <c>{Projection}:{Slice}:{tenant}</c>. Both end in <c>:{tenant}</c>,
+    ///     so one suffix match covers them.
+    /// </summary>
+    internal static string ProgressionDeleteSql(string progressionTable) => $"""
+        IF OBJECT_ID({SqlEscaping.Literal(progressionTable)}, 'U') IS NOT NULL
+        DELETE FROM {progressionTable} WHERE name LIKE @suffix ESCAPE '\';
+        """;
+
+    /// <summary>
+    ///     The LIKE pattern for <see cref="ProgressionDeleteSql" />, with metacharacters in the tenant id
+    ///     escaped: a tenant literally named <c>%</c> must not delete every other tenant's progression.
+    /// </summary>
+    internal static string ProgressionNameSuffix(string tenantId) => "%:" + EscapeLikePattern(tenantId);
 
     /// <summary>
     ///     Every table in the schema carrying a <c>tenant_id</c> column. A table without one holds no

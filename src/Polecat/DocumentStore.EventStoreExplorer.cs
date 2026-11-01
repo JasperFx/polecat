@@ -363,8 +363,18 @@ public partial class DocumentStore
             // A seq_id sub-select per tag, AND-combined: the event must carry every requested tag. The tag
             // value arrives as a string from the explorer, so it's compared case-insensitively via nvarchar —
             // matching whatever native type (uniqueidentifier, etc.) the tag's value column stores.
+            //
+            // #842: correlated on tenant under conjoined tenancy, because seq_id alone is ambiguous under
+            // per-tenant sequences: another tenant's tag on its own event 7 would match this tenant's.
+            //
+            // #841 deliberately stops at the DCB reads. There is no is_archived predicate here, because
+            // the explorer is the diagnostic surface: ReadStreamAsync and the stream listings show
+            // archived data too, and an operator chasing a tag has to be able to see it.
+            var correlation = Events.TenancyStyle == TenancyStyle.Conjoined
+                ? " AND t.tenant_id = e.tenant_id"
+                : string.Empty;
             sb.Append(
-                $"e.seq_id IN (SELECT seq_id FROM {Events.TagTableName(registration)} WHERE LOWER(CONVERT(nvarchar(4000), value)) = LOWER(@tag_value_{idx}))");
+                $"e.seq_id IN (SELECT t.seq_id FROM {Events.TagTableName(registration)} t WHERE LOWER(CONVERT(nvarchar(4000), t.value)) = LOWER(@tag_value_{idx}){correlation})");
             cmd.Parameters.AddWithValue($"@tag_value_{idx}", tagValue);
             idx++;
         }

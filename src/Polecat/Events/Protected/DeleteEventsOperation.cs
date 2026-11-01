@@ -25,12 +25,31 @@ internal class DeleteEventsOperation : Polecat.Internal.IStorageOperation, Wease
 
     public void ConfigureCommand(ICommandBuilder builder)
     {
-        builder.Append($"DELETE FROM {_events.EventsTableName} WHERE ");
+        // #841: no foreign key under archived partitioning, so the compacted events' tag rows go here.
+        // Keyed directly on seq_id, so they can go after their events.
+        var tagTables = _events.TagRowsCascadeWithEvents
+            ? []
+            : _events.TagTypes.Select(_events.TagTableName).ToArray();
 
         // #834: compaction exists for the streams that have grown long, so this list is at its largest
         // on the very streams it is for, and one parameter per sequence refused any stream past about
-        // 2100 folded events. The same decision #710 made for a LINQ IN list.
-        if (JsonValueList.ShouldBindAsJsonArray(builder, _sequences.Length))
+        // 2100 folded events. The same decision #710 made for a LINQ IN list. Every statement below
+        // carries the whole list, so the decision is made for all of them together.
+        var asJsonArray = JsonValueList.ShouldBindAsJsonArray(builder, _sequences.Length * (1 + tagTables.Length));
+
+        AppendDelete(builder, _events.EventsTableName, asJsonArray);
+
+        foreach (var tagTable in tagTables)
+        {
+            AppendDelete(builder, tagTable, asJsonArray);
+        }
+    }
+
+    private void AppendDelete(ICommandBuilder builder, string table, bool asJsonArray)
+    {
+        builder.Append($"DELETE FROM {table} WHERE ");
+
+        if (asJsonArray)
         {
             JsonValueList.AppendInClause(builder, "seq_id", _sequences, "bigint", value => value);
         }

@@ -126,7 +126,8 @@ internal sealed class PolecatQuickAppendEventsOperation
     ///     <para>
     ///         ⚠️ <b>A slice always takes at least one event</b>, so an event that needs more than the
     ///         budget by itself still goes out whole and SQL Server refuses it. That is past 1043 tags
-    ///         on one event, or 521 under conjoined tenancy, and it cannot be cut here: its tag rows
+    ///         on one event, or 521 under conjoined tenancy and 417 under per-tenant partitioning, and it
+    ///         cannot be cut here: its tag rows
     ///         read the <c>seq_id</c> from a table variable that only exists in its own command.
     ///     </para>
     /// </remarks>
@@ -207,8 +208,11 @@ internal sealed class PolecatQuickAppendEventsOperation
     {
         if (_graph.TagTypes.Count == 0 || @event.Tags is not { Count: > 0 } tags) return 0;
 
-        // WriteTagInserts binds the value (and the tenant, when conjoined) in both the guard and the insert.
+        // WriteTagInserts binds the value (and the tenant, when conjoined) in both the guard and the
+        // insert, and the partition ordinal in the insert alone.
         var perTag = _graph.TenancyStyle == JasperFx.MultiTenancy.TenancyStyle.Conjoined ? 4 : 2;
+        if (_graph.UseTenantPartitionedEvents) perTag++;
+
         return perTag * tags.Count;
     }
 
@@ -224,9 +228,9 @@ internal sealed class PolecatQuickAppendEventsOperation
         builder.Append(SeqTableVar);
         builder.Append(" table (ord int identity(1,1), seq_id bigint);");
 
-        // DCB tag writes need the just-inserted event's seq_id; captured per event via
-        // SCOPE_IDENTITY() (seq_id is IDENTITY on this path — per-tenant partitioning, which uses a
-        // sequence instead, is rejected above).
+        // DCB tag writes need the just-inserted event's seq_id, read back per event from the table
+        // variable above. That works for both ways a seq_id gets assigned: IDENTITY, and the tenant's
+        // own sequence under per-tenant partitioning (#842).
         var events = Stream.Events;
         var lastEvent = _firstEvent + _eventCount;
 
@@ -372,8 +376,7 @@ internal sealed class PolecatQuickAppendEventsOperation
 
     /// <summary>
     ///     Emits the per-event DCB tag-table upserts, mirroring the bespoke path's tenancy/archive
-    ///     variants. Uses <c>SCOPE_IDENTITY()</c> for the event's just-assigned <c>seq_id</c>, and an
-    ///     <c>IF NOT EXISTS</c> guard so a re-appended tag value is idempotent.
+    ///     variants, with an <c>IF NOT EXISTS</c> guard so a re-appended tag value is idempotent.
     /// </summary>
     private void WriteTagInserts(Weasel.Core.ICommandBuilder builder, IEvent @event, int ordinal,
         bool conjoined, bool archivePartitioned)
@@ -415,13 +418,17 @@ internal sealed class PolecatQuickAppendEventsOperation
 
             builder.Append(") insert into ");
             builder.Append(table);
-            builder.Append(conjoined
-                ? (archivePartitioned
-                    ? " (value, tenant_id, seq_id, is_archived) values ("
-                    : " (value, tenant_id, seq_id) values (")
-                : (archivePartitioned
-                    ? " (value, seq_id, is_archived) values ("
-                    : " (value, seq_id) values ("));
+            builder.Append(" (value");
+            if (conjoined) builder.Append(", tenant_id");
+            builder.Append(", seq_id");
+            if (PartitionOrdinal.HasValue)
+            {
+                builder.Append(", ");
+                builder.Append(_graph.TenantPartitionManager.Column);
+            }
+
+            if (archivePartitioned) builder.Append(", is_archived");
+            builder.Append(") values (");
 
             BindTagValue(builder, value);
             if (conjoined)
@@ -432,6 +439,12 @@ internal sealed class PolecatQuickAppendEventsOperation
 
             builder.Append(", ");
             builder.Append(SeqIdVar);
+            if (PartitionOrdinal is { } partitionOrdinal)
+            {
+                builder.Append(", ");
+                Bind(builder, partitionOrdinal, StorageColumnType.Int);
+            }
+
             if (archivePartitioned) builder.Append(", 0");
             builder.Append(");");
         }

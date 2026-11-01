@@ -35,31 +35,11 @@ internal class NaturalKeyTable : Table
 
         AddColumn("is_archived", "bit").NotNull().DefaultValue(0);
 
-        // Foreign key to streams table, accounting for conjoined tenancy and archived stream partitioning
-        if (events.UseArchivedStreamPartitioning)
-        {
-            if (isConjoined)
-            {
-                // FK must include tenant_id and is_archived to match pc_streams composite PK
-                // NOTE: Composite FK with tenant_id is intentionally omitted for conjoined tenancy
-                // due to Weasel.SqlServer's ForeignKey sorting ColumnNames/LinkedNames alphabetically,
-                // which breaks the column mapping when PK order doesn't match alphabetical order.
-            }
-            else
-            {
-                // FK to pc_streams must include is_archived when streams table is partitioned
-                ForeignKeys.Add(new ForeignKey($"fk_{Identifier.Name}_stream_is_archived")
-                {
-                    ColumnNames = [streamCol, "is_archived"],
-                    LinkedNames = ["id", "is_archived"],
-                    LinkedTable = new SqlServerObjectName(events.DatabaseSchemaName, StreamsTable.TableName),
-#pragma warning disable CS0618
-                    OnDelete = CascadeAction.Cascade
-#pragma warning restore CS0618
-                });
-            }
-        }
-        else if (isConjoined)
+        // Foreign key to streams table, accounting for conjoined tenancy. UseArchivedStreamPartitioning
+        // changes nothing here: it partitions pc_events only, so pc_streams' key is still (id). This used
+        // to reference (id, is_archived) under that flag, a column list with no unique index behind it,
+        // which SQL Server refuses with Msg 1776 and so made the combination impossible to provision.
+        if (isConjoined)
         {
             // NOTE: Composite FK to pc_streams is intentionally omitted for conjoined tenancy.
             // Weasel.SqlServer's ForeignKey sorts ColumnNames/LinkedNames alphabetically,
