@@ -40,6 +40,20 @@ namespace Polecat.Resilience;
 ///         its transaction, and this predicate answers true for that refusal, so a strategy that
 ///         asks stops there.
 ///     </para>
+///     <para>
+///         <b>A connection pool timeout is safe to replay, at every isolation level (#845).</b>
+///         <see cref="SqlServerTransientFailures" /> calls it transient and this type does not call it
+///         unsafe, and those two answers agree because of what the failure is: no connection was
+///         obtained, so no command ran and no transaction or snapshot existed for the replay to be
+///         stale against. It is a bare <see cref="InvalidOperationException" />, so it falls through
+///         the walk below, and a strategy written as "anything that is not unsafe" will retry it.
+///         Safe is not the same as free, though. Each attempt has already waited out the whole
+///         <c>Connect Timeout</c>, and a retry puts another waiter on a pool that has nothing to
+///         give, so this is a load problem a retry can only stretch. That is why Polecat adds no retry
+///         of its own: the daemon pauses the shard for a supervisor to restart, with
+///         <c>ShardFailure.IsTransient</c> true, and <see cref="Internal.ConnectionFactory" />'s open
+///         retry looks only at <see cref="SqlException" />s and never sees it.
+///     </para>
 /// </remarks>
 public static class PolecatRetryPredicates
 {
