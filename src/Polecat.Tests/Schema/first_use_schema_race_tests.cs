@@ -45,6 +45,15 @@ public class first_use_schema_race_tests
     /// </summary>
     private const int DocumentRounds = 40;
 
+    /// <summary>
+    ///     Far fewer, because the daemon's ensure applies every object over seven document tables, which is
+    ///     about eight seconds a round on a CI runner, and 40 of those went past the five minute stall
+    ///     report. Without the lock this fails about one round in fifteen, so a single run can miss it. It
+    ///     earns its place across many runs, and <see cref="two_independent_stores_making_their_first_document_write" />
+    ///     is the one that fails every time.
+    /// </summary>
+    private const int DocumentAndDaemonRounds = 12;
+
     private static string NewSchema() => "fsr_" + Guid.NewGuid().ToString("N")[..10];
 
     private static DocumentStore BuildStore(string schema, bool manyDocumentTypes = false) => DocumentStore.For(opts =>
@@ -250,7 +259,7 @@ public class first_use_schema_race_tests
         var token = TestContext.Current.CancellationToken;
         var failures = new List<Exception>();
 
-        for (var round = 0; round < DocumentRounds; round++)
+        for (var round = 0; round < DocumentAndDaemonRounds; round++)
         {
             var schema = NewSchema();
             using var store = BuildStore(schema, manyDocumentTypes: true);
@@ -262,7 +271,7 @@ public class first_use_schema_race_tests
             await DropAsync(schema, store, token);
         }
 
-        AssertNoRoundFailed(failures, DocumentRounds);
+        AssertNoRoundFailed(failures, DocumentAndDaemonRounds);
     }
 
     /// <summary>
