@@ -50,6 +50,9 @@ public class PolecatDocumentComplianceFixture : DocumentStorageComplianceFixture
             UseNativeJsonType = ConnectionSource.SupportsNativeJson
         };
 
+        // #858: no two writes in a fact share a timestamp
+        options.Listeners.Add(ServerClockTickListener.Instance);
+
         // jasperfx#665 / #472: the strong-typed identity facts key a document by a wrapper, and the
         // suite declares those wrappers separately from the document types because the identity type
         // is the one thing a document type alone does not tell a store.
