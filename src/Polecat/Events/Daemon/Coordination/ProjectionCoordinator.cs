@@ -47,7 +47,8 @@ internal class ProjectionCoordinator : ProjectionCoordinatorBase, IProjectionCoo
 
     /// <param name="soloTakesNoLocks">
     ///     #847: true from <c>AddAsyncDaemon</c>, which has never taken a lock in
-    ///     <see cref="DaemonMode.Solo" /> and which Marten's equivalent does not either.
+    ///     <see cref="DaemonMode.Solo" /> and which Marten's equivalent does not either. It also starts the
+    ///     agents with the host: see <see cref="IHostedService.StartAsync" /> below.
     ///     <c>AddProjectionCoordinator</c> leaves it false, so what it does in that mode has not moved.
     /// </param>
     public ProjectionCoordinator(DocumentStore store, ILoggerFactory? loggerFactory = null,
@@ -109,6 +110,30 @@ internal class ProjectionCoordinator : ProjectionCoordinatorBase, IProjectionCoo
         {
             _daemons.Clear();
         }
+    }
+
+    /// <summary>
+    ///     #847: <c>AddAsyncDaemon(DaemonMode.Solo)</c> has always had its agents running by the time the host
+    ///     finishes starting, and failed the host if it couldn't. Callers read the daemon straight after
+    ///     <c>StartAsync</c>, so that stays true. The loop then finds them running and only supervises.
+    /// </summary>
+    /// <remarks>
+    ///     A re-implementation rather than an override, because the base's <c>StartAsync</c> isn't virtual
+    ///     and <c>ResumeAsync</c> has to go on meaning the loop alone. HotCold can't do this at all: which
+    ///     shards a node runs is what the loop is there to find out.
+    /// </remarks>
+    async Task IHostedService.StartAsync(CancellationToken cancellationToken)
+    {
+        if (Distributor is SoloProjectionDistributor)
+        {
+            foreach (var database in await _options.Tenancy!.BuildDatabasesAsync(cancellationToken).ConfigureAwait(false))
+            {
+                await database.EnsureStorageExistsAsync(typeof(IEvent), cancellationToken).ConfigureAwait(false);
+                await DaemonFor(database).StartAllAsync().ConfigureAwait(false);
+            }
+        }
+
+        await StartAsync(cancellationToken).ConfigureAwait(false);
     }
 
     public override IProjectionDaemon DaemonForMainDatabase()

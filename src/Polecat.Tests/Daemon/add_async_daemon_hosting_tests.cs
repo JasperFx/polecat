@@ -296,6 +296,25 @@ public class add_async_daemon_hosting_tests
     }
 
     /// <summary>
+    ///     Agents have always been running by the time a Solo host has started, and callers read the daemon
+    ///     straight after <c>StartAsync</c>. No wait here, because that is the whole of what is pinned: with
+    ///     only the leadership loop to start them, this is a race against the first cycle.
+    /// </summary>
+    [Fact]
+    public async Task solo_agents_are_running_when_the_host_has_started()
+    {
+        var token = TestContext.Current.CancellationToken;
+
+        using var host = BuildNode(NewSchema(), DaemonMode.Solo);
+        await host.StartAsync(token);
+
+        IsRunning(host, CoordinatedShard).ShouldBeTrue();
+        IsRunning(host, AgentShard).ShouldBeTrue();
+
+        await host.StopAsync(token);
+    }
+
+    /// <summary>
     ///     Solo says this node is the only one, so <c>AddAsyncDaemon</c> keeps taking no lock, as it always
     ///     has. A lock here would also make a shard depend on a held connection for no benefit.
     /// </summary>

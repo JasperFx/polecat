@@ -41,13 +41,12 @@ public class PolecatDaemonHostedService : IHostedService, IAsyncDisposable, IDis
     /// <summary>
     ///     A projection daemon per database the tenancy has now — one per tenant database under a
     ///     multi-database tenancy, otherwise a single daemon for the store's database. The list follows the
-    ///     tenancy, so a master table's tenants come and go from it. Agents start on the coordinator's
-    ///     leadership loop rather than before the host finishes starting, and under
-    ///     <see cref="DaemonMode.HotCold" /> a daemon on a node that does not hold the lock has none.
+    ///     tenancy, so a master table's tenants come and go from it. Under
+    ///     <see cref="DaemonMode.HotCold" /> a daemon on a node that does not hold the lock has no agents.
     /// </summary>
     public IReadOnlyList<IProjectionDaemon> Daemons => _coordinator.AllDaemons();
 
-    public Task StartAsync(CancellationToken token) => _coordinator.StartAsync(token);
+    public Task StartAsync(CancellationToken token) => ((IHostedService)_coordinator).StartAsync(token);
 
     public Task StopAsync(CancellationToken token) => _coordinator.StopAsync(token);
 

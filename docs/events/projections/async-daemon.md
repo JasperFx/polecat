@@ -62,12 +62,14 @@ leadership cycle (`DaemonSettings.LeadershipPollingTime`, 5 seconds by default) 
 | `DaemonMode.Disabled` | Nothing. |
 | `DaemonMode.ExternallyManaged` | Nothing. Something else, such as Wolverine's managed distribution, runs the shards. |
 
-Agents start on the coordinator's loop in the background, so a shard may not be running yet when the host finishes
-starting, and a database that can't be reached is logged and retried on the next cycle instead of failing the
-host's startup.
+Under `DaemonMode.Solo` the agents are running by the time the host has started, and a database that can't be
+reached fails the host's startup. Under `DaemonMode.HotCold` they start in the background once the node wins their
+locks, so a shard may not be running anywhere yet when the host finishes starting, and a database that can't be
+reached is logged and retried on the next cycle.
 
 `AddProjectionCoordinator(mode)` registers the same coordinator, and calling both still hosts only one. The one
-difference is `DaemonMode.Solo`, where `AddProjectionCoordinator` takes the shard locks anyway.
+difference is `DaemonMode.Solo`, where `AddProjectionCoordinator` takes the shard locks anyway and starts agents in
+the background, as under `DaemonMode.HotCold`.
 
 For a store registered with `AddPolecatStore<TStore>()`, both are on the expression it returns, and a host that has
 no default store needs nothing else:
