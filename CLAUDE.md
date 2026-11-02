@@ -468,7 +468,9 @@ docker compose up -d                          # the gate never starts a containe
     the rule is about DDL.
   - The token table has **no primary key**, deliberately: no tuple of its columns is unique, and
     adding one would be a migration against every table the old renderer created. Matching the old
-    renderer's shape exactly is what makes the first delta after upgrading come out `None`.
+    renderer's shape exactly is what makes the first delta after upgrading come out `None`
+    — or did, until #877 widened `term`: that delta is now a size-of-data change, so first use deliberately
+    leaves an existing token table alone, and the migration guide tells a large store to run `db-patch`.
 
   Two things in `DocumentTableEnsurer` are deliberately *not* in scope, because they are
   pre-migration fixups of legacy tables rather than declarations of a desired schema, and Weasel's
