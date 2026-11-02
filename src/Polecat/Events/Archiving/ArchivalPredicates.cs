@@ -18,20 +18,21 @@ namespace Polecat.Events.Archiving;
 ///     </para>
 ///     <para>
 ///         Only the event being filtered counts. An event body with an <c>IsArchived</c> of its own says
-///         nothing about the row, and neither does the flag of an event captured from outside the query.
+///         nothing about the row, and neither does the flag of an event captured from outside the query,
+///         nor of one a nested lambda walks over in memory.
 ///     </para>
 /// </remarks>
 internal static class ArchivalPredicates
 {
     public static bool SpecifiesEventArchivalStatus(this LambdaExpression predicate)
     {
-        var finder = new ArchivalStatusFinder();
+        var finder = new ArchivalStatusFinder(predicate.Parameters[0]);
         finder.Visit(predicate.Body);
 
         return finder.Found;
     }
 
-    private sealed class ArchivalStatusFinder : ExpressionVisitor
+    private sealed class ArchivalStatusFinder(ParameterExpression row) : ExpressionVisitor
     {
         public bool Found { get; private set; }
 
@@ -55,14 +56,14 @@ internal static class ArchivalPredicates
             return base.VisitMethodCall(node);
         }
 
-        private static bool IsTheEvent(Expression? expression)
+        private bool IsTheEvent(Expression? expression)
         {
             while (expression is UnaryExpression { NodeType: ExpressionType.Convert } convert)
             {
                 expression = convert.Operand;
             }
 
-            return expression is ParameterExpression parameter && typeof(IEvent).IsAssignableFrom(parameter.Type);
+            return expression == row && typeof(IEvent).IsAssignableFrom(row.Type);
         }
     }
 }

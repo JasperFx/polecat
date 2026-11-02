@@ -255,6 +255,26 @@ public class archived_events_are_opt_in_tests : IntegrationContext
     }
 
     [Fact]
+    public async Task an_event_in_a_nested_lambda_is_not_the_event_being_filtered()
+    {
+        await ArchiveOneStreamBesideALiveOne();
+
+        await using var query = theStore.QuerySession();
+        var captured = await query.Events.QueryAllRawEvents()
+            .Where(x => x.IsArchived && x.StreamId == _archived)
+            .ToListAsync(Token);
+
+        // These lambdas run over the list in memory, and the row's own filter is still in force
+        (await query.Events.QueryAllRawEvents()
+            .Where(x => captured.Where(e => e.IsArchived).Select(e => e.Id).Contains(x.Id))
+            .ToListAsync(Token)).ShouldBeEmpty();
+
+        (await query.Events.QueryAllRawEvents()
+            .Where(x => captured.Where(e => e.MaybeArchived()).Select(e => e.Id).Contains(x.Id))
+            .ToListAsync(Token)).ShouldBeEmpty();
+    }
+
+    [Fact]
     public async Task an_is_archived_member_on_an_event_body_says_nothing_about_the_row()
     {
         var reference = Guid.NewGuid().ToString();
