@@ -15,8 +15,12 @@ This sets `is_archived = 1` on both the `pc_streams` and `pc_events` tables for 
 
 When a stream is archived:
 
-- `FetchStreamAsync` excludes the archived stream
+- **Archived events are left out of event reads unless you opt in.** The rows stay in `pc_events`, but
+  `FetchStreamAsync`, `QueryAllRawEvents()`, `QueryRawEvents()`, `QueryEventsAsync`, `QueryEventData<T>`,
+  `QueryRawEventDataOnly<T>`, `LoadAsync`, live aggregation and tag queries all read past them. See
+  [Reading archived events](#reading-archived-events).
 - The async daemon's event loader skips archived events
+- `FetchStreamStateAsync` and `QueryStreamStates()` still answer for the stream, with `IsArchived` set
 - Attempting to append to an archived stream throws `ArchivedStreamException`
 - `ApplyEventDataMasking` still reaches it, because archiving a stream doesn't erase it
 
@@ -53,6 +57,52 @@ await session.SaveChangesAsync();
 ```
 
 This sets `is_archived = 0` on both tables, making the stream active again.
+
+## Reading archived events
+
+Archived events are filtered out unless you ask for them, as on Marten and Fisher. There are two ways to
+ask, both in a predicate over `IEvent`, on `QueryAllRawEvents()` or `QueryRawEvents()`:
+
+<!-- snippet: sample_polecat_reading_archived_events -->
+<a id='snippet-sample_polecat_reading_archived_events'></a>
+```cs
+// Live and archived events together. MaybeArchived() is in Polecat.Events.Archiving.
+var everything = await session.Events.QueryAllRawEvents()
+    .Where(x => x.MaybeArchived() && x.StreamId == streamId)
+    .ToListAsync();
+
+// Naming IsArchived replaces the implicit filter, so this finds only archived events...
+var archived = await session.Events.QueryAllRawEvents()
+    .Where(x => x.IsArchived && x.StreamId == streamId)
+    .ToListAsync();
+
+// ...and this finds only live ones.
+var live = await session.Events.QueryAllRawEvents()
+    .Where(x => !x.IsArchived && x.StreamId == streamId)
+    .ToListAsync();
+```
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.Tests/Events/archived_events_are_opt_in_tests.cs#L114-L129' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_reading_archived_events' title='Start of snippet'>anchor</a></sup>
+<!-- endSnippet -->
+
+Naming `IsArchived` replaces the implicit `is_archived = 0` rather than sitting beside it, so a predicate
+answers for itself. What counts:
+
+- **Any predicate that filters rows.** `Where`, and the predicate of a terminal such as `CountAsync`,
+  `AnyAsync` or `FirstOrDefaultAsync`, wherever it sits in the chain.
+- **Either side of an `||`.** `x.IsArchived || x.Version == 1` finds every archived event and every first
+  event. `!x.IsArchived || x.Version == 1` also finds the first event of an archived stream, because naming
+  `IsArchived` took the implicit filter away.
+- **Not `OrderBy` or `Select`.** They name the member without filtering anything, so archived events stay
+  out.
+
+[`AggregateToAsync`](/events/querying#aggregatetoasync) folds what its query matched, so it reaches archived
+events through the same predicates.
+
+`FetchStreamAsync`, `LoadAsync` and `QueryEventsAsync(EventQuery)` have no opt-in, so read an archived stream
+through one of the predicates above. Neither do `QueryEventData<T>` and `QueryRawEventDataOnly<T>`, because
+those predicates are over the event body, which cannot speak for the row. An `IsArchived` member on the body
+itself has no effect on archiving. The `IEventStore` explorer's `ReadStreamAsync` is a diagnostic read and
+shows archived events, as it does on Marten and Fisher.
 
 ## Tombstoning (Deleting a Stream)
 

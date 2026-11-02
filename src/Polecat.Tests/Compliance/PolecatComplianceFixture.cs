@@ -108,6 +108,9 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
             UseNativeJsonType = ConnectionSource.SupportsNativeJson
         };
 
+        // #858: no two writes in a fact share a timestamp
+        options.Listeners.Add(ServerClockTickListener.Instance);
+
         // #813: start floors are opt-in in Polecat 5, and ProjectionFloorCompliance is what pins them.
         // Opted in for every compliance store rather than per suite, because the seam has no config
         // member to ask for it -- the suite just calls the IEventDatabase members.
