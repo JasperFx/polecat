@@ -196,6 +196,16 @@ EF Core projections support all lifecycle modes:
 | Async | Daemon processes events and applies DbContext changes |
 | Live | Aggregate built on demand with DbContext |
 
+## Reading an EF Core Aggregate
+
+Polecat does not store an EF Core projection's document, so the event store's read APIs cannot load it from a `pc_doc_*` table. `FetchLatest()`, `ProjectLatest()`, `FetchForWriting()`, `FetchForExclusiveWriting()` and `AggregateStreamAsync()` all build it by folding the stream through your projection, whatever its lifecycle. That means the cost of a read grows with the stream, even for an `Inline` projection, whose row is already there. Query the `DbContext` when you want the row.
+
+A fold is a read. Your `ApplyEvent` runs against a throwaway `DbContext` that is disposed as soon as the fold finishes and is never flushed, so anything it adds or changes on that context goes nowhere. Reads through it are fine. A side effect belongs to the projection run itself, which sees the same event once.
+
+## Retrying a Failed Save
+
+A `SaveChangesAsync()` that fails before it commits can be called again on the same session. The attempt that failed is rolled back, its `DbContext` is disposed with everything pending on it, and the retry runs your inline projections again from the start, so each row is written once.
+
 ## Tenanted Projections
 
 EF Core projections work with multi-tenancy -- the DbContext reads and writes through the session's connection to the tenant's database, including under database-per-tenant and master-table tenancy. The entity tables have to exist in every tenant database for that to work.

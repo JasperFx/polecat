@@ -137,6 +137,32 @@ internal class WorkTracker : IWorkTracker
         }
     }
 
+    /// <summary>
+    ///     How many operations are queued right now, which is what <see cref="RemoveOperationsFrom" /> takes.
+    /// </summary>
+    public int OperationCount
+    {
+        get
+        {
+            lock (_stateLock)
+                return _operations.Count;
+        }
+    }
+
+    /// <summary>
+    ///     Forget every operation queued since there were <paramref name="count" />.
+    /// </summary>
+    public void RemoveOperationsFrom(int count)
+    {
+        lock (_stateLock)
+        {
+            if (_operations.Count <= count) return;
+
+            _operations.RemoveRange(count, _operations.Count - count);
+            _operationsSnapshot = null;
+        }
+    }
+
     public void AddStream(StreamAction stream)
     {
         lock (_stateLock)
