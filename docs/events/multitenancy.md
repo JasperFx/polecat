@@ -39,6 +39,29 @@ await session.SaveChangesAsync();
 var order = await session.Events.AggregateStreamAsync<Order>(streamId);
 ```
 
+### Several Tenants in One Save
+
+`ForTenant` gives you a view of another tenant in the same unit of work, so its writes commit with the
+session's in one transaction:
+
+```cs
+await using var session = store.LightweightSession();
+
+// Two streams, because a stream id is only unique within a tenant
+session.ForTenant("red").Events.Append(streamId, new OrderShipped());
+session.ForTenant("blue").Events.Append(streamId, new OrderShipped());
+
+await session.SaveChangesAsync();
+```
+
+Everything on `ForTenant(...).Events` runs as that tenant, reads included: `FetchStreamAsync`,
+`AggregateStreamAsync`, `FetchLatest`, `FetchForWriting`, `FetchForWritingByTags`, `QueryAllRawEvents` and
+`CompactStreamAsync`. The session's aggregate identity map belongs to the session's own tenant, so a view
+of another tenant doesn't use it.
+
+Without conjoined tenancy the id identifies the stream on its own, so two tenants naming the same id in
+one save are appending to one stream.
+
 ## Separate Database Tenancy
 
 Each tenant gets its own database with independent event stores:

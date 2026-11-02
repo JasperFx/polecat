@@ -95,6 +95,14 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
     public bool EnableProjectionFloors => _options.Events.EnableProjectionFloors;
 
     /// <summary>
+    ///     #905: the tenant that narrows a search of a unit of work for a stream. Under conjoined tenancy a
+    ///     stream id is only unique within a tenant, and <c>ForTenant</c> puts several tenants in one save,
+    ///     so it is the stream's own. Otherwise the id is the whole key of pc_streams and two tenants naming
+    ///     it are naming the same stream, so there is nothing to narrow by and this is null.
+    /// </summary>
+    internal string? StreamIdScope(string tenantId) => TenancyStyle == TenancyStyle.Conjoined ? tenantId : null;
+
+    /// <summary>
     ///     Opt into a performance optimization that directs Polecat to use a session-level
     ///     identity map for aggregates fetched via FetchForWriting() or FetchLatest().
     ///     Subsequent calls to FetchLatest() within the same session will return the cached
