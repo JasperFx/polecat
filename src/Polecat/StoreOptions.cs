@@ -429,11 +429,6 @@ public class StoreOptions
     ///     A session that has a transaction open never waits, whatever this says: see
     ///     <see cref="Internal.SchemaMigrationLock.HoldForFirstUseAsync" /> for why.
     ///     </para>
-    ///     <para>
-    ///     ⚠️ The wait is also capped by the connection's command timeout, because the lock request is an
-    ///     ordinary command: 30 seconds unless the connection string sets <c>Command Timeout</c>. A value
-    ///     above that has no effect until the connection string is raised to match.
-    ///     </para>
     /// </remarks>
     public TimeSpan StartupMigrationLockTimeout { get; set; } = TimeSpan.FromSeconds(30);
 

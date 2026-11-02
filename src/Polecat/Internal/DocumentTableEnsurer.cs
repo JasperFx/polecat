@@ -55,6 +55,18 @@ internal class DocumentTableEnsurer
 
     private bool _hiloTableEnsured;
 
+    /// <summary>
+    ///     Forget everything this ensurer has checked, because the tables it checked have been dropped.
+    ///     Otherwise the next session trusts the memo and fails on a table nothing will create.
+    /// </summary>
+    internal void ForgetEnsuredTables()
+    {
+        _ensured.Clear();
+        _fksEnsured.Clear();
+        _hiloTableEnsured = false;
+        _eventStoreEnsured = false;
+    }
+
     private int _schemaEnsureExecutions;
 
     /// <summary>
@@ -501,14 +513,6 @@ internal class DocumentTableEnsurer
 
             var migrator = new SqlServerMigrator();
 
-            // Mirror PolecatDatabase.BuildFeatureSchemas: the event store feature owns the natural-key
-            // tables for aggregate projections that declare one.
-            var naturalKeys = _options.Projections.All
-                .OfType<JasperFx.Events.Aggregation.IAggregateProjection>()
-                .Where(p => p.NaturalKeyDefinition != null)
-                .Select(p => p.NaturalKeyDefinition!)
-                .ToList();
-
             // #335: under per-tenant partitioning, hydrate the shared partition manager's tenant map
             // first so pc_events/pc_streams CREATEd against an existing registry bake the full
             // boundary set (cached; a no-op after the first call).
@@ -517,7 +521,7 @@ internal class DocumentTableEnsurer
                 await _options.EventGraph.TenantPartitionManager.InitializeAsync(conn, token);
             }
 
-            var eventSchema = new Events.Schema.EventStoreFeatureSchema(_options.EventGraph, naturalKeys);
+            var eventSchema = new Events.Schema.EventStoreFeatureSchema(_options);
             var migration = await SchemaMigration.DetermineAsync(conn, token, eventSchema.Objects);
             await migrator.ApplyAllAsync(conn, migration, AutoCreate.CreateOrUpdate, ct: token);
 

@@ -15,6 +15,7 @@ using Polecat.Events.Daemon;
 using Polecat.Events.Schema;
 using Polecat.Linq;
 using Polly;
+using Weasel.Core;
 using Weasel.Core.Migrations;
 using Weasel.SqlServer;
 
@@ -27,7 +28,7 @@ namespace Polecat.Storage;
 ///     Implements IEventDatabase for async daemon infrastructure.
 /// </summary>
 public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IProjectionDatabase,
-    ICrossTenantRebuildSource, Weasel.Storage.IStorageDatabase
+    ICrossTenantRebuildSource, Weasel.Storage.IStorageDatabase, IDatabase
 {
     private readonly StoreOptions _options;
     private readonly EventGraph _events;
@@ -92,15 +93,9 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
 
     public override IFeatureSchema[] BuildFeatureSchemas()
     {
-        var naturalKeys = _options.Projections.All
-            .OfType<IAggregateProjection>()
-            .Where(p => p.NaturalKeyDefinition != null)
-            .Select(p => p.NaturalKeyDefinition!)
-            .ToList();
-
         var schemas = new List<IFeatureSchema>
         {
-            new EventStoreFeatureSchema(_events, naturalKeys)
+            new EventStoreFeatureSchema(_options)
         };
 
         // #573: force the providers the CONFIGURATION implies before asking whether there are any.
@@ -1139,6 +1134,42 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
 
     private static string FloorTenant(string? tenantId)
         => string.IsNullOrEmpty(tenantId) ? Polecat.Events.Schema.EventProjectionFloorsTable.StoreGlobalTenant : tenantId;
+
+    /// <summary>
+    ///     Apply every configured change to this database, under the same migration lock a startup
+    ///     migration, the daemon and a session's first use take (#868).
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///     #883: Weasel's overload with no lock argument runs under a do-nothing lock and is not virtual, so
+    ///     everything that reached it ran straight past whoever else was migrating the schema. Hiding it
+    ///     covers a call on this type, and the explicit interface member below covers one through
+    ///     <see cref="IDatabase" />, which is what <c>ApplyAllConfiguredChangesWithRetriesAsync</c>,
+    ///     <c>db-apply</c> and <c>resources setup</c> come through. A caller who wants some other lock still
+    ///     has the overload that takes one.
+    ///     </para>
+    ///     <para>
+    ///     So this can now lose. It waits up to <see cref="StoreOptions.StartupMigrationLockTimeout" />, and
+    ///     then <see cref="DatabaseBase{TConnection}.ResourceMigrationFailureMode" /> rules on it.
+    ///     </para>
+    ///     <para>
+    ///     ⚠️ Do not call this with a session's transaction open against this schema. Every internal path
+    ///     avoids waiting on this lock in that state, because the wait is a cycle SQL Server cannot see (see
+    ///     <see cref="SchemaMigrationLock.HoldForFirstUseAsync" />). This one cannot tell, and it was never
+    ///     safe there: without the lock it ran the same DDL into the same schema locks.
+    ///     </para>
+    /// </remarks>
+    public new Task<SchemaPatchDifference> ApplyAllConfiguredChangesToDatabaseAsync(
+        AutoCreate? @override = null,
+        ReconnectionOptions? reconnectionOptions = null,
+        CancellationToken ct = default) =>
+        ApplyAllConfiguredChangesToDatabaseAsync(_options.BuildMigrationLock(), @override, reconnectionOptions, ct);
+
+    Task<SchemaPatchDifference> IDatabase.ApplyAllConfiguredChangesToDatabaseAsync(
+        AutoCreate? @override,
+        ReconnectionOptions? reconnectionOptions,
+        CancellationToken ct) =>
+        ApplyAllConfiguredChangesToDatabaseAsync(@override, reconnectionOptions, ct);
 
     private volatile bool _storageEnsured;
 

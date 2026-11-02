@@ -1,6 +1,4 @@
-using System.Data.Common;
 using Polecat.Metadata;
-using Weasel.Core;
 using Weasel.SqlServer;
 using Weasel.SqlServer.Tables;
 using Weasel.SqlServer.Tables.Partitioning;
@@ -11,7 +9,7 @@ namespace Polecat.Storage;
 ///     Weasel table definition for a document type.
 ///     Table name follows the pattern: pc_doc_{lowercase_type_name}
 /// </summary>
-internal partial class DocumentTable : Table
+internal partial class DocumentTable : AdditiveTable
 {
     /// <param name="mapping">The document type's mapping.</param>
     /// <param name="includeForeignKeys">
@@ -154,62 +152,5 @@ internal partial class DocumentTable : Table
         // computed column must not join the primary key and the partitioning branches above are what
         // decide the key. See DocumentTable.DeclaredObjects.cs.
         AddDeclaredSchemaObjects(mapping, includeForeignKeys);
-    }
-
-    /// <summary>
-    ///     #267: strip objects this model does not declare out of the fetched (actual) table before the
-    ///     diff, so Polecat is purely additive — it creates what is missing from its own model and never
-    ///     drops or churns a column, index or foreign key it does not own. A user may add their own (a
-    ///     persisted computed column plus a unique index via an EF migration, say), and Weasel's default
-    ///     <see cref="TableDelta" /> would treat each as an "extra" and emit <c>DROP COLUMN</c> /
-    ///     <c>DROP INDEX</c> — destructive — while also leaving a permanently non-empty diff that makes
-    ///     every storage-ensure re-run DDL.
-    ///     <para>
-    ///     ⚠️ <b>#684 narrowed what this covers without changing a line of it, and that is the point.</b>
-    ///     Polecat's own computed columns, indexes and foreign keys used to be unmodeled too — raw DDL
-    ///     run by <see cref="Internal.DocumentTableEnsurer" /> — so they were stripped here alongside the
-    ///     user's, which is why the generated script omitted them and
-    ///     <c>AssertDatabaseMatchesConfigurationAsync</c> reported a match without them. They are
-    ///     declared in the model now (see DocumentTable.DeclaredObjects.cs), so they fall on the modeled
-    ///     side of these three comparisons and reconcile normally. Nothing here had to change: the
-    ///     override was always "keep what I do not declare", and the fix was to declare more.
-    ///     </para>
-    /// </summary>
-    public override async Task<ISchemaObjectDelta> CreateDeltaAsync(DbDataReader reader,
-        CancellationToken ct = default)
-    {
-        var delta = (TableDelta)await base.CreateDeltaAsync(reader, ct).ConfigureAwait(false);
-
-        // Null Actual => the table does not exist yet; nothing to strip (this is a Create).
-        var actual = delta.Actual;
-        if (actual == null)
-        {
-            return delta;
-        }
-
-        var modeledColumns = Columns.Select(x => x.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        foreach (var extra in actual.Columns.Where(c => !modeledColumns.Contains(c.Name)).ToList())
-        {
-            actual.RemoveColumn(extra.Name);
-        }
-
-        // DocumentTable does not model secondary indexes in Weasel (they are raw-DDL managed), so any
-        // non-primary-key index on the live table is treated as user/Polecat-owned and left in place.
-        var modeledIndexes = Indexes.Select(x => x.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        foreach (var extra in actual.Indexes.Where(i => !modeledIndexes.Contains(i.Name)).ToList())
-        {
-            actual.Indexes.Remove(extra);
-        }
-
-        // Foreign keys are likewise raw-DDL managed (DocumentTableEnsurer.EnsureForeignKeysAsync) and
-        // not modeled here, so an unmodeled FK — Polecat's own or a user's — must not be dropped either.
-        var modeledForeignKeys = ForeignKeys.Select(x => x.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        foreach (var extra in actual.ForeignKeys.Where(f => !modeledForeignKeys.Contains(f.Name)).ToList())
-        {
-            actual.ForeignKeys.Remove(extra);
-        }
-
-        // Recompute the diff against the now-stripped actual table.
-        return new TableDelta(this, actual);
     }
 }

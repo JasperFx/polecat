@@ -29,7 +29,18 @@ internal class SequenceFactory : ISequenceSource
     {
         var name = GetSequenceName(documentType, settings);
         return _sequences.GetOrAdd(name,
-            sequenceName => new HiloSequence(_connectionFactory, _options.DatabaseSchemaName, sequenceName, settings, _options.ResiliencePipeline, _options.AutoCreateSchemaObjects));
+            sequenceName => new HiloSequence(_connectionFactory, _options, sequenceName, settings));
+    }
+
+    /// <summary>
+    ///     For after <c>pc_hilo</c> has been dropped, so that the next id creates it again.
+    /// </summary>
+    internal void ForgetEnsuredTables()
+    {
+        foreach (var sequence in _sequences.Values.OfType<HiloSequence>())
+        {
+            sequence.ForgetEnsuredTable();
+        }
     }
 
     private static string GetSequenceName(Type documentType, HiloSettings settings)

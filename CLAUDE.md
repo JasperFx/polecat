@@ -476,6 +476,13 @@ docker compose up -d                          # the gate never starts a containe
     adding one would be a migration against every table the old renderer created. Matching the old
     renderer's shape exactly is what makes the first delta after upgrading come out `None`.
 
+  **#882/#883 brought the flat table and `pc_tenants` into the model, and the trap there is the first
+  delta.** A table that was only ever created has never been compared to anything, and Weasel's
+  `TableDelta` drops whatever a table does not declare, so a plain `Table` would have removed a
+  reporting index or a column from an old mapping on the first start after upgrading. Both derive from
+  `AdditiveTable`, the rule `DocumentTable` already lived by (#267). Bring an object in by checking what
+  its delta says about a table the old path made, with something added by hand.
+
   Two things in `DocumentTableEnsurer` are deliberately *not* in scope, because they are
   pre-migration fixups of legacy tables rather than declarations of a desired schema, and Weasel's
   delta cannot express either: the Decision D2 `version` int→bigint widening (drop default, alter,
