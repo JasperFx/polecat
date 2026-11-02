@@ -788,10 +788,10 @@ internal class EventOperations : QueryEventStore, IEventOperations
         // back through its IEventBinarySerializer, not into the JSON column.
         var serializedBdata = _events.SerializeEventBdata(@event);
         var serializedData = serializedBdata is null
-            ? _sessionBase.Serializer.ToJson(@event.Data)
+            ? _events.ToStorageJson(@event.Data)
             : EventGraph.JsonPlaceholderForBinaryEvent;
         var serializedHeaders = @event.Headers != null
-            ? _sessionBase.Serializer.ToJson(@event.Headers)
+            ? _events.ToStorageJson(@event.Headers)
             : null;
         _workTracker.Add(new Protected.OverwriteEventOperation(
             _events, @event, serializedData, serializedBdata, serializedHeaders, _tenantId));
@@ -809,7 +809,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
         var binary = _events.ResolveBinarySerializerFor(typeof(T));
         var serializedBdata = binary?.Serialize(typeof(T), eventBody);
         var serializedData = serializedBdata is null
-            ? _sessionBase.Serializer.ToJson(eventBody)
+            ? _events.ToStorageJson(eventBody)
             : EventGraph.JsonPlaceholderForBinaryEvent;
         var op = new Protected.ReplaceEventOperation(
             _events, sequence, serializedData, serializedBdata, mapping.EventTypeName, mapping.DotNetTypeName,

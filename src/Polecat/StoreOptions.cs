@@ -31,6 +31,7 @@ public class StoreOptions
     private string _connectionString = string.Empty;
     private string _databaseSchemaName = "dbo";
     private ISerializer? _serializer;
+    private Weasel.Storage.IStorageSerializer? _storageSerializer;
     private AutoCreate? _autoCreate;
 
     public StoreOptions()
@@ -340,7 +341,52 @@ public class StoreOptions
     public ISerializer Serializer
     {
         get => _serializer ??= new Serializer();
-        set => _serializer = value ?? throw new ArgumentNullException(nameof(value));
+        set
+        {
+            _serializer = value ?? throw new ArgumentNullException(nameof(value));
+            _storageSerializer = null;
+        }
+    }
+
+    /// <summary>
+    ///     <see cref="Serializer" /> as the storage runtime uses it. The default serializer is both, and
+    ///     a store tells it which storage it writes to. One of your own stays the one
+    ///     <see cref="Serializer" /> hands back, and gets held to the same rules here (#879).
+    /// </summary>
+    internal Weasel.Storage.IStorageSerializer StorageSerializer => _storageSerializer ??= BuildStorageSerializer();
+
+    private Weasel.Storage.IStorageSerializer BuildStorageSerializer()
+    {
+        var storage = Weasel.Storage.StorageSerializerAdapter.For(Serializer);
+
+        return UseNativeJsonType && Serializer is not Polecat.Serialization.Serializer
+            ? new NativeJsonStorageSerializer(storage)
+            : storage;
+    }
+
+    /// <summary>
+    ///     The JSON for a value that is about to be stored. Anything bound to a JSON column by hand
+    ///     comes through here, and anything that isn't going to be stored should not, because this
+    ///     refuses a number the column would change (#879).
+    /// </summary>
+    internal string ToStorageJson(object value)
+    {
+        var json = Serializer.ToJson(value);
+        return UseNativeJsonType ? NativeJsonNumbers.ForStorage(json) : json;
+    }
+
+    /// <summary>
+    ///     Called once this configuration has become a store, when <see cref="UseNativeJsonType" /> and
+    ///     <see cref="Serializer" /> have both settled.
+    /// </summary>
+    internal void BindSerializerToStorage()
+    {
+        _storageSerializer = null;
+
+        if (Serializer is Polecat.Serialization.Serializer serializer)
+        {
+            serializer.WritesToNativeJson = UseNativeJsonType;
+        }
     }
 
     /// <summary>
@@ -403,6 +449,13 @@ public class StoreOptions
     internal Storage.PolecatDatabase? StorageDatabase { get; set; }
 
     /// <summary>
+    ///     The store built from these options. Here rather than on each <see cref="Storage.PolecatDatabase" />
+    ///     because a tenancy builds its databases itself, some of them long after the store, from nothing
+    ///     but these options.
+    /// </summary>
+    internal DocumentStore? Store { get; set; }
+
+    /// <summary>
     ///     The Polly resilience pipeline used for all SQL execution.
     ///     Defaults to retry on transient SQL Server errors.
     /// </summary>
@@ -430,6 +483,37 @@ public class StoreOptions
     ///     </para>
     /// </summary>
     public bool DefaultTenantUsageEnabled { get; set; } = true;
+
+    /// <summary>
+    ///     #849, marten#5750: the application's own exception transforms, so a
+    ///     <see cref="Microsoft.Data.SqlClient.SqlException" /> carrying your own error number, from a
+    ///     guard queued with <c>QueueSqlCommand</c> for example, can surface from a save as a typed
+    ///     exception rather than as something to pick apart by number.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         Consulted for what <c>SaveChangesAsync</c> sends, after the failing operation's own
+    ///         translation and before Polecat's other ones, so a transform that matches an error
+    ///         Polecat also translates replaces that translation for this store. An error nothing
+    ///         claims is reported as it would have been.
+    ///     </para>
+    ///     <para>
+    ///         Reads are not translated: Polecat reports a failed read as the
+    ///         <see cref="Microsoft.Data.SqlClient.SqlException" /> it was, so these never run for one.
+    ///     </para>
+    ///     <para>
+    ///         Marten carries this as <c>StoreOptions.Advanced.ExceptionTransforms</c>; Polecat flattens
+    ///         it, as with <see cref="DefaultTenantUsageEnabled" />. Per store, never process-wide.
+    ///     </para>
+    /// </remarks>
+    /// <example>
+    ///     <code>
+    ///     opts.ExceptionTransforms.IfExceptionIs&lt;SqlException&gt;()
+    ///         .If(e =&gt; e.Number == 51000)
+    ///         .ThenTransformTo(e =&gt; new MyDomainException(e));
+    ///     </code>
+    /// </example>
+    public JasperFx.Core.Exceptions.ExceptionTransforms ExceptionTransforms { get; } = new();
 
     /// <summary>
     ///     Custom projection storage providers registered by extensions (e.g., EF Core).

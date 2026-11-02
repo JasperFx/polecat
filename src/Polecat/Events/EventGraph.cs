@@ -73,6 +73,9 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
 
     internal ISerializer Serializer => _options.Serializer;
 
+    /// <inheritdoc cref="StoreOptions.ToStorageJson" />
+    internal string ToStorageJson(object value) => _options.ToStorageJson(value);
+
     internal EventStoreOptions EventOptions => _options.Events;
 
     internal string JsonColumnType => _options.JsonColumnType;
@@ -359,7 +362,7 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
     private object BuildClosedShapeEventStorage()
     {
         var dialect = new Storage.SqlServerEventStoreDialect();
-        var serializer = Weasel.Storage.StorageSerializerAdapter.For(Serializer);
+        var serializer = _options.StorageSerializer;
         return StreamIdentity == StreamIdentity.AsGuid
             ? Weasel.Storage.EventStorageBuilder.Build<Guid>(dialect, AppendMode, this, serializer)
             : Weasel.Storage.EventStorageBuilder.Build<string>(dialect, AppendMode, this, serializer);

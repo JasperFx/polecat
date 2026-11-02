@@ -24,6 +24,10 @@ public class event_store_explorer_tests : IntegrationContext
         await StoreOptions(opts =>
         {
             opts.DatabaseSchemaName = "explorer_tests";
+
+            // #858: the recent streams facts order by a timestamp, so two writes must not tie
+            opts.Listeners.Add(Polecat.Tests.Compliance.ServerClockTickListener.Instance);
+
             opts.Projections.Add<SingleStreamProjection<QuestParty, Guid>>(ProjectionLifecycle.Inline);
         });
         return theStore;

@@ -34,27 +34,53 @@ builder.Services.AddPolecat(opts =>
     opts.Projections.Snapshot<OrderSummary>(SnapshotLifecycle.Async);
     opts.Projections.Add<DashboardProjection>(ProjectionLifecycle.Async);
 })
-.AddAsyncDaemon(DaemonMode.Solo)        // start the daemon as IHostedService
+.AddAsyncDaemon(DaemonMode.Solo)        // run the daemon in this host
 .ApplyAllDatabaseChangesOnStartup();    // run schema migration at boot
 ```
 
 ::: tip
 Async projections do **not** run unless the host starts a daemon. Use
 `AddAsyncDaemon(DaemonMode.Solo)` for single-node deployments and
-`AddProjectionCoordinator(DaemonMode.HotCold)` for multi-node deployments where
-only one host should own each projection shard.
+`AddAsyncDaemon(DaemonMode.HotCold)` for multi-node deployments where only one
+host should own each projection shard.
 :::
 
-::: warning AddAsyncDaemon does not elect a leader
-`AddAsyncDaemon(DaemonMode.HotCold)` is not how to run hot/cold. `AddAsyncDaemon` starts
-every shard on every node and takes no lock, whichever mode it is given, so two nodes
-using it both run every shard. The [shard lock](#the-hotcold-shard-lock) belongs to
-`AddProjectionCoordinator`.
+`AddAsyncDaemon` registers the projection coordinator as a hosted service, the same as Marten's does. On every
+leadership cycle (`DaemonSettings.LeadershipPollingTime`, 5 seconds by default) the coordinator:
 
-The coordinator also does two things `AddAsyncDaemon` does not: it restarts a shard that
-paused after a failure, and it finds tenants added to a master table while the host runs.
-Pick one of the two registrations, not both.
-:::
+- takes the [shard locks](#the-hotcold-shard-lock) under `DaemonMode.HotCold`, so a shard runs on one node at a
+  time and moves to another node when its node goes away
+- restarts a shard that paused after a failure, such as a database outage that outlasted the resilience pipeline's
+  retries
+- picks up tenants added to, disabled in or removed from a
+  [master table](/configuration/multitenancy#dynamic-tenant-management-master-table-tenancy)
+
+| Mode | What runs in this host |
+| ---- | ---------------------- |
+| `DaemonMode.Solo` | Every shard, with no locks. This node assumes it is the only one. |
+| `DaemonMode.HotCold` | The shards whose locks this node holds. |
+| `DaemonMode.Disabled` | Nothing. |
+| `DaemonMode.ExternallyManaged` | Nothing. Something else, such as Wolverine's managed distribution, runs the shards. |
+
+Under `DaemonMode.Solo` the agents are running by the time the host has started, and a database that can't be
+reached fails the host's startup. Under `DaemonMode.HotCold` they start in the background once the node wins their
+locks, so a shard may not be running anywhere yet when the host finishes starting, and a database that can't be
+reached is logged and retried on the next cycle.
+
+`AddProjectionCoordinator(mode)` registers the same coordinator, and calling both still hosts only one. The one
+difference is `DaemonMode.Solo`, where `AddProjectionCoordinator` takes the shard locks anyway and starts agents in
+the background, as under `DaemonMode.HotCold`.
+
+For a store registered with `AddPolecatStore<TStore>()`, both are on the expression it returns, and a host that has
+no default store needs nothing else:
+
+```cs
+builder.Services.AddPolecatStore<IInvoicingStore>(opts =>
+{
+    // ...
+})
+.AddAsyncDaemon(DaemonMode.HotCold);
+```
 
 ## Daemon Settings
 
@@ -136,8 +162,11 @@ another node had taken it over.
 
 ## The HotCold Shard Lock
 
-Under `AddProjectionCoordinator(DaemonMode.HotCold)`, each node takes a SQL Server `sp_getapplock` per shard set
-to decide which node runs it. Those holds are **session-scoped**: when SQL Server ends a node's session — a failover, a gateway
+Under `DaemonMode.HotCold`, each node takes a SQL Server `sp_getapplock` per shard set to decide which node runs
+it. On a single database that is one lock per shard. With a database per tenant it is one lock per database, and
+every shard for that database runs on the node that holds it. Application locks are scoped to a database, so the
+lock id is built from the event store's schema, and two stores in different schemas of one database don't compete
+for it. Those holds are **session-scoped**: when SQL Server ends a node's session — a failover, a gateway
 reconfiguration, a killed session — every lock goes with it. So the lock runs a monitor that periodically asks
 SQL Server which of its locks it still holds, and drops the ones it has lost so the daemon stops those shards
 instead of running them alongside the node that took them over.
@@ -260,9 +289,9 @@ These are stricter about the tenant than the `Advanced` convenience methods are:
 
 `AddPolecatHighWaterHealthCheck()`, from `Polecat.AspNetCore`, reports Unhealthy when the mark sits unchanged
 with later events piling up past it for longer than `staleThreshold`, which means no node is advancing it. With
-`autoRestart`, an Unhealthy result also restarts the high-water agent's poll loop. That goes through the local
-projection coordinator, so it needs `AddProjectionCoordinator`. Under `AddAsyncDaemon` the check still reports,
-and says it found no coordinator to restart.
+`autoRestart`, an Unhealthy result also restarts the high-water agent's poll loop, through the local projection
+coordinator. A host with no coordinator, which is a host with no daemon, still gets the report, and the check says
+it found nothing to restart.
 
 ```cs
 builder.Services.AddHealthChecks()
@@ -278,12 +307,13 @@ builder.Services.AddPolecat(opts =>
     {
         // ...
     })
-    .AddProjectionCoordinator<IInvoicingStore>(DaemonMode.HotCold);
+    .AddAsyncDaemon(DaemonMode.HotCold);
 
 builder.Services.AddPolecatStore<IInvoicingStore>(opts =>
 {
     // ...
-});
+})
+.AddAsyncDaemon(DaemonMode.HotCold);
 
 builder.Services.AddHealthChecks()
     .AddPolecatHighWaterHealthCheck<IInvoicingStore>(

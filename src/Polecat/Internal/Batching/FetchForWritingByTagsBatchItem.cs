@@ -31,6 +31,8 @@ internal class FetchForWritingByTagsBatchItem<T> : IBatchQueryItem where T : cla
 
     public Task<IEventBoundary<T>> Result => _tcs.Task;
 
+    public void Fail(Exception failure) => _tcs.FailWith(failure);
+
     // gh-515: two statements, capture first. The batch runner advances one result set between items, so
     // an item that emits two consumes the extra one itself and leaves the reader on its last set — see
     // ReadResultSetAsync. Ordering is load-bearing: see DcbTagVersionCapture.

@@ -721,6 +721,11 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
             db = Database;
         }
 
+        return await buildProjectionDaemonAsync(db, logger);
+    }
+
+    private async ValueTask<IProjectionDaemon> buildProjectionDaemonAsync(PolecatDatabase db, ILogger logger)
+    {
         await db.EnsureStorageExistsAsync(typeof(IEvent), CancellationToken.None);
 
         // #847: the detector shares the daemon's logger. It used to get a LoggerFactory of its own with no
@@ -732,9 +737,26 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
         return new PolecatProjectionDaemon(this, db, logger, detector);
     }
 
+    // #871 item 4: this used to ignore the id and build the default daemon, which a database-per-tenant
+    // store refuses, so Wolverine's agent family could run nothing on one. Mirrors Marten: the one database
+    // answers for a single-database store, and a database the tenancy doesn't have is refused.
     async ValueTask<IProjectionDaemon> IEventStore.BuildProjectionDaemonAsync(DatabaseId id)
     {
-        return await BuildProjectionDaemonAsync();
+        if (IsSingleDatabase)
+        {
+            return await buildProjectionDaemonAsync(SingleDatabase, NullLogger.Instance);
+        }
+
+        var databases = await Options.Tenancy!.BuildDatabasesAsync().ConfigureAwait(false);
+        var database = databases.FirstOrDefault(x =>
+        {
+            var descriptor = x.Describe();
+            return new DatabaseId(descriptor.ServerName, descriptor.DatabaseName) == id;
+        });
+
+        return database == null
+            ? throw new ArgumentOutOfRangeException(nameof(id), $"Requested database {id.Identity} cannot be found")
+            : await buildProjectionDaemonAsync(database, NullLogger.Instance);
     }
 
     private static string ResolveConnectionString(IEventDatabase database, StoreOptions options)
@@ -1099,6 +1121,13 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
             // cancellation. The transaction above has already rolled back, leaving state consistent.
             throw new OperationCanceledException("Per-tenant projection teardown was cancelled.", ex, token);
         }
+
+        // #871 item 1, as in the store-global teardown. A shard identity carries the tenant, so this
+        // leaves every other tenant's dead letters alone.
+        foreach (var identity in shardIdentities)
+        {
+            await deleteDeadLettersBeingReplayedAsync((PolecatDatabase)database, identity, 0, token);
+        }
     }
 
     // ISubscriptionRunner<ISubscription>
@@ -1264,5 +1293,17 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
             }
         }, (connStr, Events.ProgressionTableName, filter.Where, filter.Parameters, publishedTableNames),
             token);
+
+        // #871 item 1: a rebuild replays everything, so a dead letter is rewritten if its event still fails
+        // and is stale if it no longer does. Mirrors Marten's teardownProjectionStorage, which does this for
+        // a composite and for each of its members.
+        string[] names = source == null
+            ? [subscriptionName]
+            : WithCompositeMembers(source).Select(x => x.Name).Distinct().ToArray();
+
+        foreach (var name in names)
+        {
+            await deleteDeadLettersBeingReplayedAsync((PolecatDatabase)database, name, 0, token);
+        }
     }
 }

@@ -124,6 +124,25 @@ internal class BatchedQuery : IBatchedQuery
     {
         if (_items.Count == 0) return;
 
+        try
+        {
+            await ExecuteItemsAsync(token);
+        }
+        catch (Exception failure)
+        {
+            // #849: a caller holding an item's task is waiting on this method and nothing else, so an
+            // item left unfinished here waits forever. One that already read its result keeps it.
+            foreach (var item in _items)
+            {
+                item.Fail(failure);
+            }
+
+            throw;
+        }
+    }
+
+    private async Task ExecuteItemsAsync(CancellationToken token)
+    {
         // Ensure tables exist for all involved document types
         await _tableEnsurer.EnsureTablesAsync(_involvedProviders, _session.HasOpenTransaction, token);
 

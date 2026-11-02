@@ -108,6 +108,9 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
             UseNativeJsonType = ConnectionSource.SupportsNativeJson
         };
 
+        // #858: no two writes in a fact share a timestamp
+        options.Listeners.Add(ServerClockTickListener.Instance);
+
         // #813: start floors are opt-in in Polecat 5, and ProjectionFloorCompliance is what pins them.
         // Opted in for every compliance store rather than per suite, because the seam has no config
         // member to ask for it -- the suite just calls the IEventDatabase members.
@@ -532,11 +535,9 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
     ///     passed all 37 suites while it did.
     /// </summary>
     /// <remarks>
-    ///     <c>AddProjectionCoordinator</c> rather than <c>AddAsyncDaemon</c>, and the two are
-    ///     mutually exclusive: only the coordinator registers
-    ///     <see cref="IProjectionCoordinator" />, so a host built on the daemon path would fail the
-    ///     first fact on a GetRequiredService throw. Solo mode because the suite runs one node and
-    ///     HotCold would have it race itself for the shard locks.
+    ///     <c>AddProjectionCoordinator</c> rather than <c>AddAsyncDaemon</c>, which registers the same
+    ///     coordinator since #847. Solo mode because the suite runs one node and HotCold would have it
+    ///     race itself for the shard locks.
     /// </remarks>
     protected override async Task<IComplianceCoordinatorHost<IDocumentSession>> StartCoordinatorHostAsync(
         ComplianceStoreConfig config, bool includeAncillaryStore)

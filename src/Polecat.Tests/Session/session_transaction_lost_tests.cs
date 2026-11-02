@@ -511,7 +511,7 @@ public class session_transaction_lost_tests : OneOffConfigurationsContext
     }
 
     [Fact]
-    public async Task a_strategy_that_asks_the_predicate_stops_at_the_refused_replay()
+    public async Task a_strategy_that_asks_the_predicate_stops_at_the_failure()
     {
         ConfigureStore(opts => opts.ExtendPolly(builder => builder.AddRetry(new RetryStrategyOptions
         {
@@ -531,11 +531,11 @@ public class session_transaction_lost_tests : OneOffConfigurationsContext
         await using var survivor = outcome.Survivor;
         await using var victim = outcome.Victim;
 
-        // The number can't say the transaction is gone, so 1205 at ReadCommitted costs one attempt. The
-        // replay is refused rather than run outside its transaction, and the refusal stops the strategy.
-        _retries.ShouldBe(1);
-        var refused = outcome.Failure.ShouldBeOfType<SessionTransactionUnusableException>();
-        refused.InnerException.ShouldBeOfType<SqlException>().Number.ShouldBe(1205);
+        // #854: the failure says its transaction is gone, so 1205 at ReadCommitted costs no attempt and
+        // the caller sees the lock failure rather than the refusal of a replay nobody needed.
+        _retries.ShouldBe(0);
+        var locked = outcome.Failure.ShouldBeOfType<StreamLockedException>();
+        locked.InnerException.ShouldBeOfType<SqlException>().Number.ShouldBe(1205);
         PolecatRetryPredicates.IsUnsafeToReplay(outcome.Failure, IsolationLevel.ReadCommitted).ShouldBeTrue();
     }
 

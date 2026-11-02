@@ -45,6 +45,11 @@ internal interface IAlwaysConnectedLifetime : IConnectionLifetime
     bool HoldsTransactionForSession { get; }
 
     /// <summary>
+    ///     The level every transaction on this lifetime begins at (#844).
+    /// </summary>
+    System.Data.IsolationLevel IsolationLevel { get; }
+
+    /// <summary>
     ///     Begin a transaction at the session's isolation level, unless one is already open.
     /// </summary>
     ValueTask BeginTransactionAsync(CancellationToken token);
@@ -59,4 +64,16 @@ internal interface IAlwaysConnectedLifetime : IConnectionLifetime
     ///     Refuse all further work on this session, because the transaction it was relying on is gone.
     /// </summary>
     void MarkSessionUnusable(Exception cause);
+
+    /// <summary>
+    ///     Throw <see cref="Exceptions.SessionTransactionUnusableException" /> if this session may not
+    ///     begin a transaction, which is every way a session writes.
+    /// </summary>
+    void AssertWritesAreAllowed();
+
+    /// <summary>
+    ///     Refuse every transaction from now on, because a save rolled back the one the caller was
+    ///     relying on (#854). See <see cref="TransactionalConnection" />.
+    /// </summary>
+    void RefuseWrites(Exception cause);
 }

@@ -33,6 +33,7 @@ public partial class DocumentStore : IDocumentStore
     public DocumentStore(StoreOptions options)
     {
         Options = options ?? throw new ArgumentNullException(nameof(options));
+        options.BindSerializerToStorage();
 
         // jasperfx#1016 / wolverine#4986: SqlClient never reports DbException.IsTransient, so tell
         // JasperFx which SQL Server errors are transient for ShardFailure.IsTransient. Once per process.
@@ -75,9 +76,9 @@ public partial class DocumentStore : IDocumentStore
         // a mapping there is nothing to wrap the transformed payload in.
         options.EventGraph.RegisterUpcastTargetTypes();
 
-        // Back-reference so the database can open sessions for the dead-letter
-        // document store/queries (it has no store/session of its own otherwise).
-        Database.Store = this;
+        // Back-reference so a database can open sessions for the dead-letter document store/queries (it
+        // has no store/session of its own otherwise). #871: on the options, so a tenant database gets it.
+        options.Store = this;
 
         // Wire the database so per-tenant partitioning can SPLIT physical partitions at runtime (polecat#171).
         options.EventGraph.AttachTenantPartitionDatabase(Database);
