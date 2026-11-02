@@ -28,7 +28,8 @@ statement and leaves the transaction open. Either way, on the exclusive append p
 `StreamLockedException` and retry at the application layer, e.g. with a Wolverine
 `OnException<StreamLockedException>().RetryWithCooldown(...)` policy. If a strategy on this pipeline
 retries the deadlock first, you get `SessionTransactionUnusableException` instead, because the replay
-is refused, so handle that too or leave 1205 out of the strategy.
+is refused. `PolecatRetryPredicates.IsUnsafeToReplay` tells a strategy not to, so compose it in, handle
+that exception too, or leave 1205 out of the strategy.
 
 ## Before you add a retry
 
@@ -116,8 +117,11 @@ Polecat does **not** override a strategy you configured. A store that quietly re
 explicit policy would be a worse surprise than the one it prevents, so the predicate is yours to
 compose.
 
-The one thing it will not do is run a command outside a transaction the session believes it is inside.
-A strategy that retries a command whose transaction has gone, whether or not it asked the predicate,
+The predicate knows when a failure ended the transaction its command was in, so a strategy that asks
+stops at the failure itself, at any isolation level, and the caller sees what happened.
+
+The one thing Polecat will not do is run a command outside a transaction the session believes it is
+inside. A strategy that retries a command whose transaction has gone without asking the predicate
 has the replay refused with `SessionTransactionUnusableException`, which carries
 the original failure as its `InnerException`. Without that refusal the replay would autocommit: every
 later statement in the save would be durable, and the commit would then report that the save failed.
@@ -141,6 +145,30 @@ work from its inputs. Under Wolverine a message retry does exactly that.
 A lock timeout (1222) is not on this list. The statement failed, the transaction and every lock it holds
 are still there, and the session carries on.
 
+## When a failed save rolls the transaction back
+
+A save that fails on the client, with a `ConcurrencyException`, a cancelled token or an exception from a
+listener, rolls its transaction back itself. If the caller was relying on that transaction, what it was
+relying on has gone just as surely, so the session stops writing rather than carry on without it:
+
+| the transaction was... | what the session does |
+|---|---|
+| holding an exclusive lock, in a `ReadCommitted` session | **refuses to write**, and goes on reading |
+| any transaction of a session at another isolation level | **finished**: it refuses reads as well |
+| only the failed save's own, in a `ReadCommitted` session | keeps working: the next save begins a clean transaction with the work still pending |
+
+Refused means `SessionTransactionUnusableException`, carrying the original failure as its
+`InnerException`, from `SaveChangesAsync`, `FetchForExclusiveWriting` and `AppendExclusive`. Taking the lock
+again on the same session is refused too, because the work queued under the first lock is still pending and
+a second lock would cover it falsely. `EjectAllPendingChanges` does not lift the refusal either: whatever the
+caller stores next was decided under the same lock.
+
+Reads go on working in the first case because a `ReadCommitted` read runs outside any transaction and reports
+what is there, which is true whatever the session has lost. At any other level the next read would begin a new
+transaction, and with it a different view of the data from the one the caller has been reading.
+
+Recovery is the same as for a finished session: dispose it, open a new one and redo the work from its inputs.
+
 ## What the isolation level covers
 
 `SessionOptions.IsolationLevel` applies to every document session, however it was opened, and to every
@@ -153,13 +181,36 @@ A **query session** never opens a transaction, so the option does nothing there:
 connection and runs in autocommit at `ReadCommitted`. For several reads against one snapshot, use a
 document session at that level.
 
-::: warning Document writes do not raise 3960
-`Store` and `Update` are `MERGE ... WITH (HOLDLOCK)`, and SQL Server does not raise a snapshot update
-conflict for a statement carrying that hint: it reads the latest committed row and writes over it. So
-in a `Snapshot` session those two **overwrite a concurrent write**, silently, even though every
-statement really is running at `Snapshot`. Event appends, and SQL you queue yourself without that hint,
-do raise 3960. For documents, use [optimistic concurrency](/documents/storage), which compares the
-stored version and raises `ConcurrencyException` at any isolation level.
+### Document writes at `Snapshot`
+
+In a `Snapshot` session, `Store` and `Update` on a document with no concurrency check raise a snapshot
+update conflict (3960) over a concurrent write, as event appends and your own queued SQL do. So does
+`Store` over a row inserted or deleted since the session's snapshot. Two sessions truly racing to write
+the same new id can get a duplicate key (2627) instead, as a plain `INSERT` would. Either way nothing is
+overwritten, and the save fails.
+
+At every other level those writes are `MERGE ... WITH (HOLDLOCK)`, which is what makes concurrent first
+writes of one id safe. SQL Server raises no conflict for a statement carrying that hint, so a `Snapshot`
+session uses `UPDLOCK` for them instead.
+
+The rest of what a `Snapshot` session writes reads the current row, and so reports differently:
+
+| write | what it reports over a concurrent write |
+|---|---|
+| a document using [optimistic concurrency](/documents/storage) | `ConcurrencyException` from the version check, because that check has to see the current row |
+| a document using numeric revisions, with an explicit revision | `ConcurrencyException`, the same way |
+| `Insert` | `DocumentAlreadyExistsException` |
+
+::: warning These `Snapshot` writes still overwrite
+These do not raise 3960, and a concurrent write to the same row is silently replaced:
+
+- `Store` of a document using numeric revisions with revision 0, which asks for the next revision and so
+  has no check to fail. Set the revision explicitly to get one.
+- Documents written by an inline projection, though an append to the same stream raises 3960 first, so
+  this only reaches a document that other streams or writers also change.
+
+Flat table projections also keep `HOLDLOCK`, but lose nothing by it: each statement is computed by SQL
+from the current row, so `Increment` on a concurrently changed row gives the right total.
 :::
 
 ## Custom Polly configuration

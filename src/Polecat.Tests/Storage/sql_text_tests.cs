@@ -50,7 +50,7 @@ public class sql_text_tests
         var mapping = store.Options.Providers.GetProvider(typeof(ClipDoc)).Mapping;
 
         new FullTextTokenTable(mapping).Columns.Single(x => x.Name == "term").Type
-            .ShouldBe($"varchar({FullTextIndex.MaxTermLength})");
+            .ShouldBe($"nvarchar({FullTextIndex.MaxTermLength})");
     }
 
     [Fact]

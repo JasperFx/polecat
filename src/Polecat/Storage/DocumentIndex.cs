@@ -309,7 +309,11 @@ public class DocumentIndex
 
         while (current != null)
         {
-            segments.Insert(0, SerializedName(current.Member));
+            // #875: x.N.Value reads the member N, there is no key called value
+            if (!JsonPathHelper.IsValueOfNullable(current))
+            {
+                segments.Insert(0, SerializedName(current.Member));
+            }
 
             if (current.Expression is ParameterExpression)
                 break;
@@ -373,7 +377,11 @@ public class DocumentIndex
 
         while (current != null)
         {
-            chain.Insert(0, current.Member);
+            // #875: see MemberExpressionToJsonPath
+            if (!JsonPathHelper.IsValueOfNullable(current))
+            {
+                chain.Insert(0, current.Member);
+            }
 
             if (current.Expression is ParameterExpression)
                 break;

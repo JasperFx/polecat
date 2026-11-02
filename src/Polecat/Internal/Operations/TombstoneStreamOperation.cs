@@ -1,5 +1,7 @@
+using System.Data;
 using System.Data.Common;
 using Polecat.Events;
+using Polecat.Events.Dcb;
 using Weasel.Core;
 using Weasel.SqlServer;
 
@@ -21,8 +23,30 @@ internal class TombstoneStreamOperation : IStorageOperation, Weasel.Storage.NoDa
     public Type DocumentType => typeof(object);
     public OperationRole Role() => OperationRole.Deletion;
 
+    /// <summary>
+    ///     Is this the tombstone of that stream? #891: anything queued for a stream in the same save runs
+    ///     after this, so something that would write on the stream's behalf needs to ask.
+    /// </summary>
+    public bool Tombstones(object streamId, string tenantId) => _streamId.Equals(streamId) && _tenantId == tenantId;
+
     public void ConfigureCommand(ICommandBuilder builder)
     {
+        // #891: every statement below filters on these. They are bound here rather than through
+        // AddParameters, whose dictionary binds a string as nvarchar, which against a varchar stream key
+        // or tenant_id puts CONVERT_IMPLICIT on the column and scans it (#363). Measured at 230 logical
+        // reads against 2 on 50,000 rows.
+        builder.Append($"DECLARE @id {(_streamId is string ? "varchar(250)" : "uniqueidentifier")} = ");
+        builder.AppendParameter(_streamId, _streamId is string ? SqlDbType.VarChar : null);
+        builder.Append("; DECLARE @tenant_id varchar(250) = ");
+        builder.AppendParameter(_tenantId, SqlDbType.VarChar);
+        builder.Append(";\n");
+
+        // #890: a boundary that read this stream's tagged events has to hear about it, or it saves straight
+        // through the tombstone. Same reason as an archive, and first because it finds the tags through the
+        // events and their tag rows, both about to go. The rows stay: whether a tag value can be erased at
+        // all is the open question in #890, and deleting a row here would lose a real conflict.
+        StreamTagVersionBump.WriteSql(builder, _events);
+
         // #841: ahead of the events, because this finds the tag rows through them. Everywhere else the
         // foreign key does this, but archived partitioning has none and the rows would be orphaned.
         if (!_events.TagRowsCascadeWithEvents)
@@ -63,7 +87,6 @@ internal class TombstoneStreamOperation : IStorageOperation, Weasel.Storage.NoDa
             DELETE FROM {_events.StreamsTableName}
             WHERE id = @id AND tenant_id = @tenant_id;
             """);
-        builder.AddParameters(new Dictionary<string, object?> { ["id"] = _streamId, ["tenant_id"] = _tenantId });
     }
 
     public Task PostprocessAsync(DbDataReader reader, IList<Exception> exceptions, CancellationToken token) => Task.CompletedTask;

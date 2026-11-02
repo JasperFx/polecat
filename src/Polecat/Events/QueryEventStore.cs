@@ -25,18 +25,39 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
 {
     private readonly QuerySession _session;
     private readonly StoreOptions _options;
+    private readonly string? _tenantScope;
     protected readonly EventGraph _events;
 
     // #674: one compiled assignment per aggregate type — null for a type with no Id member. Replaces a
     // has-an-Id boolean cache that re-reflected the property on every call anyway.
     private static readonly ConcurrentDictionary<Type, Action<object, object>?> _identityAssignerCache = new();
 
-    public QueryEventStore(QuerySession session, EventGraph events, StoreOptions options)
+    /// <param name="tenantScope">
+    ///     The tenant to read as when it is not the session's, which is what a <c>ForTenant</c> view is.
+    ///     #905: every read here ran as the session's tenant, so a view answered with another tenant's
+    ///     events, and <c>FetchForWriting</c> folded them into the aggregate it handed back.
+    /// </param>
+    public QueryEventStore(QuerySession session, EventGraph events, StoreOptions options, string? tenantScope = null)
     {
         _session = session;
         _events = events;
         _options = options;
+        _tenantScope = tenantScope;
     }
+
+    private string TenantId => _tenantScope ?? _session.TenantId;
+
+    /// <summary>
+    ///     The session's aggregate identity map belongs to the session's tenant and is keyed by id alone,
+    ///     so a view of another tenant neither reads it nor adds to it.
+    /// </summary>
+    protected bool UsesAggregateIdentityMap => TenantId == _session.TenantId;
+
+    /// <summary>
+    ///     Where a document this store reads as part of an event read comes from, which has to be the same
+    ///     tenant as the events.
+    /// </summary>
+    protected virtual IQuerySession DocumentReads => _session;
 
     /// <remarks>
     ///     ⚠️ <b>Upcasting deliberately does not apply here</b> (#561). This overload is the one read
@@ -57,13 +78,13 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
     {
         _events.AddEventType(typeof(T));
         var eventTypeName = _events.EventMappingFor(typeof(T)).EventTypeName;
-        var provider = new EventLinqQueryProvider(_session, _events, eventTypeName, typeof(T), _options);
+        var provider = new EventLinqQueryProvider(_session, _events, eventTypeName, typeof(T), _options, _tenantScope);
         return new PolecatLinqQueryable<T>(provider);
     }
 
     public IPolecatQueryable<IEvent> QueryAllRawEvents()
     {
-        var provider = new EventLinqQueryProvider(_session, _events);
+        var provider = new EventLinqQueryProvider(_session, _events, _tenantScope);
         return new PolecatLinqQueryable<IEvent>(provider);
     }
 
@@ -73,7 +94,7 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
     /// </summary>
     internal IPolecatQueryable<IEvent> QueryAllRawEventsIncludingArchived()
     {
-        var provider = new EventLinqQueryProvider(_session, _events, includeArchived: true);
+        var provider = new EventLinqQueryProvider(_session, _events, _tenantScope, includeArchived: true);
         return new PolecatLinqQueryable<IEvent>(provider);
     }
 
@@ -99,7 +120,7 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
                 "refused, never silently ignored: unscoped results would read as tenant-scoped. See jasperfx#1094.");
         }
 
-        var provider = new EventLinqQueryProvider(_session, _events, tenantId);
+        var provider = new EventLinqQueryProvider(_session, _events, tenantId ?? _tenantScope);
         return new PolecatLinqQueryable<IEvent>(provider);
     }
 
@@ -127,7 +148,7 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
                 "never silently ignored — unscoped results would read as tenant-scoped. See jasperfx#740.");
         }
 
-        var provider = new StreamStateLinqQueryProvider(_session, _events, tenantId);
+        var provider = new StreamStateLinqQueryProvider(_session, _events, tenantId ?? _tenantScope);
         return new PolecatLinqQueryable<StreamState>(provider);
     }
 
@@ -161,7 +182,8 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
 
         _events.AddEventType(typeof(T));
         var eventTypeName = _events.EventMappingFor(typeof(T)).EventTypeName;
-        var provider = new EventLinqQueryProvider(_session, _events, eventTypeName, typeof(T), _options, tenantId);
+        var provider = new EventLinqQueryProvider(_session, _events, eventTypeName, typeof(T), _options,
+            tenantId ?? _tenantScope);
         return new PolecatLinqQueryable<T>(provider);
     }
 
@@ -472,7 +494,7 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
         }
 
         cmd.Parameters.AddIdParameter("@stream_id", streamId);
-        cmd.Parameters.AddVarChar("@tenant_id", _session.TenantId);
+        cmd.Parameters.AddVarChar("@tenant_id", TenantId);
 
         if (version > 0)
         {
@@ -499,7 +521,7 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
             _events,
             _session.Serializer,
             streamId,
-            defaultTenantId: _session.TenantId);
+            defaultTenantId: TenantId);
 
         // Per-batch hoists: compute the optional-metadata column ordinals
         // once, declare a single-slot type→mapping cache, pick the
@@ -557,7 +579,7 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
             WHERE id = @id AND tenant_id = @tenant_id AND is_archived = 0;
             """;
         cmd.Parameters.AddWithValue("@id", id); // event id — uniqueidentifier
-        cmd.Parameters.AddVarChar("@tenant_id", _session.TenantId);
+        cmd.Parameters.AddVarChar("@tenant_id", TenantId);
 
         await using var reader = await _session.ExecuteReaderAsync(cmd, token);
         if (!await reader.ReadAsync(token)) return null;
@@ -573,7 +595,7 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
             _events,
             _session.Serializer,
             streamId,
-            defaultTenantId: _session.TenantId);
+            defaultTenantId: TenantId);
 
         var slots = MetadataSlots.Compute(_events.EventOptions);
         var cache = new EventTypeCache();
@@ -608,7 +630,7 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
             WHERE id = @id AND tenant_id = @tenant_id;
             """;
         cmd.Parameters.AddIdParameter("@id", streamId);
-        cmd.Parameters.AddVarChar("@tenant_id", _session.TenantId);
+        cmd.Parameters.AddVarChar("@tenant_id", TenantId);
 
         await using var reader = await _session.ExecuteReaderAsync(cmd, token);
         if (await reader.ReadAsync(token))
@@ -697,7 +719,7 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
     public async ValueTask<T?> FetchLatest<T>(Guid id, CancellationToken cancellation = default)
         where T : class
     {
-        if (_session.TryGetAggregateFromIdentityMap<T, Guid>(id, out var cached))
+        if (UsesAggregateIdentityMap && _session.TryGetAggregateFromIdentityMap<T, Guid>(id, out var cached))
         {
             return cached;
         }
@@ -706,7 +728,7 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
         // re-aggregated off the stream. See CanReadInlineDocument.
         if (CanReadInlineDocument<T>(typeof(Guid)))
         {
-            return await _session.LoadAsync<T>(id, cancellation);
+            return await DocumentReads.LoadAsync<T>(id, cancellation);
         }
 
         return await AggregateStreamAsync<T>(id, token: cancellation);
@@ -715,7 +737,7 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
     public async ValueTask<T?> FetchLatest<T>(string key, CancellationToken cancellation = default)
         where T : class
     {
-        if (_session.TryGetAggregateFromIdentityMap<T, string>(key, out var cached))
+        if (UsesAggregateIdentityMap && _session.TryGetAggregateFromIdentityMap<T, string>(key, out var cached))
         {
             return cached;
         }
@@ -723,7 +745,7 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
         // #463: see CanReadInlineDocument.
         if (CanReadInlineDocument<T>(typeof(string)))
         {
-            return await _session.LoadAsync<T>(key, cancellation);
+            return await DocumentReads.LoadAsync<T>(key, cancellation);
         }
 
         return await AggregateStreamAsync<T>(key, token: cancellation);
@@ -769,9 +791,20 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
     ///     <c>InnerIdType</c> rather than <c>IdType</c> so a strongly-typed id still matches on the
     ///     value it wraps; the storage layer re-wraps it on the way through.
     ///     </para>
+    ///     <para>
+    ///     #869: a type with custom projection storage has no projected document to read here either,
+    ///     for the reason given on <c>ConfiguredDocumentProviders.MaterializeConfigured</c>: an EF Core
+    ///     projection's document lives in a <c>DbContext</c>, not in a <c>pc_doc_*</c> table. Loading
+    ///     it anyway found nothing, so every stream read as having no aggregate, after first creating
+    ///     the empty table to look in. Those fall back to live aggregation too, which is what
+    ///     <c>FetchForWriting</c> already does for them, and the events answer for the caller's tenant
+    ///     and database without anything here having to know how the entity is mapped. The check comes
+    ///     first because asking for the provider is itself a claim that Polecat owns the document.
+    ///     </para>
     /// </remarks>
     private bool CanReadInlineDocument<T>(Type keyType) where T : class
-        => _options.Projections.TryFindAggregate(typeof(T), out var projection)
+        => !_options.CustomProjectionStorageProviders.ContainsKey(typeof(T))
+           && _options.Projections.TryFindAggregate(typeof(T), out var projection)
            && projection.Lifecycle == ProjectionLifecycle.Inline
            && _session.Providers.GetProvider<T>().Mapping.InnerIdType == keyType;
 

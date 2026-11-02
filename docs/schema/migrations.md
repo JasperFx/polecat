@@ -14,7 +14,7 @@ opts.AutoCreateSchemaObjects = AutoCreate.CreateOrUpdate;
 
 - Creates document tables on first use
 - Adds new columns when document configuration changes (e.g., enabling soft deletes)
-- Creates event store tables on startup
+- Creates event store tables on startup, including the tables flat table projections write to
 - Creates the HiLo table on first use
 - **Never drops columns or tables**
 
@@ -43,6 +43,21 @@ On startup, Polecat's migration flow:
 2. Generate DDL for differences (new tables, new columns)
 3. Execute DDL within a transaction
 4. Run initial data seeding if configured
+
+## Concurrent Migrations
+
+Everything that changes a store's schema takes the same application lock first, so two replicas starting together, or a daemon and a session's first write, cannot collide on a fresh schema. That covers startup migrations, `ApplyAllConfiguredChangesToDatabaseAsync()`, `db-apply`, `resources setup`, the async daemon, a session's first use of the event store or of a document table, the HiLo table and `pc_tenants`. The lock is per schema within a database, so tenants' databases and stores in other schemas do not block each other.
+
+Whoever finds the lock taken waits up to `StoreOptions.StartupMigrationLockTimeout`, 30 seconds by default, and then finds the schema already there:
+
+```cs
+opts.StartupMigrationLockTimeout = TimeSpan.FromMinutes(5);
+```
+
+If the wait runs out, a session's first use fails and the next use tries again, and an apply fails or carries on according to `ResourceMigrationFailureMode`.
+
+A session with a transaction open never waits, because a migration waiting on that transaction's locks would then wait on the session forever, with nothing SQL Server can detect. If the lock is taken it skips the check, so a table that exists is used as normal and a table that does not fails the statement straight away. A HiLo sequence used outside a session behaves the same way, because it can't tell whether its caller has a transaction open.
+
 
 ## Weasel.SqlServer
 

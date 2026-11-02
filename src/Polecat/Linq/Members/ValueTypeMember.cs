@@ -14,8 +14,9 @@ internal class ValueTypeMember : IQueryableMember
     private readonly ValueTypeInfo _valueType;
 
     public ValueTypeMember(string rawLocator, string typedLocator, Type memberType, ValueTypeInfo valueType,
-        string? locatorSqlType = null, int? textCapacity = null)
+        string? locatorSqlType = null, int? textCapacity = null, string? bareTextLocator = null)
     {
+        BareTextLocator = bareTextLocator;
         LocatorSqlType = locatorSqlType;
         RawLocator = rawLocator;
         TypedLocator = typedLocator;
@@ -30,6 +31,7 @@ internal class ValueTypeMember : IQueryableMember
     public bool IsBoolean => false;
     public string? LocatorSqlType { get; }
     public int? TextCapacity { get; }
+    public string? BareTextLocator { get; }
 
     public object? ConvertValue(object? value)
         => value == null ? null : _valueType.ValueProperty.GetValue(value);

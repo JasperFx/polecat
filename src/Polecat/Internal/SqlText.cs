@@ -69,15 +69,40 @@ internal static class SqlText
     ///     </para>
     /// </remarks>
     internal static string UnlimitedJsonString(string dataColumn, string jsonPath, bool nativeJson) =>
+        UnlimitedJsonStringAt(dataColumn, $"'{jsonPath}'", nativeJson);
+
+    /// <summary>
+    ///     <see cref="UnlimitedJsonString" /> for a path that is already a literal, which an
+    ///     <c>N'...'</c> one has to be for anything outside the database's code page to survive.
+    /// </summary>
+    internal static string UnlimitedJsonStringAt(string dataColumn, string pathLiteral, bool nativeJson) =>
         nativeJson
-            ? $"JSON_VALUE({dataColumn}, '{jsonPath}' RETURNING nvarchar(max))"
-            : $"(SELECT pc_value FROM OPENJSON({dataColumn}) WITH (pc_value nvarchar(max) '{jsonPath}'))";
+            ? $"JSON_VALUE({dataColumn}, {pathLiteral} RETURNING nvarchar(max))"
+            : $"(SELECT pc_value FROM OPENJSON({dataColumn}) WITH (pc_value nvarchar(max) {pathLiteral}))";
 
     /// <summary>
     ///     Whether a locator is the <c>OPENJSON</c> form of <see cref="UnlimitedJsonString" />, which SQL
     ///     Server refuses as a <c>GROUP BY</c> key and inside an aggregate.
     /// </summary>
     internal static bool IsSubquery(string locator) => locator.StartsWith("(SELECT ", StringComparison.Ordinal);
+
+    /// <summary>
+    ///     Whatever is stored at a <c>JSON_VALUE</c> locator's path, as something <c>IS NULL</c> can ask
+    ///     about: a scalar through <c>JSON_VALUE</c>, an object or an array through <c>JSON_QUERY</c>.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         Each of the two is NULL for what the other one reads, and the declared type cannot choose
+    ///         between them, because a class with a converter of its own can be stored as either.
+    ///     </para>
+    ///     <para>
+    ///         ⚠️ <b>The cast is load-bearing on a native <c>json</c> column.</b> <c>JSON_QUERY</c> yields
+    ///         <c>json</c> there, which outranks <c>nvarchar</c>, so without it <c>COALESCE</c> converts the
+    ///         scalar it just read to <c>json</c>, and a plain string fails as malformed JSON.
+    ///     </para>
+    /// </remarks>
+    internal static string StoredValue(string jsonValueLocator) =>
+        $"COALESCE({jsonValueLocator}, CAST({jsonValueLocator.Replace("JSON_VALUE(", "JSON_QUERY(")} AS nvarchar(max)))";
 
     /// <summary>
     ///     An expression matched by the characters it holds rather than by what the database's collation

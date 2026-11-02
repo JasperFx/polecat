@@ -12,15 +12,7 @@ internal sealed class HasValueMember : IQueryableMember
     private readonly string _stored;
 
     /// <param name="nullable">The <see cref="Nullable{T}" /> member this is read off.</param>
-    /// <param name="isScalar">
-    ///     Whether the value is a JSON scalar. <c>JSON_VALUE</c> is NULL for an object, so a nullable
-    ///     struct that is stored as one has to be looked for with <c>JSON_QUERY</c> as well.
-    /// </param>
-    public HasValueMember(IQueryableMember nullable, bool isScalar)
-    {
-        var scalar = nullable.RawLocator;
-        _stored = isScalar ? scalar : $"COALESCE({scalar}, {scalar.Replace("JSON_VALUE(", "JSON_QUERY(")})";
-    }
+    public HasValueMember(IQueryableMember nullable) => _stored = nullable.NullLocator;
 
     public Type MemberType => typeof(bool);
     public string TypedLocator => $"CASE WHEN {_stored} IS NOT NULL THEN 'true' ELSE 'false' END";

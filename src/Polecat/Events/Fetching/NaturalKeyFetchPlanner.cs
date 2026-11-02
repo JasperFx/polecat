@@ -86,7 +86,7 @@ internal static class NaturalKeyFetchPlanner
         T? aggregate = null;
         if (version > 0)
         {
-            var queryEventStore = new QueryEventStore(session, events, session.Options);
+            var queryEventStore = new QueryEventStore(session, events, session.Options, tenantId);
             if (isGuidStream)
             {
                 var guidId = (Guid)streamId!;

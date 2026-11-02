@@ -1,3 +1,4 @@
+using System.Data;
 using System.Linq.Expressions;
 using Polecat.Internal;
 using Polecat.Linq.Members;
@@ -180,8 +181,11 @@ internal class FullTextFilter: ISqlFragment
             builder.Append(".tenant_id");
         }
 
+        // #363: varchar, like the column, which is only a residual here but costs a conversion per row
+        // otherwise. The term below is nvarchar, like its column: see FullTextTokenTable for why the
+        // term must never be bound as varchar.
         builder.Append(" AND f0.member = ");
-        builder.AppendParameter(_index.TokenKey);
+        builder.AppendParameter(_index.TokenKey, SqlDbType.VarChar);
 
         if (clause.Phrase)
         {

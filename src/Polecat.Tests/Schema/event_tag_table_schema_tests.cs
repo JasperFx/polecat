@@ -199,20 +199,24 @@ public class event_tag_table_schema_tests : IAsyncLifetime
     }
 
     /// <summary>
-    ///     Once rather than twice, and that has nothing to do with tags: a partitioned table's generated
-    ///     DDL starts with an unguarded <c>DROP PARTITION SCHEME</c>, which SQL Server refuses while the
-    ///     table is on it, so the script of any partitioned <c>pc_events</c> fails its second run. That
-    ///     is Weasel's to change. What the second run would prove, the second apply proves here.
+    ///     The partitioned shapes used to run this once. The creation DDL refreshed a partition scheme by
+    ///     dropping it, unguarded, which SQL Server refuses while a table is on it, so a second run failed
+    ///     on the table the script had just made. weasel#765 (Weasel 9.48.0) guards the drop and the
+    ///     creates, so these are held to the same claim as every other shape.
     /// </summary>
     [Theory]
     [InlineData(Shape.ArchivedPartitioning)]
     [InlineData(Shape.ConjoinedArchivedPartitioning)]
     [InlineData(Shape.TenantPartitioning)]
-    public async Task the_generated_script_builds_the_table_under_partitioning(Shape shape)
+    public async Task the_generated_script_builds_the_table_under_partitioning_and_runs_twice(Shape shape)
     {
         using var store = StoreFor(shape);
+        var script = store.Advanced.ToDatabaseScript();
 
-        await ExecuteAsync(store.Advanced.ToDatabaseScript());
+        await ExecuteAsync(script);
+        (await SeqIdIndexesAsync()).Single()[0].ShouldBe(IndexName);
+
+        await ExecuteAsync(script);
         (await SeqIdIndexesAsync()).Single()[0].ShouldBe(IndexName);
 
         await AssertNothingLeftToApplyAsync(store);

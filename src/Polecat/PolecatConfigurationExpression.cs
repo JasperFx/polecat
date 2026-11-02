@@ -50,19 +50,36 @@ public class PolecatConfigurationExpression
     }
 
     /// <summary>
-    ///     Enable the async projection daemon as a hosted service.
-    ///     This starts background processing of projections registered with Async lifecycle.
+    ///     Run the async projection daemon in this host, through the projection coordinator. Mirrors
+    ///     Marten's <c>AddAsyncDaemon</c>.
     /// </summary>
+    /// <remarks>
+    ///     <see cref="DaemonMode.Solo" /> runs every shard here and takes no lock.
+    ///     <see cref="DaemonMode.HotCold" /> runs a shard on one node at a time, with failover. In both, a
+    ///     paused shard is restarted and a tenant added to, disabled in or removed from a master table is
+    ///     picked up on the leadership cycle. <see cref="DaemonMode.Disabled" /> and
+    ///     <see cref="DaemonMode.ExternallyManaged" /> host nothing.
+    /// </remarks>
     public PolecatConfigurationExpression AddAsyncDaemon(DaemonMode mode)
     {
         Services.ConfigurePolecat(opts => opts.DaemonSettings.AsyncMode = mode);
         EnsureActivatorIsRegistered();
-        Services.AddSingleton<PolecatDaemonHostedService>(sp =>
+
+        if (mode is not (DaemonMode.Solo or DaemonMode.HotCold))
         {
-            var store = (DocumentStore)sp.GetRequiredService<IDocumentStore>();
-            return new PolecatDaemonHostedService(store, sp.GetRequiredService<ILoggerFactory>());
-        });
-        Services.AddSingleton<IHostedService>(sp => sp.GetRequiredService<PolecatDaemonHostedService>());
+            return this;
+        }
+
+        registerCoordinator(soloTakesNoLocks: true);
+
+        // #847: kept for Daemon and Daemons. The coordinator is the hosted service, so this isn't one.
+        if (Services.All(x => x.ServiceType != typeof(PolecatDaemonHostedService)))
+        {
+            Services.AddSingleton<PolecatDaemonHostedService>(sp => new PolecatDaemonHostedService(
+                (Polecat.Events.Daemon.Coordination.ProjectionCoordinator)sp
+                    .GetRequiredService<Polecat.Events.Daemon.Coordination.IProjectionCoordinator>()));
+        }
+
         return this;
     }
 
@@ -74,20 +91,32 @@ public class PolecatConfigurationExpression
     ///     coordination.
     /// </summary>
     /// <remarks>
-    ///     Mutually exclusive with <see cref="AddAsyncDaemon"/> — pick one. The
-    ///     coordinator subsumes the simple hosted-service path: it owns the
-    ///     daemon lifecycle, leader election, and per-shard agent start/stop.
+    ///     <see cref="AddAsyncDaemon"/> registers the same coordinator, so calling both still hosts one.
+    ///     The difference is <see cref="DaemonMode.Solo" />, where this takes the locks anyway and
+    ///     <see cref="AddAsyncDaemon"/> takes none. Whichever is called first decides that.
     /// </remarks>
     public PolecatConfigurationExpression AddProjectionCoordinator(DaemonMode mode)
     {
         Services.ConfigurePolecat(opts => opts.DaemonSettings.AsyncMode = mode);
         EnsureActivatorIsRegistered();
+        registerCoordinator(soloTakesNoLocks: false);
+        return this;
+    }
+
+    // marten#5056: a second IHostedService forwarding to the one coordinator would have the host stop it
+    // twice at shutdown, so a repeated registration, by either method, adds nothing.
+    private void registerCoordinator(bool soloTakesNoLocks)
+    {
+        if (Services.Any(x => x.ServiceType == typeof(Polecat.Events.Daemon.Coordination.IProjectionCoordinator)))
+        {
+            return;
+        }
 
         Services.AddSingleton<Polecat.Events.Daemon.Coordination.IProjectionCoordinator>(sp =>
         {
             var store = (DocumentStore)sp.GetRequiredService<IDocumentStore>();
             return new Polecat.Events.Daemon.Coordination.ProjectionCoordinator(
-                store, sp.GetRequiredService<ILoggerFactory>());
+                store, sp.GetRequiredService<ILoggerFactory>(), soloTakesNoLocks);
         });
         Services.AddSingleton<IHostedService>(sp =>
             sp.GetRequiredService<Polecat.Events.Daemon.Coordination.IProjectionCoordinator>());
@@ -96,7 +125,6 @@ public class PolecatConfigurationExpression
         // the registered IHostedServices for one.
         Services.AddSingleton<JasperFx.Events.Daemon.IProjectionCoordinator>(sp =>
             sp.GetRequiredService<Polecat.Events.Daemon.Coordination.IProjectionCoordinator>());
-        return this;
     }
 
     /// <summary>
@@ -107,19 +135,8 @@ public class PolecatConfigurationExpression
     public PolecatConfigurationExpression AddProjectionCoordinator<T>(DaemonMode mode)
         where T : class, IDocumentStore
     {
-        // #847: T's own options. The non-generic ConfigurePolecat is the DEFAULT store's chain, so this
-        // used to leave T Disabled, whose coordinator has no distributor and starts nothing.
-        Services.ConfigurePolecat<T>(opts => opts.DaemonSettings.AsyncMode = mode);
         EnsureActivatorIsRegistered();
-
-        Services.AddSingleton<Polecat.Events.Daemon.Coordination.IProjectionCoordinator<T>>(sp =>
-        {
-            var store = (DocumentStore)(IDocumentStore)sp.GetRequiredService<T>();
-            return new Polecat.Events.Daemon.Coordination.ProjectionCoordinator<T>(
-                store, sp.GetRequiredService<ILoggerFactory>());
-        });
-        Services.AddSingleton<IHostedService>(sp =>
-            sp.GetRequiredService<Polecat.Events.Daemon.Coordination.IProjectionCoordinator<T>>());
+        new PolecatStoreExpression<T>(Services).AddProjectionCoordinator(mode);
         return this;
     }
 

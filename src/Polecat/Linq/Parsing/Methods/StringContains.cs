@@ -18,10 +18,10 @@ internal class StringContains : IMethodCallParser
 
     public ISqlFragment Parse(IMemberResolver memberFactory, MethodCallExpression expression)
     {
-        var member = memberFactory.ResolveMember((MemberExpression)expression.Object!);
+        var locator = TextLocator.For(memberFactory, expression);
         var value = WhereClauseParser.ExtractValue(expression.Arguments[0]);
         var pattern = $"%{EscapeLikePattern(value?.ToString() ?? "")}%";
-        return new ComparisonFilter(member.RawLocator, "LIKE", pattern);
+        return new ComparisonFilter(locator, "LIKE", pattern);
     }
 
     internal static string EscapeLikePattern(string value)

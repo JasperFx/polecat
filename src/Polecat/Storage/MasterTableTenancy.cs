@@ -6,6 +6,8 @@ using JasperFx.MultiTenancy;
 using Microsoft.Data.SqlClient;
 using Polecat.Internal;
 using Polly;
+using Weasel.Core;
+using Weasel.SqlServer;
 
 namespace Polecat.Storage;
 
@@ -141,16 +143,34 @@ public class MasterTableTenancy : ITenancy, IDynamicTenantSource<string>
     }
 
     /// <summary>
-    ///     Read every enabled tenant from the master table, (re)building the in-memory database cache,
-    ///     and return the full set of tenant databases the tenancy currently knows about. Mirrors
-    ///     Marten's <c>BuildDatabases()</c>.
-    /// </summary>
-    /// <summary>
     ///     The control-plane database. Master table tenancy always has one, so an application never
     ///     needs to set StoreOptions.ConnectionString as well. polecat#514.
     /// </summary>
     public string? SeedConnectionString => _masterConnectionString;
 
+    /// <summary>
+    ///     Read every enabled tenant from the master table, bring the in-memory database cache into line
+    ///     with it, and return the tenant databases that leaves. Mirrors Marten's <c>BuildDatabases()</c>,
+    ///     except that it also evicts.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         #871 item 3, #849. This used to only add, so a tenant disabled or removed on another node
+    ///         stayed in this node's cache, and went on opening sessions, until the process restarted.
+    ///         Marten closed its equivalent (marten#5629) leaving it to CritterWatch. The eviction is cheap
+    ///         here because the projection coordinator already comes through this method on every
+    ///         leadership cycle, which also makes it the place that stops such a tenant's agents.
+    ///     </para>
+    ///     <para>
+    ///         What that leaves node-local is a node nothing reads the table on. A host with no daemon
+    ///         keeps a tenant it has cached until something calls this,
+    ///         <see cref="ITenantedSource{T}.RefreshAsync" /> or <see cref="DescribeDatabasesAsync" />.
+    ///     </para>
+    ///     <para>
+    ///         A tenant added on this node after the read below and before the eviction is evicted with
+    ///         the rest. That is harmless: the row is there, so the next lookup or read brings it back.
+    ///     </para>
+    /// </remarks>
     public async Task<IReadOnlyList<PolecatDatabase>> BuildDatabasesAsync(CancellationToken token = default)
     {
         await EnsureMasterTableAsync(token).ConfigureAwait(false);
@@ -183,6 +203,12 @@ public class MasterTableTenancy : ITenancy, IDynamicTenantSource<string>
                 (id, existing) => existing.Factory.ConnectionString == connectionString
                     ? existing
                     : CreateEntry(id, connectionString));
+        }
+
+        var enabled = rows.Select(x => x.TenantId).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var tenantId in _cache.Keys.Where(x => !enabled.Contains(x)))
+        {
+            _cache.TryRemove(tenantId, out _);
         }
 
         return _cache.Values.Select(x => x.Database).ToList();
@@ -284,7 +310,9 @@ public class MasterTableTenancy : ITenancy, IDynamicTenantSource<string>
 
     /// <summary>
     ///     Disable a tenant without deleting its record. Disabled tenants are evicted from the cache
-    ///     and rejected (as <see cref="UnknownTenantIdException" />) until re-enabled.
+    ///     and rejected (as <see cref="UnknownTenantIdException" />) until re-enabled. That is immediate
+    ///     on this node. Another node finds out the next time it reads the master table, which a projection
+    ///     coordinator does on every leadership cycle: see <see cref="BuildDatabasesAsync" />.
     /// </summary>
     public async Task DisableTenantAsync(string tenantId, CancellationToken token = default)
     {
@@ -355,7 +383,6 @@ public class MasterTableTenancy : ITenancy, IDynamicTenantSource<string>
     /// </summary>
     async Task ITenantedSource<string>.RefreshAsync()
     {
-        _cache.Clear();
         await BuildDatabasesAsync().ConfigureAwait(false);
     }
 
@@ -481,6 +508,12 @@ public class MasterTableTenancy : ITenancy, IDynamicTenantSource<string>
     ///     DDL operation (same documented exception as <c>DocumentTableEnsurer</c>) and is wrapped in
     ///     the resilience pipeline.
     /// </summary>
+    /// <remarks>
+    ///     #883: under the migration lock, because the semaphore below covers one tenancy in one process,
+    ///     and two replicas starting together both found the table missing and the loser failed on the
+    ///     CREATE. Nothing has to worry about a transaction here: this runs as a session is being opened,
+    ///     and a process has finished it before its first session exists.
+    /// </remarks>
     private async Task EnsureMasterTableAsync(CancellationToken token)
     {
         if (_masterTableEnsured) return;
@@ -501,40 +534,18 @@ public class MasterTableTenancy : ITenancy, IDynamicTenantSource<string>
 
             await _resilience.ExecuteAsync(static async (state, ct) =>
             {
-                var (connectionString, schema, table) = state;
+                var (connectionString, options, schema) = state;
                 await using var conn = new SqlConnection(connectionString);
                 await conn.OpenAsync(ct).ConfigureAwait(false);
 
-                await using var cmd = conn.CreateCommand();
-                // #665: QUOTENAME rather than '[' + @schema + ']'. @schema is bound, but its VALUE
-                // was then concatenated into the EXEC'd batch with no escaping, so a ']' in the name
-                // closed the bracket early inside that nested batch. The source is
-                // StoreOptions.DatabaseSchemaName / the MultiTenantedMasterTable(..., schemaName)
-                // argument — startup configuration, so exploiting it means already owning the
-                // bootstrap — but "a parameter is involved" is not the same as "escaped", and this
-                // was the one place in the repo where those two came apart.
-                //
-                // ⚠️ Via sp_executesql and a variable, NOT EXEC('...' + QUOTENAME(@schema)).
-                // EXEC()'s argument expression accepts only literals and variables — a function call
-                // in it is a syntax error ("Incorrect syntax near 'QUOTENAME'"), which is why the
-                // original had to concatenate the brackets by hand in the first place.
-                cmd.CommandText = $"""
-                    IF SCHEMA_ID(@schema) IS NULL
-                    BEGIN
-                        DECLARE @createSchema NVARCHAR(MAX) = N'CREATE SCHEMA ' + QUOTENAME(@schema);
-                        EXEC sp_executesql @createSchema;
-                    END
-                    IF OBJECT_ID(@qualified, 'U') IS NULL
-                        CREATE TABLE {table} (
-                            tenant_id NVARCHAR(200) NOT NULL CONSTRAINT pk_pc_tenants PRIMARY KEY,
-                            connection_string NVARCHAR(MAX) NOT NULL,
-                            is_disabled BIT NOT NULL CONSTRAINT df_pc_tenants_is_disabled DEFAULT 0
-                        );
-                    """;
-                cmd.Parameters.AddWithValue("@schema", schema);
-                cmd.Parameters.AddWithValue("@qualified", table);
-                await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
-            }, (_masterConnectionString, _schemaName, QualifiedTableName), token).ConfigureAwait(false);
+                await using var migrationLock = await SchemaMigrationLock.HoldForFirstUseAsync(
+                    options, conn, insideTransaction: false, ct, schema).ConfigureAwait(false);
+
+                var migration = await SchemaMigration.DetermineAsync(conn, ct, new TenantsTable(schema))
+                    .ConfigureAwait(false);
+                await new SqlServerMigrator().ApplyAllAsync(conn, migration, AutoCreate.CreateOrUpdate, ct: ct)
+                    .ConfigureAwait(false);
+            }, (_masterConnectionString, _options, _schemaName), token).ConfigureAwait(false);
 
             _masterTableEnsured = true;
         }

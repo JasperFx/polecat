@@ -4,6 +4,7 @@ using JasperFx.Events.EventModeling;
 using JasperFx.MultiTenancy;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Logging;
 using Polecat.Internal;
 using Polecat.Storage;
 
@@ -99,6 +100,7 @@ public static class PolecatServiceCollectionExtensions
         services.AddSingleton(sp =>
         {
             var options = optionSource(sp);
+            options.LogFactory = sp.GetService<ILoggerFactory>();
 
             var configures = sp.GetServices<IConfigurePolecat>();
             foreach (var configure in configures)

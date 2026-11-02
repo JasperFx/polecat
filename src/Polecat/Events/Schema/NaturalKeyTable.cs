@@ -35,6 +35,14 @@ internal class NaturalKeyTable : Table
 
         AddColumn("is_archived", "bit").NotNull().DefaultValue(0);
 
+        // #891: the primary key answers "which stream has this key". The opposite question is asked by
+        // every tombstone, by NaturalKeyRetireOperation on each key-carrying append, and by the foreign
+        // key's cascade, and each of those scanned the table. Marten's table has the same index.
+        Indexes.Add(new IndexDefinition($"ix_{Identifier.Name}_{streamCol}")
+        {
+            Columns = isConjoined ? [streamCol, JasperFx.StorageConstants.TenantIdColumn] : [streamCol]
+        });
+
         // Foreign key to streams table, accounting for conjoined tenancy. UseArchivedStreamPartitioning
         // changes nothing here: it partitions pc_events only, so pc_streams' key is still (id). This used
         // to reference (id, is_archived) under that flag, a column list with no unique index behind it,

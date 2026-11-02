@@ -4,6 +4,7 @@ using System.Linq.Expressions;
 using JasperFx.Core.Reflection;
 using JasperFx.Events;
 using Microsoft.Data.SqlClient;
+using Polecat.Events.Archiving;
 using Polecat.Internal;
 using Polecat.Linq;
 using Polecat.Linq.Members;
@@ -127,7 +128,9 @@ internal class EventLinqQueryProvider : IPolecatAsyncQueryProvider,
             // event query is refused rather than ignored, exactly as it is over a hard-delete
             // document type.
             SoftDeleteTarget.NeverSoftDeleted("The event store"),
-            _isAllEvents ? [new HasTagParser(_events), new HasTagValueParser(_events)] : null);
+            _isAllEvents
+                ? [new HasTagParser(_events), new HasTagValueParser(_events), new MaybeArchivedParser()]
+                : null);
         parser.Parse(expression);
 
         ApplySingleValueMode(parser);
@@ -148,8 +151,9 @@ internal class EventLinqQueryProvider : IPolecatAsyncQueryProvider,
             }
         }
 
-        // Add is_archived = 0 filter by default
-        if (!_includeArchived && !parser.IsMaybeDeleted)
+        // Add is_archived = 0 filter by default, unless this provider was built to keep archived events, or a
+        // predicate opts in by calling MaybeArchived() or by naming IEvent.IsArchived, which then answers for itself
+        if (!_includeArchived && !parser.RowPredicates.Any(x => x.SpecifiesEventArchivalStatus()))
         {
             parser.Statement.Wheres.Add(new LiteralSqlFragment("is_archived = 0"));
         }
@@ -203,6 +207,15 @@ internal class EventLinqQueryProvider : IPolecatAsyncQueryProvider,
             if (parser.SelectExpression != null && parser.IsScalarSelect)
             {
                 return await InvokeScalarListHandlerAsync<TResult>(reader, token);
+            }
+
+            // #875: nothing below projects, so a list of events met a cast to a list of something else.
+            if (parser.SelectExpression != null)
+            {
+                throw new Polecat.Linq.BadLinqExpressionException(
+                    $"Polecat cannot translate the Select '{parser.SelectExpression}' in an event query, which "
+                    + "can project a single scalar member. Materialize the events with ToListAsync() and "
+                    + "project them in memory.");
             }
 
             if (_isAllEvents && parser.SelectExpression == null)

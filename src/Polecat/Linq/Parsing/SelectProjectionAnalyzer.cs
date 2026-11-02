@@ -100,7 +100,8 @@ internal static class SelectProjectionAnalyzer
         // A bool's locator is the bare JSON_VALUE, which yields the text 'true'. Compared against a
         // string that is what a predicate wants; written into a JSON object it would be a quoted string
         // that no bool member can read back. As a bit it is written as the JSON literal.
-        var locator = member.IsBoolean ? $"CAST({member.TypedLocator} AS bit)" : member.TypedLocator;
+        var locator = member.JsonLocator
+                      ?? (member.IsBoolean ? $"CAST({member.TypedLocator} AS bit)" : member.TypedLocator);
 
         return new SimpleProjectionColumn(key, locator, member.MemberType, member.LocatorSqlType);
     }

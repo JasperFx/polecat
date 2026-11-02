@@ -75,6 +75,16 @@ public class PolecatProjectionOptions
     public TimeSpan? SkipStaleGapsDespiteLiveTransactionsAfter { get; set; }
 
     /// <summary>
+    ///     Every flat table projection in the store, including the members of a composite, which
+    ///     <see cref="ProjectionGraph{TProjection,TOperations,TQuerySession}.All" /> does not list.
+    /// </summary>
+    internal IEnumerable<FlatTableProjection> AllFlatTableProjections() => All
+        .SelectMany(x => x is CompositeProjection<IDocumentSession, IQuerySession> composite
+            ? composite.AllProjections()
+            : [x])
+        .OfType<FlatTableProjection>();
+
+    /// <summary>
     ///     Register <see cref="IChangeListener" />s that fire ONLY within the async daemon, at the commit
     ///     boundary of each projection batch. Use these for post-commit side effects — such as flushing a
     ///     cache after an aggregate snapshot has been durably updated — that must not run before the

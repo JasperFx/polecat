@@ -307,7 +307,7 @@ public class conjoined_append_lock_tests(ConjoinedAppendDatabases databases)
         }
 
         await Task.WhenAll(Task.Run(() => SaveAcrossAllOfThem(streams), Ct),
-            Task.Run(() => SaveAcrossAllOfThem(streams.Reverse()), Ct));
+            Task.Run(() => SaveAcrossAllOfThem(Enumerable.Reverse(streams)), Ct));
 
         await using var query = store.QuerySession(new SessionOptions { TenantId = Red });
         foreach (var stream in streams)

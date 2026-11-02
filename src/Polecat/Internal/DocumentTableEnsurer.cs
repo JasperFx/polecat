@@ -36,6 +36,7 @@ internal class DocumentTableEnsurer
 
     private readonly ConcurrentDictionary<Type, bool> _ensured = new();
     private readonly ConcurrentDictionary<Type, bool> _fksEnsured = new();
+    private readonly ConcurrentDictionary<Type, DocumentProvider> _foundInsideTransaction = new();
     private readonly SemaphoreSlim _semaphore = new(1, 1);
     private readonly ConnectionFactory _connectionFactory;
     private readonly StoreOptions _options;
@@ -53,6 +54,18 @@ internal class DocumentTableEnsurer
     }
 
     private bool _hiloTableEnsured;
+
+    /// <summary>
+    ///     Forget everything this ensurer has checked, because the tables it checked have been dropped.
+    ///     Otherwise the next session trusts the memo and fails on a table nothing will create.
+    /// </summary>
+    internal void ForgetEnsuredTables()
+    {
+        _ensured.Clear();
+        _fksEnsured.Clear();
+        _hiloTableEnsured = false;
+        _eventStoreEnsured = false;
+    }
 
     private int _schemaEnsureExecutions;
 
@@ -199,7 +212,18 @@ internal class DocumentTableEnsurer
             var ftObjects = Storage.FullText.FullTextSchemaObjects.For(provider.Mapping);
             if (ftObjects.Length > 0)
             {
-                var ftMigration = await SchemaMigration.DetermineAsync(conn, token, ftObjects);
+                // #877: created here and never updated here. Changing an existing token table's column
+                // is a size-of-data operation that can outlast the command timeout inside whichever
+                // request got here first, and it would fail the same way on every request after it. A
+                // table left as it was keeps working as it did; see FullTextTokenTable.
+                var tokenTables = ftObjects.Where(x => x is Storage.FullText.FullTextTokenTable).ToArray();
+                var tokenTableMigration = await SchemaMigration.DetermineAsync(conn, token, tokenTables);
+                if (tokenTableMigration.Difference == SchemaPatchDifference.Create)
+                {
+                    await migrator.ApplyAllAsync(conn, tokenTableMigration, AutoCreate.CreateOrUpdate, ct: token);
+                }
+
+                var ftMigration = await SchemaMigration.DetermineAsync(conn, token, ftObjects.Except(tokenTables).ToArray());
                 await migrator.ApplyAllAsync(conn, ftMigration, AutoCreate.CreateOrUpdate, ct: token);
 
                 // The backfill is a DATA migration and deliberately not a schema object: a trigger only
@@ -208,13 +232,7 @@ internal class DocumentTableEnsurer
                 // answers empty. Idempotent, so running it on every ensure is correct rather than merely
                 // harmless. It follows the migration because it writes to the table that migration
                 // creates.
-                foreach (var statement in Storage.FullText.FullTextIndex.BackfillStatements(
-                             provider.Mapping, provider.Mapping.FullTextIndexes))
-                {
-                    await using var ftCmd = conn.CreateCommand();
-                    ftCmd.CommandText = statement;
-                    await ftCmd.ExecuteNonQueryAsync(token);
-                }
+                await Storage.FullText.FullTextBackfill.RunAsync(conn, provider.Mapping, _options.CommandTimeout);
             }
 
             // #685: JSON indexes are no longer rendered here. They are declared on DocumentTable
@@ -223,6 +241,7 @@ internal class DocumentTableEnsurer
             // AssertDatabaseMatchesConfigurationAsync, and can be refused under AutoCreate.None.
 
             _ensured.TryAdd(docType, true);
+            _foundInsideTransaction.TryRemove(docType, out _);
         }
         finally
         {
@@ -399,6 +418,62 @@ internal class DocumentTableEnsurer
         }
     }
 
+    /// <summary>
+    ///     Ensure the tables a save's inline projections turned out to write to, from inside that save's
+    ///     transaction.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         #870: an event projection that calls <c>Store</c> on a type it never declared is only found
+    ///         out once it has run. <see cref="EnsureTableAsync" /> needs a connection of its own for that,
+    ///         which is a second one for a session already holding a transaction, so with the pool at its
+    ///         limit every save waited on a connection only another save could give back, until they timed
+    ///         out: #846's stall again, once per type on every process start, and on a pool of one it could
+    ///         not succeed at all.
+    ///     </para>
+    ///     <para>
+    ///         Almost every time, the table is there, and the transaction's own connection can say so. Such
+    ///         a table is left for <see cref="EnsureTablesFoundInsideTransactionAsync" /> rather than
+    ///         remembered as ensured, because a table being there says nothing about its columns: the next
+    ///         save does the whole ensure, ahead of its transaction, and memoizes it there. Only a table that
+    ///         really is missing still has to go round by a second connection. DDL cannot run on this one,
+    ///         because Weasel's migration does not take a transaction, and a type the projection declares
+    ///         with <c>RegisterPublishedType</c> never reaches this at all.
+    ///     </para>
+    /// </remarks>
+    /// <param name="providers">The types the save's projections wrote.</param>
+    /// <param name="tableExists">Asks the session's own connection whether a table exists.</param>
+    /// <param name="token"></param>
+    public async Task EnsureProjectedTablesAsync(IEnumerable<DocumentProvider> providers,
+        Func<string, CancellationToken, Task<bool>> tableExists, CancellationToken token)
+    {
+        foreach (var provider in providers)
+        {
+            var docType = provider.Mapping.DocumentType;
+
+            if (_ensured.ContainsKey(docType) || _foundInsideTransaction.ContainsKey(docType)) continue;
+
+            if (_options.AutoCreateSchemaObjects != AutoCreate.None
+                && await tableExists(provider.Mapping.QualifiedTableName, token))
+            {
+                _foundInsideTransaction.TryAdd(docType, provider);
+                continue;
+            }
+
+            await EnsureTableAsync(provider, insideTransaction: true, token);
+        }
+    }
+
+    /// <summary>
+    ///     Finish what <see cref="EnsureProjectedTablesAsync" /> left, for a caller with no transaction open.
+    /// </summary>
+    public Task EnsureTablesFoundInsideTransactionAsync(CancellationToken token)
+    {
+        return _foundInsideTransaction.IsEmpty
+            ? Task.CompletedTask
+            : EnsureTablesAsync(_foundInsideTransaction.Values.ToArray(), insideTransaction: false, token);
+    }
+
     private volatile bool _eventStoreEnsured;
     private readonly SemaphoreSlim _eventStoreSemaphore = new(1, 1);
 
@@ -443,14 +518,6 @@ internal class DocumentTableEnsurer
 
             var migrator = new SqlServerMigrator();
 
-            // Mirror PolecatDatabase.BuildFeatureSchemas: the event store feature owns the natural-key
-            // tables for aggregate projections that declare one.
-            var naturalKeys = _options.Projections.All
-                .OfType<JasperFx.Events.Aggregation.IAggregateProjection>()
-                .Where(p => p.NaturalKeyDefinition != null)
-                .Select(p => p.NaturalKeyDefinition!)
-                .ToList();
-
             // #335: under per-tenant partitioning, hydrate the shared partition manager's tenant map
             // first so pc_events/pc_streams CREATEd against an existing registry bake the full
             // boundary set (cached; a no-op after the first call).
@@ -459,7 +526,7 @@ internal class DocumentTableEnsurer
                 await _options.EventGraph.TenantPartitionManager.InitializeAsync(conn, token);
             }
 
-            var eventSchema = new Events.Schema.EventStoreFeatureSchema(_options.EventGraph, naturalKeys);
+            var eventSchema = new Events.Schema.EventStoreFeatureSchema(_options);
             var migration = await SchemaMigration.DetermineAsync(conn, token, eventSchema.Objects);
             await migrator.ApplyAllAsync(conn, migration, AutoCreate.CreateOrUpdate, ct: token);
 

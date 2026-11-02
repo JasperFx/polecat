@@ -24,6 +24,8 @@ internal class QueryListBatchItem<T> : IBatchQueryItem where T : class
 
     public Task<IReadOnlyList<T>> Result => _tcs.Task;
 
+    public void Fail(Exception failure) => _tcs.FailWith(failure);
+
     public void WriteSql(ICommandBuilder builder)
     {
         _statement.Apply(builder);
@@ -56,6 +58,8 @@ internal class QueryCountBatchItem : IBatchQueryItem
     }
 
     public Task<int> Result => _tcs.Task;
+
+    public void Fail(Exception failure) => _tcs.FailWith(failure);
 
     public void WriteSql(ICommandBuilder builder)
     {
@@ -90,6 +94,8 @@ internal class QueryAnyBatchItem : IBatchQueryItem
     }
 
     public Task<bool> Result => _tcs.Task;
+
+    public void Fail(Exception failure) => _tcs.FailWith(failure);
 
     public void WriteSql(ICommandBuilder builder)
     {
@@ -128,6 +134,8 @@ internal class QueryFirstOrDefaultBatchItem<T> : IBatchQueryItem where T : class
     }
 
     public Task<T?> Result => _tcs.Task;
+
+    public void Fail(Exception failure) => _tcs.FailWith(failure);
 
     public void WriteSql(ICommandBuilder builder)
     {

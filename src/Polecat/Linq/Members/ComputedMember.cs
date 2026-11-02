@@ -7,8 +7,9 @@ namespace Polecat.Linq.Members;
 internal sealed class ComputedMember : IQueryableMember
 {
     public ComputedMember(string locator, Type memberType, string sqlType, bool isSubquery = false,
-        ComputedMember? withoutSubquery = null)
+        ComputedMember? withoutSubquery = null, string? jsonLocator = null)
     {
+        JsonLocator = jsonLocator;
         TypedLocator = locator;
         MemberType = memberType;
         LocatorSqlType = sqlType;
@@ -21,6 +22,7 @@ internal sealed class ComputedMember : IQueryableMember
     public string RawLocator => TypedLocator;
     public bool IsBoolean => false;
     public string? LocatorSqlType { get; }
+    public string? JsonLocator { get; }
 
     /// <summary>
     ///     Whether the locator is a subquery, which SQL Server refuses in a GROUP BY key and inside an
@@ -32,6 +34,10 @@ internal sealed class ComputedMember : IQueryableMember
     ///     What to use where a subquery isn't allowed, when there is such a form.
     /// </summary>
     public ComputedMember? WithoutSubquery { get; }
+
+    /// <summary>This member, written into JSON as <paramref name="locator" />.</summary>
+    public ComputedMember WrittenAs(string locator)
+        => new(TypedLocator, MemberType, LocatorSqlType!, IsSubquery, WithoutSubquery, locator);
 
     /// <summary>
     ///     <c>DayOfWeek</c> is the one computed value with an enum on the CLR side, compared as its number.

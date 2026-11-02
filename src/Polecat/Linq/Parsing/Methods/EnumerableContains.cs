@@ -231,6 +231,11 @@ internal class OpenjsonContainsFilter : ISqlFragment
     public void Apply(ICommandBuilder builder)
     {
         builder.AppendParameter(_value);
-        builder.Append($" IN (SELECT [value] FROM OPENJSON(data, '{_jsonPath}'))");
+
+        // #877: IN pads like =, so "a" was found in ["a  "]. See InFilter for why a character on the end
+        // of each side is enough. There is no index to keep here, so it needs no plain IN in front of it.
+        builder.Append(_value is string
+            ? $" + N'.' IN (SELECT [value] + N'.' FROM OPENJSON(data, '{_jsonPath}'))"
+            : $" IN (SELECT [value] FROM OPENJSON(data, '{_jsonPath}'))");
     }
 }

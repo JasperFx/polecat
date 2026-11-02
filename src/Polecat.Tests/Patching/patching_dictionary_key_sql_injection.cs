@@ -36,8 +36,8 @@ public class patching_dictionary_key_sql_injection : IntegrationContext
 
         // If the key were interpolated raw, these single quotes would terminate the JSON path
         // literal and the appended tokens would run as their own statement, dropping the document
-        // table. Escaped, the whole string is a single (malformed) JSON path that SQL Server's
-        // JSON_MODIFY rejects at runtime as data — it never leaves the '$....' literal.
+        // table. Escaped, the whole string is one quoted JSON key, stored as data — it never leaves
+        // the '$....' literal.
         var maliciousKey = "k')); DROP TABLE pc_doc_target; SELECT ('";
 
         Exception? thrown = null;
@@ -48,9 +48,8 @@ public class patching_dictionary_key_sql_injection : IntegrationContext
         }
         catch (Exception ex)
         {
-            // SQL Server rejects the escaped-but-malformed JSON path ("JSON path is not properly
-            // formatted"). That the server evaluates it as a path argument — rather than parsing the
-            // quotes as SQL — is itself the proof the value stayed inside the literal.
+            // #861 made a key like this legal, so this no longer throws. It's kept so that a future
+            // refusal fails on the assertions below rather than on the throw itself.
             thrown = ex;
         }
 

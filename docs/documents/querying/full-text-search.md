@@ -262,6 +262,20 @@ What separates terms is every character .NET's `char.IsWhiteSpace` accepts, plus
 The stored position counts terms rather than characters, so a phrase search finds `quick brown` in
 `quick, brown` and across a line break.
 
+## Text outside Western European languages
+
+The term column is `nvarchar`, so a term in any script is stored and found as written. The tokenizer only
+knows about whitespace and punctuation though, which matters for languages that do not put spaces between
+words: a run of Chinese or Japanese is one term, so `東京` does not find `東京都に住む`, though `東京都に住む`
+does. Comparison follows the database's collation. The default `SQL_Latin1_General_CP1_CI_AS` gives some
+rarer characters no weight at all, so CJK Extension A characters compare equal to each other under it, and
+it does not tell hiragana from katakana. A collation such as `Latin1_General_100_CI_AS` separates the first.
+
+A token table created by 5.47 or earlier has a `varchar` term column, which kept only what the
+database's code page could hold: `東京` was stored as `??` and could not be found. Polecat leaves such a
+table working as it was rather than changing it during a request, because that is a long operation on a
+large table. See the [migration guide](/migration-guide#upgrading-past-5-47-0-the-full-text-term-column).
+
 ## Rebuilding the index
 
 Stored tokens are only ever as good as the tokenizer that wrote them. When the tokenizer changes, as it
@@ -286,18 +300,22 @@ of them took about three minutes. For much longer documents, lower it with
 Polecat does not do this for you at startup, and that is on purpose. A document with some tokens looks
 finished to the backfill however stale they are, because telling otherwise means re-tokenizing it to
 compare. A document with none, like a member over 4000 characters written by an older version, would be
-visible to it, but the backfill is one statement running inside whichever request touches the type first:
-over 8,000 such documents it hit the command timeout and rolled back, so every later request would have
-done the same. Work on that scale should be something you schedule rather than something a deployment does
-to you, and the rebuild is batched for that reason.
+visible to it, but the backfill runs inside whichever request touches the type first. Work on that scale
+should be something you schedule rather than something a deployment does to you.
 
 Declaring a new index, or changing an index's tokenizer, is different: there is nothing to preserve, so the
-backfill covers every document, however long.
+backfill covers every document, however long, in the first request to touch the type. It works in batches
+of 100 documents, each with `CommandTimeout` to finish, so a large store makes that request slow and does not
+make it fail, and it does not stop if the request is cancelled. If the process dies partway, ordinary
+documents are picked up by the next first use, and a rebuild is what covers any over 4000 characters that
+were left.
 
 ::: warning Apply the schema change first
 The tokenizer is in the trigger. Under `AutoCreate.None` nothing replaces an older trigger, and rebuilding
-through it would recreate the tokens you are getting rid of, so the rebuild refuses with an
-`InvalidOperationException` until `db-patch` or `ApplyAllConfiguredChangesToDatabaseAsync()` has been run.
+through it would recreate the tokens you are getting rid of. The same goes for a token table that still has
+a `varchar` term column, under any setting, because nothing widens that one at first use. So the rebuild
+refuses with an `InvalidOperationException` until `db-patch` or `ApplyAllConfiguredChangesToDatabaseAsync()`
+has been run.
 :::
 
 ## An empty search matches nothing

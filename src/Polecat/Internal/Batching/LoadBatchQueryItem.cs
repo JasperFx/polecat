@@ -29,6 +29,8 @@ internal class LoadBatchQueryItem<T> : IBatchQueryItem where T : class
 
     public Task<T?> Result => _tcs.Task;
 
+    public void Fail(Exception failure) => _tcs.FailWith(failure);
+
     public void WriteSql(ICommandBuilder builder) => _storage.WriteLoadByIdSql(builder, _id, _tenantId);
 
     public async Task ReadResultSetAsync(DbDataReader reader, CancellationToken token)

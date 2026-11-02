@@ -23,13 +23,13 @@ internal class PatchExpression<T> : IPatchExpression<T>
     private const string DecimalArithmeticType = "decimal(37,18)";
 
     private readonly List<Action<ICommandBuilder>> _actions = new();
-    private readonly ISerializer _serializer;
+    private readonly StoreOptions _options;
     private readonly JsonNamingPolicy? _namingPolicy;
     private readonly bool _nativeJson;
 
     public PatchExpression(object id, string tenantId, DocumentSessionBase session)
     {
-        _serializer = session.Options.Serializer;
+        _options = session.Options;
         _namingPolicy = GetNamingPolicy(session);
         _nativeJson = session.Options.UseNativeJsonType;
 
@@ -50,7 +50,7 @@ internal class PatchExpression<T> : IPatchExpression<T>
 
     public PatchExpression(Expression<Func<T, bool>> filter, DocumentSessionBase session)
     {
-        _serializer = session.Options.Serializer;
+        _options = session.Options;
         _namingPolicy = GetNamingPolicy(session);
         _nativeJson = session.Options.UseNativeJsonType;
 
@@ -85,11 +85,21 @@ internal class PatchExpression<T> : IPatchExpression<T>
         return JsonNamingPolicy.CamelCase;
     }
 
-    private string ToPath(Expression expression) => JsonPathHelper.ToPath(expression, _namingPolicy);
+    private string ToPath(Expression expression) => JsonPathHelper.ToPath(expression, _namingPolicy, _options.Serializer);
+
+    /// <summary>
+    ///     What goes in the document. Everything a patch writes or looks for has to be this, so that it
+    ///     is the same text a stored document has (#879).
+    /// </summary>
+    private string ToJson<TValue>(TValue value) => _options.ToStorageJson(value!);
+
+    /// <summary>A dictionary key as a path segment.</summary>
+    private string Key(string key)
+        => JsonPathHelper.Segment(JsonPathHelper.KeyText(key, _options.Serializer), _options.Serializer);
 
     public IPatchExpression<T> Set<TValue>(string name, TValue value)
     {
-        var path = FormatName(name);
+        var path = NamePath(name);
         AddSetAction(path, value);
         return this;
     }
@@ -97,7 +107,7 @@ internal class PatchExpression<T> : IPatchExpression<T>
     public IPatchExpression<T> Set<TParent, TValue>(string name, Expression<Func<T, TParent>> expression, TValue value)
     {
         var parentPath = ToPath(expression);
-        var path = parentPath + "." + FormatName(name);
+        var path = parentPath + "." + NamePath(name);
         AddSetAction(path, value);
         return this;
     }
@@ -117,7 +127,22 @@ internal class PatchExpression<T> : IPatchExpression<T>
 
         var sourcePath = ToPath(expression);
         var destPaths = destinations.Select(d => ToPath(d)).ToArray();
-        _actions.Add(PatchOperation.DuplicateProperty(sourcePath, destPaths, _nativeJson));
+
+        // A nested destination might share an absent parent with another one, and only an action of
+        // its own will see what the one before it created.
+        var nested = destPaths.Where(d => JsonPathHelper.SplitPath(d).Length > 1).ToArray();
+        var flat = destPaths.Except(nested).ToArray();
+
+        if (flat.Length > 0)
+        {
+            _actions.Add(PatchOperation.DuplicateProperty(sourcePath, flat, _nativeJson));
+        }
+
+        foreach (var destination in nested)
+        {
+            _actions.Add(PatchOperation.DuplicateProperty(sourcePath, [destination], _nativeJson));
+        }
+
         return this;
     }
 
@@ -135,19 +160,19 @@ internal class PatchExpression<T> : IPatchExpression<T>
 
     public IPatchExpression<T> Increment(Expression<Func<T, double>> expression, double increment = 1)
     {
-        _actions.Add(PatchOperation.IncrementFloat(ToPath(expression), increment, "float"));
+        _actions.Add(PatchOperation.IncrementFloat(ToPath(expression), increment, "float", _nativeJson));
         return this;
     }
 
     public IPatchExpression<T> Increment(Expression<Func<T, float>> expression, float increment = 1)
     {
-        _actions.Add(PatchOperation.IncrementFloat(ToPath(expression), increment, "real"));
+        _actions.Add(PatchOperation.IncrementFloat(ToPath(expression), increment, "real", _nativeJson));
         return this;
     }
 
     public IPatchExpression<T> Increment(Expression<Func<T, decimal>> expression, decimal increment = 1)
     {
-        _actions.Add(PatchOperation.IncrementFloat(ToPath(expression), increment, DecimalArithmeticType));
+        _actions.Add(PatchOperation.IncrementDecimal(ToPath(expression), increment, DecimalArithmeticType));
         return this;
     }
 
@@ -155,14 +180,10 @@ internal class PatchExpression<T> : IPatchExpression<T>
         TElement element)
     {
         var path = ToPath(expression);
-        if (PatchOperation.IsScalarType(typeof(TElement)))
-        {
-            _actions.Add(PatchOperation.AppendScalar(path, element!));
-        }
-        else
-        {
-            _actions.Add(PatchOperation.AppendComplex(path, _serializer.ToJson(element!)));
-        }
+        var json = ToJson(element);
+        _actions.Add(IsObjectOrArray(json)
+            ? PatchOperation.AppendComplex(path, json)
+            : PatchOperation.AppendScalar(path, Scalar(element, json).Value));
 
         return this;
     }
@@ -170,7 +191,7 @@ internal class PatchExpression<T> : IPatchExpression<T>
     public IPatchExpression<T> Append<TElement>(Expression<Func<T, IDictionary<string, TElement>>> expression,
         string key, TElement element)
     {
-        _actions.Add(BuildDictKeySet(ToPath(expression), key, element));
+        _actions.Add(BuildDictKeySet(ToPath(expression), Key(key), element));
         return this;
     }
 
@@ -178,14 +199,10 @@ internal class PatchExpression<T> : IPatchExpression<T>
         TElement element)
     {
         var path = ToPath(expression);
-        if (PatchOperation.IsScalarType(typeof(TElement)))
-        {
-            _actions.Add(PatchOperation.AppendIfNotExistsScalar(path, element!, ElementText(element)));
-        }
-        else
-        {
-            _actions.Add(PatchOperation.AppendIfNotExistsComplex(path, _serializer.ToJson(element!)));
-        }
+        var json = ToJson(element);
+        _actions.Add(IsObjectOrArray(json)
+            ? PatchOperation.AppendIfNotExistsComplex(path, json, _nativeJson)
+            : PatchOperation.AppendIfNotExistsScalar(path, Scalar(element, json)));
 
         return this;
     }
@@ -194,7 +211,8 @@ internal class PatchExpression<T> : IPatchExpression<T>
         Expression<Func<T, IDictionary<string, TElement>>> expression, string key, TElement element)
     {
         var dictPath = ToPath(expression);
-        _actions.Add(PatchOperation.SetDictKeyIfNotExists(dictPath, key, BuildDictKeySet(dictPath, key, element),
+        var segment = Key(key);
+        _actions.Add(PatchOperation.SetDictKeyIfNotExists(dictPath, segment, BuildDictKeySet(dictPath, segment, element),
             _nativeJson));
         return this;
     }
@@ -202,20 +220,12 @@ internal class PatchExpression<T> : IPatchExpression<T>
     public IPatchExpression<T> Insert<TElement>(Expression<Func<T, IEnumerable<TElement>>> expression,
         TElement element, int? index = null)
     {
-        var path = ToPath(expression);
-        var isComplex = !PatchOperation.IsScalarType(typeof(TElement));
-        var jsonElement = isComplex ? _serializer.ToJson(element!) : null;
-
-        if (index.HasValue)
+        if (!index.HasValue)
         {
-            _actions.Add(PatchOperation.InsertAtIndex(path, index.Value, element!, isComplex, jsonElement,
-                _serializer));
-        }
-        else
-        {
-            _actions.Add(PatchOperation.InsertAtEnd(path, element!, isComplex, jsonElement));
+            return Append(expression, element);
         }
 
+        _actions.Add(PatchOperation.InsertAtIndex(ToPath(expression), index.Value, ToJson(element)));
         return this;
     }
 
@@ -223,15 +233,10 @@ internal class PatchExpression<T> : IPatchExpression<T>
         TElement element, int? index = null)
     {
         var path = ToPath(expression);
-        if (PatchOperation.IsScalarType(typeof(TElement)))
-        {
-            _actions.Add(PatchOperation.InsertIfNotExistsScalar(path, element!, ElementText(element), index, _serializer));
-        }
-        else
-        {
-            _actions.Add(PatchOperation.InsertIfNotExistsComplex(path, _serializer.ToJson(element!), index,
-                _serializer));
-        }
+        var json = ToJson(element);
+        _actions.Add(IsObjectOrArray(json)
+            ? PatchOperation.InsertIfNotExistsComplex(path, json, index, _nativeJson)
+            : PatchOperation.InsertIfNotExistsScalar(path, Scalar(element, json), index));
 
         return this;
     }
@@ -240,20 +245,20 @@ internal class PatchExpression<T> : IPatchExpression<T>
         TElement element, RemoveAction action = RemoveAction.RemoveFirst)
     {
         var path = ToPath(expression);
-        var isComplex = !PatchOperation.IsScalarType(typeof(TElement));
+        var json = ToJson(element);
 
-        if (isComplex)
+        if (IsObjectOrArray(json))
         {
-            var json = _serializer.ToJson(element!);
             _actions.Add(action == RemoveAction.RemoveAll
-                ? PatchOperation.RemoveComplexAll(path, json)
-                : PatchOperation.RemoveComplexFirst(path, json));
+                ? PatchOperation.RemoveComplexAll(path, json, _nativeJson)
+                : PatchOperation.RemoveComplexFirst(path, json, _nativeJson));
         }
         else
         {
+            var scalar = Scalar(element, json);
             _actions.Add(action == RemoveAction.RemoveAll
-                ? PatchOperation.RemoveScalarAll(path, ElementText(element))
-                : PatchOperation.RemoveScalarFirst(path, ElementText(element)));
+                ? PatchOperation.RemoveScalarAll(path, scalar)
+                : PatchOperation.RemoveScalarFirst(path, scalar));
         }
 
         return this;
@@ -262,8 +267,7 @@ internal class PatchExpression<T> : IPatchExpression<T>
     public IPatchExpression<T> Remove<TElement>(Expression<Func<T, IDictionary<string, TElement>>> expression,
         string key)
     {
-        var dictPath = ToPath(expression);
-        _actions.Add(PatchOperation.RemoveDictKey(dictPath, key));
+        _actions.Add(PatchOperation.RemoveDictKey(ToPath(expression), Key(key)));
         return this;
     }
 
@@ -273,8 +277,8 @@ internal class PatchExpression<T> : IPatchExpression<T>
         // Polecat formerly exposed a generic Rename<TElement>. ToPath already unwraps
         // the boxing Convert in Func<T, object>.
         var newPath = ToPath(expression);
-        var parts = newPath.Split('.');
-        parts[^1] = FormatName(oldName);
+        var parts = JsonPathHelper.SplitPath(newPath);
+        parts[^1] = NamePath(oldName);
         var oldPath = string.Join(".", parts);
 
         _actions.Add(PatchOperation.RenameProperty(oldPath, newPath, _nativeJson));
@@ -304,14 +308,14 @@ internal class PatchExpression<T> : IPatchExpression<T>
 
     public IPatchExpression<T> Delete(string name)
     {
-        _actions.Add(PatchOperation.DeleteProperty(FormatName(name)));
+        _actions.Add(PatchOperation.DeleteProperty(NamePath(name)));
         return this;
     }
 
     public IPatchExpression<T> Delete<TParent>(string name, Expression<Func<T, TParent>> expression)
     {
         var parentPath = ToPath(expression);
-        _actions.Add(PatchOperation.DeleteProperty(parentPath + "." + FormatName(name)));
+        _actions.Add(PatchOperation.DeleteProperty(parentPath + "." + NamePath(name)));
         return this;
     }
 
@@ -321,20 +325,40 @@ internal class PatchExpression<T> : IPatchExpression<T>
         return this;
     }
 
-    private string FormatName(string name) => _namingPolicy?.ConvertName(name) ?? name;
+    /// <summary>
+    ///     A member name from the API as a path. A dot in it has always meant a level down, so each
+    ///     piece is a key of its own. Unlike a dictionary key, it takes the property naming policy.
+    /// </summary>
+    private string NamePath(string name)
+        => string.Join(".", (_namingPolicy?.ConvertName(name) ?? name).Split('.')
+            .Select(segment => JsonPathHelper.Segment(segment, _options.Serializer)));
 
     /// <summary>
-    ///     The text OPENJSON's <c>value</c> column holds for this element, which is what finding it in an
-    ///     array has to compare against. The CLR value bound as a parameter doesn't get there: a bool
-    ///     casts to '1' where the column holds 'true', so it is never found, and a double or a date casts
-    ///     to a different format from the one the serializer stored.
+    ///     Everything a patch needs to know about a value that isn't an object or an array, all of it
+    ///     from the JSON it serializes to.
     /// </summary>
-    private string ElementText<TElement>(TElement element)
+    /// <remarks>
+    ///     ⚠️ <b>The CLR value is only bound where that is known to be right.</b> <c>JSON_MODIFY</c>
+    ///     refuses a <see cref="Guid" /> or a <see cref="DateTimeOffset" /> as an argument, stores the
+    ///     integer behind a string enum, and turns a <see cref="double" /> into something else. Only
+    ///     what the serializer made of a value decides what is stored (#880), and only those it can be
+    ///     trusted with are left as themselves, because a number written as text costs a rewrite of the
+    ///     whole document. A bool goes in as a bit, which <c>JSON_MODIFY</c> renders as true or false.
+    /// </remarks>
+    private static ScalarElement Scalar<TValue>(TValue value, string json)
     {
-        using var doc = JsonDocument.Parse(_serializer.ToJson(element!));
-        return doc.RootElement.ValueKind == JsonValueKind.String
-            ? doc.RootElement.GetString()!
-            : doc.RootElement.GetRawText();
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+
+        return root.ValueKind switch
+        {
+            JsonValueKind.String => new ScalarElement(root.GetString(), json, root.GetString()!, PatchOperation.JsonKindString),
+            JsonValueKind.True or JsonValueKind.False =>
+                new ScalarElement(root.GetBoolean(), json, root.GetRawText(), PatchOperation.JsonKindBoolean),
+            JsonValueKind.Null => new ScalarElement(null, json, json, PatchOperation.JsonKindNull),
+            _ => new ScalarElement(value is byte or short or int or long or decimal ? value : new NumberText(json), json,
+                root.GetRawText(), PatchOperation.JsonKindNumber)
+        };
     }
 
     private void AddSetAction<TValue>(string path, TValue value)
@@ -345,16 +369,16 @@ internal class PatchExpression<T> : IPatchExpression<T>
             return;
         }
 
-        var json = _serializer.ToJson(value);
-        _actions.Add(IsObjectOrArray(json) ? PatchOperation.SetComplex(path, json) : BuildScalarSet(path, value));
+        var json = ToJson(value);
+        _actions.Add(IsObjectOrArray(json) ? PatchOperation.SetComplex(path, json) : BuildScalarSet(path, value, json));
     }
 
     private Action<ICommandBuilder> BuildDictKeySet<TElement>(string dictPath, string key, TElement element)
     {
-        var json = _serializer.ToJson(element!);
+        var json = ToJson(element);
         return IsObjectOrArray(json)
             ? PatchOperation.SetDictKey(dictPath, key, json)
-            : BuildScalarSet($"{dictPath}.{key}", element);
+            : BuildScalarSet($"{dictPath}.{key}", element, json);
     }
 
     /// <summary>
@@ -362,8 +386,8 @@ internal class PatchExpression<T> : IPatchExpression<T>
     ///     which refuses anything else as malformed JSON, and it does so before looking at any row even
     ///     where the expression sits in a <c>CASE</c> branch that would not run. This has to come from
     ///     the serialized value: a dictionary of strings has scalar values, and a <see cref="TimeSpan" />
-    ///     or a <see cref="Uri" /> is not a scalar to <see cref="PatchOperation.IsScalarType" /> but is
-    ///     stored as a JSON string.
+    ///     or a <see cref="Uri" /> is stored as a JSON string, and what an <see cref="object" /> holds is
+    ///     only known here.
     /// </summary>
     private static bool IsObjectOrArray(string json)
     {
@@ -373,35 +397,13 @@ internal class PatchExpression<T> : IPatchExpression<T>
 
     /// <summary>
     ///     Builds a scalar JSON_MODIFY assignment whose value matches exactly how the
-    ///     property is persisted in the document body. The value is serialized through the
-    ///     configured serializer first, so enum storage (AsString vs AsInteger) and
-    ///     System.Text.Json's date/time formatting are honored rather than binding the raw
-    ///     CLR value — which would emit the wrong representation (e.g. the integer behind a
-    ///     string enum) or a SQL type JSON_MODIFY rejects (e.g. datetimeoffset).
+    ///     property is persisted in the document body. See <see cref="Scalar{TValue}" />.
     /// </summary>
-    private Action<ICommandBuilder> BuildScalarSet<TValue>(string path, TValue value)
+    private static Action<ICommandBuilder> BuildScalarSet<TValue>(string path, TValue value, string json)
     {
-        var json = _serializer.ToJson(value!);
-        using var doc = JsonDocument.Parse(json);
-        switch (doc.RootElement.ValueKind)
-        {
-            case JsonValueKind.String:
-                // JSON_MODIFY escapes and stores an nvarchar argument as a JSON string —
-                // the right rendering for enum-as-string, DateTime/DateTimeOffset,
-                // DateOnly/TimeOnly, Guid, and string values.
-                return PatchOperation.SetScalar(path, doc.RootElement.GetString());
-
-            case JsonValueKind.True:
-            case JsonValueKind.False:
-                // A bit argument is rendered as JSON true/false by JSON_MODIFY.
-                return PatchOperation.SetScalar(path, doc.RootElement.GetBoolean());
-
-            case JsonValueKind.Null:
-                return PatchOperation.DeleteProperty(path);
-
-            default:
-                // Numeric: pass the original CLR value so JSON_MODIFY stores a JSON number.
-                return PatchOperation.SetScalar(path, value);
-        }
+        var scalar = Scalar(value, json);
+        return scalar.Kind == PatchOperation.JsonKindNull
+            ? PatchOperation.DeleteProperty(path)
+            : PatchOperation.SetScalar(path, scalar.Value);
     }
 }

@@ -67,7 +67,7 @@ public class patching_long_and_non_string_values: OneOffConfigurationsContext
         public DateTimeOffset? When { get; set; }
         public DateTimeOffset? OtherWhen { get; set; }
 
-        // Not scalars to PatchOperation.IsScalarType, and each one is stored as a JSON string.
+        // Each one is stored as a JSON string, which nothing about its CLR type says.
         public TimeSpan? Span { get; set; }
         public TimeSpan? OtherSpan { get; set; }
         public Uri? Link { get; set; }

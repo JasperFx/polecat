@@ -183,6 +183,8 @@ If a mapped event produces a `null` or default key value, Polecat silently skips
 
 The natural key lookup table is maintained automatically as part of normal event appending. If you need to rebuild the lookup table (for example, after a data migration), you can do so through Polecat's schema management tools as part of a projection rebuild.
 
+A rebuild works from the events that are left. [Compacting a stream](/events/archiving#compacting-a-stream) deletes the events that carried its key, so for a compacted stream the key is read from the aggregate in the compaction marker instead, which needs the natural key member to survive serialization of that aggregate.
+
 ## Testing Considerations
 
 When writing integration tests:

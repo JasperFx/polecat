@@ -8,6 +8,49 @@ the `Polecat.Mcp` package, which is built on the official ModelContextProtocol S
 with `MapPolecatMcpServer()` from `Polecat.Mcp`; both default to `/polecat/mcp`, and `RequireAuthorization(...)`
 chains the same way. Do not map both on one host: they share a route.
 
+## Upgrading past 5.47.0: the full-text term column
+
+[polecat#877](https://github.com/JasperFx/polecat/issues/877) widened the full-text token table's `term`
+column from `varchar(255)` to `nvarchar(255)`. As `varchar` it lost every character outside the database's
+code page, so under the default collation nothing written in Chinese, Japanese, Korean, Cyrillic, Greek,
+Arabic or Hebrew could be found, and every search scanned the token table, because the term is bound as
+`nvarchar`. A new token table has the new column. **An existing one needs a step from you, and until then
+it keeps working exactly as it did.**
+
+1. Run `ApplyAllConfiguredChangesToDatabaseAsync()`, or the script from `db-patch`. This drops the token
+   index, alters the column and builds the index again, now with `member` in its key.
+2. Run `RebuildFullTextIndexAsync<T>()` for each type with a full-text index, to recover what the old column
+   lost. A rebuild refuses until step 1 has been done.
+
+::: warning Step 1 is a size-of-data operation
+Nothing does it at first use, because it would run inside whichever request touched the type first. 8
+million tokens, which is what 8,000 documents of 5,000 characters amount to, took 72 seconds to alter and
+36 to index on the development container, far past the 30 second command timeout a migration runs under.
+A store of that size should apply the `db-patch` script through a tool with no timeout, in a maintenance
+window, rather than through `ApplyAllConfiguredChangesToDatabaseAsync()` or
+`ApplyAllDatabaseChangesOnStartup`, which would stop the application from starting. The table is locked
+while the column changes, so searches and writes to that document type wait for it, and it takes about 13%
+to 25% more space afterwards.
+:::
+
+## Upgrading past 5.47.0: event predicates naming `IsArchived`
+
+Archived events are still filtered out by default, and now you can [opt in](/events/archiving#reading-archived-events).
+`MaybeArchived()` in `Polecat.Events.Archiving` is new, and a predicate naming `IEvent.IsArchived` now replaces
+the implicit `is_archived = 0` instead of sitting beside it. A query that never names `IsArchived` is
+unchanged, and so is `!x.IsArchived` alone. These do change, and all of them start reading rows they never
+read before:
+
+| Predicate over `IEvent` | Before | Now |
+| --- | --- | --- |
+| `x.IsArchived`, `x.IsArchived == true` | matched nothing | archived events |
+| `x.IsArchived \|\| y` | live events matching `y` | archived events, and any event matching `y` |
+| `!x.IsArchived \|\| y` | live events | live events, and archived events matching `y` |
+| `ApplyEventDataMasking`'s `IncludeEvents(x => x.IsArchived)` | masked nothing | masks archived events |
+
+Predicates over an event body are unaffected, including `QueryEventData<T>` and `QueryRawEventDataOnly<T>`
+over a body with an `IsArchived` of its own. So is `QueryStreamStates()`, which has no implicit filter.
+
 ## Upgrading past 5.47.0: string predicates and full-text tokens
 
 [polecat#835](https://github.com/JasperFx/polecat/issues/835) and
@@ -50,6 +93,29 @@ These were wrong and are now what .NET says, so anything that had come to depend
 | `x.Text != "a"`, `!(x.Text == "a")` | over 4000 characters | no match | matches |
 | `x.Text.Contains("a")` and friends | over 4000 characters | no match | matches |
 | `x.Code.Trim() == "ABC"` | `"\tABC\n"` | no match | matches |
+
+Later in the same line, for [polecat#875](https://github.com/JasperFx/polecat/issues/875) and
+[polecat#877](https://github.com/JasperFx/polecat/issues/877):
+
+| Query | Before | Now |
+| --- | --- | --- |
+| `x.Text == "abc"`, `x.Text.Equals("abc")`, `x.Text.ToLower() == "abc"`, `IsOneOf("abc")`, `list.Contains(x.Text)`, `x.Tags.Contains("abc")` against `"abc  "` | matched | no match |
+| `x.Text == ""` against spaces only | matched | no match |
+| `x.Text != "abc"` against `"abc  "` | no match | matches |
+| An indexed `x.Code == prefix` on `nvarchar(max)` storage, against a stored value longer than the index and starting with `prefix` | matched | no match |
+| `x.Address == null`, for any object or array member, including a nullable struct stored as an object | matched every row | matches a null |
+| `x.Address != null`, likewise | matched nothing | matches a value |
+| `Select(x => x.Address)`, for any object or array member | a null for every row | the value |
+| `Select(x => x.Address).Where(a => a.City == "x")` and any other operator reading a member of a `Select` | matched nothing, or did nothing | what it says |
+| `Select(x => new { A = x.Age }).Select(y => y.A)` | a default for every row | the value |
+| `Select(x => new Dto { A = x.A }).Where(y => y.B == 0)`, or a member of `new Dto(x.A)` | matched nothing | refused |
+| `QueryAllRawEvents().OrderBy(e => ((Body)e.Data).Id)`, `Max(e => ((Body)e.Data).Version)` | read the event's own column | refused |
+| `x.Text.Trim().ToLower() == "abc"` and any other chain of string methods | `InvalidCastException` | translated |
+| `x.Name.Substring(1).ToLower() == "a"` | `InvalidCastException` | refused |
+| `x.Text == x.Other`, comparing two members | `InvalidOperationException` | refused |
+| `x.Address == someAddress` | `ArgumentException` from SqlClient | refused |
+| `x.Name == input.ToLower()` | refused | translated |
+| `Select(x => new { x.Created.DayOfWeek })` as JSON under `EnumStorage.AsString` | a number | a name, as a stored enum is |
 
 ## Key Changes in 5.30.0
 
