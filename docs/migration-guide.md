@@ -8,6 +8,24 @@ the `Polecat.Mcp` package, which is built on the official ModelContextProtocol S
 with `MapPolecatMcpServer()` from `Polecat.Mcp`; both default to `/polecat/mcp`, and `RequireAuthorization(...)`
 chains the same way. Do not map both on one host: they share a route.
 
+## Upgrading past 5.47.0: event predicates naming `IsArchived`
+
+Archived events are still filtered out by default, and now you can [opt in](/events/archiving#reading-archived-events).
+`MaybeArchived()` in `Polecat.Events.Archiving` is new, and a predicate naming `IEvent.IsArchived` now replaces
+the implicit `is_archived = 0` instead of sitting beside it. A query that never names `IsArchived` is
+unchanged, and so is `!x.IsArchived` alone. These do change, and all of them start reading rows they never
+read before:
+
+| Predicate over `IEvent` | Before | Now |
+| --- | --- | --- |
+| `x.IsArchived`, `x.IsArchived == true` | matched nothing | archived events |
+| `x.IsArchived \|\| y` | live events matching `y` | archived events, and any event matching `y` |
+| `!x.IsArchived \|\| y` | live events | live events, and archived events matching `y` |
+| `ApplyEventDataMasking`'s `IncludeEvents(x => x.IsArchived)` | masked nothing | masks archived events |
+
+Predicates over an event body are unaffected, including `QueryEventData<T>` and `QueryRawEventDataOnly<T>`
+over a body with an `IsArchived` of its own. So is `QueryStreamStates()`, which has no implicit filter.
+
 ## Upgrading past 5.47.0: string predicates and full-text tokens
 
 [polecat#835](https://github.com/JasperFx/polecat/issues/835) and

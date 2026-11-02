@@ -26,6 +26,12 @@ public interface IQueryEventStore : JasperFx.Events.IQueryEventStore
     ///     Query directly against the raw event data across all event types.
     ///     Returns IEvent wrappers with full metadata.
     /// </summary>
+    /// <remarks>
+    ///     Archived events are left out unless a predicate opts in, with
+    ///     <see cref="Polecat.Events.Archiving.ArchivedEventExtensions.MaybeArchived" /> for live and
+    ///     archived events together, or by naming <see cref="IEvent.IsArchived" />, which replaces the
+    ///     implicit filter.
+    /// </remarks>
     IPolecatQueryable<IEvent> QueryAllRawEvents();
 
     /// <summary>
