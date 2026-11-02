@@ -57,6 +57,12 @@ Switch to local project references from ~/code/jasperfx and ~/code/weasel if unr
 | Timestamps | `timestamptz` + `now()` | `datetimeoffset` + `SYSDATETIMEOFFSET()` |
 | Quick append | PostgreSQL function | Direct INSERT with UPDATE...OUTPUT for version |
 
+**Never `JSON_MODIFY` a native `json` column directly on a write path.** On SQL Server 2025 RTM-CU5, a
+`JSON_MODIFY` that adds a key can make the next one through an object write to the wrong member, which
+has overwritten a document's `id`, and `DBCC CHECKTABLE` sees nothing (#907). Which documents show it
+depends on their keys, so a passing test on a small document proves nothing. Go through
+`CAST(data AS nvarchar(max))`, as `PatchOperation.Document` does.
+
 ## Event Store Schema (pc_ prefix)
 
 **pc_streams**: id, type, version, timestamp, created, snapshot, snapshot_version, tenant_id, is_archived
@@ -469,6 +475,13 @@ docker compose up -d                          # the gate never starts a containe
   - The token table has **no primary key**, deliberately: no tuple of its columns is unique, and
     adding one would be a migration against every table the old renderer created. Matching the old
     renderer's shape exactly is what makes the first delta after upgrading come out `None`.
+
+  **#882/#883 brought the flat table and `pc_tenants` into the model, and the trap there is the first
+  delta.** A table that was only ever created has never been compared to anything, and Weasel's
+  `TableDelta` drops whatever a table does not declare, so a plain `Table` would have removed a
+  reporting index or a column from an old mapping on the first start after upgrading. Both derive from
+  `AdditiveTable`, the rule `DocumentTable` already lived by (#267). Bring an object in by checking what
+  its delta says about a table the old path made, with something added by hand.
 
   Two things in `DocumentTableEnsurer` are deliberately *not* in scope, because they are
   pre-migration fixups of legacy tables rather than declarations of a desired schema, and Weasel's

@@ -34,6 +34,18 @@ public class projection_coordinator_disabled_mode_tests
         coordinator.Distributor.ShouldBeNull();
     }
 
+    /// <summary>
+    ///     jasperfx#490: Wolverine's managed distribution runs the agents, and the store hosts nothing.
+    /// </summary>
+    [Fact]
+    public void coordinator_constructs_with_null_distributor_when_externally_managed()
+    {
+        using var store = DisabledStore();
+        store.Options.DaemonSettings.AsyncMode = DaemonMode.ExternallyManaged;
+
+        new ProjectionCoordinator(store).Distributor.ShouldBeNull();
+    }
+
     [Fact]
     public async Task start_then_stop_no_op_in_disabled_mode()
     {

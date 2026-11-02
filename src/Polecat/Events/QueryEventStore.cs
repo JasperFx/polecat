@@ -769,9 +769,20 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
     ///     <c>InnerIdType</c> rather than <c>IdType</c> so a strongly-typed id still matches on the
     ///     value it wraps; the storage layer re-wraps it on the way through.
     ///     </para>
+    ///     <para>
+    ///     #869: a type with custom projection storage has no projected document to read here either,
+    ///     for the reason given on <c>ConfiguredDocumentProviders.MaterializeConfigured</c>: an EF Core
+    ///     projection's document lives in a <c>DbContext</c>, not in a <c>pc_doc_*</c> table. Loading
+    ///     it anyway found nothing, so every stream read as having no aggregate, after first creating
+    ///     the empty table to look in. Those fall back to live aggregation too, which is what
+    ///     <c>FetchForWriting</c> already does for them, and the events answer for the caller's tenant
+    ///     and database without anything here having to know how the entity is mapped. The check comes
+    ///     first because asking for the provider is itself a claim that Polecat owns the document.
+    ///     </para>
     /// </remarks>
     private bool CanReadInlineDocument<T>(Type keyType) where T : class
-        => _options.Projections.TryFindAggregate(typeof(T), out var projection)
+        => !_options.CustomProjectionStorageProviders.ContainsKey(typeof(T))
+           && _options.Projections.TryFindAggregate(typeof(T), out var projection)
            && projection.Lifecycle == ProjectionLifecycle.Inline
            && _session.Providers.GetProvider<T>().Mapping.InnerIdType == keyType;
 

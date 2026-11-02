@@ -1,24 +1,41 @@
 using JasperFx.Events;
+using JasperFx.Events.Aggregation;
 using Weasel.Core;
 using Weasel.Core.Migrations;
 using Weasel.SqlServer;
+using Weasel.SqlServer.Tables;
 
 namespace Polecat.Events.Schema;
 
 /// <summary>
-///     Groups the event store tables (pc_streams, pc_events, pc_event_progression)
-///     into a single Weasel feature schema for coordinated migrations.
+///     Groups the event store tables (pc_streams, pc_events, pc_event_progression, and the tables
+///     flat table projections write to) into a single Weasel feature schema for coordinated migrations.
 /// </summary>
 internal class EventStoreFeatureSchema : FeatureSchemaBase
 {
     private readonly EventGraph _events;
     private readonly IReadOnlyList<NaturalKeyDefinition> _naturalKeys;
+    private readonly IReadOnlyList<Table> _flatTables;
 
-    public EventStoreFeatureSchema(EventGraph events, IReadOnlyList<NaturalKeyDefinition> naturalKeys)
+    /// <summary>
+    ///     One answer to "what does the event store declare", because the whole-database schema and a
+    ///     session's first use both have to apply it and must not disagree.
+    /// </summary>
+    public EventStoreFeatureSchema(StoreOptions options)
         : base("EventStore", new SqlServerMigrator())
     {
-        _events = events;
-        _naturalKeys = naturalKeys;
+        _events = options.EventGraph;
+
+        _naturalKeys = options.Projections.All
+            .OfType<IAggregateProjection>()
+            .Where(p => p.NaturalKeyDefinition != null)
+            .Select(p => p.NaturalKeyDefinition!)
+            .ToList();
+
+        _flatTables = options.Projections.AllFlatTableProjections()
+            .Select(p => p.Table)
+            .DistinctBy(t => t.Identifier.QualifiedName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
     }
 
     public override Type StorageType => typeof(EventStoreFeatureSchema);
@@ -76,6 +93,13 @@ internal class EventStoreFeatureSchema : FeatureSchemaBase
         foreach (var naturalKey in _naturalKeys)
         {
             yield return new NaturalKeyTable(_events, naturalKey);
+        }
+
+        // #882: the projection used to create its own table the first time an event reached it, which
+        // kept it away from AutoCreate, from the migration lock and from every database but the first.
+        foreach (var flatTable in _flatTables)
+        {
+            yield return flatTable;
         }
     }
 }

@@ -1,6 +1,8 @@
 using JasperFx;
 using JasperFx.Events;
 using Microsoft.Data.SqlClient;
+using Polecat.Storage;
+using Polecat.Tests.Harness;
 using Polecat.TestUtils;
 
 namespace Polecat.Tests.Schema;
@@ -56,13 +58,15 @@ public class first_use_schema_race_tests
 
     private static string NewSchema() => "fsr_" + Guid.NewGuid().ToString("N")[..10];
 
-    private static DocumentStore BuildStore(string schema, bool manyDocumentTypes = false) => DocumentStore.For(opts =>
+    private static DocumentStore BuildStore(string schema, bool manyDocumentTypes = false,
+        Action<StoreOptions>? configure = null) => DocumentStore.For(opts =>
     {
         opts.ConnectionString = ConnectionSource.ConnectionString;
         opts.DatabaseSchemaName = schema;
         opts.AutoCreateSchemaObjects = AutoCreate.All;
         opts.UseNativeJsonType = ConnectionSource.SupportsNativeJson;
         opts.Schema.For<FirstUseDoc>();
+        configure?.Invoke(opts);
 
         if (!manyDocumentTypes) return;
 
@@ -272,6 +276,68 @@ public class first_use_schema_race_tests
         }
 
         AssertNoRoundFailed(failures, DocumentAndDaemonRounds);
+    }
+
+    /// <summary>
+    ///     #883: both of these want <c>pc_hilo</c>. The session reaches for it from a synchronous
+    ///     <c>Store()</c>, and nothing it finds there may fail, because <c>Store()</c> is not a call
+    ///     anybody expects to have to retry. This is what stops the sequence never waiting from being the
+    ///     whole answer: on its own, that fails here on a table the daemon has not got to yet.
+    /// </summary>
+    [Fact]
+    public async Task a_sessions_first_hilo_id_and_the_daemons_ensure()
+    {
+        var token = TestContext.Current.CancellationToken;
+        var failures = new List<Exception>();
+
+        for (var round = 0; round < Rounds; round++)
+        {
+            var schema = NewSchema();
+            using var store = BuildStore(schema, configure: opts => opts.Schema.For<IntDoc>());
+
+            failures.AddRange(await ReleaseTogetherAsync(
+                () => store.Database.EnsureStorageExistsAsync(typeof(IEvent), token),
+                async () =>
+                {
+                    await using var session = store.LightweightSession();
+                    session.Store(new IntDoc());
+                    await session.SaveChangesAsync(token);
+                }));
+
+            await DropAsync(schema, store, token);
+        }
+
+        AssertNoRoundFailed(failures);
+    }
+
+    /// <summary>
+    ///     #883: two replicas opening their first sessions, with a semaphore each.
+    /// </summary>
+    [Fact]
+    public async Task two_replicas_provisioning_the_tenant_table()
+    {
+        var token = TestContext.Current.CancellationToken;
+        var failures = new List<Exception>();
+
+        for (var round = 0; round < Rounds; round++)
+        {
+            var schema = NewSchema();
+            var options = new StoreOptions { ConnectionString = ConnectionSource.ConnectionString };
+            var first = new MasterTableTenancy(options, ConnectionSource.ConnectionString, schema);
+            var second = new MasterTableTenancy(options, ConnectionSource.ConnectionString, schema);
+
+            failures.AddRange(await ReleaseTogetherAsync(
+                () => first.AllDisabledAsync(token),
+                () => second.AllDisabledAsync(token)));
+
+            await using var conn = new SqlConnection(ConnectionSource.ConnectionString);
+            await conn.OpenAsync(token);
+            await using var drop = conn.CreateCommand();
+            drop.CommandText = $"DROP TABLE IF EXISTS {first.QualifiedTableName}; DROP SCHEMA IF EXISTS [{schema}];";
+            await drop.ExecuteNonQueryAsync(token);
+        }
+
+        AssertNoRoundFailed(failures);
     }
 
     /// <summary>

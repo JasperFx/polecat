@@ -130,10 +130,10 @@ internal sealed class UnversionedLightweightPolecatStorage<TDoc, TId> : Lightwei
         => new UnversionedClosedShapeInsertOperation<TDoc, TId>(document, Identity(document), tenantId, _descriptor);
 
     public override Weasel.Storage.IStorageOperation Update(TDoc document, IStorageSession session, string tenantId)
-        => new UnversionedClosedShapeUpdateOperation<TDoc, TId>(document, Identity(document), tenantId, _descriptor);
+        => new UnversionedClosedShapeUpdateOperation<TDoc, TId>(document, Identity(document), tenantId, UnguardedWriteDescriptorFor(session));
 
     public override Weasel.Storage.IStorageOperation Upsert(TDoc document, IStorageSession session, string tenantId)
-        => new UnversionedClosedShapeUpsertOperation<TDoc, TId>(document, Identity(document), tenantId, _descriptor, OperationRole.Upsert);
+        => new UnversionedClosedShapeUpsertOperation<TDoc, TId>(document, Identity(document), tenantId, UnguardedWriteDescriptorFor(session), OperationRole.Upsert);
 
     public override Weasel.Storage.IStorageOperation Overwrite(TDoc document, IStorageSession session, string tenantId)
         => new UnversionedClosedShapeOverwriteOperation<TDoc, TId>(document, Identity(document), tenantId, _descriptor);
@@ -169,10 +169,10 @@ internal sealed class UnversionedIdentityMapPolecatStorage<TDoc, TId> : Identity
         => new UnversionedClosedShapeInsertOperation<TDoc, TId>(document, Identity(document), tenantId, _descriptor);
 
     public override Weasel.Storage.IStorageOperation Update(TDoc document, IStorageSession session, string tenantId)
-        => new UnversionedClosedShapeUpdateOperation<TDoc, TId>(document, Identity(document), tenantId, _descriptor);
+        => new UnversionedClosedShapeUpdateOperation<TDoc, TId>(document, Identity(document), tenantId, UnguardedWriteDescriptorFor(session));
 
     public override Weasel.Storage.IStorageOperation Upsert(TDoc document, IStorageSession session, string tenantId)
-        => new UnversionedClosedShapeUpsertOperation<TDoc, TId>(document, Identity(document), tenantId, _descriptor, OperationRole.Upsert);
+        => new UnversionedClosedShapeUpsertOperation<TDoc, TId>(document, Identity(document), tenantId, UnguardedWriteDescriptorFor(session), OperationRole.Upsert);
 
     public override Weasel.Storage.IStorageOperation Overwrite(TDoc document, IStorageSession session, string tenantId)
         => new UnversionedClosedShapeOverwriteOperation<TDoc, TId>(document, Identity(document), tenantId, _descriptor);

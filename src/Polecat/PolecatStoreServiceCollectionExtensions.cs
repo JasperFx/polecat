@@ -1,9 +1,12 @@
 using System.Diagnostics.CodeAnalysis;
 using JasperFx.Events;
+using JasperFx.Events.Daemon;
 using JasperFx.Events.EventModeling;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Polecat.Internal;
 
 namespace Polecat;
@@ -161,6 +164,52 @@ public class PolecatStoreExpression<T> where T : class, IDocumentStore
     }
 
     public IServiceCollection Services { get; }
+
+    /// <summary>
+    ///     Run the async projection daemon for this store in this host, through this store's own
+    ///     projection coordinator. See <see cref="PolecatConfigurationExpression.AddAsyncDaemon" />.
+    /// </summary>
+    public PolecatStoreExpression<T> AddAsyncDaemon(DaemonMode mode)
+    {
+        Services.ConfigurePolecat<T>(opts => opts.DaemonSettings.AsyncMode = mode);
+
+        if (mode is DaemonMode.Solo or DaemonMode.HotCold)
+        {
+            registerCoordinator(soloTakesNoLocks: true);
+        }
+
+        return this;
+    }
+
+    /// <summary>
+    ///     Enable the multi-node-aware projection coordinator for this store. See
+    ///     <see cref="PolecatConfigurationExpression.AddProjectionCoordinator" />.
+    /// </summary>
+    public PolecatStoreExpression<T> AddProjectionCoordinator(DaemonMode mode)
+    {
+        // #847: T's own options. The non-generic ConfigurePolecat is the DEFAULT store's chain, so this
+        // used to leave T Disabled, whose coordinator has no distributor and starts nothing.
+        Services.ConfigurePolecat<T>(opts => opts.DaemonSettings.AsyncMode = mode);
+        registerCoordinator(soloTakesNoLocks: false);
+        return this;
+    }
+
+    private void registerCoordinator(bool soloTakesNoLocks)
+    {
+        if (Services.Any(x => x.ServiceType == typeof(Polecat.Events.Daemon.Coordination.IProjectionCoordinator<T>)))
+        {
+            return;
+        }
+
+        Services.AddSingleton<Polecat.Events.Daemon.Coordination.IProjectionCoordinator<T>>(sp =>
+        {
+            var store = (DocumentStore)(IDocumentStore)sp.GetRequiredService<T>();
+            return new Polecat.Events.Daemon.Coordination.ProjectionCoordinator<T>(
+                store, sp.GetRequiredService<ILoggerFactory>(), soloTakesNoLocks);
+        });
+        Services.AddSingleton<IHostedService>(sp =>
+            sp.GetRequiredService<Polecat.Events.Daemon.Coordination.IProjectionCoordinator<T>>());
+    }
 }
 
 internal class LambdaConfigurePolecat<T> : IConfigurePolecat<T> where T : IDocumentStore

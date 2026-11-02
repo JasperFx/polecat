@@ -219,8 +219,6 @@ public class culture_independence_tests : OneOffConfigurationsContext
     [InlineData("ar-SA")]
     public void a_negative_dictionary_key_makes_the_same_patch_path_on_every_host(string culture)
     {
-        // At the path, and not against the database: a key that starts with a digit or a sign is not
-        // quoted, so JSON_MODIFY refuses it on every host. That is a separate gap.
         Expression<Func<CultureDoc, string>> negative = x => x.ByNumber[-1];
         var invariant = JsonPathHelper.ToPath(negative, JsonNamingPolicy.CamelCase);
 
@@ -239,7 +237,7 @@ public class culture_independence_tests : OneOffConfigurationsContext
         using var scope = CultureScope.Formatting(culture);
 
         // System.Text.Json writes a dictionary key the invariant way, so this is what is in the document
-        JsonPathHelper.ToPath(fractional, JsonNamingPolicy.CamelCase).ShouldEndWith("1.5");
+        JsonPathHelper.ToPath(fractional, JsonNamingPolicy.CamelCase).ShouldEndWith("\"1.5\"");
     }
 
     // ---- identifiers --------------------------------------------------------------------------------

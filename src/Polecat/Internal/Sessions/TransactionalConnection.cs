@@ -2,6 +2,7 @@ using System.Data;
 using System.Data.Common;
 using Microsoft.Data.SqlClient;
 using Polecat.Exceptions;
+using Polecat.Resilience;
 using Polly;
 
 namespace Polecat.Internal.Sessions;
@@ -26,6 +27,15 @@ namespace Polecat.Internal.Sessions;
 ///         beginning one on demand, because <c>Snapshot</c> and <c>Serializable</c> protect a read
 ///         followed by a write and a transaction that begins at the save has already missed the read.
 ///     </para>
+///     <para>
+///         <b>#854. A rollback the client asked for loses the same things.</b> Refusing to begin a
+///         transaction is exactly as wide as it needs to be, because everything that writes begins
+///         one and a read at <see cref="IsolationLevel.ReadCommitted" /> does not. Such a read runs
+///         outside any transaction and sees what is there, which is true whatever the session has
+///         lost, so it goes on working. At any other level a read begins a transaction too, so it is
+///         refused by the same check, and that is right: its new transaction would be a different
+///         view of the data from the one the caller has been reading.
+///     </para>
 /// </remarks>
 internal class TransactionalConnection : IAlwaysConnectedLifetime
 {
@@ -42,6 +52,8 @@ internal class TransactionalConnection : IAlwaysConnectedLifetime
     // Outlives the Transaction property, which DocumentSessionBase clears after every save.
     private bool _unusable;
 
+    private bool _writesRefused;
+
     public TransactionalConnection(ConnectionFactory connectionFactory, int commandTimeout,
         IsolationLevel isolationLevel, ResiliencePipeline resilience)
     {
@@ -57,10 +69,11 @@ internal class TransactionalConnection : IAlwaysConnectedLifetime
     public SqlTransaction? Transaction { get; set; }
     public bool HasOpenTransaction => Transaction != null;
     public bool HoldsTransactionForSession => _isolationLevel != IsolationLevel.ReadCommitted;
+    public IsolationLevel IsolationLevel => _isolationLevel;
 
     public async ValueTask BeginTransactionAsync(CancellationToken token)
     {
-        AssertTransactionIsUsable();
+        AssertWritesAreAllowed();
         await EnsureConnectionOpenAsync(token);
         if (Transaction != null) return;
 
@@ -79,6 +92,22 @@ internal class TransactionalConnection : IAlwaysConnectedLifetime
     public void MarkSessionUnusable(Exception cause)
     {
         _unusable = true;
+        _transactionFailure ??= cause;
+    }
+
+    public void AssertWritesAreAllowed()
+    {
+        AssertTransactionIsUsable();
+
+        if (_writesRefused)
+        {
+            throw SessionTransactionUnusableException.AfterRollback(_transactionFailure);
+        }
+    }
+
+    public void RefuseWrites(Exception cause)
+    {
+        _writesRefused = true;
         _transactionFailure ??= cause;
     }
 
@@ -113,6 +142,10 @@ internal class TransactionalConnection : IAlwaysConnectedLifetime
         if (Transaction is not { Connection: null }) return;
 
         _transactionFailure = failure;
+
+        // #854: here, below the resilience pipeline, so a retry strategy deciding whether to replay this
+        // command already has the answer.
+        PolecatRetryPredicates.MarkTransactionEnded(failure);
     }
 
     public async Task<int> ExecuteAsync(SqlCommand command, CancellationToken token)

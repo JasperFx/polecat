@@ -214,6 +214,26 @@ internal abstract class PolecatDocumentStorage<TDoc, TId>
 
     private readonly Action<TDoc, long>? _setMappedRevision;
 
+    private DocumentStorageDescriptor<TDoc, TId>? _snapshotDescriptor;
+
+    /// <summary>
+    ///     The descriptor for a write with no concurrency guard. A <c>Snapshot</c> session gets its own
+    ///     SQL for these so a write conflict raises 3960 as every other write in that session does (#854).
+    ///     Built on first use, because almost no store ever needs it.
+    /// </summary>
+    protected DocumentStorageDescriptor<TDoc, TId> UnguardedWriteDescriptorFor(IStorageSession session)
+        => RunsAtSnapshot(session)
+            ? _snapshotDescriptor ??= SqlServerDocumentStorageDescriptorBuilder.Build(
+                _mapping, _descriptor.Identification, _mapping.StoreOptions, forSnapshotSession: true)
+            : _descriptor;
+
+    private static bool RunsAtSnapshot(IStorageSession session) => session switch
+    {
+        Internal.DocumentSessionBase documents => documents.RunsAtSnapshotIsolation,
+        Internal.TenantScopedStorageSession scoped => RunsAtSnapshot(scoped.Inner),
+        _ => false
+    };
+
     protected PolecatDocumentStorage(DocumentMapping mapping, DocumentStorageDescriptor<TDoc, TId> descriptor)
     {
         _mapping = mapping;

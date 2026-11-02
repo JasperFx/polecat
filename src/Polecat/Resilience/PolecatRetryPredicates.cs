@@ -35,10 +35,12 @@ namespace Polecat.Resilience;
 ///         <b>A strategy on this pipeline retries one command, not a unit of work (#832).</b> That is
 ///         fine for a read outside any transaction. It can never be fine for a command whose
 ///         transaction the failure rolled back, because everything before that command went with it.
-///         The error number cannot tell those two apart, so the protection is lower down: the replay
-///         is refused with <see cref="SessionTransactionUnusableException" /> rather than run outside
-///         its transaction, and this predicate answers true for that refusal, so a strategy that
-///         asks stops there.
+///         The error number cannot tell those two apart, so the session marks the failure when its
+///         transaction died (#854) and this predicate answers true for it, at every isolation level.
+///         A strategy that asks stops at the failure itself, and the caller sees what happened. One
+///         that does not ask still cannot do harm: its replay is refused with
+///         <see cref="SessionTransactionUnusableException" /> rather than run outside the transaction,
+///         and this predicate answers true for that refusal too.
 ///     </para>
 ///     <para>
 ///         <b>A connection pool timeout is safe to replay, at every isolation level (#845).</b>
@@ -70,6 +72,20 @@ public static class PolecatRetryPredicates
     public const int LockRequestTimeout = 1222;
 
     /// <summary>
+    ///     The <see cref="Exception.Data" /> key <see cref="MarkTransactionEnded" /> sets. A key on the
+    ///     exception rather than a wrapper, because a strategy has to be handed the same
+    ///     <see cref="SqlException" /> it always was, and <c>StreamLockedException</c> and anything else
+    ///     wrapping it above the pipeline keep the mark without knowing about it.
+    /// </summary>
+    private const string TransactionEndedKey = "Polecat.TransactionEnded";
+
+    /// <summary>
+    ///     Records that <paramref name="failure" /> ended the transaction its command was running in,
+    ///     which the error number cannot say.
+    /// </summary>
+    internal static void MarkTransactionEnded(SqlException failure) => failure.Data[TransactionEndedKey] = true;
+
+    /// <summary>
     ///     True when replaying the command that raised <paramref name="exception" /> could commit a
     ///     lost update, or when the replay has already been refused because the session's transaction
     ///     is gone, so a retry strategy must not handle it.
@@ -95,7 +111,8 @@ public static class PolecatRetryPredicates
                 return true;
             }
 
-            if (current is SqlException sql && IsUnsafeToReplay(sql.Number, isolationLevel))
+            if (current is SqlException sql
+                && (sql.Data.Contains(TransactionEndedKey) || IsUnsafeToReplay(sql.Number, isolationLevel)))
             {
                 return true;
             }
@@ -119,7 +136,9 @@ public static class PolecatRetryPredicates
     ///         <b>1205 and 1222 fork on the level.</b> At <see cref="IsolationLevel.ReadCommitted" />
     ///         a read outside a transaction simply reads current data again, so it is the ordinary
     ///         safe retry. So is a lock timeout inside one: 1222 aborts the statement and leaves the
-    ///         transaction open. Under <c>Snapshot</c> or <c>Serializable</c> the operations being
+    ///         transaction open. A 1205 inside one is not, and that is the case this table cannot see,
+    ///         which is what <see cref="MarkTransactionEnded" /> is for. Under <c>Snapshot</c> or
+    ///         <c>Serializable</c> the operations being
     ///         replayed were derived from a snapshot the replay will not re-take, which is
     ///         marten#5528's mechanism reached through a different error number. Marten's issue
     ///         explicitly leaves this case named rather than guessed, and naming it is what this

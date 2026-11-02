@@ -41,11 +41,6 @@ namespace Polecat.Internal;
 /// </remarks>
 internal sealed class SchemaMigrationLock : IGlobalLock<SqlConnection>
 {
-    /// <summary>
-    ///     SqlClient's own number for a command that ran out of time on the client.
-    /// </summary>
-    private const int ClientCommandTimeout = -2;
-
     private readonly SqlServerGlobalLock _lock;
     private readonly string _resource;
     private readonly TimeSpan _timeout;
@@ -64,25 +59,9 @@ internal sealed class SchemaMigrationLock : IGlobalLock<SqlConnection>
     /// </summary>
     internal bool Attained { get; private set; }
 
-    /// <remarks>
-    ///     ⚠️ Weasel runs <c>sp_getapplock</c> as an ordinary command under the connection's default command
-    ///     timeout, 30 seconds unless the connection string says otherwise. So with the default 30 second
-    ///     lock timeout the client gives up first, and a busy lock arrives here as a raw
-    ///     <c>SqlException</c> rather than a failed result, which meant <c>ContinueOnFailures</c> could never
-    ///     engage on the default settings and nothing told the caller what it had been waiting for. All this
-    ///     command does is wait for the lock, so a timeout on it is reported as what it almost always is.
-    /// </remarks>
     public async Task<AttainLockResult> TryAttainLock(SqlConnection conn, CancellationToken ct = default)
     {
-        AttainLockResult result;
-        try
-        {
-            result = await _lock.TryAttainLock(conn, ct).ConfigureAwait(false);
-        }
-        catch (SqlException e) when (e.Number == ClientCommandTimeout)
-        {
-            result = AttainLockResult.Failure();
-        }
+        var result = await _lock.TryAttainLock(conn, ct).ConfigureAwait(false);
 
         Attained = result.Succeeded;
         return result;
@@ -118,12 +97,19 @@ internal sealed class SchemaMigrationLock : IGlobalLock<SqlConnection>
     ///     tries again, and the failure names the setting that decides how long it waited.
     ///     </para>
     /// </remarks>
+    /// <param name="options"></param>
+    /// <param name="conn"></param>
+    /// <param name="insideTransaction"></param>
+    /// <param name="token"></param>
+    /// <param name="schemaName">
+    ///     The schema being provisioned, when that is not the store's own. <c>pc_tenants</c> is the one
+    ///     case: its schema is an argument to <c>MultiTenantedMasterTable</c>.
+    /// </param>
     internal static async Task<IAsyncDisposable?> HoldForFirstUseAsync(StoreOptions options, SqlConnection conn,
-        bool insideTransaction, CancellationToken token)
+        bool insideTransaction, CancellationToken token, string? schemaName = null)
     {
-        var migrationLock = insideTransaction
-            ? new SchemaMigrationLock(options.DatabaseSchemaName, TimeSpan.Zero)
-            : options.BuildMigrationLock();
+        var migrationLock = new SchemaMigrationLock(schemaName ?? options.DatabaseSchemaName,
+            insideTransaction ? TimeSpan.Zero : options.StartupMigrationLockTimeout);
 
         await migrationLock.TryAttainLock(conn, token).ConfigureAwait(false);
 
@@ -139,7 +125,7 @@ internal sealed class SchemaMigrationLock : IGlobalLock<SqlConnection>
                 + "else is applying schema changes to this database. Nothing was changed here, and the next use "
                 + "will try again. If migrations legitimately take this long, raise "
                 + $"{nameof(StoreOptions)}.{nameof(StoreOptions.StartupMigrationLockTimeout)}, currently "
-                + $"{migrationLock._timeout}, and the connection string's Command Timeout along with it.");
+                + $"{migrationLock._timeout}.");
         }
 
         return null;

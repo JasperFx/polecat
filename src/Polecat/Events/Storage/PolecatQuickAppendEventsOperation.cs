@@ -319,7 +319,7 @@ internal sealed class PolecatQuickAppendEventsOperation
 
             builder.Append(", ");
             Bind(builder,
-                bdata is null ? session.Serializer.ToJson(@event.Data) : EventGraph.JsonPlaceholderForBinaryEvent,
+                bdata is null ? _graph.ToStorageJson(@event.Data) : EventGraph.JsonPlaceholderForBinaryEvent,
                 StorageColumnType.Json);
 
             builder.Append(", ");
@@ -350,7 +350,7 @@ internal sealed class PolecatQuickAppendEventsOperation
             {
                 builder.Append(", ");
                 object headers = @event.Headers is { Count: > 0 }
-                    ? session.Serializer.ToJson(@event.Headers)
+                    ? _graph.ToStorageJson(@event.Headers)
                     : DBNull.Value;
                 Bind(builder, headers, StorageColumnType.Json);
             }

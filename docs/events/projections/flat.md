@@ -60,6 +60,18 @@ map.SetValue("processed", true);
 
 Flat table projections use SQL Server `MERGE` statements for upsert behavior, ensuring idempotent processing.
 
+## Schema Management
+
+A flat table is part of the event store's schema, so it follows the same rules as `pc_events`:
+
+- `ApplyAllConfiguredChangesToDatabaseAsync()`, `db-apply` and the async daemon create it, and so does a session's first use of the event store, in every tenant database.
+- `AutoCreate.None` never creates it. A store that manages its own schema has to create the table, and a missing table fails the save with an ordinary "Invalid object name" error.
+- `Advanced.ToDatabaseScript()` and `db-dump` include it, and `AssertDatabaseMatchesConfigurationAsync()` and `db-assert` report it when it is missing or out of date.
+
+Migrations are additive. A column or index the projection declares is added to an existing table, and one it does not declare is left alone, so a column kept from an old mapping or an index added for a report survives. Dropping one is up to you.
+
+Table, column and index names go through Weasel's identifier rules like every other schema object: `;`, `'`, `"`, `[` and `]` are refused at startup.
+
 ## Use Cases
 
 - **Reporting tables** -- Denormalized data for BI tools

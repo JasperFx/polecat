@@ -461,6 +461,10 @@ public class AdvancedOperations
         {
             database.ResetSchemaExistenceChecks();
         }
+
+        // #882: and so does a session's first use. A store that goes on being used after this would
+        // otherwise fail on pc_streams, or on a flat table, that nothing would ever create again.
+        _store.ForgetEnsuredTables();
     }
 
     private async Task CompletelyRemoveAllForDatabaseAsync(string connStr, CancellationToken token = default)
@@ -577,8 +581,7 @@ public class AdvancedOperations
     /// </summary>
     private string[] CollectFlatTableNames()
     {
-        return _store.Options.Projections.All
-            .OfType<FlatTableProjection>()
+        return _store.Options.Projections.AllFlatTableProjections()
             .Select(p => p.Table.Identifier.QualifiedName)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
@@ -590,9 +593,10 @@ public class AdvancedOperations
         foreach (var qualified in qualifiedNames)
         {
             await using var cmd = conn.CreateCommand();
-            // Guard against the table not existing yet (the projection ensures it lazily). #390: the
-            // same name lands in a string-literal position and a bare identifier position, which need
-            // different escaping — only the literal one gets it.
+            // Guard against the table not existing yet: a store that has not used its event store, or an
+            // AutoCreate.None store nobody has migrated. #390: the same name lands in a string-literal
+            // position and a bare identifier position, which need different escaping — only the literal
+            // one gets it.
             cmd.CommandText =
                 $"IF OBJECT_ID({SqlEscaping.Literal(qualified)}, 'U') IS NOT NULL DELETE FROM {qualified};";
             await cmd.ExecuteNonQueryAsync(ct);

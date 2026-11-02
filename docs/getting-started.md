@@ -63,6 +63,10 @@ builder.Services.AddPolecat(options =>
 .AddAsyncDaemon(DaemonMode.Solo);
 ```
 
+`DaemonMode.Solo` is for one node. If several nodes run this application, use `DaemonMode.HotCold` and each shard
+runs on one of them at a time. Either way a shard that pauses after a failure is restarted for you. See
+[the async daemon](/events/projections/async-daemon) for the details.
+
 See [Bootstrapping Polecat](/configuration/hostbuilder) for more options.
 
 ::: tip

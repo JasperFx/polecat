@@ -16,6 +16,7 @@ using Polecat.Linq.Members;
 using Polecat.Linq.Parsing;
 using Polecat.Metadata;
 using Polecat.Projections;
+using Polecat.Schema.Identity.Sequences;
 using Weasel.Core;
 using Weasel.SqlServer;
 
@@ -262,6 +263,11 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     internal void AssertTransactionIsUsable() => _transactional.AssertTransactionIsUsable();
 
     /// <summary>
+    ///     Decides which SQL this session's unguarded document writes use (#854).
+    /// </summary>
+    internal bool RunsAtSnapshotIsolation => _transactional.IsolationLevel == System.Data.IsolationLevel.Snapshot;
+
+    /// <summary>
     ///     Run a command that does not go through this session's lifetime but belongs to its unit of
     ///     work: today, what an EF Core <c>DbContext</c> does on the session's behalf (#846).
     /// </summary>
@@ -407,6 +413,8 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         Weasel.Storage.IStorageSession session = tenantScope ?? (Weasel.Storage.IStorageSession)this;
         var storage = (Weasel.Storage.IDocumentStorage<T>)session.StorageFor<T>();
 
+        EnsureHiloStorage(provider);
+
         // id assignment + identity-map/version bookkeeping
         StoreForConcurrency(storage, session, document);
 
@@ -423,6 +431,15 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     }
 
     /// <summary>
+    ///     #883: the id assigned next may come from a Hi-Lo sequence, which cannot see this session's
+    ///     transaction and so never waits for the migration lock on its own. This can.
+    /// </summary>
+    private void EnsureHiloStorage(DocumentProvider provider)
+    {
+        (provider.Sequence as HiloSequence)?.EnsureStorage(HasOpenTransaction);
+    }
+
+    /// <summary>
     ///     Runtime-type (object) variant of <see cref="BuildClosedShapeWrite{T}" /> for
     ///     StoreObjects (#273 E2e) — dispatches through the non-generic object-write bridge.
     /// </summary>
@@ -431,6 +448,8 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     {
         Weasel.Storage.IStorageSession session = tenantScope ?? (Weasel.Storage.IStorageSession)this;
         var storage = (Polecat.Storage.ClosedShape.IPolecatObjectWriteStorage)session.StorageFor(document.GetType());
+
+        EnsureHiloStorage(provider);
 
         // #592: the same version seeding Store<T> does, through the object bridge.
         // #720 adds the mapped-member branch in the same order StoreForConcurrency uses it.
@@ -885,7 +904,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         try
         {
             // #832: before any listener or DDL runs on behalf of a save that cannot happen.
-            _transactional.AssertTransactionIsUsable();
+            _transactional.AssertWritesAreAllowed();
             await prepareToSaveChangesAsync(token);
 
             // Was the caller already relying on this transaction before the save? An exclusive fetch's
@@ -909,6 +928,11 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
 
         using var tx = _transactional.Transaction!;
         var committed = false;
+
+        // #870: anything queued or enlisted past this point belongs to this attempt at the save.
+        var operationsBeforeThisAttempt = _workTracker.OperationCount;
+        var participantsBeforeThisAttempt = _transactionParticipants.Count;
+
         try
         {
             // gh-515: the DCB boundary check, run BEFORE the events are inserted so this session's own
@@ -931,7 +955,8 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
 
                 // Ensure document tables exist for any additional projected types. #868: this is the one
                 // ensure a save cannot move ahead of its transaction, because the types are only known
-                // once the projections have run, and it is why the ensure has to be told it is inside one.
+                // once the projections have run. #870: so it asks this transaction's own connection first,
+                // and only a table that really is missing costs a second one.
                 if (_workTracker.Operations.Count > 0)
                 {
                     var newTypes = _workTracker.Operations
@@ -939,7 +964,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
                         .Where(t => t != typeof(object))
                         .Distinct()
                         .Select(t => _providers.GetProvider(t));
-                    await _tableEnsurer.EnsureTablesAsync(newTypes, HasOpenTransaction, token);
+                    await _tableEnsurer.EnsureProjectedTablesAsync(newTypes, tableExistsAsync, token);
                 }
             }
 
@@ -978,18 +1003,6 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
                         throw new AggregateException(exceptions);
                     }
                 }
-                catch (SqlException ex) when (ex.Number == 2627)
-                {
-                    // Map duplicate key violation to DocumentAlreadyExistsException
-                    var insertOp = operations.FirstOrDefault(op => op.Role() == OperationRole.Insert);
-                    if (insertOp != null)
-                    {
-                        var documentId = insertOp is IStorageOperation bespoke ? bespoke.DocumentId : null;
-                        throw new DocumentAlreadyExistsException(insertOp.DocumentType, documentId!);
-                    }
-
-                    throw;
-                }
                 catch (SqlException ex)
                 {
                     // #549: give a queued operation the chance to name its own SQL error, exactly as
@@ -997,9 +1010,22 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
                     // flush loops are otherwise mirror images and this hook was only on one of them,
                     // so an operation carrying an IExceptionTransform got its translation when the
                     // daemon ran it and a raw SqlException when a session did.
-                    if (BatchExceptionTransforms.TryTransform(ex, batch, operations, out var transformed))
+                    //
+                    // #849: this is also where the application's transforms are asked, so it comes
+                    // before the 2627 below for the same reason it does in Marten: one that claims an
+                    // error Polecat translates replaces that translation.
+                    if (BatchExceptionTransforms.TryTransform(ex, batch, operations, Options.ExceptionTransforms,
+                            out var transformed))
                     {
                         System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(transformed!).Throw();
+                    }
+
+                    // Map duplicate key violation to DocumentAlreadyExistsException
+                    if (ex.Number == 2627
+                        && operations.FirstOrDefault(op => op.Role() == OperationRole.Insert) is { } insertOp)
+                    {
+                        var documentId = insertOp is IStorageOperation bespoke ? bespoke.DocumentId : null;
+                        throw new DocumentAlreadyExistsException(insertOp.DocumentType, documentId!);
                     }
 
                     throw;
@@ -1105,6 +1131,14 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             // transaction that already committed has no connection left and needs nothing.
             if (tx.Connection is not null)
             {
+                // #854: the same loss as the branch below, only requested from this end. Clearing
+                // Transaction would let the next save carry on without the lock or the snapshot, and
+                // the version check that still guards an append guards no document.
+                if (reliesOnTransaction)
+                {
+                    _transactional.RefuseWrites(failure);
+                }
+
                 try
                 {
                     await SqlTransactionRequests.RollbackAsync(tx);
@@ -1122,6 +1156,12 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
                 _transactional.MarkSessionUnusable(failure);
             }
 
+            if (!committed)
+            {
+                _workTracker.RemoveOperationsFrom(operationsBeforeThisAttempt);
+                await abandonParticipantsFromAsync(participantsBeforeThisAttempt);
+            }
+
             throw;
         }
         finally
@@ -1135,6 +1175,62 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             // at the version the instance reflects, so it would still be correct on a later commit --
             // but a session should not carry a fetch's leftovers past the save that failed.
             _aggregateCacheWrites?.Clear();
+        }
+    }
+
+    /// <summary>
+    ///     Is this table there, as far as the transaction this save holds can tell? On the session's own
+    ///     connection, so it needs nothing from the pool, and any wait on it is one the server can see.
+    /// </summary>
+    private async Task<bool> tableExistsAsync(string qualifiedTableName, CancellationToken token)
+    {
+        await using var cmd = new SqlCommand("SELECT OBJECT_ID(@table);");
+        cmd.Parameters.AddVarChar("@table", qualifiedTableName);
+
+        return await ExecuteScalarAsync(cmd, token) is not (null or DBNull);
+    }
+
+    /// <summary>
+    ///     #870: drop the participants a failed attempt at a save enlisted, from
+    ///     <paramref name="firstOfTheAttempt" /> on.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         An inline projection enlists a participant each time it runs, and a retry on this session
+    ///         runs it again. The attempt that failed is rolled back but nothing took its participant off
+    ///         the list, so the retry flushed both: for Polecat.EntityFrameworkCore, two contexts holding
+    ///         the same pending rows, which is a primary key violation at best and a row written twice
+    ///         where the key is generated. The operations a projection queues have the same shape, which
+    ///         is why the caller forgets those too: two <c>Insert</c>s of one document fail the retry.
+    ///     </para>
+    ///     <para>
+    ///         Only the attempt's own. A participant enlisted before the save, as Wolverine's outbox does,
+    ///         has nothing to enlist it again, and its work was rolled back with everything else, so it
+    ///         stays for the retry. After a commit that went through, nothing here runs: those participants
+    ///         stay until the session ends, for the reason given on <c>DbContextTransactionParticipant</c>.
+    ///     </para>
+    ///     <para>
+    ///         Disposal has no token, and a failure here must not replace the save's own exception.
+    ///     </para>
+    /// </remarks>
+    private async Task abandonParticipantsFromAsync(int firstOfTheAttempt)
+    {
+        var abandoned = _transactionParticipants.Count - firstOfTheAttempt;
+        if (abandoned <= 0) return;
+
+        var participants = _transactionParticipants.GetRange(firstOfTheAttempt, abandoned);
+        _transactionParticipants.RemoveRange(firstOfTheAttempt, abandoned);
+
+        foreach (var disposable in participants.OfType<IAsyncDisposable>())
+        {
+            try
+            {
+                await disposable.DisposeAsync();
+            }
+            catch (Exception e)
+            {
+                Logger.LogFailure("Failure trying to dispose a transaction participant after a failed SaveChangesAsync", e);
+            }
         }
     }
 
@@ -1165,6 +1261,13 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
                 .Select(t => _providers.GetProvider(t));
 
             await _tableEnsurer.EnsureTablesAsync(typesNeeded, HasOpenTransaction, token);
+        }
+
+        // #870: tables an earlier save's projections wrote to and only looked up, because it was already
+        // inside its transaction by then. This is the first chance to do the rest of an ensure for them.
+        if (!HasOpenTransaction)
+        {
+            await _tableEnsurer.EnsureTablesFoundInsideTransactionAsync(token);
         }
 
         // Pre-create document tables for projected types that projections may query. #548: this set comes
@@ -1268,6 +1371,10 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     ///         on it. If the server has already ended it there is nothing to roll back, and the session
     ///         must not forget that it happened.
     ///     </para>
+    ///     <para>
+    ///         #854: nor when this rollback is what ends it, so that is recorded first, in case the
+    ///         rollback fails.
+    ///     </para>
     /// </remarks>
     private async Task abandonOpenTransactionAsync(Exception cause)
     {
@@ -1283,6 +1390,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             }
             else
             {
+                _transactional.RefuseWrites(cause);
                 await SqlTransactionRequests.RollbackAsync(tx);
             }
         }
@@ -1698,7 +1806,8 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         }
         catch (SqlException ex)
         {
-            if (BatchExceptionTransforms.TryTransform(ex, batch, operations, out var transformed))
+            if (BatchExceptionTransforms.TryTransform(ex, batch, operations, Options.ExceptionTransforms,
+                    out var transformed))
             {
                 System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(transformed!).Throw();
             }

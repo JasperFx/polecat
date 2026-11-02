@@ -159,9 +159,7 @@ public class session_isolation_level_tests : OneOffConfigurationsContext
     ///     the concurrent write, finds no conflict to report.
     /// </summary>
     /// <remarks>
-    ///     Asserted on an append rather than on <c>session.Store</c>: Polecat's document upsert is
-    ///     <c>MERGE ... WITH (HOLDLOCK)</c>, and SQL Server does not raise 3960 for a statement carrying
-    ///     that hint. See <c>docs/configuration/retries.md</c>.
+    ///     Asserted on an append; <c>snapshot_document_write_conflict_tests</c> covers <c>session.Store</c>.
     /// </remarks>
     [Theory]
     [MemberData(nameof(Kinds))]
@@ -197,7 +195,7 @@ public class session_isolation_level_tests : OneOffConfigurationsContext
     }
 
     /// <summary>
-    ///     The way to protect a document at <c>Snapshot</c>, since its upsert will not raise 3960.
+    ///     A guarded document reports its own exception at <c>Snapshot</c> rather than 3960.
     ///     <c>docs/configuration/retries.md</c> says so, and this is what holds that claim to the truth.
     /// </summary>
     [Fact]

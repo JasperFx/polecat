@@ -111,3 +111,28 @@ opts.InitialData.Add(async (store, ct) =>
 ```
 
 See [Initial Baseline Data](/documents/initial-data) for more details.
+
+## Translating Database Errors into Your Own Exceptions
+
+If SQL you queue yourself raises errors of its own, such as a guard queued with `QueueSqlCommand` that refuses a write
+with `THROW`, register a transform so your callers receive a typed exception instead of picking through a `SqlException`:
+
+```cs
+var store = DocumentStore.For(opts =>
+{
+    opts.ConnectionString = connectionString;
+
+    opts.ExceptionTransforms.IfExceptionIs<SqlException>()
+        .If(e => e.Number == 51000)
+        .ThenTransformTo(e => new GuardRefusedException(e));
+});
+```
+
+Your transforms are consulted for what `SaveChangesAsync` sends, after the failing operation's own translation and before
+Polecat's other ones. An error none of them claims is reported as it would have been. A transform that matches an error
+Polecat also translates, such as a duplicate key (`2627`) that would have been a `DocumentAlreadyExistsException`, replaces
+that translation for this store. Transforms belong to the store they are registered on, never to the whole process.
+
+They do not run for reads. Polecat translates nothing there, so a failed query or raw SQL read reports the `SqlException`
+it was, and the lock failures of `FetchForExclusiveWriting` and `AppendExclusive` stay `StreamLockedException`. This is
+narrower than Marten, whose `Advanced.ExceptionTransforms` also covers raw SQL and LINQ queries.

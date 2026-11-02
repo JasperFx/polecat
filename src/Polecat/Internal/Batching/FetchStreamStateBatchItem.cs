@@ -28,6 +28,8 @@ internal class FetchStreamStateBatchItem : IBatchQueryItem
 
     public Task<StreamState?> Result => _tcs.Task;
 
+    public void Fail(Exception failure) => _tcs.FailWith(failure);
+
     public void WriteSql(ICommandBuilder builder)
     {
         builder.Append($"SELECT {PcStreamsRowReader.SelectColumns} FROM {_events.StreamsTableName} WHERE id = ");
