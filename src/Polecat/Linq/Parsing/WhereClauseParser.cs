@@ -175,6 +175,9 @@ internal class WhereClauseParser
         var unwrapped = StripConvert(methodSide);
         if (unwrapped is not MethodCallExpression methodCall) return false;
 
+        // x.Name == input.ToLower() is the value side: there is no document in it to transform.
+        if (!ParameterFinder.ReferencesParameter(methodCall)) return false;
+
         var parser = MethodCallParserRegistry.FindParser(methodCall);
         if (parser == null) return false;
 
@@ -187,6 +190,11 @@ internal class WhereClauseParser
             fragment = op == "="
                 ? new WhereFragment($"{funcLocator.FullLocator} IS NULL")
                 : new WhereFragment($"{funcLocator.FullLocator} IS NOT NULL");
+        }
+        else if (op is "=" or "!=" && value is string)
+        {
+            fragment = new TextEqualityFilter(funcLocator.FullLocator,
+                TextEqualityFilter.Measured(funcLocator.FullLocator), op == "=", value);
         }
         else
         {
@@ -284,12 +292,11 @@ internal class WhereClauseParser
         if (value == null)
         {
             return op == "="
-                ? new WhereFragment($"{member.RawLocator} IS NULL")
-                : new WhereFragment($"{member.RawLocator} IS NOT NULL");
+                ? new WhereFragment($"{member.NullLocator} IS NULL")
+                : new WhereFragment($"{member.NullLocator} IS NOT NULL");
         }
 
-        var convertedValue = member.ConvertValue(value);
-        return new ComparisonFilter(member.ComparisonLocator(op, IsPositive, value), op, convertedValue!);
+        return member.Comparison(op, IsPositive, value);
     }
 
     private ISqlFragment ParseNot(UnaryExpression unary)
@@ -379,6 +386,16 @@ internal class WhereClauseParser
 
     private static object? CompileAndInvoke(Expression expression)
     {
+        // The compiler's own answer is that a variable is not defined in its scope.
+        if (ParameterFinder.ReferencesParameter(expression))
+        {
+            throw new BadLinqExpressionException(
+                $"Polecat cannot translate '{expression}' to SQL as a value: it reads the document, and a "
+                + "comparison is between a document member and something known before the query runs. Two "
+                + "members cannot be compared, so run the query as raw SQL through "
+                + "session.AdvancedSql.QueryAsync<T>(...), or materialize it and filter in memory.");
+        }
+
         var lambda = Expression.Lambda(expression);
         var compiled = lambda.Compile();
 

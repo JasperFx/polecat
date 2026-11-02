@@ -1,4 +1,6 @@
 using System.Collections;
+using Polecat.Internal;
+using Polecat.Linq.SqlGeneration;
 
 namespace Polecat.Linq.Members;
 
@@ -65,6 +67,37 @@ internal interface IQueryableMember
     int? TextCapacity => null;
 
     /// <summary>
+    ///     What <c>IS NULL</c> has to be asked of. <see cref="RawLocator" /> for anything JSON holds as a
+    ///     scalar, which is what <c>JSON_VALUE</c> reads.
+    /// </summary>
+    /// <remarks>
+    ///     #875: <c>JSON_VALUE</c> is NULL for an object and for an array, present or not, so asking it
+    ///     about one called every row null. See <see cref="SqlText.StoredValue" />.
+    /// </remarks>
+    string NullLocator => RawLocator;
+
+    /// <summary>
+    ///     Whether the declared type can be stored as a JSON object or array, which the scalar locators
+    ///     read as NULL. A class with a converter of its own can still turn out to hold a scalar, so
+    ///     this is a "may".
+    /// </summary>
+    bool MayBeObject => false;
+
+    /// <summary>
+    ///     A string member read through a bare <c>JSON_VALUE</c>, for when <see cref="TypedLocator" /> has
+    ///     been rewritten onto a computed column and cannot be trusted to hold the whole stored value. It
+    ///     needs no subquery on either storage shape, and it is NULL past 4000 characters. See
+    ///     <see cref="QueryableMemberExtensions.ExactTextLocator" />.
+    /// </summary>
+    string? BareTextLocator => null;
+
+    /// <summary>
+    ///     The value as a JSON projection should write it, when that differs from
+    ///     <see cref="TypedLocator" />.
+    /// </summary>
+    string? JsonLocator => null;
+
+    /// <summary>
     ///     Convert a CLR value to the appropriate SQL parameter value for this member.
     /// </summary>
     object? ConvertValue(object? value);
@@ -111,6 +144,46 @@ internal static class QueryableMemberExtensions
     /// <param name="values">The values as written in the query, before <c>ConvertValue</c>.</param>
     internal static string ListLocator(this IQueryableMember member, bool positive, IEnumerable values)
         => member.Choose(positive, values);
+
+    /// <summary>
+    ///     The predicate that this member <paramref name="op" /> <paramref name="value" />.
+    /// </summary>
+    /// <param name="member">The member being compared.</param>
+    /// <param name="op">The SQL comparison operator.</param>
+    /// <param name="positive">False when the predicate sits under a <c>NOT</c>.</param>
+    /// <param name="value">The value as written in the query, before <c>ConvertValue</c>.</param>
+    internal static ISqlFragment Comparison(this IQueryableMember member, string op, bool positive, object value)
+    {
+        var locator = member.ComparisonLocator(op, positive, value);
+        var converted = member.ConvertValue(value)!;
+
+        return op is "=" or "!=" && member.TextCapacity != null && converted is string
+            ? new TextEqualityFilter(locator, member.ExactTextLocator(locator), op == "=", converted)
+            : new ComparisonFilter(locator, op, converted);
+    }
+
+    /// <summary>
+    ///     What to measure to find out that <paramref name="locator" />, a text read of this member,
+    ///     really holds what it appears to.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         Usually the locator itself. A computed column is the exception: it can be narrower than
+    ///         the document, and <c>nvarchar(max)</c> storage truncates to fit it rather than answering
+    ///         NULL (#877), so <c>"aaa…tail"</c> equals its own first 250 characters there. That has to be
+    ///         checked against the document, which is what <see cref="IQueryableMember.BareTextLocator" />
+    ///         reads.
+    ///     </para>
+    ///     <para>
+    ///         Bare rather than <see cref="IQueryableMember.RawLocator" />, because it is enough and it is
+    ///         not a subquery. The value going through the column fits it, so a stored value past 4000
+    ///         characters cannot equal it, and the NULL that reads as is the right answer. And the
+    ///         <c>OPENJSON</c> form of the full read would get an indexed comparison refused inside
+    ///         <c>g.Count(...)</c>, where it has always worked.
+    ///     </para>
+    /// </remarks>
+    internal static string ExactTextLocator(this IQueryableMember member, string locator)
+        => locator == member.RawLocator ? locator : member.BareTextLocator ?? locator;
 
     private static string Choose(this IQueryableMember member, bool unknownDropsTheRowCorrectly, IEnumerable values)
     {

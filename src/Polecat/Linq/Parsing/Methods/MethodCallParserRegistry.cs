@@ -38,6 +38,9 @@ internal static class MethodCallParserRegistry
         + "IsOneOf(...)/In(...), collection Contains(...), IsEmpty(), Equals(...), and the full text "
         + "search operators (PlainTextSearch, PhraseSearch, PrefixSearch, WebStyleSearch)";
 
+    /// <summary>The string methods that yield text another string method can be called on.</summary>
+    public const string SupportedTransforms = "ToLower, ToUpper, Trim, TrimStart or TrimEnd";
+
     public static IMethodCallParser? FindParser(MethodCallExpression expression)
     {
         foreach (var parser in Parsers)

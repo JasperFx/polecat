@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using Polecat.Linq.SqlGeneration;
 using Weasel.SqlServer;
 
@@ -7,7 +8,7 @@ namespace Polecat.Linq.Joins;
 ///     Generates JOIN SQL for GroupJoin queries.
 ///     Selects both outer and inner data columns for in-memory projection.
 /// </summary>
-internal class JoinStatement
+internal partial class JoinStatement
 {
     public string OuterTable { get; set; } = "";
     public string InnerTable { get; set; } = "";
@@ -114,23 +115,27 @@ internal class JoinStatement
     /// <summary>
     ///     Replaces bare column references (data, id) with aliased versions for a given table alias.
     /// </summary>
+    /// <remarks>
+    ///     #875: every column a locator can name, wherever it sits in the locator, because both sides of
+    ///     a join have one. This used to know the functions a member reads the document with and the
+    ///     literal <c>id</c>, so <c>x.Id.Length</c>, <c>x.Id.ToLower()</c> and <c>x.Id != null</c> all
+    ///     left an <c>id</c> behind for the server to call ambiguous. A quoted JSON path is left alone:
+    ///     <c>'$.id'</c> is a key, and splitting on the quote keeps the odd pieces out of the match,
+    ///     doubled quotes included.
+    /// </remarks>
     public static string AliasLocator(string locator, string alias)
     {
-        // Replace "JSON_VALUE(data," with "JSON_VALUE(alias.data,", and likewise for the other functions a
-        // member's locator can read the document with: the OPENJSON read a string member uses on
-        // nvarchar(max) storage (#835) would otherwise be ambiguous in a join.
-        var result = locator
-            .Replace("JSON_VALUE(data,", $"JSON_VALUE({alias}.data,")
-            .Replace("JSON_QUERY(data,", $"JSON_QUERY({alias}.data,")
-            .Replace("OPENJSON(data,", $"OPENJSON({alias}.data,")
-            .Replace("OPENJSON(data)", $"OPENJSON({alias}.data)");
+        var pieces = locator.Split('\'');
 
-        // Replace bare "id" with "alias.id" (but not inside JSON paths or CAST)
-        if (result == "id")
+        for (var i = 0; i < pieces.Length; i += 2)
         {
-            result = $"{alias}.id";
+            pieces[i] = BareColumn().Replace(pieces[i], $"{alias}.$0");
         }
 
-        return result;
+        return string.Join('\'', pieces);
     }
+
+    // Not when it is part of a longer name, already qualified, a parameter or a bracketed identifier.
+    [GeneratedRegex(@"(?<![\w.@\[])(?:data|id)(?![\w\]])")]
+    private static partial Regex BareColumn();
 }

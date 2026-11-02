@@ -34,6 +34,23 @@ var results = await session.Query<User>()
     .ToListAsync();
 ```
 
+`==`, `!=`, `Equals` and the list forms (`IsOneOf`, `In`, `list.Contains(x.Name)`) compare the whole
+value, trailing spaces included, as .NET does: `x.Code == "abc"` does not match `"abc  "`, and
+`x.Code == ""` does not match a value of nothing but spaces. T-SQL's own `=` ignores trailing spaces, so
+Polecat follows it with a check on the byte count, which runs against the rows the `=` found and leaves any
+index seek in place. Case still follows the database's collation.
+
+## Chaining
+
+`ToLower`, `ToUpper`, `Trim`, `TrimStart` and `TrimEnd` can be chained, and any of the operators on this
+page can be called on the result:
+
+```cs
+var results = await session.Query<User>()
+    .Where(x => x.Email.Trim().ToLower().EndsWith("@example.com"))
+    .ToListAsync();
+```
+
 ## IsNullOrEmpty
 
 ```cs

@@ -121,15 +121,18 @@ internal static class JsonValueList
     ///         it in an expression, which is one less thing between the join and an index seek.
     ///     </para>
     /// </remarks>
-    internal static void AppendInClause(ICommandBuilder builder, string locator, IList values,
+    /// <returns>The name of the array's parameter, without its <c>@</c>.</returns>
+    internal static string AppendInClause(ICommandBuilder builder, string locator, IList values,
         string? locatorSqlType, Func<object?, object?> convert)
     {
         var json = WriteJsonArray(values, convert);
 
         builder.Append(locator);
         builder.Append(" IN (SELECT [value] FROM OPENJSON(");
-        builder.AppendParameter(json, System.Data.SqlDbType.NVarChar);
+        var parameter = builder.AppendParameter(json, System.Data.SqlDbType.NVarChar);
         builder.Append($") WITH ([value] {locatorSqlType ?? UntypedColumn} '$'))");
+
+        return parameter.ParameterName.TrimStart('@');
     }
 
     /// <summary>

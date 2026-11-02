@@ -186,8 +186,8 @@ public class FullTextIndex
     /// <remarks>
     ///     <para>
     ///         An explicit <c>CONVERT</c> because it truncates silently where the implicit conversion of
-    ///         an <c>INSERT</c> raises Msg 2628, and because it clips by the column's own measure: in a
-    ///         UTF-8 collation <c>varchar(255)</c> is 255 bytes, which <c>LEFT(x, 255)</c> can overflow.
+    ///         an <c>INSERT</c> raises Msg 2628. It clips by UTF-16 code units, as <see cref="Tokenize" />
+    ///         does, so the two sides keep agreeing about a term of more than 255 characters.
     ///     </para>
     ///     <para>
     ///         Whether the clip comes before or after the stem makes no difference, which is why
@@ -201,7 +201,7 @@ public class FullTextIndex
             ? PorterStemFunction.Call(mapping.DatabaseSchemaName, "s.value")
             : "s.value";
 
-        return $"CONVERT(varchar({MaxTermLength}), {term})";
+        return $"CONVERT(nvarchar({MaxTermLength}), {term})";
     }
 
     /// <summary>

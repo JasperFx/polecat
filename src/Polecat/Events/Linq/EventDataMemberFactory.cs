@@ -3,6 +3,7 @@ using System.Reflection;
 using System.Text.Json;
 using Polecat.Internal;
 using Polecat.Linq.Members;
+using Polecat.Linq.Parsing;
 using Polecat.Serialization;
 using Polecat.Storage;
 using Weasel.Core;
@@ -64,8 +65,9 @@ internal class EventDataMemberFactory : IMemberResolver
         // #835: the same read the document side uses, because the text predicates are shared.
         return underlying == typeof(string)
             ? new QueryableMember(SqlText.UnlimitedJsonString("data", jsonPath, _useReturning), typedLocator,
-                memberType, textCapacity: SqlText.JsonValueCapacity)
-            : new QueryableMember(rawLocator, typedLocator, memberType);
+                memberType, textCapacity: SqlText.JsonValueCapacity, bareTextLocator: rawLocator)
+            : new QueryableMember(rawLocator, typedLocator, memberType,
+                mayBeObject: !SelectProjectionAnalyzer.IsScalar(underlying));
     }
 
     private string BuildJsonPath(MemberExpression expression)

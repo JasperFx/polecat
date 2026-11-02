@@ -64,8 +64,10 @@ The LINQ provider supports:
 - String operations (Contains, StartsWith, EndsWith)
 - Boolean logic (And, Or, Not)
 - Null checks
-- Collection operations (Any, All, Contains)
-- Arithmetic operations
+- Null checks on objects and arrays as well as scalars
+- Collections: `Contains`, the `Count` and `Length` properties, and `IsEmpty()`. `Any`, `All` and `Count()`
+  are [not translated](/documents/querying/linq/child-collections)
+- Arithmetic between two members
 - Nested property access
 
 See [Supported LINQ Operators](/documents/querying/linq/operators) for a complete list.
@@ -140,6 +142,32 @@ exist and quietly match nothing.
 
 A complex `Select` that materializes through `ToListAsync()` is not affected, because it runs in memory:
 `Select(x => new { x.CreatedAt.Ticks })` works, and only the JSON streaming calls refuse it.
+
+## Operators after a Select
+
+An operator written after a `Select` reads what the `Select` projected, as it does in LINQ-to-Objects:
+
+```cs
+var cities = await session.Query<Order>()
+    .Select(x => x.ShippingAddress)
+    .Where(a => a.City != "Oslo")
+    .OrderBy(a => a.City)
+    .ToListAsync();
+
+var names = await session.Query<User>()
+    .Select(x => new { Label = x.LastName })
+    .Where(y => y.Label.StartsWith("Sm"))
+    .OrderBy(y => y.Label)
+    .ToListAsync();
+```
+
+That works for a member the projection assigned, in an anonymous type or an object initializer, and it
+means what writing the same expression against the document would mean. Where the tree does not say what a
+member holds, it is refused: a member a `new Dto { ... }` left unset, because no row holds its default, and
+any member of a constructor call like `new Dto(x.Name)`. The members of a projected scalar are refused
+too, as above.
+
+A second `Select` reads the first in the same way.
 
 Values with no document in them are worked out before the query runs, which is what makes the usual
 optional filter work. The right side of a decided `||` or `&&` is never evaluated, exactly as in C#:

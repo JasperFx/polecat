@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using JasperFx.Core.Reflection;
 using Polecat.Internal;
+using Polecat.Linq.Parsing;
 using Polecat.Serialization;
 using Polecat.Storage;
 using Weasel.Core;
@@ -58,8 +59,27 @@ internal class MemberFactory : IMemberResolver
 
         // #840: a member that exists only in .NET has no JSON key, so it is translated or refused here,
         // where every execution path comes through, rather than becoming a path that is always missing.
-        return ClrOnlyMembers.TryTranslate(expression, ResolveMember)
-               ?? CreateMember(BuildJsonPath(expression), GetMemberType(expression.Member));
+        var clrOnly = ClrOnlyMembers.TryTranslate(expression, ResolveMember);
+        if (clrOnly is ComputedMember computed) return WithStoredEnumForm(computed);
+
+        return clrOnly ?? CreateMember(BuildJsonPath(expression), GetMemberType(expression.Member));
+    }
+
+    /// <summary>
+    ///     #875: SQL computes <c>DayOfWeek</c> as a number, and that is what a predicate compares and a
+    ///     scalar read takes. A JSON projection is different: under <see cref="EnumStorage.AsString" />
+    ///     every enum a document holds is written as a name, by the rules <see cref="EnumMember" /> applies,
+    ///     and this one has to look like them.
+    /// </summary>
+    private IQueryableMember WithStoredEnumForm(ComputedMember computed)
+    {
+        if (computed.MemberType != typeof(DayOfWeek) || _enumStorage != EnumStorage.AsString) return computed;
+
+        var enumMember = new EnumMember(computed.TypedLocator, typeof(DayOfWeek), _enumStorage, _namingPolicy);
+        var names = Enum.GetValues<DayOfWeek>().OrderBy(x => (int)x)
+            .Select(x => $"N{SqlEscaping.Literal((string)enumMember.ConvertValue(x)!)}");
+
+        return computed.WrittenAs($"CHOOSE({computed.TypedLocator} + 1, {string.Join(", ", names)})");
     }
 
     /// <summary>
@@ -78,7 +98,8 @@ internal class MemberFactory : IMemberResolver
 
     private IQueryableMember CreateMember(string jsonPath, Type memberType)
     {
-        var rawLocator = $"JSON_VALUE(data, '{jsonPath}')";
+        var bareLocator = $"JSON_VALUE(data, '{jsonPath}')";
+        var rawLocator = bareLocator;
         var underlying = Nullable.GetUnderlyingType(memberType) ?? memberType;
 
         if (underlying.IsEnum)
@@ -133,10 +154,14 @@ internal class MemberFactory : IMemberResolver
                 : SqlTypeMap.TextCapacity(locatorSqlType);
         }
 
+        var bareTextLocator = textCapacity == null ? null : bareLocator;
+
         return valueType != null
-            ? new ValueTypeMember(rawLocator, typedLocator, memberType, valueType, locatorSqlType, textCapacity)
+            ? new ValueTypeMember(rawLocator, typedLocator, memberType, valueType, locatorSqlType, textCapacity,
+                bareTextLocator)
             : new QueryableMember(rawLocator, typedLocator, memberType, locatorSqlType: locatorSqlType,
-                textCapacity: textCapacity);
+                textCapacity: textCapacity, bareTextLocator: bareTextLocator,
+                mayBeObject: !SelectProjectionAnalyzer.IsScalar(underlying));
     }
 
     private bool TryGetIndexedLocator(string jsonPath, Type underlying, out string locator,

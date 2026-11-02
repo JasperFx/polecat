@@ -4,10 +4,25 @@ Polecat can create a native SQL Server 2025 **`CREATE JSON INDEX`** over a docum
 the SQL Server counterpart to Marten's `GinIndexJsonData()` GIN index on the JSONB column.
 
 Unlike a [computed index](/documents/indexing/computed-indexes), which materializes one persisted
-computed column per path, a **single** JSON index covers **many** JSON paths at once and accelerates a
-wide range of ad-hoc predicates against the document body — `JSON_VALUE` equality (including the
-`JSON_VALUE(data, '$.x' RETURNING type)` form used on native `json` storage), `JSON_PATH_EXISTS`, and
-`JSON_CONTAINS` — with no per-path computed columns.
+computed column per path, a **single** JSON index covers **many** JSON paths at once, with no per-path
+computed columns.
+
+::: danger A JSON index only serves `JSON_CONTAINS`, and LINQ does not emit that
+The optimizer seeks a JSON index for `JSON_CONTAINS` and for nothing else tried here. Everything Polecat's
+LINQ provider writes is `JSON_VALUE` or `OPENJSON`, so **declaring a JSON index does not make a
+`Query<T>()` faster.** Measured on SQL Server 2025 over 100,000 documents with `$.userName` indexed:
+
+| Predicate | Plan | Reads |
+|---|---|---|
+| `JSON_VALUE(data, '$.userName') = @p` | Clustered Index Scan | 2015 |
+| `JSON_VALUE(data, '$.userName' RETURNING nvarchar(max)) = @p` | Clustered Index Scan | 2015 |
+| `JSON_VALUE(data, '$.userName' RETURNING varchar(250)) = @p` | Clustered Index Scan | 2015 |
+| `JSON_PATH_EXISTS(data, '$.userName') = 1` | Clustered Index Scan | 2015 |
+| `JSON_CONTAINS(data, @p, '$.userName') = 1` | Seek on the JSON index, then the primary key | 6 |
+
+A `JSON_CONTAINS` you write yourself through `session.AdvancedSql.QueryAsync<T>(...)` is what it is for. To
+speed up a LINQ predicate, use a [computed index](/documents/indexing/computed-indexes).
+:::
 
 ::: warning
 Native JSON indexes require the native `json` column type, so they are only available when
@@ -110,5 +125,6 @@ Native JSON indexes carry a number of SQL Server restrictions, all documented on
   [computed index](/documents/indexing/computed-indexes) for any of those.
 
 JSON indexes are therefore **additive** to computed-column indexes, not a replacement: reach for a JSON
-index to accelerate many ad-hoc paths at once, and a computed index when you need uniqueness, filtering,
-covering columns, ordering, or portable `nvarchar(max)` storage.
+index to back `JSON_CONTAINS` over many paths in SQL you write yourself, and a computed index for anything
+LINQ asks, or when you need uniqueness, filtering, covering columns, ordering, or portable `nvarchar(max)`
+storage.
