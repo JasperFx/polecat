@@ -59,4 +59,16 @@ internal interface IAlwaysConnectedLifetime : IConnectionLifetime
     ///     Refuse all further work on this session, because the transaction it was relying on is gone.
     /// </summary>
     void MarkSessionUnusable(Exception cause);
+
+    /// <summary>
+    ///     Throw <see cref="Exceptions.SessionTransactionUnusableException" /> if this session may not
+    ///     begin a transaction, which is every way a session writes.
+    /// </summary>
+    void AssertWritesAreAllowed();
+
+    /// <summary>
+    ///     Refuse every transaction from now on, because a save rolled back the one the caller was
+    ///     relying on (#854). See <see cref="TransactionalConnection" />.
+    /// </summary>
+    void RefuseWrites(Exception cause);
 }

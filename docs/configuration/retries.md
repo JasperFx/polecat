@@ -141,6 +141,30 @@ work from its inputs. Under Wolverine a message retry does exactly that.
 A lock timeout (1222) is not on this list. The statement failed, the transaction and every lock it holds
 are still there, and the session carries on.
 
+## When a failed save rolls the transaction back
+
+A save that fails on the client, with a `ConcurrencyException`, a cancelled token or an exception from a
+listener, rolls its transaction back itself. If the caller was relying on that transaction, what it was
+relying on has gone just as surely, so the session stops writing rather than carry on without it:
+
+| the transaction was... | what the session does |
+|---|---|
+| holding an exclusive lock, in a `ReadCommitted` session | **refuses to write**, and goes on reading |
+| any transaction of a session at another isolation level | **finished**: it refuses reads as well |
+| only the failed save's own, in a `ReadCommitted` session | keeps working: the next save begins a clean transaction with the work still pending |
+
+Refused means `SessionTransactionUnusableException`, carrying the original failure as its
+`InnerException`, from `SaveChangesAsync`, `FetchForExclusiveWriting` and `AppendExclusive`. Taking the lock
+again on the same session is refused too, because the work queued under the first lock is still pending and
+a second lock would cover it falsely. `EjectAllPendingChanges` does not lift the refusal either: whatever the
+caller stores next was decided under the same lock.
+
+Reads go on working in the first case because a `ReadCommitted` read runs outside any transaction and reports
+what is there, which is true whatever the session has lost. At any other level the next read would begin a new
+transaction, and with it a different view of the data from the one the caller has been reading.
+
+Recovery is the same as for a finished session: dispose it, open a new one and redo the work from its inputs.
+
 ## What the isolation level covers
 
 `SessionOptions.IsolationLevel` applies to every document session, however it was opened, and to every

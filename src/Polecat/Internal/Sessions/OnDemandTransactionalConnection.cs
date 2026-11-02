@@ -97,6 +97,10 @@ internal sealed class OnDemandTransactionalConnection : IAlwaysConnectedLifetime
 
     public void MarkSessionUnusable(Exception cause) => _pinned.MarkSessionUnusable(cause);
 
+    public void AssertWritesAreAllowed() => _pinned.AssertWritesAreAllowed();
+
+    public void RefuseWrites(Exception cause) => _pinned.RefuseWrites(cause);
+
     public Task<int> ExecuteAsync(SqlCommand command, CancellationToken token)
         => _isPinned ? _pinned.ExecuteAsync(command, token) : _pooled.ExecuteAsync(command, token);
 

@@ -885,7 +885,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         try
         {
             // #832: before any listener or DDL runs on behalf of a save that cannot happen.
-            _transactional.AssertTransactionIsUsable();
+            _transactional.AssertWritesAreAllowed();
             await prepareToSaveChangesAsync(token);
 
             // Was the caller already relying on this transaction before the save? An exclusive fetch's
@@ -1106,6 +1106,14 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             // transaction that already committed has no connection left and needs nothing.
             if (tx.Connection is not null)
             {
+                // #854: the same loss as the branch below, only requested from this end. Clearing
+                // Transaction would let the next save carry on without the lock or the snapshot, and
+                // the version check that still guards an append guards no document.
+                if (reliesOnTransaction)
+                {
+                    _transactional.RefuseWrites(failure);
+                }
+
                 try
                 {
                     await SqlTransactionRequests.RollbackAsync(tx);
@@ -1259,6 +1267,10 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     ///         on it. If the server has already ended it there is nothing to roll back, and the session
     ///         must not forget that it happened.
     ///     </para>
+    ///     <para>
+    ///         #854: nor when this rollback is what ends it, so that is recorded first, in case the
+    ///         rollback fails.
+    ///     </para>
     /// </remarks>
     private async Task abandonOpenTransactionAsync(Exception cause)
     {
@@ -1274,6 +1286,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             }
             else
             {
+                _transactional.RefuseWrites(cause);
                 await SqlTransactionRequests.RollbackAsync(tx);
             }
         }
