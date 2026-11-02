@@ -14,6 +14,7 @@ using Polecat.Resilience;
 using Polecat.Schema.Identity.Sequences;
 using Polecat.Serialization;
 using Polecat.Internal.OpenTelemetry;
+using Microsoft.Extensions.Logging;
 using Polecat.Logging;
 using Polecat.Metadata;
 using Polecat.Storage;
@@ -311,6 +312,12 @@ public class StoreOptions
     ///     Defaults to NullPolecatLogger (no-op).
     /// </summary>
     public IPolecatLogger Logger { get; set; } = NullPolecatLogger.Instance;
+
+    // The host's logging, for what happens outside any session. AddPolecat sets it, as AddMarten does
+    internal ILoggerFactory? LogFactory { get; set; }
+
+    // Mostly for tests, which want to hand over one logger rather than a factory
+    internal ILogger? DotNetLogger { get; set; }
 
     /// <summary>
     ///     OpenTelemetry tracing and metrics configuration.
@@ -1028,6 +1035,7 @@ public class EventStoreOptions : IEventStoreInstrumentation
         where TOldEvent : notnull where TEvent : notnull
     {
         Upcasters.Upcast(eventTypeName, upcast);
+        EventGraph!.RecordUpcastSource(typeof(TOldEvent), typeof(TEvent));
         return this;
     }
 
@@ -1052,6 +1060,7 @@ public class EventStoreOptions : IEventStoreInstrumentation
         where TOldEvent : notnull where TEvent : notnull
     {
         Upcasters.Upcast(eventTypeName, upcastAsync);
+        EventGraph!.RecordUpcastSource(typeof(TOldEvent), typeof(TEvent));
         return this;
     }
 

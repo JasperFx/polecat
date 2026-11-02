@@ -92,6 +92,9 @@ public partial class DocumentStore : IDocumentStore
         // Fail fast on an incoherent per-tenant partitioning configuration (#163 Phase 1).
         options.EventGraph.AssertTenantPartitioningValidity();
 
+        // Fail fast on a masking rule that could only ever appear to work (#860)
+        options.EventGraph.AssertMaskingRulesCanRun();
+
         // Initialize projection graph - builds async shard registry
         options.Projections.AssertValidity(options);
 

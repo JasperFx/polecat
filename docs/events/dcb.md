@@ -388,7 +388,8 @@ The table's shape follows the event store's:
 `QueryByTagsAsync`, `EventsExistAsync`, `AggregateByTagsAsync` and `FetchForWritingByTags` leave out
 archived events, as every other event query does. Archiving or un-archiving a stream also moves the
 consistency counter of each tag on its events, so it conflicts with a boundary that read those tags: the
-boundary's decision was made from a set of events that has since changed.
+boundary's decision was made from a set of events that has since changed. Tombstoning a stream does the
+same, for the same reason.
 
 The event store explorer's tag lookup (`IEventStore.QueryByTagsAsync`) still shows archived events,
 because it is a diagnostic surface, like its stream reads.

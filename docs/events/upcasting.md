@@ -126,10 +126,16 @@ opts.Events.Upcast<RoomBooked, RoomReserved>(old => new RoomReserved(old.RoomId,
 opts.Events.AddMaskingRuleForProtectedInformation<RoomReserved>(e => e with { Guest = "****" });
 ```
 
-::: warning A rule against the old type never runs
-Rows are masked as what they read as, so a rule registered against `RoomBooked` here matches nothing.
-The pass reports success and the protected value stays in the row.
-:::
+Rows are masked as what they read as, so a rule registered against `RoomBooked` here could never match
+anything: the pass would report success with the protected value still in the row. The store refuses
+that configuration when it is built, whichever was registered first, with an `InvalidOperationException`
+naming both types.
+
+A rule is only refused when no row can read as its type. A rule under
+`opts.Events.Upcast<RoomReserved>(json => ...)` is fine, because the source and target are the same name,
+and so is one on the middle of a chain, because older rows read as it. The check goes by stored name, so
+it can't see an upcast registered directly on `opts.Events.Upcasters` that claims a different name from
+the old type's own.
 
 The masked row is stored the way an append of the new type would be: the new shape, with `type` and
 `dotnet_type` both moved to the new type. It is no longer an upcast row, which has consequences:

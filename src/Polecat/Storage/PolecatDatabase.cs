@@ -66,6 +66,22 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
     /// </summary>
     public string ConnectionString => _connectionString;
 
+    /// <summary>
+    ///     This database again, for handing to something that makes its own commands and takes no timeout,
+    ///     as Weasel's partition management does: the connection string is the only place left to say it.
+    ///     Never raises a limit the connection string already sets lower.
+    /// </summary>
+    internal PolecatDatabase WithCommandTimeout(int seconds)
+    {
+        var builder = new SqlConnectionStringBuilder(_connectionString);
+        if (builder.CommandTimeout == 0 || builder.CommandTimeout > seconds)
+        {
+            builder.CommandTimeout = seconds;
+        }
+
+        return new PolecatDatabase(_options, builder.ConnectionString, Identifier);
+    }
+
     internal EventGraph Events => _events;
 
     /// <summary>

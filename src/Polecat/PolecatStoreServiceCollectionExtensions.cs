@@ -3,6 +3,7 @@ using JasperFx.Events;
 using JasperFx.Events.Daemon;
 using JasperFx.Events.EventModeling;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -59,6 +60,7 @@ public static class PolecatStoreServiceCollectionExtensions
             // ancillary stores. Mirrors Marten's SecondaryStoreConfig (options.StoreName = typeof(T).Name).
             // Set before the IConfigurePolecat<T> chain so a user override still wins.
             options.StoreName = typeof(T).Name;
+            options.LogFactory = sp.GetService<ILoggerFactory>();
 
             var configures = sp.GetServices<IConfigurePolecat<T>>();
             foreach (var configure in configures)

@@ -8,6 +8,8 @@ using JasperFx.Events.Aggregation;
 using JasperFx.Events.Projections;
 using JasperFx.Events.Tags;
 using JasperFx.Events.Upcasting;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Polecat.Events.Schema;
 using Polecat.Projections;
 using Polecat.Serialization;
@@ -39,6 +41,7 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
     private readonly ConcurrentDictionary<string, Type?> _eventTypeByDotNetName = new();
     private readonly List<ITagTypeRegistration> _tagTypes = new();
     private readonly List<IMasker> _maskers = new();
+    private readonly Dictionary<Type, Type> _upcastSources = new();
 
     internal EventGraph(StoreOptions options)
     {
@@ -295,7 +298,9 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
         _tenantOrdinals ??= new TenantPartitionOrdinalRegistry(
             TenantPartitionManager,
             _tenantPartitionDatabase ?? throw new InvalidOperationException(
-                "The owning database has not been attached for per-tenant partitioning."));
+                "The owning database has not been attached for per-tenant partitioning."),
+            _options.DotNetLogger ?? _options.LogFactory?.CreateLogger<TenantPartitionOrdinalRegistry>()
+            ?? NullLogger<TenantPartitionOrdinalRegistry>.Instance);
 
     /// <summary>
     ///     Resolves (and lazily provisions) each tenant's ordinal, physical partition, and per-tenant
@@ -975,6 +980,55 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
         _maskers.Add(new FuncMasker<T>(func));
     }
 
+    /// <summary>
+    ///     #860: refuse a masking rule that can never run. An upcast source's rows are read as the upcast's
+    ///     target and masked as what they read as, so a rule naming the source matches nothing, the pass
+    ///     reports success, and the protected value stays in the row. Checked when the store is built
+    ///     because the rule and the upcast can be registered in either order.
+    /// </summary>
+    /// <remarks>
+    ///     A type that an upcast also produces is left alone, because some rows do read as it: that is
+    ///     <c>Upcast&lt;T&gt;(Func&lt;JsonDocument, T&gt;)</c>, where the source and target are one name,
+    ///     and the middle of a chain. The registry keeps stored names rather than old CLR types, so this
+    ///     goes by name, which also covers class-based upcasters and is why the overloads taking an
+    ///     explicit name report the old type through <see cref="RecordUpcastSource" />.
+    /// </remarks>
+    internal void AssertMaskingRulesCanRun()
+    {
+        if (!Upcasters.HasAny) return;
+
+        var targets = Upcasters.AllTransformations.Select(x => x.EventType).ToHashSet();
+
+        foreach (var eventType in _maskers.Select(x => x.EventType).Distinct())
+        {
+            if (targets.Contains(eventType)) continue;
+
+            var target = findUpcastTargetOf(eventType);
+            if (target == null) continue;
+
+            throw new InvalidOperationException(
+                $"The masking rule for event type {eventType.FullNameInCode()} can never run. That type is an upcast source, so its rows are read as {target.FullNameInCode()}, and masking works on what an event reads as: the rule would match nothing, the pass would report success, and the protected data would stay in the row. Register the rule with AddMaskingRuleForProtectedInformation<{target.FullNameInCode()}>(...) instead.");
+        }
+    }
+
+    private Type? findUpcastTargetOf(Type eventType)
+    {
+        if (_upcastSources.TryGetValue(eventType, out var recorded)) return recorded;
+
+        foreach (var name in new[] { eventType.GetEventTypeName(), ToEventTypeName(eventType.Name) })
+        {
+            if (Upcasters.TryFindTransformation(name, out var transformation)) return transformation.EventType;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    ///     An upcast that claims an explicit stored name, whose old type therefore can't be found from
+    ///     that name. See <see cref="AssertMaskingRulesCanRun" />.
+    /// </summary>
+    internal void RecordUpcastSource(Type oldEventType, Type eventType) => _upcastSources[oldEventType] = eventType;
+
     internal bool TryMask(IEvent e)
     {
         var matched = false;
@@ -992,6 +1046,8 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
 
 internal interface IMasker
 {
+    Type EventType { get; }
+
     bool TryMask(IEvent @event);
 }
 
@@ -1003,6 +1059,8 @@ internal class ActionMasker<T> : IMasker where T : notnull
     {
         _masking = masking;
     }
+
+    public Type EventType => typeof(T);
 
     public bool TryMask(IEvent @event)
     {
@@ -1023,6 +1081,8 @@ internal class FuncMasker<T> : IMasker where T : notnull
     {
         _masking = masking;
     }
+
+    public Type EventType => typeof(T);
 
     public bool TryMask(IEvent @event)
     {
