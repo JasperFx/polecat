@@ -91,11 +91,10 @@ With separate database tenancy:
 - Schema management runs independently per database — `ApplyAllDatabaseChangesOnStartup()` migrates
   every tenant database, not just the one behind `StoreOptions.ConnectionString`
 - Sessions automatically route to the correct database based on tenant ID
-- The async daemon runs independently per tenant database: `AddAsyncDaemon(...)` starts one daemon
-  per tenant database, each tracking its own high-water mark and projection progress
-- `AddAsyncDaemon(...)` reads the tenant list once, at startup. With `MultiTenantedMasterTable()`, use
-  `AddProjectionCoordinator(...)` if tenants are added while the host runs, because it re-reads the
-  master table on every leadership cycle and starts agents for the new tenant
+- The async daemon runs independently per tenant database: `AddAsyncDaemon(...)` runs one daemon
+  per tenant database, each tracking its own high-water mark, projection progress and dead letters
+- With `MultiTenantedMasterTable()`, the daemon re-reads the master table on every leadership cycle. It
+  starts agents for a tenant added while the host runs, and stops them for one that was disabled or removed
 
 ### No default tenant is required
 
@@ -240,6 +239,11 @@ Notes:
   derives from `UnknownTenantIdException`, so an existing `catch (UnknownTenantIdException)` keeps
   catching both.
 - All master-table access flows through `StoreOptions.ResiliencePipeline`.
+- Disabling or removing a tenant takes effect at once on the node that made the call. Other nodes find out when
+  they next read the master table, which the async daemon does on every leadership cycle
+  (`DaemonSettings.LeadershipPollingTime`, 5 seconds by default): they stop that tenant's agents, give up its lock
+  and refuse new sessions for it. **A node with no daemon doesn't read the table on its own**, so it keeps serving a
+  tenant it has already cached until something does, such as `RefreshAsync()` below.
 
 This is the Polecat (SQL Server) equivalent of Marten's `MultiTenantedDatabasesViaMasterTable` /
 `MasterTableTenancy`.

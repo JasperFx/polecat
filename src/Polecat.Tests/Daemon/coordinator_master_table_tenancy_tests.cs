@@ -3,6 +3,7 @@ using JasperFx.Core;
 using JasperFx.Events;
 using JasperFx.Events.Daemon;
 using JasperFx.Events.Projections;
+using JasperFx.MultiTenancy;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -107,6 +108,130 @@ public class coordinator_master_table_tenancy_tests : IClassFixture<CoordinatorT
         await AssertProjectedAsync(otherNode, TenantB);
     }
 
+    /// <summary>
+    ///     #847: <c>AddAsyncDaemon</c> read the tenant list once, so with no tenant at start it built no
+    ///     daemon at all and nothing it could find later.
+    /// </summary>
+    [Theory]
+    [InlineData(DaemonMode.Solo)]
+    [InlineData(DaemonMode.HotCold)]
+    public async Task add_async_daemon_finds_tenants_added_after_the_host_started(DaemonMode mode)
+    {
+        await using var node = new CoordinatedNode(mode, addAsyncDaemon: true);
+        await node.StartAsync();
+
+        await node.AddTenantAsync(TenantA, DbA);
+        await node.AddTenantAsync(TenantB, DbB);
+
+        await node.AssertProjectedAsync(TenantA);
+        await node.AssertProjectedAsync(TenantB);
+    }
+
+    /// <summary>
+    ///     #871 item 3, #849. Disabling is a row on the master table, and the coordinator re-reads that
+    ///     table every cycle, so a node that never made the call still converges. The other tenant is
+    ///     here to show the reaping is that specific, and re-enabling to show it is not a dead end.
+    /// </summary>
+    [Theory]
+    [InlineData(DaemonMode.Solo)]
+    [InlineData(DaemonMode.HotCold)]
+    public async Task a_tenant_disabled_on_another_node_stops_running_here_until_it_is_enabled(DaemonMode mode)
+    {
+        var token = TestContext.Current.CancellationToken;
+
+        await using var node = new CoordinatedNode(mode);
+        await node.StartAsync();
+
+        await node.AddTenantAsync(TenantA, DbA);
+        await node.AddTenantAsync(TenantB, DbB);
+        await node.AssertProjectedAsync(TenantA);
+        await node.AssertProjectedAsync(TenantB);
+
+        var daemonB = await node.DaemonForAsync(TenantB);
+        daemonB.CurrentAgents().ShouldNotBeEmpty();
+
+        using var otherNode = node.BuildStoreWithNoDaemon();
+        var tenancy = (MasterTableTenancy)otherNode.Options.Tenancy!;
+        await tenancy.DisableTenantAsync(TenantB, token);
+
+        await WaitUntilAsync(() => daemonB.CurrentAgents().Count == 0, "tenant B's agents stopped on this node");
+        Should.Throw<DisabledTenantException>(() => node.Store.Options.Tenancy!.GetDatabase(TenantB));
+        await node.AssertProjectedAsync(TenantA);
+
+        await tenancy.EnableTenantAsync(TenantB, token);
+        await node.AssertProjectedAsync(TenantB);
+    }
+
+    [Fact]
+    public async Task a_tenant_removed_on_another_node_stops_running_here()
+    {
+        var token = TestContext.Current.CancellationToken;
+
+        await using var node = new CoordinatedNode(DaemonMode.Solo);
+        await node.StartAsync();
+
+        await node.AddTenantAsync(TenantA, DbA);
+        await node.AssertProjectedAsync(TenantA);
+
+        var daemon = await node.DaemonForAsync(TenantA);
+        daemon.CurrentAgents().ShouldNotBeEmpty();
+
+        using var otherNode = node.BuildStoreWithNoDaemon();
+        await ((MasterTableTenancy)otherNode.Options.Tenancy!).DeleteDatabaseRecordAsync(TenantA, token);
+
+        await WaitUntilAsync(() => daemon.CurrentAgents().Count == 0, "tenant A's agents stopped on this node");
+    }
+
+    /// <summary>
+    ///     Stopping the agents is not enough under HotCold. The lock has to go too, or no other node could
+    ///     run the database if the tenant came back.
+    /// </summary>
+    [Fact]
+    public async Task a_hot_cold_node_lets_go_of_the_lock_on_a_tenant_it_evicts()
+    {
+        await using var node = new CoordinatedNode(DaemonMode.HotCold);
+        await node.StartAsync();
+
+        await node.AddTenantAsync(TenantA, DbA);
+        await node.AssertProjectedAsync(TenantA);
+
+        (await ApplicationLocksOnAsync(DbA)).ShouldBeGreaterThan(0);
+
+        using var otherNode = node.BuildStoreWithNoDaemon();
+        await ((MasterTableTenancy)otherNode.Options.Tenancy!).DisableTenantAsync(TenantA,
+            TestContext.Current.CancellationToken);
+
+        var deadline = DateTimeOffset.UtcNow.Add(Timeout);
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            if (await ApplicationLocksOnAsync(DbA) == 0) return;
+            await Task.Delay(100, TestContext.Current.CancellationToken);
+        }
+
+        throw new TimeoutException("The node stopped running the tenant and kept its lock.");
+    }
+
+    /// <summary>
+    ///     #871 item 6. An application lock is per database, and the multi-database distributor used the same
+    ///     id for every set, so the second of two event stores to reach a database they share lost to the
+    ///     first for good and its projections never ran. Each node here has a schema of its own.
+    /// </summary>
+    [Fact]
+    public async Task two_schemas_sharing_a_tenant_database_do_not_block_each_other()
+    {
+        await using var first = new CoordinatedNode(DaemonMode.HotCold);
+        await using var second = new CoordinatedNode(DaemonMode.HotCold);
+
+        await first.StartAsync();
+        await second.StartAsync();
+
+        await first.AddTenantAsync(TenantA, DbA);
+        await second.AddTenantAsync(TenantA, DbA);
+
+        await first.AssertProjectedAsync(TenantA);
+        await second.AssertProjectedAsync(TenantA);
+    }
+
     [Theory]
     [InlineData(DaemonMode.Solo)]
     [InlineData(DaemonMode.HotCold)]
@@ -122,6 +247,36 @@ public class coordinator_master_table_tenancy_tests : IClassFixture<CoordinatorT
         });
 
         new ProjectionCoordinator(store).Distributor.ShouldBeOfType<MultiTenantedProjectionDistributor>();
+    }
+
+    private static async Task WaitUntilAsync(Func<bool> condition, string description)
+    {
+        var deadline = DateTimeOffset.UtcNow.Add(Timeout);
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            if (condition()) return;
+            await Task.Delay(50, TestContext.Current.CancellationToken);
+        }
+
+        throw new TimeoutException($"Timed out waiting until {description}");
+    }
+
+    private static async Task<int> ApplicationLocksOnAsync(string database)
+    {
+        var token = TestContext.Current.CancellationToken;
+
+        await using var conn = new SqlConnection(ConnectionSource.MasterConnectionString);
+        await conn.OpenAsync(token);
+
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT COUNT(*) FROM sys.dm_tran_locks
+            WHERE resource_type = 'APPLICATION' AND request_status = 'GRANT'
+              AND resource_database_id = DB_ID(@database);
+            """;
+        cmd.Parameters.AddWithValue("@database", database);
+
+        return (int)(await cmd.ExecuteScalarAsync(token))!;
     }
 
     private static Task AddTenantAsync(DocumentStore store, string tenantId, string database) =>
@@ -189,10 +344,22 @@ public class coordinator_master_table_tenancy_tests : IClassFixture<CoordinatorT
         private readonly DocumentStore _store;
         private bool _started;
 
-        public CoordinatedNode(DaemonMode mode)
+        public CoordinatedNode(DaemonMode mode, bool addAsyncDaemon = false)
         {
             _host = Host.CreateDefaultBuilder()
-                .ConfigureServices(services => services.AddPolecat(Configure).AddProjectionCoordinator(mode))
+                .ConfigureServices(services =>
+                {
+                    var polecat = services.AddPolecat(Configure);
+
+                    if (addAsyncDaemon)
+                    {
+                        polecat.AddAsyncDaemon(mode);
+                    }
+                    else
+                    {
+                        polecat.AddProjectionCoordinator(mode);
+                    }
+                })
                 .Build();
 
             _store = (DocumentStore)_host.Services.GetRequiredService<IDocumentStore>();
@@ -214,7 +381,13 @@ public class coordinator_master_table_tenancy_tests : IClassFixture<CoordinatorT
             _started = true;
         }
 
+        public DocumentStore Store => _store;
+
         public DocumentStore BuildStoreWithNoDaemon() => DocumentStore.For(Configure);
+
+        public ValueTask<IProjectionDaemon> DaemonForAsync(string tenantId) =>
+            _host.Services.GetRequiredService<JasperFx.Events.Daemon.IProjectionCoordinator>()
+                .DaemonForDatabase(_store.Options.Tenancy!.GetDatabase(tenantId).Identifier);
 
         public Task AddTenantAsync(string tenantId, string database) =>
             coordinator_master_table_tenancy_tests.AddTenantAsync(_store, tenantId, database);

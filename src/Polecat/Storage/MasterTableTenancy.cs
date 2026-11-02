@@ -141,16 +141,34 @@ public class MasterTableTenancy : ITenancy, IDynamicTenantSource<string>
     }
 
     /// <summary>
-    ///     Read every enabled tenant from the master table, (re)building the in-memory database cache,
-    ///     and return the full set of tenant databases the tenancy currently knows about. Mirrors
-    ///     Marten's <c>BuildDatabases()</c>.
-    /// </summary>
-    /// <summary>
     ///     The control-plane database. Master table tenancy always has one, so an application never
     ///     needs to set StoreOptions.ConnectionString as well. polecat#514.
     /// </summary>
     public string? SeedConnectionString => _masterConnectionString;
 
+    /// <summary>
+    ///     Read every enabled tenant from the master table, bring the in-memory database cache into line
+    ///     with it, and return the tenant databases that leaves. Mirrors Marten's <c>BuildDatabases()</c>,
+    ///     except that it also evicts.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         #871 item 3, #849. This used to only add, so a tenant disabled or removed on another node
+    ///         stayed in this node's cache, and went on opening sessions, until the process restarted.
+    ///         Marten closed its equivalent (marten#5629) leaving it to CritterWatch. The eviction is cheap
+    ///         here because the projection coordinator already comes through this method on every
+    ///         leadership cycle, which also makes it the place that stops such a tenant's agents.
+    ///     </para>
+    ///     <para>
+    ///         What that leaves node-local is a node nothing reads the table on. A host with no daemon
+    ///         keeps a tenant it has cached until something calls this,
+    ///         <see cref="ITenantedSource{T}.RefreshAsync" /> or <see cref="DescribeDatabasesAsync" />.
+    ///     </para>
+    ///     <para>
+    ///         A tenant added on this node after the read below and before the eviction is evicted with
+    ///         the rest. That is harmless: the row is there, so the next lookup or read brings it back.
+    ///     </para>
+    /// </remarks>
     public async Task<IReadOnlyList<PolecatDatabase>> BuildDatabasesAsync(CancellationToken token = default)
     {
         await EnsureMasterTableAsync(token).ConfigureAwait(false);
@@ -183,6 +201,12 @@ public class MasterTableTenancy : ITenancy, IDynamicTenantSource<string>
                 (id, existing) => existing.Factory.ConnectionString == connectionString
                     ? existing
                     : CreateEntry(id, connectionString));
+        }
+
+        var enabled = rows.Select(x => x.TenantId).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var tenantId in _cache.Keys.Where(x => !enabled.Contains(x)))
+        {
+            _cache.TryRemove(tenantId, out _);
         }
 
         return _cache.Values.Select(x => x.Database).ToList();
@@ -284,7 +308,9 @@ public class MasterTableTenancy : ITenancy, IDynamicTenantSource<string>
 
     /// <summary>
     ///     Disable a tenant without deleting its record. Disabled tenants are evicted from the cache
-    ///     and rejected (as <see cref="UnknownTenantIdException" />) until re-enabled.
+    ///     and rejected (as <see cref="UnknownTenantIdException" />) until re-enabled. That is immediate
+    ///     on this node. Another node finds out the next time it reads the master table, which a projection
+    ///     coordinator does on every leadership cycle: see <see cref="BuildDatabasesAsync" />.
     /// </summary>
     public async Task DisableTenantAsync(string tenantId, CancellationToken token = default)
     {
@@ -355,7 +381,6 @@ public class MasterTableTenancy : ITenancy, IDynamicTenantSource<string>
     /// </summary>
     async Task ITenantedSource<string>.RefreshAsync()
     {
-        _cache.Clear();
         await BuildDatabasesAsync().ConfigureAwait(false);
     }
 
