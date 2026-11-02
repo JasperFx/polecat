@@ -91,9 +91,13 @@ What to expect:
   `UseArchivedStreamPartitioning`, a delete of their own. So do its natural key rows, through a
   cascade or, under conjoined tenancy, a delete of their own, which frees the key for a new stream.
 - **Tag values stay in `pc_dcb_tag_version`.** That table keeps a counter per tag value, with the value
-  as text, and a tombstone does not touch it: the counter is what the
+  as text. A tombstone keeps those rows, because the counter is what the
   [DCB consistency check](/events/dcb#consistency-check) compares, and restarting it could let a stale
-  boundary through. If a tag value is personal data, tombstoning does not erase that copy of it.
+  boundary through. If a tag value is personal data, tombstoning does not erase that copy of it. A tag
+  with no row yet gets one, as it does from an archive.
+- **It conflicts with a boundary that read the stream's tags.** A tombstone moves the counter of each tag
+  on the stream's events, so a boundary that read them throws `DcbConcurrencyException` on save instead
+  of saving a decision made from events that are gone. The retry reads the stream as deleted.
 - **It is tenant-scoped.** Only the stream in the session's tenant is deleted. Under conjoined
   tenancy, a stream with the same id in another tenant is untouched.
 - **A missing stream is a no-op.** Tombstoning a stream that does not exist, or was already deleted,

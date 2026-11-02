@@ -63,6 +63,7 @@ internal sealed class TenantDataCleaner
             var edges = await LoadForeignKeyEdgesAsync(conn, schemaName, ct).ConfigureAwait(false);
 
             var ordered = OrderChildrenFirst(tenanted, edges);
+            var unreachedTagTables = await LoadUnreachedTagTablesAsync(conn, schemaName, ct).ConfigureAwait(false);
 
             var deleted = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 
@@ -70,6 +71,21 @@ internal sealed class TenantDataCleaner
             // present nor absent, and the caller has no way to tell which tables made it.
             await using var tx = await SqlTransactionRequests.BeginAsync(
                 conn, IsolationLevel.ReadCommitted, ct).ConfigureAwait(false);
+
+            // #891: found through the events, so ahead of the loop that deletes those
+            foreach (var table in unreachedTagTables)
+            {
+                await using var cmd = conn.CreateCommand();
+                cmd.Transaction = tx;
+                cmd.CommandText = $"""
+                    DELETE t FROM {SqlEscaping.QualifiedName(schemaName, table)} t
+                    INNER JOIN {SqlEscaping.QualifiedName(schemaName, Events.Schema.EventsTable.TableName)} e ON e.seq_id = t.seq_id
+                    WHERE e.tenant_id = @tenant;
+                    """;
+                cmd.Parameters.Add("@tenant", SqlDbType.VarChar, 250).Value = tenantId;
+                var rows = await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+                if (rows > 0) deleted[table] = rows;
+            }
 
             foreach (var table in ordered)
             {
@@ -132,6 +148,37 @@ internal sealed class TenantDataCleaner
             JOIN sys.schemas s ON t.schema_id = s.schema_id
             JOIN sys.columns c ON c.object_id = t.object_id
             WHERE s.name = @schema AND c.name = 'tenant_id'
+            ORDER BY t.name;
+            """;
+        cmd.Parameters.Add("@schema", SqlDbType.NVarChar, 128).Value = schema;
+
+        var tables = new List<string>();
+        await using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+        while (await reader.ReadAsync(ct).ConfigureAwait(false))
+        {
+            tables.Add(reader.GetString(0));
+        }
+
+        return tables;
+    }
+
+    /// <summary>
+    ///     #891: DCB tag tables the delete below can never reach, because they have no <c>tenant_id</c> and
+    ///     no foreign key to cascade from <c>pc_events</c>. That is a tag table in a database-per-tenant
+    ///     store under <c>UseArchivedStreamPartitioning</c>. Their rows belong to a tenant only through the
+    ///     event they tag, and left alone they keep a tag value after the tenant is gone.
+    /// </summary>
+    private static async Task<List<string>> LoadUnreachedTagTablesAsync(SqlConnection conn, string schema,
+        CancellationToken ct)
+    {
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT t.name
+            FROM sys.tables t
+            JOIN sys.schemas s ON t.schema_id = s.schema_id
+            WHERE s.name = @schema AND t.name LIKE 'pc[_]event[_]tag[_]%'
+              AND NOT EXISTS (SELECT 1 FROM sys.columns c WHERE c.object_id = t.object_id AND c.name = 'tenant_id')
+              AND NOT EXISTS (SELECT 1 FROM sys.foreign_keys fk WHERE fk.parent_object_id = t.object_id)
             ORDER BY t.name;
             """;
         cmd.Parameters.Add("@schema", SqlDbType.NVarChar, 128).Value = schema;

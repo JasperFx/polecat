@@ -144,8 +144,34 @@ Two things can't be reordered that way, because the lock is taken before Polecat
 be written to: an exclusive fetch or `AppendExclusive` for one tenant followed by a write through
 `ForTenant` to a new one, and a plain event read in a Serializable or Repeatable Read session followed by
 a tenant's first append. Either one waits for the command timeout and leaves the tenant's partitions
-unsplit. A plain read in a Snapshot session followed by a tenant's first append fails instead, with SQL
-Server's error 3961. Onboard those tenants first with `store.Advanced.AddPolecatManagedTenantsAsync`.
+unsplit, which is the failure described below. A plain read in a Snapshot session followed by a tenant's
+first append fails instead, with SQL Server's error 3961. Onboard those tenants first with
+`store.Advanced.AddPolecatManagedTenantsAsync`.
+
+#### When a split fails
+
+Splitting a partition needs a schema-modification lock, so another session's long transaction on
+`pc_streams` or `pc_events` can make a new tenant's split time out. That does not fail the save. The
+write goes ahead, and until the split succeeds the tenant's rows on that table sit in a neighbouring
+tenant's partition:
+
+- **Reads are correct.** Every read filters on the tenant, so only the physical placement is wrong.
+- **A warning is logged** naming the tenant and the tables, through the host's logging when the store was
+  registered with `AddPolecat`. A store built with `DocumentStore.For` has no logger to write to.
+- **A later write retries the split**, and SQL Server moves the misplaced rows when it succeeds. So does
+  the next new tenant's split, which fills in every boundary that is missing.
+
+A retry never runs behind a lock the session holds on the table, so a session with a transaction already
+open leaves it to a later one. At most one retry for a tenant starts every 30 seconds in each process,
+and it gives up after three seconds rather than the command timeout. The limits are there because
+while a split waits for its lock, every tenant's reads and writes of that table queue behind it.
+
+Moving rows counts against those three seconds, and was measured at about 60,000 small rows a second on
+a development container, so a tenant that wrote a great many rows before its split could run may never
+get through on a retry. It keeps logging the warning. `store.Advanced.AddPolecatManagedTenantsAsync` repeats the split on demand under the
+connection's own command timeout, and reports the outcome for each table. Moving rows holds that lock
+for as long as it takes, so run it at a quiet moment and raise `Command Timeout` in the connection string
+if it needs longer.
 
 ### Tenant-aware async daemon
 

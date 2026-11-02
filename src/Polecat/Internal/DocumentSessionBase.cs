@@ -1197,17 +1197,18 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         var projectsInline = _inlineProjections.Length > 0 && _workTracker.Streams.Any(s => s.Events.Any());
         if (Options.Policies.DocumentTenantPartitioningEnabled && (_workTracker.Operations.Count > 0 || projectsInline))
         {
-            await _eventGraph.TenantOrdinals.ResolveAsync(TenantId, token);
+            await _eventGraph.TenantOrdinals.ResolveAsync(TenantId, token, MayRetryFailedTenantSplit);
             foreach (var adapter in _workTracker.Operations.OfType<Operations.ClosedShapeOperationAdapter>())
             {
-                await _eventGraph.TenantOrdinals.ResolveAsync(adapter.SessionTenantId, token);
+                await _eventGraph.TenantOrdinals.ResolveAsync(adapter.SessionTenantId, token,
+                    MayRetryFailedTenantSplit);
             }
 
             if (projectsInline)
             {
                 foreach (var stream in _workTracker.Streams.Where(s => s.Events.Any()))
                 {
-                    await _eventGraph.TenantOrdinals.ResolveAsync(stream.TenantId, token);
+                    await _eventGraph.TenantOrdinals.ResolveAsync(stream.TenantId, token, MayRetryFailedTenantSplit);
                 }
             }
         }
@@ -1217,15 +1218,24 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         // append planner's locking read has taken that table: the SPLIT would wait on this save's own
         // transaction until it timed out, and Weasel catches that per table and carries on, leaving the
         // row in another tenant's partition. Every stream's tenant and not just the session's, because
-        // ForTenant puts others in the same save.
+        // ForTenant puts others in the same save. #892: this is also where a tenant whose SPLIT failed
+        // gets another attempt, for the same reason it can't happen any later.
         if (_eventGraph.UseTenantPartitionedEvents)
         {
             foreach (var stream in _workTracker.Streams.Where(s => s.Events.Any()))
             {
-                await _eventGraph.TenantSequences.ResolveAsync(stream.TenantId, token);
+                await _eventGraph.TenantSequences.ResolveAsync(stream.TenantId, token, MayRetryFailedTenantSplit);
             }
         }
     }
+
+    /// <summary>
+    ///     #892: a failed SPLIT is only retried while this session holds nothing the SPLIT could wait on. The
+    ///     start of a save usually is that, but a transaction open by then was begun by an exclusive fetch,
+    ///     <c>AppendExclusive</c> or a read at a higher isolation level. The write goes ahead either way,
+    ///     and a later session retries.
+    /// </summary>
+    private bool MayRetryFailedTenantSplit => !HasOpenTransaction;
 
     /// <summary>
     ///     #864: provision a tenant ahead of a stream read whose locks outlast it, which the start of the
@@ -1241,7 +1251,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
 
         // Provisioning is what reads pc_tenant_partitions, so the schema has to be there first
         await EnsureEventStoreSchemaAsync(token);
-        await _eventGraph.TenantSequences.ResolveAsync(tenantId, token);
+        await _eventGraph.TenantSequences.ResolveAsync(tenantId, token, MayRetryFailedTenantSplit);
     }
 
     /// <summary>
@@ -1392,7 +1402,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             else
             {
                 var streamId = isGuid ? (object)stream.Id : stream.Key!;
-                var (currentVersion, exists, archived) = states.TryGetValue(streamId, out var state)
+                var (currentVersion, exists, archived) = states.TryGetValue((TenantOf(stream), streamId), out var state)
                     ? state
                     : (0L, false, false);
 
@@ -1457,7 +1467,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             var (partitionOrdinal, partitionSequenceName) = await ResolvePartitionForClosedShapeAsync(stream, token);
 
             var streamId = isGuid ? (object)stream.Id : stream.Key!;
-            var (currentVersion, exists, archived) = states.TryGetValue(streamId, out var state)
+            var (currentVersion, exists, archived) = states.TryGetValue((TenantOf(stream), streamId), out var state)
                 ? state
                 : (0L, false, false);
 
@@ -1489,7 +1499,9 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         StreamAction stream, CancellationToken token)
     {
         if (!_eventGraph.UseTenantPartitionedEvents) return (null, null);
-        var storage = await _eventGraph.TenantSequences.ResolveAsync(stream.TenantId, token);
+
+        // Past the locking read by now, so a tenant whose SPLIT failed has to wait for the next save (#892)
+        var storage = await _eventGraph.TenantSequences.ResolveAsync(stream.TenantId, token, retryFailedSplit: false);
         return (storage.Ordinal, storage.SequenceName);
     }
 
@@ -1549,17 +1561,31 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     ///     also removes the interleaving window the old N sequential statements offered.
     ///     </para>
     ///     <para>
-    ///     Tenancy: like the per-stream read this replaces, the lookup is scoped to the session's
-    ///     own <see cref="QuerySession.TenantId" /> (the daemon path builds one session per tenant
-    ///     group before calling in).
+    ///     Tenancy: each stream is read under its own tenant, which is not always the session's, because
+    ///     <c>ForTenant</c> puts other tenants' streams in the same save (#892). A stream id is only unique
+    ///     within a tenant, so the result is keyed by both. That costs one statement per tenant, and a
+    ///     save for one tenant is still the one round trip.
     ///     </para>
     /// </summary>
-    private async Task<Dictionary<object, (long currentVersion, bool exists, bool archived)>>
+    private async Task<Dictionary<(string tenantId, object streamId), (long currentVersion, bool exists, bool archived)>>
         ReadStreamStatesForClosedShapeAsync(IReadOnlyList<StreamAction> streams, CancellationToken token)
     {
-        var states = new Dictionary<object, (long currentVersion, bool exists, bool archived)>();
-        if (streams.Count == 0) return states;
+        var states = new Dictionary<(string tenantId, object streamId), (long currentVersion, bool exists, bool archived)>();
 
+        foreach (var tenant in streams.GroupBy(TenantOf).OrderBy(x => x.Key, StringComparer.Ordinal))
+        {
+            await readStreamStatesForTenantAsync(tenant.Key, tenant.ToList(), states, token);
+        }
+
+        return states;
+    }
+
+    private string TenantOf(StreamAction stream) => stream.TenantId ?? TenantId;
+
+    private async Task readStreamStatesForTenantAsync(string tenantId, IReadOnlyList<StreamAction> streams,
+        Dictionary<(string tenantId, object streamId), (long currentVersion, bool exists, bool archived)> states,
+        CancellationToken token)
+    {
         var isGuid = _eventGraph.StreamIdentity == JasperFx.Events.StreamIdentity.AsGuid;
 
         if (streams.Count == 1)
@@ -1571,16 +1597,16 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             cmd.CommandText =
                 $"SELECT version, is_archived FROM {_eventGraph.StreamsTableName} WITH (UPDLOCK, HOLDLOCK) WHERE id = @id AND tenant_id = @tenant_id;";
             cmd.Parameters.AddIdParameter("@id", streamId);
-            cmd.Parameters.AddVarChar("@tenant_id", TenantId);
+            cmd.Parameters.AddVarChar("@tenant_id", tenantId);
 
             // Through the db-neutral seam so the session logger sees the stream-state read
             await using var reader = await ExecuteReaderAsync((System.Data.Common.DbCommand)cmd, token);
             if (await reader.ReadAsync(token))
             {
-                states[streamId] = (reader.GetInt64(0), true, reader.GetBoolean(1));
+                states[(tenantId, streamId)] = (reader.GetInt64(0), true, reader.GetBoolean(1));
             }
 
-            return states;
+            return;
         }
 
         // #363 OPENJSON id-list pattern (see PolecatDocumentStorage): SQL Server has no array
@@ -1606,17 +1632,15 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             {
                 SqlDbType = System.Data.SqlDbType.NVarChar
             });
-        batchCmd.Parameters.AddVarChar("@tenant_id", TenantId);
+        batchCmd.Parameters.AddVarChar("@tenant_id", tenantId);
 
         // Through the db-neutral seam so the session logger sees the stream-state read
         await using var batchReader = await ExecuteReaderAsync((System.Data.Common.DbCommand)batchCmd, token);
         while (await batchReader.ReadAsync(token))
         {
             var id = isGuid ? (object)batchReader.GetGuid(0) : batchReader.GetString(0);
-            states[id] = (batchReader.GetInt64(1), true, batchReader.GetBoolean(2));
+            states[(tenantId, id)] = (batchReader.GetInt64(1), true, batchReader.GetBoolean(2));
         }
-
-        return states;
     }
 
     /// <summary>
@@ -1703,7 +1727,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         cmd.CommandText =
             $"SELECT version FROM {_eventGraph.StreamsTableName} WHERE id = @id AND tenant_id = @tenant_id;";
         cmd.Parameters.AddIdParameter("@id", streamId);
-        cmd.Parameters.AddVarChar("@tenant_id", TenantId);
+        cmd.Parameters.AddVarChar("@tenant_id", TenantOf(stream));
 
         await using var reader = await ExecuteReaderAsync(cmd, token);
         if (!await reader.ReadAsync(token))
