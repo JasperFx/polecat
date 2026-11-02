@@ -454,6 +454,13 @@ public class StoreOptions
     internal Storage.PolecatDatabase? StorageDatabase { get; set; }
 
     /// <summary>
+    ///     The store built from these options. Here rather than on each <see cref="Storage.PolecatDatabase" />
+    ///     because a tenancy builds its databases itself, some of them long after the store, from nothing
+    ///     but these options.
+    /// </summary>
+    internal DocumentStore? Store { get; set; }
+
+    /// <summary>
     ///     The Polly resilience pipeline used for all SQL execution.
     ///     Defaults to retry on transient SQL Server errors.
     /// </summary>

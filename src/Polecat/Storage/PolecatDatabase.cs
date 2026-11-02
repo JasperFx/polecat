@@ -68,11 +68,10 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
     internal EventGraph Events => _events;
 
     /// <summary>
-    ///     Back-reference to the owning store, set by <see cref="DocumentStore" /> during
-    ///     construction. Lets the database open sessions for the dead-letter document
-    ///     store / count queries (it has no store or session of its own otherwise).
+    ///     Back-reference to the owning store. Lets the database open sessions for the dead-letter
+    ///     document store / count queries (it has no store or session of its own otherwise).
     /// </summary>
-    internal DocumentStore? Store { get; set; }
+    internal DocumentStore? Store => _options.Store;
 
     private DocumentStore RequireStore() =>
         Store ?? throw new InvalidOperationException(
@@ -858,8 +857,11 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
     {
         // DeadLetterEvent is a Polecat document (pc_doc_deadletterevent). Store it
         // through a session; Polecat assigns the Guid id when the framework leaves it
-        // default. Mirrors Marten's document-backed dead-letter storage.
-        await using var session = RequireStore().LightweightSession();
+        // default. Mirrors Marten's document-backed dead-letter storage. #871: bound to this
+        // database, as every session below is. With no database, a session routes through the
+        // tenancy, which refuses the default tenant under database-per-tenant, and which would
+        // not reach this database if it didn't.
+        await using var session = RequireStore().LightweightSession(SessionOptions.ForDatabase(this));
         session.Store(deadLetterEvent);
         await session.SaveChangesAsync(token);
     }
@@ -881,7 +883,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
             var projectionName = shard.Name;
             var shardKey = shard.ShardKey;
 
-            await using var session = RequireStore().QuerySession();
+            await using var session = RequireStore().QuerySession(SessionOptions.ForDatabase(this));
             return await session.Query<DeadLetterEvent>()
                 .Where(x => x.ProjectionName == projectionName && x.ShardName == shardKey)
                 .LongCountAsync(token);
@@ -908,7 +910,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
     {
         try
         {
-            await using var session = RequireStore().QuerySession();
+            await using var session = RequireStore().QuerySession(SessionOptions.ForDatabase(this));
             var all = await session.Query<DeadLetterEvent>().ToListAsync(token);
 
             return all
@@ -943,7 +945,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
                 return await FetchDeadLetterCountsAsync(token);
             }
 
-            await using var session = RequireStore().QuerySession();
+            await using var session = RequireStore().QuerySession(SessionOptions.ForDatabase(this));
             var all = await session.Query<DeadLetterEvent>().ToListAsync(token);
 
             return all
@@ -978,7 +980,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
             var projectionName = shard.Name;
             var shardKey = shard.ShardKey;
 
-            await using var session = RequireStore().QuerySession();
+            await using var session = RequireStore().QuerySession(SessionOptions.ForDatabase(this));
             var all = await session.Query<DeadLetterEvent>().ToListAsync(token);
 
             return all
