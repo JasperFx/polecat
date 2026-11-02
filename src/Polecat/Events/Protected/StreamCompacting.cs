@@ -25,7 +25,12 @@ internal static class StreamCompactingExecution
     ///     Polecat cannot call refuses the compaction, because either way the events
     ///     cannot be got back afterward.
     /// </summary>
-    internal static async Task ExecuteAsync<T>(this StreamCompactingRequest<T> request, DocumentSessionBase session)
+    /// <param name="request">The compaction to run.</param>
+    /// <param name="session">The session whose unit of work the operations join.</param>
+    /// <param name="stream">Where the events are read from, which a <c>ForTenant</c> view scopes to its tenant.</param>
+    /// <param name="tenantId">The stream's tenant, which is not always the session's (#905).</param>
+    internal static async Task ExecuteAsync<T>(this StreamCompactingRequest<T> request, DocumentSessionBase session,
+        IQueryEventStore stream, string tenantId)
         where T : class
     {
         // 1. Find the aggregator
@@ -35,12 +40,12 @@ internal static class StreamCompactingExecution
         IReadOnlyList<IEvent> events;
         if (session.Options.Events.StreamIdentity == StreamIdentity.AsGuid)
         {
-            events = await session.Events.FetchStreamAsync(request.StreamId!.Value, request.Version, request.Timestamp,
+            events = await stream.FetchStreamAsync(request.StreamId!.Value, request.Version, request.Timestamp,
                 token: request.CancellationToken).ConfigureAwait(false);
         }
         else
         {
-            events = await session.Events.FetchStreamAsync(request.StreamKey!, request.Version, request.Timestamp,
+            events = await stream.FetchStreamAsync(request.StreamKey!, request.Version, request.Timestamp,
                 token: request.CancellationToken).ConfigureAwait(false);
         }
 
@@ -111,7 +116,7 @@ internal static class StreamCompactingExecution
 
         var replaceOp = new ReplaceEventOperation(
             graph, request.Sequence, serializedData, serializedBdata,
-            mapping.EventTypeName, mapping.DotNetTypeName, session.TenantId);
+            mapping.EventTypeName, mapping.DotNetTypeName, tenantId);
 
         session.WorkTracker.Add(replaceOp);
 
@@ -119,7 +124,7 @@ internal static class StreamCompactingExecution
         if (sequences.Length > 0)
         {
             session.WorkTracker.Add(new DeleteEventsOperation(session.Options.EventGraph, sequences,
-                session.TenantId));
+                tenantId));
         }
 
         // 7. jasperfx#740: record the compaction watermark on pc_streams. request.Version was set
@@ -131,7 +136,7 @@ internal static class StreamCompactingExecution
             graph,
             (object?)request.StreamId ?? request.StreamKey!,
             request.Version,
-            session.TenantId));
+            tenantId));
     }
 
     private static IAggregator<T, IQuerySession> FindAggregator<T>(DocumentSessionBase session) where T : class

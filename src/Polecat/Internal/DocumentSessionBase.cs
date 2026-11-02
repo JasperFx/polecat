@@ -1300,18 +1300,17 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         var projectsInline = _inlineProjections.Length > 0 && _workTracker.Streams.Any(s => s.Events.Any());
         if (Options.Policies.DocumentTenantPartitioningEnabled && (_workTracker.Operations.Count > 0 || projectsInline))
         {
-            await _eventGraph.TenantOrdinals.ResolveAsync(TenantId, token, MayRetryFailedTenantSplit);
+            await _eventGraph.TenantOrdinals.ResolveAsync(TenantId, HasOpenTransaction, token);
             foreach (var adapter in _workTracker.Operations.OfType<Operations.ClosedShapeOperationAdapter>())
             {
-                await _eventGraph.TenantOrdinals.ResolveAsync(adapter.SessionTenantId, token,
-                    MayRetryFailedTenantSplit);
+                await _eventGraph.TenantOrdinals.ResolveAsync(adapter.SessionTenantId, HasOpenTransaction, token);
             }
 
             if (projectsInline)
             {
                 foreach (var stream in _workTracker.Streams.Where(s => s.Events.Any()))
                 {
-                    await _eventGraph.TenantOrdinals.ResolveAsync(stream.TenantId, token, MayRetryFailedTenantSplit);
+                    await _eventGraph.TenantOrdinals.ResolveAsync(stream.TenantId, HasOpenTransaction, token);
                 }
             }
         }
@@ -1322,23 +1321,17 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         // transaction until it timed out, and Weasel catches that per table and carries on, leaving the
         // row in another tenant's partition. Every stream's tenant and not just the session's, because
         // ForTenant puts others in the same save. #892: this is also where a tenant whose SPLIT failed
-        // gets another attempt, for the same reason it can't happen any later.
+        // gets another attempt, for the same reason it can't happen any later. The start of a save usually
+        // holds nothing a SPLIT could wait on, but a transaction open by then was begun by an exclusive
+        // fetch, AppendExclusive or a read at a higher isolation level, and then a later session retries.
         if (_eventGraph.UseTenantPartitionedEvents)
         {
             foreach (var stream in _workTracker.Streams.Where(s => s.Events.Any()))
             {
-                await _eventGraph.TenantSequences.ResolveAsync(stream.TenantId, token, MayRetryFailedTenantSplit);
+                await _eventGraph.TenantSequences.ResolveAsync(stream.TenantId, HasOpenTransaction, token);
             }
         }
     }
-
-    /// <summary>
-    ///     #892: a failed SPLIT is only retried while this session holds nothing the SPLIT could wait on. The
-    ///     start of a save usually is that, but a transaction open by then was begun by an exclusive fetch,
-    ///     <c>AppendExclusive</c> or a read at a higher isolation level. The write goes ahead either way,
-    ///     and a later session retries.
-    /// </summary>
-    private bool MayRetryFailedTenantSplit => !HasOpenTransaction;
 
     /// <summary>
     ///     #864: provision a tenant ahead of a stream read whose locks outlast it, which the start of the
@@ -1354,7 +1347,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
 
         // Provisioning is what reads pc_tenant_partitions, so the schema has to be there first
         await EnsureEventStoreSchemaAsync(token);
-        await _eventGraph.TenantSequences.ResolveAsync(tenantId, token, MayRetryFailedTenantSplit);
+        await _eventGraph.TenantSequences.ResolveAsync(tenantId, HasOpenTransaction, token);
     }
 
     /// <summary>
@@ -1609,7 +1602,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         if (!_eventGraph.UseTenantPartitionedEvents) return (null, null);
 
         // Past the locking read by now, so a tenant whose SPLIT failed has to wait for the next save (#892)
-        var storage = await _eventGraph.TenantSequences.ResolveAsync(stream.TenantId, token, retryFailedSplit: false);
+        var storage = await _eventGraph.TenantSequences.ResolveAsync(stream.TenantId, insideTransaction: true, token);
         return (storage.Ordinal, storage.SequenceName);
     }
 

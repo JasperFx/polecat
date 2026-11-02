@@ -132,6 +132,24 @@ internal sealed class SchemaMigrationLock : IGlobalLock<SqlConnection>
     }
 
     /// <summary>
+    ///     Hold the lock for provisioning a tenant, which unlike a first-use ensure can be neither skipped
+    ///     nor refused, so a null result means the caller goes ahead without it. See
+    ///     <see cref="Polecat.Events.Schema.TenantPartitionOrdinalRegistry.ProvisionAsync" />. The waiting is
+    ///     the same as <see cref="HoldForFirstUseAsync" />: a caller inside a transaction doesn't.
+    /// </summary>
+    internal static async Task<IAsyncDisposable?> TryHoldForProvisioningAsync(StoreOptions options,
+        SqlConnection conn, bool insideTransaction, CancellationToken token)
+    {
+        var migrationLock = insideTransaction
+            ? new SchemaMigrationLock(options.DatabaseSchemaName, TimeSpan.Zero)
+            : options.BuildMigrationLock();
+
+        await migrationLock.TryAttainLock(conn, token).ConfigureAwait(false);
+
+        return migrationLock.Attained ? new Held(migrationLock, conn) : null;
+    }
+
+    /// <summary>
     ///     A session-scoped lock outlives the connection handed back to the pool: only an explicit release,
     ///     or the reset when that connection is next reused, gives it up (weasel#659). So this releases on
     ///     every way out, including a failed migration, and with no token, because a cancelled ensure is one

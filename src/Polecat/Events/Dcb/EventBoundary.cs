@@ -14,12 +14,14 @@ internal class EventBoundary<T> : IEventBoundary<T> where T : class
 {
     private readonly DocumentSessionBase _session;
     private readonly EventGraph _events;
+    private readonly string _tenantId;
 
-    public EventBoundary(DocumentSessionBase session, EventGraph events, T? aggregate,
+    public EventBoundary(DocumentSessionBase session, EventGraph events, string tenantId, T? aggregate,
         IReadOnlyList<IEvent> loadedEvents, long lastSeenSequence)
     {
         _session = session;
         _events = events;
+        _tenantId = tenantId;
         Aggregate = aggregate;
         Events = loadedEvents;
         LastSeenSequence = lastSeenSequence;
@@ -83,7 +85,7 @@ internal class EventBoundary<T> : IEventBoundary<T> where T : class
             var streamId = registration.ExtractValue(tag.Value);
             if (streamId is Guid guidId)
             {
-                if (_session.WorkTracker.TryFindStream(guidId, out stream))
+                if (_session.WorkTracker.TryFindStream(guidId, _events.StreamIdScope(_tenantId), out stream))
                     stream!.AddEvent(wrapped);
                 else
                 {
@@ -92,13 +94,13 @@ internal class EventBoundary<T> : IEventBoundary<T> where T : class
                     // StreamAction.Start would throw ExistingStreamIdCollisionException on save.
                     stream = StreamAction.Append(guidId, [wrapped]);
                     stream.AggregateType = registration.AggregateType;
-                    stream.TenantId = _session.TenantId;
+                    stream.TenantId = _tenantId;
                     _session.WorkTracker.AddStream(stream);
                 }
             }
             else if (streamId is string stringId)
             {
-                if (_session.WorkTracker.TryFindStream(stringId, out stream))
+                if (_session.WorkTracker.TryFindStream(stringId, _events.StreamIdScope(_tenantId), out stream))
                     stream!.AddEvent(wrapped);
                 else
                 {
@@ -107,7 +109,7 @@ internal class EventBoundary<T> : IEventBoundary<T> where T : class
                     // StreamAction.Start would throw ExistingStreamIdCollisionException on save.
                     stream = StreamAction.Append(stringId, [wrapped]);
                     stream.AggregateType = registration.AggregateType;
-                    stream.TenantId = _session.TenantId;
+                    stream.TenantId = _tenantId;
                     _session.WorkTracker.AddStream(stream);
                 }
             }
@@ -123,14 +125,14 @@ internal class EventBoundary<T> : IEventBoundary<T> where T : class
             {
                 var newId = Guid.NewGuid();
                 stream = StreamAction.Start(newId, new[] { wrapped });
-                stream.TenantId = _session.TenantId;
+                stream.TenantId = _tenantId;
                 _session.WorkTracker.AddStream(stream);
             }
             else
             {
                 var newKey = Guid.NewGuid().ToString();
                 stream = StreamAction.Start(newKey, new[] { wrapped });
-                stream.TenantId = _session.TenantId;
+                stream.TenantId = _tenantId;
                 _session.WorkTracker.AddStream(stream);
             }
         }

@@ -39,6 +39,29 @@ await session.SaveChangesAsync();
 var order = await session.Events.AggregateStreamAsync<Order>(streamId);
 ```
 
+### Several Tenants in One Save
+
+`ForTenant` gives you a view of another tenant in the same unit of work, so its writes commit with the
+session's in one transaction:
+
+```cs
+await using var session = store.LightweightSession();
+
+// Two streams, because a stream id is only unique within a tenant
+session.ForTenant("red").Events.Append(streamId, new OrderShipped());
+session.ForTenant("blue").Events.Append(streamId, new OrderShipped());
+
+await session.SaveChangesAsync();
+```
+
+Everything on `ForTenant(...).Events` runs as that tenant, reads included: `FetchStreamAsync`,
+`AggregateStreamAsync`, `FetchLatest`, `FetchForWriting`, `FetchForWritingByTags`, `QueryAllRawEvents` and
+`CompactStreamAsync`. The session's aggregate identity map belongs to the session's own tenant, so a view
+of another tenant doesn't use it.
+
+Without conjoined tenancy the id identifies the stream on its own, so two tenants naming the same id in
+one save are appending to one stream.
+
 ## Separate Database Tenancy
 
 Each tenant gets its own database with independent event stores:
@@ -147,6 +170,16 @@ a tenant's first append. Either one waits for the command timeout and leaves the
 unsplit, which is the failure described below. A plain read in a Snapshot session followed by a tenant's
 first append fails instead, with SQL Server's error 3961. Onboard those tenants first with
 `store.Advanced.AddPolecatManagedTenantsAsync`.
+
+Provisioning takes the same schema lock as migrations and the async daemon, so a split doesn't collide with
+them, and new tenants are provisioned one at a time across all your processes. A write waits for that lock
+for up to `StoreOptions.StartupMigrationLockTimeout`, 30 seconds by default, and a session with a transaction
+open doesn't wait at all. Either way, a write that can't get the lock goes ahead without it, because it can't
+happen without the tenant's ordinal, and a busy schema doesn't fail a write. A retried split is the
+exception: it's skipped if the lock is taken, and comes round again later.
+
+Each process keeps its own copy of the `pc_tenant_partitions` map. When two processes pick the same ordinal
+for different new tenants, the second one reloads the map and takes the next ordinal, so both writes succeed.
 
 #### When a split fails
 

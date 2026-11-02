@@ -1,3 +1,4 @@
+using System.Data;
 using System.Data.Common;
 using Polecat.Events;
 using Polecat.Events.Dcb;
@@ -40,6 +41,16 @@ internal class SetStreamArchivedOperation : IStorageOperation, Weasel.Storage.No
         // time where is_archived participates in the partition scheme.
         var flag = _archived ? 1 : 0;
 
+        // Bound here rather than through AddParameters, whose dictionary binds a string as nvarchar, which
+        // against a varchar stream key or tenant_id puts CONVERT_IMPLICIT on the column and scans it (#363).
+        // Measured on 50,000 string streams: 456 logical reads against 3 on pc_streams, and 309 against 6
+        // on pc_events. The tombstone does the same.
+        builder.Append($"DECLARE @id {(_streamId is string ? "varchar(250)" : "uniqueidentifier")} = ");
+        builder.AppendParameter(_streamId, _streamId is string ? SqlDbType.VarChar : null);
+        builder.Append("; DECLARE @tenant_id varchar(250) = ");
+        builder.AppendParameter(_tenantId, SqlDbType.VarChar);
+        builder.Append(";\n");
+
         builder.Append($"""
             UPDATE {_events.StreamsTableName} SET is_archived = {flag}
             WHERE id = @id AND tenant_id = @tenant_id;
@@ -48,8 +59,6 @@ internal class SetStreamArchivedOperation : IStorageOperation, Weasel.Storage.No
             """);
 
         StreamTagVersionBump.WriteSql(builder, _events);
-
-        builder.AddParameters(new Dictionary<string, object?> { ["id"] = _streamId, ["tenant_id"] = _tenantId });
     }
 
     public Task PostprocessAsync(DbDataReader reader, IList<Exception> exceptions, CancellationToken token) => Task.CompletedTask;

@@ -326,6 +326,74 @@ public class natural_key_lifecycle_tests : OneOffConfigurationsContext
         parameters[1].SqlDbType.ShouldBe(SqlDbType.VarChar);
     }
 
+    /// <summary>
+    ///     The same again for an archive, which also had the same shape: 456 logical reads to 3 on
+    ///     pc_streams and 309 to 6 on pc_events, on 50,000 string streams.
+    /// </summary>
+    [Theory]
+    [InlineData(StreamIdentity.AsString)]
+    [InlineData(StreamIdentity.AsGuid)]
+    public void an_archive_binds_a_string_as_varchar(StreamIdentity identity)
+    {
+        ConfigureStore(opts => opts.Events.StreamIdentity = identity);
+
+        object streamId = identity == StreamIdentity.AsString ? "a-stream" : Guid.NewGuid();
+        var operation = new SetStreamArchivedOperation(theStore.Events, streamId, "tenant", archived: true);
+
+        using var batch = new SqlBatch();
+        var builder = new BatchBuilder(batch);
+        operation.ConfigureCommand(builder);
+        builder.Compile();
+
+        var parameters = batch.BatchCommands.Cast<SqlBatchCommand>().SelectMany(x => x.Parameters.Cast<SqlParameter>())
+            .ToList();
+
+        parameters.Count.ShouldBe(2);
+        parameters[0].SqlDbType.ShouldBe(identity == StreamIdentity.AsString
+            ? SqlDbType.VarChar
+            : SqlDbType.UniqueIdentifier);
+        parameters[1].SqlDbType.ShouldBe(SqlDbType.VarChar);
+    }
+
+    [Theory]
+    [InlineData(StreamIdentity.AsString)]
+    [InlineData(StreamIdentity.AsGuid)]
+    public async Task archiving_two_streams_in_one_save(StreamIdentity identity)
+    {
+        await ConfigureAsync(identity: identity);
+
+        object first = identity == StreamIdentity.AsString ? "first-stream" : Guid.NewGuid();
+        object second = identity == StreamIdentity.AsString ? "second-stream" : Guid.NewGuid();
+
+        await using (var session = SessionFor(Red))
+        {
+            foreach (var streamId in new[] { first, second })
+            {
+                var created = new NkOrderCreated(new OrderNumber($"ORD-{streamId}"), "First");
+                if (streamId is Guid guid) session.Events.StartStream(guid, created);
+                else session.Events.StartStream((string)streamId, created);
+            }
+
+            await session.SaveChangesAsync(Ct);
+        }
+
+        await using (var session = SessionFor(Red))
+        {
+            foreach (var streamId in new[] { first, second })
+            {
+                if (streamId is Guid guid) session.Events.ArchiveStream(guid);
+                else session.Events.ArchiveStream((string)streamId);
+            }
+
+            await session.SaveChangesAsync(Ct);
+        }
+
+        await using var conn = await OpenConnectionAsync();
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"SELECT COUNT(*) FROM {theStore.Events.StreamsTableName} WHERE is_archived = 1";
+        (await cmd.ExecuteScalarAsync(Ct)).ShouldBe(2);
+    }
+
     [Fact]
     public async Task a_tombstone_of_a_string_stream_finds_it_through_a_varchar_variable()
     {

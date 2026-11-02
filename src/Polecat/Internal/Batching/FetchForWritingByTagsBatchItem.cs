@@ -73,6 +73,6 @@ internal class FetchForWritingByTagsBatchItem<T> : IBatchQueryItem where T : cla
         _session.CaptureDcbBoundary(DcbTagVersionCapture.BuildEntries(
             _targets!, capturedByKey, _tenantId, _query, lastSeenSequence));
 
-        _tcs.SetResult(new EventBoundary<T>(_session, _eventGraph, aggregate, events, lastSeenSequence));
+        _tcs.SetResult(new EventBoundary<T>(_session, _eventGraph, _tenantId, aggregate, events, lastSeenSequence));
     }
 }

@@ -58,7 +58,6 @@ If the wait runs out, a session's first use fails and the next use tries again, 
 
 A session with a transaction open never waits, because a migration waiting on that transaction's locks would then wait on the session forever, with nothing SQL Server can detect. If the lock is taken it skips the check, so a table that exists is used as normal and a table that does not fails the statement straight away. A HiLo sequence used outside a session behaves the same way, because it can't tell whether its caller has a transaction open.
 
-Tenant partitions are the exception: provisioning a new tenant's partitions takes no lock yet.
 
 ## Weasel.SqlServer
 
