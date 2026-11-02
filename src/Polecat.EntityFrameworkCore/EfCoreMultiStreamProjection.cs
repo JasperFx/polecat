@@ -5,7 +5,6 @@ using JasperFx.Events.Daemon;
 using JasperFx.Events.Projections;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
-using Polecat.Internal;
 using Polecat.Projections;
 
 namespace Polecat.EntityFrameworkCore;
@@ -66,19 +65,10 @@ public abstract class EfCoreMultiStreamProjection<
             return base.DetermineActionAsync(session, snapshot, identity, identitySetter, events, cancellation);
         }
 
+        // #869 / #650: see the single-stream twin. A live fold is a read, so this context flushes nothing
+        // and has no owner but this call.
         var (dbContext, placeholder) = EfCoreDbContextFactory.CreateFor<TDbContext>(session, _connectionString);
 
-        if (session is ITransactionParticipantRegistrar registrar)
-        {
-            registrar.AddTransactionParticipant(
-                new DbContextTransactionParticipant<TDbContext>(dbContext, placeholder,
-                    session as DocumentSessionBase));
-
-            return ValueTask.FromResult(Apply(snapshot, identity, events, dbContext));
-        }
-
-        // #650: see the single-stream twin — a plain IQuerySession is not a registrar, so nothing
-        // would have owned either object on this route.
         return DisposeAfterApplying(snapshot, identity, events, dbContext, placeholder);
     }
 

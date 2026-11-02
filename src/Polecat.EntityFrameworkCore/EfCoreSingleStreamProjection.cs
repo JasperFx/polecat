@@ -5,7 +5,6 @@ using JasperFx.Events.Daemon;
 using JasperFx.Events.Projections;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
-using Polecat.Internal;
 using Polecat.Projections;
 
 namespace Polecat.EntityFrameworkCore;
@@ -65,24 +64,19 @@ public abstract class EfCoreSingleStreamProjection<
             return base.DetermineActionAsync(session, snapshot, identity, identitySetter, events, cancellation);
         }
 
-        // No EF-backed storage arrived, so build a DbContext just for this call. Live aggregation
-        // takes this route on every AggregateStreamAsync.
+        // No EF-backed storage arrived, so this is a live fold: AggregateStreamAsync, FetchLatest,
+        // FetchForWriting and everything else that reads an aggregate off its events. That is a read.
+        //
+        // #869: it used to enlist this context whenever the session could take a participant, which a
+        // document session always can, so whatever ApplyEvent did to the context was flushed at the
+        // next save. Those are the projection's writes, already made once by the projection itself, so
+        // an Add failed the save with a primary key violation, and an Add with a generated key would
+        // have written the row a second time and said nothing. The context exists for ApplyEvent to
+        // read through and for nothing else, so nothing here ever flushes it.
+        //
+        // #650: and so it has no owner but this call. We created it here, so we dispose it here.
         var (dbContext, placeholder) = EfCoreDbContextFactory.CreateFor<TDbContext>(session, _connectionString);
 
-        // Register participant so DbContext flushes in same transaction — and so something owns it.
-        if (session is ITransactionParticipantRegistrar registrar)
-        {
-            registrar.AddTransactionParticipant(
-                new DbContextTransactionParticipant<TDbContext>(dbContext, placeholder,
-                    session as DocumentSessionBase));
-
-            return ValueTask.FromResult(Apply(snapshot, identity, events, session, dbContext));
-        }
-
-        // #650: a plain IQuerySession is NOT an ITransactionParticipantRegistrar, which is exactly
-        // what the live-aggregation path passes — so on that route the participant above would have
-        // had no owner and nothing would ever have disposed either object. We created them here, so
-        // we dispose them here.
         return DisposeAfterApplying(snapshot, identity, events, session, dbContext, placeholder);
     }
 

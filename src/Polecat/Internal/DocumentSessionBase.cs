@@ -909,6 +909,11 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
 
         using var tx = _transactional.Transaction!;
         var committed = false;
+
+        // #870: anything queued or enlisted past this point belongs to this attempt at the save.
+        var operationsBeforeThisAttempt = _workTracker.OperationCount;
+        var participantsBeforeThisAttempt = _transactionParticipants.Count;
+
         try
         {
             // gh-515: the DCB boundary check, run BEFORE the events are inserted so this session's own
@@ -931,7 +936,8 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
 
                 // Ensure document tables exist for any additional projected types. #868: this is the one
                 // ensure a save cannot move ahead of its transaction, because the types are only known
-                // once the projections have run, and it is why the ensure has to be told it is inside one.
+                // once the projections have run. #870: so it asks this transaction's own connection first,
+                // and only a table that really is missing costs a second one.
                 if (_workTracker.Operations.Count > 0)
                 {
                     var newTypes = _workTracker.Operations
@@ -939,7 +945,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
                         .Where(t => t != typeof(object))
                         .Distinct()
                         .Select(t => _providers.GetProvider(t));
-                    await _tableEnsurer.EnsureTablesAsync(newTypes, HasOpenTransaction, token);
+                    await _tableEnsurer.EnsureProjectedTablesAsync(newTypes, tableExistsAsync, token);
                 }
             }
 
@@ -1122,6 +1128,12 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
                 _transactional.MarkSessionUnusable(failure);
             }
 
+            if (!committed)
+            {
+                _workTracker.RemoveOperationsFrom(operationsBeforeThisAttempt);
+                await abandonParticipantsFromAsync(participantsBeforeThisAttempt);
+            }
+
             throw;
         }
         finally
@@ -1135,6 +1147,62 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             // at the version the instance reflects, so it would still be correct on a later commit --
             // but a session should not carry a fetch's leftovers past the save that failed.
             _aggregateCacheWrites?.Clear();
+        }
+    }
+
+    /// <summary>
+    ///     Is this table there, as far as the transaction this save holds can tell? On the session's own
+    ///     connection, so it needs nothing from the pool, and any wait on it is one the server can see.
+    /// </summary>
+    private async Task<bool> tableExistsAsync(string qualifiedTableName, CancellationToken token)
+    {
+        await using var cmd = new SqlCommand("SELECT OBJECT_ID(@table);");
+        cmd.Parameters.AddVarChar("@table", qualifiedTableName);
+
+        return await ExecuteScalarAsync(cmd, token) is not (null or DBNull);
+    }
+
+    /// <summary>
+    ///     #870: drop the participants a failed attempt at a save enlisted, from
+    ///     <paramref name="firstOfTheAttempt" /> on.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         An inline projection enlists a participant each time it runs, and a retry on this session
+    ///         runs it again. The attempt that failed is rolled back but nothing took its participant off
+    ///         the list, so the retry flushed both: for Polecat.EntityFrameworkCore, two contexts holding
+    ///         the same pending rows, which is a primary key violation at best and a row written twice
+    ///         where the key is generated. The operations a projection queues have the same shape, which
+    ///         is why the caller forgets those too: two <c>Insert</c>s of one document fail the retry.
+    ///     </para>
+    ///     <para>
+    ///         Only the attempt's own. A participant enlisted before the save, as Wolverine's outbox does,
+    ///         has nothing to enlist it again, and its work was rolled back with everything else, so it
+    ///         stays for the retry. After a commit that went through, nothing here runs: those participants
+    ///         stay until the session ends, for the reason given on <c>DbContextTransactionParticipant</c>.
+    ///     </para>
+    ///     <para>
+    ///         Disposal has no token, and a failure here must not replace the save's own exception.
+    ///     </para>
+    /// </remarks>
+    private async Task abandonParticipantsFromAsync(int firstOfTheAttempt)
+    {
+        var abandoned = _transactionParticipants.Count - firstOfTheAttempt;
+        if (abandoned <= 0) return;
+
+        var participants = _transactionParticipants.GetRange(firstOfTheAttempt, abandoned);
+        _transactionParticipants.RemoveRange(firstOfTheAttempt, abandoned);
+
+        foreach (var disposable in participants.OfType<IAsyncDisposable>())
+        {
+            try
+            {
+                await disposable.DisposeAsync();
+            }
+            catch (Exception e)
+            {
+                Logger.LogFailure("Failure trying to dispose a transaction participant after a failed SaveChangesAsync", e);
+            }
         }
     }
 
@@ -1165,6 +1233,13 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
                 .Select(t => _providers.GetProvider(t));
 
             await _tableEnsurer.EnsureTablesAsync(typesNeeded, HasOpenTransaction, token);
+        }
+
+        // #870: tables an earlier save's projections wrote to and only looked up, because it was already
+        // inside its transaction by then. This is the first chance to do the rest of an ensure for them.
+        if (!HasOpenTransaction)
+        {
+            await _tableEnsurer.EnsureTablesFoundInsideTransactionAsync(token);
         }
 
         // Pre-create document tables for projected types that projections may query. #548: this set comes
