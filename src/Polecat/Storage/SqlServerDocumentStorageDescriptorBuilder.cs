@@ -39,10 +39,48 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
 {
     private const string ServerTimestamp = "SYSDATETIMEOFFSET()";
 
+    private const string UpsertLockHint = "HOLDLOCK";
+
+    /// <summary>
+    ///     What an unguarded upsert or update carries in a <c>Snapshot</c> session, in place of
+    ///     <see cref="UpsertLockHint" /> (#854).
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         <b><c>HOLDLOCK</c> cannot do both jobs.</b> It is what makes a first write safe at
+    ///         <c>ReadCommitted</c>: measured on SQL Server 2025 with eight writers racing for 150 new
+    ///         keys, it gives 1200 clean writes and no deadlocks, and a <c>MERGE</c> without it fails 412
+    ///         of those writers with 2627. But it also reads the latest committed row, so at
+    ///         <c>Snapshot</c> SQL Server has no conflict to report and the statement writes over a
+    ///         concurrent commit. <c>SERIALIZABLE</c>, <c>READCOMMITTEDLOCK</c> and
+    ///         <c>UPDLOCK, HOLDLOCK</c> do the same.
+    ///     </para>
+    ///     <para>
+    ///         <b>The isolation level decides, because no one statement does both</b> without a second
+    ///         locking read ahead of every write, which would need the id bound twice and would change
+    ///         the default path to fix a rare one. <c>UPDLOCK</c> alone is the choice over no hint because
+    ///         it answers 3960 for a row inserted since the snapshot, where a bare <c>MERGE</c> answers
+    ///         2627. Two sessions truly racing for one new key can still get 2627, as a plain
+    ///         <c>INSERT</c> would: loud, and nothing lost.
+    ///     </para>
+    ///     <para>
+    ///         <b>Only unguarded writes change.</b> A concurrency guard compares against the current row
+    ///         and reports <c>ConcurrencyException</c>, so reading one is what makes it work, and an
+    ///         insert reads the row it collides with to name that collision. Both keep
+    ///         <see cref="UpsertLockHint" /> at every level.
+    ///     </para>
+    /// </remarks>
+    private const string SnapshotUpsertLockHint = "UPDLOCK";
+
+    /// <param name="forSnapshotSession">
+    ///     True for the descriptor an unversioned document's writes use in a <c>Snapshot</c> session.
+    ///     See <see cref="SnapshotUpsertLockHint" />.
+    /// </param>
     public static DocumentStorageDescriptor<TDoc, TId> Build<TDoc, TId>(
         DocumentMapping mapping,
         IIdentification<TDoc, TId> identification,
-        StoreOptions options)
+        StoreOptions options,
+        bool forSnapshotSession = false)
         where TDoc : notnull
         where TId : notnull
     {
@@ -220,9 +258,10 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
                 : ConcurrencyMode.Off;
 
         var partitionColumn = partitionBinder?.ColumnName;
-        var upsertSql = BuildMergeSql(mapping, writeArray, revisionBinder, partitionColumn, isConjoined, concurrencyMode, guarded: concurrencyMode != ConcurrencyMode.Off, insertOnly: false);
+        var upsertLockHint = forSnapshotSession ? SnapshotUpsertLockHint : UpsertLockHint;
+        var upsertSql = BuildMergeSql(mapping, writeArray, revisionBinder, partitionColumn, isConjoined, concurrencyMode, guarded: concurrencyMode != ConcurrencyMode.Off, insertOnly: false, lockHint: upsertLockHint);
         var insertSql = BuildMergeSql(mapping, writeArray, revisionBinder, partitionColumn, isConjoined, concurrencyMode, guarded: false, insertOnly: true);
-        var updateSql = BuildUpdateSql(mapping, writeArray, revisionBinder, partitionColumn, isConjoined, concurrencyMode);
+        var updateSql = BuildUpdateSql(mapping, writeArray, revisionBinder, partitionColumn, isConjoined, concurrencyMode, upsertLockHint);
         var overwriteSql = BuildMergeSql(mapping, writeArray, revisionBinder, partitionColumn, isConjoined, concurrencyMode, guarded: false, insertOnly: false);
 
         return new DocumentStorageDescriptor<TDoc, TId>(
@@ -290,7 +329,8 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
         bool isConjoined,
         ConcurrencyMode mode,
         bool guarded,
-        bool insertOnly)
+        bool insertOnly,
+        string lockHint = UpsertLockHint)
         where TDoc : notnull
     {
         var table = mapping.QualifiedTableName;
@@ -470,7 +510,7 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
 
         var mergeOut = OutputParts(mapping, mode);
         return mergeOut.Prologue +
-               $"MERGE {table} WITH (HOLDLOCK) AS t " +
+               $"MERGE {table} WITH ({lockHint}) AS t " +
                $"USING {usingClause} ON {onClause} " +
                $"WHEN MATCHED{guard} THEN UPDATE SET {string.Join(", ", updateAssignments)} " +
                $"{insertClause} " +
@@ -492,7 +532,8 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
         IDocumentMetadataBinder<TDoc>? revisionBinder,
         string? partitionColumn,
         bool isConjoined,
-        ConcurrencyMode mode)
+        ConcurrencyMode mode,
+        string lockHint)
         where TDoc : notnull
     {
         var table = mapping.QualifiedTableName;
@@ -575,7 +616,7 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
 
         var updateOut = OutputParts(mapping, mode);
         return updateOut.Prologue +
-               $"MERGE {table} WITH (HOLDLOCK) AS t " +
+               $"MERGE {table} WITH ({lockHint}) AS t " +
                $"USING {usingClause} ON {onClause} " +
                $"WHEN MATCHED{guard} THEN UPDATE SET {string.Join(", ", updateAssignments)} " +
                updateOut.Output + updateOut.Epilogue;

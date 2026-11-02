@@ -262,6 +262,11 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     internal void AssertTransactionIsUsable() => _transactional.AssertTransactionIsUsable();
 
     /// <summary>
+    ///     Decides which SQL this session's unguarded document writes use (#854).
+    /// </summary>
+    internal bool RunsAtSnapshotIsolation => _transactional.IsolationLevel == System.Data.IsolationLevel.Snapshot;
+
+    /// <summary>
     ///     Run a command that does not go through this session's lifetime but belongs to its unit of
     ///     work: today, what an EF Core <c>DbContext</c> does on the session's behalf (#846).
     /// </summary>

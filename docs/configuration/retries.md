@@ -177,13 +177,36 @@ A **query session** never opens a transaction, so the option does nothing there:
 connection and runs in autocommit at `ReadCommitted`. For several reads against one snapshot, use a
 document session at that level.
 
-::: warning Document writes do not raise 3960
-`Store` and `Update` are `MERGE ... WITH (HOLDLOCK)`, and SQL Server does not raise a snapshot update
-conflict for a statement carrying that hint: it reads the latest committed row and writes over it. So
-in a `Snapshot` session those two **overwrite a concurrent write**, silently, even though every
-statement really is running at `Snapshot`. Event appends, and SQL you queue yourself without that hint,
-do raise 3960. For documents, use [optimistic concurrency](/documents/storage), which compares the
-stored version and raises `ConcurrencyException` at any isolation level.
+### Document writes at `Snapshot`
+
+In a `Snapshot` session, `Store` and `Update` on a document with no concurrency check raise a snapshot
+update conflict (3960) over a concurrent write, as event appends and your own queued SQL do. So does
+`Store` over a row inserted or deleted since the session's snapshot. Two sessions truly racing to write
+the same new id can get a duplicate key (2627) instead, as a plain `INSERT` would. Either way nothing is
+overwritten, and the save fails.
+
+At every other level those writes are `MERGE ... WITH (HOLDLOCK)`, which is what makes concurrent first
+writes of one id safe. SQL Server raises no conflict for a statement carrying that hint, so a `Snapshot`
+session uses `UPDLOCK` for them instead.
+
+The rest of what a `Snapshot` session writes reads the current row, and so reports differently:
+
+| write | what it reports over a concurrent write |
+|---|---|
+| a document using [optimistic concurrency](/documents/storage) | `ConcurrencyException` from the version check, because that check has to see the current row |
+| a document using numeric revisions, with an explicit revision | `ConcurrencyException`, the same way |
+| `Insert` | `DocumentAlreadyExistsException` |
+
+::: warning These `Snapshot` writes still overwrite
+These do not raise 3960, and a concurrent write to the same row is silently replaced:
+
+- `Store` of a document using numeric revisions with revision 0, which asks for the next revision and so
+  has no check to fail. Set the revision explicitly to get one.
+- Documents written by an inline projection, though an append to the same stream raises 3960 first, so
+  this only reaches a document that other streams or writers also change.
+
+Flat table projections also keep `HOLDLOCK`, but lose nothing by it: each statement is computed by SQL
+from the current row, so `Increment` on a concurrently changed row gives the right total.
 :::
 
 ## Custom Polly configuration

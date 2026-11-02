@@ -87,6 +87,8 @@ internal sealed class OnDemandTransactionalConnection : IAlwaysConnectedLifetime
 
     public bool HoldsTransactionForSession => _pinned.HoldsTransactionForSession;
 
+    public IsolationLevel IsolationLevel => _pinned.IsolationLevel;
+
     public async ValueTask BeginTransactionAsync(CancellationToken token)
     {
         _isPinned = true;

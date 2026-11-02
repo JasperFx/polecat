@@ -68,6 +68,7 @@ internal class TransactionalConnection : IAlwaysConnectedLifetime
     public SqlTransaction? Transaction { get; set; }
     public bool HasOpenTransaction => Transaction != null;
     public bool HoldsTransactionForSession => _isolationLevel != IsolationLevel.ReadCommitted;
+    public IsolationLevel IsolationLevel => _isolationLevel;
 
     public async ValueTask BeginTransactionAsync(CancellationToken token)
     {

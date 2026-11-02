@@ -45,6 +45,11 @@ internal interface IAlwaysConnectedLifetime : IConnectionLifetime
     bool HoldsTransactionForSession { get; }
 
     /// <summary>
+    ///     The level every transaction on this lifetime begins at (#844).
+    /// </summary>
+    System.Data.IsolationLevel IsolationLevel { get; }
+
+    /// <summary>
     ///     Begin a transaction at the session's isolation level, unless one is already open.
     /// </summary>
     ValueTask BeginTransactionAsync(CancellationToken token);
