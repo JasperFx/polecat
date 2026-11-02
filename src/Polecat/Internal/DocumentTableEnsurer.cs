@@ -212,7 +212,18 @@ internal class DocumentTableEnsurer
             var ftObjects = Storage.FullText.FullTextSchemaObjects.For(provider.Mapping);
             if (ftObjects.Length > 0)
             {
-                var ftMigration = await SchemaMigration.DetermineAsync(conn, token, ftObjects);
+                // #877: created here and never updated here. Changing an existing token table's column
+                // is a size-of-data operation that can outlast the command timeout inside whichever
+                // request got here first, and it would fail the same way on every request after it. A
+                // table left as it was keeps working as it did; see FullTextTokenTable.
+                var tokenTables = ftObjects.Where(x => x is Storage.FullText.FullTextTokenTable).ToArray();
+                var tokenTableMigration = await SchemaMigration.DetermineAsync(conn, token, tokenTables);
+                if (tokenTableMigration.Difference == SchemaPatchDifference.Create)
+                {
+                    await migrator.ApplyAllAsync(conn, tokenTableMigration, AutoCreate.CreateOrUpdate, ct: token);
+                }
+
+                var ftMigration = await SchemaMigration.DetermineAsync(conn, token, ftObjects.Except(tokenTables).ToArray());
                 await migrator.ApplyAllAsync(conn, ftMigration, AutoCreate.CreateOrUpdate, ct: token);
 
                 // The backfill is a DATA migration and deliberately not a schema object: a trigger only
@@ -221,13 +232,7 @@ internal class DocumentTableEnsurer
                 // answers empty. Idempotent, so running it on every ensure is correct rather than merely
                 // harmless. It follows the migration because it writes to the table that migration
                 // creates.
-                foreach (var statement in Storage.FullText.FullTextIndex.BackfillStatements(
-                             provider.Mapping, provider.Mapping.FullTextIndexes))
-                {
-                    await using var ftCmd = conn.CreateCommand();
-                    ftCmd.CommandText = statement;
-                    await ftCmd.ExecuteNonQueryAsync(token);
-                }
+                await Storage.FullText.FullTextBackfill.RunAsync(conn, provider.Mapping, _options.CommandTimeout);
             }
 
             // #685: JSON indexes are no longer rendered here. They are declared on DocumentTable

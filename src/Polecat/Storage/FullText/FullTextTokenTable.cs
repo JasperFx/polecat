@@ -24,9 +24,28 @@ namespace Polecat.Storage.FullText;
 ///         (doc_id, tenant_id, member, term, pos) and nothing about it is unique — the same term can
 ///         appear at several positions, and <c>pos</c> is a recorded ordinal rather than a key. Adding
 ///         one now would also be a migration against every table the raw-DDL renderer already created,
-///         which is the opposite of what moving an object into the model should cost: the shape here
-///         matches what that renderer emitted exactly, so the delta against an existing database is
-///         <c>None</c>.
+///         which is the opposite of what moving an object into the model should cost.
+///     </para>
+///     <para>
+///         ⚠️ <b><c>term</c> is <c>nvarchar</c> (#877), and that is the one change to the shape the raw-DDL
+///         renderer emitted.</b> As <c>varchar</c> it held what the database's code page could, so under
+///         the default collation <c>東京</c> was stored as <c>??</c> and nothing outside Western European
+///         text could be found. And a search scanned, because the term binds as <c>nvarchar</c> and that
+///         puts <c>CONVERT_IMPLICIT</c> on the column: a Table Scan at 3,582 reads over half a million
+///         tokens against an Index Seek at 5 once the two agree. Binding <c>varchar</c> instead also
+///         seeks, and turns the first defect from a miss into a false match, because <c>大阪</c> then binds
+///         as <c>??</c> as well. It costs 13% more space over short terms, and 25% over the 8 million
+///         tokens measured below.
+///     </para>
+///     <para>
+///         ⚠️ <b>Widening an existing table is a size-of-data operation, so nothing does it at first
+///         use.</b> 8 million tokens took 72 seconds to alter and 36 to re-index, which is what 8,000 long
+///         documents amount to. Inside the first request that would run into the 30 second command
+///         timeout, roll back, and do it again on the next one, leaving the type unusable. The first-use
+///         path therefore creates this table and never updates it: an existing table keeps working as it
+///         did, and <c>ApplyAllConfiguredChangesToDatabaseAsync()</c> or the script from <c>db-patch</c>
+///         is the step that widens it, followed by <c>RebuildFullTextIndexAsync</c> for what the old
+///         column already lost.
 ///     </para>
 /// </remarks>
 internal class FullTextTokenTable: Table
@@ -44,15 +63,22 @@ internal class FullTextTokenTable: Table
         // styles. See FullTextIndex.TenantColumn.
         AddColumn(JasperFx.StorageConstants.TenantIdColumn, "varchar(250)").NotNull();
         AddColumn("member", "varchar(200)").NotNull();
-        AddColumn("term", $"varchar({FullTextIndex.MaxTermLength})").NotNull();
+        AddColumn("term", $"nvarchar({FullTextIndex.MaxTermLength})").NotNull();
         AddColumn("pos", "int").NotNull();
 
-        // (term, doc_id) leading, covering everything a search projects: the hot path is "find the
-        // documents carrying this term", and the INCLUDE list keeps it from touching the base table.
+        // term leading, covering everything a search projects: the hot path is "find the documents
+        // carrying this term", and the INCLUDE list keeps it from touching the base table. member is in
+        // the key because every search filters on it.
+        //
+        // ⚠️ That key is also what gets an existing table widened. ALTER COLUMN is refused while an index
+        // depends on the column (Msg 5074), and Weasel only takes down an index it is replacing: one that
+        // matches the model stays put unless the column is a computed one (weasel#638). An index whose
+        // definition differs is dropped before the columns change and built after them, so the change of
+        // key and the change of type have to arrive together.
         Indexes.Add(new IndexDefinition(IndexNameFor(mapping))
         {
-            Columns = ["term", "doc_id"],
-            IncludedColumns = ["pos", "member", JasperFx.StorageConstants.TenantIdColumn]
+            Columns = ["term", "member", "doc_id"],
+            IncludedColumns = ["pos", JasperFx.StorageConstants.TenantIdColumn]
         });
     }
 

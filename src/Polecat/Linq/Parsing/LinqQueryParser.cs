@@ -530,11 +530,24 @@ internal class LinqQueryParser : ExpressionVisitor
 
     private void HandleWhere(MethodCallExpression node)
     {
-        var predicate = GetLambda(node.Arguments[1]);
+        var predicate = OnTheDocument(GetLambda(node.Arguments[1]));
         var fragment = _whereParser.Parse(predicate.Body);
         Statement.Wheres.Add(fragment);
         RowPredicates.Add(predicate);
     }
+
+    /// <summary>
+    ///     <paramref name="lambda" />, read through the preceding <c>Select</c> if there is one. See
+    ///     <see cref="ProjectedMembers" />.
+    /// </summary>
+    /// <remarks>
+    ///     A projected scalar is left to the existing rules: <c>OrderBy(n =&gt; n)</c> orders by the select
+    ///     list, and a member of one is refused, as the docs have said since #840.
+    /// </remarks>
+    private LambdaExpression OnTheDocument(LambdaExpression lambda)
+        => SelectExpression == null || SelectProjectionAnalyzer.IsScalar(lambda.Parameters[0].Type)
+            ? lambda
+            : ProjectedMembers.Rewrite(SelectExpression, lambda);
 
     private void HandleOrderBy(MethodCallExpression node, bool descending, bool replace)
     {
@@ -544,7 +557,7 @@ internal class LinqQueryParser : ExpressionVisitor
             OrderByMembers.Clear();
         }
 
-        var lambda = GetLambda(node.Arguments[1]);
+        var lambda = OnTheDocument(GetLambda(node.Arguments[1]));
         var body = StripConvert(lambda.Body);
 
         // After Select(x => x.Name), OrderBy(x => x) has a ParameterExpression body
@@ -577,7 +590,12 @@ internal class LinqQueryParser : ExpressionVisitor
 
     private void HandleSelect(MethodCallExpression node)
     {
-        SelectExpression = GetLambda(node.Arguments[1]);
+        // #875: a second Select reads the first, whatever the first one projected.
+        var lambda = GetLambda(node.Arguments[1]);
+        SelectExpression = SelectExpression == null ? lambda : ProjectedMembers.Rewrite(SelectExpression, lambda);
+
+        Statement.SelectColumns = "data";
+        IsScalarSelect = false;
 
         // For scalar Select (e.g., Select(x => x.Name)), change the select columns
         // to use JSON_VALUE for efficiency
@@ -588,6 +606,12 @@ internal class LinqQueryParser : ExpressionVisitor
         if (body is MemberExpression memberExpr && IsDocumentMember(memberExpr))
         {
             var member = _memberFactory.ResolveMember(memberExpr);
+
+            // #875: JSON_VALUE reads NULL for an object or an array, so this returned a null for every
+            // row. It is projected in memory like the shapes below, which is also the right answer for
+            // a class with a converter of its own.
+            if (member.MayBeObject) return;
+
             Statement.SelectColumns = member.TypedLocator;
             // Mark as scalar select so provider knows to use ScalarListHandler
             IsScalarSelect = true;
@@ -715,7 +739,7 @@ internal class LinqQueryParser : ExpressionVisitor
                 return;
             }
 
-            var fragment = _whereParser.Parse(predicate.Body);
+            var fragment = _whereParser.Parse(OnTheDocument(predicate).Body);
             Statement.Wheres.Add(fragment);
             RowPredicates.Add(predicate);
         }
@@ -736,6 +760,8 @@ internal class LinqQueryParser : ExpressionVisitor
                 GroupByAggregateSelector = lambda;
                 return;
             }
+
+            lambda = OnTheDocument(lambda);
 
             var memberExpr = StripConvert(lambda.Body) as MemberExpression
                 ?? throw new BadLinqExpressionException(

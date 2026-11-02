@@ -138,7 +138,8 @@ internal class GroupBySelectBuilder
 
         // A bool's locator yields the text 'true'. It stays that way for GROUP BY and for comparing
         // against the member's converted value, but in JSON it has to be the literal.
-        ISqlFragment json = member.IsBoolean ? new LiteralSqlFragment($"CAST({member.TypedLocator} AS bit)") : sql;
+        ISqlFragment json = member.JsonLocator != null ? new LiteralSqlFragment(member.JsonLocator)
+            : member.IsBoolean ? new LiteralSqlFragment($"CAST({member.TypedLocator} AS bit)") : sql;
 
         return new GroupedValue(sql, json, member.LocatorSqlType, member);
     }

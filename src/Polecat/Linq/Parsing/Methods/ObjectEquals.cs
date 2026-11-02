@@ -28,10 +28,9 @@ internal class ObjectEquals : IMethodCallParser
 
         if (value == null)
         {
-            return new WhereFragment($"{member.RawLocator} IS NULL");
+            return new WhereFragment($"{member.NullLocator} IS NULL");
         }
 
-        var convertedValue = member.ConvertValue(value);
-        return new ComparisonFilter(member.ComparisonLocator("=", positive, value), "=", convertedValue!);
+        return member.Comparison("=", positive, value);
     }
 }

@@ -55,9 +55,13 @@ var ids = new[] { id1, id2, id3 };
 .Where(x => ids.Contains(x.Id))
 
 // Check child collections
-.Where(x => x.Tags.Any())
+.Where(x => x.Tags.Count > 0)
+.Where(x => x.Tags.IsEmpty())
 .Where(x => x.Tags.Contains("priority"))
 ```
+
+`Any()`, `All()` and the `Count()` method are not translated on a child collection. See
+[Querying within Child Collections](/documents/querying/linq/child-collections).
 
 ## Ordering
 

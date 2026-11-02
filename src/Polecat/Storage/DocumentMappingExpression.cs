@@ -314,9 +314,9 @@ public class DocumentMappingExpression<T> : IDocumentTenancyDeclaration
 
     /// <summary>
     ///     Add a native SQL Server 2025 JSON index (<c>CREATE JSON INDEX</c>) over one or more JSON
-    ///     paths in the document. A single JSON index covers all the given paths and accelerates
-    ///     <c>JSON_VALUE</c> (=, including the <c>RETURNING</c> form) / <c>JSON_PATH_EXISTS</c> /
-    ///     <c>JSON_CONTAINS</c> predicates without per-path computed columns. Requires
+    ///     paths in the document. A single JSON index covers all the given paths without per-path computed
+    ///     columns, and the optimizer seeks it for <c>JSON_CONTAINS</c> only, which LINQ does not emit, so
+    ///     this backs hand-written SQL rather than a <c>Query&lt;T&gt;()</c>. Requires
     ///     <c>UseNativeJsonType = true</c>. See <see cref="JsonIndex" /> for the constraints.
     /// </summary>
     public DocumentMappingExpression<T> JsonIndex(Expression<Func<T, object?>> expression,

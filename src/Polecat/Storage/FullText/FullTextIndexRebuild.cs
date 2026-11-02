@@ -138,24 +138,27 @@ internal static class FullTextIndexRebuild
     }
 
     /// <summary>
-    ///     Refuses to run through a trigger that is not the one this version declares.
+    ///     Refuses to run through a trigger that is not the one this version declares, or into a token
+    ///     table that is not.
     /// </summary>
     /// <remarks>
     ///     Under <c>AutoCreate.None</c> nothing has replaced an older trigger, and a rebuild through it
-    ///     would re-create the very tokens it was run to get rid of and report success.
+    ///     would re-create the very tokens it was run to get rid of and report success. The first-use path
+    ///     leaves an older token table as it is under any setting (#877), and a rebuild into that one
+    ///     would lose the same characters over again.
     /// </remarks>
     private static async Task AssertTriggerIsCurrentAsync(SqlConnection conn, DocumentMapping mapping,
         CancellationToken token)
     {
         var trigger = new FullTextTrigger(mapping, mapping.FullTextIndexes);
-        var migration = await SchemaMigration.DetermineAsync(conn, token, trigger);
+        var migration = await SchemaMigration.DetermineAsync(conn, token, new FullTextTokenTable(mapping), trigger);
 
         if (migration.Difference != SchemaPatchDifference.None)
         {
             throw new InvalidOperationException(
-                $"The full-text trigger on {mapping.QualifiedTableName} is not the one this version of "
-                + "Polecat declares, so rebuilding through it would store the tokens it is meant to "
-                + "replace. Apply the schema change first: run ApplyAllConfiguredChangesToDatabaseAsync(), "
+                $"The full-text trigger or token table on {mapping.QualifiedTableName} is not the one this "
+                + "version of Polecat declares, so rebuilding through it would store the tokens it is meant "
+                + "to replace. Apply the schema change first: run ApplyAllConfiguredChangesToDatabaseAsync(), "
                 + "or the script from db-patch, and rebuild again.");
         }
     }

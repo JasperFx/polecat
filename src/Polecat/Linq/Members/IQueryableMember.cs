@@ -1,4 +1,8 @@
 using System.Collections;
+using System.Data;
+using System.Text;
+using Polecat.Internal;
+using Polecat.Linq.SqlGeneration;
 
 namespace Polecat.Linq.Members;
 
@@ -65,6 +69,37 @@ internal interface IQueryableMember
     int? TextCapacity => null;
 
     /// <summary>
+    ///     What <c>IS NULL</c> has to be asked of. <see cref="RawLocator" /> for anything JSON holds as a
+    ///     scalar, which is what <c>JSON_VALUE</c> reads.
+    /// </summary>
+    /// <remarks>
+    ///     #875: <c>JSON_VALUE</c> is NULL for an object and for an array, present or not, so asking it
+    ///     about one called every row null. See <see cref="SqlText.StoredValue" />.
+    /// </remarks>
+    string NullLocator => RawLocator;
+
+    /// <summary>
+    ///     Whether the declared type can be stored as a JSON object or array, which the scalar locators
+    ///     read as NULL. A class with a converter of its own can still turn out to hold a scalar, so
+    ///     this is a "may".
+    /// </summary>
+    bool MayBeObject => false;
+
+    /// <summary>
+    ///     A string member read through a bare <c>JSON_VALUE</c>, for when <see cref="TypedLocator" /> has
+    ///     been rewritten onto a computed column and cannot be trusted to hold the whole stored value. It
+    ///     needs no subquery on either storage shape, and it is NULL past 4000 characters. See
+    ///     <see cref="QueryableMemberExtensions.ExactTextLocator" />.
+    /// </summary>
+    string? BareTextLocator => null;
+
+    /// <summary>
+    ///     The value as a JSON projection should write it, when that differs from
+    ///     <see cref="TypedLocator" />.
+    /// </summary>
+    string? JsonLocator => null;
+
+    /// <summary>
     ///     Convert a CLR value to the appropriate SQL parameter value for this member.
     /// </summary>
     object? ConvertValue(object? value);
@@ -112,6 +147,79 @@ internal static class QueryableMemberExtensions
     internal static string ListLocator(this IQueryableMember member, bool positive, IEnumerable values)
         => member.Choose(positive, values);
 
+    /// <summary>
+    ///     The predicate that this member <paramref name="op" /> <paramref name="value" />.
+    /// </summary>
+    /// <param name="member">The member being compared.</param>
+    /// <param name="op">The SQL comparison operator.</param>
+    /// <param name="positive">False when the predicate sits under a <c>NOT</c>.</param>
+    /// <param name="value">The value as written in the query, before <c>ConvertValue</c>.</param>
+    internal static ISqlFragment Comparison(this IQueryableMember member, string op, bool positive, object value)
+    {
+        var locator = member.ComparisonLocator(op, positive, value);
+        var converted = member.ConvertValue(value)!;
+        var dbType = member.BindingFor(locator, converted);
+
+        return op is "=" or "!=" && member.TextCapacity != null && converted is string
+            ? new TextEqualityFilter(locator, member.ExactTextLocator(locator), op == "=", converted, dbType)
+            : new ComparisonFilter(locator, op, converted, dbType);
+    }
+
+    /// <summary>
+    ///     <see cref="SqlDbType.VarChar" /> when <paramref name="locator" /> is a <c>varchar</c> column and
+    ///     <paramref name="value" /> can be bound as one without changing, otherwise null for the default.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         #877, the #363 rule on the LINQ path. A string binds as <c>nvarchar</c>, which outranks
+    ///         <c>varchar</c>, so under a SQL collation the conversion lands on the COLUMN and an index on
+    ///         it cannot be sought. That is every default <c>Index(x =&gt; x.Name)</c>: an Index Scan at 451
+    ///         reads over 100,000 rows, against an Index Seek at 3 with the parameter typed to match.
+    ///     </para>
+    ///     <para>
+    ///         ASCII only, because that is the part of a <c>varchar</c> parameter that means the same thing
+    ///         under every code page, and this cannot see which one the database has. A value outside it
+    ///         stays <c>nvarchar</c>: bound as <c>varchar</c>, <c>東京</c> would become <c>??</c> and match
+    ///         other values that did the same. See <see cref="Choose" /> for where a text member's goes.
+    ///     </para>
+    ///     <para>
+    ///         ⚠️ Not for a short <c>IN</c>, which stays <c>nvarchar</c> and scans. Twenty-five of them over
+    ///         a <c>varchar</c> primary key turned 2,500 seek ranges into Msg 8623, the optimizer running out
+    ///         of resources, on a shape that scanned without complaint.
+    ///     </para>
+    /// </remarks>
+    internal static SqlDbType? BindingFor(this IQueryableMember member, string locator, object? value)
+        => value is string text && locator == member.TypedLocator && IsVarChar(member.LocatorSqlType)
+                                && Ascii.IsValid(text)
+            ? SqlDbType.VarChar
+            : null;
+
+    private static bool IsVarChar(string? sqlType)
+        => sqlType != null && sqlType.StartsWith("varchar", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    ///     What to measure to find out that <paramref name="locator" />, a text read of this member,
+    ///     really holds what it appears to.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         Usually the locator itself. A computed column is the exception: it can be narrower than
+    ///         the document, and <c>nvarchar(max)</c> storage truncates to fit it rather than answering
+    ///         NULL (#877), so <c>"aaa…tail"</c> equals its own first 250 characters there. That has to be
+    ///         checked against the document, which is what <see cref="IQueryableMember.BareTextLocator" />
+    ///         reads.
+    ///     </para>
+    ///     <para>
+    ///         Bare rather than <see cref="IQueryableMember.RawLocator" />, because it is enough and it is
+    ///         not a subquery. The value going through the column fits it, so a stored value past 4000
+    ///         characters cannot equal it, and the NULL that reads as is the right answer. And the
+    ///         <c>OPENJSON</c> form of the full read would get an indexed comparison refused inside
+    ///         <c>g.Count(...)</c>, where it has always worked.
+    ///     </para>
+    /// </remarks>
+    internal static string ExactTextLocator(this IQueryableMember member, string locator)
+        => locator == member.RawLocator ? locator : member.BareTextLocator ?? locator;
+
     private static string Choose(this IQueryableMember member, bool unknownDropsTheRowCorrectly, IEnumerable values)
     {
         if (member.TextCapacity is not { } capacity) return member.TypedLocator;
@@ -119,9 +227,13 @@ internal static class QueryableMemberExtensions
         var indexed = member.LocatorSqlType != null;
         if (!indexed && !unknownDropsTheRowCorrectly) return member.RawLocator;
 
+        // #877: a varchar column can no more hold a value outside its code page than one wider than
+        // itself. It stored 東京 as ??, so comparing through it found nothing, with no error.
+        var narrow = IsVarChar(member.LocatorSqlType);
+
         foreach (var value in values)
         {
-            if (member.ConvertValue(value) is string text && text.Length > capacity)
+            if (member.ConvertValue(value) is string text && (text.Length > capacity || (narrow && !Ascii.IsValid(text))))
             {
                 return member.RawLocator;
             }

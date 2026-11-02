@@ -6,9 +6,13 @@ namespace Polecat.Storage;
 /// <summary>
 ///     A native SQL Server 2025 JSON index (<c>CREATE JSON INDEX</c>) over a document's native
 ///     <c>json</c> <c>data</c> column. Unlike a computed-column <see cref="DocumentIndex" />, a single
-///     JSON index can cover many JSON paths and accelerates <c>JSON_VALUE</c> (equality, including the
-///     <c>RETURNING</c> form), <c>JSON_PATH_EXISTS</c>, and <c>JSON_CONTAINS</c> predicates without any
-///     per-path computed columns.
+///     JSON index can cover many JSON paths without any per-path computed columns.
+///
+///     ⚠️ #877: the optimizer seeks one for <c>JSON_CONTAINS</c>. It does not seek one for
+///     <c>JSON_VALUE</c>, bare or with <c>RETURNING</c>, or for <c>JSON_PATH_EXISTS</c>: each of those was
+///     a Clustered Index Scan over 100,000 rows with the path indexed. The LINQ provider emits none of
+///     what it serves, so this backs hand-written SQL, and a <see cref="DocumentIndex" /> is what
+///     speeds up a <c>Query&lt;T&gt;()</c>.
 ///
 ///     Requirements (enforced / documented):
 ///     - The <c>data</c> column must be the native <c>json</c> type — i.e. <c>UseNativeJsonType = true</c>

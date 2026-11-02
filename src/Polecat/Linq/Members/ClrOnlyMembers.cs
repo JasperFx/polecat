@@ -81,6 +81,13 @@ internal static class ClrOnlyMembers
     }
 
     /// <summary>
+    ///     Whether <paramref name="expression" /> is read straight off the query's parameter, through a
+    ///     cast if there is one, rather than off something further along a chain.
+    /// </summary>
+    public static bool IsReadOffParameter(MemberExpression expression)
+        => Unwrapped(expression.Expression) is ParameterExpression;
+
+    /// <summary>
     ///     The translation of <paramref name="expression" /> when it is a CLR-only member, or null when
     ///     it is an ordinary JSON member the caller should resolve as a path.
     /// </summary>
@@ -117,7 +124,7 @@ internal static class ClrOnlyMembers
             // HasValue is the only other member Nullable<T> has that can reach here.
             return expression.Member.Name == nameof(Nullable<int>.Value)
                 ? null
-                : new HasValueMember(resolve(ownerMember), SelectProjectionAnalyzer.IsScalar(nullableOf));
+                : new HasValueMember(resolve(ownerMember));
         }
 
         if (isCollection) return CollectionCount(expression, resolve(ownerMember));

@@ -234,7 +234,7 @@ public static class CriteriaShapes
         new("contains", "CustomerName.Contains(@0)", null, "ta"),
         new("ends_with", "CustomerName.EndsWith(@0)", null, "a"),
         new("to_lower", "CustomerName.ToLower() = @0", null, "alpha co"),
-        new("to_lower_starts_with", "CustomerName.ToLower().StartsWith(@0)", null, "alpha") { Verdict = ShapeVerdict.ProviderRefuses },
+        new("to_lower_starts_with", "CustomerName.ToLower().StartsWith(@0)", null, "alpha"),
         new("bool_member", "Priority", null),
         new("bool_equals", "Priority = true", null),
         new("bool_not", "not Priority", null),

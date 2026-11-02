@@ -87,6 +87,24 @@ internal static class SqlText
     internal static bool IsSubquery(string locator) => locator.StartsWith("(SELECT ", StringComparison.Ordinal);
 
     /// <summary>
+    ///     Whatever is stored at a <c>JSON_VALUE</c> locator's path, as something <c>IS NULL</c> can ask
+    ///     about: a scalar through <c>JSON_VALUE</c>, an object or an array through <c>JSON_QUERY</c>.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         Each of the two is NULL for what the other one reads, and the declared type cannot choose
+    ///         between them, because a class with a converter of its own can be stored as either.
+    ///     </para>
+    ///     <para>
+    ///         ⚠️ <b>The cast is load-bearing on a native <c>json</c> column.</b> <c>JSON_QUERY</c> yields
+    ///         <c>json</c> there, which outranks <c>nvarchar</c>, so without it <c>COALESCE</c> converts the
+    ///         scalar it just read to <c>json</c>, and a plain string fails as malformed JSON.
+    ///     </para>
+    /// </remarks>
+    internal static string StoredValue(string jsonValueLocator) =>
+        $"COALESCE({jsonValueLocator}, CAST({jsonValueLocator.Replace("JSON_VALUE(", "JSON_QUERY(")} AS nvarchar(max)))";
+
+    /// <summary>
     ///     An expression matched by the characters it holds rather than by what the database's collation
     ///     says they are equivalent to.
     /// </summary>

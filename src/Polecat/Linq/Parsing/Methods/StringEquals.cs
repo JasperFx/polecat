@@ -20,7 +20,7 @@ internal class StringEquals : IMethodCallParser
 
     public ISqlFragment Parse(IMemberResolver memberFactory, MethodCallExpression expression)
     {
-        var member = memberFactory.ResolveMember((MemberExpression)expression.Object!);
+        var locator = TextLocator.For(memberFactory, expression);
         var value = WhereClauseParser.ExtractValue(expression.Arguments[0]);
         var comparison = (StringComparison)WhereClauseParser.ExtractValue(expression.Arguments[1])!;
 
@@ -29,15 +29,17 @@ internal class StringEquals : IMethodCallParser
         {
             // SQL Server default collation is typically case-insensitive (CI).
             // Use explicit COLLATE for guaranteed case-insensitive comparison.
-            return new CaseInsensitiveEqualsFilter(member.RawLocator, value!);
+            return new CaseInsensitiveEqualsFilter(locator, value!);
         }
 
-        return new ComparisonFilter(member.RawLocator, "=", value!);
+        return value is string
+            ? new TextEqualityFilter(locator, TextEqualityFilter.Measured(locator), true, value)
+            : new ComparisonFilter(locator, "=", value!);
     }
 }
 
 /// <summary>
-///     Case-insensitive equals using COLLATE.
+///     Case-insensitive equals using COLLATE, and as unpadded as <see cref="TextEqualityFilter" />.
 /// </summary>
 internal class CaseInsensitiveEqualsFilter : ISqlFragment
 {
@@ -52,8 +54,9 @@ internal class CaseInsensitiveEqualsFilter : ISqlFragment
 
     public void Apply(ICommandBuilder builder)
     {
-        builder.Append(_locator);
-        builder.Append(" COLLATE Latin1_General_CI_AS = ");
-        builder.AppendParameter(_value);
+        // Parenthesized because the locator can already end in a COLLATE, and only one is allowed.
+        builder.Append($"(({_locator}) COLLATE Latin1_General_CI_AS = ");
+        var parameter = builder.AppendParameter(_value);
+        builder.Append($" AND {TextEqualityFilter.SameBytes(TextEqualityFilter.Measured(_locator), "=", parameter.ParameterName)})");
     }
 }

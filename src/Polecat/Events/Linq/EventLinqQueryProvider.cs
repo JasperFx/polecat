@@ -209,6 +209,15 @@ internal class EventLinqQueryProvider : IPolecatAsyncQueryProvider,
                 return await InvokeScalarListHandlerAsync<TResult>(reader, token);
             }
 
+            // #875: nothing below projects, so a list of events met a cast to a list of something else.
+            if (parser.SelectExpression != null)
+            {
+                throw new Polecat.Linq.BadLinqExpressionException(
+                    $"Polecat cannot translate the Select '{parser.SelectExpression}' in an event query, which "
+                    + "can project a single scalar member. Materialize the events with ToListAsync() and "
+                    + "project them in memory.");
+            }
+
             if (_isAllEvents && parser.SelectExpression == null)
             {
                 // Return IReadOnlyList<IEvent>

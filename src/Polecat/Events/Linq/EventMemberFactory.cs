@@ -33,6 +33,17 @@ internal class EventMemberFactory : IMemberResolver
 
         var propName = expression.Member.Name;
 
+        // #875: and ((Body)e.Data).Id would read the id column. A column belongs to the event itself, so
+        // only a member read off the event can name one.
+        if (!ClrOnlyMembers.IsReadOffParameter(expression))
+        {
+            throw new Polecat.Linq.BadLinqExpressionException(
+                $"Polecat cannot translate '{expression}' in an event LINQ query: {propName} is not a "
+                + "member of the event itself, and the raw event queries have no path into the event "
+                + "body. To filter or order on the body, query the concrete event type with "
+                + "QueryRawEventDataOnly<T>().");
+        }
+
         if (!EventColumns.TryGetValue(propName, out var mapping))
         {
             throw new Polecat.Linq.BadLinqExpressionException(

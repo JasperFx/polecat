@@ -642,7 +642,7 @@ public class AdvancedOperations
     ///         and a member over 4000 characters still holds no terms at all, so neither is found. Nothing
     ///         else repairs them, on purpose: re-tokenizing can be far too much work for the request that
     ///         happens to touch the type first. See the remarks on
-    ///         <c>FullTextIndex.BackfillStatements</c> for what that cost when it was tried.
+    ///         <c>FullTextBackfill</c> for what that cost when it was tried.
     ///     </para>
     ///     <para>
     ///         Documents and their metadata are untouched, searches keep working throughout, and it is
