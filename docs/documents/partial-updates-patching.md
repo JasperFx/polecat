@@ -29,6 +29,18 @@ session.Patch<Order>(orderId)
     .Set(x => x.Address.City, "New York");
 ```
 
+If `Address` is missing or null, it is created, however many levels are missing. A parent that holds some other value, such as a number, is left alone. This goes for everything that writes a value, including `Increment`, `Append`, `Insert` and `Duplicate`. `Delete` and `Remove` never create anything.
+
+Set a dictionary entry with its indexer, whatever the type of the key:
+
+```cs
+session.Patch<Order>(orderId)
+    .Set(x => x.NotesByDay[new DateOnly(2026, 11, 2)], "Shipped")
+    .Set(x => x.Labels["a.key with spaces"], "value");
+```
+
+The key is written exactly the way System.Text.Json writes it in the document, including any `DictionaryKeyPolicy` and `Encoder` you have configured, so this finds the stored entry on any host culture. `PropertyNamingPolicy` is not applied to a key, because the serializer doesn't apply it either. An index into a list, as in `x.Items[0]`, isn't supported and throws `NotSupportedException`.
+
 ### Increment a Numeric Value
 
 ```cs
@@ -67,6 +79,8 @@ session.Patch<Order>(orderId)
 session.Patch<Order>(orderId)
     .Remove(x => x.Tags, "obsolete");
 ```
+
+`Remove`, `AppendIfNotExists` and `InsertIfNotExists` match an element exactly, whatever the database's collation: `"ABC"` is not `"abc"`, `"abc "` is not `"abc"`, and the string `"1"` is not the number `1`.
 
 ### Duplicate a Value
 
@@ -114,7 +128,7 @@ Each patch operation generates a SQL `UPDATE` statement using `JSON_MODIFY()`:
 
 ```sql
 UPDATE pc_doc_order
-SET data = JSON_MODIFY(data, '$.status', 'Shipped')
+SET data = JSON_MODIFY(CAST(data AS nvarchar(max)), N'$.status', 'Shipped')
 WHERE id = @id
 ```
 
@@ -123,3 +137,18 @@ For collection operations, Polecat uses `OPENJSON` and `STRING_AGG` to manipulat
 ::: tip
 Patching is more efficient than loading, modifying, and re-saving a document because only the changed values are sent to the database, and it doesn't require reading the full document first.
 :::
+
+### Patching and the Native `json` Type
+
+The `CAST` above is deliberate. On SQL Server 2025 RTM-CU5, a `JSON_MODIFY` that adds a key directly to a `json` value leaves it in a state where the next `JSON_MODIFY` through an object can fail with "Encountered corrupted JSON type", write to the wrong member, or leave the document unreadable. Until that second write the row reads back correctly, and `DBCC CHECKTABLE` doesn't report it, even with `EXTENDED_LOGICAL_CHECKS`. Working on text avoids this, and the next patch to a row that an earlier version left in that state puts it right. A write that has already gone to the wrong member can't be undone this way.
+
+The cost is a full parse of the document for each patch operation, so the time for one update grows with its size. Measured per update on one server:
+
+| Document size | Directly on `json` | Through text |
+|---|---|---|
+| 1 KB | 0.7 ms | 0.9 ms |
+| 10 KB | 1.0 ms | 2.8 ms |
+| 100 KB | 1.7 ms | 14.8 ms |
+| 1 MB | 4.1 ms | 170 ms |
+
+`nvarchar(max)` storage pays none of this.

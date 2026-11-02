@@ -275,6 +275,48 @@ public class native_json_numbers_tests: OneOffConfigurationsContext
         ((JsonElement)events.Single().Headers!["amount"]!).GetDouble().ShouldBe(1.2345678901234567E-05);
     }
 
+    private async Task<string> storedHeadersAsync(Guid id)
+    {
+        await using var connection = new Microsoft.Data.SqlClient.SqlConnection(ConnectionSource.ConnectionString);
+        await connection.OpenAsync(Ct);
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            $"SELECT CAST(headers AS nvarchar(max)) FROM [{theStore.Options.DatabaseSchemaName}].pc_doc_doc WHERE id = @id";
+        command.Parameters.AddWithValue("@id", id);
+        return (string)(await command.ExecuteScalarAsync(Ct))!;
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task a_document_header_comes_back_exactly(bool nativeJson)
+    {
+        ConfigureFor(nativeJson, opts => opts.Schema.For<Doc>().Metadata(m => m.Headers.Enabled = true));
+        var doc = new Doc { Id = Guid.NewGuid() };
+
+        await using (var session = theStore.LightweightSession())
+        {
+            session.SetHeader("amount", 1.2345678901234567E-05);
+            session.Store(doc);
+            await session.SaveChangesAsync(Ct);
+        }
+
+        using var headers = JsonDocument.Parse(await storedHeadersAsync(doc.Id));
+        headers.RootElement.GetProperty("amount").GetDouble().ShouldBe(1.2345678901234567E-05);
+    }
+
+    [Fact]
+    public async Task a_document_header_native_json_cannot_hold_is_refused()
+    {
+        ConfigureFor(true, opts => opts.Schema.For<Doc>().Metadata(m => m.Headers.Enabled = true));
+
+        await using var session = theStore.LightweightSession();
+        session.SetHeader("amount", double.MaxValue);
+        session.Store(new Doc { Id = Guid.NewGuid() });
+
+        await Should.ThrowAsync<NativeJsonNumberException>(() => session.SaveChangesAsync(Ct));
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
@@ -469,6 +511,20 @@ public class native_json_numbers_tests: OneOffConfigurationsContext
         await using var session = theStore.QuerySession();
         var ids = await session.Query<Doc>().Where(x => x.AsText > 1E+300).Select(x => x.Id).ToListAsync(Ct);
         ids.ShouldBe([id]);
+    }
+
+    [Fact]
+    public async Task a_member_written_as_a_string_still_sorts_by_its_value()
+    {
+        ConfigureFor(true);
+
+        var largest = await storeAsync(new Doc { AsText = double.MaxValue });
+        var smallest = await storeAsync(new Doc { AsText = 5 });
+        var middle = await storeAsync(new Doc { AsText = 1E+300 });
+
+        await using var session = theStore.QuerySession();
+        var ordered = await session.Query<Doc>().OrderBy(x => x.AsText).Select(x => x.Id).ToListAsync(Ct);
+        ordered.ShouldBe([smallest, middle, largest]);
     }
 
     // ---- whatever wrote it ------------------------------------------------------------------------------

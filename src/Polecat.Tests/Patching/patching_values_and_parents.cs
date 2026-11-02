@@ -941,6 +941,58 @@ public class patching_values_and_parents: OneOffConfigurationsContext
     ///     fails or goes to the wrong member, after a JSON_MODIFY that adds a key. The row still reads
     ///     back correctly, so the only way to see it is to write again. See PatchOperation.Document.
     /// </summary>
+    /// <remarks>
+    ///     Which documents show it depends on the keys they have, and plenty don't. This one does: each
+    ///     fact below fails with the text route taken out. Don't simplify it without checking that.
+    /// </remarks>
+    public class Shaped
+    {
+        public Guid Id { get; set; }
+        public string Alpha { get; set; } = "a";
+        public List<Guid> Guids { get; set; } = [];
+        public List<long> Longs { get; set; } = [1];
+        public Dictionary<string, int> Map { get; set; } = new() { ["x"] = 1 };
+        public Dictionary<string, int> Other { get; set; } = new();
+        public List<string> Tags { get; set; } = ["t"];
+        public string Zulu { get; set; } = "z";
+
+        public string? Text { get; set; }
+        public int? Number { get; set; }
+        public Dictionary<string, int>? Added { get; set; }
+    }
+
+    private async Task<Guid> storeShapedAsync()
+    {
+        var id = Guid.NewGuid();
+        await using var session = theStore.LightweightSession();
+        session.Store(new Shaped { Id = id });
+        await session.SaveChangesAsync(Ct);
+        return id;
+    }
+
+    private async Task patchShapedAsync(Guid id, Action<IPatchExpression<Shaped>> patch)
+    {
+        await using var session = theStore.LightweightSession();
+        patch(session.Patch<Shaped>(id));
+        await session.SaveChangesAsync(Ct);
+    }
+
+    private async Task<Shaped> loadShapedAsync(Guid id)
+    {
+        await using var session = theStore.QuerySession();
+        return (await session.LoadAsync<Shaped>(id, Ct)).ShouldNotBeNull();
+    }
+
+    private static void TheRestIsUntouched(Shaped doc)
+    {
+        doc.Alpha.ShouldBe("a");
+        doc.Guids.ShouldBeEmpty();
+        doc.Longs.ShouldBe([1L]);
+        doc.Other.ShouldBeEmpty();
+        doc.Tags.ShouldBe(["t"]);
+        doc.Zulu.ShouldBe("z");
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
@@ -948,13 +1000,14 @@ public class patching_values_and_parents: OneOffConfigurationsContext
     {
         ConfigureFor(nativeJson);
 
-        var id = await storeAsync(new Doc { Middle = new Middle { Sibling = "old" } });
-        await patchAsync(id, p => p.Set(x => x.Text, "added"));
-        await patchAsync(id, p => p.Set(x => x.Middle!.Sibling, "new"));
+        var id = await storeShapedAsync();
+        await patchShapedAsync(id, p => p.Set(x => x.Text, "added"));
+        await patchShapedAsync(id, p => p.Set(x => x.Map["child"], 2));
 
-        var doc = await loadAsync(id);
+        var doc = await loadShapedAsync(id);
         doc.Text.ShouldBe("added");
-        doc.Middle!.Sibling.ShouldBe("new");
+        doc.Map.ShouldBe(new Dictionary<string, int> { ["x"] = 1, ["child"] = 2 });
+        TheRestIsUntouched(doc);
     }
 
     [Theory]
@@ -964,13 +1017,14 @@ public class patching_values_and_parents: OneOffConfigurationsContext
     {
         ConfigureFor(nativeJson);
 
-        var id = await storeAsync(new Doc { Middle = new Middle { Sibling = "old" } });
-        await patchAsync(id, p => p.Set(x => x.MaybeNumber, 5));
-        await patchAsync(id, p => p.Set(x => x.Middle!.Sibling, "new"));
+        var id = await storeShapedAsync();
+        await patchShapedAsync(id, p => p.Set(x => x.Number, 5));
+        await patchShapedAsync(id, p => p.Set(x => x.Map["child"], 2));
 
-        var doc = await loadAsync(id);
-        doc.MaybeNumber.ShouldBe(5);
-        doc.Middle!.Sibling.ShouldBe("new");
+        var doc = await loadShapedAsync(id);
+        doc.Number.ShouldBe(5);
+        doc.Map.ShouldBe(new Dictionary<string, int> { ["x"] = 1, ["child"] = 2 });
+        TheRestIsUntouched(doc);
     }
 
     [Theory]
@@ -980,11 +1034,14 @@ public class patching_values_and_parents: OneOffConfigurationsContext
     {
         ConfigureFor(nativeJson);
 
-        var id = await storeAsync(new Doc());
-        await patchAsync(id, p => p.Set(x => x.Middle, new Middle { Sibling = "old" }));
-        await patchAsync(id, p => p.Set(x => x.Middle!.Sibling, "new"));
+        var id = await storeShapedAsync();
+        await patchShapedAsync(id, p => p.Set(x => x.Added, new Dictionary<string, int> { ["a"] = 1 }));
+        await patchShapedAsync(id, p => p.Set(x => x.Added!["child"], 2));
 
-        (await loadAsync(id)).Middle!.Sibling.ShouldBe("new");
+        var doc = await loadShapedAsync(id);
+        doc.Added.ShouldBe(new Dictionary<string, int> { ["a"] = 1, ["child"] = 2 });
+        doc.Map.ShouldBe(new Dictionary<string, int> { ["x"] = 1 });
+        TheRestIsUntouched(doc);
     }
 
     [Theory]
@@ -994,11 +1051,14 @@ public class patching_values_and_parents: OneOffConfigurationsContext
     {
         ConfigureFor(nativeJson);
 
-        var id = await storeAsync(new Doc());
-        await patchAsync(id, p => p.Set(x => x.Middle, new Middle()));
-        await patchAsync(id, p => p.Set(x => x.Middle!.Sibling, "new"));
+        var id = await storeShapedAsync();
+        await patchShapedAsync(id, p => p.Set(x => x.Added, new Dictionary<string, int>()));
+        await patchShapedAsync(id, p => p.Set(x => x.Added!["child"], 2));
 
-        (await loadAsync(id)).Middle!.Sibling.ShouldBe("new");
+        var doc = await loadShapedAsync(id);
+        doc.Added.ShouldBe(new Dictionary<string, int> { ["child"] = 2 });
+        doc.Map.ShouldBe(new Dictionary<string, int> { ["x"] = 1 });
+        TheRestIsUntouched(doc);
     }
 
     [Theory]
@@ -1008,12 +1068,13 @@ public class patching_values_and_parents: OneOffConfigurationsContext
     {
         ConfigureFor(nativeJson);
 
-        var id = await storeAsync(new Doc { Middle = new Middle { Sibling = "old" } });
-        await patchAsync(id, p => p.Set(x => x.Text, "added").Set(x => x.Middle!.Sibling, "new"));
+        var id = await storeShapedAsync();
+        await patchShapedAsync(id, p => p.Set(x => x.Text, "added").Set(x => x.Map["child"], 2));
 
-        var doc = await loadAsync(id);
+        var doc = await loadShapedAsync(id);
         doc.Text.ShouldBe("added");
-        doc.Middle!.Sibling.ShouldBe("new");
+        doc.Map.ShouldBe(new Dictionary<string, int> { ["x"] = 1, ["child"] = 2 });
+        TheRestIsUntouched(doc);
     }
 
     [Fact]
@@ -1021,7 +1082,7 @@ public class patching_values_and_parents: OneOffConfigurationsContext
     {
         ConfigureFor(true);
 
-        var id = await storeAsync(new Doc { Middle = new Middle { Sibling = "old" } });
+        var id = await storeShapedAsync();
 
         // What a patch from before this fix left behind
         await using (var connection = new Microsoft.Data.SqlClient.SqlConnection(ConnectionSource.ConnectionString))
@@ -1029,16 +1090,17 @@ public class patching_values_and_parents: OneOffConfigurationsContext
             await connection.OpenAsync(Ct);
             await using var command = connection.CreateCommand();
             command.CommandText =
-                $"UPDATE [{theStore.Options.DatabaseSchemaName}].pc_doc_doc SET data = JSON_MODIFY(data, '$.text', 'added') WHERE id = @id";
+                $"UPDATE [{theStore.Options.DatabaseSchemaName}].pc_doc_shaped SET data = JSON_MODIFY(data, '$.text', 'added') WHERE id = @id";
             command.Parameters.AddWithValue("@id", id);
             await command.ExecuteNonQueryAsync(Ct);
         }
 
-        await patchAsync(id, p => p.Set(x => x.Middle!.Sibling, "new"));
+        await patchShapedAsync(id, p => p.Set(x => x.Map["child"], 2));
 
-        var doc = await loadAsync(id);
+        var doc = await loadShapedAsync(id);
         doc.Text.ShouldBe("added");
-        doc.Middle!.Sibling.ShouldBe("new");
+        doc.Map.ShouldBe(new Dictionary<string, int> { ["x"] = 1, ["child"] = 2 });
+        TheRestIsUntouched(doc);
     }
 
     // ---- matching an element ---------------------------------------------------------------------------
