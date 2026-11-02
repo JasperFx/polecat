@@ -442,6 +442,7 @@ internal class WhereClauseParser
 
     private sealed class ParameterFinder : ExpressionVisitor
     {
+        private readonly HashSet<ParameterExpression> _bound = [];
         private bool _found;
 
         public static bool ReferencesParameter(Expression expression)
@@ -451,9 +452,17 @@ internal class WhereClauseParser
             return finder._found;
         }
 
+        // A nested lambda binds its own parameters, as in captured.Where(e => e.IsArchived), and that runs
+        // in memory. Only a parameter nothing here binds is the row the query is reading.
+        protected override Expression VisitLambda<T>(Expression<T> node)
+        {
+            _bound.UnionWith(node.Parameters);
+            return base.VisitLambda(node);
+        }
+
         protected override Expression VisitParameter(ParameterExpression node)
         {
-            _found = true;
+            _found |= !_bound.Contains(node);
             return node;
         }
     }
