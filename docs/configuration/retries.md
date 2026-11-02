@@ -28,7 +28,8 @@ statement and leaves the transaction open. Either way, on the exclusive append p
 `StreamLockedException` and retry at the application layer, e.g. with a Wolverine
 `OnException<StreamLockedException>().RetryWithCooldown(...)` policy. If a strategy on this pipeline
 retries the deadlock first, you get `SessionTransactionUnusableException` instead, because the replay
-is refused, so handle that too or leave 1205 out of the strategy.
+is refused. `PolecatRetryPredicates.IsUnsafeToReplay` tells a strategy not to, so compose it in, handle
+that exception too, or leave 1205 out of the strategy.
 
 ## Before you add a retry
 
@@ -116,8 +117,11 @@ Polecat does **not** override a strategy you configured. A store that quietly re
 explicit policy would be a worse surprise than the one it prevents, so the predicate is yours to
 compose.
 
-The one thing it will not do is run a command outside a transaction the session believes it is inside.
-A strategy that retries a command whose transaction has gone, whether or not it asked the predicate,
+The predicate knows when a failure ended the transaction its command was in, so a strategy that asks
+stops at the failure itself, at any isolation level, and the caller sees what happened.
+
+The one thing Polecat will not do is run a command outside a transaction the session believes it is
+inside. A strategy that retries a command whose transaction has gone without asking the predicate
 has the replay refused with `SessionTransactionUnusableException`, which carries
 the original failure as its `InnerException`. Without that refusal the replay would autocommit: every
 later statement in the save would be durable, and the commit would then report that the save failed.

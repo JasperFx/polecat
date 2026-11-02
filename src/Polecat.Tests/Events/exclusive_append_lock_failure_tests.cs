@@ -114,10 +114,11 @@ public class exclusive_append_lock_failure_tests
     /// </summary>
     /// <remarks>
     ///     <see cref="SqlException" /> cannot be constructed, so the rest of #724's facts assert the
-    ///     decision table by error number. This is what proves the public overload actually finds a
-    ///     number in a real exception chain — and the chain here is the hard shape: a
-    ///     <see cref="StreamLockedException" /> wrapping the <c>SqlException</c>, which is what a
-    ///     caller's <c>ShouldHandle</c> is handed.
+    ///     decision table by error number. This is what proves the public overload actually finds the
+    ///     failure in a real exception chain, here a <see cref="StreamLockedException" /> wrapping the
+    ///     <c>SqlException</c>, which is what a caller who catches it holds. A <c>ShouldHandle</c> is
+    ///     handed the bare <c>SqlException</c>, because <see cref="StreamLockedException" /> is thrown
+    ///     outside the pipeline; <c>deadlock_replay_classification_tests</c> covers that.
     /// </remarks>
     [Fact]
     public async Task a_real_deadlock_is_classified_by_isolation_level_through_the_wrapper()
@@ -132,13 +133,14 @@ public class exclusive_append_lock_failure_tests
         failure.ShouldBeOfType<StreamLockedException>();
         failure!.InnerException.ShouldBeOfType<SqlException>().Number.ShouldBe(1205);
 
-        // At ReadCommitted a replay re-reads current data, so this is the ordinary safe retry...
+        // #854: this deadlock ended the transaction holding AppendExclusive's lock, so a replay has
+        // nothing to run inside, whatever the level...
         Polecat.Resilience.PolecatRetryPredicates
             .IsUnsafeToReplay(failure, System.Data.IsolationLevel.ReadCommitted)
-            .ShouldBeFalse();
+            .ShouldBeTrue();
 
         // ...and under a snapshot the operations being replayed came from one the replay will not
-        // re-take, which is marten#5528's mechanism. Both directions, through the wrapper.
+        // re-take, which is marten#5528's mechanism. Both through the wrapper.
         Polecat.Resilience.PolecatRetryPredicates
             .IsUnsafeToReplay(failure, System.Data.IsolationLevel.Snapshot)
             .ShouldBeTrue();

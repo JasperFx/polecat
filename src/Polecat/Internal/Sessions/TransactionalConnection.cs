@@ -2,6 +2,7 @@ using System.Data;
 using System.Data.Common;
 using Microsoft.Data.SqlClient;
 using Polecat.Exceptions;
+using Polecat.Resilience;
 using Polly;
 
 namespace Polecat.Internal.Sessions;
@@ -141,6 +142,10 @@ internal class TransactionalConnection : IAlwaysConnectedLifetime
         if (Transaction is not { Connection: null }) return;
 
         _transactionFailure = failure;
+
+        // #854: here, below the resilience pipeline, so a retry strategy deciding whether to replay this
+        // command already has the answer.
+        PolecatRetryPredicates.MarkTransactionEnded(failure);
     }
 
     public async Task<int> ExecuteAsync(SqlCommand command, CancellationToken token)
