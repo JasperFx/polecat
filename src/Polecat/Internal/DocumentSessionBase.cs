@@ -262,6 +262,11 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     internal void AssertTransactionIsUsable() => _transactional.AssertTransactionIsUsable();
 
     /// <summary>
+    ///     Decides which SQL this session's unguarded document writes use (#854).
+    /// </summary>
+    internal bool RunsAtSnapshotIsolation => _transactional.IsolationLevel == System.Data.IsolationLevel.Snapshot;
+
+    /// <summary>
     ///     Run a command that does not go through this session's lifetime but belongs to its unit of
     ///     work: today, what an EF Core <c>DbContext</c> does on the session's behalf (#846).
     /// </summary>
@@ -885,7 +890,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         try
         {
             // #832: before any listener or DDL runs on behalf of a save that cannot happen.
-            _transactional.AssertTransactionIsUsable();
+            _transactional.AssertWritesAreAllowed();
             await prepareToSaveChangesAsync(token);
 
             // Was the caller already relying on this transaction before the save? An exclusive fetch's
@@ -984,18 +989,6 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
                         throw new AggregateException(exceptions);
                     }
                 }
-                catch (SqlException ex) when (ex.Number == 2627)
-                {
-                    // Map duplicate key violation to DocumentAlreadyExistsException
-                    var insertOp = operations.FirstOrDefault(op => op.Role() == OperationRole.Insert);
-                    if (insertOp != null)
-                    {
-                        var documentId = insertOp is IStorageOperation bespoke ? bespoke.DocumentId : null;
-                        throw new DocumentAlreadyExistsException(insertOp.DocumentType, documentId!);
-                    }
-
-                    throw;
-                }
                 catch (SqlException ex)
                 {
                     // #549: give a queued operation the chance to name its own SQL error, exactly as
@@ -1003,9 +996,22 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
                     // flush loops are otherwise mirror images and this hook was only on one of them,
                     // so an operation carrying an IExceptionTransform got its translation when the
                     // daemon ran it and a raw SqlException when a session did.
-                    if (BatchExceptionTransforms.TryTransform(ex, batch, operations, out var transformed))
+                    //
+                    // #849: this is also where the application's transforms are asked, so it comes
+                    // before the 2627 below for the same reason it does in Marten: one that claims an
+                    // error Polecat translates replaces that translation.
+                    if (BatchExceptionTransforms.TryTransform(ex, batch, operations, Options.ExceptionTransforms,
+                            out var transformed))
                     {
                         System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(transformed!).Throw();
+                    }
+
+                    // Map duplicate key violation to DocumentAlreadyExistsException
+                    if (ex.Number == 2627
+                        && operations.FirstOrDefault(op => op.Role() == OperationRole.Insert) is { } insertOp)
+                    {
+                        var documentId = insertOp is IStorageOperation bespoke ? bespoke.DocumentId : null;
+                        throw new DocumentAlreadyExistsException(insertOp.DocumentType, documentId!);
                     }
 
                     throw;
@@ -1111,6 +1117,14 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             // transaction that already committed has no connection left and needs nothing.
             if (tx.Connection is not null)
             {
+                // #854: the same loss as the branch below, only requested from this end. Clearing
+                // Transaction would let the next save carry on without the lock or the snapshot, and
+                // the version check that still guards an append guards no document.
+                if (reliesOnTransaction)
+                {
+                    _transactional.RefuseWrites(failure);
+                }
+
                 try
                 {
                     await SqlTransactionRequests.RollbackAsync(tx);
@@ -1333,6 +1347,10 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     ///         on it. If the server has already ended it there is nothing to roll back, and the session
     ///         must not forget that it happened.
     ///     </para>
+    ///     <para>
+    ///         #854: nor when this rollback is what ends it, so that is recorded first, in case the
+    ///         rollback fails.
+    ///     </para>
     /// </remarks>
     private async Task abandonOpenTransactionAsync(Exception cause)
     {
@@ -1348,6 +1366,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             }
             else
             {
+                _transactional.RefuseWrites(cause);
                 await SqlTransactionRequests.RollbackAsync(tx);
             }
         }
@@ -1749,7 +1768,8 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         }
         catch (SqlException ex)
         {
-            if (BatchExceptionTransforms.TryTransform(ex, batch, operations, out var transformed))
+            if (BatchExceptionTransforms.TryTransform(ex, batch, operations, Options.ExceptionTransforms,
+                    out var transformed))
             {
                 System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(transformed!).Throw();
             }

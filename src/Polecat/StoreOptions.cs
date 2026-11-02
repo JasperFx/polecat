@@ -437,6 +437,37 @@ public class StoreOptions
     public bool DefaultTenantUsageEnabled { get; set; } = true;
 
     /// <summary>
+    ///     #849, marten#5750: the application's own exception transforms, so a
+    ///     <see cref="Microsoft.Data.SqlClient.SqlException" /> carrying your own error number, from a
+    ///     guard queued with <c>QueueSqlCommand</c> for example, can surface from a save as a typed
+    ///     exception rather than as something to pick apart by number.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         Consulted for what <c>SaveChangesAsync</c> sends, after the failing operation's own
+    ///         translation and before Polecat's other ones, so a transform that matches an error
+    ///         Polecat also translates replaces that translation for this store. An error nothing
+    ///         claims is reported as it would have been.
+    ///     </para>
+    ///     <para>
+    ///         Reads are not translated: Polecat reports a failed read as the
+    ///         <see cref="Microsoft.Data.SqlClient.SqlException" /> it was, so these never run for one.
+    ///     </para>
+    ///     <para>
+    ///         Marten carries this as <c>StoreOptions.Advanced.ExceptionTransforms</c>; Polecat flattens
+    ///         it, as with <see cref="DefaultTenantUsageEnabled" />. Per store, never process-wide.
+    ///     </para>
+    /// </remarks>
+    /// <example>
+    ///     <code>
+    ///     opts.ExceptionTransforms.IfExceptionIs&lt;SqlException&gt;()
+    ///         .If(e =&gt; e.Number == 51000)
+    ///         .ThenTransformTo(e =&gt; new MyDomainException(e));
+    ///     </code>
+    /// </example>
+    public JasperFx.Core.Exceptions.ExceptionTransforms ExceptionTransforms { get; } = new();
+
+    /// <summary>
     ///     Custom projection storage providers registered by extensions (e.g., EF Core).
     ///     Keyed by document type, returns a factory that creates IProjectionStorage instances.
     /// </summary>

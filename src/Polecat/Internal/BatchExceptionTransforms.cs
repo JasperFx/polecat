@@ -9,9 +9,33 @@ namespace Polecat.Internal;
 ///     number claim it — so a save that started a new stream and an existing one reported the
 ///     collision against the new stream, because every insert-mode append maps 2627.
 /// </summary>
+/// <remarks>
+///     #849: the application's <see cref="StoreOptions.ExceptionTransforms" /> come after the
+///     operations, which know the most, and before anything the caller does with the error next.
+/// </remarks>
 internal static class BatchExceptionTransforms
 {
     public static bool TryTransform<T>(SqlException ex, SqlBatch batch, IReadOnlyList<T> operations,
+        ExceptionTransforms application, out Exception? transformed)
+    {
+        if (TryOperations(ex, batch, operations, out transformed))
+        {
+            return true;
+        }
+
+        foreach (var transform in application)
+        {
+            if (transform.TryTransform(ex, out transformed) && transformed != null)
+            {
+                return true;
+            }
+        }
+
+        transformed = null;
+        return false;
+    }
+
+    private static bool TryOperations<T>(SqlException ex, SqlBatch batch, IReadOnlyList<T> operations,
         out Exception? transformed)
     {
         // Each operation is configured into its own batch command (StartNewCommand between them),

@@ -20,6 +20,8 @@ internal class CheckExistsBatchQueryItem<T> : IBatchQueryItem where T : class
 
     public Task<bool> Result => _tcs.Task;
 
+    public void Fail(Exception failure) => _tcs.FailWith(failure);
+
     public void WriteSql(ICommandBuilder builder)
     {
         var softDeleteFilter = _provider.Mapping.DeleteStyle == DeleteStyle.SoftDelete
