@@ -68,6 +68,16 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
     }
 
     /// <summary>
+    ///     <see cref="QueryAllRawEvents" /> with archived events left in, for the one caller that has to
+    ///     reach every stored row. A predicate naming <see cref="IEvent.IsArchived" /> still narrows it.
+    /// </summary>
+    internal IPolecatQueryable<IEvent> QueryAllRawEventsIncludingArchived()
+    {
+        var provider = new EventLinqQueryProvider(_session, _events, includeArchived: true);
+        return new PolecatLinqQueryable<IEvent>(provider);
+    }
+
+    /// <summary>
     ///     jasperfx#1094: the event envelope (sequence, stream, timestamp, event type, correlation and
     ///     causation ids, tenant) as a plain <see cref="IQueryable{T}" /> of <see cref="IEvent" />, so a
     ///     store-agnostic tool can filter and order events by metadata with LINQ. The same provider as
@@ -425,8 +435,24 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
         return await FetchStreamInternalAsync(streamKey, version, timestamp, fromVersion, token);
     }
 
+    /// <summary>
+    ///     Every stored event in this stream, archived or not, for the one caller that has to reach every
+    ///     stored row. Archiving a stream does not erase it, so masking cannot read through
+    ///     <see cref="FetchStreamAsync(Guid, long, DateTimeOffset?, long, CancellationToken)" />.
+    /// </summary>
+    internal Task<IReadOnlyList<IEvent>> FetchStreamIncludingArchivedAsync(Guid streamId, CancellationToken token)
+    {
+        return FetchStreamInternalAsync(streamId, 0, null, 0, token, includeArchived: true);
+    }
+
+    /// <inheritdoc cref="FetchStreamIncludingArchivedAsync(Guid, CancellationToken)" />
+    internal Task<IReadOnlyList<IEvent>> FetchStreamIncludingArchivedAsync(string streamKey, CancellationToken token)
+    {
+        return FetchStreamInternalAsync(streamKey, 0, null, 0, token, includeArchived: true);
+    }
+
     private async Task<IReadOnlyList<IEvent>> FetchStreamInternalAsync(object streamId, long version,
-        DateTimeOffset? timestamp, long fromVersion, CancellationToken token)
+        DateTimeOffset? timestamp, long fromVersion, CancellationToken token, bool includeArchived = false)
     {
         await _session.EnsureEventStoreSchemaAsync(token); // #219: create event store on first use
         // #57 pc_events half: column projection + per-row hydration live in
@@ -437,8 +463,13 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
         var sql = $"""
             SELECT {PcEventsRowReader.ComposeSelectColumns(_events.EventOptions)}
             FROM {_events.EventsTableName}
-            WHERE stream_id = @stream_id AND tenant_id = @tenant_id AND is_archived = 0
+            WHERE stream_id = @stream_id AND tenant_id = @tenant_id
             """;
+
+        if (!includeArchived)
+        {
+            sql += " AND is_archived = 0";
+        }
 
         cmd.Parameters.AddIdParameter("@stream_id", streamId);
         cmd.Parameters.AddVarChar("@tenant_id", _session.TenantId);
