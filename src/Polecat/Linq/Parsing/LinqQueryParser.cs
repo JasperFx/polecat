@@ -140,6 +140,13 @@ internal class LinqQueryParser : ExpressionVisitor
     /// </summary>
     public TimeSpan? NonStaleDataTimeout { get; private set; }
 
+    /// <summary>
+    ///     The predicates that filter rows: every Where(), and the inline predicate of First(), Any(),
+    ///     Count() and the like. Not an OrderBy() or a Select(), which only name members, and not
+    ///     anything after a GroupBy(), which filters groups.
+    /// </summary>
+    public List<LambdaExpression> RowPredicates { get; } = [];
+
     public LinqQueryParser(IMemberResolver memberFactory, string fromTable,
         SoftDeleteTarget softDeleteTarget,
         IReadOnlyList<Methods.IMethodCallParser>? additionalMethodParsers = null)
@@ -526,6 +533,7 @@ internal class LinqQueryParser : ExpressionVisitor
         var predicate = GetLambda(node.Arguments[1]);
         var fragment = _whereParser.Parse(predicate.Body);
         Statement.Wheres.Add(fragment);
+        RowPredicates.Add(predicate);
     }
 
     private void HandleOrderBy(MethodCallExpression node, bool descending, bool replace)
@@ -709,6 +717,7 @@ internal class LinqQueryParser : ExpressionVisitor
 
             var fragment = _whereParser.Parse(predicate.Body);
             Statement.Wheres.Add(fragment);
+            RowPredicates.Add(predicate);
         }
     }
 

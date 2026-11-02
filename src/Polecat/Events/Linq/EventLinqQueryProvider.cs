@@ -4,6 +4,7 @@ using System.Linq.Expressions;
 using JasperFx.Core.Reflection;
 using JasperFx.Events;
 using Microsoft.Data.SqlClient;
+using Polecat.Events.Archiving;
 using Polecat.Internal;
 using Polecat.Linq;
 using Polecat.Linq.Members;
@@ -120,7 +121,9 @@ internal class EventLinqQueryProvider : IPolecatAsyncQueryProvider,
             // event query is refused rather than ignored, exactly as it is over a hard-delete
             // document type.
             SoftDeleteTarget.NeverSoftDeleted("The event store"),
-            _isAllEvents ? [new HasTagParser(_events), new HasTagValueParser(_events)] : null);
+            _isAllEvents
+                ? [new HasTagParser(_events), new HasTagValueParser(_events), new MaybeArchivedParser()]
+                : null);
         parser.Parse(expression);
 
         ApplySingleValueMode(parser);
@@ -141,8 +144,9 @@ internal class EventLinqQueryProvider : IPolecatAsyncQueryProvider,
             }
         }
 
-        // Add is_archived = 0 filter by default (unless MaybeArchived was called)
-        if (!parser.IsMaybeDeleted)
+        // Add is_archived = 0 filter by default, unless a predicate opts in by calling MaybeArchived() or
+        // by naming IEvent.IsArchived, which then answers for itself
+        if (!parser.RowPredicates.Any(x => x.SpecifiesEventArchivalStatus()))
         {
             parser.Statement.Wheres.Add(new LiteralSqlFragment("is_archived = 0"));
         }
