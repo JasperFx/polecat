@@ -210,7 +210,7 @@ internal class PatchOperation : Polecat.Internal.IStorageOperation, Weasel.Stora
 
         for (var depth = 1; depth < segments.Length; depth++)
         {
-            var missing = segments[depth..^1].Reverse()
+            var missing = Enumerable.Reverse(segments[depth..^1])
                 .Aggregate("{}", (below, segment) => $"{{{JsonPathHelper.MemberName(segment)}:{below}}}");
 
             sql.Append($"WHEN ISNULL({KindOf(segments[..depth])}, {JsonKindNull}) = {JsonKindNull} ");
