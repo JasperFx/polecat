@@ -1695,8 +1695,8 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             var streamId = isGuid ? (object)streams[0].Id : streams[0].Key!;
 
             await using var cmd = new SqlCommand();
-            cmd.CommandText =
-                $"SELECT version, is_archived FROM {_eventGraph.StreamsTableName} WITH (UPDLOCK, HOLDLOCK) WHERE id = @id AND tenant_id = @tenant_id;";
+            cmd.CommandText = _eventGraph.LockedStreamReadSql("version, is_archived",
+                "id = @id AND tenant_id = @tenant_id", TenantId, cmd);
             cmd.Parameters.AddIdParameter("@id", streamId);
             cmd.Parameters.AddVarChar("@tenant_id", tenantId);
 
@@ -1722,12 +1722,12 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
                 .Cast<object>().ToArray();
 
         var idsSelect = isGuid
-            ? "SELECT CAST(value AS uniqueidentifier) FROM OPENJSON(@ids)"
-            : "SELECT CAST(value AS varchar(250)) FROM OPENJSON(@ids)";
+            ? "SELECT CAST(value AS uniqueidentifier) AS id FROM OPENJSON(@ids)"
+            : "SELECT CAST(value AS varchar(250)) AS id FROM OPENJSON(@ids)";
 
         await using var batchCmd = new SqlCommand();
-        batchCmd.CommandText =
-            $"SELECT id, version, is_archived FROM {_eventGraph.StreamsTableName} WITH (UPDLOCK, HOLDLOCK) WHERE tenant_id = @tenant_id AND id IN ({idsSelect});";
+        batchCmd.CommandText = _eventGraph.LockedStreamReadSql("s.id, s.version, s.is_archived",
+            "s.tenant_id = @tenant_id", TenantId, batchCmd, idsSelect);
         batchCmd.Parameters.Add(
             new SqlParameter("@ids", WriteStreamIdsAsJsonArray(ids))
             {

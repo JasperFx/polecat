@@ -1036,7 +1036,8 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
             }
 
             await cmd.ExecuteNonQueryAsync(ct);
-        }, (connStr, Events.ProgressionTableName, filter.Where, filter.Parameters), token);
+        }, (connStr, Events.ProgressionTableName, filter.Where, filter.Parameters), token)
+            .AsTask().TranslatingCancellation("Deleting projection progress", token);
     }
 
     // #163 Phase 2 — per-tenant rebuild teardown (jasperfx#407 Phase 2b). A non-null tenantId scopes the
@@ -1292,7 +1293,7 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
                 await truncCmd.ExecuteNonQueryAsync(ct);
             }
         }, (connStr, Events.ProgressionTableName, filter.Where, filter.Parameters, publishedTableNames),
-            token);
+            token).AsTask().TranslatingCancellation("Projection teardown", token);
 
         // #871 item 1: a rebuild replays everything, so a dead letter is rewritten if its event still fails
         // and is stale if it no longer does. Mirrors Marten's teardownProjectionStorage, which does this for
@@ -1303,7 +1304,8 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
 
         foreach (var name in names)
         {
-            await deleteDeadLettersBeingReplayedAsync((PolecatDatabase)database, name, 0, token);
+            await deleteDeadLettersBeingReplayedAsync((PolecatDatabase)database, name, 0, token)
+                .TranslatingCancellation("Projection teardown", token);
         }
     }
 }

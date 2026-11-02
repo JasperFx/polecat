@@ -1218,7 +1218,8 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
         // Nothing here can run inside a session's transaction: every caller is the daemon, a high water
         // operation or a health check, and the apply opens its own connection.
         var migrationLock = _options.BuildMigrationLock();
-        await ApplyAllConfiguredChangesToDatabaseAsync(migrationLock, ct: token);
+        await ApplyAllConfiguredChangesToDatabaseAsync(migrationLock, ct: token)
+            .TranslatingCancellation("Ensuring the event store schema", token);
 
         // Not unconditionally: under ContinueOnFailures a loser returns as if nothing needed doing, and it
         // has not looked.
@@ -1256,6 +1257,10 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
     ///         would let two rows for one tenanted shard stand in for a second shard that never ran,
     ///         which is the same defect this fixes.
     ///     </para>
+    ///     <para>
+    ///         #857: a row left by another version of a projection this store configures does not count.
+    ///         See <see cref="IsRetiredVersion" />.
+    ///     </para>
     /// </remarks>
     public async Task WaitForNonStaleProjectionDataAsync(TimeSpan timeout)
     {
@@ -1286,6 +1291,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
             // Filter out the HighWaterMark entry — only check actual projection shards
             projectionProgress = progress
                 .Where(p => p.ShardName != ShardState.HighWaterMark)
+                .Where(p => !IsRetiredVersion(p, expected))
                 .ToList();
 
             if (AllShardsAreCaughtUp(expected, projectionProgress, highWater))
@@ -1307,8 +1313,8 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
         IReadOnlyList<ShardState> projectionProgress,
         long highWater)
     {
-        // Every row that IS present has to be caught up, including rows for shards that are no longer
-        // configured — that was the original check and it stays.
+        // Every row that IS present has to be caught up, including the row of a projection that has been
+        // dropped from the configuration. A retired version's row never gets this far; see IsRetiredVersion.
         if (projectionProgress.Any(p => p.Sequence < highWater)) return false;
 
         // ...and every CONFIGURED shard has to have a row at all.
@@ -1330,6 +1336,40 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
     private static bool Matches(ShardState state, string identity)
         => ShardName.TryParse(state.ShardName, out var parsed)
            && parsed?.ForTenant(null).Identity == identity;
+
+    /// <summary>
+    ///     Is this the row of another version of a projection this store still configures?
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         #857: nothing advances such a row, so a wait that counted it could only ever time out, and
+    ///         it cannot be deleted because blue/green keeps it on purpose: it is where the prior version's
+    ///         mark comes from (<c>GateSideEffectsBehindPriorVersion</c>). "Another version" rather than
+    ///         "an older version", because rolling back from V3 to V2 leaves V3's row in exactly the same
+    ///         position.
+    ///     </para>
+    ///     <para>
+    ///         Deliberately narrower than "any row that is not configured", which is what Marten does
+    ///         (marten#5161). Checking every row was never a decision about retired shards: the first
+    ///         version of this wait had no list of shards but the rows. But a row for a projection that has
+    ///         left the configuration entirely is residue somebody has to clear, and this timeout is the
+    ///         only thing that tells them it is there, so that row stays reported.
+    ///     </para>
+    ///     <para>
+    ///         The configured side comes from its identity string, not from the <see cref="ShardName" />
+    ///         it started as, for the reason given on <see cref="Matches" />: a composite's own shard carries
+    ///         version 0 and its row reads as version 1.
+    ///     </para>
+    /// </remarks>
+    private static bool IsRetiredVersion(ShardState state, IReadOnlyList<string> expected)
+    {
+        if (!ShardName.TryParse(state.ShardName, out var row) || row == null) return false;
+        if (expected.Any(identity => Matches(state, identity))) return false;
+
+        return expected.Any(identity => ShardName.TryParse(identity, out var configured)
+                                        && configured!.Version != row.Version
+                                        && configured.Name.Equals(row.Name, StringComparison.OrdinalIgnoreCase));
+    }
 
     /// <summary>
     ///     The diagnostic the old timeout message could not give: which shards are behind, and which

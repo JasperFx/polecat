@@ -45,6 +45,36 @@ public class PolecatProjectionOptions
     internal void SetStoreOptions(StoreOptions options) => _storeOptions = options;
 
     /// <summary>
+    ///     #852: when set, the async daemon's high water mark moves past an append that is still in flight
+    ///     once it has been held behind that append for this long, so that a transaction left open cannot
+    ///     stall every projection and subscription for good. Null, the default, never knowingly steps over
+    ///     an append in flight. Mirrors Marten's option of the same name.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         <b>The trade is a stall for a lost event, and only the stall is recoverable.</b> If the
+    ///         skipped append goes on to commit, its events are behind the mark and no async projection or
+    ///         subscription will read them short of a rebuild. Nothing reports that afterwards. The skip
+    ///         itself logs a warning naming the range, and that is all the evidence there is, which is why
+    ///         this is off unless you turn it on.
+    ///     </para>
+    ///     <para>
+    ///         Without it the daemon holds and tells you: <c>DaemonSettings.HighWaterProgressStallThreshold</c>
+    ///         warns, and <c>Advanced.AdvanceHighWaterMarkToLatestAsync()</c> moves the mark by hand. Set this
+    ///         if an unattended stall is worse for you than the risk above, well above the longest
+    ///         transaction you expect to run. Stale gaps that are not held by an append are skipped after
+    ///         <c>DaemonSettings.StaleSequenceThreshold</c> regardless.
+    ///     </para>
+    ///     <para>
+    ///         The clock is the detector's, in memory, and starts when it first sees the mark held. A daemon
+    ///         restart starts it again, which errs towards holding. A value below
+    ///         <c>StaleSequenceThreshold</c> has no effect below that threshold, because this is only
+    ///         considered once the mark has been held for that long.
+    ///     </para>
+    /// </remarks>
+    public TimeSpan? SkipStaleGapsDespiteLiveTransactionsAfter { get; set; }
+
+    /// <summary>
     ///     Every flat table projection in the store, including the members of a composite, which
     ///     <see cref="ProjectionGraph{TProjection,TOperations,TQuerySession}.All" /> does not list.
     /// </summary>

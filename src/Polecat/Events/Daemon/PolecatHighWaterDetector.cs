@@ -1,5 +1,6 @@
 using Weasel.SqlServer;
 using JasperFx.Descriptors;
+using System.Collections.Concurrent;
 using System.Text.Json;
 using JasperFx.Events.Daemon;
 using JasperFx.Events.Daemon.HighWater;
@@ -140,6 +141,20 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
 
     private HeldMark? _heldMark;
 
+    // #852: how long the mark has been at this position for StoreOptions.Projections'
+    // SkipStaleGapsDespiteLiveTransactionsAfter cap. _heldMark cannot answer that, because it is a single
+    // observation and is thrown away every threshold, however long the append goes on holding the mark. A
+    // cap measured from it would never expire.
+    //
+    // Ceiling is the same bound with the same reasoning, taken at the same moment: a value above it was
+    // handed out after the clock started, so its append has not been open for the cap and gets no skip.
+    private HeldMark? _stall;
+
+    // The same for each tenant's mark. Deliberately not last_updated, which is how old a tenant's mark is and
+    // not how old its gap is, so a tenant idle for longer than the cap would skip a brand new append on the
+    // first poll that saw it. See advancePerTenantMarkAsync.
+    private readonly ConcurrentDictionary<string, HeldMark> _tenantStalls = new(StringComparer.Ordinal);
+
     private HeldMark observeHeldMark(HighWaterStatistics stats, long mark, long lowestAbove)
     {
         var held = _heldMark;
@@ -151,8 +166,19 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
             _heldMark = held;
         }
 
+        if (_stall == null || _stall.Mark != mark) _stall = held;
+
         return held;
     }
+
+    private void forgetHeldMark()
+    {
+        _heldMark = null;
+        _stall = null;
+    }
+
+    private static bool HasOutlastedCap(HeldMark stall, DateTimeOffset now, EventGraph events)
+        => events.SkipStaleGapsDespiteLiveTransactionsAfter is { } cap && now - stall.Since >= cap;
 
     public async Task<HighWaterStatistics> Detect(CancellationToken token)
     {
@@ -164,7 +190,7 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
             // state a monitor cannot otherwise distinguish from abandoned, so the row is re-stamped
             // here rather than returned untouched. Everything below this point has, by definition,
             // found work to do.
-            _heldMark = null;
+            forgetHeldMark();
             await MarkHighWaterAsync(stats.CurrentMark, token);
             return stats;
         }
@@ -198,7 +224,7 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
             // state a monitor cannot otherwise distinguish from abandoned, so the row is re-stamped
             // here rather than returned untouched. Everything below this point has, by definition,
             // found work to do.
-            _heldMark = null;
+            forgetHeldMark();
             await MarkHighWaterAsync(stats.CurrentMark, token);
             return stats;
         }
@@ -218,6 +244,10 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
 
                 stats.CurrentMark = target.Value;
                 stats.IncludesSkipping = true;
+            }
+            else if (_stall != null && HasOutlastedCap(_stall, stats.Timestamp, _events))
+            {
+                await skipPastStuckAppendAsync(stats, _stall, token);
             }
             else
             {
@@ -320,8 +350,58 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
             stats.CurrentMark = run.End.Value;
         }
 
-        _heldMark = null;
+        forgetHeldMark();
         return null;
+    }
+
+    /// <summary>
+    ///     #852: the one place a mark moves past an append known to be in flight. Everything at or below
+    ///     <see cref="HeldMark.Ceiling" /> was handed out when the clock started, so whatever is in flight
+    ///     there has been open for the whole of the cap. Anything younger is above it and stays held.
+    /// </summary>
+    private async Task skipPastStuckAppendAsync(HighWaterStatistics stats, HeldMark stall, CancellationToken token)
+    {
+        var target = await _resilience.ExecuteAsync(static async (state, ct) =>
+        {
+            var (connectionString, events, mark, ceiling) = state;
+            await using var conn = new SqlConnection(connectionString);
+            await conn.OpenAsync(ct);
+
+            return await findHighestCommittedAsync(conn, events, null, mark, ceiling, ct);
+        }, (_connectionString, _events, stall.Mark, stall.Ceiling), token);
+
+        if (!target.HasValue) return;
+
+        _logger.LogWarning(
+            "Skipping the event sequence range ({HeldAt}, {Target}] although an append below {Target} is still in flight, because the high water mark has been held at {HeldAt} since {Since}, past the SkipStaleGapsDespiteLiveTransactionsAfter cap of {Cap}. If that append commits, its events will NOT be read by any async projection or subscription",
+            stall.Mark, target.Value, target.Value, stall.Mark, stall.Since,
+            _events.SkipStaleGapsDespiteLiveTransactionsAfter);
+
+        stats.CurrentMark = target.Value;
+        stats.IncludesSkipping = true;
+    }
+
+    /// <summary>
+    ///     The highest committed seq_id in the range, whatever is in flight inside it. This is what makes it
+    ///     different from <see cref="findSkipTargetAsync" />, and why only the cap may ask for it.
+    /// </summary>
+    private static async Task<long?> findHighestCommittedAsync(SqlConnection conn, EventGraph events, int? ordinal,
+        long mark, long ceiling, CancellationToken ct)
+    {
+        var inScope = ordinal == null ? "" : $" AND c.{events.TenantPartitionManager.Column} = @ordinal";
+
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"""
+            SELECT MAX(c.seq_id)
+            FROM {events.EventsTableName} c {CommittedRows}
+            WHERE c.seq_id > @mark AND c.seq_id <= @ceiling{inScope};
+            """;
+        cmd.Parameters.AddWithValue("@mark", mark);
+        cmd.Parameters.AddWithValue("@ceiling", ceiling);
+        if (ordinal != null) cmd.Parameters.AddWithValue("@ordinal", ordinal.Value);
+
+        var result = await cmd.ExecuteScalarAsync(ct);
+        return result is long target ? target : null;
     }
 
     /// <summary>
@@ -657,7 +737,7 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
 
         return await _resilience.ExecuteAsync(static async (state, ct) =>
         {
-            var (connectionString, events, tenantsJson, staleThreshold, logger) = state;
+            var (connectionString, events, tenantsJson, staleThreshold, logger, stalls) = state;
 
             var ordinal = events.TenantPartitionManager.Column;
 
@@ -727,12 +807,12 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
             var results = new List<HighWaterStatistics>(readings.Count);
             foreach (var (stats, run, partition) in readings)
             {
-                await advancePerTenantMarkAsync(conn, events, stats, run, partition, staleThreshold, logger, ct);
+                await advancePerTenantMarkAsync(conn, events, stats, run, partition, staleThreshold, logger, stalls, ct);
                 results.Add(stats);
             }
 
             return (IReadOnlyList<HighWaterStatistics>)results;
-        }, (_connectionString, _events, tenantsJson, staleThreshold, logger), token);
+        }, (_connectionString, _events, tenantsJson, staleThreshold, logger, _tenantStalls), token);
     }
 
     /// <summary>
@@ -771,14 +851,22 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
     ///         bound it, so what is left is a value allocated and not yet inserted, the instant between the
     ///         allocation and the row, on the first poll that sees an idle tenant move.
     ///     </para>
+    ///     <para>
+    ///         <b>#852: the cap is the one thing here on a clock of the detector's own.</b> A stale reading
+    ///         that <see cref="findSkipTargetAsync" /> then checks can afford to be wrong about the age. The cap
+    ///         goes ahead whatever is in flight, so <c>last_updated</c> would give it the very first-sight skip
+    ///         described above, this time over a live append. It also needs no staleness at all, or a tenant
+    ///         with no persisted mark could never be released.
+    ///     </para>
     /// </remarks>
     private static async Task advancePerTenantMarkAsync(SqlConnection conn, EventGraph events,
         HighWaterStatistics stats, ContiguousRun run, int? partition, TimeSpan staleThreshold, ILogger logger,
-        CancellationToken ct)
+        ConcurrentDictionary<string, HeldMark> stalls, CancellationToken ct)
     {
         // Caught up: the persisted mark already equals the committed height.
         if (stats.CurrentMark == stats.HighestSequence)
         {
+            stalls.TryRemove(stats.TenantId!, out _);
             return;
         }
 
@@ -795,6 +883,7 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
             // Nothing above the mark, but a mark above the height follows it down: a tenant removed and added
             // back restarts its sequence below its old row. The height is never what moves a mark UP.
             stats.CurrentMark = run.End ?? Math.Min(mark, stats.HighestSequence);
+            stalls.TryRemove(stats.TenantId!, out _);
             return;
         }
 
@@ -802,11 +891,17 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
         var heldAt = hasLeadingGap ? mark : run.End!.Value;
         stats.CurrentMark = heldAt;
 
+        var above = hasLeadingGap ? run.First!.Value : run.Next!.Value;
+        var ceiling = Math.Max(stats.HighestSequence, above);
+
+        var stall = stalls.AddOrUpdate(stats.TenantId!,
+            static (_, fresh) => fresh,
+            static (_, known, fresh) => known.Mark == fresh.Mark ? known : fresh,
+            new HeldMark(heldAt, stats.Timestamp, ceiling));
+
         if (stats.TryGetStaleAge(out var timeSinceUpdate) && timeSinceUpdate > staleThreshold)
         {
-            var above = hasLeadingGap ? run.First!.Value : run.Next!.Value;
-            var target = await findSkipTargetAsync(conn, events, partition, heldAt,
-                Math.Max(stats.HighestSequence, above), ct);
+            var target = await findSkipTargetAsync(conn, events, partition, heldAt, ceiling, ct);
 
             if (target.HasValue)
             {
@@ -816,13 +911,26 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
 
                 stats.CurrentMark = target.Value;
                 stats.IncludesSkipping = true;
+                return;
             }
-            else
-            {
-                logger.LogInformation(
-                    "Tenant {TenantId}: the high water mark is held after seq_id {HeldAt} by an append that is still in flight",
-                    stats.TenantId, heldAt);
-            }
+
+            logger.LogInformation(
+                "Tenant {TenantId}: the high water mark is held after seq_id {HeldAt} by an append that is still in flight",
+                stats.TenantId, heldAt);
+        }
+
+        if (HasOutlastedCap(stall, stats.Timestamp, events))
+        {
+            var target = await findHighestCommittedAsync(conn, events, partition, heldAt, stall.Ceiling, ct);
+            if (!target.HasValue) return;
+
+            logger.LogWarning(
+                "Tenant {TenantId}: skipping the event sequence range ({HeldAt}, {Target}] although an append below {Target} is still in flight, because its high water mark has been held at {HeldAt} since {Since}, past the SkipStaleGapsDespiteLiveTransactionsAfter cap of {Cap}. If that append commits, its events will NOT be read by any async projection or subscription",
+                stats.TenantId, heldAt, target.Value, target.Value, heldAt, stall.Since,
+                events.SkipStaleGapsDespiteLiveTransactionsAfter);
+
+            stats.CurrentMark = target.Value;
+            stats.IncludesSkipping = true;
         }
     }
 
