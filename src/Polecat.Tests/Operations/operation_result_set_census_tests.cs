@@ -88,6 +88,10 @@ public class operation_result_set_census_tests : OneOffConfigurationsContext
             opts.Schema.For<SearchableVersioned>().FullTextIndex(x => x.Body);
             opts.Schema.For<SearchableRevisioned>().FullTextIndex(x => x.Body);
             opts.Events.RegisterTagType<CensusTag>("census_tag");
+
+            // #882: a flat table is a schema object, so it needs its projection registered. Async keeps
+            // this census driving the operations by hand
+            opts.Projections.Add(new CensusFlatProjection(opts.DatabaseSchemaName), JasperFx.Events.Projections.ProjectionLifecycle.Async);
         });
         await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync(ct: Ct);
         await EnsureNaturalKeyTableAsync();
