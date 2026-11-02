@@ -101,7 +101,7 @@ public partial class bluegreen_side_effect_gate_tests : IAsyncLifetime
 
     // #856: not WaitForProjectionAsync, which ends in CatchUpAsync. That stops the running agents and
     // replays through a fresh agent that never resolves the gate mark, so this test passed only when the
-    // gated agent beat the stop. Nor WaitForNonStaleData, which also waits on the prior version's row (#857).
+    // gated agent beat the stop.
     private static async Task RunGatedAgentToHighWaterAsync(DocumentStore store)
     {
         var token = TestContext.Current.CancellationToken;
@@ -126,6 +126,38 @@ public partial class bluegreen_side_effect_gate_tests : IAsyncLifetime
         }
 
         await daemon.StopAllAsync();
+    }
+
+    /// <summary>
+    ///     #857, as it was reported: V2 at 3, V3 at 5, the high water mark at 5. The row V2 left is what the
+    ///     gate reads its mark from, so it has to stay, and nothing will ever move it again.
+    /// </summary>
+    [Fact]
+    public async Task the_prior_versions_row_does_not_hold_the_wait_for_non_stale_data()
+    {
+        var token = TestContext.Current.CancellationToken;
+
+        using (var v2 = CreateStore(version: 2, new GateOutbox(), gate: false))
+        {
+            await v2.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: token);
+            await AppendStreamsAsync(v2, "prior", 3);
+            await v2.WaitForProjectionAsync();
+        }
+
+        using var v3 = CreateStore(version: 3, new GateOutbox(), gate: true);
+        await AppendStreamsAsync(v3, "new", 2);
+        await RunGatedAgentToHighWaterAsync(v3);
+
+        var rows = (await v3.Database.AllProjectionProgress(token)).ToDictionary(x => x.ShardName, x => x.Sequence);
+        var prior = v3.Options.Projections.AllShards().Single().Name.Identity.Replace(":V3:", ":V2:");
+        rows.ShouldContainKey(prior, "the gate's mark has to survive the wait");
+        rows[prior].ShouldBe(3);
+
+        await v3.Database.WaitForNonStaleProjectionDataAsync(TimeSpan.FromSeconds(5));
+
+        await using var query = v3.QuerySession();
+        var all = await query.Query<GateSnap>().QueryForNonStaleData(TimeSpan.FromSeconds(5)).ToListAsync(token);
+        all.Count.ShouldBe(5);
     }
 
     private static async Task DropSchemaTablesAsync(string schema)

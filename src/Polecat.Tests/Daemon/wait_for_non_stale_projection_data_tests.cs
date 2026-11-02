@@ -212,6 +212,184 @@ public class wait_for_non_stale_projection_data_tests : OneOffConfigurationsCont
         await theDatabase.WaitForNonStaleProjectionDataAsync(_shortTimeout);
     }
 
+    /// <summary>
+    ///     V3 is configured and any other version's row is what a bump left behind. The rows are planted,
+    ///     as everywhere in this class; <c>bluegreen_side_effect_gate_tests</c> produces them for real once.
+    /// </summary>
+    private async Task WithVersionThreeAsync()
+    {
+        ConfigureStore(opts =>
+        {
+            opts.DatabaseSchemaName = "wait_non_stale_versioned";
+            opts.AutoCreateSchemaObjects = AutoCreate.All;
+            opts.Projections.Add(new VersionedWaitProjection { Version = 3 }, ProjectionLifecycle.Async);
+        });
+
+        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync();
+        await theStore.Advanced.Clean.DeleteAllEventDataAsync();
+        await ClearProgressionAsync();
+    }
+
+    private static ShardName VersionOfWaitTurbine(uint version, string? tenantId = null)
+        => new(nameof(WaitTurbine), ShardName.All, version, tenantId);
+
+    [Fact]
+    public async Task a_retired_versions_row_does_not_hold_the_wait()
+    {
+        await WithVersionThreeAsync();
+        var highWater = await AppendAStreamAsync();
+
+        await SeedAsync(VersionOfWaitTurbine(2), highWater - 1);
+        await SeedAsync(VersionOfWaitTurbine(3), highWater);
+
+        await theDatabase.WaitForNonStaleProjectionDataAsync(_shortTimeout);
+    }
+
+    /// <summary>
+    ///     #602 has to survive #857. V2 sitting at the high water mark is no evidence that V3 has run, and a
+    ///     rule that let the old row stand in for its successor would be the same early return again.
+    /// </summary>
+    [Fact]
+    public async Task a_retired_versions_row_does_not_stand_in_for_its_successor()
+    {
+        await WithVersionThreeAsync();
+        var highWater = await AppendAStreamAsync();
+
+        await SeedAsync(VersionOfWaitTurbine(2), highWater);
+
+        var ex = await Should.ThrowAsync<TimeoutException>(() =>
+            theDatabase.WaitForNonStaleProjectionDataAsync(_shortTimeout));
+        ex.Message.ShouldContain($"{VersionOfWaitTurbine(3).Identity} (no progress recorded)");
+    }
+
+    [Fact]
+    public async Task the_successor_still_has_to_catch_up()
+    {
+        await WithVersionThreeAsync();
+        var highWater = await AppendAStreamAsync();
+
+        await SeedAsync(VersionOfWaitTurbine(2), highWater);
+        await SeedAsync(VersionOfWaitTurbine(3), highWater - 1);
+
+        var ex = await Should.ThrowAsync<TimeoutException>(() =>
+            theDatabase.WaitForNonStaleProjectionDataAsync(_shortTimeout));
+
+        // ...and only the shard that matters is named.
+        ex.Message.ShouldContain($"{VersionOfWaitTurbine(3).Identity}@{highWater - 1}");
+        ex.Message.ShouldNotContain(VersionOfWaitTurbine(2).Identity);
+    }
+
+    /// <summary>
+    ///     Rolling back strands the newer version's row in just the same way, so the rule cannot be "older
+    ///     than what is configured".
+    /// </summary>
+    [Fact]
+    public async Task a_newer_versions_row_does_not_hold_the_wait_after_a_rollback()
+    {
+        await WithVersionThreeAsync();
+        var highWater = await AppendAStreamAsync();
+
+        await SeedAsync(VersionOfWaitTurbine(3), highWater);
+        await SeedAsync(VersionOfWaitTurbine(4), highWater - 1);
+
+        await theDatabase.WaitForNonStaleProjectionDataAsync(_shortTimeout);
+    }
+
+    [Fact]
+    public async Task a_retired_versions_tenant_rows_do_not_hold_the_wait()
+    {
+        await WithVersionThreeAsync();
+        var highWater = await AppendAStreamAsync();
+
+        await SeedAsync(VersionOfWaitTurbine(2, "acme"), highWater - 1);
+        await SeedAsync(VersionOfWaitTurbine(3, "acme"), highWater);
+
+        await theDatabase.WaitForNonStaleProjectionDataAsync(_shortTimeout);
+    }
+
+    /// <summary>
+    ///     Version 1 writes no version segment, so its row is the easiest one to read as something else.
+    /// </summary>
+    [Fact]
+    public async Task a_row_written_by_version_one_is_a_retired_version_too()
+    {
+        await WithVersionThreeAsync();
+        var highWater = await AppendAStreamAsync();
+
+        await SeedAsync(VersionOfWaitTurbine(1), highWater - 1);
+        await SeedAsync(VersionOfWaitTurbine(3), highWater);
+
+        await theDatabase.WaitForNonStaleProjectionDataAsync(_shortTimeout);
+    }
+
+    /// <summary>
+    ///     Not a version of anything this store configures. Nothing advances this row either, but it is
+    ///     residue somebody has to clear, and the timeout is how they hear about it.
+    /// </summary>
+    [Fact]
+    public async Task a_dropped_projections_row_still_holds_the_wait_and_is_named()
+    {
+        await WithVersionThreeAsync();
+        var highWater = await AppendAStreamAsync();
+
+        await SeedAsync(VersionOfWaitTurbine(3), highWater);
+        await SeedAsync(new ShardName("SomethingDropped"), highWater - 1);
+
+        var ex = await Should.ThrowAsync<TimeoutException>(() =>
+            theDatabase.WaitForNonStaleProjectionDataAsync(_shortTimeout));
+        ex.Message.ShouldContain($"SomethingDropped:All@{highWater - 1}");
+    }
+
+    /// <summary>
+    ///     A shard key the store no longer runs, at the version it does run, is not a version change.
+    /// </summary>
+    [Fact]
+    public async Task a_row_for_an_unconfigured_shard_key_of_the_same_version_still_holds_the_wait()
+    {
+        await WithVersionThreeAsync();
+        var highWater = await AppendAStreamAsync();
+
+        await SeedAsync(VersionOfWaitTurbine(3), highWater);
+        await SeedAsync(new ShardName(nameof(WaitTurbine), "Retired", 3), highWater - 1);
+
+        await Should.ThrowAsync<TimeoutException>(() =>
+            theDatabase.WaitForNonStaleProjectionDataAsync(_shortTimeout));
+    }
+
+    /// <summary>
+    ///     The composite trap from the other direction. Its configured shard says version 0, and every row
+    ///     it could ever have written reads as version 1, so comparing those directly would call a row of
+    ///     the same version a retired one.
+    /// </summary>
+    [Fact]
+    public async Task a_composites_version_is_read_from_its_identity()
+    {
+        ConfigureStore(opts =>
+        {
+            opts.DatabaseSchemaName = "wait_non_stale_composite";
+            opts.AutoCreateSchemaObjects = AutoCreate.All;
+            opts.Projections.CompositeProjectionFor("WaitComposite", composite =>
+            {
+                composite.Snapshot<WaitTurbine>();
+            });
+        });
+
+        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync();
+        await theStore.Advanced.Clean.DeleteAllEventDataAsync();
+        await ClearProgressionAsync();
+
+        var composite = theStore.Options.Projections.AllShards()
+            .Single(x => x.Name.Name == "WaitComposite").Name;
+        var highWater = await AppendAStreamAsync();
+
+        await SeedAsync(composite, highWater);
+        await SeedAsync(new ShardName("WaitComposite", "Retired", 1), highWater - 1);
+
+        var ex = await Should.ThrowAsync<TimeoutException>(() =>
+            theDatabase.WaitForNonStaleProjectionDataAsync(_shortTimeout));
+        ex.Message.ShouldContain($"WaitComposite:Retired@{highWater - 1}");
+    }
+
     private ShardName ShardFor<T>() => theStore.Options.Projections.AllShards()
         .Single(x => x.Name.Name == typeof(T).Name).Name;
 
@@ -281,6 +459,8 @@ public partial class WaitTurbineAudit
 
     public void Apply(WaitTurbineSpun _) => Revisions++;
 }
+
+public partial class VersionedWaitProjection : SingleStreamProjection<WaitTurbine, Guid>;
 
 /// <summary>
 ///     Registered so the wait has a subscription shard to cover. Its progression rows are planted
