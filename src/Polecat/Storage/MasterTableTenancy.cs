@@ -6,6 +6,8 @@ using JasperFx.MultiTenancy;
 using Microsoft.Data.SqlClient;
 using Polecat.Internal;
 using Polly;
+using Weasel.Core;
+using Weasel.SqlServer;
 
 namespace Polecat.Storage;
 
@@ -481,6 +483,12 @@ public class MasterTableTenancy : ITenancy, IDynamicTenantSource<string>
     ///     DDL operation (same documented exception as <c>DocumentTableEnsurer</c>) and is wrapped in
     ///     the resilience pipeline.
     /// </summary>
+    /// <remarks>
+    ///     #883: under the migration lock, because the semaphore below covers one tenancy in one process,
+    ///     and two replicas starting together both found the table missing and the loser failed on the
+    ///     CREATE. Nothing has to worry about a transaction here: this runs as a session is being opened,
+    ///     and a process has finished it before its first session exists.
+    /// </remarks>
     private async Task EnsureMasterTableAsync(CancellationToken token)
     {
         if (_masterTableEnsured) return;
@@ -501,40 +509,18 @@ public class MasterTableTenancy : ITenancy, IDynamicTenantSource<string>
 
             await _resilience.ExecuteAsync(static async (state, ct) =>
             {
-                var (connectionString, schema, table) = state;
+                var (connectionString, options, schema) = state;
                 await using var conn = new SqlConnection(connectionString);
                 await conn.OpenAsync(ct).ConfigureAwait(false);
 
-                await using var cmd = conn.CreateCommand();
-                // #665: QUOTENAME rather than '[' + @schema + ']'. @schema is bound, but its VALUE
-                // was then concatenated into the EXEC'd batch with no escaping, so a ']' in the name
-                // closed the bracket early inside that nested batch. The source is
-                // StoreOptions.DatabaseSchemaName / the MultiTenantedMasterTable(..., schemaName)
-                // argument — startup configuration, so exploiting it means already owning the
-                // bootstrap — but "a parameter is involved" is not the same as "escaped", and this
-                // was the one place in the repo where those two came apart.
-                //
-                // ⚠️ Via sp_executesql and a variable, NOT EXEC('...' + QUOTENAME(@schema)).
-                // EXEC()'s argument expression accepts only literals and variables — a function call
-                // in it is a syntax error ("Incorrect syntax near 'QUOTENAME'"), which is why the
-                // original had to concatenate the brackets by hand in the first place.
-                cmd.CommandText = $"""
-                    IF SCHEMA_ID(@schema) IS NULL
-                    BEGIN
-                        DECLARE @createSchema NVARCHAR(MAX) = N'CREATE SCHEMA ' + QUOTENAME(@schema);
-                        EXEC sp_executesql @createSchema;
-                    END
-                    IF OBJECT_ID(@qualified, 'U') IS NULL
-                        CREATE TABLE {table} (
-                            tenant_id NVARCHAR(200) NOT NULL CONSTRAINT pk_pc_tenants PRIMARY KEY,
-                            connection_string NVARCHAR(MAX) NOT NULL,
-                            is_disabled BIT NOT NULL CONSTRAINT df_pc_tenants_is_disabled DEFAULT 0
-                        );
-                    """;
-                cmd.Parameters.AddWithValue("@schema", schema);
-                cmd.Parameters.AddWithValue("@qualified", table);
-                await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
-            }, (_masterConnectionString, _schemaName, QualifiedTableName), token).ConfigureAwait(false);
+                await using var migrationLock = await SchemaMigrationLock.HoldForFirstUseAsync(
+                    options, conn, insideTransaction: false, ct, schema).ConfigureAwait(false);
+
+                var migration = await SchemaMigration.DetermineAsync(conn, ct, new TenantsTable(schema))
+                    .ConfigureAwait(false);
+                await new SqlServerMigrator().ApplyAllAsync(conn, migration, AutoCreate.CreateOrUpdate, ct: ct)
+                    .ConfigureAwait(false);
+            }, (_masterConnectionString, _options, _schemaName), token).ConfigureAwait(false);
 
             _masterTableEnsured = true;
         }

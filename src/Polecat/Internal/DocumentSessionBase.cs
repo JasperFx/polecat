@@ -16,6 +16,7 @@ using Polecat.Linq.Members;
 using Polecat.Linq.Parsing;
 using Polecat.Metadata;
 using Polecat.Projections;
+using Polecat.Schema.Identity.Sequences;
 using Weasel.Core;
 using Weasel.SqlServer;
 
@@ -407,6 +408,8 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         Weasel.Storage.IStorageSession session = tenantScope ?? (Weasel.Storage.IStorageSession)this;
         var storage = (Weasel.Storage.IDocumentStorage<T>)session.StorageFor<T>();
 
+        EnsureHiloStorage(provider);
+
         // id assignment + identity-map/version bookkeeping
         StoreForConcurrency(storage, session, document);
 
@@ -423,6 +426,15 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     }
 
     /// <summary>
+    ///     #883: the id assigned next may come from a Hi-Lo sequence, which cannot see this session's
+    ///     transaction and so never waits for the migration lock on its own. This can.
+    /// </summary>
+    private void EnsureHiloStorage(DocumentProvider provider)
+    {
+        (provider.Sequence as HiloSequence)?.EnsureStorage(HasOpenTransaction);
+    }
+
+    /// <summary>
     ///     Runtime-type (object) variant of <see cref="BuildClosedShapeWrite{T}" /> for
     ///     StoreObjects (#273 E2e) — dispatches through the non-generic object-write bridge.
     /// </summary>
@@ -431,6 +443,8 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     {
         Weasel.Storage.IStorageSession session = tenantScope ?? (Weasel.Storage.IStorageSession)this;
         var storage = (Polecat.Storage.ClosedShape.IPolecatObjectWriteStorage)session.StorageFor(document.GetType());
+
+        EnsureHiloStorage(provider);
 
         // #592: the same version seeding Store<T> does, through the object bridge.
         // #720 adds the mapped-member branch in the same order StoreForConcurrency uses it.

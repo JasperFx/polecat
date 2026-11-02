@@ -247,6 +247,20 @@ public partial class DocumentStore : IDocumentStore
         });
     }
 
+    /// <summary>
+    ///     Everything that memoizes "this table exists", for after those tables have been dropped.
+    /// </summary>
+    internal void ForgetEnsuredTables()
+    {
+        _tableEnsurer.ForgetEnsuredTables();
+        foreach (var ensurer in _tableEnsurers.Values)
+        {
+            ensurer.ForgetEnsuredTables();
+        }
+
+        Sequences.ForgetEnsuredTables();
+    }
+
     public IDocumentSession LightweightSession()
     {
         return LightweightSession(new SessionOptions());
