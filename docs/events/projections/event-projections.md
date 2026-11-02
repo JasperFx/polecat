@@ -71,6 +71,25 @@ public void Project(IEvent<UserDeactivated> @event, IDocumentOperations ops)
 }
 ```
 
+### Declaring What a Projection Writes
+
+A document type returned from a `Create` method is declared by the method. One written through `ops` inside `Project` is not, so Polecat only finds out about it once the projection has run, by which time an inline save already holds its transaction. If that type's table does not exist yet, creating it takes a second connection from the pool in the middle of the save. Declare the type in the constructor and its table is included in a migration and ensured ahead of the transaction:
+
+```cs
+public partial class AuditProjection : EventProjection
+{
+    public AuditProjection()
+    {
+        RegisterPublishedType(typeof(DeactivationRecord));
+    }
+
+    public void Project(IEvent<UserDeactivated> @event, IDocumentOperations ops)
+    {
+        ops.Store(new DeactivationRecord { ... });
+    }
+}
+```
+
 ## Event Enrichment
 
 `EventProjection` supports an `EnrichEventsAsync` hook that runs **before** individual events

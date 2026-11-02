@@ -182,7 +182,7 @@ The queryable `IEvent` properties available for filtering and projection are:
 | `Timestamp` | `timestamp` | When recorded |
 | `EventTypeName` | `type` | Event type name |
 | `DotNetTypeName` | `dotnet_type` | .NET type name |
-| `IsArchived` | `is_archived` | Archive flag |
+| `IsArchived` | `is_archived` | Archive flag. In a predicate this replaces the implicit filter, see [Reading archived events](/events/archiving#reading-archived-events) |
 | `TenantId` | `tenant_id` | Tenant identifier |
 | `CorrelationId` | `correlation_id` | Correlation ID |
 | `CausationId` | `causation_id` | Causation ID |
