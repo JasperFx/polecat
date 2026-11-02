@@ -1401,9 +1401,67 @@
                  answers true, so inert for Weasel.SqlServer.
                * INERT: weasel#718 (PostgreSQL partitioned index resume) and weasel#719 (PostgreSQL
                  advisory lock holder scope; the SQL Server read already filters on DB_ID()). -->
-        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.47.1" />
-        <PackageVersion Include="Weasel.SqlServer" Version="9.47.1" />
-        <PackageVersion Include="Weasel.Storage" Version="9.47.1" />
+        <!-- Weasel 9.48.0 (from 9.47.1, spanning 9.47.0). Polecat FOUND three of these. No Polecat code
+
+             The JasperFx floor: Weasel.Core 9.48.0 declares JasperFx >= 2.98.0 and Weasel.Storage
+             declares JasperFx.Events >= 2.98.0, both read from the published nuspec. Already satisfied
+             here, because the JasperFx 2.98.0 bump landed on its own ahead of this one; at 2.97.0 the
+             restore fails outright with NU1605, a package downgrade promoted to an error, rather than
+             resolving quietly upward.
+             changes required; one workaround here is now redundant and comes out separately.
+
+               * weasel#765 - Polecat's own report (#842). A SQL Server partition function and scheme have
+                 no CREATE OR ALTER, so the creation DDL refreshed them by dropping first, with no check
+                 for the tables already using the scheme. The second run of a generated creation script
+                 therefore failed on the table the script itself had created:
+                 `The partition scheme "ps_..." is currently being used to partition one or more tables`.
+                 The drop is now conditional on the scheme being unused and the creates on the objects
+                 being absent, and both halves are needed: skipping the drop alone just moves the failure
+                 to `There is already an object named ...`. generated_schema_script_executes can stop
+                 excusing partitioned shapes from its run-it-twice check.
+               * weasel#764 - Polecat's own report (#848). RangePartitioning rendered boundary values with
+                 the CURRENT CULTURE, so the schema a host emitted depended on where it ran. Under th-TH a
+                 custom date format picks up the Buddhist calendar and a 2026 boundary rendered as 2569;
+                 under fi-FI the `:` in `HH:mm:ss` renders as `.`, because it is the time-separator
+                 placeholder rather than a literal colon; sv-SE, fi-FI, lt-LT and nb-NO write a negative
+                 sign as U+2212, which applies to a plain int and not only to decimals. The 11 failures
+                 the Storage and Schema suites show when run under a th-TH culture trace here. Also
+                 swept: Table.DefaultValue(int)/(long) and the ManagedTenantPartitions ordinals.
+               * weasel#766 - Polecat's own report (#868). sp_getapplock was told its wait through
+                 @LockTimeout but ran under the connection's CommandTimeout, 30 seconds by default, so the
+                 client gave up first: a requested wait of 30s or more silently had no effect, and at
+                 exactly 30s a busy lock arrived as a raw SqlException instead of a failed
+                 AttainLockResult. StartupMigrationLockTimeout defaults to 30 seconds, which is exactly
+                 the boundary. FOLLOW-UP, not done here: SchemaMigrationLock.TryAttainLock catches
+                 SqlClient's -2 and reports it as a lost lock, and its remark documents this Weasel bug.
+                 Both can go once this pin lands; left in place so this PR is a dependency bump only.
+               * weasel#758/#759 - the parameter-type catch-all. A private helper in five providers ended
+                 in `?? <catch-all>`, which can never return null, so every fall-through branch after the
+                 first was dead code. On SQL Server the catch-all went out as sql_variant, which outranks
+                 every ordinary type in data type precedence, so comparing one against a column converted
+                 THE COLUMN once per row. Largely inert for Polecat, and deliberately so: TypeForRawId
+                 types Guid/string/int/long explicitly, SetParameterType switches on StorageColumnType,
+                 and Guid was already mapped to UniqueIdentifier before this. What does change is the
+                 fallback arm of TypeForRawId and SetIdParameterType: a raw id type Weasel has no mapping
+                 for now THROWS where it used to return Variant and scan, and short / byte / float / char
+                 / DateOnly / TimeOnly went from that same catch-all to real mappings. DateTime also moves
+                 from SqlDbType.Date (which dropped the time of day) to DateTime2; Polecat never routed a
+                 DateTime through this seam, so that one is inert here.
+               * weasel#761 - an enum parameter now resolves by EnumStorage, defaulting to the integer
+                 type, with ToParameterType/TryGetDbType/TryGetDbTypeForValue overloads taking one. Arrays
+                 on SQL Server defer to the driver instead of binding as sql_variant. Inert for Polecat:
+                 no enum or array reaches the provider seam.
+               * weasel#762 - documentation only, and it confirms Polecat's #363 finding from the other
+                 side. Measured on SQL Server 2025 from sys.dm_exec_query_plan: an NVarChar parameter
+                 against a varchar column scans with CONVERT_IMPLICIT on the COLUMN, while VarChar seeks
+                 against either column shape. Weasel.SqlServer's non-Unicode default is the safe
+                 direction, which is why Polecat's varchar(250) id columns were never at risk.
+               * INERT: weasel#763 (DateOnly/TimeOnly on MySQL and Oracle).
+               * MySqlConnector 2.6.1 for GHSA-473q-m89c-ghf8 and JasperFx 2.98.0 ride along; neither is a
+                 Weasel.SqlServer surface. -->
+        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.48.0" />
+        <PackageVersion Include="Weasel.SqlServer" Version="9.48.0" />
+        <PackageVersion Include="Weasel.Storage" Version="9.48.0" />
 
         <!-- Strongly typed IDs. Both generators are test-only: they prove Polecat's value-type id
              support against the two libraries Marten's ValueTypeTests exercise. StronglyTypedId emits
