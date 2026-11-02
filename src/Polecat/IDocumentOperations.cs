@@ -112,6 +112,10 @@ public interface IDocumentOperations : IQuerySession, IDocumentWriteOperations
     ///     Access data from another tenant and apply document or event updates to this
     ///     session for a separate tenant.
     /// </summary>
+    /// <exception cref="Polecat.Exceptions.InvalidTenantForDatabaseException">
+    ///     The tenant's data is in a different database from this session's. A session's work commits in
+    ///     one transaction on one database, so open a separate session for that tenant.
+    /// </exception>
     ITenantOperations ForTenant(string tenantId);
 
     /// <summary>

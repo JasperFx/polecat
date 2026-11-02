@@ -11,7 +11,8 @@ namespace Polecat.Internal;
 /// <summary>
 ///     Lightweight wrapper around a parent session that scopes document and event
 ///     operations to a different tenant. Shares the parent's connection, work tracker,
-///     and serializer so all operations flush in a single transaction.
+///     and serializer so all operations flush in a single transaction, which is why the
+///     tenant has to be in the parent's database. <c>ForTenant</c> refuses one that isn't.
 /// </summary>
 internal class NestedTenantSession : ITenantOperations
 {

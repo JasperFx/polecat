@@ -82,7 +82,9 @@ var store = DocumentStore.For(opts =>
 });
 ```
 
-Sessions are automatically routed to the correct database.
+Sessions are automatically routed to the correct database. A session stays on that database, so
+`session.ForTenant("tenant-b")` from a `tenant-a` session throws `InvalidTenantForDatabaseException`. Open
+a separate session for that tenant.
 
 ::: warning No default tenant — and no top level connection string
 `MultiTenantedDatabases()` (and `MultiTenantedMasterTable()`) sets

@@ -91,6 +91,10 @@ With separate database tenancy:
 - Schema management runs independently per database — `ApplyAllDatabaseChangesOnStartup()` migrates
   every tenant database, not just the one behind `StoreOptions.ConnectionString`
 - Sessions automatically route to the correct database based on tenant ID
+- A session stays on that one database. `session.ForTenant("other")` throws
+  `InvalidTenantForDatabaseException` if that tenant is in a different database, because a session's work
+  commits in one transaction on one connection. Open a separate session for it. Two tenants that really
+  are in the same database (same server and catalog) can still share a save
 - The async daemon runs independently per tenant database: `AddAsyncDaemon(...)` runs one daemon
   per tenant database, each tracking its own high-water mark, projection progress and dead letters
 - With `MultiTenantedMasterTable()`, the daemon re-reads the master table on every leadership cycle. It

@@ -62,6 +62,12 @@ of another tenant doesn't use it.
 Without conjoined tenancy the id identifies the stream on its own, so two tenants naming the same id in
 one save are appending to one stream.
 
+A view shares the session's connection, so the tenant has to be in the session's database. Under
+[separate database tenancy](#separate-database-tenancy) `ForTenant` throws
+`InvalidTenantForDatabaseException` for a tenant in another database, and two tenants in one save means two
+sessions and two transactions, which don't commit as one. See
+[Separate Database Tenancy](/configuration/multitenancy#separate-database-tenancy).
+
 ## Separate Database Tenancy
 
 Each tenant gets its own database with independent event stores:

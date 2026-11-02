@@ -56,6 +56,26 @@ public class ConnectionFactory
     public string ConnectionString => _connectionString;
 
     /// <summary>
+    ///     The database this factory connects to.
+    /// </summary>
+    internal string DatabaseName => new SqlConnectionStringBuilder(_connectionString).InitialCatalog;
+
+    /// <summary>
+    ///     Do these two connect to one database? Going by the server and the catalog, because two
+    ///     connection strings can differ in everything else. Answering no when the answer was yes costs a
+    ///     clear refusal and the opposite costs a silent write to the wrong place, so the catalog has to
+    ///     match exactly: on a case-sensitive server, names that differ in case are two databases.
+    /// </summary>
+    internal bool ConnectsToSameDatabaseAs(ConnectionFactory other)
+    {
+        var mine = new SqlConnectionStringBuilder(_connectionString);
+        var theirs = new SqlConnectionStringBuilder(other._connectionString);
+
+        return string.Equals(mine.DataSource, theirs.DataSource, StringComparison.OrdinalIgnoreCase)
+               && string.Equals(mine.InitialCatalog, theirs.InitialCatalog, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     ///     Create a new SqlConnection. Caller is responsible for opening and disposing it.
     /// </summary>
     public SqlConnection Create()

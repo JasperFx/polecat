@@ -53,6 +53,17 @@ internal sealed class PolecatQuickAppendEventsOperation
     private const string SeqTableVar = "@pc_appended_seqs";
     private const string SeqIdVar = "@pc_event_seq";
 
+    /// <summary>
+    ///     What the stream version update touched. Set by the dialect's update closure.
+    /// </summary>
+    internal const string StreamRowsVar = "@pc_stream_rows";
+
+    /// <summary>
+    ///     Raised when the stream version update found no row. <see cref="TryTransform" /> turns it into
+    ///     <see cref="EventStreamUnexpectedMaxEventIdException" /> on a session's save.
+    /// </summary>
+    internal const int StreamRowNotUpdatedError = 52905;
+
     private readonly EventGraph _graph;
     private readonly QuickEventStorageDescriptor _descriptor;
 
@@ -250,6 +261,14 @@ internal sealed class PolecatQuickAppendEventsOperation
             builder.Append(" bigint;");
         }
 
+        var checksStreamRow = WritesStreamRow && Mode == StreamWriteMode.Update;
+        if (checksStreamRow)
+        {
+            builder.Append("declare ");
+            builder.Append(StreamRowsVar);
+            builder.Append(" int;");
+        }
+
         // Stream row write reuses the dialect's descriptor closures so the SQL stays in one place.
         if (WritesStreamRow)
         {
@@ -367,6 +386,23 @@ internal sealed class PolecatQuickAppendEventsOperation
             {
                 WriteTagInserts(builder, @event, ordinal, conjoined, archivePartitioned);
             }
+        }
+
+        // An update that touched nothing fails the append. The shared UpdateStreamVersionOperationBase
+        // checks RecordsAffected, but Polecat's append doesn't run that operation: the update is a statement
+        // in this command, whose result set is the seq_ids, so nothing used to look at the count. The events
+        // went in behind a row that kept its old version, and the next append numbered from that.
+        //
+        // After the inserts and not straight after the update, for the sake of a Snapshot session. Its
+        // locking read sees a commit its snapshot doesn't, so its update matches nothing, and error 3960
+        // comes from the inserts here. That error ends the transaction, which is what tells the session
+        // not to replay the save, so this mustn't get in first.
+        if (checksStreamRow)
+        {
+            builder.Append("if ");
+            builder.Append(StreamRowsVar);
+            builder.Append($" = 0 throw {StreamRowNotUpdatedError}, ");
+            builder.Append("N'The version update found no pc_streams row at the version this append read.', 1;");
         }
 
         builder.Append("select seq_id from ");
@@ -492,20 +528,26 @@ internal sealed class PolecatQuickAppendEventsOperation
     ///     Map a SQL Server primary-key violation (2627) on the stream INSERT to
     ///     <see cref="ExistingStreamIdCollisionException" /> — the closed-shape equivalent of the
     ///     bespoke <c>ProcessStartStreamAsync</c> catch. Only meaningful when this op inserts the
-    ///     stream row.
+    ///     stream row. A stream UPDATE that found no row is the shared expected-version failure, with
+    ///     the same -1 for an actual version nobody read.
     /// </summary>
     public bool TryTransform(Exception original, out Exception? transformed)
     {
-        if (Mode == StreamWriteMode.Insert)
+        var sql = original as Microsoft.Data.SqlClient.SqlException
+                  ?? original.InnerException as Microsoft.Data.SqlClient.SqlException;
+        var id = Stream.Key is not null ? (object)Stream.Key : Stream.Id;
+
+        if (Mode == StreamWriteMode.Insert && sql is { Number: 2627 })
         {
-            var sql = original as Microsoft.Data.SqlClient.SqlException
-                      ?? original.InnerException as Microsoft.Data.SqlClient.SqlException;
-            if (sql is { Number: 2627 })
-            {
-                var id = Stream.Key is not null ? (object)Stream.Key : Stream.Id;
-                transformed = new Polecat.Exceptions.ExistingStreamIdCollisionException(id);
-                return true;
-            }
+            transformed = new Polecat.Exceptions.ExistingStreamIdCollisionException(id);
+            return true;
+        }
+
+        if (Mode == StreamWriteMode.Update && sql is { Number: StreamRowNotUpdatedError })
+        {
+            transformed = new EventStreamUnexpectedMaxEventIdException(id, Stream.AggregateType,
+                Stream.ExpectedVersionOnServer!.Value, -1);
+            return true;
         }
 
         transformed = null;

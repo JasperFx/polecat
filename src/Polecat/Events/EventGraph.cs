@@ -364,9 +364,11 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
     ///         <b>The second branch is not there for the lock.</b> A stream row keeps the ordinal it was
     ///         written with, and a tenant removed with <c>RetainData</c> and added back after its ordinal
     ///         went to somebody else gets a new one. Finding nothing under the new ordinal would make that
-    ///         stream look new, and the append would fork it, numbering from 1 again. Nothing can move such
-    ///         a row, because the version update names the ordinal too, so there is no version to protect
-    ///         and <c>NOLOCK</c> costs nothing.
+    ///         stream look new, and the append would fork it, numbering from 1 again. An append does move
+    ///         such a row, in the second update in <c>SqlServerEventStoreDialect</c>, but that update names
+    ///         the version this read returned, and if it finds no row the append fails. So <c>NOLOCK</c>
+    ///         can't lose a version here. Two appends racing on such a stream can both get past this read,
+    ///         and the loser then fails, on the event's unique index or on that check.
     ///     </para>
     ///     <para>
     ///         An ordinal this process has not resolved yet keeps the wider lock. Looking it up here could
