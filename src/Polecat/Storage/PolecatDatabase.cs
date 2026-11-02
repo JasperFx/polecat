@@ -1169,7 +1169,8 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
         // Nothing here can run inside a session's transaction: every caller is the daemon, a high water
         // operation or a health check, and the apply opens its own connection.
         var migrationLock = _options.BuildMigrationLock();
-        await ApplyAllConfiguredChangesToDatabaseAsync(migrationLock, ct: token);
+        await ApplyAllConfiguredChangesToDatabaseAsync(migrationLock, ct: token)
+            .TranslatingCancellation("Ensuring the event store schema", token);
 
         // Not unconditionally: under ContinueOnFailures a loser returns as if nothing needed doing, and it
         // has not looked.

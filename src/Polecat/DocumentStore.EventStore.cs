@@ -1014,7 +1014,8 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
             }
 
             await cmd.ExecuteNonQueryAsync(ct);
-        }, (connStr, Events.ProgressionTableName, filter.Where, filter.Parameters), token);
+        }, (connStr, Events.ProgressionTableName, filter.Where, filter.Parameters), token)
+            .AsTask().TranslatingCancellation("Deleting projection progress", token);
     }
 
     // #163 Phase 2 — per-tenant rebuild teardown (jasperfx#407 Phase 2b). A non-null tenantId scopes the
@@ -1263,6 +1264,6 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
                 await truncCmd.ExecuteNonQueryAsync(ct);
             }
         }, (connStr, Events.ProgressionTableName, filter.Where, filter.Parameters, publishedTableNames),
-            token);
+            token).AsTask().TranslatingCancellation("Projection teardown", token);
     }
 }
