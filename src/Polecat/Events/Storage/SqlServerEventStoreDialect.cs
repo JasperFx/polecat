@@ -185,15 +185,24 @@ internal sealed class SqlServerEventStoreDialect : IEventStoreSqlDialect
     /// <summary>
     ///     Closure for <c>update {schema}.pc_streams set version = @version, timestamp =
     ///     SYSDATETIMEOFFSET() where id = @id and version = @expected [and tenant_id = @tenant]</c>.
-    ///     The <c>and version = @expected</c> guard is the shared expected-version check; Polecat's
-    ///     planner reads the current version under <c>UPDLOCK, HOLDLOCK</c> first, so the guard always
-    ///     matches, but it stays as defense-in-depth and to satisfy the shared op's Postprocess
-    ///     (0-rows → <c>EventStreamUnexpectedMaxEventIdException</c>).
+    ///     Polecat's planner reads the current version under <c>UPDLOCK, HOLDLOCK</c> first, so the
+    ///     <c>and version = @expected</c> guard should always match. How many rows it touched goes in
+    ///     <see cref="PolecatQuickAppendEventsOperation.StreamRowsVar" />, for the check at the end of
+    ///     that operation's command.
     /// </summary>
+    /// <remarks>
+    ///     <b>Under per-tenant partitioning there are two updates, and the second is not a retry.</b> A
+    ///     stream row keeps the ordinal it was written with, and a tenant removed with <c>RetainData</c>
+    ///     and added back can return on a different one. The planner's read has no ordinal in it and finds
+    ///     that row, but an update naming the tenant's current ordinal can't. The second update looks in
+    ///     every partition, so it only runs when the first found nothing, and an ordinary append pays for
+    ///     one variable.
+    /// </remarks>
     private static Action<Weasel.Core.ICommandBuilder, StreamAction> BuildUpdateStreamVersionCommandConfigurer(
         EventGraph graph, bool isGuid, bool isConjoined, IStorageDialect dialect)
     {
         var prefix = $"update {graph.StreamsTableName} set version = ";
+        var countRows = $"; set {PolecatQuickAppendEventsOperation.StreamRowsVar} = @@rowcount";
 
         return (builder, stream) =>
         {
@@ -209,11 +218,13 @@ internal sealed class SqlServerEventStoreDialect : IEventStoreSqlDialect
             var expectedParam = builder.AppendParameter(stream.ExpectedVersionOnServer!.Value);
             dialect.SetParameterType(expectedParam, StorageColumnType.Long);
 
+            var tenantFilter = "";
             if (isConjoined)
             {
                 builder.Append(" and tenant_id = ");
                 var tenantParam = builder.AppendParameter(stream.TenantId);
                 dialect.SetParameterType(tenantParam, StorageColumnType.String);
+                tenantFilter = $" and tenant_id = @{tenantParam.ParameterName}";
             }
 
             // #335: partition-eliminate the version bump under per-tenant partitioning —
@@ -223,6 +234,18 @@ internal sealed class SqlServerEventStoreDialect : IEventStoreSqlDialect
                 builder.Append(" and tenant_ordinal = ");
                 var ordinalParam = builder.AppendParameter(ResolveCachedOrdinal(graph, stream));
                 dialect.SetParameterType(ordinalParam, StorageColumnType.Int);
+                builder.Append(countRows);
+
+                // The same parameters again, so the command's budget doesn't change (#834)
+                builder.Append($"; if {PolecatQuickAppendEventsOperation.StreamRowsVar} = 0 begin ");
+                builder.Append($"{prefix}@{versionParam.ParameterName}, timestamp = SYSDATETIMEOFFSET() "
+                               + $"where id = @{idParam.ParameterName} and version = @{expectedParam.ParameterName}"
+                               + tenantFilter);
+                builder.Append($"{countRows}; end");
+            }
+            else
+            {
+                builder.Append(countRows);
             }
         };
     }
