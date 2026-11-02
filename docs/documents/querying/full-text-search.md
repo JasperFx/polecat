@@ -300,13 +300,15 @@ of them took about three minutes. For much longer documents, lower it with
 Polecat does not do this for you at startup, and that is on purpose. A document with some tokens looks
 finished to the backfill however stale they are, because telling otherwise means re-tokenizing it to
 compare. A document with none, like a member over 4000 characters written by an older version, would be
-visible to it, but the backfill is one statement running inside whichever request touches the type first:
-over 8,000 such documents it hit the command timeout and rolled back, so every later request would have
-done the same. Work on that scale should be something you schedule rather than something a deployment does
-to you, and the rebuild is batched for that reason.
+visible to it, but the backfill runs inside whichever request touches the type first. Work on that scale
+should be something you schedule rather than something a deployment does to you.
 
 Declaring a new index, or changing an index's tokenizer, is different: there is nothing to preserve, so the
-backfill covers every document, however long.
+backfill covers every document, however long, in the first request to touch the type. It works in batches
+of 100 documents, each with `CommandTimeout` to finish, so a large store makes that request slow and does not
+make it fail, and it does not stop if the request is cancelled. If the process dies partway, ordinary
+documents are picked up by the next first use, and a rebuild is what covers any over 4000 characters that
+were left.
 
 ::: warning Apply the schema change first
 The tokenizer is in the trigger. Under `AutoCreate.None` nothing replaces an older trigger, and rebuilding

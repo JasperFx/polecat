@@ -219,13 +219,7 @@ internal class DocumentTableEnsurer
                 // answers empty. Idempotent, so running it on every ensure is correct rather than merely
                 // harmless. It follows the migration because it writes to the table that migration
                 // creates.
-                foreach (var statement in Storage.FullText.FullTextIndex.BackfillStatements(
-                             provider.Mapping, provider.Mapping.FullTextIndexes))
-                {
-                    await using var ftCmd = conn.CreateCommand();
-                    ftCmd.CommandText = statement;
-                    await ftCmd.ExecuteNonQueryAsync(token);
-                }
+                await Storage.FullText.FullTextBackfill.RunAsync(conn, provider.Mapping, _options.CommandTimeout);
             }
 
             // #685: JSON indexes are no longer rendered here. They are declared on DocumentTable

@@ -35,7 +35,7 @@ namespace Polecat.Storage.FullText;
 ///         <see cref="FullTextTrigger" /> is a Weasel trigger; <c>FullTextSchemaObjects.For</c> is the
 ///         single answer to "which objects, in what order". The backfill below is the third and stays
 ///         raw SQL on purpose — it writes rows rather than declaring structure. See
-///         <see cref="BackfillStatements" />.
+///         <see cref="FullTextBackfill" />.
 ///     </para>
 ///     <para>
 ///         <b>Maintained by a trigger, so the write path is untouched.</b> The same trade
@@ -158,7 +158,7 @@ public class FullTextIndex
     ///         "indexed" with literal terms, backfill nothing, and the stemmed searches would quietly miss
     ///         every document written before the switch. With the tokenizer in the key, a switch is a new
     ///         key with no rows, so the backfill re-tokenizes everything, and
-    ///         <see cref="BackfillStatements" /> clears the old key's rows.
+    ///         <see cref="FullTextBackfill" /> clears the old key's rows.
     ///     </para>
     ///     <para>
     ///         A <see cref="FullTextTokenizer.Literal" /> index keeps the bare member name, exactly as before
@@ -242,75 +242,6 @@ public class FullTextIndex
             : "pc_ft_" + mapping.TableName;
 
     /// <summary>
-    ///     #685: the one-time backfill that makes a newly declared index cover rows written before it
-    ///     existed — one statement per declared member.
-    /// </summary>
-    /// <remarks>
-    ///     <para>
-    ///         <b>This is a data migration, not a schema object, and it stays raw SQL for that reason.</b>
-    ///         The token table and the trigger are now Weasel objects (<see cref="FullTextTokenTable" />,
-    ///         <see cref="FullTextTrigger" />) so they appear in a generated script, are compared by
-    ///         <c>AssertDatabaseMatchesConfigurationAsync()</c>, and can be refused under
-    ///         <c>AutoCreate.None</c>. A backfill is none of those things: it describes rows rather than
-    ///         structure, there is nothing in the catalog for a delta to compare it against, and it is
-    ///         correct to run it after the schema converges rather than as part of converging.
-    ///     </para>
-    ///     <para>
-    ///         Scoped to rows this member has no tokens for, so it is idempotent and so declaring a
-    ///         second member later does not re-tokenize the first. A trigger only fires on writes made
-    ///         after it exists, so without this a declaration against a store that already holds
-    ///         documents produces an index matching nothing — no error, no rows, just a search that
-    ///         quietly answers empty.
-    ///     </para>
-    ///     <para>
-    ///         ⚠️ <b>Repairing an existing index is not this statement's job, and it is held back from
-    ///         doing so</b> (#835, #839). Two kinds of document are out of date after a tokenizer change.
-    ///         One with SOME tokens is invisible here, however wrong they are:
-    ///         <c>"quick\nbrown fox"</c> keeps its stale <c>quick\nbrown</c> until it is next written.
-    ///         One with NONE, like a member over 4000 characters, is exactly what <c>NOT EXISTS</c> finds,
-    ///         and left alone this would tokenize all of them, in one statement, inside whichever request
-    ///         happened to touch the type first. Measured: 8,000 such documents of 5,000 characters ran
-    ///         into the 30 second command timeout, the statement rolled back, and the next request began
-    ///         the same doomed attempt, so the type stayed unusable. Even 2,000 took 28 seconds.
-    ///     </para>
-    ///     <para>
-    ///         So once a member has tokens, the bare <c>JSON_VALUE</c> below keeps this to what it could
-    ///         always reach, and those documents wait for
-    ///         <see cref="AdvancedOperations.RebuildFullTextIndexAsync{T}(CancellationToken)" />, which is batched and is
-    ///         something an operator chooses to run. A member with no tokens at all is a new declaration
-    ///         or a changed tokenizer, where the promise above applies and every document is covered.
-    ///     </para>
-    /// </remarks>
-    internal static string[] BackfillStatements(DocumentMapping mapping, IReadOnlyList<FullTextIndex> indexes)
-    {
-        if (indexes.Count == 0) return [];
-
-        var docTable = SqlEscaping.QualifiedName(mapping.DatabaseSchemaName, mapping.TableName);
-        var ftTable = SqlEscaping.QualifiedName(mapping.DatabaseSchemaName, TableNameFor(mapping));
-        var tenant = TenantColumn(mapping);
-        var nativeJson = DocumentIndex.UsesNativeJson(mapping);
-
-        // #642: rows under a key no declared index produces any more -- an index whose tokenizer
-        // changed, or one that was removed -- are cleared first. The rows they hold were tokenized by a
-        // rule nothing searches with, and leaving them is only harmless until a key is reused.
-        var declaredKeys = string.Join(", ", indexes.Select(x => SqlEscaping.Literal(x.TokenKey)));
-        var cleanup = $"DELETE FROM {ftTable} WHERE member NOT IN ({declaredKeys});";
-
-        return indexes.Select(x =>
-            $"""
-             DECLARE @established bit = IIF(EXISTS (SELECT 1 FROM {ftTable} WHERE member = {SqlEscaping.Literal(x.TokenKey)}), 1, 0);
-             INSERT INTO {ftTable} (doc_id, tenant_id, member, term, pos)
-             SELECT i.id, {tenant}, {SqlEscaping.Literal(x.TokenKey)}, {x.TermExpression(mapping)}, {PositionExpression(mapping)}
-             FROM {docTable} i
-             {x.TokenizeClause("i", nativeJson)}
-             AND (@established = 0 OR JSON_VALUE(i.data, '{x.JsonPath}') IS NOT NULL)
-             AND NOT EXISTS (SELECT 1 FROM {ftTable} ft
-                             WHERE ft.doc_id = i.id AND ft.tenant_id = {tenant}
-                               AND ft.member = {SqlEscaping.Literal(x.TokenKey)});
-             """).Prepend(cleanup).ToArray();
-    }
-
-    /// <summary>
     ///     A term's position among the document's terms, which is what a phrase search compares.
     /// </summary>
     /// <remarks>
@@ -386,7 +317,7 @@ public class FullTextIndex
     ///         ⚠️ <b>This text is stored in the trigger and compared against <c>sys.sql_modules</c>, so a
     ///         change here is a schema change.</b> Every existing trigger reports <c>Update</c> and is
     ///         replaced on the next migration, which is safe, but it does nothing for tokens already
-    ///         stored. See <see cref="BackfillStatements" />.
+    ///         stored. See <see cref="FullTextBackfill" />.
     ///     </para>
     /// </remarks>
     internal string TokenizeClause(string alias, bool nativeJson)

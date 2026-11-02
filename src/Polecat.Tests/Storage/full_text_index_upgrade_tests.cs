@@ -253,7 +253,7 @@ public class full_text_index_upgrade_tests: OneOffConfigurationsContext
 
         // Not an endorsement of the result either. Left to the backfill, this is one statement over every
         // such document inside whichever request comes first, and at 8,000 of them that statement never
-        // finishes. See the remarks on FullTextIndex.BackfillStatements.
+        // finishes. See the remarks on FullTextBackfill.
         (await searchAsync(store, "plain")).ShouldBe([other]);
         (await searchAsync(store, "needle")).ShouldBeEmpty();
     }
