@@ -78,6 +78,8 @@ var orders = await ordersTask;
 
 All queries in the batch execute in a single database call, significantly reducing latency when you need to load multiple independent pieces of data.
 
+If `Execute()` fails it throws, and every item that has not read its result fails the same way, or is cancelled if the batch was. So awaiting an item after a failed `Execute()` reports the failure rather than waiting forever. An item that read its result before the failure keeps it.
+
 ## Query Plans
 
 For reusable query specifications, implement `IBatchQueryPlan<T>`:

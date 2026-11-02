@@ -978,18 +978,6 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
                         throw new AggregateException(exceptions);
                     }
                 }
-                catch (SqlException ex) when (ex.Number == 2627)
-                {
-                    // Map duplicate key violation to DocumentAlreadyExistsException
-                    var insertOp = operations.FirstOrDefault(op => op.Role() == OperationRole.Insert);
-                    if (insertOp != null)
-                    {
-                        var documentId = insertOp is IStorageOperation bespoke ? bespoke.DocumentId : null;
-                        throw new DocumentAlreadyExistsException(insertOp.DocumentType, documentId!);
-                    }
-
-                    throw;
-                }
                 catch (SqlException ex)
                 {
                     // #549: give a queued operation the chance to name its own SQL error, exactly as
@@ -997,9 +985,22 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
                     // flush loops are otherwise mirror images and this hook was only on one of them,
                     // so an operation carrying an IExceptionTransform got its translation when the
                     // daemon ran it and a raw SqlException when a session did.
-                    if (BatchExceptionTransforms.TryTransform(ex, batch, operations, out var transformed))
+                    //
+                    // #849: this is also where the application's transforms are asked, so it comes
+                    // before the 2627 below for the same reason it does in Marten: one that claims an
+                    // error Polecat translates replaces that translation.
+                    if (BatchExceptionTransforms.TryTransform(ex, batch, operations, Options.ExceptionTransforms,
+                            out var transformed))
                     {
                         System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(transformed!).Throw();
+                    }
+
+                    // Map duplicate key violation to DocumentAlreadyExistsException
+                    if (ex.Number == 2627
+                        && operations.FirstOrDefault(op => op.Role() == OperationRole.Insert) is { } insertOp)
+                    {
+                        var documentId = insertOp is IStorageOperation bespoke ? bespoke.DocumentId : null;
+                        throw new DocumentAlreadyExistsException(insertOp.DocumentType, documentId!);
                     }
 
                     throw;
@@ -1674,7 +1675,8 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         }
         catch (SqlException ex)
         {
-            if (BatchExceptionTransforms.TryTransform(ex, batch, operations, out var transformed))
+            if (BatchExceptionTransforms.TryTransform(ex, batch, operations, Options.ExceptionTransforms,
+                    out var transformed))
             {
                 System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(transformed!).Throw();
             }
