@@ -44,6 +44,8 @@ internal class FetchStreamBatchItem : IBatchQueryItem
 
     public Task<IReadOnlyList<IEvent>> Result => _tcs.Task;
 
+    public void Fail(Exception failure) => _tcs.FailWith(failure);
+
     public void WriteSql(ICommandBuilder builder)
     {
         builder.Append(

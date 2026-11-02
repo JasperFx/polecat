@@ -48,6 +48,8 @@ internal class AdvancedSqlBatchItem<T> : IBatchQueryItem
 
     public Task<IReadOnlyList<T>> Result => _tcs.Task;
 
+    public void Fail(Exception failure) => _tcs.FailWith(failure);
+
     public void WriteSql(ICommandBuilder builder)
     {
         builder.Append(_segments[0]);
