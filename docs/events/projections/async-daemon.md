@@ -180,6 +180,8 @@ Wait for all projections to catch up to the current high water mark:
 await store.WaitForNonStaleProjectionDataAsync(TimeSpan.FromSeconds(30));
 ```
 
+Every shard the store configures has to report, and every row in `pc_event_progression` has to reach the mark. The one exception is a row for another version of a projection the store still configures, such as the row V2 leaves behind when V3 takes over. Nothing advances that row, and the blue/green side effect gate needs it to stay, so the wait ignores it. A row for a projection you have removed altogether still counts, and the timeout names it, so delete it once you are done with it.
+
 ### Per-Query
 
 Wait for projections before a specific query:
@@ -210,11 +212,27 @@ A gap left by an append that rolled back never fills. The detector holds the mar
 
 ### Open Transactions and READ_COMMITTED_SNAPSHOT
 
-An append that is still in flight holds the mark as well, and `StaleSequenceThreshold` does not release it. Only a gap with nothing in it is skipped, so an event is not lost however long its transaction stays open. The cost is that a transaction that appends events and then stays open holds back every async projection and subscription on that database until it commits or rolls back, so keep those transactions short. `HighWaterAgent` logs a warning if the mark sits still for longer than `DaemonSettings.HighWaterProgressStallThreshold` with committed events above it.
+An append that is still in flight holds the mark as well, and `StaleSequenceThreshold` does not release it. Only a gap with nothing in it is skipped, so by default an event is not lost however long its transaction stays open. The cost is that a transaction that appends events and then stays open holds back every async projection and subscription on that database until it commits or rolls back, so keep those transactions short. `HighWaterAgent` logs a warning if the mark sits still for longer than `DaemonSettings.HighWaterProgressStallThreshold` with committed events above it.
 
 The detector behaves the same on every database setting, including `READ_COMMITTED_SNAPSHOT`, which is on by default in Azure SQL Database, and optimized locking. It says how to read `pc_events` in its own queries rather than taking that from the database, and it never waits for an open transaction, so detection keeps running while the mark is held.
 
 To release a mark held by a transaction you do not expect to finish, use `AdvanceHighWaterMarkToLatestAsync` below. Any event still in flight below the new mark will not be read by the daemon if its transaction commits later.
+
+### Capping How Long an Open Transaction Can Hold the Mark
+
+If you would rather the daemon released the mark by itself, set a cap:
+
+```cs
+opts.Projections.SkipStaleGapsDespiteLiveTransactionsAfter = TimeSpan.FromMinutes(5);
+```
+
+Once the mark has been held at one position for that long, the daemon moves it past the append that is holding it, up to the highest event committed when the mark was first held there, and logs a warning naming the sequence range. An append that opened after that is not stepped over, and has a cap of its own to wait out. Under per-tenant event partitioning each tenant's mark has its own clock.
+
+::: warning
+This is off by default, because it trades a stall you can recover from for a loss you can't. If the skipped append goes on to commit, its events sit below the mark, and no async projection or subscription will read them short of a rebuild. Nothing reports that afterwards, so the warning is the only record of the skip. Set the cap well above the longest transaction you expect to run.
+:::
+
+The clock is kept in memory by the running detector, so a daemon restart starts it again, which errs towards holding. The cap is only considered once the mark has been held for `StaleSequenceThreshold`, so it can't take effect sooner than that.
 
 ### Advancing the High Water Mark Manually
 

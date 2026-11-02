@@ -41,12 +41,22 @@ internal static class NaturalKeyFetchPlanner
             ? " AND nk.tenant_id = @tenantId"
             : "";
 
+        // #852: the whole key, or this locks the end of every other partition. See
+        // EventGraph.LockedStreamReadSql. No second branch here because the stream has to exist, so
+        // finding nothing is already the failure a retained row would end in.
+        var partitionFilter = "";
+        if (events.UseTenantPartitionedEvents && events.TenantOrdinals.TryGetOrdinal(tenantId, out var ordinal))
+        {
+            partitionFilter = $" AND s.{events.TenantPartitionManager.Column} = @ordinal";
+            cmd.Parameters.AddWithValue("@ordinal", ordinal);
+        }
+
         cmd.CommandText = $"""
             SELECT s.version, s.id
             FROM {qualifiedTableName} nk WITH (NOLOCK)
             INNER JOIN {events.StreamsTableName} s WITH (UPDLOCK, HOLDLOCK) ON s.id = nk.{streamColumn}
             WHERE nk.natural_key_value = @naturalKey AND nk.is_archived = 0{tenantFilter}
-            AND s.tenant_id = @tenantId;
+            AND s.tenant_id = @tenantId{partitionFilter};
             """;
 
         cmd.Parameters.AddWithValue("@naturalKey", unwrapped); // natural_key_value is nvarchar(200)

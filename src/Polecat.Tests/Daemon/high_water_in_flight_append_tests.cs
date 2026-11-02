@@ -768,11 +768,9 @@ public class per_tenant_high_water_in_flight_append_tests(PerTenantHighWaterData
     ///     A row committed behind an in-flight append, from the tenant's own sequence.
     /// </summary>
     /// <remarks>
-    ///     Raw rather than through a session because a real append here would wait for the one in flight,
-    ///     which is a different problem from the one under test. pc_streams' key is
-    ///     <c>(tenant_id, id, tenant_ordinal)</c> under partitioning, so the planner's <c>HOLDLOCK</c> read on
-    ///     <c>(tenant_id, id)</c> is a range seek that also locks the next stream in key order. A real append
-    ///     only gets ahead of another one if it has already passed that read.
+    ///     Raw rather than through a session because a real append here used to wait for the one in flight,
+    ///     until #852 had the planner's locking read name the whole key. It stays raw because all these facts
+    ///     need is a committed row at the next seq_id, and this says so with nothing else in the way.
     /// </remarks>
     private async Task CommitBehindAsync()
     {

@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Data;
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using System.Text;
@@ -8,6 +9,7 @@ using JasperFx.Events.Aggregation;
 using JasperFx.Events.Projections;
 using JasperFx.Events.Tags;
 using JasperFx.Events.Upcasting;
+using Microsoft.Data.SqlClient;
 using Polecat.Events.Schema;
 using Polecat.Projections;
 using Polecat.Serialization;
@@ -302,6 +304,79 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
         _tenantSequences ??= new TenantEventSequenceRegistry(
             TenantOrdinals,
             _options.ConnectionString, DatabaseSchemaName, _options.ResiliencePipeline);
+
+    /// <summary>
+    ///     #852: see <see cref="PolecatProjectionOptions.SkipStaleGapsDespiteLiveTransactionsAfter" />.
+    /// </summary>
+    internal TimeSpan? SkipStaleGapsDespiteLiveTransactionsAfter =>
+        _options.Projections.SkipStaleGapsDespiteLiveTransactionsAfter;
+
+    /// <summary>
+    ///     The read of stream rows that a version check rests on: locked until the transaction ends, so
+    ///     that nothing can move the version it returns, or start a stream it found missing.
+    /// </summary>
+    /// <param name="columns">The columns to select, from the alias <c>s</c> if there are <paramref name="ids" />.</param>
+    /// <param name="match">The predicate naming the rows, on the same terms.</param>
+    /// <param name="tenantId">The tenant in <paramref name="match" />.</param>
+    /// <param name="command">Takes the ordinal's parameter, when there is one.</param>
+    /// <param name="ids">
+    ///     A query for several streams' ids, in a column called <c>id</c>, if <paramref name="match" /> does
+    ///     not name one stream.
+    /// </param>
+    /// <remarks>
+    ///     <para>
+    ///         <b>#852: this has to reach each row by its whole key</b>, because <c>HOLDLOCK</c> locks all
+    ///         that a read walks over and not just what it returns. Two ways of missing that are ruled out
+    ///         here, both measured with one append held open.
+    ///     </para>
+    ///     <para>
+    ///         Under <see cref="UseTenantPartitionedEvents" /> the key is
+    ///         <c>(tenant_id, id, tenant_ordinal)</c>, so <c>(tenant_id, id)</c> is a range, walked once per
+    ///         partition. In every partition but the stream's own it finds nothing and locks the end of the
+    ///         partition, one key that every other such read needs too, so the open append blocked
+    ///         24 of 24 appends to other streams in its tenant and 24 of 24 in another tenant, against
+    ///         none on the same schema unpartitioned. The whole key is a singleton in one partition, and
+    ///         the append then holds exactly the locks it holds unpartitioned.
+    ///     </para>
+    ///     <para>
+    ///         Several streams at once read as <c>id IN (...)</c> left the plan to the optimizer, and on any
+    ///         conjoined store it walked the tenant, locking all of it. The loop join is what guarantees
+    ///         one singleton per id. It also takes them in the order the ids were sorted into.
+    ///     </para>
+    ///     <para>
+    ///         <b>The second branch is not there for the lock.</b> A stream row keeps the ordinal it was
+    ///         written with, and a tenant removed with <c>RetainData</c> and added back after its ordinal
+    ///         went to somebody else gets a new one. Finding nothing under the new ordinal would make that
+    ///         stream look new, and the append would fork it, numbering from 1 again. Nothing can move such
+    ///         a row, because the version update names the ordinal too, so there is no version to protect
+    ///         and <c>NOLOCK</c> costs nothing.
+    ///     </para>
+    ///     <para>
+    ///         An ordinal this process has not resolved yet keeps the wider lock. Looking it up here could
+    ///         mean DDL with this transaction open, which is #864.
+    ///     </para>
+    /// </remarks>
+    internal string LockedStreamReadSql(string columns, string match, string tenantId, SqlCommand command,
+        string? ids = null)
+    {
+        string from(string hint) => ids == null
+            ? $"{StreamsTableName} WITH ({hint})"
+            : $"({ids}) ids INNER LOOP JOIN {StreamsTableName} s WITH ({hint}) ON s.id = ids.id";
+
+        if (!UseTenantPartitionedEvents || !TenantOrdinals.TryGetOrdinal(tenantId, out var ordinal))
+        {
+            return $"SELECT {columns} FROM {from("UPDLOCK, HOLDLOCK")} WHERE {match};";
+        }
+
+        var column = (ids == null ? "" : "s.") + TenantPartitionManager.Column;
+        command.Parameters.Add("@tenant_ordinal", SqlDbType.Int).Value = ordinal;
+
+        return $"""
+            SELECT {columns} FROM {from("UPDLOCK, HOLDLOCK")} WHERE {match} AND {column} = @tenant_ordinal
+            UNION ALL
+            SELECT {columns} FROM {from("NOLOCK")} WHERE {match} AND {column} <> @tenant_ordinal;
+            """;
+    }
 
     /// <summary>
     ///     Validate the per-tenant partitioning configuration (#163 / polecat#171). Per-tenant event

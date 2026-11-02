@@ -646,12 +646,10 @@ internal class EventOperations : QueryEventStore, IEventOperations
 
     private async Task<long> ReadVersionFromExistingStream(object streamId, bool forUpdate, CancellationToken token)
     {
-        var lockHint = forUpdate ? " WITH (UPDLOCK, HOLDLOCK)" : "";
         await using var cmd = new SqlCommand();
-        cmd.CommandText = $"""
-            SELECT version FROM {_events.StreamsTableName}{lockHint}
-            WHERE id = @id AND tenant_id = @tenant_id;
-            """;
+        cmd.CommandText = forUpdate
+            ? _events.LockedStreamReadSql("version", "id = @id AND tenant_id = @tenant_id", _tenantId, cmd)
+            : $"SELECT version FROM {_events.StreamsTableName} WHERE id = @id AND tenant_id = @tenant_id;";
         cmd.Parameters.AddIdParameter("@id", streamId);
         cmd.Parameters.AddVarChar("@tenant_id", _tenantId);
 
@@ -832,14 +830,12 @@ internal class EventOperations : QueryEventStore, IEventOperations
         // Query stream version
         long version = 0;
         bool streamExists = false;
-        var lockHint = forExclusive ? " WITH (UPDLOCK, HOLDLOCK)" : "";
 
         {
             await using var cmd = new SqlCommand();
-            cmd.CommandText = $"""
-                SELECT version FROM {_events.StreamsTableName}{lockHint}
-                WHERE id = @id AND tenant_id = @tenant_id;
-                """;
+            cmd.CommandText = forExclusive
+                ? _events.LockedStreamReadSql("version", "id = @id AND tenant_id = @tenant_id", _tenantId, cmd)
+                : $"SELECT version FROM {_events.StreamsTableName} WHERE id = @id AND tenant_id = @tenant_id;";
             cmd.Parameters.AddIdParameter("@id", streamId);
             cmd.Parameters.AddVarChar("@tenant_id", _tenantId);
 
