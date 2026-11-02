@@ -31,6 +31,7 @@ public class StoreOptions
     private string _connectionString = string.Empty;
     private string _databaseSchemaName = "dbo";
     private ISerializer? _serializer;
+    private Weasel.Storage.IStorageSerializer? _storageSerializer;
     private AutoCreate? _autoCreate;
 
     public StoreOptions()
@@ -340,7 +341,52 @@ public class StoreOptions
     public ISerializer Serializer
     {
         get => _serializer ??= new Serializer();
-        set => _serializer = value ?? throw new ArgumentNullException(nameof(value));
+        set
+        {
+            _serializer = value ?? throw new ArgumentNullException(nameof(value));
+            _storageSerializer = null;
+        }
+    }
+
+    /// <summary>
+    ///     <see cref="Serializer" /> as the storage runtime uses it. The default serializer is both, and
+    ///     a store tells it which storage it writes to. One of your own stays the one
+    ///     <see cref="Serializer" /> hands back, and gets held to the same rules here (#879).
+    /// </summary>
+    internal Weasel.Storage.IStorageSerializer StorageSerializer => _storageSerializer ??= BuildStorageSerializer();
+
+    private Weasel.Storage.IStorageSerializer BuildStorageSerializer()
+    {
+        var storage = Weasel.Storage.StorageSerializerAdapter.For(Serializer);
+
+        return UseNativeJsonType && Serializer is not Polecat.Serialization.Serializer
+            ? new NativeJsonStorageSerializer(storage)
+            : storage;
+    }
+
+    /// <summary>
+    ///     The JSON for a value that is about to be stored. Anything bound to a JSON column by hand
+    ///     comes through here, and anything that isn't going to be stored should not, because this
+    ///     refuses a number the column would change (#879).
+    /// </summary>
+    internal string ToStorageJson(object value)
+    {
+        var json = Serializer.ToJson(value);
+        return UseNativeJsonType ? NativeJsonNumbers.ForStorage(json) : json;
+    }
+
+    /// <summary>
+    ///     Called once this configuration has become a store, when <see cref="UseNativeJsonType" /> and
+    ///     <see cref="Serializer" /> have both settled.
+    /// </summary>
+    internal void BindSerializerToStorage()
+    {
+        _storageSerializer = null;
+
+        if (Serializer is Polecat.Serialization.Serializer serializer)
+        {
+            serializer.WritesToNativeJson = UseNativeJsonType;
+        }
     }
 
     /// <summary>

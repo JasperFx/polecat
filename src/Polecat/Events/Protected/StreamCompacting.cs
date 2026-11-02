@@ -105,7 +105,7 @@ internal static class StreamCompactingExecution
         var binary = graph.ResolveBinarySerializerFor(typeof(Compacted<T>));
         var serializedBdata = binary?.Serialize(typeof(Compacted<T>), compacted);
         var serializedData = serializedBdata is null
-            ? session.Serializer.ToJson(compacted)
+            ? session.Options.ToStorageJson(compacted)
             : EventGraph.JsonPlaceholderForBinaryEvent;
         var mapping = graph.EventMappingFor(typeof(Compacted<T>));
 

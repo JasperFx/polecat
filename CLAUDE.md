@@ -57,6 +57,12 @@ Switch to local project references from ~/code/jasperfx and ~/code/weasel if unr
 | Timestamps | `timestamptz` + `now()` | `datetimeoffset` + `SYSDATETIMEOFFSET()` |
 | Quick append | PostgreSQL function | Direct INSERT with UPDATE...OUTPUT for version |
 
+**Never `JSON_MODIFY` a native `json` column directly on a write path.** On SQL Server 2025 RTM-CU5, a
+`JSON_MODIFY` that adds a key can make the next one through an object write to the wrong member, which
+has overwritten a document's `id`, and `DBCC CHECKTABLE` sees nothing (#907). Which documents show it
+depends on their keys, so a passing test on a small document proves nothing. Go through
+`CAST(data AS nvarchar(max))`, as `PatchOperation.Document` does.
+
 ## Event Store Schema (pc_ prefix)
 
 **pc_streams**: id, type, version, timestamp, created, snapshot, snapshot_version, tenant_id, is_archived
