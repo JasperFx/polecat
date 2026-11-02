@@ -18,6 +18,20 @@ public class event_loader_tests : IntegrationContext
     {
         await base.InitializeAsync();
         // Clean slate for each test
+        await ClearEventsAsync();
+    }
+
+    // Afterwards as well, because dbo is shared with the whole "integration" collection. These tests
+    // corrupt rows on purpose, and a corrupted row left behind fails the next class to run a daemon there
+    // (subscription_tests), for a reason that has nothing to do with that class.
+    public override async ValueTask DisposeAsync()
+    {
+        await ClearEventsAsync();
+        await base.DisposeAsync();
+    }
+
+    private async Task ClearEventsAsync()
+    {
         await using var conn = await OpenConnectionAsync();
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = """
