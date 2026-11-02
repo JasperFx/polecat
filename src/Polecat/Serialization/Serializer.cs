@@ -1,6 +1,7 @@
 using System.Buffers;
 using System.Data.Common;
 using System.Diagnostics.CodeAnalysis;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
@@ -33,6 +34,18 @@ public class Serializer : ISerializer, Weasel.Storage.IStorageSerializer
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
     }
+
+    /// <summary>
+    ///     Whether what this writes to a parameter ends up in a native <c>json</c> column, which holds a
+    ///     number differently from how it is written (#879). Set by <see cref="DocumentStore" /> from
+    ///     <see cref="StoreOptions.UseNativeJsonType" />, so a single instance serves one kind of storage.
+    /// </summary>
+    /// <remarks>
+    ///     This is here rather than on a wrapper because the storage runtime is handed this very
+    ///     object. <see cref="ToJson" /> is deliberately left out of it: it also writes things that are
+    ///     never stored, such as a live aggregate, and a value doesn't have to fit in a column for that.
+    /// </remarks>
+    internal bool WritesToNativeJson { get; set; }
 
     /// <summary>
     ///     Provides access to the underlying JsonSerializerOptions for advanced configuration.
@@ -118,6 +131,12 @@ public class Serializer : ISerializer, Weasel.Storage.IStorageSerializer
     [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode", Justification = SharedSerializerSuppression)]
     public void WriteTo(IBufferWriter<byte> writer, object? value)
     {
+        if (WritesToNativeJson)
+        {
+            writer.Write(Encoding.UTF8.GetBytes(NativeJsonNumbers.ForStorage(ToJson(value))));
+            return;
+        }
+
         using var jsonWriter = new Utf8JsonWriter(writer);
         JsonSerializer.Serialize(jsonWriter, value, value?.GetType() ?? typeof(object), _options);
     }
@@ -131,7 +150,14 @@ public class Serializer : ISerializer, Weasel.Storage.IStorageSerializer
     [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode", Justification = SharedSerializerSuppression)]
     public void WriteToParameter(DbParameter parameter, object? value)
     {
-        parameter.Value = value is null ? DBNull.Value : ToJson(value);
+        if (value is null)
+        {
+            parameter.Value = DBNull.Value;
+            return;
+        }
+
+        var json = ToJson(value);
+        parameter.Value = WritesToNativeJson ? NativeJsonNumbers.ForStorage(json) : json;
     }
 
     [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode", Justification = SharedSerializerSuppression)]

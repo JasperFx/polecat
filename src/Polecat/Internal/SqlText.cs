@@ -69,9 +69,16 @@ internal static class SqlText
     ///     </para>
     /// </remarks>
     internal static string UnlimitedJsonString(string dataColumn, string jsonPath, bool nativeJson) =>
+        UnlimitedJsonStringAt(dataColumn, $"'{jsonPath}'", nativeJson);
+
+    /// <summary>
+    ///     <see cref="UnlimitedJsonString" /> for a path that is already a literal, which an
+    ///     <c>N'...'</c> one has to be for anything outside the database's code page to survive.
+    /// </summary>
+    internal static string UnlimitedJsonStringAt(string dataColumn, string pathLiteral, bool nativeJson) =>
         nativeJson
-            ? $"JSON_VALUE({dataColumn}, '{jsonPath}' RETURNING nvarchar(max))"
-            : $"(SELECT pc_value FROM OPENJSON({dataColumn}) WITH (pc_value nvarchar(max) '{jsonPath}'))";
+            ? $"JSON_VALUE({dataColumn}, {pathLiteral} RETURNING nvarchar(max))"
+            : $"(SELECT pc_value FROM OPENJSON({dataColumn}) WITH (pc_value nvarchar(max) {pathLiteral}))";
 
     /// <summary>
     ///     Whether a locator is the <c>OPENJSON</c> form of <see cref="UnlimitedJsonString" />, which SQL

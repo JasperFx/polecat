@@ -55,7 +55,7 @@ internal sealed class SqlServerEventStoreDialect : IEventStoreSqlDialect
             // one of the two closures produces a payload for any given event. These cover any shared-op
             // path that reaches for them; the SQL Server append operation binds both directly.
             serializeEventData: e => graph.SerializeEventBdata(e) is null
-                ? serializer.ToJson(e.Data)
+                ? graph.ToStorageJson(e.Data)
                 : EventGraph.JsonPlaceholderForBinaryEvent,
             serializeEventBdata: graph.SerializeEventBdata)
         {
