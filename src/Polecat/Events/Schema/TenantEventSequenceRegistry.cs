@@ -46,16 +46,16 @@ internal sealed class TenantEventSequenceRegistry
     ///     (e.g. <c>3</c>, <c>[dbo].[pc_events_sequence_3]</c>), provisioning both on first use.
     /// </summary>
     /// <param name="tenantId">The tenant.</param>
+    /// <param name="insideTransaction">See <see cref="TenantPartitionOrdinalRegistry.ResolveAsync" />.</param>
     /// <param name="token">The token.</param>
-    /// <param name="retryFailedSplit">See <see cref="TenantPartitionOrdinalRegistry.ResolveAsync" />.</param>
-    public async ValueTask<TenantStorage> ResolveAsync(string tenantId, CancellationToken token,
-        bool retryFailedSplit = true)
+    public async ValueTask<TenantStorage> ResolveAsync(string tenantId, bool insideTransaction,
+        CancellationToken token)
     {
         // Allocate the tenant ordinal + SPLIT every managed-partitioned table (idempotent),
         // through the store's shared ordinal registry (#335) so document writes and the
         // stream-row SQL see the same tenant -> ordinal cache. Asked before the cache below, because a
         // tenant can have its sequence and still be owed a SPLIT (#892).
-        var ordinal = await _ordinals.ResolveAsync(tenantId, token, retryFailedSplit).ConfigureAwait(false);
+        var ordinal = await _ordinals.ResolveAsync(tenantId, insideTransaction, token).ConfigureAwait(false);
 
         if (_cache.TryGetValue(tenantId, out var cached)) return cached;
 

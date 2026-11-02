@@ -1,5 +1,7 @@
 using System.Collections.Concurrent;
+using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Logging;
+using Polecat.Internal;
 using Polecat.Storage;
 using Weasel.SqlServer.Tables.Partitioning;
 
@@ -28,12 +30,28 @@ namespace Polecat.Events.Schema;
 ///     keeps its ordinal here and is also recorded as unsplit until a later resolve gets the SPLIT
 ///     through. SQL Server moves the misplaced rows when that happens.
 ///     </para>
+///     <para>
+///     #906 and #883: everything that allocates an ordinal or SPLITs goes through
+///     <see cref="ProvisionAsync" />, which is where the migration lock is taken and where a map that has
+///     gone stale is reloaded.
+///     </para>
 /// </summary>
 internal sealed class TenantPartitionOrdinalRegistry
 {
+    /// <summary>
+    ///     SQL Server's number for a duplicate key on a unique index, as opposed to a constraint.
+    /// </summary>
+    private const int DuplicateKeyOnUniqueIndex = 2601;
+
+    /// <summary>
+    ///     Every failed attempt means another tenant got the ordinal, so this is only reached by that many
+    ///     tenants arriving at once outside the migration lock. See <see cref="ProvisionAsync" />.
+    /// </summary>
+    private const int MaxOrdinalAttempts = 8;
+
     private readonly ManagedTenantPartitions _partitions;
     private readonly PolecatDatabase _database;
-
+    private readonly StoreOptions _options;
     private readonly ILogger _logger;
 
     private readonly ConcurrentDictionary<string, int> _cache = new(StringComparer.Ordinal);
@@ -46,10 +64,11 @@ internal sealed class TenantPartitionOrdinalRegistry
     private PolecatDatabase? _splitRetryDatabase;
 
     public TenantPartitionOrdinalRegistry(ManagedTenantPartitions partitions, PolecatDatabase database,
-        ILogger logger)
+        StoreOptions options, ILogger logger)
     {
         _partitions = partitions;
         _database = database;
+        _options = options;
         _logger = logger;
     }
 
@@ -75,18 +94,20 @@ internal sealed class TenantPartitionOrdinalRegistry
     ///     first use (idempotent — an already-registered tenant just hydrates the cache).
     /// </summary>
     /// <param name="tenantId">The tenant.</param>
-    /// <param name="token">The token.</param>
-    /// <param name="retryFailedSplit">
-    ///     #892: whether a tenant whose SPLIT failed should try it again now. A SPLIT cannot run behind a
-    ///     lock the caller holds on the table (#864), so anything inside a transaction passes false. It
-    ///     changes nothing for a tenant with no ordinal yet, which has to be provisioned for the write to
-    ///     happen at all.
+    /// <param name="insideTransaction">
+    ///     Whether the caller has a transaction open, on the model of the same parameter on
+    ///     <see cref="DocumentTableEnsurer" />. Required rather than defaulted, so that the compiler
+    ///     classifies every call site. A caller inside one never waits for the migration lock (#868), and a
+    ///     tenant whose SPLIT failed doesn't try again now, because a SPLIT cannot run behind a lock the
+    ///     caller holds on the table (#864, #892). A tenant with no ordinal yet is provisioned regardless,
+    ///     which the write can't happen without.
     /// </param>
-    public async ValueTask<int> ResolveAsync(string tenantId, CancellationToken token, bool retryFailedSplit = true)
+    /// <param name="token">The token.</param>
+    public async ValueTask<int> ResolveAsync(string tenantId, bool insideTransaction, CancellationToken token)
     {
         if (_cache.TryGetValue(tenantId, out var cached))
         {
-            if (retryFailedSplit && tryClaimSplitRetry(tenantId))
+            if (!insideTransaction && tryClaimSplitRetry(tenantId))
             {
                 await retrySplitAsync(tenantId, cached, token).ConfigureAwait(false);
             }
@@ -94,7 +115,9 @@ internal sealed class TenantPartitionOrdinalRegistry
             return cached;
         }
 
-        var result = await _partitions.AddPartitionsToAllTables(_logger, _database, new[] { tenantId }, token)
+        var result = await ProvisionAsync(
+                () => _partitions.AddPartitionsToAllTables(_logger, _database, new[] { tenantId }, token),
+                insideTransaction, token)
             .ConfigureAwait(false);
 
         var ordinal = result.Ordinals[tenantId];
@@ -102,6 +125,60 @@ internal sealed class TenantPartitionOrdinalRegistry
 
         return _cache.GetOrAdd(tenantId, ordinal);
     }
+
+    /// <summary>
+    ///     Run something that registers tenants against <see cref="ManagedTenantPartitions" /> under the
+    ///     rules for doing that.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///     #883: Weasel takes no lock here, so a SPLIT could meet a migration or the daemon's ensure, and
+    ///     two replicas could register and SPLIT at once. The lock is held on a connection of its own while
+    ///     Weasel works on another. A caller inside a transaction never waits for it, for the reason on
+    ///     <see cref="SchemaMigrationLock.HoldForFirstUseAsync" />.
+    ///     </para>
+    ///     <para>
+    ///     Unlike an ensure, this goes ahead without the lock when it can't be had. The caller can't skip it,
+    ///     since the write needs the ordinal, and #892 settled that a busy schema doesn't fail a write. That
+    ///     is safe here in a way it isn't for an ensure: the SPLIT fails per table and is retried, and a
+    ///     lost race for an ordinal is the retry below.
+    ///     </para>
+    ///     <para>
+    ///     #906: Weasel allocates the next ordinal from the map it cached when it first loaded, and nothing
+    ///     reloads it, so once another process has registered a tenant the unique index refuses that number
+    ///     on every attempt. The lock alone doesn't help, because the stale value is in the map. Reloading on
+    ///     that one error, rather than ahead of every new tenant, is what Weasel's own comment on the MERGE
+    ///     asks of a caller. The reload publishes what it read over whatever is in the map, so this relies on
+    ///     the lock to keep one reload from overtaking another caller's registration. An attempt that goes
+    ///     ahead without the lock could lose a concurrent tenant's SPLIT that way, and the next tenant's SPLIT
+    ///     fills it in.
+    ///     </para>
+    /// </remarks>
+    internal async Task<TenantPartitionAddResult> ProvisionAsync(Func<Task<TenantPartitionAddResult>> register,
+        bool insideTransaction, CancellationToken token)
+    {
+        await using var conn = _database.CreateConnection();
+        await conn.OpenAsync(token).ConfigureAwait(false);
+
+        await using var migrationLock = await SchemaMigrationLock
+            .TryHoldForProvisioningAsync(_options, conn, insideTransaction, token).ConfigureAwait(false);
+
+        for (var attempt = 1;; attempt++)
+        {
+            try
+            {
+                return await register().ConfigureAwait(false);
+            }
+            catch (SqlException e) when (attempt < MaxOrdinalAttempts && isOrdinalCollision(e))
+            {
+                _partitions.ForceReload();
+            }
+        }
+    }
+
+    private bool isOrdinalCollision(SqlException e)
+        => e.Number == DuplicateKeyOnUniqueIndex
+           && e.Message.Contains($"uniq_{_partitions.RegistryTableIdentifier.Name}_ordinal", StringComparison.Ordinal);
 
     private bool tryClaimSplitRetry(string tenantId)
     {
@@ -117,6 +194,15 @@ internal sealed class TenantPartitionOrdinalRegistry
 
         try
         {
+            // A retry has nothing riding on it, so unlike a first attempt it doesn't wait for the lock or
+            // go without it. This tenant's next retry comes round on the interval either way.
+            await using var conn = _splitRetryDatabase.CreateConnection();
+            await conn.OpenAsync(token).ConfigureAwait(false);
+
+            await using var migrationLock = await SchemaMigrationLock
+                .TryHoldForProvisioningAsync(_options, conn, insideTransaction: true, token).ConfigureAwait(false);
+            if (migrationLock is null) return;
+
             var result = await _partitions
                 .AddPartitionsToAllTables(_logger, _splitRetryDatabase, new[] { tenantId }, token)
                 .ConfigureAwait(false);

@@ -120,7 +120,7 @@ public class AdvancedOperations
         // bulk MERGEs resolve it server-side from the registry (cached no-op for known tenants).
         if (mapping.TenantPartitioned)
         {
-            await _store.Events.TenantOrdinals.ResolveAsync(tenantId, token);
+            await _store.Events.TenantOrdinals.ResolveAsync(tenantId, insideTransaction: false, token);
         }
 
         var storage = _store.Options.Providers.ClosedShapeGraph.StorageFor<T>().QueryOnly;
@@ -249,7 +249,7 @@ public class AdvancedOperations
         // version-checked MERGEs resolve it server-side from the registry.
         if (mapping.TenantPartitioned)
         {
-            await _store.Events.TenantOrdinals.ResolveAsync(tenantId, token);
+            await _store.Events.TenantOrdinals.ResolveAsync(tenantId, insideTransaction: false, token);
         }
 
         // #273 doc-side convergence: source the version-checked MERGE's full column set from the
@@ -979,8 +979,9 @@ public class AdvancedOperations
         var events = AssertManagedTenantPartitioning();
         var manager = events.TenantPartitionManager;
 
-        var result = await manager.AddPartitionsToAllTables(
-                NullLogger.Instance, _store.Database, tenantIds, token)
+        var result = await events.TenantOrdinals.ProvisionAsync(
+                () => manager.AddPartitionsToAllTables(NullLogger.Instance, _store.Database, tenantIds, token),
+                insideTransaction: false, token)
             .ConfigureAwait(false);
 
         await EnsureTenantSequencesAsync(events, result.Ordinals, token).ConfigureAwait(false);
@@ -1003,8 +1004,9 @@ public class AdvancedOperations
         var events = AssertManagedTenantPartitioning();
         var manager = events.TenantPartitionManager;
 
-        var result = await manager.AddPartitionsToAllTables(
-                NullLogger.Instance, _store.Database, tenantIdToOrdinal, token)
+        var result = await events.TenantOrdinals.ProvisionAsync(
+                () => manager.AddPartitionsToAllTables(NullLogger.Instance, _store.Database, tenantIdToOrdinal, token),
+                insideTransaction: false, token)
             .ConfigureAwait(false);
 
         await EnsureTenantSequencesAsync(events, result.Ordinals, token).ConfigureAwait(false);

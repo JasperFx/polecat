@@ -171,6 +171,16 @@ unsplit, which is the failure described below. A plain read in a Snapshot sessio
 first append fails instead, with SQL Server's error 3961. Onboard those tenants first with
 `store.Advanced.AddPolecatManagedTenantsAsync`.
 
+Provisioning takes the same schema lock as migrations and the async daemon, so a split doesn't collide with
+them, and new tenants are provisioned one at a time across all your processes. A write waits for that lock
+for up to `StoreOptions.StartupMigrationLockTimeout`, 30 seconds by default, and a session with a transaction
+open doesn't wait at all. Either way, a write that can't get the lock goes ahead without it, because it can't
+happen without the tenant's ordinal, and a busy schema doesn't fail a write. A retried split is the
+exception: it's skipped if the lock is taken, and comes round again later.
+
+Each process keeps its own copy of the `pc_tenant_partitions` map. When two processes pick the same ordinal
+for different new tenants, the second one reloads the map and takes the next ordinal, so both writes succeed.
+
 #### When a split fails
 
 Splitting a partition needs a schema-modification lock, so another session's long transaction on

@@ -307,6 +307,7 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
             TenantPartitionManager,
             _tenantPartitionDatabase ?? throw new InvalidOperationException(
                 "The owning database has not been attached for per-tenant partitioning."),
+            _options,
             _options.DotNetLogger ?? _options.LogFactory?.CreateLogger<TenantPartitionOrdinalRegistry>()
             ?? NullLogger<TenantPartitionOrdinalRegistry>.Instance);
 

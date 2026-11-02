@@ -188,7 +188,8 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
         {
             foreach (var adapter in allOps.OfType<Polecat.Internal.Operations.ClosedShapeOperationAdapter>())
             {
-                await _store.Events.TenantOrdinals.ResolveAsync(adapter.SessionTenantId, token);
+                await _store.Events.TenantOrdinals.ResolveAsync(adapter.SessionTenantId, insideTransaction: false,
+                    token);
             }
         }
 
