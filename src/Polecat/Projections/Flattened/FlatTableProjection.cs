@@ -6,10 +6,10 @@ using JasperFx.Events.Daemon;
 using JasperFx.Events.Descriptors;
 using JasperFx.Events.Projections;
 using JasperFx.Events.Subscriptions;
-using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Logging;
 using Polecat.Events.Daemon;
 using Polecat.Internal;
+using Polecat.Storage;
 using Weasel.SqlServer;
 using Weasel.SqlServer.Tables;
 
@@ -48,12 +48,16 @@ public abstract class FlatTableProjection : ProjectionBase,
 {
     private readonly Dictionary<Type, IFlatTableEventHandler> _handlers = new();
     private bool _compiled;
-    private bool _tableEnsured;
 
     protected FlatTableProjection(string tableName, string? schemaName = null)
     {
         var schema = schemaName ?? "dbo";
-        Table = new Table(new SqlServerObjectName(schema, tableName));
+
+        // #882: declared by the event store feature (EventStoreFeatureSchema), so AutoCreate, the migration
+        // lock, each tenant's database, the generated script and the database assertion all reach it the
+        // way they reach pc_events. Additive because a reporting table is where somebody adds an index,
+        // and it was never compared to anything before this.
+        Table = new AdditiveTable(new SqlServerObjectName(schema, tableName));
         Name = GetType().FullName ?? GetType().Name;
 
         // A flat table projection publishes no document type, so nothing else tells the rebuild path
@@ -121,19 +125,12 @@ public abstract class FlatTableProjection : ProjectionBase,
     }
 
     // IInlineProjection<IDocumentSession>
-    public async Task ApplyAsync(IDocumentSession operations, IEnumerable<StreamAction> streams,
+    public Task ApplyAsync(IDocumentSession operations, IEnumerable<StreamAction> streams,
         CancellationToken cancellation)
     {
-        if (operations is not DocumentSessionBase sessionBase) return;
+        if (operations is not DocumentSessionBase sessionBase) return Task.CompletedTask;
 
         LazyCompile(sessionBase);
-
-        // Ensure table exists on first use
-        if (!_tableEnsured)
-        {
-            await EnsureTableAsync(sessionBase, cancellation);
-            _tableEnsured = true;
-        }
 
         foreach (var stream in streams)
         {
@@ -146,22 +143,17 @@ public abstract class FlatTableProjection : ProjectionBase,
                 }
             }
         }
+
+        return Task.CompletedTask;
     }
 
     // IJasperFxProjection<IDocumentSession> — used by async daemon
-    public async Task ApplyAsync(IDocumentSession operations, IReadOnlyList<IEvent> events,
+    public Task ApplyAsync(IDocumentSession operations, IReadOnlyList<IEvent> events,
         CancellationToken cancellation)
     {
-        if (operations is not DocumentSessionBase sessionBase) return;
+        if (operations is not DocumentSessionBase sessionBase) return Task.CompletedTask;
 
         LazyCompile(sessionBase);
-
-        // Ensure table exists on first use
-        if (!_tableEnsured)
-        {
-            await EnsureTableAsync(sessionBase, cancellation);
-            _tableEnsured = true;
-        }
 
         foreach (var e in events)
         {
@@ -171,6 +163,8 @@ public abstract class FlatTableProjection : ProjectionBase,
                 sessionBase.WorkTracker.Add(op);
             }
         }
+
+        return Task.CompletedTask;
     }
 
     // IProjectionSource<IDocumentSession, IQuerySession>
@@ -233,17 +227,6 @@ public abstract class FlatTableProjection : ProjectionBase,
     {
         return new ProjectionExecution<IDocumentSession, IQuerySession>(
             shardName, Options, store, database, this, logger);
-    }
-
-    private async Task EnsureTableAsync(DocumentSessionBase session, CancellationToken cancellation)
-    {
-        var migrator = new SqlServerMigrator();
-        var writer = new StringWriter();
-        Table.WriteCreateStatement(migrator, writer);
-
-        await using var cmd = new SqlCommand();
-        cmd.CommandText = writer.ToString();
-        await session.ExecuteAsync(cmd, cancellation);
     }
 
     private static MemberInfo[]? GetMemberPath<T>(Expression<Func<T, object>> expression)

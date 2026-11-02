@@ -40,12 +40,15 @@ internal class EventOperations : QueryEventStore, IEventOperations
     private readonly string _tenantId;
 
     public EventOperations(DocumentSessionBase session, EventGraph events, StoreOptions options, WorkTracker workTracker, string tenantId)
-        : base(session, events, options)
+        : base(session, events, options, tenantId)
     {
         _sessionBase = session;
         _workTracker = workTracker;
         _tenantId = tenantId;
     }
+
+    protected override IQuerySession DocumentReads
+        => _tenantId == _sessionBase.TenantId ? _sessionBase : _sessionBase.ForTenant(_tenantId);
 
     public StreamAction Append(Guid stream, params object[] events)
     {
@@ -55,7 +58,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
         var wrapped = WrapEvents(events);
         foreach (var e in wrapped) e.StreamId = stream;
 
-        if (_workTracker.TryFindStream(stream, out var existing))
+        if (_workTracker.TryFindStream(stream, _events.StreamIdScope(_tenantId), out var existing))
         {
             existing!.AddEvents(wrapped);
             return existing;
@@ -75,7 +78,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
         var wrapped = WrapEvents(events);
         foreach (var e in wrapped) e.StreamKey = stream;
 
-        if (_workTracker.TryFindStream(stream, out var existing))
+        if (_workTracker.TryFindStream(stream, _events.StreamIdScope(_tenantId), out var existing))
         {
             existing!.AddEvents(wrapped);
             return existing;
@@ -467,9 +470,10 @@ internal class EventOperations : QueryEventStore, IEventOperations
     public async ValueTask<T?> ProjectLatest<T>(Guid id, CancellationToken cancellation = default)
         where T : class
     {
-        var snapshot = await _sessionBase.Events.FetchLatest<T>(id, cancellation);
+        var snapshot = await FetchLatest<T>(id, cancellation);
 
-        if (_workTracker.TryFindStream(id, out var stream) && stream!.Events.Count > 0)
+        if (_workTracker.TryFindStream(id, _events.StreamIdScope(_tenantId), out var stream)
+            && stream!.Events.Count > 0)
         {
             var aggregator = _sessionBase.Options.Projections.AggregatorFor<T>();
             snapshot = await aggregator.BuildAsync(stream.Events, _sessionBase, snapshot, cancellation);
@@ -481,9 +485,10 @@ internal class EventOperations : QueryEventStore, IEventOperations
     public async ValueTask<T?> ProjectLatest<T>(string key, CancellationToken cancellation = default)
         where T : class
     {
-        var snapshot = await _sessionBase.Events.FetchLatest<T>(key, cancellation);
+        var snapshot = await FetchLatest<T>(key, cancellation);
 
-        if (_workTracker.TryFindStream(key, out var stream) && stream!.Events.Count > 0)
+        if (_workTracker.TryFindStream(key, _events.StreamIdScope(_tenantId), out var stream)
+            && stream!.Events.Count > 0)
         {
             var aggregator = _sessionBase.Options.Projections.AggregatorFor<T>();
             snapshot = await aggregator.BuildAsync(stream.Events, _sessionBase, snapshot, cancellation);
@@ -788,10 +793,10 @@ internal class EventOperations : QueryEventStore, IEventOperations
         // back through its IEventBinarySerializer, not into the JSON column.
         var serializedBdata = _events.SerializeEventBdata(@event);
         var serializedData = serializedBdata is null
-            ? _sessionBase.Serializer.ToJson(@event.Data)
+            ? _events.ToStorageJson(@event.Data)
             : EventGraph.JsonPlaceholderForBinaryEvent;
         var serializedHeaders = @event.Headers != null
-            ? _sessionBase.Serializer.ToJson(@event.Headers)
+            ? _events.ToStorageJson(@event.Headers)
             : null;
         _workTracker.Add(new Protected.OverwriteEventOperation(
             _events, @event, serializedData, serializedBdata, serializedHeaders, _tenantId));
@@ -809,7 +814,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
         var binary = _events.ResolveBinarySerializerFor(typeof(T));
         var serializedBdata = binary?.Serialize(typeof(T), eventBody);
         var serializedData = serializedBdata is null
-            ? _sessionBase.Serializer.ToJson(eventBody)
+            ? _events.ToStorageJson(eventBody)
             : EventGraph.JsonPlaceholderForBinaryEvent;
         var op = new Protected.ReplaceEventOperation(
             _events, sequence, serializedData, serializedBdata, mapping.EventTypeName, mapping.DotNetTypeName,
@@ -889,7 +894,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
     /// </summary>
     private void cacheAggregateInIdentityMap<T>(object streamId, T? aggregate) where T : class
     {
-        if (aggregate == null || !_events.UseIdentityMapForAggregates) return;
+        if (aggregate == null || !_events.UseIdentityMapForAggregates || !UsesAggregateIdentityMap) return;
 
         if (streamId is Guid gid)
         {
@@ -1270,7 +1275,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
 
         var request = new StreamCompactingRequest<T>(streamId);
         configure?.Invoke(request);
-        await request.ExecuteAsync(_sessionBase).ConfigureAwait(false);
+        await request.ExecuteAsync(_sessionBase, this, _tenantId).ConfigureAwait(false);
     }
 
     public async Task CompactStreamAsync<T>(string streamKey, Action<StreamCompactingRequest<T>>? configure = null)
@@ -1283,7 +1288,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
 
         var request = new StreamCompactingRequest<T>(streamKey);
         configure?.Invoke(request);
-        await request.ExecuteAsync(_sessionBase).ConfigureAwait(false);
+        await request.ExecuteAsync(_sessionBase, this, _tenantId).ConfigureAwait(false);
     }
 
     public IEvent BuildEvent(object data) => _events.BuildEvent(data);
@@ -1432,7 +1437,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
         _sessionBase.CaptureDcbBoundary(
             DcbTagVersionCapture.BuildEntries(targets, capturedByKey, _tenantId, query, lastSeenSequence));
 
-        return new EventBoundary<T>(_sessionBase, _events, aggregate, events, lastSeenSequence);
+        return new EventBoundary<T>(_sessionBase, _events, _tenantId, aggregate, events, lastSeenSequence);
     }
 
     public void AssignTagWhere(Expression<Func<IEvent, bool>> expression, object tag)

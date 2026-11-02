@@ -21,6 +21,8 @@ internal class EventsExistBatchItem : IBatchQueryItem
 
     public Task<bool> Result => _tcs.Task;
 
+    public void Fail(Exception failure) => _tcs.FailWith(failure);
+
     public void WriteSql(ICommandBuilder builder)
         => EventOperations.WriteEventsExistSql(builder, _eventGraph, _query, _tenantId);
 

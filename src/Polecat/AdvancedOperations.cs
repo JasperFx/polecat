@@ -120,7 +120,7 @@ public class AdvancedOperations
         // bulk MERGEs resolve it server-side from the registry (cached no-op for known tenants).
         if (mapping.TenantPartitioned)
         {
-            await _store.Events.TenantOrdinals.ResolveAsync(tenantId, token);
+            await _store.Events.TenantOrdinals.ResolveAsync(tenantId, insideTransaction: false, token);
         }
 
         var storage = _store.Options.Providers.ClosedShapeGraph.StorageFor<T>().QueryOnly;
@@ -249,7 +249,7 @@ public class AdvancedOperations
         // version-checked MERGEs resolve it server-side from the registry.
         if (mapping.TenantPartitioned)
         {
-            await _store.Events.TenantOrdinals.ResolveAsync(tenantId, token);
+            await _store.Events.TenantOrdinals.ResolveAsync(tenantId, insideTransaction: false, token);
         }
 
         // #273 doc-side convergence: source the version-checked MERGE's full column set from the
@@ -461,6 +461,10 @@ public class AdvancedOperations
         {
             database.ResetSchemaExistenceChecks();
         }
+
+        // #882: and so does a session's first use. A store that goes on being used after this would
+        // otherwise fail on pc_streams, or on a flat table, that nothing would ever create again.
+        _store.ForgetEnsuredTables();
     }
 
     private async Task CompletelyRemoveAllForDatabaseAsync(string connStr, CancellationToken token = default)
@@ -577,8 +581,7 @@ public class AdvancedOperations
     /// </summary>
     private string[] CollectFlatTableNames()
     {
-        return _store.Options.Projections.All
-            .OfType<FlatTableProjection>()
+        return _store.Options.Projections.AllFlatTableProjections()
             .Select(p => p.Table.Identifier.QualifiedName)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
@@ -590,9 +593,10 @@ public class AdvancedOperations
         foreach (var qualified in qualifiedNames)
         {
             await using var cmd = conn.CreateCommand();
-            // Guard against the table not existing yet (the projection ensures it lazily). #390: the
-            // same name lands in a string-literal position and a bare identifier position, which need
-            // different escaping — only the literal one gets it.
+            // Guard against the table not existing yet: a store that has not used its event store, or an
+            // AutoCreate.None store nobody has migrated. #390: the same name lands in a string-literal
+            // position and a bare identifier position, which need different escaping — only the literal
+            // one gets it.
             cmd.CommandText =
                 $"IF OBJECT_ID({SqlEscaping.Literal(qualified)}, 'U') IS NOT NULL DELETE FROM {qualified};";
             await cmd.ExecuteNonQueryAsync(ct);
@@ -975,8 +979,9 @@ public class AdvancedOperations
         var events = AssertManagedTenantPartitioning();
         var manager = events.TenantPartitionManager;
 
-        var result = await manager.AddPartitionsToAllTables(
-                NullLogger.Instance, _store.Database, tenantIds, token)
+        var result = await events.TenantOrdinals.ProvisionAsync(
+                () => manager.AddPartitionsToAllTables(NullLogger.Instance, _store.Database, tenantIds, token),
+                insideTransaction: false, token)
             .ConfigureAwait(false);
 
         await EnsureTenantSequencesAsync(events, result.Ordinals, token).ConfigureAwait(false);
@@ -999,8 +1004,9 @@ public class AdvancedOperations
         var events = AssertManagedTenantPartitioning();
         var manager = events.TenantPartitionManager;
 
-        var result = await manager.AddPartitionsToAllTables(
-                NullLogger.Instance, _store.Database, tenantIdToOrdinal, token)
+        var result = await events.TenantOrdinals.ProvisionAsync(
+                () => manager.AddPartitionsToAllTables(NullLogger.Instance, _store.Database, tenantIdToOrdinal, token),
+                insideTransaction: false, token)
             .ConfigureAwait(false);
 
         await EnsureTenantSequencesAsync(events, result.Ordinals, token).ConfigureAwait(false);

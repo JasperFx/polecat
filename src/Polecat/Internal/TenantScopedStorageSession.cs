@@ -34,6 +34,8 @@ internal sealed class TenantScopedStorageSession : IStorageSession
 
     public string TenantId { get; }
 
+    internal IStorageSession Inner => _inner;
+
     // ---- IMetadataContext (session-level metadata is the parent's) ----
 
     public string? CausationId

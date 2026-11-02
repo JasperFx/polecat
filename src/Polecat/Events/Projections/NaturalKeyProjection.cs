@@ -1,7 +1,10 @@
+using System.Diagnostics.CodeAnalysis;
+using System.Reflection;
 using JasperFx;
 using JasperFx.Events;
 using JasperFx.Events.Projections;
 using Polecat.Internal;
+using Polecat.Internal.Operations;
 
 namespace Polecat.Events.Projections;
 
@@ -37,6 +40,14 @@ internal class NaturalKeyProjection : IInlineProjection<IDocumentSession>
         {
             var streamId = _isGuidStream ? (object)stream.Id : stream.Key!;
             var tenantId = stream.TenantId;
+
+            // #891: inline projections run after the session's tombstones were queued, so a key written
+            // here would land after the delete meant to take it, and map to a stream that is gone.
+            if (sessionBase.WorkTracker.Operations.OfType<TombstoneStreamOperation>()
+                .Any(x => x.Tombstones(streamId, tenantId)))
+            {
+                continue;
+            }
 
             foreach (var e in stream.Events)
             {
@@ -87,18 +98,7 @@ internal class NaturalKeyProjection : IInlineProjection<IDocumentSession>
             return;
         }
 
-        // Check if this event type has a natural key mapping
-        var mapping = _definition.EventMappings
-            .FirstOrDefault(m => m.EventType.IsAssignableFrom(e.Data.GetType()));
-
-        if (mapping == null) return;
-
-        // #369 / jasperfx#569: the extraction contract widened from the event *data* to the whole IEvent,
-        // which is what makes an IEvent<T> [NaturalKeySource] handler bindable at all (before, discovery
-        // silently dropped those and the lookup table was simply never written for that event type) and
-        // what lets a key be derived from event metadata. Both call sites into this method — the inline
-        // append path and the rebuild path — already hold the real IEvent.
-        var naturalKeyValue = mapping.Extractor(e);
+        var naturalKeyValue = NaturalKeyCarriedBy(e);
         if (naturalKeyValue == null) return;
 
         // Unwrap strong-typed id to primitive value
@@ -117,5 +117,47 @@ internal class NaturalKeyProjection : IInlineProjection<IDocumentSession>
         sessionBase.WorkTracker.Add(
             new NaturalKeyUpsertOperation(_qualifiedTableName, unwrapped, streamId, _isGuidStream,
                 _definition.AggregateType, _isConjoined, tenantId));
+    }
+
+    private object? NaturalKeyCarriedBy(IEvent e)
+    {
+        if (IsCompactionMarker(e.Data.GetType())) return NaturalKeyInSnapshotOf(e.Data);
+
+        // Check if this event type has a natural key mapping
+        var mapping = _definition.EventMappings
+            .FirstOrDefault(m => m.EventType.IsAssignableFrom(e.Data.GetType()));
+
+        // #369 / jasperfx#569: the extraction contract widened from the event *data* to the whole IEvent,
+        // which is what makes an IEvent<T> [NaturalKeySource] handler bindable at all (before, discovery
+        // silently dropped those and the lookup table was simply never written for that event type) and
+        // what lets a key be derived from event metadata. Both call sites into this method — the inline
+        // append path and the rebuild path — already hold the real IEvent.
+        return mapping?.Extractor(e);
+    }
+
+    // Compared rather than closed with MakeGenericType: the aggregate type is only known at runtime here,
+    // and closing a generic over it is what a native AOT store can't do.
+    private bool IsCompactionMarker(Type eventType)
+        => eventType.IsGenericType && eventType.GetGenericTypeDefinition() == typeof(Compacted<>)
+                                   && eventType.GetGenericArguments()[0] == _definition.AggregateType;
+
+    /// <summary>
+    ///     #891: compaction deletes the events that carried the key and leaves a <see cref="Compacted{T}" />
+    ///     in their place, which no mapping names, so a rebuild had nothing left to restore a live stream's
+    ///     key from. The marker's snapshot is the aggregate those events folded to, which holds the key.
+    /// </summary>
+    [UnconditionalSuppressMessage("Trimming", "IL2075",
+        Justification = "The event was just hydrated as this Compacted<T>, and reading Snapshot is what its own MaybeFastForward does, so the property is rooted. A trimmed one reads as no key, which is what a rebuild did before #891.")]
+    private object? NaturalKeyInSnapshotOf(object marker)
+    {
+        var snapshot = marker.GetType().GetProperty(nameof(Compacted<object>.Snapshot))?.GetValue(marker);
+
+        return _definition.Member switch
+        {
+            _ when snapshot == null => null,
+            PropertyInfo property => property.GetValue(snapshot),
+            FieldInfo field => field.GetValue(snapshot),
+            _ => null
+        };
     }
 }

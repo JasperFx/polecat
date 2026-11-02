@@ -188,7 +188,8 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
         {
             foreach (var adapter in allOps.OfType<Polecat.Internal.Operations.ClosedShapeOperationAdapter>())
             {
-                await _store.Events.TenantOrdinals.ResolveAsync(adapter.SessionTenantId, token);
+                await _store.Events.TenantOrdinals.ResolveAsync(adapter.SessionTenantId, insideTransaction: false,
+                    token);
             }
         }
 
@@ -433,7 +434,7 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
         var ops = new List<Weasel.Storage.IStorageOperation>();
         if (actions.Count == 0) return ops;
 
-        // One session per tenant: the stream-state read is scoped by the session's tenant id.
+        // One session per tenant, because each append below is bound to the session that will write it.
         foreach (var group in actions.Where(a => a.Events.Any())
                      .GroupBy(a => a.TenantId ?? JasperFx.StorageConstants.DefaultTenantId))
         {

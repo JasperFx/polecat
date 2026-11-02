@@ -5,7 +5,10 @@ using JasperFx.Events.Projections;
 using Microsoft.Data.SqlClient;
 using Polecat.Internal;
 using Polecat.Projections;
+using Polecat.Storage;
+using Polecat.Tests.Harness;
 using Polecat.TestUtils;
+using Weasel.Core;
 using Weasel.Core.Migrations;
 using Weasel.SqlServer;
 
@@ -156,7 +159,14 @@ public class first_use_schema_lock_tests
     ///     fresh schema takes anything from 50ms to 4 seconds with nothing contending for it, so "still
     ///     running after 1.5 seconds" passed by luck against code with no lock at all.
     /// </remarks>
-    private static async Task AssertWaitsThenCarriesOnAsync(LockHolder holder, Func<Task> firstUse)
+    /// <param name="holder"></param>
+    /// <param name="firstUse"></param>
+    /// <param name="whileItWaits">
+    ///     Checked once the waiter is queued, for a first use with something else to wait for further on,
+    ///     where being queued says nothing about the step that matters.
+    /// </param>
+    private static async Task AssertWaitsThenCarriesOnAsync(LockHolder holder, Func<Task> firstUse,
+        Func<Task>? whileItWaits = null)
     {
         var token = TestContext.Current.CancellationToken;
         var running = Task.Run(firstUse, token);
@@ -171,6 +181,8 @@ public class first_use_schema_lock_tests
         }
 
         running.IsCompleted.ShouldBeFalse("this finished while it was queued for the migration lock");
+
+        if (whileItWaits != null) await whileItWaits();
 
         await holder.ReleaseAsync();
         await running;
@@ -329,14 +341,14 @@ public class first_use_schema_lock_tests
     }
 
     /// <summary>
-    ///     The lock request is an ordinary command, and on default settings the 30 second lock timeout and
-    ///     the 30 second command timeout expire together, with the client winning. A raw "Execution Timeout
-    ///     Expired" names nothing, and it bypasses <c>ResourceMigrationFailureMode</c> altogether, so
-    ///     <c>ContinueOnFailures</c> never engaged. A one second command timeout gets to that same place
-    ///     without taking 30 seconds over it.
+    ///     The lock request is an ordinary command, and until Weasel 9.48.0 (weasel#766) it ran under the
+    ///     connection's command timeout, so the client could give up before the server did. That arrived
+    ///     as a raw "Execution Timeout Expired" that named nothing and bypassed
+    ///     <c>ResourceMigrationFailureMode</c> altogether. A command timeout far below the lock timeout has
+    ///     to make no difference to either: the whole wait happens, and it ends as a lost lock.
     /// </summary>
     [Fact]
-    public async Task a_lock_wait_cut_short_by_the_command_timeout_is_still_a_lost_lock()
+    public async Task a_lock_wait_longer_than_the_command_timeout_runs_its_course_and_is_a_lost_lock()
     {
         var token = TestContext.Current.CancellationToken;
         var schema = NewSchema();
@@ -345,15 +357,20 @@ public class first_use_schema_lock_tests
             CommandTimeout = 1
         };
 
-        using var store = BuildStore(schema, configure: opts => opts.ConnectionString = shortCommandTimeout.ConnectionString);
+        using var store = BuildStore(schema, lockTimeout: TimeSpan.FromSeconds(3),
+            configure: opts => opts.ConnectionString = shortCommandTimeout.ConnectionString);
         await using var holder = await LockHolder.TakeAsync(schema, token);
 
+        var waited = Stopwatch.StartNew();
         var failure = await Should.ThrowAsync<InvalidOperationException>(async () =>
         {
             await using var session = store.LightweightSession();
             session.Events.StartStream(Guid.NewGuid(), new FirstUseTick());
             await session.SaveChangesAsync(token);
         });
+        waited.Stop();
+
+        waited.Elapsed.ShouldBeGreaterThan(TimeSpan.FromSeconds(2.5));
         failure.Message.ShouldContain(LockFor(schema));
 
         store.Database.ResourceMigrationFailureMode = ResourceMigrationFailureMode.ContinueOnFailures;
@@ -659,5 +676,314 @@ public class first_use_schema_lock_tests
         }
 
         (await LockIsFreeAsync(schema, token)).ShouldBeTrue();
+    }
+
+    // -------------------------------------------------------------------------------------
+    // #883: Hi-Lo, which reaches for its table from a synchronous Store()
+    // -------------------------------------------------------------------------------------
+
+    private static void WithHiloDocument(StoreOptions opts) => opts.Schema.For<IntDoc>();
+
+    [Fact]
+    public async Task a_sessions_first_hilo_id_waits_for_the_lock_and_then_succeeds()
+    {
+        var token = TestContext.Current.CancellationToken;
+        var schema = NewSchema();
+        using var store = BuildStore(schema, configure: WithHiloDocument);
+        await using var holder = await LockHolder.TakeAsync(schema, token);
+
+        await AssertWaitsThenCarriesOnAsync(holder, async () =>
+        {
+            await using var session = store.LightweightSession();
+            var doc = new IntDoc();
+            session.Store(doc);
+            doc.Id.ShouldBeGreaterThan(0);
+            await session.SaveChangesAsync(token);
+        }, async () =>
+        {
+            // The save's own ensure queues for the lock too, so being queued proves nothing about Store()
+            (await TableExistsAsync(schema, "pc_hilo", token)).ShouldBeFalse(
+                "pc_hilo was created while another process held the migration lock");
+        });
+
+        (await TableExistsAsync(schema, "pc_hilo", token)).ShouldBeTrue();
+    }
+
+    /// <summary>
+    ///     The sequence has no way to know whether whoever asked it for an id has a transaction open, so
+    ///     unless a session has told it, it has to behave as though one is.
+    /// </summary>
+    [Fact]
+    public async Task a_sequence_nobody_has_told_about_a_transaction_never_waits_for_the_lock()
+    {
+        var token = TestContext.Current.CancellationToken;
+        var schema = NewSchema();
+        using var store = BuildStore(schema, lockTimeout: TimeSpan.FromSeconds(10), configure: WithHiloDocument);
+        var sequence = store.Sequences.SequenceFor(typeof(IntDoc));
+
+        await using var holder = await LockHolder.TakeAsync(schema, token);
+
+        var stopwatch = Stopwatch.StartNew();
+        Should.Throw<SqlException>(() => sequence.NextLong());
+        stopwatch.Stop();
+
+        stopwatch.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(5),
+            "a sequence that cannot see a transaction must never wait on the migration lock");
+        (await TableExistsAsync(schema, "pc_hilo", token)).ShouldBeFalse();
+
+        await holder.ReleaseAsync();
+
+        sequence.NextLong().ShouldBeGreaterThan(0);
+    }
+
+    /// <summary>
+    ///     The Polly pipeline and the async overload are a different path to the same ensure.
+    /// </summary>
+    [Fact]
+    public async Task resetting_a_hilo_floor_never_waits_for_the_lock()
+    {
+        var token = TestContext.Current.CancellationToken;
+        var schema = NewSchema();
+        using var store = BuildStore(schema, lockTimeout: TimeSpan.FromSeconds(10), configure: WithHiloDocument);
+
+        await using var holder = await LockHolder.TakeAsync(schema, token);
+
+        var stopwatch = Stopwatch.StartNew();
+        await Should.ThrowAsync<SqlException>(() => store.Advanced.ResetHiloSequenceFloor<IntDoc>(100));
+        stopwatch.Stop();
+
+        stopwatch.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(5),
+            "a sequence that cannot see a transaction must never wait on the migration lock");
+
+        await holder.ReleaseAsync();
+
+        await store.Advanced.ResetHiloSequenceFloor<IntDoc>(100);
+    }
+
+    [Fact]
+    public async Task a_sessions_hilo_id_inside_a_transaction_fails_at_once_and_the_next_use_creates_the_table()
+    {
+        var token = TestContext.Current.CancellationToken;
+        var schema = NewSchema();
+        var id = Guid.NewGuid();
+
+        using (var existing = BuildStore(schema))
+        {
+            await using var seed = existing.LightweightSession();
+            seed.Events.StartStream(id, new FirstUseTick());
+            await seed.SaveChangesAsync(token);
+        }
+
+        using var store = BuildStore(schema, lockTimeout: TimeSpan.FromSeconds(10), configure: WithHiloDocument);
+
+        await using (var session = store.LightweightSession())
+        {
+            await session.Events.AppendExclusive(id, token, new FirstUseTick());
+
+            await using var holder = await LockHolder.TakeAsync(schema, token);
+
+            var stopwatch = Stopwatch.StartNew();
+            Should.Throw<SqlException>(() => session.Store(new IntDoc()));
+            stopwatch.Stop();
+
+            stopwatch.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(5),
+                "a session holding a transaction must never wait on the migration lock");
+        }
+
+        await using var next = store.LightweightSession();
+        next.Store(new IntDoc());
+        await next.SaveChangesAsync(token);
+    }
+
+    [Fact]
+    public async Task a_sessions_hilo_id_inside_a_transaction_uses_a_table_that_is_already_there()
+    {
+        var token = TestContext.Current.CancellationToken;
+        var schema = NewSchema();
+        var id = Guid.NewGuid();
+
+        using (var existing = BuildStore(schema, configure: WithHiloDocument))
+        {
+            await using var seed = existing.LightweightSession();
+            seed.Events.StartStream(id, new FirstUseTick());
+            seed.Store(new IntDoc());
+            await seed.SaveChangesAsync(token);
+        }
+
+        using var store = BuildStore(schema, lockTimeout: TimeSpan.FromSeconds(10), configure: WithHiloDocument);
+
+        await using var session = store.LightweightSession();
+        await session.Events.AppendExclusive(id, token, new FirstUseTick());
+
+        await using var holder = await LockHolder.TakeAsync(schema, token);
+
+        var doc = new IntDoc();
+        var stopwatch = Stopwatch.StartNew();
+        session.Store(doc);
+        stopwatch.Stop();
+
+        doc.Id.ShouldBeGreaterThan(0);
+        stopwatch.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(5),
+            "a session holding a transaction must never wait on the migration lock");
+    }
+
+    [Fact]
+    public async Task removing_everything_forgets_that_the_hilo_table_was_ensured()
+    {
+        var token = TestContext.Current.CancellationToken;
+        var schema = NewSchema();
+        using var store = BuildStore(schema, configure: WithHiloDocument);
+
+        await using (var session = store.LightweightSession())
+        {
+            session.Store(new IntDoc());
+            await session.SaveChangesAsync(token);
+        }
+
+        await store.Advanced.CompletelyRemoveAllAsync(token);
+        (await TableExistsAsync(schema, "pc_hilo", token)).ShouldBeFalse();
+
+        await using var next = store.LightweightSession();
+        next.Store(new IntDoc());
+        await next.SaveChangesAsync(token);
+
+        (await TableExistsAsync(schema, "pc_hilo", token)).ShouldBeTrue();
+    }
+
+    // -------------------------------------------------------------------------------------
+    // #883: pc_tenants, which sits in a schema of its own choosing
+    // -------------------------------------------------------------------------------------
+
+    /// <summary>
+    ///     The resource is the schema being provisioned, and on this path that is the argument to
+    ///     <c>MultiTenantedMasterTable</c> and not the store's own. A lock on the store's schema would
+    ///     serialize nothing, because two tenancies sharing a control table need not share a store schema.
+    /// </summary>
+    [Fact]
+    public async Task the_tenant_table_waits_for_the_lock_on_its_own_schema_and_then_succeeds()
+    {
+        var token = TestContext.Current.CancellationToken;
+        var schema = NewSchema();
+        var tenancy = new MasterTableTenancy(
+            new StoreOptions { ConnectionString = ConnectionSource.ConnectionString, DatabaseSchemaName = NewSchema() },
+            ConnectionSource.ConnectionString, schema);
+
+        await using var holder = await LockHolder.TakeAsync(schema, token);
+
+        await AssertWaitsThenCarriesOnAsync(holder, () => tenancy.AllDisabledAsync(token));
+
+        (await TableExistsAsync(schema, MasterTableTenancy.TableName, token)).ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task a_tenancy_that_loses_the_lock_says_why_and_the_next_use_tries_again()
+    {
+        var token = TestContext.Current.CancellationToken;
+        var schema = NewSchema();
+        var tenancy = new MasterTableTenancy(
+            new StoreOptions
+            {
+                ConnectionString = ConnectionSource.ConnectionString,
+                StartupMigrationLockTimeout = TimeSpan.FromMilliseconds(300)
+            },
+            ConnectionSource.ConnectionString, schema);
+
+        await using var holder = await LockHolder.TakeAsync(schema, token);
+
+        var failure = await Should.ThrowAsync<InvalidOperationException>(() => tenancy.AllDisabledAsync(token));
+        failure.Message.ShouldContain(LockFor(schema));
+
+        await holder.ReleaseAsync();
+
+        (await tenancy.AllDisabledAsync(token)).ShouldBeEmpty();
+    }
+
+    // -------------------------------------------------------------------------------------
+    // #883: the public overload with no lock argument
+    // -------------------------------------------------------------------------------------
+
+    [Fact]
+    public async Task applying_changes_with_no_lock_argument_waits_for_the_lock_and_then_succeeds()
+    {
+        var token = TestContext.Current.CancellationToken;
+        var schema = NewSchema();
+        using var store = BuildStore(schema);
+        await using var holder = await LockHolder.TakeAsync(schema, token);
+
+        await AssertWaitsThenCarriesOnAsync(holder,
+            () => store.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: token));
+
+        (await TableExistsAsync(schema, "pc_events", token)).ShouldBeTrue();
+    }
+
+    /// <summary>
+    ///     The overload is not virtual, so hiding it on <see cref="PolecatDatabase" /> says nothing about
+    ///     anyone holding an <see cref="IDatabase" />, which is everything in Weasel and JasperFx.
+    /// </summary>
+    [Fact]
+    public async Task applying_changes_through_the_interface_waits_for_the_lock_and_then_succeeds()
+    {
+        var token = TestContext.Current.CancellationToken;
+        var schema = NewSchema();
+        using var store = BuildStore(schema);
+        await using var holder = await LockHolder.TakeAsync(schema, token);
+
+        IDatabase database = store.Database;
+
+        await AssertWaitsThenCarriesOnAsync(holder,
+            () => database.ApplyAllConfiguredChangesToDatabaseAsync(ct: token));
+
+        (await TableExistsAsync(schema, "pc_events", token)).ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task applying_changes_with_retries_waits_for_the_lock_and_then_succeeds()
+    {
+        var token = TestContext.Current.CancellationToken;
+        var schema = NewSchema();
+        using var store = BuildStore(schema);
+        await using var holder = await LockHolder.TakeAsync(schema, token);
+
+        await AssertWaitsThenCarriesOnAsync(holder,
+            () => store.Database.ApplyAllConfiguredChangesWithRetriesAsync(ct: token));
+
+        (await TableExistsAsync(schema, "pc_events", token)).ShouldBeTrue();
+    }
+
+    /// <summary>
+    ///     <c>db-apply</c> and <c>resources setup</c>.
+    /// </summary>
+    [Fact]
+    public async Task the_stateful_resource_setup_waits_for_the_lock_and_then_succeeds()
+    {
+        var token = TestContext.Current.CancellationToken;
+        var schema = NewSchema();
+        using var store = BuildStore(schema);
+        await using var holder = await LockHolder.TakeAsync(schema, token);
+
+        var resource = new Weasel.Core.CommandLine.DatabaseResource(store.Database, new Uri("polecat://test"));
+
+        await AssertWaitsThenCarriesOnAsync(holder, () => resource.Setup(token));
+
+        (await TableExistsAsync(schema, "pc_events", token)).ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task applying_changes_with_no_lock_argument_can_lose_the_lock()
+    {
+        var token = TestContext.Current.CancellationToken;
+        var schema = NewSchema();
+        using var store = BuildStore(schema, lockTimeout: TimeSpan.FromMilliseconds(300));
+        await using var holder = await LockHolder.TakeAsync(schema, token);
+
+        await Should.ThrowAsync<InvalidOperationException>(
+            () => store.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: token));
+
+        store.Database.ResourceMigrationFailureMode = ResourceMigrationFailureMode.ContinueOnFailures;
+
+        (await store.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: token))
+            .ShouldBe(SchemaPatchDifference.None);
+
+        (await TableExistsAsync(schema, "pc_events", token)).ShouldBeFalse();
     }
 }

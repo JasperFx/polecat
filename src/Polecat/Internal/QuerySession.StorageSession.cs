@@ -20,7 +20,7 @@ internal partial class QuerySession : IStorageSession
     private Dictionary<Type, object>? _itemMap;
     private int _tempTableNumber;
 
-    IStorageSerializer IStorageSession.Serializer => _storageSerializer ??= StorageSerializerAdapter.For(Serializer);
+    IStorageSerializer IStorageSession.Serializer => _storageSerializer ??= Options.StorageSerializer;
 
     IStorageDatabase IStorageSession.Database =>
         Options.StorageDatabase ?? throw new InvalidOperationException(
