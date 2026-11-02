@@ -784,9 +784,39 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             return tenantSession;
         }
 
+        assertTenantIsInThisDatabase(tenantId);
+
         tenantSession = new NestedTenantSession(this, tenantId);
         _byTenant[tenantId] = tenantSession;
         return tenantSession;
+    }
+
+    /// <summary>
+    ///     A view of a tenant shares this session's connection and transaction, so it can only reach this
+    ///     session's database. For a tenant anywhere else it would read and write the wrong database, with
+    ///     that tenant's id on the rows. Marten's <c>ForTenant</c> refuses at the same point. Writing to the
+    ///     right database instead would need a second transaction, and a save that looks atomic but isn't
+    ///     is no better.
+    /// </summary>
+    /// <remarks>
+    ///     By the connection and not by <see cref="Storage.ITenancy.GetDatabase" />, for two reasons. A
+    ///     session bound with <see cref="SessionOptions.ForDatabase(Storage.PolecatDatabase)" /> isn't on
+    ///     its tenant's database, or has no tenant to speak of. And each tenant has a
+    ///     <see cref="Storage.PolecatDatabase" /> of its own even when two of them share a physical
+    ///     database, where Marten's <c>StaticMultiTenancy</c> would give them one. Those two are allowed.
+    ///     An unknown or disabled tenant gets the same refusal as opening a session for it.
+    /// </remarks>
+    private void assertTenantIsInThisDatabase(string tenantId)
+    {
+        var tenancy = Options.Tenancy;
+        if (tenantId == TenantId || tenancy is null
+            || tenancy.Cardinality == JasperFx.Descriptors.DatabaseCardinality.Single) return;
+
+        var connection = _lifetime.ConnectionFactory;
+        if (!connection.ConnectsToSameDatabaseAs(tenancy.GetConnectionFactory(tenantId)))
+        {
+            throw new InvalidTenantForDatabaseException(tenantId, connection.DatabaseName);
+        }
     }
 
     public void UpdateExpectedVersion<T>(T document, Guid version) where T : notnull
@@ -1777,7 +1807,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         return System.Text.Encoding.UTF8.GetString(buffer.WrittenSpan);
     }
 
-    private async Task ExecuteClosedShapeEventOperationsAsync(
+    internal async Task ExecuteClosedShapeEventOperationsAsync(
         List<Weasel.Storage.IStorageOperation> operations, CancellationToken token)
     {
         await using var batch = new SqlBatch();
