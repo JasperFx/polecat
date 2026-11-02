@@ -61,6 +61,31 @@ var user = await session.Query<User>()
     .FirstOrDefaultAsync(x => x.UserName == "somebody");
 ```
 
+## Indexing String Members
+
+A string member is indexed as `varchar(250)` unless you say otherwise, and that shapes what the index can
+do, because `varchar` holds what the database's code page holds:
+
+- **A plain ASCII value seeks.** Polecat binds it as `varchar` to match the column. It has to: under a SQL
+  collation such as the default, an `nvarchar` parameter puts `CONVERT_IMPLICIT` on the column and the index
+  can only be scanned.
+- **Any other value reads the document instead**, which is a scan of the table. The column stored `東京` as
+  `??`, so comparing through it could not find it. That goes for accented Latin text too, because Polecat
+  cannot tell from the client which characters the database's code page has.
+- **A value wider than the column reads the document as well**, and a stored value wider than the column
+  is not matched by the part of it that fits.
+
+If a member holds text outside ASCII, declare the column `nvarchar` and every value seeks:
+
+```cs
+opts.Schema.For<User>().Index(x => x.UserName, x => x.SqlType = "nvarchar(250)");
+```
+
+The index serves equality and range comparisons on the member itself. An `IsOneOf` of 100 values or fewer
+binds `nvarchar` whatever it holds, so over a `varchar` column it scans the index rather than seeking it.
+`Contains`, `StartsWith`, `EndsWith`, `ToLower()` and the other string methods read the document, so an
+index does not help them.
+
 ## Composite (Multi-Column) Indexes
 
 Create a single index across multiple properties using an anonymous type:

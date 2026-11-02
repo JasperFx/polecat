@@ -1,3 +1,4 @@
+using System.Data;
 using Weasel.SqlServer;
 
 namespace Polecat.Linq.SqlGeneration;
@@ -35,6 +36,7 @@ internal class TextEqualityFilter : ISqlFragment
     private readonly string _exact;
     private readonly bool _equal;
     private readonly object _value;
+    private readonly SqlDbType? _dbType;
 
     /// <param name="locator">What is compared with <c>=</c>, and sought through any index.</param>
     /// <param name="exact">
@@ -43,8 +45,10 @@ internal class TextEqualityFilter : ISqlFragment
     /// </param>
     /// <param name="equal">True for equality, false for inequality.</param>
     /// <param name="value">The value.</param>
-    public TextEqualityFilter(string locator, string exact, bool equal, object value)
+    /// <param name="dbType">How to bind it, when not as the default.</param>
+    public TextEqualityFilter(string locator, string exact, bool equal, object value, SqlDbType? dbType = null)
     {
+        _dbType = dbType;
         _locator = locator;
         _exact = exact;
         _equal = equal;
@@ -56,16 +60,18 @@ internal class TextEqualityFilter : ISqlFragment
         var (op, join) = _equal ? ("=", "AND") : ("!=", "OR");
 
         builder.Append($"({_locator} {op} ");
-        var parameter = builder.AppendParameter(_value);
-        builder.Append($" {join} {SameBytes(_exact, op, parameter.ParameterName)})");
+        var parameter = ComparisonFilter.AppendValue(builder, _value, _dbType);
+        var perCharacter = _dbType == SqlDbType.VarChar ? 2 : 1;
+        builder.Append($" {join} {SameBytes(_exact, op, parameter.ParameterName, perCharacter)})");
     }
 
     /// <summary>
     ///     That <paramref name="exact" /> holds the same number of bytes as the parameter, or a different
-    ///     number for <c>!=</c>.
+    ///     number for <c>!=</c>. A parameter bound as <c>varchar</c> counts one byte per character where
+    ///     what it is measured against counts two, hence <paramref name="scale" />.
     /// </summary>
-    internal static string SameBytes(string exact, string op, string parameterName)
-        => $"DATALENGTH({exact}) {op} DATALENGTH(@{parameterName.TrimStart('@')})";
+    internal static string SameBytes(string exact, string op, string parameterName, int scale = 1)
+        => $"DATALENGTH({exact}) {op} {scale} * DATALENGTH(@{parameterName.TrimStart('@')})";
 
     /// <summary>A locator made safe to measure, for one that may read a <c>varchar</c> column.</summary>
     internal static string Measured(string locator) => $"CAST({locator} AS nvarchar(max))";

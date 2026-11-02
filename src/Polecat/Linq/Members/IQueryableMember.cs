@@ -1,4 +1,6 @@
 using System.Collections;
+using System.Data;
+using System.Text;
 using Polecat.Internal;
 using Polecat.Linq.SqlGeneration;
 
@@ -156,11 +158,44 @@ internal static class QueryableMemberExtensions
     {
         var locator = member.ComparisonLocator(op, positive, value);
         var converted = member.ConvertValue(value)!;
+        var dbType = member.BindingFor(locator, converted);
 
         return op is "=" or "!=" && member.TextCapacity != null && converted is string
-            ? new TextEqualityFilter(locator, member.ExactTextLocator(locator), op == "=", converted)
-            : new ComparisonFilter(locator, op, converted);
+            ? new TextEqualityFilter(locator, member.ExactTextLocator(locator), op == "=", converted, dbType)
+            : new ComparisonFilter(locator, op, converted, dbType);
     }
+
+    /// <summary>
+    ///     <see cref="SqlDbType.VarChar" /> when <paramref name="locator" /> is a <c>varchar</c> column and
+    ///     <paramref name="value" /> can be bound as one without changing, otherwise null for the default.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         #877, the #363 rule on the LINQ path. A string binds as <c>nvarchar</c>, which outranks
+    ///         <c>varchar</c>, so under a SQL collation the conversion lands on the COLUMN and an index on
+    ///         it cannot be sought. That is every default <c>Index(x =&gt; x.Name)</c>: an Index Scan at 451
+    ///         reads over 100,000 rows, against an Index Seek at 3 with the parameter typed to match.
+    ///     </para>
+    ///     <para>
+    ///         ASCII only, because that is the part of a <c>varchar</c> parameter that means the same thing
+    ///         under every code page, and this cannot see which one the database has. A value outside it
+    ///         stays <c>nvarchar</c>: bound as <c>varchar</c>, <c>東京</c> would become <c>??</c> and match
+    ///         other values that did the same. See <see cref="Choose" /> for where a text member's goes.
+    ///     </para>
+    ///     <para>
+    ///         ⚠️ Not for a short <c>IN</c>, which stays <c>nvarchar</c> and scans. Twenty-five of them over
+    ///         a <c>varchar</c> primary key turned 2,500 seek ranges into Msg 8623, the optimizer running out
+    ///         of resources, on a shape that scanned without complaint.
+    ///     </para>
+    /// </remarks>
+    internal static SqlDbType? BindingFor(this IQueryableMember member, string locator, object? value)
+        => value is string text && locator == member.TypedLocator && IsVarChar(member.LocatorSqlType)
+                                && Ascii.IsValid(text)
+            ? SqlDbType.VarChar
+            : null;
+
+    private static bool IsVarChar(string? sqlType)
+        => sqlType != null && sqlType.StartsWith("varchar", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     ///     What to measure to find out that <paramref name="locator" />, a text read of this member,
@@ -192,9 +227,13 @@ internal static class QueryableMemberExtensions
         var indexed = member.LocatorSqlType != null;
         if (!indexed && !unknownDropsTheRowCorrectly) return member.RawLocator;
 
+        // #877: a varchar column can no more hold a value outside its code page than one wider than
+        // itself. It stored 東京 as ??, so comparing through it found nothing, with no error.
+        var narrow = IsVarChar(member.LocatorSqlType);
+
         foreach (var value in values)
         {
-            if (member.ConvertValue(value) is string text && text.Length > capacity)
+            if (member.ConvertValue(value) is string text && (text.Length > capacity || (narrow && !Ascii.IsValid(text))))
             {
                 return member.RawLocator;
             }
