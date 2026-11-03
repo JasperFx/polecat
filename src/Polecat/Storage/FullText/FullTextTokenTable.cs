@@ -47,6 +47,13 @@ namespace Polecat.Storage.FullText;
 ///         is the step that widens it, followed by <c>RebuildFullTextIndexAsync</c> for what the old
 ///         column already lost.
 ///     </para>
+///     <para>
+///         ⚠️ <b>The <c>doc_id</c> index is the same kind of change, so it takes the same road (#916).</b>
+///         The trigger finds a document's old tokens by <c>doc_id</c>, which led no index, so every write
+///         to the type scanned the table: 3,819 logical reads for a document of 25 tokens among half a
+///         million, growing with the table, against 253 that do not. An existing table keeps scanning
+///         until the schema is applied.
+///     </para>
 /// </remarks>
 internal class FullTextTokenTable: Table
 {
@@ -80,8 +87,18 @@ internal class FullTextTokenTable: Table
             Columns = ["term", "member", "doc_id"],
             IncludedColumns = ["pos", JasperFx.StorageConstants.TenantIdColumn]
         });
+
+        // What the trigger deletes by. The tenant is in the key because an id is only unique per tenant
+        // under conjoined tenancy, and the trigger's join names it. See FullTextIndex.DeletedTenantPredicate.
+        Indexes.Add(new IndexDefinition(DocumentIndexNameFor(mapping))
+        {
+            Columns = ["doc_id", JasperFx.StorageConstants.TenantIdColumn]
+        });
     }
 
     internal static string IndexNameFor(DocumentMapping mapping)
         => "ix_" + FullTextIndex.TableNameFor(mapping) + "_term";
+
+    internal static string DocumentIndexNameFor(DocumentMapping mapping)
+        => "ix_" + FullTextIndex.TableNameFor(mapping) + "_doc";
 }

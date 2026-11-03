@@ -110,6 +110,12 @@ outgrow the default `varchar(250)`.
 `x.Text.Length` reads the value in full everywhere it can, so it's right past 4000 characters in a `Where`, `Select`, `OrderBy` and in an aggregate over the whole query. On `nvarchar(max)` storage, a `GroupBy` key or an aggregate over a group reads through plain `JSON_VALUE`, so the length is `NULL` there past 4000 characters. SQL Server won't take the full read in those two places.
 :::
 
+## Trailing Spaces
+
+`==`, `!=`, `IsOneOf`, `Contains` over a list and a `GroupBy` key all treat `abc` and `abc  ` as different
+values, as .NET does, even though SQL Server's `=` pads. That goes for a string id too. `Distinct()` is the
+exception, and leaves it to [SQL Server](/documents/querying/linq/operators#distinct).
+
 ## Case Sensitivity
 
 SQL Server string comparisons follow the database collation by default. For case-insensitive searches, configure your database collation accordingly.

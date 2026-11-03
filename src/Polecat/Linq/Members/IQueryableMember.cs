@@ -218,7 +218,36 @@ internal static class QueryableMemberExtensions
     ///     </para>
     /// </remarks>
     internal static string ExactTextLocator(this IQueryableMember member, string locator)
-        => locator == member.RawLocator ? locator : member.BareTextLocator ?? locator;
+        => member is IdMember
+            ? TextEqualityFilter.Measured(locator)
+            : locator == member.RawLocator ? locator : member.BareTextLocator ?? locator;
+
+    /// <summary>
+    ///     What to read this member through when the query wants its value, as a <c>Select</c> or a
+    ///     <c>GroupBy</c> key does, rather than something to compare or to order by.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         <see cref="IQueryableMember.TypedLocator" />, unless that is a <c>varchar</c> computed column.
+    ///         One of those holds what the database's code page holds, so under the default collation
+    ///         <c>東京</c> and <c>大阪</c> are both <c>??</c> in it, and that is what came back (#916). The
+    ///         document has the value, past the 250 characters of the column as well.
+    ///     </para>
+    ///     <para>
+    ///         ⚠️ It costs the query the index, because the value is no longer in it. Over 100,000 documents
+    ///         an unfiltered <c>GroupBy</c> on a default index goes from 588 reads and 16ms to 5,160 reads
+    ///         and 155ms, and a filter on the member still seeks. Declaring the column <c>nvarchar</c>
+    ///         keeps it, because then there is nothing for it to lose short of its width, which is the
+    ///         contract <see cref="ComparisonLocator" /> describes.
+    ///     </para>
+    ///     <para>
+    ///         An <c>OrderBy</c> stays on the column, and sorts <c>??</c> where <c>東京</c> would go. That
+    ///         decides the order and not what comes back, and it is what makes <c>Take(10)</c> a walk of
+    ///         the index rather than a sort of the table.
+    ///     </para>
+    /// </remarks>
+    internal static string ValueLocator(this IQueryableMember member)
+        => IsVarChar(member.LocatorSqlType) ? member.BareTextLocator ?? member.TypedLocator : member.TypedLocator;
 
     private static string Choose(this IQueryableMember member, bool unknownDropsTheRowCorrectly, IEnumerable values)
     {

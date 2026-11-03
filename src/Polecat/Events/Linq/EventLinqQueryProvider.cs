@@ -212,10 +212,7 @@ internal class EventLinqQueryProvider : IPolecatAsyncQueryProvider,
             // #875: nothing below projects, so a list of events met a cast to a list of something else.
             if (parser.SelectExpression != null)
             {
-                throw new Polecat.Linq.BadLinqExpressionException(
-                    $"Polecat cannot translate the Select '{parser.SelectExpression}' in an event query, which "
-                    + "can project a single scalar member. Materialize the events with ToListAsync() and "
-                    + "project them in memory.");
+                throw RefuseProjection(parser);
             }
 
             if (_isAllEvents && parser.SelectExpression == null)
@@ -229,6 +226,14 @@ internal class EventLinqQueryProvider : IPolecatAsyncQueryProvider,
             // QueryRawEventDataOnly: deserialize from data column
             var documentType = FindDocumentType();
             return await InvokeListHandlerAsync<TResult>(documentType, reader, token);
+        }
+
+        // #916: the same goes for one row, which was read as an event or as the event's data.
+        if (parser.SelectExpression != null && parser.ValueMode.Value.TakesOneRow())
+        {
+            return parser.IsScalarSelect
+                ? parser.ValueMode.Value.OneOf(await new ScalarListHandler<TResult>().HandleAsync(reader, token))
+                : throw RefuseProjection(parser);
         }
 
         switch (parser.ValueMode)
@@ -269,6 +274,11 @@ internal class EventLinqQueryProvider : IPolecatAsyncQueryProvider,
                 throw new NotSupportedException($"Unsupported single value mode: {parser.ValueMode}");
         }
     }
+
+    private static Polecat.Linq.BadLinqExpressionException RefuseProjection(LinqQueryParser parser)
+        => new($"Polecat cannot translate the Select '{parser.SelectExpression}' in an event query, which "
+               + "can project a single scalar member. Materialize the events with ToListAsync() and "
+               + "project them in memory.");
 
     private async Task<TResult> HandleSingleEventAsync<TResult>(
         DbDataReader reader, CancellationToken token, bool canBeNull)

@@ -1,4 +1,5 @@
 using JasperFx.Core.Reflection;
+using Polecat.Storage;
 
 namespace Polecat.Linq.Members;
 
@@ -26,6 +27,14 @@ internal class IdMember : IQueryableMember
     ///     the column holds its inner scalar (#296/#302).
     /// </summary>
     public string? LocatorSqlType { get; }
+
+    /// <summary>
+    ///     #916: a string id is text like any other, and <c>=</c> pads it like any other, so
+    ///     <c>x.Id == "abc "</c> found <c>abc</c>.
+    /// </summary>
+    public int? TextCapacity => LocatorSqlType != null && LocatorSqlType.Contains("char", StringComparison.OrdinalIgnoreCase)
+        ? SqlTypeMap.TextCapacity(LocatorSqlType)
+        : null;
 
     public object? ConvertValue(object? value)
     {

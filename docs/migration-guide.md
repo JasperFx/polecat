@@ -18,7 +18,8 @@ Arabic or Hebrew could be found, and every search scanned the token table, becau
 it keeps working exactly as it did.**
 
 1. Run `ApplyAllConfiguredChangesToDatabaseAsync()`, or the script from `db-patch`. This drops the token
-   index, alters the column and builds the index again, now with `member` in its key.
+   index, alters the column and builds the index again, now with `member` in its key. It also adds the
+   `doc_id` index described below.
 2. Run `RebuildFullTextIndexAsync<T>()` for each type with a full-text index, to recover what the old column
    lost. A rebuild refuses until step 1 has been done.
 
@@ -31,6 +32,59 @@ window, rather than through `ApplyAllConfiguredChangesToDatabaseAsync()` or
 `ApplyAllDatabaseChangesOnStartup`, which would stop the application from starting. The table is locked
 while the column changes, so searches and writes to that document type wait for it, and it takes about 13%
 to 25% more space afterwards.
+:::
+
+### The `doc_id` index
+
+[polecat#916](https://github.com/JasperFx/polecat/issues/916) added a second index to the token table, on
+`doc_id` and `tenant_id`, which the trigger finds a document's old tokens through. Without it, every write to
+a type with a full-text index scans the token table: 3,819 logical reads for a document of 25 tokens among
+half a million, and more as the table grows, against 253 with the index. Those scanning writes also hold up
+each other.
+
+A new token table has the index. An existing one gets it from step 1 above and works as it did until then,
+so if you have already widened the column, apply the schema once more. It is the same kind of step: the
+index took 0.6 seconds over half a million tokens on the development container, and `db-patch` is the way to
+add it to a large table. The index is not there for what `AssertDatabaseMatchesConfigurationAsync()` compares
+until it has been applied, so that check reports the difference in the meantime.
+
+## Upgrading past 5.47.0: LINQ answers that change
+
+[polecat#916](https://github.com/JasperFx/polecat/issues/916) fixed a set of queries that threw or that
+answered wrongly. Nothing needs changing unless something had come to depend on one of these.
+
+| Query | Before | Now |
+| --- | --- | --- |
+| `Select(...).First()` and `Single`, `Last` | threw | the projected value |
+| `Select(x => new { x.A, x.B }).Distinct()` | threw, or duplicates on `nvarchar(max)` storage | distinct rows |
+| `...Distinct().OrderBy(y => y.A)` | Msg 145 | ordered |
+| `Select(...).Distinct().Count()` | the rows of the table | the distinct rows |
+| `Query<T>().Distinct()` | threw on `json` storage | the documents |
+| `x.Id == "abc "`, `x.Id.IsOneOf("abc ")` | matched `abc` | no match |
+| `GroupBy(x => x.Name)` over `abc` and `abc  ` | one group | two groups |
+| `x.Name == "??"` over a `varchar` index | matched `東京` | no match |
+| `x.Name == "a"` over a `varchar` index | matched `ā` | no match |
+| `Select(x => x.Name)`, a `GroupBy` key, `Distinct`, `DistinctBy`, `Min` or `Max` of an indexed member | `??` for `東京`, and two such keys merged | the stored value |
+| anything over a key like `[JsonPropertyName("a-b")]` or on a kebab-case store | SQL error | works |
+| a `[JsonPropertyName]` on an event body in `QueryRawEventDataOnly<T>()` | the CLR name, which matched nothing | the key it was written under |
+
+These are refused with `BadLinqExpressionException` now, and were either a raw SQL error or a quiet wrong
+answer before:
+
+- `OrderBy`, `ThenBy`, `GroupBy` or `DistinctBy` on a member stored as a JSON object or array. They read `NULL`
+  for every row. A class with a converter that stores it as a scalar still works.
+- `Distinct()` over a projection SQL cannot compare: an object, a computed value or a constructor call.
+- An ordering by something a `Select` did not project, on a `Distinct()`.
+- `Sum`, `Min`, `Max` or `Average` after `Distinct()`, which aggregated the rows of the table.
+- `ToJsonPageByCursorAsync` over a `Distinct()`, which dropped it.
+- A `Select` of anything but one scalar with `First`, `Single` or `Last` on an event query.
+
+::: warning One of these costs an index
+Reading a value back through a default `varchar` index is what answered `??`, so that now reads the document.
+An unfiltered `GroupBy` on an indexed string member over 100,000 documents takes 5,160 reads and 155ms rather
+than 588 and 16. A `Select` or a `Distinct` of the member loses a covering index the same way. A filter on the
+member still seeks. If you need the index for these, [declare the column
+`nvarchar`](/documents/indexing/computed-indexes#indexing-string-members).
 :::
 
 ## Upgrading past 5.47.0: event predicates naming `IsArchived`

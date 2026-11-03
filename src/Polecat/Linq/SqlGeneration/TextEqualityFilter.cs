@@ -23,6 +23,13 @@ namespace Polecat.Linq.SqlGeneration;
 ///         its own would be right and would scan.
 ///     </para>
 ///     <para>
+///         ⚠️ <b>The length cannot speak for a <c>varchar</c> column.</b> It holds what the code page holds,
+///         so <c>東京</c> sits in it as <c>??</c>, the same length as the <c>"??"</c> a query can ask for, and
+///         <c>ā</c> sits in it as <c>a</c> (#916). So a value bound as <c>varchar</c>, which is what seeks that
+///         column, is compared to the document as well. That runs against the rows the seek found, like
+///         the length.
+///     </para>
+///     <para>
 ///         Both sides have to be measured as <c>nvarchar</c>, because the count means nothing otherwise.
 ///         The value is, and so is a member read out of the JSON. An <c>id</c> column is <c>varchar</c>
 ///         at a byte per character and a <c>LOWER</c> over one stays that way, so a locator that may be
@@ -62,6 +69,12 @@ internal class TextEqualityFilter : ISqlFragment
         builder.Append($"({_locator} {op} ");
         var parameter = ComparisonFilter.AppendValue(builder, _value, _dbType);
         var perCharacter = _dbType == SqlDbType.VarChar ? 2 : 1;
+
+        if (_dbType == SqlDbType.VarChar)
+        {
+            builder.Append($" {join} {_exact} {op} @{parameter.ParameterName.TrimStart('@')}");
+        }
+
         builder.Append($" {join} {SameBytes(_exact, op, parameter.ParameterName, perCharacter)})");
     }
 

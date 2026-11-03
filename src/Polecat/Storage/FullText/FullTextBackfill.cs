@@ -34,9 +34,10 @@ namespace Polecat.Storage.FullText;
 ///     </para>
 ///     <para>
 ///         ⚠️ <b>The list is taken once, and the batches work down it.</b> Asking the token table what is
-///         missing per batch is an anti-join over a heap with no index on <c>doc_id</c>, and over 2,000
-///         documents that took 133 seconds where one statement took 12. Asked once it costs what the one
-///         statement always did, and a document that yields no tokens simply comes off the list.
+///         missing per batch is an anti-join over a heap, and over 2,000 documents with no index on
+///         <c>doc_id</c>, which a table from before #916 still has none of, that took 133 seconds where one
+///         statement took 12. Asked once it costs what the one statement always did, and a document that
+///         yields no tokens simply comes off the list.
 ///     </para>
 ///     <para>
 ///         ⚠️ <b>Repairing an existing index is not this job, and it is held back from doing so</b> (#835,

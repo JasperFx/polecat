@@ -212,10 +212,10 @@ internal class DocumentTableEnsurer
             var ftObjects = Storage.FullText.FullTextSchemaObjects.For(provider.Mapping);
             if (ftObjects.Length > 0)
             {
-                // #877: created here and never updated here. Changing an existing token table's column
-                // is a size-of-data operation that can outlast the command timeout inside whichever
-                // request got here first, and it would fail the same way on every request after it. A
-                // table left as it was keeps working as it did; see FullTextTokenTable.
+                // #877: created here and never updated here. Changing an existing token table's column,
+                // or adding an index to it (#916), is a size-of-data operation that can outlast the command
+                // timeout inside whichever request got here first, and it would fail the same way on every
+                // request after it. A table left as it was keeps working as it did; see FullTextTokenTable.
                 var tokenTables = ftObjects.Where(x => x is Storage.FullText.FullTextTokenTable).ToArray();
                 var tokenTableMigration = await SchemaMigration.DetermineAsync(conn, token, tokenTables);
                 if (tokenTableMigration.Difference == SchemaPatchDifference.Create)
