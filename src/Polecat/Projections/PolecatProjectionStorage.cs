@@ -180,6 +180,8 @@ internal class PolecatProjectionStorage<TDoc, TId> : IProjectionStorage<TDoc, TI
     public async Task<TDoc> LoadAsync(TId id, CancellationToken cancellation)
     {
         await EnsureTableExistsAsync(cancellation);
+        if (!await _session.CouldHaveIdAsync(_provider.Mapping, id!, cancellation)) return default!;
+
         var doc = await Storage.LoadByObjectIdAsync(id, (Weasel.Storage.IStorageSession)_session, TenantId,
             cancellation);
         return doc ?? default!;
@@ -193,11 +195,9 @@ internal class PolecatProjectionStorage<TDoc, TId> : IProjectionStorage<TDoc, TI
 
         await EnsureTableExistsAsync(cancellationToken);
 
-        var ids = new object[identities.Length];
-        for (var i = 0; i < identities.Length; i++)
-        {
-            ids[i] = identities[i];
-        }
+        var ids = await _session.IdsThatCouldBeStoredAsync(_provider.Mapping,
+            identities.Select(x => (object)x!).ToList(), cancellationToken);
+        if (ids.Count == 0) return dict;
 
         var docs = await Storage.LoadManyByObjectIdsAsync(ids, (Weasel.Storage.IStorageSession)_session, TenantId,
             cancellationToken);

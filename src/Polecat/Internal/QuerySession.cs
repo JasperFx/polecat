@@ -265,6 +265,7 @@ internal partial class QuerySession : IQuerySession, JasperFx.Events.IEventTenan
         assertNotDisposed();
         var provider = _providers.GetProvider<T>();
         await _tableEnsurer.EnsureTableAsync(provider, HasOpenTransaction, token);
+        if (!await CouldHaveIdAsync(provider.Mapping, id, token)) return false;
 
         await using var cmd = new SqlCommand();
 
@@ -338,6 +339,7 @@ internal partial class QuerySession : IQuerySession, JasperFx.Events.IEventTenan
         assertNotDisposed();
         var provider = _providers.GetProvider<T>();
         await _tableEnsurer.EnsureTableAsync(provider, HasOpenTransaction, token);
+        if (!await CouldHaveIdAsync(provider.Mapping, id, token)) return default;
 
         // #273 E2a/E2e: all document loads route through the closed-shape storage layer
         // (shared selectors + dialect commands over the descriptor); subclass types resolve
@@ -378,6 +380,7 @@ internal partial class QuerySession : IQuerySession, JasperFx.Events.IEventTenan
         assertNotDisposed();
         var provider = _providers.GetProvider<T>();
         await _tableEnsurer.EnsureTableAsync(provider, HasOpenTransaction, token);
+        if (!await CouldHaveIdAsync(provider.Mapping, id, token)) return default;
 
         var storage = (Polecat.Storage.ClosedShape.IPolecatObjectStorage<T>)
             ((Weasel.Storage.IStorageSession)this).StorageFor<T>();
@@ -394,6 +397,7 @@ internal partial class QuerySession : IQuerySession, JasperFx.Events.IEventTenan
         assertNotDisposed();
         var provider = _providers.GetProvider<T>();
         await _tableEnsurer.EnsureTableAsync(provider, HasOpenTransaction, token);
+        if (!await CouldHaveIdAsync(provider.Mapping, id, token)) return default;
 
         var storage = (Polecat.Storage.ClosedShape.IPolecatObjectStorage<T>)
             _providers.ClosedShapeGraph.StorageFor<T>().QueryOnly;
@@ -413,6 +417,9 @@ internal partial class QuerySession : IQuerySession, JasperFx.Events.IEventTenan
         var provider = _providers.GetProvider<T>();
         await _tableEnsurer.EnsureTableAsync(provider, HasOpenTransaction, token);
 
+        ids = await IdsThatCouldBeStoredAsync(provider.Mapping, ids, token);
+        if (ids.Count == 0) return [];
+
         var storage = (Polecat.Storage.ClosedShape.IPolecatObjectStorage<T>)
             ((Weasel.Storage.IStorageSession)this).StorageFor<T>();
         return await storage.LoadManyByObjectIdsAsync(ids, state, tenantId, token);
@@ -426,6 +433,9 @@ internal partial class QuerySession : IQuerySession, JasperFx.Events.IEventTenan
 
         var provider = _providers.GetProvider<T>();
         await _tableEnsurer.EnsureTableAsync(provider, HasOpenTransaction, token);
+
+        ids = await IdsThatCouldBeStoredAsync(provider.Mapping, ids, token);
+        if (ids.Count == 0) return [];
 
         // #273 E2a/E2e: all document loads route through the closed-shape storage layer.
         var storage = (Polecat.Storage.ClosedShape.IPolecatObjectStorage<T>)
@@ -488,6 +498,7 @@ internal partial class QuerySession : IQuerySession, JasperFx.Events.IEventTenan
         assertNotDisposed();
         var provider = _providers.GetProvider<T>();
         await _tableEnsurer.EnsureTableAsync(provider, HasOpenTransaction, token);
+        if (!await CouldHaveIdAsync(provider.Mapping, id, token)) return null;
 
         await using var cmd = new SqlCommand();
 

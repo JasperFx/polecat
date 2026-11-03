@@ -7,7 +7,8 @@ using Weasel.SqlServer;
 
 namespace Polecat.Internal.Operations;
 
-internal class TombstoneStreamOperation : IStorageOperation, Weasel.Storage.NoDataReturnedCall
+internal class TombstoneStreamOperation : IStorageOperation, IStreamKeyedOperation,
+    Weasel.Storage.NoDataReturnedCall
 {
     private readonly EventGraph _events;
     private readonly object _streamId;
@@ -20,6 +21,7 @@ internal class TombstoneStreamOperation : IStorageOperation, Weasel.Storage.NoDa
         _tenantId = tenantId;
     }
 
+    public object StreamId => _streamId;
     public Type DocumentType => typeof(object);
     public OperationRole Role() => OperationRole.Deletion;
 

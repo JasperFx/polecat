@@ -10,7 +10,8 @@ namespace Polecat.Events.Projections;
 ///     when the corresponding stream is archived. For conjoined tenancy,
 ///     filters by tenant_id as well.
 /// </summary>
-internal class NaturalKeyArchiveOperation : Polecat.Internal.IStorageOperation, Weasel.Storage.NoDataReturnedCall
+internal class NaturalKeyArchiveOperation : Polecat.Internal.IStorageOperation,
+    Polecat.Internal.Operations.IStreamKeyedOperation, Weasel.Storage.NoDataReturnedCall
 {
     private readonly string _tableName;
     private readonly object _streamId;
@@ -36,6 +37,7 @@ internal class NaturalKeyArchiveOperation : Polecat.Internal.IStorageOperation, 
         _archived = archived;
     }
 
+    public object StreamId => _streamId;
     public Type DocumentType => typeof(object);
     public OperationRole Role() => OperationRole.Update;
 

@@ -1,4 +1,5 @@
 using System.Data;
+using System.Text;
 using Microsoft.Data.SqlClient;
 
 namespace Polecat.Internal;
@@ -22,6 +23,22 @@ internal static class SqlParameterCollectionExtensions
         parameters.Add(parameter);
         return parameter;
     }
+
+    /// <summary>
+    ///     How to bind an id or stream key that nothing has checked against the column: a batched read, which
+    ///     is written synchronously, or a diagnostic read, which has no session to ask with. Outside ASCII it
+    ///     stays <c>nvarchar</c> and the comparison is exact (#919). A <c>varchar</c> parameter would turn
+    ///     <c>東京</c> into <c>??</c> and find whatever else did. It costs such an id the index seek under a
+    ///     SQL collation, the trade #877 made on the LINQ path for the same reason.
+    /// </summary>
+    public static SqlDbType? BindingForKey(object? id)
+        => id is string text && Ascii.IsValid(text) ? SqlDbType.VarChar : null;
+
+    /// <inheritdoc cref="BindingForKey" />
+    public static SqlParameter AddUncheckedKey(this SqlParameterCollection parameters, string name, object id)
+        => id is string text && !Ascii.IsValid(text)
+            ? parameters.AddWithValue(name, text)
+            : parameters.AddIdParameter(name, id);
 
     /// <summary>
     ///     Bind a stream/document identity whose runtime type is Guid or string (the two stream

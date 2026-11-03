@@ -33,7 +33,7 @@ internal class FetchStreamStateBatchItem : IBatchQueryItem
     public void WriteSql(ICommandBuilder builder)
     {
         builder.Append($"SELECT {PcStreamsRowReader.SelectColumns} FROM {_events.StreamsTableName} WHERE id = ");
-        builder.AppendParameter(_streamId, _streamId is string ? SqlDbType.VarChar : null);
+        builder.AppendParameter(_streamId, SqlParameterCollectionExtensions.BindingForKey(_streamId));
         builder.Append(" AND tenant_id = ");
         builder.AppendParameter(_tenantId, SqlDbType.VarChar);
         builder.Append(";\n");

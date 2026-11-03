@@ -547,6 +547,19 @@ internal class DocumentMapping
             + $"whose id is {accepted}.", parameterName);
     }
 
+    /// <summary>
+    ///     #919: the string this id is stored as, strong-typed or not, or null if it isn't stored as one.
+    ///     Unlike <see cref="UnwrapIdentity" /> this doesn't judge the value, because it's asked on the way
+    ///     past by paths that have their own opinion of an id of the wrong type.
+    /// </summary>
+    internal string? StringKeyOf(object id)
+    {
+        if (id is string key) return key;
+        if (_idUnwrapper == null || InnerIdType != typeof(string)) return null;
+
+        return id.GetType() == (Nullable.GetUnderlyingType(IdType) ?? IdType) ? _idUnwrapper(id) as string : null;
+    }
+
     public void AssignIdIfMissing(object document, ISequenceSource sequences)
         => _identityAssigner?.AssignIfMissing(document, sequences);
 

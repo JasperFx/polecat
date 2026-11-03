@@ -192,6 +192,35 @@ await Shape("load a document by id", "marten#5328", async () =>
     if (loaded is null) throw new InvalidOperationException("LoadAsync returned null");
 });
 
+// --- a string id against the database's code page ---------------------------
+// The code page tables live in the shared framework as an embedded resource, read at runtime, which is
+// exactly the sort of thing a trimmer can take away with no warning. Nothing else here reaches them.
+await Shape("a string id within and outside the code page", "polecat#919", async () =>
+{
+    await using var scope = host.Services.CreateAsyncScope();
+    var session = scope.ServiceProvider.GetRequiredService<IDocumentSession>();
+
+    session.Store(new Waypoint { Id = "café" });
+    await session.SaveChangesAsync();
+
+    if (await session.LoadAsync<Waypoint>("café") is null)
+        throw new InvalidOperationException("an id within the code page did not come back");
+    if (await session.LoadAsync<Waypoint>("東京") is not null)
+        throw new InvalidOperationException("an id outside the code page found a row");
+
+    session.Store(new Waypoint { Id = "東京" });
+    try
+    {
+        await session.SaveChangesAsync();
+    }
+    catch (Polecat.Exceptions.StringIdOutsideCodePageException)
+    {
+        return;
+    }
+
+    throw new InvalidOperationException("an id outside the code page was written");
+});
+
 // --- 3. an enum compared to a VARIABLE --------------------------------------
 // The shape most likely to reach WhereClauseParser's CompileAndInvoke fallback:
 // an enum operand is commonly wrapped in a Convert node, which is neither a bare
@@ -715,6 +744,7 @@ namespace Polecat.AotRuntimeSmoke
     [JsonSerializable(typeof(Badge))]
     [JsonSerializable(typeof(Medal))]
     [JsonSerializable(typeof(Relic))]
+    [JsonSerializable(typeof(Waypoint))]
     [JsonSerializable(typeof(JasperFx.Events.Daemon.DeadLetterEvent))]
     [JsonSerializable(typeof(DifficultyTally))]
     [JsonSerializable(typeof(JoinedTitle))]
@@ -732,6 +762,7 @@ namespace Polecat.AotRuntimeSmoke
         [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties, typeof(QuestStarted))]
         [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties, typeof(Badge))]
         [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties, typeof(Relic))]
+        [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties, typeof(Waypoint))]
         [DynamicDependency(DynamicallyAccessedMemberTypes.All, typeof(BadgeId))]
         [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties, typeof(Medal))]
         [DynamicDependency(DynamicallyAccessedMemberTypes.All, typeof(MedalId))]
@@ -781,6 +812,14 @@ namespace Polecat.AotRuntimeSmoke
     }
 
     internal sealed record QuestStarted(string Title);
+
+    /// <summary>
+    ///     #919: a document with a string id, for the shape that takes one to the database's code page.
+    /// </summary>
+    internal sealed class Waypoint
+    {
+        public string Id { get; set; } = "";
+    }
 
     /// <summary>
     ///     polecat#743. A STATIC METHOD rather than a local function, because an expression tree

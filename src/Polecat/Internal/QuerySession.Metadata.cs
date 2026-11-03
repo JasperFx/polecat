@@ -45,6 +45,7 @@ internal partial class QuerySession
     {
         var mapping = provider.Mapping;
         await _tableEnsurer.EnsureTableAsync(provider, HasOpenTransaction, token);
+        if (!await CouldHaveIdAsync(mapping, id, token)) return null;
 
         // Build the column list off the mapping. Note: no soft-delete filter — metadata is surfaced
         // even for soft-deleted rows so the caller can see Deleted/DeletedAt.

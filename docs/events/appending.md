@@ -27,6 +27,10 @@ session.Events.StartStream<QuestParty>("quest-123",
 
 `StartStream` will throw if a stream with the same ID already exists.
 
+A string stream ID has to be something `pc_streams.id`, a `varchar(250)`, can hold. One outside the database's
+code page, such as `東京` under the default collation, is refused by `SaveChangesAsync` with a
+`StringIdOutsideCodePageException`. See [what a string id can hold](/documents/identity#what-a-string-id-can-hold).
+
 ## Appending to an Existing Stream
 
 ```cs

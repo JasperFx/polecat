@@ -195,6 +195,77 @@ Later in the same line, for [polecat#875](https://github.com/JasperFx/polecat/is
 | `x.Name == input.ToLower()` | refused | translated |
 | `Select(x => new { x.Created.DayOfWeek })` as JSON under `EnumStorage.AsString` | a number | a name, as a stored enum is |
 
+## Upgrading past 5.47.0: string ids outside the code page
+
+[polecat#919](https://github.com/JasperFx/polecat/issues/919). A string document id or stream key is stored
+in a `varchar(250)` column, which holds what the database's code page holds. Anything else was changed with
+no error: under the default collation `東京` and `大阪` are both `??`, so they were one row, the second write
+overwrote the first, and `LoadAsync("東京")` returned Osaka's document. `ā` was stored as `a`, which can be
+another document's id.
+
+**This is a behaviour change.** A write that used to succeed and lose data now throws
+`StringIdOutsideCodePageException`:
+
+| What you call | Before | Now |
+| --- | --- | --- |
+| `Store`, `Insert`, `Update`, `StoreObjects` | saved under `??`, over whatever was there | refused by `SaveChangesAsync` |
+| `BulkInsertAsync`, `BulkInsertWithVersionAsync` | the same | refused before the first chunk is written |
+| `StartStream`, `Append`, `FetchForWriting` and appending | a false `ExistingStreamIdCollisionException`, or the events joined the `??` stream | refused by `SaveChangesAsync` |
+| A projection that takes a document's id from an event | the same as `Store` | refused, inline at the save, and a daemon shard fails on it |
+| `LoadAsync`, `LoadManyAsync`, `CheckExistsAsync`, `FetchStreamAsync`, `FetchLatest`, `AggregateStreamAsync` | found the row it collapsed onto | finds nothing, with no error |
+| `FetchForWriting` | handed back the stream it collapsed onto | a new stream |
+| `AppendOptimistic`, `AppendExclusive` | appended to it | `NonExistentStreamException` |
+| `Delete`, `HardDelete`, `ArchiveStream`, `TombstoneStream` | acted on that row or stream | does nothing, as for any id that isn't there |
+
+The exception comes from `SaveChangesAsync` and not from `Store`, because finding out the code page takes a
+round trip and `Store` is synchronous. Nothing is written, including anything else in that save.
+
+What's refused is what the column can't hold, not whatever isn't ASCII. `café`, `ñ` and `€100` are in code
+page 1252 and work as they always did. Under `Japanese_CI_AS`, `東京` is fine and `café` is refused. Under a
+`_UTF8` collation nothing is refused, because `varchar` holds everything there. Each tenant database answers
+for itself. An ASCII id costs nothing, and the first id outside ASCII that a table sees costs one round trip
+to read its code page, after which the store remembers it.
+
+### Rows that are already stored
+
+Nothing changes them, and nothing can repair them. **A document that was overwritten this way can't be
+recovered:** only the last writer's survives, and nothing records what it replaced. A stream under such a key
+can hold events appended under several different keys.
+
+The row stays where it is, under the key its column actually holds, so it can only be reached by that:
+
+```cs
+var document = await session.LoadAsync<City>("??");   // what the key holds
+document.Id;                                          // "大阪", from the JSON body
+
+await session.LoadAsync<City>("大阪");                 // null: the column can't hold that id
+session.Store(document);                              // refused, for the same reason
+session.Delete(document);                             // does nothing, for the same reason
+session.Delete<City>("??");                           // removes the row
+```
+
+To find them, compare the key with the id in the document's body. The member's name in the JSON follows your
+serializer's casing, and this assumes `id`:
+
+```sql
+SELECT id, JSON_VALUE(data, '$.id') AS id_in_the_document
+FROM dbo.pc_doc_city
+WHERE CONVERT(varbinary(1000), CONVERT(nvarchar(250), id))
+   <> CONVERT(varbinary(1000), JSON_VALUE(data, '$.id'));
+```
+
+### What to do instead
+
+- Use a `Guid` id, or for a stream, `StreamIdentity.AsGuid`.
+- Keep string ids within the database's code page. An id made from a name can be kept apart from the name,
+  with the name as an ordinary member you can index.
+- Create the database with a `_UTF8` collation, such as `Latin1_General_100_CI_AS_SC_UTF8`. It has to be a new
+  database, or at least new tables: `ALTER DATABASE ... COLLATE` changes the default and leaves every existing
+  column as it was, so those go on being refused. The limit of 250 is in bytes, so `東京` takes 6 of them.
+
+Widening the keys to `nvarchar` is the lasting fix. It's a size-of-data change to the primary key of every
+string-keyed table, and it's planned for a major version.
+
 ## Key Changes in 5.30.0
 
 Polecat 5.30 adopts the shared vector and hybrid search surface from `JasperFx.Events.Vectors`

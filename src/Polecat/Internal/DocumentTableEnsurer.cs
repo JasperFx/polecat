@@ -55,6 +55,16 @@ internal class DocumentTableEnsurer
 
     private bool _hiloTableEnsured;
 
+    // #919: here because there's one of these per database, which is how far an answer about a collation
+    // can be trusted. A tenant database can have a different one.
+    private readonly ConcurrentDictionary<string, VarcharKeyColumn> _keyColumns =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    internal VarcharKeyColumn? KeyColumnFor(string table) => _keyColumns.GetValueOrDefault(table);
+
+    internal VarcharKeyColumn RememberKeyColumn(string table, VarcharKeyColumn column)
+        => _keyColumns.GetOrAdd(table, column);
+
     /// <summary>
     ///     Forget everything this ensurer has checked, because the tables it checked have been dropped.
     ///     Otherwise the next session trusts the memo and fails on a table nothing will create.
@@ -62,6 +72,7 @@ internal class DocumentTableEnsurer
     internal void ForgetEnsuredTables()
     {
         _ensured.Clear();
+        _keyColumns.Clear();
         _fksEnsured.Clear();
         _hiloTableEnsured = false;
         _eventStoreEnsured = false;

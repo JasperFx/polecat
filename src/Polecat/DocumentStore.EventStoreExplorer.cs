@@ -165,7 +165,7 @@ public partial class DocumentStore
             WHERE stream_id = @stream_id
             {tenantFilter}ORDER BY version;
             """;
-        cmd.Parameters.AddIdParameter("@stream_id", resolvedStreamId);
+        cmd.Parameters.AddUncheckedKey("@stream_id", resolvedStreamId);
         if (tenantId != null) cmd.Parameters.AddVarChar("@tenant_id", tenantId);
 
         var ctx = new EventHydrationContext(
@@ -256,7 +256,7 @@ public partial class DocumentStore
             WHERE s.id = @id{tenantFilter}
             GROUP BY s.id, s.type, s.version, s.created, s.timestamp, s.tenant_id, s.is_archived, s.compacted_version;
             """;
-        cmd.Parameters.AddIdParameter("@id", resolvedStreamId);
+        cmd.Parameters.AddUncheckedKey("@id", resolvedStreamId);
         if (tenantId != null) cmd.Parameters.AddVarChar("@tenant_id", tenantId);
 
         await using var reader = await session.ExecuteReaderAsync(cmd, ct);

@@ -493,7 +493,7 @@ internal abstract class PolecatDocumentStorage<TDoc, TId>
     {
         builder.Append(_selectPrefixSql);
         builder.Append(" WHERE id = ");
-        builder.AppendParameter(id, id is string ? System.Data.SqlDbType.VarChar : null);
+        builder.AppendParameter(id, Polecat.Internal.SqlParameterCollectionExtensions.BindingForKey(id));
         AppendBatchLoadFilters(builder, tenantId);
     }
 
@@ -512,8 +512,12 @@ internal abstract class PolecatDocumentStorage<TDoc, TId>
         // #363. This copy bound one parameter per id, so it alone was refused past 2098 ids.
         if (Polecat.Linq.SqlGeneration.JsonValueList.ShouldBindAsJsonArray(builder, ids.Count))
         {
+            // #919: typed as the column, the list would turn 東京 into ?? on the server. Left as what
+            // OPENJSON gives it, the comparison is exact, for the price SqlParameterCollectionExtensions
+            // .BindingForKey describes.
+            var exact = ids.Any(x => x is string text && !System.Text.Ascii.IsValid(text));
             Polecat.Linq.SqlGeneration.JsonValueList.AppendInClause(builder, "id", ids.ToArray(),
-                DocumentTable.SqlTypeForIdentity(_mapping.InnerIdType), value => value);
+                exact ? null : DocumentTable.SqlTypeForIdentity(_mapping.InnerIdType), value => value);
         }
         else
         {
@@ -521,7 +525,7 @@ internal abstract class PolecatDocumentStorage<TDoc, TId>
             for (var i = 0; i < ids.Count; i++)
             {
                 if (i > 0) builder.Append(", ");
-                builder.AppendParameter(ids[i], ids[i] is string ? System.Data.SqlDbType.VarChar : null);
+                builder.AppendParameter(ids[i], Polecat.Internal.SqlParameterCollectionExtensions.BindingForKey(ids[i]));
             }
 
             builder.Append(")");

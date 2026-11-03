@@ -74,7 +74,7 @@ internal class FetchStreamBatchItem : IBatchQueryItem
     {
         builder.Append(
             $"SELECT {PcEventsRowReader.ComposeSelectColumns(_events.EventOptions)} FROM {_events.EventsTableName} WHERE stream_id = ");
-        builder.AppendParameter(_streamId, _streamId is string ? SqlDbType.VarChar : null);
+        builder.AppendParameter(_streamId, SqlParameterCollectionExtensions.BindingForKey(_streamId));
         builder.Append(" AND tenant_id = ");
         builder.AppendParameter(_tenantId, SqlDbType.VarChar);
         if (ordinalPredicate != null) builder.Append(ordinalPredicate);

@@ -477,6 +477,8 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
         DateTimeOffset? timestamp, long fromVersion, CancellationToken token, bool includeArchived = false)
     {
         await _session.EnsureEventStoreSchemaAsync(token); // #219: create event store on first use
+        if (!await _session.CouldHaveStreamAsync(streamId, token)) return [];
+
         // #57 pc_events half: column projection + per-row hydration live in
         // PcEventsRowReader, shared with the IEventStore explorer's
         // ReadStreamAsync path. This method only composes WHERE / ORDER BY.
@@ -620,6 +622,8 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
     private async Task<StreamState?> FetchStreamStateInternalAsync(object streamId, CancellationToken token)
     {
         await _session.EnsureEventStoreSchemaAsync(token); // #219: create event store on first use
+        if (!await _session.CouldHaveStreamAsync(streamId, token)) return null;
+
         // #57: column projection + row read live in PcStreamsRowReader so this
         // method, GetRecentStreamsAsync, and GetStreamMetadataAsync all read
         // pc_streams with the same shape. Note the canonical column order

@@ -175,6 +175,9 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
                     // Not inside a transaction: the batch only opens one further down.
                     await tableEnsurer.EnsureTablesAsync(providers, insideTransaction: false, token);
 
+                    // #919: a projection can take a document's id from an event's data
+                    await sessionBase.AssertStringKeysFitAsync(token);
+
                     allOps.AddRange(workTracker.Operations);
                 }
             }

@@ -29,7 +29,7 @@ internal class CheckExistsBatchQueryItem<T> : IBatchQueryItem where T : class
             : "";
 
         builder.Append($"SELECT CAST(CASE WHEN EXISTS(SELECT 1 FROM {_provider.Mapping.QualifiedTableName} WHERE id = ");
-        builder.AppendParameter(_id, _id is string ? System.Data.SqlDbType.VarChar : null);
+        builder.AppendParameter(_id, SqlParameterCollectionExtensions.BindingForKey(_id));
         if (_provider.Mapping.TenancyStyle == TenancyStyle.Conjoined) // #234
         {
             builder.Append(" AND tenant_id = ");

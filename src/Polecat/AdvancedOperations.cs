@@ -143,6 +143,8 @@ public class AdvancedOperations
         await using var bindingSession = _store.QuerySession(new SessionOptions { TenantId = tenantId });
         var storageSession = (Weasel.Storage.IStorageSession)bindingSession;
 
+        await assertIdsFitAsync(mapping, documents, tenantId, token);
+
         var connFactory = _store.Options.Tenancy!.GetConnectionFactory(tenantId);
         await _resilience.ExecuteAsync(static async (state, ct) =>
         {
@@ -272,6 +274,8 @@ public class AdvancedOperations
             }
         }
 
+        await assertIdsFitAsync(mapping, documents.Select(x => x.Document), tenantId, token);
+
         var connFactory = _store.Options.Tenancy!.GetConnectionFactory(tenantId);
 
         await _resilience.ExecuteAsync(static async (state, ct) =>
@@ -321,6 +325,29 @@ public class AdvancedOperations
                 }
             }
         }, (connFactory, documents, batchSize, storage, tenantId), token);
+    }
+
+    /// <summary>
+    ///     #919: the session's refusal, for a write that has no session. All of it before the first chunk,
+    ///     because each chunk commits on its own and half a bulk insert is hard to take back.
+    /// </summary>
+    private async Task assertIdsFitAsync<T>(DocumentMapping mapping, IEnumerable<T> documents, string tenantId,
+        CancellationToken token) where T : notnull
+    {
+        if (mapping.InnerIdType != typeof(string)) return;
+
+        var keys = documents.Select(x => (string)mapping.GetId(x)).Where(x => !Ascii.IsValid(x)).Distinct().ToList();
+        if (keys.Count == 0) return;
+
+        await using var session = (Internal.QuerySession)_store.QuerySession(new SessionOptions { TenantId = tenantId });
+        foreach (var key in keys)
+        {
+            if (await session.CodePageLosingAsync(mapping.QualifiedTableName, key, token) is { } codePage)
+            {
+                throw Polecat.Exceptions.StringIdOutsideCodePageException.ForDocument(key, mapping.DocumentType,
+                    mapping.QualifiedTableName, codePage);
+            }
+        }
     }
 
     public Task ResetHiloSequenceFloor<T>(long floor)

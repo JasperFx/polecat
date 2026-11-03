@@ -167,6 +167,18 @@ internal class WorkTracker : IWorkTracker
     }
 
     /// <summary>
+    ///     Forget one operation, for something a save has found it doesn't need to do.
+    /// </summary>
+    public void Remove(Weasel.Storage.IStorageOperation operation)
+    {
+        lock (_stateLock)
+        {
+            if (_operations.Remove(operation))
+                _operationsSnapshot = null;
+        }
+    }
+
+    /// <summary>
     ///     How many events each stream holds right now, which is what <see cref="RemoveEventsSince" /> takes.
     ///     Costs nothing to ask of a save with no streams.
     /// </summary>

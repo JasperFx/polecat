@@ -17,7 +17,8 @@ namespace Polecat.Internal.Operations;
 ///     archived would save straight through an un-archive that brought the tag's events back: a decision
 ///     made without them. See <see cref="StreamTagVersionBump" />.
 /// </remarks>
-internal class SetStreamArchivedOperation : IStorageOperation, Weasel.Storage.NoDataReturnedCall
+internal class SetStreamArchivedOperation : IStorageOperation, IStreamKeyedOperation,
+    Weasel.Storage.NoDataReturnedCall
 {
     private readonly EventGraph _events;
     private readonly object _streamId;
@@ -32,6 +33,7 @@ internal class SetStreamArchivedOperation : IStorageOperation, Weasel.Storage.No
         _archived = archived;
     }
 
+    public object StreamId => _streamId;
     public Type DocumentType => typeof(object);
     public OperationRole Role() => OperationRole.Update;
 
