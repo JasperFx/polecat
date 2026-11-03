@@ -651,6 +651,11 @@ internal class EventOperations : QueryEventStore, IEventOperations
 
     private async Task<long> ReadVersionFromExistingStream(object streamId, bool forUpdate, CancellationToken token)
     {
+        if (!await _sessionBase.CouldHaveStreamAsync(streamId, token))
+        {
+            throw new Exceptions.NonExistentStreamException(streamId);
+        }
+
         await using var cmd = new SqlCommand();
         cmd.CommandText = forUpdate
             ? _events.LockedStreamReadSql("version", "id = @id AND tenant_id = @tenant_id", _tenantId, cmd)
@@ -836,6 +841,9 @@ internal class EventOperations : QueryEventStore, IEventOperations
         long version = 0;
         bool streamExists = false;
 
+        // #919: a key the column can't hold is a new stream, not the one it collapses onto, and an
+        // exclusive fetch has no business locking that one.
+        if (await _sessionBase.CouldHaveStreamAsync(streamId, cancellation))
         {
             await using var cmd = new SqlCommand();
             cmd.CommandText = forExclusive

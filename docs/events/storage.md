@@ -10,7 +10,7 @@ The main event log table:
 | :--- | :--- | :--- |
 | `seq_id` | `bigint IDENTITY(1,1)` | Global sequence number (PK) |
 | `id` | `uniqueidentifier` | Unique event ID |
-| `stream_id` | `uniqueidentifier` or `nvarchar(250)` | Stream identifier |
+| `stream_id` | `uniqueidentifier` or `varchar(250)` | Stream identifier |
 | `version` | `int` | Position within the stream |
 | `data` | `json` | Serialized event body |
 | `bdata` | `varbinary(max)` | Binary event body, `NULL` unless the event type opted in — see [Binary Event Serialization](/events/binary-serialization) |
@@ -29,7 +29,7 @@ Stream metadata:
 
 | Column | Type | Description |
 | :--- | :--- | :--- |
-| `id` | `uniqueidentifier` or `nvarchar(250)` | Stream identifier (PK) |
+| `id` | `uniqueidentifier` or `varchar(250)` | Stream identifier (PK) |
 | `type` | `nvarchar(250)` | Aggregate type name |
 | `version` | `int` | Current stream version |
 | `timestamp` | `datetimeoffset` | Last event timestamp |

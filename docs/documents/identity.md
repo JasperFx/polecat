@@ -28,6 +28,47 @@ public class UserByEmail
 
 String IDs must be assigned by the application before storing.
 
+#### What a string id can hold
+
+A string id is stored in a `varchar(250)` primary key, so it can hold what the database's code page holds. A
+value outside that can't be stored, and Polecat refuses it rather than let SQL Server change it:
+
+```cs
+session.Store(new UserByEmail { Id = "東京" });
+
+// StringIdOutsideCodePageException, on the default collation
+await session.SaveChangesAsync();
+```
+
+SQL Server would otherwise store `東京` and `大阪` as the same `??`, so the second document would silently
+overwrite the first. The refusal comes from `SaveChangesAsync`, or from `BulkInsertAsync` before anything is
+written, and it applies to a [strong typed id](#strongly-typed-ids) wrapping a string and to a string stream
+key too.
+
+The test is whether the value survives the column, not whether it's ASCII:
+
+| Database collation | Code page | `plain` | `café` | `東京` | `😀` |
+| --- | --- | --- | --- | --- | --- |
+| `SQL_Latin1_General_CP1_CI_AS`, the default | 1252 | yes | yes | refused | refused |
+| `Japanese_CI_AS` | 932 | yes | refused | yes | refused |
+| `Latin1_General_100_CI_AS_SC_UTF8` | 65001 | yes | yes | yes | yes |
+
+Under database-per-tenant tenancy each database answers for itself. If a column has a different collation
+from its database, as an existing one does after `ALTER DATABASE ... COLLATE`, the value has to survive both,
+because a parameter is encoded with the database's.
+
+Nothing can have been stored under an id the column can't hold, so reading one is not an error. `LoadAsync`
+returns null, `LoadManyAsync` leaves it out, a LINQ comparison matches nothing, and `Delete` does nothing.
+
+To store ids like these, use a `Guid` id, or a database created with a `_UTF8` collation. A document overwritten
+this way before 5.48 can't be recovered, and the row it left behind answers to `??`: see the
+[migration guide](/migration-guide#upgrading-past-5-47-0-string-ids-outside-the-code-page).
+
+::: warning
+Tenant ids go into the same kind of column and aren't checked. Under the default collation two tenants named
+`東京` and `大阪` are one tenant, so keep tenant ids within the code page.
+:::
+
 ### Int / Long with HiLo
 
 ```cs

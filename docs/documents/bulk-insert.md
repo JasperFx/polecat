@@ -62,6 +62,9 @@ Bulk insert automatically handles ID assignment:
 - **Numeric IDs**: Assigned via HiLo sequences
 - **Strongly Typed IDs**: Inner values are auto-assigned
 
+A string id its column can't hold is refused before the first batch is written, so a bulk insert doesn't stop
+halfway through for it. See [what a string id can hold](/documents/identity#what-a-string-id-can-hold).
+
 ## Metadata Sync
 
 During bulk insert, Polecat automatically syncs metadata interfaces:

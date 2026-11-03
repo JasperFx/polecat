@@ -1005,6 +1005,10 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
                         .Select(t => _providers.GetProvider(t));
                     await _tableEnsurer.EnsureProjectedTablesAsync(newTypes, tableExistsAsync, token);
                 }
+
+                // #919: what the projections just queued. Nothing has been sent for it yet, and the
+                // streams the projections came from roll back with the refusal.
+                await AssertStringKeysFitAsync(token);
             }
 
             // Process document operations using BatchBuilder/SqlBatch. gh-515: the DCB boundary check is
@@ -1349,6 +1353,10 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             await _tableEnsurer.EnsureEventStoreSchemaAsync(HasOpenTransaction, token);
         }
 
+        // #919: past the ensures so the columns are there to ask about, and ahead of the provisioning
+        // below so a refused save leaves nothing behind.
+        await AssertStringKeysFitAsync(token);
+
         // #335: tenant-partitioned documents — resolve (and lazily provision, mirroring the event
         // append path) the partition ordinal for every tenant this flush writes under, BEFORE the
         // data transaction opens (provisioning runs DDL on its own connection). The document write
@@ -1389,6 +1397,77 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             {
                 await _eventGraph.TenantSequences.ResolveAsync(stream.TenantId, HasOpenTransaction, token);
             }
+        }
+    }
+
+    /// <summary>
+    ///     #919: refuse what this unit of work would write under a string id or stream key that its
+    ///     <c>varchar</c> column can't hold, before any of it is sent.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         At the save rather than in <c>Store</c>, which is synchronous and would have to block on a
+    ///         round trip to find out the code page. The walk costs next to nothing, because an ASCII id
+    ///         answers itself and only the first id outside it in a table has to ask.
+    ///     </para>
+    ///     <para>
+    ///         A delete, an archive and a tombstone are dropped rather than refused. They're after a row
+    ///         that can't exist, and a delete of a row that isn't there has never been an error, but they
+    ///         can't be left to run: by the time the id reached the column it would be the id of a row
+    ///         that does exist. The same goes for a read, which is why reads find nothing.
+    ///     </para>
+    /// </remarks>
+    internal async Task AssertStringKeysFitAsync(CancellationToken token)
+    {
+        foreach (var operation in _workTracker.Operations)
+        {
+            if (operation is Operations.IStreamKeyedOperation { StreamId: string streamKey })
+            {
+                if (!await CouldHaveStreamAsync(streamKey, token)) _workTracker.Remove(operation);
+            }
+            else if (operation is IStorageOperation { DocumentId: { } id and not (Guid or int or long) })
+            {
+                await assertDocumentIdFitsAsync(operation, id, token);
+            }
+        }
+
+        if (_eventGraph.StreamIdentity != JasperFx.Events.StreamIdentity.AsString) return;
+
+        foreach (var stream in _workTracker.Streams)
+        {
+            // Only what will be written. A stream fetched for writing and left alone writes nothing.
+            if (stream.Events.Count > 0 || stream.AlwaysEnforceConsistency)
+            {
+                await AssertStreamKeyFitsAsync(stream, token);
+            }
+        }
+    }
+
+    private async Task assertDocumentIdFitsAsync(Weasel.Storage.IStorageOperation operation, object id,
+        CancellationToken token)
+    {
+        var mapping = _providers.GetProvider(operation.DocumentType).Mapping;
+        if (mapping.StringKeyOf(id) is not { } key) return;
+
+        if (await CodePageLosingAsync(mapping.QualifiedTableName, key, token) is not { } codePage) return;
+
+        if (operation.Role() == OperationRole.Deletion)
+        {
+            _workTracker.Remove(operation);
+            return;
+        }
+
+        throw Exceptions.StringIdOutsideCodePageException.ForDocument(key, mapping.DocumentType,
+            mapping.QualifiedTableName, codePage);
+    }
+
+    internal async Task AssertStreamKeyFitsAsync(StreamAction stream, CancellationToken token)
+    {
+        if (stream.Key is { } key
+            && await CodePageLosingAsync(_eventGraph.StreamsTableName, key, token) is { } codePage)
+        {
+            throw Exceptions.StringIdOutsideCodePageException.ForStream(key, stream.AggregateType,
+                _eventGraph.StreamsTableName, codePage);
         }
     }
 
@@ -1618,6 +1697,11 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
 
         var storage = _eventGraph.ClosedShapeEventStorage;
         var isGuid = _eventGraph.StreamIdentity == JasperFx.Events.StreamIdentity.AsGuid;
+
+        foreach (var stream in streams)
+        {
+            await AssertStreamKeyFitsAsync(stream, token); // #919
+        }
 
         // One batched locking read for the whole group instead of one round trip per action.
         var states = await ReadStreamStatesForClosedShapeAsync(streams, token);

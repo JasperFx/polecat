@@ -626,8 +626,8 @@ public partial class DocumentStore : IDocumentStoreDiagnostics
         }
 
         // varchar id: VarChar rather than NVarChar so the comparison does not wrap the column in
-        // CONVERT_IMPLICIT and scan (#363).
-        bind = p => p.AddVarChar("@id", id);
+        // CONVERT_IMPLICIT and scan (#363), unless that would change the id (#919).
+        bind = p => p.AddUncheckedKey("@id", id);
         return true;
     }
 
