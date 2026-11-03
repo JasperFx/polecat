@@ -22,6 +22,7 @@ internal class MemberFactory : IMemberResolver
     private readonly ValueTypeInfo? _valueTypeId;
     private readonly DocumentMapping _mapping;
     private readonly bool _useReturning;
+    private readonly ISerializer _serializer;
 
     /// <summary>
     ///     The mapping these members belong to. Exposed because a method-call parser sometimes needs
@@ -34,6 +35,7 @@ internal class MemberFactory : IMemberResolver
     public MemberFactory(StoreOptions options, DocumentMapping mapping)
     {
         _enumStorage = options.Serializer.EnumStorage;
+        _serializer = options.Serializer;
         _idType = mapping.IdType;
         _valueTypeId = mapping.ValueTypeId;
         _mapping = mapping;
@@ -64,6 +66,9 @@ internal class MemberFactory : IMemberResolver
 
         return clrOnly ?? CreateMember(BuildJsonPath(expression), GetMemberType(expression.Member));
     }
+
+    public IQueryableMember ResolveKey(MemberExpression expression, string position)
+        => StoredShape.AssertHasValue(ResolveMember(expression), expression.Member, _serializer, position);
 
     /// <summary>
     ///     #875: SQL computes <c>DayOfWeek</c> as a number, and that is what a predicate compares and a
@@ -211,7 +216,7 @@ internal class MemberFactory : IMemberResolver
     internal static bool SupportsReturning(string sqlType) => sqlType != "uniqueidentifier";
 
     private string BuildJsonPath(MemberExpression expression)
-        => "$." + string.Join(".", ClrOnlyMembers.JsonKeys(expression).Select(GetJsonPropertyName));
+        => SerializedNames.PathFor(ClrOnlyMembers.JsonKeys(expression).Select(GetJsonPropertyName), _serializer);
 
     /// <summary>
     ///     #270: resolves the JSON key for a member exactly as System.Text.Json serializes it — an

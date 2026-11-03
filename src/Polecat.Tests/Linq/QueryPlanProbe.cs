@@ -65,7 +65,7 @@ public static class QueryPlanProbe
         return ReadAccesses(plan);
     }
 
-    private static PlanAccess[] ReadAccesses(string plan)
+    public static PlanAccess[] ReadAccesses(string plan)
     {
         var accesses = new List<PlanAccess>();
 

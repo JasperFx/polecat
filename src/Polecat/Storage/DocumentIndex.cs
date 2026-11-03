@@ -164,7 +164,7 @@ public class DocumentIndex
     /// </summary>
     internal static string ColumnNameForPath(string jsonPath, IndexCasing casing)
     {
-        var baseName = "cc_" + jsonPath.Replace("$.", "").Replace(".", "_").ToLowerInvariant();
+        var baseName = "cc_" + SerializedNames.IdentifierFor(jsonPath);
         return casing switch
         {
             IndexCasing.Upper => baseName + "_upper",
@@ -254,8 +254,7 @@ public class DocumentIndex
     private string DeriveIndexName(string tableName)
     {
         var prefix = IsUnique ? "ux" : "ix";
-        var pathSuffix = string.Join("_", JsonPaths.Select(p =>
-            p.Replace("$.", "").Replace(".", "_").ToLowerInvariant()));
+        var pathSuffix = string.Join("_", JsonPaths.Select(SerializedNames.IdentifierFor));
         var casingSuffix = Casing switch
         {
             IndexCasing.Upper => "_upper",
@@ -271,7 +270,7 @@ public class DocumentIndex
     /// </summary>
     internal static string MemberToJsonPath(MemberInfo member)
     {
-        return "$." + SerializedName(member);
+        return SerializedNames.PathFor([SerializedName(member)], null);
     }
 
     /// <summary>
@@ -321,7 +320,7 @@ public class DocumentIndex
             current = current.Expression as MemberExpression;
         }
 
-        return "$." + string.Join(".", segments);
+        return SerializedNames.PathFor(segments, null);
     }
 
     /// <summary>
@@ -393,7 +392,7 @@ public class DocumentIndex
     }
 
     internal static string MemberChainToJsonPath(MemberInfo[] chain)
-        => "$." + string.Join(".", chain.Select(SerializedName));
+        => SerializedNames.PathFor(chain.Select(SerializedName), null);
 
     /// <summary>
     ///     Strips a Convert wrapper (value-type members boxed to object in some anonymous-type

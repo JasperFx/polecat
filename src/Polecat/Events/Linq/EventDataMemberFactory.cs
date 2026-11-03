@@ -4,6 +4,7 @@ using System.Text.Json;
 using Polecat.Internal;
 using Polecat.Linq.Members;
 using Polecat.Linq.Parsing;
+using Polecat.Patching;
 using Polecat.Serialization;
 using Polecat.Storage;
 using Weasel.Core;
@@ -19,10 +20,12 @@ internal class EventDataMemberFactory : IMemberResolver
     private readonly JsonNamingPolicy? _namingPolicy;
     private readonly EnumStorage _enumStorage;
     private readonly bool _useReturning;
+    private readonly ISerializer _serializer;
 
     public EventDataMemberFactory(StoreOptions options)
     {
         _enumStorage = options.Serializer.EnumStorage;
+        _serializer = options.Serializer;
         _useReturning = options.UseNativeJsonType;
 
         if (options.Serializer is Serializer s)
@@ -41,6 +44,9 @@ internal class EventDataMemberFactory : IMemberResolver
         return ClrOnlyMembers.TryTranslate(expression, ResolveMember)
                ?? CreateMember(BuildJsonPath(expression), GetMemberType(expression.Member));
     }
+
+    public IQueryableMember ResolveKey(MemberExpression expression, string position)
+        => StoredShape.AssertHasValue(ResolveMember(expression), expression.Member, _serializer, position);
 
     private IQueryableMember CreateMember(string jsonPath, Type memberType)
     {
@@ -70,13 +76,11 @@ internal class EventDataMemberFactory : IMemberResolver
                 mayBeObject: !SelectProjectionAnalyzer.IsScalar(underlying));
     }
 
+    // #916: through the rule the document side uses, which is also what reads [JsonPropertyName]. An event
+    // body is written by the same serializer, so a renamed member was simply absent here.
     private string BuildJsonPath(MemberExpression expression)
-        => "$." + string.Join(".", ClrOnlyMembers.JsonKeys(expression).Select(x => GetJsonPropertyName(x.Name)));
-
-    private string GetJsonPropertyName(string clrPropertyName)
-    {
-        return _namingPolicy?.ConvertName(clrPropertyName) ?? clrPropertyName;
-    }
+        => SerializedNames.PathFor(
+            ClrOnlyMembers.JsonKeys(expression).Select(x => JsonPathHelper.FormatMember(x, _namingPolicy)), _serializer);
 
     private static Type GetMemberType(MemberInfo member)
     {

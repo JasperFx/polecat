@@ -219,9 +219,8 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
             return parser.Statement;
         }
 
+        DistinctProjection.ApplyTo(parser, query.Members);
         ApplySingleValueMode(parser);
-
-        if (parser.IsDistinct) parser.Statement.IsDistinct = true;
 
         return parser.Statement;
     }
@@ -289,8 +288,6 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
         {
             AssertNotGroupedOrJoined(parser, nameof(JsonQueryExtensions.ToJsonArrayAsync));
             parser.Statement.SelectFragment = ResolveStreamingSelect(parser, query.Members);
-
-            if (parser.IsDistinct) parser.Statement.IsDistinct = true;
         }
 
         await using var batch = new SqlBatch();
@@ -383,8 +380,6 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
         parser.Statement.Offset = (pageNumber - 1) * pageSize;
         parser.Statement.Limit = pageSize;
 
-        if (parser.IsDistinct) parser.Statement.IsDistinct = true;
-
         await using var batch = new SqlBatch();
         var builder = new BatchBuilder(batch);
         parser.Statement.Apply(builder);
@@ -441,6 +436,14 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
         var query = await PrepareAsync(expression, token);
         var parser = query.Parser;
         AssertNotGroupedOrJoined(parser, nameof(CursorPagingQueryableExtensions.ToJsonPageByCursorAsync));
+
+        // The cursor is read off each row's document, and the rows of a Distinct() have none.
+        if (parser.IsDistinct)
+        {
+            throw new BadLinqExpressionException(
+                $"{nameof(CursorPagingQueryableExtensions.ToJsonPageByCursorAsync)} has no translation for a "
+                + "Distinct(), because a cursor names one document. Page it with Skip and Take instead.");
+        }
 
         var orderBy = parser.OrderByMembers;
         CursorPagination.ValidateOrdering(orderBy);
@@ -536,6 +539,8 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
                 "instead of a JSON-streaming call.");
         }
 
+        if (parser.IsDistinct) return DistinctProjection.ReadColumns(parser.Statement, columns);
+
         var members = columns.Select(column => new JsonObjectMember(column.JsonKey,
             new LiteralSqlFragment(column.Locator), column.MemberType, column.SqlType));
 
@@ -580,14 +585,11 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
             return await ExecuteGroupByAsync<TResult>(query, token);
         }
 
+        // Apply Distinct, which needs the select list single-value mode replaces
+        DistinctProjection.ApplyTo(parser, query.Members);
+
         // Apply single-value mode to Statement
         ApplySingleValueMode(parser);
-
-        // Apply Distinct
-        if (parser.IsDistinct)
-        {
-            parser.Statement.IsDistinct = true;
-        }
 
         // Materialization shape (#273 E2d/E2e). Whole-document queries ride the closed-shape
         // QueryOnly storage: SELECT columns come from the shared select clause (data first,
@@ -598,7 +600,7 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
         bool syncGuidVersion = provider.Mapping.UseOptimisticConcurrency;
         bool isHierarchy = provider.Mapping.IsHierarchy();
         Weasel.Storage.ISelectClause? sharedSelectClause = null;
-        if (parser.Statement.SelectColumns == "data")
+        if (parser.Statement.SelectColumns == "data" && parser.Statement.DistinctColumns == null)
         {
             sharedSelectClause = _providers.ClosedShapeGraph.QueryOnlySelectClauseFor(documentType);
             parser.Statement.SelectColumns = string.Join(", ", sharedSelectClause.SelectFields());
@@ -652,50 +654,25 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
                 return await new ScalarHandler<TResult>().HandleAsync(reader, token);
 
             default:
-                return await ReadOneGroupAsync<TResult>(reader, parser.ValueMode.Value, grouping.ReadsJson, token);
+                return await ReadOneRowAsync<TResult>(reader, parser.ValueMode.Value, grouping.ReadsJson, token);
         }
     }
 
     /// <summary>
-    ///     First, Single and Last over groups. Reads the row directly rather than through a handler, so
-    ///     nothing has to be closed over <typeparamref name="TResult" /> at runtime.
+    ///     First, Single and Last over rows that are not documents: a scalar in the first column, or a
+    ///     JSON object. The rows are closed over <typeparamref name="TResult" /> statically, so nothing
+    ///     has to be at runtime, and a <c>TOP</c> has already bounded how many there are.
     /// </summary>
     [RequiresDynamicCode("Deserializes a projected row via ISerializer.FromJson.")]
     [RequiresUnreferencedCode("Deserializes a projected row via ISerializer.FromJson.")]
-    private async Task<TResult> ReadOneGroupAsync<TResult>(
+    private async Task<TResult> ReadOneRowAsync<TResult>(
         DbDataReader reader, SingleValueMode mode, bool readsJson, CancellationToken token)
     {
-        if (!await reader.ReadAsync(token))
-        {
-            if (mode is SingleValueMode.First or SingleValueMode.Single or SingleValueMode.Last)
-            {
-                throw new InvalidOperationException("Sequence contains no elements");
-            }
+        var rows = readsJson
+            ? await new GroupByListHandler<TResult>(_session.Serializer).HandleAsync(reader, token)
+            : await new ScalarListHandler<TResult>().HandleAsync(reader, token);
 
-            return default!;
-        }
-
-        TResult result;
-        if (readsJson)
-        {
-            result = _session.Serializer.FromJson<TResult>(reader.GetString(0));
-        }
-        else if (await reader.IsDBNullAsync(0, token))
-        {
-            result = default!;
-        }
-        else
-        {
-            var targetType = Nullable.GetUnderlyingType(typeof(TResult)) ?? typeof(TResult);
-            result = (TResult)ScalarConversion.Convert(reader.GetValue(0), targetType);
-        }
-
-        if (mode is SingleValueMode.Single or SingleValueMode.SingleOrDefault && await reader.ReadAsync(token))
-        {
-            throw new InvalidOperationException("Sequence contains more than one element");
-        }
-
-        return result;
+        return mode.OneOf(rows);
     }
 
     [RequiresDynamicCode("Closes GroupByListHandler<> over TResult's element type via Type.MakeGenericType.")]
@@ -1223,13 +1200,13 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
 
             case SingleValueMode.Min:
                 statement.SelectColumns = parser.AggregationMember != null
-                    ? $"MIN({parser.AggregationMember.TypedLocator})"
+                    ? $"MIN({parser.AggregationMember.ValueLocator()})"
                     : "MIN(data)";
                 break;
 
             case SingleValueMode.Max:
                 statement.SelectColumns = parser.AggregationMember != null
-                    ? $"MAX({parser.AggregationMember.TypedLocator})"
+                    ? $"MAX({parser.AggregationMember.ValueLocator()})"
                     : "MAX(data)";
                 break;
 
@@ -1259,6 +1236,12 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
                     return await InvokeScalarListHandlerAsync<TResult>(reader, token);
                 }
 
+                // Distinct rows are a JSON object each, like a GroupBy's: see DistinctProjection
+                if (parser.Statement.DistinctColumns != null)
+                {
+                    return await InvokeGroupByListHandlerAsync<TResult>(reader, parser.SelectExpression, token);
+                }
+
                 // Complex projection: read documents then project
                 return await InvokeProjectionHandlerAsync<TResult>(documentType, reader, parser.SelectExpression, token);
             }
@@ -1266,6 +1249,18 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
             // Plain list result
             return await InvokeListHandlerAsync<TResult>(documentType, reader, token, syncRevision, syncGuidVersion,
                 hierarchyMapping, sharedSelectClause);
+        }
+
+        // #916: a Select's row is whatever it projected. Read as the document, a scalar failed as
+        // malformed JSON and everything else as a bad cast.
+        if (parser.SelectExpression != null && parser.ValueMode.Value.TakesOneRow())
+        {
+            var readsJson = parser.Statement.DistinctColumns != null;
+
+            return parser.IsScalarSelect || readsJson
+                ? await ReadOneRowAsync<TResult>(reader, parser.ValueMode.Value, readsJson, token)
+                : parser.ValueMode.Value.OneOf(await InvokeProjectionHandlerAsync<IReadOnlyList<TResult>>(
+                    documentType, reader, parser.SelectExpression, token));
         }
 
         switch (parser.ValueMode)

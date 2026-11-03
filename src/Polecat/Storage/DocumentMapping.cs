@@ -220,7 +220,7 @@ internal class DocumentMapping
         if (!jsonPath.StartsWith("$.", StringComparison.Ordinal)) return null;
 
         var current = _documentType;
-        foreach (var segment in jsonPath[2..].Split('.'))
+        foreach (var segment in JsonPathHelper.SplitPath(jsonPath[2..]))
         {
             // #507: match on the SERIALIZED name, not the CLR name. An index path segment is
             // whatever the serializer writes, which for a [JsonPropertyName] member is the alias and
@@ -234,7 +234,7 @@ internal class DocumentMapping
             // to a default SQL type — a silently mistyped column rather than a refused one.
             var props = current.GetProperties(BindingFlags.Public | BindingFlags.Instance);
             var prop = Array.Find(props,
-                           p => string.Equals(SerializedNames.For(p, StoreOptions), segment,
+                           p => string.Equals(SerializedNames.SegmentFor(p, StoreOptions), segment,
                                StringComparison.Ordinal))
                        ?? Array.Find(props,
                            p => string.Equals(p.Name, segment, StringComparison.OrdinalIgnoreCase));

@@ -72,12 +72,38 @@ var ids = new[] { id1, id2, id3 };
 .ThenByDescending(x => x.Age)
 ```
 
+A member stored as a JSON object or array has no value to sort by, so `OrderBy`, `GroupBy` and `DistinctBy`
+refuse one with `BadLinqExpressionException`. Use one of its members. A class with a JSON converter that
+stores it as a number or a string is ordered by what it stores.
+
 ## Projection
 
 ```cs
 .Select(x => new { x.FirstName, x.LastName })
 .Select(x => x.Email)
+.Select(x => x.Email).FirstOrDefaultAsync()
 ```
+
+### Distinct
+
+```cs
+.Select(x => x.City).Distinct()
+.Select(x => new { x.City, x.State }).Distinct().OrderBy(x => x.City)
+.Select(x => new { x.City, x.State }).Distinct().CountAsync()
+```
+
+`Distinct()` runs in SQL, over the scalar a `Select` projected or over the members of an anonymous type or
+object initializer. Those members have to be scalar members of the document, because SQL can only compare
+columns: a member that is an object, a computed value or a constructor call is refused with
+`BadLinqExpressionException`. So is an ordering by something the `Select` did not project, and a `Sum`, `Min`,
+`Max` or `Average` after it. Project in memory after `ToListAsync()` for any of those.
+
+::: warning SQL decides what is equal
+Rows are compared by the database's collation, so on the default case-insensitive one `abc` and `ABC` are
+one row, and so are `abc` and `abc  `, because `=` pads with spaces. Which of the spellings comes back is up
+to SQL Server. Adding the length to a `DISTINCT` would mean reading every value twice, so it is left to mean
+what it means in SQL.
+:::
 
 ## Aggregation
 
@@ -124,6 +150,9 @@ public async Task group_by_simple_key_with_count()
 ```
 <sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.Tests/Linq/group_by_operator.cs#L22-L41' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_group_by_simple_key_with_count' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
+
+A string key is compared by the database's collation, so on the default case-insensitive one `abc` and `ABC`
+are one group. Trailing spaces do count: `abc` and `abc  ` are two groups, as they are in .NET.
 
 ### Composite Key
 

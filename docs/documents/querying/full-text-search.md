@@ -274,7 +274,8 @@ it does not tell hiragana from katakana. A collation such as `Latin1_General_100
 A token table created by 5.47 or earlier has a `varchar` term column, which kept only what the
 database's code page could hold: `東京` was stored as `??` and could not be found. Polecat leaves such a
 table working as it was rather than changing it during a request, because that is a long operation on a
-large table. See the [migration guide](/migration-guide#upgrading-past-5-47-0-the-full-text-term-column).
+large table. The same goes for the `doc_id` index, without which every write to the type scans the token
+table. See the [migration guide](/migration-guide#upgrading-past-5-47-0-the-full-text-term-column).
 
 ## Rebuilding the index
 

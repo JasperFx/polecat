@@ -563,8 +563,8 @@ internal class LinqQueryParser : ExpressionVisitor
         // After Select(x => x.Name), OrderBy(x => x) has a ParameterExpression body
         if (body is ParameterExpression)
         {
-            // Order by the current select columns (the projected scalar)
-            Statement.OrderBys.Add((Statement.SelectColumns, descending));
+            // Order by the projected scalar, through an index where it has one like any other ordering
+            Statement.OrderBys.Add((ScalarSelectMember?.TypedLocator ?? Statement.SelectColumns, descending));
             return;
         }
 
@@ -573,7 +573,7 @@ internal class LinqQueryParser : ExpressionVisitor
                 $"Polecat cannot translate the OrderBy key '{body}' to SQL. Order by a document member "
                 + "(x => x.Name) or by the scalar a preceding Select(...) projected.");
 
-        var member = _memberFactory.ResolveMember(memberExpr);
+        var member = _memberFactory.ResolveKey(memberExpr, "in an OrderBy");
         Statement.OrderBys.Add((member.TypedLocator, descending));
         OrderByMembers.Add((member, descending));
     }
@@ -595,7 +595,7 @@ internal class LinqQueryParser : ExpressionVisitor
         SelectExpression = SelectExpression == null ? lambda : ProjectedMembers.Rewrite(SelectExpression, lambda);
 
         Statement.SelectColumns = "data";
-        IsScalarSelect = false;
+        ScalarSelectMember = null;
 
         // For scalar Select (e.g., Select(x => x.Name)), change the select columns
         // to use JSON_VALUE for efficiency
@@ -612,9 +612,9 @@ internal class LinqQueryParser : ExpressionVisitor
             // a class with a converter of its own.
             if (member.MayBeObject) return;
 
-            Statement.SelectColumns = member.TypedLocator;
+            Statement.SelectColumns = member.ValueLocator();
             // Mark as scalar select so provider knows to use ScalarListHandler
-            IsScalarSelect = true;
+            ScalarSelectMember = member;
         }
         // For complex projections (anonymous types, DTOs), keep selecting 'data' column
         // and project in-memory after deserialization
@@ -633,9 +633,14 @@ internal class LinqQueryParser : ExpressionVisitor
     }
 
     /// <summary>
+    ///     The member behind a Select that is a simple scalar member access.
+    /// </summary>
+    public IQueryableMember? ScalarSelectMember { get; private set; }
+
+    /// <summary>
     ///     Whether the Select is a simple scalar member access.
     /// </summary>
-    public bool IsScalarSelect { get; private set; }
+    public bool IsScalarSelect => ScalarSelectMember != null;
 
     private void HandleDistinctBy(MethodCallExpression node)
     {
@@ -654,8 +659,8 @@ internal class LinqQueryParser : ExpressionVisitor
         var keyBody = StripConvert(keyLambda.Body);
 
         var documentMember = ResolveDistinctByKeyMember(keyBody);
-        var member = _memberFactory.ResolveMember(documentMember);
-        Statement.DistinctByLocator = member.TypedLocator;
+        var member = _memberFactory.ResolveKey(documentMember, "as a DistinctBy key");
+        Statement.DistinctByLocator = member.ValueLocator();
     }
 
     private MemberExpression ResolveDistinctByKeyMember(Expression keyBody)

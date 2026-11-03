@@ -38,6 +38,7 @@ public class full_text_unicode_tests: OneOffConfigurationsContext
     private const string Schema = "full_text_unicode_tests";
     private const string TokenTable = $"[{Schema}].[pc_ft_article]";
     private const string IndexName = "ix_pc_ft_article_term";
+    private const string DocumentIndexName = "ix_pc_ft_article_doc";
 
     private const string Tokyo = "東京";
     private const string Osaka = "大阪";
@@ -182,6 +183,7 @@ public class full_text_unicode_tests: OneOffConfigurationsContext
 
         await execAsync($"""
                          DROP INDEX {IndexName} ON {TokenTable};
+                         DROP INDEX {DocumentIndexName} ON {TokenTable};
                          ALTER TABLE {TokenTable} ALTER COLUMN term varchar(255) NOT NULL;
                          CREATE INDEX {IndexName} ON {TokenTable} (term, doc_id) INCLUDE (pos, member, tenant_id);
                          """);
