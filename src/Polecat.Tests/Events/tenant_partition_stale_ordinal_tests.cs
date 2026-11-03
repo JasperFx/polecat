@@ -105,6 +105,46 @@ public class tenant_partition_stale_ordinal_tests : IAsyncLifetime
         ordinals.ShouldBeSubsetOf(await BoundariesOfAsync("pc_streams"));
     }
 
+    /// <summary>
+    ///     #916. The removal asked the map it had, found no such tenant, and said so in a warning nobody
+    ///     could read, because its logger was the null one. The tenant stayed registered and split.
+    /// </summary>
+    [Fact]
+    public async Task a_store_can_remove_a_tenant_another_store_registered()
+    {
+        var (a, b) = await TwoLoadedStoresAsync();
+        using (a)
+        using (b)
+        {
+            await AppendAsync(b, "tenant_b");
+            var ordinal = (await RegistryAsync())["tenant_b"];
+
+            await a.Advanced.RemovePolecatManagedTenantsAsync(["tenant_b"], Ct);
+
+            (await RegistryAsync()).ShouldNotContainKey("tenant_b");
+            (await BoundariesOfAsync("pc_events")).ShouldNotContain(ordinal);
+            (await BoundariesOfAsync("pc_streams")).ShouldNotContain(ordinal);
+        }
+    }
+
+    [Fact]
+    public async Task a_store_can_remove_a_tenant_with_its_data_when_another_store_registered_it()
+    {
+        var (a, b) = await TwoLoadedStoresAsync();
+        using (a)
+        using (b)
+        {
+            var streamId = await AppendAsync(b, "tenant_b");
+
+            await a.Advanced.RemovePolecatManagedTenantsAsync(["tenant_b"],
+                Weasel.SqlServer.Tables.Partitioning.TenantDropBehavior.DeleteData, Ct);
+
+            var events = await TestSchema.QueryAsync(
+                $"SELECT seq_id FROM [{Schema}].[pc_events] WHERE stream_id = '{streamId}'");
+            events.ShouldBeEmpty();
+        }
+    }
+
     [Fact]
     public async Task a_store_can_add_a_tenant_after_another_store_took_the_next_ordinal()
     {

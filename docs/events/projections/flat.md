@@ -72,6 +72,16 @@ Migrations are additive. A column or index the projection declares is added to a
 
 Table, column and index names go through Weasel's identifier rules like every other schema object: `;`, `'`, `"`, `[` and `]` are refused at startup.
 
+### The Table's Schema
+
+A flat table goes in `dbo` unless you pass a schema to the constructor, whatever `DatabaseSchemaName` the store uses:
+
+```cs
+public OrderFlatTableProjection() : base("order_summary", "sales")
+```
+
+Pass one if you have more than one store in a database. Two stores in different schemas that register the same projection with no schema of their own share one `dbo` table, while each takes the migration lock for its own schema, so neither lock keeps the other out of it.
+
 ## Use Cases
 
 - **Reporting tables** -- Denormalized data for BI tools

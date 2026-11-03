@@ -56,6 +56,62 @@ public class separate_database_tenancy_tests : IAsyncLifetime
         }
     }
 
+    public class HiloAcrossDatabasesDocument
+    {
+        public int Id { get; set; }
+    }
+
+    private static async Task<bool> HasHiloRowAsync(string database)
+    {
+        await using var conn = new SqlConnection(TenantConnectionString(database));
+        await conn.OpenAsync(TestContext.Current.CancellationToken);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            IF OBJECT_ID('sep_hilo.pc_hilo') IS NULL SELECT 0;
+            ELSE SELECT COUNT(*) FROM sep_hilo.pc_hilo;
+            """;
+        return (int)(await cmd.ExecuteScalarAsync(TestContext.Current.CancellationToken))! > 0;
+    }
+
+    /// <summary>
+    ///     What <c>docs/documents/identity.md</c> says, held still until somebody decides otherwise (#916).
+    ///     One <c>pc_hilo</c> for the store, in the database behind <see cref="StoreOptions.ConnectionString" />,
+    ///     which is the first tenant's when nothing else names one. Giving each database its own would
+    ///     start numbering from nothing beside ids the shared one already handed out.
+    /// </summary>
+    [Fact]
+    public async Task hilo_ids_come_from_the_one_database_for_every_tenant()
+    {
+        var token = TestContext.Current.CancellationToken;
+
+        using var store = DocumentStore.For(opts =>
+        {
+            opts.DatabaseSchemaName = "sep_hilo";
+            opts.AutoCreateSchemaObjects = AutoCreate.All;
+            opts.UseNativeJsonType = ConnectionSource.SupportsNativeJson;
+            opts.MultiTenantedDatabases(tenancy =>
+            {
+                tenancy.AddTenant(TenantA, TenantConnectionString(DbA));
+                tenancy.AddTenant(TenantB, TenantConnectionString(DbB));
+            });
+        });
+
+        var ids = new List<int>();
+        foreach (var tenant in new[] { TenantA, TenantB })
+        {
+            await using var session = store.LightweightSession(new SessionOptions { TenantId = tenant });
+            var document = new HiloAcrossDatabasesDocument();
+            session.Store(document);
+            await session.SaveChangesAsync(token);
+            ids.Add(document.Id);
+        }
+
+        ids.ShouldBeUnique();
+
+        new[] { await HasHiloRowAsync(DbA), await HasHiloRowAsync(DbB) }
+            .Count(x => x).ShouldBe(1);
+    }
+
     private DocumentStore CreateSeparateTenantStore()
     {
         return DocumentStore.For(opts =>

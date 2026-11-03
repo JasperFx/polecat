@@ -212,6 +212,44 @@ public class coordinator_master_table_tenancy_tests : IClassFixture<CoordinatorT
     }
 
     /// <summary>
+    ///     #916. The distributor keeps one lock per database identifier for as long as it runs, and has no way
+    ///     to forget one. That identifier is the tenant's, so a tenant back on another database found the lock
+    ///     it left behind, and that lock went on connecting to where the tenant used to be.
+    /// </summary>
+    [Fact]
+    public async Task a_tenant_back_on_another_database_takes_its_lock_there()
+    {
+        var token = TestContext.Current.CancellationToken;
+
+        await using var node = new CoordinatedNode(DaemonMode.HotCold);
+        await node.StartAsync();
+
+        await node.AddTenantAsync(TenantA, DbA);
+        await node.AssertProjectedAsync(TenantA);
+
+        using var otherNode = node.BuildStoreWithNoDaemon();
+        await ((MasterTableTenancy)otherNode.Options.Tenancy!).DeleteDatabaseRecordAsync(TenantA, token);
+
+        var deadline = DateTimeOffset.UtcNow.Add(Timeout);
+        while (await ApplicationLocksOnAsync(DbA) > 0)
+        {
+            DateTimeOffset.UtcNow.ShouldBeLessThan(deadline, "the node never let go of tenant A's lock");
+            await Task.Delay(100, token);
+        }
+
+        await node.AddTenantAsync(TenantA, DbB);
+
+        deadline = DateTimeOffset.UtcNow.Add(Timeout);
+        while (await ApplicationLocksOnAsync(DbB) == 0)
+        {
+            DateTimeOffset.UtcNow.ShouldBeLessThan(deadline, "tenant A's lock never reached its new database");
+            await Task.Delay(100, token);
+        }
+
+        (await ApplicationLocksOnAsync(DbA)).ShouldBe(0);
+    }
+
+    /// <summary>
     ///     #871 item 6. An application lock is per database, and the multi-database distributor used the same
     ///     id for every set, so the second of two event stores to reach a database they share lost to the
     ///     first for good and its projections never ran. Each node here has a schema of its own.

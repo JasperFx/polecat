@@ -10,6 +10,9 @@ namespace Polecat.Internal;
 /// </summary>
 internal class WorkTracker : IWorkTracker
 {
+    private static readonly IReadOnlyDictionary<StreamAction, int> NoStreams =
+        new Dictionary<StreamAction, int>();
+
     private readonly List<Weasel.Storage.IStorageOperation> _operations = [];
     private ImmutableList<Weasel.Storage.IStorageOperation>? _operationsSnapshot;
 
@@ -160,6 +163,55 @@ internal class WorkTracker : IWorkTracker
 
             _operations.RemoveRange(count, _operations.Count - count);
             _operationsSnapshot = null;
+        }
+    }
+
+    /// <summary>
+    ///     How many events each stream holds right now, which is what <see cref="RemoveEventsSince" /> takes.
+    ///     Costs nothing to ask of a save with no streams.
+    /// </summary>
+    public IReadOnlyDictionary<StreamAction, int> EventCountsByStream()
+    {
+        lock (_stateLock)
+        {
+            if (_streams.Count == 0) return NoStreams;
+
+            var counts = new Dictionary<StreamAction, int>(_streams.Count, ReferenceEqualityComparer.Instance);
+            foreach (var stream in _streams)
+            {
+                counts[stream] = stream.Events.Count;
+            }
+
+            return counts;
+        }
+    }
+
+    /// <summary>
+    ///     Forget every event added since <paramref name="counts" /> was taken, and every stream that wasn't
+    ///     in it, leaving the streams that were as the same instances, because the application may hold them.
+    /// </summary>
+    /// <remarks>
+    ///     By count rather than by dropping the stream, because what the application put on a stream before
+    ///     the save is still owed. <see cref="StreamAction" /> has no way to remove an event, so this relies
+    ///     on <see cref="StreamAction.Events" /> being its own list.
+    ///     <c>retrying_a_failed_save_side_effect_tests</c> is what notices if that stops being true.
+    /// </remarks>
+    public void RemoveEventsSince(IReadOnlyDictionary<StreamAction, int> counts)
+    {
+        lock (_stateLock)
+        {
+            if (_streams.RemoveAll(x => !counts.ContainsKey(x)) > 0)
+            {
+                _streamsSnapshot = null;
+            }
+
+            foreach (var stream in _streams)
+            {
+                if (stream.Events is List<IEvent> events && events.Count > counts[stream])
+                {
+                    events.RemoveRange(counts[stream], events.Count - counts[stream]);
+                }
+            }
         }
     }
 

@@ -1438,11 +1438,17 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
         var options = _session.Options;
         var eventGraph = options.EventGraph;
 
+        // #916: under per-tenant partitioning a shard writes one row per tenant, and each tenant's seq_id
+        // counts from 1 by itself, so this tenant's rows and this tenant's height are the only comparison
+        // there is. The row called Name:All is never written, and the store's highest sequence is
+        // another tenant's.
+        var tenantId = eventGraph.UseTenantPartitionedEvents ? _session.TenantId : null;
+
         // Get the registered async projection shard names
         var asyncShardNames = options.Projections.All
             .Where(p => p.Lifecycle == JasperFx.Events.Projections.ProjectionLifecycle.Async)
             .SelectMany(p => p.ShardNames())
-            .Select(s => s.Identity)
+            .Select(s => tenantId == null ? s.Identity : s.ForTenant(tenantId).Identity)
             .ToHashSet();
 
         // If no async projections are registered, nothing to wait for
@@ -1460,7 +1466,7 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
             // the registered async shards have caught up to the high-water mark.
             var nonStale = await options.ResiliencePipeline.ExecuteAsync(static async (state, ct) =>
             {
-                var (connectionString, eventGraph, asyncShardNames) = state;
+                var (connectionString, eventGraph, asyncShardNames, tenantId) = state;
 
                 await using var conn = new SqlConnection(connectionString);
                 await conn.OpenAsync(ct);
@@ -1469,7 +1475,20 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
                 long highWater;
                 await using (var cmd = conn.CreateCommand())
                 {
-                    cmd.CommandText = $"SELECT ISNULL(MAX(seq_id), 0) FROM {eventGraph.EventsTableName};";
+                    if (tenantId == null)
+                    {
+                        cmd.CommandText = $"SELECT ISNULL(MAX(seq_id), 0) FROM {eventGraph.EventsTableName};";
+                    }
+                    else
+                    {
+                        cmd.CommandText = $"""
+                            SELECT ISNULL(MAX(seq_id), 0) FROM {eventGraph.EventsTableName}
+                            WHERE tenant_id = @tenant_id AND {eventGraph.TenantPartitionManager.Column} =
+                                (SELECT ordinal FROM {eventGraph.TenantPartitionsTableName} WHERE tenant_id = @tenant_id);
+                            """;
+                        cmd.Parameters.AddVarChar("@tenant_id", tenantId);
+                    }
+
                     var result = await cmd.ExecuteScalarAsync(ct);
                     highWater = result is long seq ? seq : 0;
                 }
@@ -1502,7 +1521,7 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
                     // All registered shards must exist and be caught up
                     return allCaughtUp && foundShards.SetEquals(asyncShardNames);
                 }
-            }, (options.ConnectionString, eventGraph, asyncShardNames), token);
+            }, (options.ConnectionString, eventGraph, asyncShardNames, tenantId), token);
 
             if (nonStale) return;
 

@@ -211,6 +211,8 @@ await store.WaitForNonStaleProjectionDataAsync(TimeSpan.FromSeconds(30));
 
 Every shard the store configures has to report, and every row in `pc_event_progression` has to reach the mark. The one exception is a row for another version of a projection the store still configures, such as the row V2 leaves behind when V3 takes over. Nothing advances that row, and the blue/green side effect gate needs it to stay, so the wait ignores it. A row for a projection you have removed altogether still counts, and the timeout names it, so delete it once you are done with it.
 
+With per-tenant partitioned events (`UseTenantPartitionedEvents`) each tenant has its own sequence and its own row for each shard, so this waits for every tenant that has events, each up to that tenant's own highest sequence.
+
 ### Per-Query
 
 Wait for projections before a specific query:
@@ -221,6 +223,8 @@ var orders = await session.Query<OrderSummary>()
     .Where(x => x.Status == "Active")
     .ToListAsync();
 ```
+
+With per-tenant partitioned events this waits for the session's tenant only.
 
 ## Event Progression
 

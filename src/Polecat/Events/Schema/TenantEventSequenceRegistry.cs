@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using Microsoft.Data.SqlClient;
 using Polecat.Storage;
 using Polly;
+using Weasel.SqlServer;
 using Weasel.SqlServer.Tables.Partitioning;
 
 namespace Polecat.Events.Schema;
@@ -16,15 +17,21 @@ namespace Polecat.Events.Schema;
 ///       per-tenant partition of <c>pc_events</c> via Weasel.SqlServer's
 ///       <see cref="ManagedTenantPartitions" /> (idempotent — existing tenants return their ordinal
 ///       with no DDL), and</item>
-///       <item>creates the tenant's <c>pc_events_sequence_{ordinal}</c> SEQUENCE object (idempotent,
-///       serialized per ordinal via <c>sp_getapplock</c>, its own short transaction so it never rolls
-///       back with the caller's append, all through the store resilience pipeline).</item>
+///       <item>creates the tenant's <c>pc_events_sequence_{ordinal}</c> SEQUENCE object through Weasel
+///       (idempotent, serialized per ordinal via <c>sp_getapplock</c>, on its own connection so it never
+///       rolls back with the caller's append, all through the store resilience pipeline).</item>
 ///     </list>
 ///     Subsequent appends hit the in-memory cache. The ordinal is both the physical partition value
 ///     written to <c>tenant_ordinal</c> and the suffix of the tenant's event sequence.
 /// </summary>
 internal sealed class TenantEventSequenceRegistry
 {
+    /// <summary>
+    ///     Nothing holds this lock for longer than a <c>CREATE SEQUENCE</c>, so waiting for it is only ever
+    ///     a matter of tenants registering at once.
+    /// </summary>
+    private const int SequenceLockTimeoutMilliseconds = 30_000;
+
     private readonly TenantPartitionOrdinalRegistry _ordinals;
     private readonly string _connectionString;
     private readonly string _schemaName;
@@ -85,34 +92,38 @@ internal sealed class TenantEventSequenceRegistry
         }
     }
 
+    /// <summary>
+    ///     A tenant's event sequence as a Weasel schema object. One per ordinal, known only once a tenant
+    ///     registers, so it isn't part of the event store's feature schema: the migration can't declare it,
+    ///     and this creates or drops it at the point the tenant comes or goes.
+    /// </summary>
+    internal static Sequence SequenceFor(string schemaName, int ordinal)
+        => new(new SqlServerObjectName(schemaName, $"pc_events_sequence_{ordinal}"));
+
     private async Task EnsureSequenceAsync(int ordinal, CancellationToken token)
     {
         await _resilience.ExecuteAsync(static async (state, ct) =>
         {
             var (connectionString, schema, ordinal) = state;
+            var sequence = SequenceFor(schema, ordinal);
+            var resource = sequence.Identifier.Name;
 
             await using var conn = new SqlConnection(connectionString);
             await conn.OpenAsync(ct).ConfigureAwait(false);
 
-            await using var cmd = conn.CreateCommand();
-            cmd.CommandText = $"""
-                DECLARE @seq sysname = N'pc_events_sequence_' + CAST(@ordinal AS varchar(20));
-                BEGIN TRANSACTION;
-                EXEC sp_getapplock @Resource = @seq, @LockMode = 'Exclusive', @LockOwner = 'Transaction';
-                IF NOT EXISTS (
-                    SELECT 1 FROM sys.sequences sq
-                    JOIN sys.schemas sc ON sq.schema_id = sc.schema_id
-                    WHERE sq.name = @seq AND sc.name = @schema)
-                BEGIN
-                    DECLARE @ddl nvarchar(max) =
-                        N'CREATE SEQUENCE [' + @schema + N'].[' + @seq + N'] AS bigint START WITH 1 INCREMENT BY 1;';
-                    EXEC sp_executesql @ddl;
-                END
-                COMMIT TRANSACTION;
-                """;
-            cmd.Parameters.AddWithValue("@schema", schema);
-            cmd.Parameters.AddWithValue("@ordinal", ordinal);
-            await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+            // Weasel's create is guarded so that it can run twice, not so that it can run twice at once.
+            // Two callers could both pass the guard, and the loser would fail on a name it was happy to find.
+            await conn.GetGlobalLock(resource, ct, lockTimeoutMs: SequenceLockTimeoutMilliseconds)
+                .ConfigureAwait(false);
+
+            try
+            {
+                await sequence.CreateAsync(conn, ct).ConfigureAwait(false);
+            }
+            finally
+            {
+                await conn.ReleaseGlobalLock(resource, CancellationToken.None).ConfigureAwait(false);
+            }
         }, (_connectionString, _schemaName, ordinal), token).ConfigureAwait(false);
     }
 

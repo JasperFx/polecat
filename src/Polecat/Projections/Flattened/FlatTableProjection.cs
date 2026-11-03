@@ -49,6 +49,12 @@ public abstract class FlatTableProjection : ProjectionBase,
     private readonly Dictionary<Type, IFlatTableEventHandler> _handlers = new();
     private bool _compiled;
 
+    /// <param name="tableName">The table to project into.</param>
+    /// <param name="schemaName">
+    ///     Its schema, or <c>dbo</c> if you leave this out, not the store's <c>DatabaseSchemaName</c>. That
+    ///     default can't change quietly: a projection registered without one has its table there, with its
+    ///     data in it, and an existing store would go on to write to a new, empty table in another schema.
+    /// </param>
     protected FlatTableProjection(string tableName, string? schemaName = null)
     {
         var schema = schemaName ?? "dbo";

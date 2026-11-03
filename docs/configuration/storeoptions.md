@@ -128,8 +128,8 @@ var store = DocumentStore.For(opts =>
 });
 ```
 
-Your transforms are consulted for what `SaveChangesAsync` sends, after the failing operation's own translation and before
-Polecat's other ones. An error none of them claims is reported as it would have been. A transform that matches an error
+Your transforms are consulted for what `SaveChangesAsync` sends, and for what the async daemon sends when it flushes a
+batch, after the failing operation's own translation and before Polecat's other ones. An error none of them claims is reported as it would have been. A transform that matches an error
 Polecat also translates, such as a duplicate key (`2627`) that would have been a `DocumentAlreadyExistsException`, replaces
 that translation for this store. Transforms belong to the store they are registered on, never to the whole process.
 

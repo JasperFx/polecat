@@ -1,4 +1,5 @@
 using System.Data.Common;
+using JasperFx.Core.Exceptions;
 using Weasel.Core;
 using Weasel.Storage;
 
@@ -18,7 +19,8 @@ namespace Polecat.Internal.Operations;
 ///     Raised events reach listeners through the change set's stream collection instead.
 ///     </para>
 /// </summary>
-internal sealed class SessionBoundOperationAdapter : IStorageOperation, IStorageOperationAdapter
+internal sealed class SessionBoundOperationAdapter : IStorageOperation, IStorageOperationAdapter,
+    IExceptionTransform
 {
     private readonly Weasel.Storage.IStorageOperation _inner;
     private readonly IStorageSession _session;
@@ -40,4 +42,12 @@ internal sealed class SessionBoundOperationAdapter : IStorageOperation, IStorage
 
     public Task PostprocessAsync(DbDataReader reader, IList<Exception> exceptions, CancellationToken token)
         => _inner.PostprocessAsync(reader, exceptions, token);
+
+    public bool TryTransform(Exception original, out Exception? transformed)
+    {
+        if (_inner is IExceptionTransform transform) return transform.TryTransform(original, out transformed);
+
+        transformed = null;
+        return false;
+    }
 }

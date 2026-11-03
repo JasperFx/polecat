@@ -312,6 +312,14 @@ public class Invoice
 }
 ```
 
+### HiLo and Database-per-Tenant
+
+A store has one set of HiLo sequences, not one per database. Under `MultiTenantedDatabases` or `MultiTenantedMasterTable`,
+every tenant's ids come from the `pc_hilo` rows in the database behind `StoreOptions.ConnectionString`. Unless you set one,
+that is the first tenant's database, or the master table's. So an id is unique across tenants as well as within one, that
+database has to stay reachable for every tenant's inserts, and a tenant's database moved elsewhere doesn't take its position
+in the sequence with it. This differs from Marten, which keeps a sequence per database.
+
 ### Resetting the Sequence Floor
 
 ```cs

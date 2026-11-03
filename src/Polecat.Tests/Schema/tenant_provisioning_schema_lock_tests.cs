@@ -266,6 +266,61 @@ public class tenant_provisioning_schema_lock_tests : IAsyncLifetime
         (await RegisteredTenantsAsync()).ShouldContain("newcomer");
     }
 
+    /// <summary>
+    ///     #916. MERGE RANGE is a schema change like any other, and it took no lock at all.
+    /// </summary>
+    [Fact]
+    public async Task removing_a_tenant_waits_for_the_lock()
+    {
+        using var store = await CreateProvisionedStoreAsync();
+        await AppendAsync(store, "leaving");
+
+        await using var holder = await TakeTheLockAsync();
+
+        var running = store.Advanced.RemovePolecatManagedTenantsAsync(["leaving"], Ct);
+
+        var patience = Stopwatch.StartNew();
+        while (!await SomethingIsQueuedForTheLockAsync(holder))
+        {
+            running.IsCompleted.ShouldBeFalse("this ran while another process held the migration lock");
+            patience.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(20), "nothing ever asked for the migration lock");
+
+            await Task.Delay(25, Ct);
+        }
+
+        (await RegisteredTenantsAsync()).ShouldContain("leaving");
+
+        await holder.ReleaseGlobalLock(Resource, Ct);
+        await running;
+
+        (await RegisteredTenantsAsync()).ShouldNotContain("leaving");
+    }
+
+    [Fact]
+    public async Task removing_a_tenant_gives_up_rather_than_go_ahead_without_the_lock()
+    {
+        using var store = await CreateProvisionedStoreAsync(TimeSpan.FromMilliseconds(250));
+        await AppendAsync(store, "leaving");
+
+        await using var holder = await TakeTheLockAsync();
+
+        await Should.ThrowAsync<InvalidOperationException>(
+            () => store.Advanced.RemovePolecatManagedTenantsAsync(["leaving"], Ct));
+
+        (await RegisteredTenantsAsync()).ShouldContain("leaving");
+    }
+
+    [Fact]
+    public async Task removing_a_tenant_gives_the_lock_back()
+    {
+        using var store = await CreateProvisionedStoreAsync();
+        await AppendAsync(store, "leaving");
+
+        await store.Advanced.RemovePolecatManagedTenantsAsync(["leaving"], Ct);
+
+        (await LockIsFreeAsync()).ShouldBeTrue();
+    }
+
     [Fact]
     public async Task a_split_retry_does_not_wait_for_the_lock_and_comes_round_again()
     {

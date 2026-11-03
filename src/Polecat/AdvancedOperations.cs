@@ -978,9 +978,10 @@ public class AdvancedOperations
     {
         var events = AssertManagedTenantPartitioning();
         var manager = events.TenantPartitionManager;
+        var logger = events.TenantOrdinals.Logger;
 
         var result = await events.TenantOrdinals.ProvisionAsync(
-                () => manager.AddPartitionsToAllTables(NullLogger.Instance, _store.Database, tenantIds, token),
+                () => manager.AddPartitionsToAllTables(logger, _store.Database, tenantIds, token),
                 insideTransaction: false, token)
             .ConfigureAwait(false);
 
@@ -1003,9 +1004,10 @@ public class AdvancedOperations
     {
         var events = AssertManagedTenantPartitioning();
         var manager = events.TenantPartitionManager;
+        var logger = events.TenantOrdinals.Logger;
 
         var result = await events.TenantOrdinals.ProvisionAsync(
-                () => manager.AddPartitionsToAllTables(NullLogger.Instance, _store.Database, tenantIdToOrdinal, token),
+                () => manager.AddPartitionsToAllTables(logger, _store.Database, tenantIdToOrdinal, token),
                 insideTransaction: false, token)
             .ConfigureAwait(false);
 
@@ -1041,22 +1043,37 @@ public class AdvancedOperations
     ///     <c>pc_natural_key_*</c> and <c>pc_dcb_tag_version</c> rows. Its <c>pc_event_tag_*</c> rows go
     ///     with its events. A tenant sharing an ordinal keeps all of this, as it keeps its events.
     ///     </para>
+    ///     <para>
+    ///     Holds the same schema migration lock as a migration or a new tenant's SPLIT, because
+    ///     <c>MERGE RANGE</c> is the same kind of change, and throws if it can't be had within
+    ///     <see cref="StoreOptions.StartupMigrationLockTimeout" />.
+    ///     </para>
     /// </summary>
     public async Task RemovePolecatManagedTenantsAsync(
         string[] tenantIds, TenantDropBehavior behavior, CancellationToken token = default)
     {
         var events = AssertManagedTenantPartitioning();
         var manager = events.TenantPartitionManager;
+        var logger = events.TenantOrdinals.Logger;
+
+        await using var conn = _store.Database.CreateConnection();
+        await conn.OpenAsync(token).ConfigureAwait(false);
+
+        await using var migrationLock = await Internal.SchemaMigrationLock
+            .HoldForFirstUseAsync(_store.Options, conn, insideTransaction: false, token).ConfigureAwait(false);
 
         // Hydrate + capture the ordinals of the tenants being dropped BEFORE the drop clears the
-        // registry rows, so fully-released ordinals can be identified afterwards.
+        // registry rows, so fully-released ordinals can be identified afterwards. From the database rather
+        // than the map this process last loaded (#906), which is missing any tenant another process
+        // registered: Weasel would skip one of those with a warning, and leave it registered and SPLIT.
+        // The lock is what makes the reload safe, for the reason on TenantPartitionOrdinalRegistry.ProvisionAsync.
+        manager.ForceReload();
         await manager.InitializeAsync(_store.Database, token).ConfigureAwait(false);
         var captured = tenantIds
             .Where(t => !string.IsNullOrEmpty(t) && manager.Ordinals.ContainsKey(t))
             .ToDictionary(t => t, t => manager.Ordinals[t], StringComparer.Ordinal);
 
-        await manager.DropPartitionFromAllTables(
-                NullLogger.Instance, _store.Database, tenantIds, behavior, token)
+        await manager.DropPartitionFromAllTables(logger, _store.Database, tenantIds, behavior, token)
             .ConfigureAwait(false);
 
         // An ordinal is released only when no remaining tenant references it (ordinal sharing).
@@ -1402,21 +1419,8 @@ public class AdvancedOperations
 
             foreach (var ordinal in released)
             {
-                await using var cmd = conn.CreateCommand();
-                cmd.CommandText = $"""
-                    IF EXISTS (
-                        SELECT 1 FROM sys.sequences sq
-                        JOIN sys.schemas sc ON sq.schema_id = sc.schema_id
-                        WHERE sq.name = @seq AND sc.name = @schema)
-                    BEGIN
-                        DECLARE @sql nvarchar(max) =
-                            N'DROP SEQUENCE ' + QUOTENAME(@schema) + N'.' + QUOTENAME(@seq);
-                        EXEC sp_executesql @sql;
-                    END
-                    """;
-                cmd.Parameters.AddWithValue("@seq", $"pc_events_sequence_{ordinal}");
-                cmd.Parameters.AddWithValue("@schema", schemaName);
-                await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+                await Events.Schema.TenantEventSequenceRegistry.SequenceFor(schemaName, ordinal).Drop(conn, ct)
+                    .ConfigureAwait(false);
             }
         }, (connStr, schema, ordinals), token).ConfigureAwait(false);
     }

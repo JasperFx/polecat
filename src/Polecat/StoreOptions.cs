@@ -499,8 +499,8 @@ public class StoreOptions
     /// </summary>
     /// <remarks>
     ///     <para>
-    ///         Consulted for what <c>SaveChangesAsync</c> sends, after the failing operation's own
-    ///         translation and before Polecat's other ones, so a transform that matches an error
+    ///         Consulted for what <c>SaveChangesAsync</c> and the async daemon's batch flush send, after the
+    ///         failing operation's own translation and before Polecat's other ones, so a transform that matches an error
     ///         Polecat also translates replaces that translation for this store. An error nothing
     ///         claims is reported as it would have been.
     ///     </para>
