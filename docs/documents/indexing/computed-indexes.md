@@ -337,6 +337,10 @@ opts.Schema.For<Metric>().Index(x => x.Label);
 produces a column over `$.bucket_label`, matching what queries on `x.Label` translate to, so the
 index is usable.
 
+A key that isn't a plain identifier, like `[JsonPropertyName("a-b")]` or anything under a kebab-case naming
+policy, is quoted as the serializer wrote it, so it reads `$."a-b"`. The characters a column name can't hold
+are spelled out in the names built from it: that member gets the column `cc_a_x2d_b`.
+
 ::: warning Upgrading from before 5.20
 Prior to 5.20 the index path was built from the CLR member name, so an aliased member got a column
 over a path the serializer never writes — permanently `NULL`, and an index that could never match.

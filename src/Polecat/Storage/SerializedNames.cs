@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Text;
 using System.Text.Json;
 using Polecat.Patching;
 using Polecat.Serialization;
@@ -50,6 +51,78 @@ internal static class SerializedNames
     public static string PathFor(IReadOnlyList<MemberInfo> chain, StoreOptions options)
     {
         var policy = PolicyFor(options);
-        return "$." + string.Join(".", chain.Select(m => JsonPathHelper.FormatMember(m, policy)));
+        return PathFor(chain.Select(m => JsonPathHelper.FormatMember(m, policy)), options.Serializer);
+    }
+
+    /// <summary>
+    ///     Stored keys as a JSON path to put inside a SQL string literal.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         #916: a key that isn't a plain identifier has to be quoted, or <c>$.a-b</c> fails as a
+    ///         badly formed path. That is any <c>[JsonPropertyName("a-b")]</c>, and every member of a store
+    ///         on a kebab-case policy. The rule is <see cref="JsonPathHelper.Segment" />, which the patch
+    ///         paths already use, because a path has to match how the serializer wrote the key.
+    ///     </para>
+    ///     <para>
+    ///         ⚠️ A serializer on a relaxed encoder writes an apostrophe as it is, where the default one
+    ///         writes <c>\u0027</c>, so the literal has to be allowed for here. Every site writes the path
+    ///         as <c>'{path}'</c>. That is also why text outside the code page can't work on such a
+    ///         serializer: it would need an <c>N'...'</c> at each of those sites.
+    ///     </para>
+    /// </remarks>
+    public static string PathFor(IEnumerable<string> keys, ISerializer? serializer)
+        => "$." + string.Join(".", keys.Select(x => Segment(x, serializer)));
+
+    /// <summary>
+    ///     One member's segment of a path, as <see cref="PathFor(IEnumerable{string}, ISerializer?)" /> wrote it.
+    /// </summary>
+    public static string SegmentFor(MemberInfo member, StoreOptions options)
+        => Segment(For(member, options), options.Serializer);
+
+    private static string Segment(string key, ISerializer? serializer)
+        => JsonPathHelper.Segment(key, serializer).Replace("'", "''");
+
+    /// <summary>
+    ///     A path as the part of a column or index name that comes from it: <c>$.address.city</c> is
+    ///     <c>address_city</c>.
+    /// </summary>
+    /// <remarks>
+    ///     A character no name can hold is spelled out rather than dropped, because Weasel refuses it, and
+    ///     because <c>a-b</c>, <c>a.b</c> as one key and <c>a_b</c> are three keys. It can only be reached
+    ///     by a key that used to fail, so no column that exists has a name that changes.
+    /// </remarks>
+    public static string IdentifierFor(string jsonPath)
+    {
+        var name = new StringBuilder();
+        var quoted = false;
+
+        foreach (var character in jsonPath.Replace("$.", string.Empty))
+        {
+            switch (character)
+            {
+                case '"':
+                    quoted = !quoted;
+                    break;
+
+                case '.' when !quoted:
+                    name.Append('_');
+                    break;
+
+                default:
+                    if (char.IsAsciiLetterOrDigit(character) || character == '_')
+                    {
+                        name.Append(char.ToLowerInvariant(character));
+                    }
+                    else
+                    {
+                        name.Append($"_x{(int)character:x}_");
+                    }
+
+                    break;
+            }
+        }
+
+        return name.ToString();
     }
 }

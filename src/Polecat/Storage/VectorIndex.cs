@@ -61,7 +61,7 @@ public class VectorIndex
     public DistanceFunction Distance { get; }
 
     /// <summary>The persisted computed column this declaration creates.</summary>
-    public string ColumnName => "vec_" + JsonPath.Replace("$.", "").Replace(".", "_").ToLowerInvariant();
+    public string ColumnName => "vec_" + SerializedNames.IdentifierFor(JsonPath);
 
     /// <summary>The member as the caller wrote it, for error messages.</summary>
     internal string MemberName => MemberChain is { Length: > 0 }

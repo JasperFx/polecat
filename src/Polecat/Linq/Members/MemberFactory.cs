@@ -216,7 +216,7 @@ internal class MemberFactory : IMemberResolver
     internal static bool SupportsReturning(string sqlType) => sqlType != "uniqueidentifier";
 
     private string BuildJsonPath(MemberExpression expression)
-        => "$." + string.Join(".", ClrOnlyMembers.JsonKeys(expression).Select(GetJsonPropertyName));
+        => SerializedNames.PathFor(ClrOnlyMembers.JsonKeys(expression).Select(GetJsonPropertyName), _serializer);
 
     /// <summary>
     ///     #270: resolves the JSON key for a member exactly as System.Text.Json serializes it — an
