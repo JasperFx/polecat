@@ -44,10 +44,9 @@ internal class TombstoneStreamOperation : IStorageOperation, IStreamKeyedOperati
         builder.Append(";\n");
 
         // #890: a boundary that read this stream's tagged events has to hear about it, or it saves straight
-        // through the tombstone. Same reason as an archive, and first because it finds the tags through the
-        // events and their tag rows, both about to go. The rows stay: whether a tag value can be erased at
-        // all is the open question in #890, and deleting a row here would lose a real conflict.
-        StreamTagVersionBump.WriteSql(builder, _events);
+        // through the tombstone, and a tag value nothing carries any more shouldn't outlive the stream. First
+        // because it finds the tags through the events and their tag rows, both about to go.
+        StreamTagVersionBump.WriteErasureSql(builder, _events);
 
         // #841: ahead of the events, because this finds the tag rows through them. Everywhere else the
         // foreign key does this, but archived partitioning has none and the rows would be orphaned.

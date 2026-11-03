@@ -34,7 +34,10 @@ This cleans:
 - `pc_streams` -- All stream metadata
 - `pc_event_progression` -- All daemon progression
 - `pc_natural_key_*` -- All natural key lookups
-- `pc_event_tag_*` and `pc_dcb_tag_version` -- All DCB tag rows and boundary counters
+- `pc_event_tag_*` and `pc_dcb_tag_version` -- All DCB tag rows and boundary versions
+
+It leaves `pc_dcb_tag_version_sequence` where it is, so a boundary captured before the clean can't match
+a row created after it.
 
 It deliberately leaves `pc_event_projection_floors` alone. A projection's start floor is
 configuration about where its history begins, so it outlives a data reset, just as it outlives a

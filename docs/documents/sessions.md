@@ -165,9 +165,10 @@ await using var session = store.LightweightSession(new SessionOptions
 });
 ```
 
-A retry of a failed `SaveChangesAsync` on the same session calls `BeforeSaveChangesAsync` again. Operations
-and transaction participants it added on the failed attempt are dropped first, so it should add them every
-time rather than remembering that it already has.
+A retry of a failed `SaveChangesAsync` on the same session calls `BeforeSaveChangesAsync` again. Operations,
+transaction participants, events and streams it added on the failed attempt are dropped first, so it should
+add them every time rather than remembering that it already has. Events you appended before calling
+`SaveChangesAsync` stay on their streams for the retry.
 
 ### The IChangeSet
 

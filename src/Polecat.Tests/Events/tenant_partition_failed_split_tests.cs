@@ -194,6 +194,106 @@ public class tenant_partition_failed_split_tests : IAsyncLifetime
         (await RowsPhysicallyInPartitionOfAsync("pc_streams", await OrdinalOfAsync("newcomer"))).ShouldBe(4);
     }
 
+    /// <summary>
+    ///     #916. On the connection's own limit, this is 30 seconds in which every tenant queues behind the
+    ///     SPLIT's schema-modification lock request.
+    /// </summary>
+    [Fact]
+    public async Task a_first_split_gives_up_at_its_own_limit_and_not_the_connections()
+    {
+        using var setup = await CreateProvisionedStoreAsync();
+
+        using var store = CreateStore(AutoCreate.None, StoreOptions.DefaultTimeout, null);
+        store.Events.TenantOrdinals.FirstSplitTimeoutSeconds = 1;
+        store.Events.TenantOrdinals.SplitRetryInterval = TimeSpan.Zero;
+
+        await using (await LockAsync("pc_streams"))
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            await AppendAsync(store, "newcomer");
+            stopwatch.Stop();
+
+            stopwatch.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(15));
+        }
+
+        await ShouldBeUnsplitAsync("pc_streams", "newcomer", 1);
+        _logger.Warnings.ShouldContain(x => x.Contains("newcomer"));
+
+        await AppendAsync(store, "newcomer");
+
+        await ShouldBeInItsOwnPartitionsAsync("pc_streams", "newcomer", 2);
+    }
+
+    /// <summary>
+    ///     Weasel writes the registry on the same connection as the SPLIT, and a write can't go ahead
+    ///     without that row, so the shorter limit must not be what fails it.
+    /// </summary>
+    [Fact]
+    public async Task a_registration_that_takes_longer_than_the_first_split_limit_still_lands()
+    {
+        using var setup = await CreateProvisionedStoreAsync();
+
+        using var store = CreateStore(AutoCreate.None, StoreOptions.DefaultTimeout, null);
+        store.Events.TenantOrdinals.FirstSplitTimeoutSeconds = 1;
+
+        // Loads the map, so that what is left for the new tenant is the MERGE this holds up
+        await AppendAsync(store, "incumbent");
+
+        await using var blocker = new SqlConnection(ConnectionSource.ConnectionString);
+        await blocker.OpenAsync(Ct);
+        await using var transaction = blocker.BeginTransaction();
+        await using (var command = blocker.CreateCommand())
+        {
+            command.Transaction = transaction;
+            command.CommandText = $"SELECT COUNT(*) FROM [{Schema}].[pc_tenant_partitions] WITH (TABLOCKX, HOLDLOCK)";
+            await command.ExecuteScalarAsync(Ct);
+        }
+
+        var appending = AppendAsync(store, "newcomer");
+
+        await Task.Delay(TimeSpan.FromSeconds(2.5), Ct);
+        await transaction.RollbackAsync(Ct);
+
+        await appending;
+
+        await ShouldBeInItsOwnPartitionsAsync("pc_streams", "newcomer", 1);
+    }
+
+    [Fact]
+    public async Task onboarding_explicitly_keeps_the_connections_limit()
+    {
+        using var setup = await CreateProvisionedStoreAsync();
+
+        using var store = CreateStore(AutoCreate.None, StoreOptions.DefaultTimeout, null);
+        store.Events.TenantOrdinals.FirstSplitTimeoutSeconds = 1;
+
+        Task<Weasel.SqlServer.Tables.Partitioning.TablePartitionStatus[]> onboarding;
+        await using (await LockAsync("pc_streams"))
+        {
+            onboarding = store.Advanced.AddPolecatManagedTenantsAsync(Ct, "newcomer");
+
+            // Past the first split limit, where a save would have given up on this table
+            await Task.Delay(TimeSpan.FromSeconds(2), Ct);
+            onboarding.IsCompleted.ShouldBeFalse();
+        }
+
+        (await onboarding).ShouldAllBe(x =>
+            x.Status == Weasel.SqlServer.Tables.Partitioning.PartitionMigrationStatus.Complete);
+    }
+
+    [Fact]
+    public async Task onboarding_explicitly_logs_through_the_stores_logger()
+    {
+        using var store = await CreateProvisionedStoreAsync();
+
+        await using (await LockAsync("pc_streams"))
+        {
+            await store.Advanced.AddPolecatManagedTenantsAsync(Ct, "newcomer");
+        }
+
+        _logger.Errors.ShouldContain(x => x.Contains("pc_streams"));
+    }
+
     [Fact]
     public async Task a_failed_split_can_be_read_back_while_it_waits()
     {
@@ -550,8 +650,10 @@ public class tenant_partition_failed_split_tests : IAsyncLifetime
     private sealed class RecordingLogger : ILogger
     {
         private readonly ConcurrentQueue<string> _warnings = new();
+        private readonly ConcurrentQueue<string> _errors = new();
 
         public IReadOnlyList<string> Warnings => _warnings.ToArray();
+        public IReadOnlyList<string> Errors => _errors.ToArray();
 
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
 
@@ -561,6 +663,7 @@ public class tenant_partition_failed_split_tests : IAsyncLifetime
             Func<TState, Exception?, string> formatter)
         {
             if (logLevel == LogLevel.Warning) _warnings.Enqueue(formatter(state, exception));
+            if (logLevel == LogLevel.Error) _errors.Enqueue(formatter(state, exception));
         }
     }
 }

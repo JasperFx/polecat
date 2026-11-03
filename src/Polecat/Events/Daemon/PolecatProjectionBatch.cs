@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Linq.Expressions;
+using System.Runtime.ExceptionServices;
 using FastExpressionCompiler;
 using JasperFx.Events;
 using JasperFx.Events.Daemon;
@@ -256,7 +257,7 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
 
         await _resilience.ExecuteAsync(static async (state, ct) =>
         {
-            var (connectionString, ops, txParticipants, msgBatch) = state;
+            var (connectionString, ops, txParticipants, msgBatch, transforms) = state;
             await using var conn = new SqlConnection(connectionString);
             await conn.OpenAsync(ct);
             await using var tx = await SqlTransactionRequests.BeginAsync(conn, ct);
@@ -284,20 +285,31 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
                         }
 
                         builder.Compile();
-                        var reader = await batch.ExecuteReaderAsync(ct);
+
                         try
                         {
-                            var exceptions = new List<Exception>();
-                            await OperationResultSets.ApplyAsync(reader, ops, exceptions, ct);
-
-                            if (exceptions.Count > 0)
+                            var reader = await batch.ExecuteReaderAsync(ct);
+                            try
                             {
-                                throw new AggregateException(exceptions);
+                                var exceptions = new List<Exception>();
+                                await OperationResultSets.ApplyAsync(reader, ops, exceptions, ct);
+
+                                if (exceptions.Count > 0)
+                                {
+                                    throw new AggregateException(exceptions);
+                                }
+                            }
+                            finally
+                            {
+                                await reader.DisposeAsync();
                             }
                         }
-                        finally
+                        catch (SqlException ex)
+                            when (BatchExceptionTransforms.TryTransform(ex, batch, ops, transforms, out var transformed))
                         {
-                            await reader.DisposeAsync();
+                            // The session's flush does the same (#549), so that an operation names its own
+                            // error however it came to run, and a raised event's lost race reads as one.
+                            ExceptionDispatchInfo.Capture(transformed!).Throw();
                         }
                     }
                     finally
@@ -336,7 +348,7 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
 
                 throw;
             }
-        }, (_connectionString, allOps, participants, messageBatch), token);
+        }, (_connectionString, allOps, participants, messageBatch, _store.Options.ExceptionTransforms), token);
 
         // ⚠️ The post-commit hooks below deliberately do NOT take `token`, and that is load-bearing
         // as of JasperFx 2.81.0 (jasperfx#953 / #980, polecat#744). A drain that times out calls

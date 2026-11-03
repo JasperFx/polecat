@@ -398,6 +398,78 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
     }
 
     /// <summary>
+    ///     The statement that reads one stream's events.
+    /// </summary>
+    /// <param name="select">The query as far as its stream and tenant predicate.</param>
+    /// <param name="rest">What follows that predicate, through the <c>ORDER BY</c>.</param>
+    /// <param name="stream">Something naming the stream id, which this may use more than once.</param>
+    /// <param name="tenant">Something naming the tenant, on the same terms.</param>
+    /// <remarks>
+    ///     <para>
+    ///         <b>#916: under <see cref="UseTenantPartitionedEvents" /> the read has to name
+    ///         <c>tenant_ordinal</c></b>, which leads <c>ix_pc_events_stream_and_version</c> there. Without it
+    ///         the read scans every partition, and on locking read committed it queues behind any open append
+    ///         in the store.
+    ///     </para>
+    ///     <para>
+    ///         <b>The ordinal comes from the registry, not this process's cache.</b> A process can read a
+    ///         tenant it has never written, and resolving one here could mean DDL with a transaction open,
+    ///         which is #864. Asking the registry is one seek. It is <c>NOLOCK</c> so that a Serializable
+    ///         session doesn't hold a lock the next tenant's registration would have to wait for.
+    ///     </para>
+    ///     <para>
+    ///         <b>The current ordinal isn't enough by itself.</b> A stream row keeps the ordinal it was written
+    ///         with, and a tenant removed with <c>RetainData</c> can come back on a different one (see
+    ///         <see cref="LockedStreamReadSql" />). Its old events stay where they are, and there is no listing
+    ///         old ordinals to seek them by, because nothing records one and <c>MERGE RANGE</c> took the
+    ///         boundary. So a stream that isn't wholly on the current ordinal, and any stream of a tenant the
+    ///         registry no longer has, keeps the read that doesn't name one, and pays for the scan.
+    ///     </para>
+    ///     <para>
+    ///         The first <c>EXISTS</c> is the ordinary case: two singletons, and the end of one stream in the
+    ///         index. The row being on the current ordinal isn't proof by itself, because a tenant can come
+    ///         back to an ordinal it had before, with the row still there and its newest events somewhere
+    ///         else, so the row's version also has to be the last one found there. If it isn't, the cost is
+    ///         the scan, and never events. The second <c>EXISTS</c> tells a stream that isn't there, which has
+    ///         nothing to scan for, from one that is elsewhere. It is one seek per partition, and <c>NOLOCK</c>
+    ///         for the reason given on <see cref="LockedStreamReadSql" />.
+    ///     </para>
+    /// </remarks>
+    internal string StreamEventsSql(string select, string rest, string stream, string tenant)
+    {
+        if (!UseTenantPartitionedEvents) return $"{select}{rest};";
+
+        return $"""
+            {StreamOrdinalGuardSql(stream, tenant)}
+                {select}{StreamOrdinalPredicate}{rest};
+            ELSE
+                {select}{rest};
+            """;
+    }
+
+    /// <summary>
+    ///     What <see cref="StreamEventsSql" /> starts with, up to the statement for a stream on the tenant's
+    ///     current ordinal, which narrows with <see cref="StreamOrdinalPredicate" />.
+    /// </summary>
+    internal string StreamOrdinalGuardSql(string stream, string tenant)
+    {
+        var column = TenantPartitionManager.Column;
+        var row = $"s.tenant_id = {tenant} AND s.id = {stream}";
+
+        return $"""
+            DECLARE @pc_stream_ordinal int =
+                (SELECT ordinal FROM {TenantPartitionsTableName} WITH (NOLOCK) WHERE tenant_id = {tenant});
+            IF EXISTS (SELECT 1 FROM {StreamsTableName} s
+                       WHERE {row} AND s.{column} = @pc_stream_ordinal AND s.version =
+                          (SELECT MAX(e.version) FROM {EventsTableName} e
+                           WHERE e.{column} = @pc_stream_ordinal AND e.stream_id = {stream}))
+               OR NOT EXISTS (SELECT 1 FROM {StreamsTableName} s WITH (NOLOCK) WHERE {row})
+            """;
+    }
+
+    internal string StreamOrdinalPredicate => $" AND {TenantPartitionManager.Column} = @pc_stream_ordinal";
+
+    /// <summary>
     ///     Validate the per-tenant partitioning configuration (#163 / polecat#171). Per-tenant event
     ///     sequencing only makes sense with conjoined event tenancy (there must be a tenant to slice
     ///     by), and it physically partitions <c>pc_events</c> by tenant — which a SQL Server table can
@@ -1018,9 +1090,20 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
         return new DcbTagVersionTable(this);
     }
 
+    internal Weasel.SqlServer.Sequence BuildDcbTagVersionSequence()
+    {
+        return new Weasel.SqlServer.Sequence(
+            new Weasel.SqlServer.SqlServerObjectName(DatabaseSchemaName, DcbTagVersionTable.SequenceName),
+            DcbTagVersionTable.SequenceStart);
+    }
+
     /// <summary>The schema-qualified name of the DCB tag-version side table (gh-515).</summary>
     internal string DcbTagVersionTableName
         => Polecat.Internal.SqlEscaping.QualifiedName(DatabaseSchemaName, DcbTagVersionTable.TableName);
+
+    /// <summary>The schema-qualified name of the sequence behind every tag version (#890).</summary>
+    internal string DcbTagVersionSequenceName
+        => Polecat.Internal.SqlEscaping.QualifiedName(DatabaseSchemaName, DcbTagVersionTable.SequenceName);
 
     /// <summary>
     ///     Convert a PascalCase type name to a snake_case event type alias.

@@ -87,6 +87,10 @@ internal class EventStoreFeatureSchema : FeatureSchemaBase
         if (_events.TagTypes.Count > 0)
         {
             yield return _events.BuildDcbTagVersionTable();
+
+            // #890: every value that table holds comes from here, so a row deleted by a tombstone and
+            // created again can never match a capture of the old one.
+            yield return _events.BuildDcbTagVersionSequence();
         }
 
         // Natural key tables

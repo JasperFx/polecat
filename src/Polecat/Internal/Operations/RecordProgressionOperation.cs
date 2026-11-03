@@ -1,3 +1,4 @@
+using System.Data;
 using System.Data.Common;
 using Weasel.Core;
 using Weasel.SqlServer;
@@ -37,20 +38,24 @@ internal class RecordProgressionOperation : IStorageOperation, Weasel.Storage.No
             ? "last_seq_id = @seq, last_updated = SYSDATETIMEOFFSET(), heartbeat = SYSDATETIMEOFFSET()"
             : "last_seq_id = @seq, last_updated = SYSDATETIMEOFFSET()";
 
+        // #916: varchar, as the column is, and the same mistake as #363. As nvarchar the column converts
+        // rather than the parameter, so this walks the table, and with these update locks that means
+        // waiting for the open batch of every shard it passes on the way to its own row.
         if (_upsert)
         {
             var columns = _extendedTracking
                 ? "name, last_seq_id, last_updated, heartbeat"
                 : "name, last_seq_id, last_updated";
             var values = _extendedTracking
-                ? "@name, @seq, SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET()"
-                : "@name, @seq, SYSDATETIMEOFFSET()";
+                ? "source.name, @seq, SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET()"
+                : "source.name, @seq, SYSDATETIMEOFFSET()";
 
             // HOLDLOCK: this is the Floor == 0 path, where the row does not exist yet and two
             // agents starting together both take the INSERT branch without it. See #500.
+            builder.Append($"MERGE {_progressionTableName} WITH (UPDLOCK, HOLDLOCK) AS target USING (SELECT ");
+            builder.AppendParameter(_name, SqlDbType.VarChar);
             builder.Append($"""
-                MERGE {_progressionTableName} WITH (UPDLOCK, HOLDLOCK) AS target
-                USING (SELECT @name AS name) AS source ON target.name = source.name
+                 AS name) AS source ON target.name = source.name
                 WHEN MATCHED THEN UPDATE SET {set}
                 WHEN NOT MATCHED THEN INSERT ({columns})
                     VALUES ({values});
@@ -58,16 +63,13 @@ internal class RecordProgressionOperation : IStorageOperation, Weasel.Storage.No
         }
         else
         {
-            builder.Append($"""
-                UPDATE {_progressionTableName}
-                SET {set}
-                WHERE name = @name;
-                """);
+            builder.Append($"UPDATE {_progressionTableName} SET {set} WHERE name = ");
+            builder.AppendParameter(_name, SqlDbType.VarChar);
+            builder.Append(";");
         }
 
         builder.AddParameters(new Dictionary<string, object?>
         {
-            ["name"] = _name,
             ["seq"] = _ceiling
         });
     }

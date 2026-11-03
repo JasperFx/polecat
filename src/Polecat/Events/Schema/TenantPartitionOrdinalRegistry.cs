@@ -44,6 +44,11 @@ internal sealed class TenantPartitionOrdinalRegistry
     private const int DuplicateKeyOnUniqueIndex = 2601;
 
     /// <summary>
+    ///     What SqlClient reports as the number of a command that ran out of time.
+    /// </summary>
+    private const int CommandTimedOut = -2;
+
+    /// <summary>
     ///     Every failed attempt means another tenant got the ordinal, so this is only reached by that many
     ///     tenants arriving at once outside the migration lock. See <see cref="ProvisionAsync" />.
     /// </summary>
@@ -62,6 +67,7 @@ internal sealed class TenantPartitionOrdinalRegistry
     private readonly ConcurrentDictionary<string, long> _unsplit = new(StringComparer.Ordinal);
 
     private PolecatDatabase? _splitRetryDatabase;
+    private PolecatDatabase? _firstSplitDatabase;
 
     public TenantPartitionOrdinalRegistry(ManagedTenantPartitions partitions, PolecatDatabase database,
         StoreOptions options, ILogger logger)
@@ -72,15 +78,25 @@ internal sealed class TenantPartitionOrdinalRegistry
         _logger = logger;
     }
 
+    internal ILogger Logger => _logger;
+
     /// <summary>
-    ///     How long a retried SPLIT may run, in seconds, where a first attempt has the connection's 30
-    ///     second default. It is short because of who else pays: while a SPLIT waits for its
-    ///     schema-modification lock, later readers and writers of the table queue behind it, so every
-    ///     tenant waits out this attempt and not only the one that made it. It covers moving the rows as
-    ///     well as waiting for the lock, because the connection's <c>Command Timeout</c> is the only limit
-    ///     that can be set from here. See <see cref="PolecatDatabase.WithCommandTimeout" />.
+    ///     How long a retried SPLIT may run, in seconds. It is short because of who else pays: while a SPLIT
+    ///     waits for its schema-modification lock, later readers and writers of the table queue behind it,
+    ///     so every tenant waits out this attempt and not only the one that made it. It covers moving the
+    ///     rows as well as waiting for the lock, because the connection's <c>Command Timeout</c> is the only
+    ///     limit that can be set from here. See <see cref="PolecatDatabase.WithCommandTimeout" />.
     /// </summary>
     internal int SplitRetryTimeoutSeconds { get; set; } = 3;
+
+    /// <summary>
+    ///     The same limit for a tenant's first SPLIT, per table. It is longer than a retry's because the
+    ///     tenant's partition is empty at this point and nothing has been written yet, so this is the
+    ///     attempt worth some patience, but it has the same queue behind it. It is safe to lose, because a
+    ///     SPLIT that gives up leaves the tenant with an ordinal and a retry owed. Weasel writes the
+    ///     registry on the same connection, which <see cref="firstRegistrationAsync" /> allows for.
+    /// </summary>
+    internal int FirstSplitTimeoutSeconds { get; set; } = 5;
 
     /// <summary>
     ///     The least time between two attempts at one tenant's SPLIT in this process. With
@@ -115,15 +131,39 @@ internal sealed class TenantPartitionOrdinalRegistry
             return cached;
         }
 
-        var result = await ProvisionAsync(
-                () => _partitions.AddPartitionsToAllTables(_logger, _database, new[] { tenantId }, token),
-                insideTransaction, token)
+        var result = await ProvisionAsync(() => firstRegistrationAsync(tenantId, token), insideTransaction, token)
             .ConfigureAwait(false);
 
         var ordinal = result.Ordinals[tenantId];
         recordSplitOutcome(tenantId, ordinal, result.Tables);
 
         return _cache.GetOrAdd(tenantId, ordinal);
+    }
+
+    /// <summary>
+    ///     A tenant's registration and first SPLIT, with the SPLIT on a shorter limit than the connection's.
+    /// </summary>
+    /// <remarks>
+    ///     Weasel does both on one connection, so the limit reaches the registry's <c>MERGE</c> as well, and
+    ///     a write can't go ahead without that row. Weasel isolates a SPLIT's failure per table, so a timeout
+    ///     that gets out of here came from the registry and nothing has been split. That one goes back
+    ///     to waiting the connection's full limit, as it always did.
+    /// </remarks>
+    private async Task<TenantPartitionAddResult> firstRegistrationAsync(string tenantId, CancellationToken token)
+    {
+        _firstSplitDatabase ??= _database.WithCommandTimeout(FirstSplitTimeoutSeconds);
+
+        try
+        {
+            return await _partitions
+                .AddPartitionsToAllTables(_logger, _firstSplitDatabase, new[] { tenantId }, token)
+                .ConfigureAwait(false);
+        }
+        catch (SqlException e) when (e.Number == CommandTimedOut)
+        {
+            return await _partitions.AddPartitionsToAllTables(_logger, _database, new[] { tenantId }, token)
+                .ConfigureAwait(false);
+        }
     }
 
     /// <summary>

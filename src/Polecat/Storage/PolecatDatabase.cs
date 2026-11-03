@@ -1277,6 +1277,12 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
         // Nothing runs asynchronously, so there is nothing that could be stale.
         if (expected.Count == 0) return;
 
+        if (_events.UseTenantPartitionedEvents)
+        {
+            await WaitForEachTenantsProjectionDataAsync(expected, timeout);
+            return;
+        }
+
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         var highWater = 0L;
         IReadOnlyList<ShardState> projectionProgress = [];
@@ -1306,6 +1312,87 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
             $"Timed out after {timeout} waiting for projection data to become non-stale. "
             + $"High water mark is {highWater}. "
             + $"Shards not caught up: {DescribeLaggingShards(expected, projectionProgress, highWater)}.");
+    }
+
+    /// <summary>
+    ///     #916: the same wait under <see cref="Events.EventGraph.UseTenantPartitionedEvents" />, where it
+    ///     is one wait per tenant.
+    /// </summary>
+    /// <remarks>
+    ///     Each tenant's <c>seq_id</c> counts from 1 by itself, so comparing a row with the highest sequence
+    ///     in the store holds a short tenant to a tall tenant's number, and that wait could only time out.
+    ///     So does the row <c>HighWaterMark:tenant</c>, which isn't a shard and never gets past its
+    ///     own tenant. Going tenant by tenant is also what stops one tenant's row answering for another's,
+    ///     as a row for any tenant would for <see cref="Matches" />. Only a tenant with events is asked
+    ///     about: a shard writes nothing for a tenant that gave it nothing to do.
+    /// </remarks>
+    private async Task WaitForEachTenantsProjectionDataAsync(IReadOnlyList<string> expected, TimeSpan timeout)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        IReadOnlyList<string> lagging = [];
+
+        while (stopwatch.Elapsed < timeout)
+        {
+            var heights = await FetchEventHeightsByTenantAsync(CancellationToken.None);
+            var progress = await AllProjectionProgress(CancellationToken.None);
+
+            var shards = progress
+                .Select(state => (state, name: ShardName.TryParse(state.ShardName, out var parsed) ? parsed : null))
+                .Where(x => x.name is { IsHighWaterMark: false })
+                .ToLookup(x => x.name!.TenantId, x => x.state, StringComparer.Ordinal);
+
+            lagging = heights
+                .Select(height => (height, rows: shards[height.Key].Where(p => !IsRetiredVersion(p, expected)).ToList()))
+                .Where(x => !AllShardsAreCaughtUp(expected, x.rows, x.height.Value))
+                .Select(x => $"{x.height.Key} at {x.height.Value}: {DescribeLaggingShards(expected, x.rows, x.height.Value)}")
+                .ToList();
+
+            if (lagging.Count == 0) return;
+
+            await Task.Delay(100);
+        }
+
+        throw new TimeoutException(
+            $"Timed out after {timeout} waiting for projection data to become non-stale. "
+            + $"Tenants not caught up: {string.Join("; ", lagging)}.");
+    }
+
+    private async Task<IReadOnlyDictionary<string, long>> FetchEventHeightsByTenantAsync(CancellationToken token)
+    {
+        try
+        {
+            return await _resilience.ExecuteAsync(static async (state, ct) =>
+            {
+                var (connectionString, events) = state;
+                var heights = new Dictionary<string, long>(StringComparer.Ordinal);
+
+                await using var conn = new SqlConnection(connectionString);
+                await conn.OpenAsync(ct);
+
+                await using var cmd = conn.CreateCommand();
+                cmd.CommandText = $"""
+                    SELECT t.tenant_id, h.height
+                    FROM {events.TenantPartitionsTableName} t
+                    CROSS APPLY (SELECT MAX(e.seq_id) AS height FROM {events.EventsTableName} e
+                                 WHERE e.{events.TenantPartitionManager.Column} = t.ordinal
+                                   AND e.tenant_id = t.tenant_id) h
+                    WHERE h.height IS NOT NULL;
+                    """;
+
+                await using var reader = await cmd.ExecuteReaderAsync(ct);
+                while (await reader.ReadAsync(ct))
+                {
+                    heights[reader.GetString(0)] = reader.GetInt64(1);
+                }
+
+                return (IReadOnlyDictionary<string, long>)heights;
+            }, (_connectionString, _events), token);
+        }
+        catch (Exception e) when (MissingStorageDetection.IsMissingStorage(e))
+        {
+            // #677: no events table, so nothing has been appended, as with FetchHighestEventSequenceNumber
+            return new Dictionary<string, long>();
+        }
     }
 
     private static bool AllShardsAreCaughtUp(

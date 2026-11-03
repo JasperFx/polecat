@@ -22,6 +22,8 @@ using Weasel.SqlServer;
 
 // The `Events` property on this class shadows the Polecat.Events namespace, so the DCB types have to be
 // reached by alias rather than by `Events.Dcb.X`.
+using DcbBoundaryRead = Polecat.Events.Dcb.DcbBoundaryRead;
+using DcbTagVersionCapture = Polecat.Events.Dcb.DcbTagVersionCapture;
 using DcbTagVersionEntry = Polecat.Events.Dcb.DcbTagVersionEntry;
 using DcbTagVersionPhase = Polecat.Events.Dcb.DcbTagVersionPhase;
 using TagValueStringifier = Polecat.Events.Dcb.TagValueStringifier;
@@ -143,12 +145,23 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     /// </remarks>
     private List<DcbTagVersionEntry>? _capturedDcbRows;
 
-    internal void CaptureDcbBoundary(IReadOnlyList<DcbTagVersionEntry> rows)
+    /// <summary>
+    ///     The boundaries whose events the save has to look at again, because a tag they read has no row
+    ///     (#890). Usually empty.
+    /// </summary>
+    private List<DcbBoundaryRead>? _capturedDcbReads;
+
+    internal void CaptureDcbBoundary(IReadOnlyList<DcbTagVersionEntry> rows, int eventsRead)
     {
         if (rows.Count == 0) return;
 
         _capturedDcbRows ??= new List<DcbTagVersionEntry>(rows.Count);
         _capturedDcbRows.AddRange(rows);
+
+        if (DcbTagVersionCapture.ReadFor(rows, eventsRead) is { } read)
+        {
+            (_capturedDcbReads ??= []).Add(read);
+        }
     }
 
     /// <summary>
@@ -164,6 +177,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         if (!anyTags || (captured is not { Count: > 0 } && !_workTracker.Streams.Any(s => s.Events.Count > 0)))
         {
             _capturedDcbRows?.Clear();
+            _capturedDcbReads?.Clear();
             return;
         }
 
@@ -182,12 +196,16 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         var capturedRows = appendsEvents && captured is { Count: > 0 }
             ? captured.ToArray()
             : Array.Empty<DcbTagVersionEntry>();
+        var capturedReads = appendsEvents && _capturedDcbReads is { Count: > 0 }
+            ? _capturedDcbReads.ToArray()
+            : Array.Empty<DcbBoundaryRead>();
 
         // The captures belong to the unit of work that is ending here either way -- a retry after a
         // conflict re-fetches the boundary and captures it again.
         _capturedDcbRows?.Clear();
+        _capturedDcbReads?.Clear();
 
-        var phase = DcbTagVersionPhase.Build(_eventGraph, capturedRows, appended);
+        var phase = DcbTagVersionPhase.Build(_eventGraph, capturedRows, appended, capturedReads);
         if (phase == null) return;
 
         await using var batch = new SqlBatch();
@@ -940,6 +958,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         var operationsBeforeThisAttempt = _workTracker.OperationCount;
         var participantsBeforeThisAttempt = _transactionParticipants.Count;
         var messageBatchBeforeThisAttempt = _inlineMessageBatch;
+        var eventsBeforeThisAttempt = _workTracker.EventCountsByStream();
 
         bool reliesOnTransaction;
         try
@@ -965,7 +984,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             // disposed. End it here, as a failure after that point does.
             await abandonOpenTransactionAsync(e);
             await abandonAttemptAsync(operationsBeforeThisAttempt, participantsBeforeThisAttempt,
-                messageBatchBeforeThisAttempt);
+                messageBatchBeforeThisAttempt, eventsBeforeThisAttempt);
             throw;
         }
 
@@ -1049,10 +1068,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
                 catch (SqlException ex)
                 {
                     // #549: give a queued operation the chance to name its own SQL error, exactly as
-                    // the daemon's batch flush already does (see ApplyOperationsAsync below). The two
-                    // flush loops are otherwise mirror images and this hook was only on one of them,
-                    // so an operation carrying an IExceptionTransform got its translation when the
-                    // daemon ran it and a raw SqlException when a session did.
+                    // the daemon's batch flush does (PolecatProjectionBatch.ExecuteAsync, since #916).
                     //
                     // #849: this is also where the application's transforms are asked, so it comes
                     // before the 2627 below for the same reason it does in Marten: one that claims an
@@ -1207,7 +1223,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             if (!committed)
             {
                 await abandonAttemptAsync(operationsBeforeThisAttempt, participantsBeforeThisAttempt,
-                    messageBatchBeforeThisAttempt);
+                    messageBatchBeforeThisAttempt, eventsBeforeThisAttempt);
             }
 
             throw;
@@ -1243,12 +1259,15 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     ///     again. #916: that is the listeners' <c>BeforeSaveChangesAsync</c> as well as the projections,
     ///     and it includes the message batch, whose messages the projections publish again on the retry.
     ///     It needs no telling: <c>BeforeCommitAsync</c> wrote inside the transaction that just rolled back,
-    ///     and <c>AfterCommitAsync</c> never ran, so nothing it holds was sent.
+    ///     and <c>AfterCommitAsync</c> never ran, so nothing it holds was sent. And it includes the events a
+    ///     listener appended, while what the application put on those same streams before the save stays,
+    ///     because nothing on a retry would add that again.
     /// </summary>
     private async Task abandonAttemptAsync(int operationsBefore, int participantsBefore,
-        IMessageBatch? messageBatchBefore)
+        IMessageBatch? messageBatchBefore, IReadOnlyDictionary<StreamAction, int> eventsBefore)
     {
         _workTracker.RemoveOperationsFrom(operationsBefore);
+        _workTracker.RemoveEventsSince(eventsBefore);
         _inlineMessageBatch = messageBatchBefore;
         await abandonParticipantsFromAsync(participantsBefore);
     }

@@ -148,6 +148,65 @@ public class per_tenant_event_sequence_tests : IAsyncLifetime
         (await blueQuery.Events.FetchStreamAsync(blueStream, token: TestContext.Current.CancellationToken)).Count.ShouldBe(3);
     }
 
+    private static async Task<(string Type, long Start, long Increment)?> SequenceAsync(string name)
+    {
+        var rows = await TestSchema.QueryAsync($"""
+            SELECT TYPE_NAME(sq.user_type_id), CAST(sq.start_value AS bigint), CAST(sq.increment AS bigint)
+            FROM sys.sequences sq
+            JOIN sys.schemas sc ON sq.schema_id = sc.schema_id
+            WHERE sc.name = '{PartitionedSchema}' AND sq.name = '{name}'
+            """);
+
+        return rows.Count == 0 ? null : ((string)rows[0][0], (long)rows[0][1], (long)rows[0][2]);
+    }
+
+    /// <summary>
+    ///     This went through Weasel in #916. It says nothing about the type or the step, so what the
+    ///     hand-written statement spelled out has to still come out of it: <c>seq_id</c> is a bigint.
+    /// </summary>
+    [Fact]
+    public async Task a_tenants_sequence_counts_up_in_bigints_from_one()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        using var store = CreatePartitionedStore();
+        await store.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: ct);
+
+        await store.Advanced.AddPolecatManagedTenantsAsync(ct, "Sequenced");
+        var ordinal = store.Events.TenantPartitionManager.Ordinals["Sequenced"];
+
+        (await SequenceAsync($"pc_events_sequence_{ordinal}")).ShouldBe(("bigint", 1L, 1L));
+    }
+
+    [Fact]
+    public async Task provisioning_one_sequence_from_many_callers_at_once_is_safe()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        using var store = CreatePartitionedStore();
+        await store.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: ct);
+
+        const int ordinal = 4242;
+
+        await Task.WhenAll(Enumerable.Range(0, 12).Select(_ =>
+            store.Events.TenantSequences.EnsureSequencesForOrdinalsAsync([ordinal], ct)));
+
+        (await SequenceAsync($"pc_events_sequence_{ordinal}")).ShouldNotBeNull();
+    }
+
+    [Fact]
+    public async Task removing_a_tenant_drops_its_sequence()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        using var store = CreatePartitionedStore();
+        await store.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: ct);
+
+        await store.Advanced.AddPolecatManagedTenantsAsync(ct, "Sequenced");
+        var ordinal = store.Events.TenantPartitionManager.Ordinals["Sequenced"];
+
+        await store.Advanced.RemovePolecatManagedTenantsAsync(["Sequenced"], ct);
+
+        (await SequenceAsync($"pc_events_sequence_{ordinal}")).ShouldBeNull();
+    }
+
     [Fact]
     public async Task events_are_physically_partitioned_by_tenant()
     {

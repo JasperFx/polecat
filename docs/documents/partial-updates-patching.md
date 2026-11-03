@@ -149,7 +149,7 @@ Patching is more efficient than loading, modifying, and re-saving a document bec
 
 ### Patching and the Native `json` Type
 
-The `CAST` above is deliberate. On SQL Server 2025 RTM-CU5, a `JSON_MODIFY` that adds a key directly to a `json` value leaves it in a state where the next `JSON_MODIFY` through an object can fail with "Encountered corrupted JSON type", write to the wrong member, or leave the document unreadable. Until that second write the row reads back correctly, and `DBCC CHECKTABLE` doesn't report it, even with `EXTENDED_LOGICAL_CHECKS`. Working on text avoids this, and the next patch to a row that an earlier version left in that state puts it right. A write that has already gone to the wrong member can't be undone this way.
+The `CAST` above is deliberate. On SQL Server 2025 RTM-CU5, a `JSON_MODIFY` that adds a key directly to a `json` value leaves it in a state where the next `JSON_MODIFY` through an object can go wrong. Which way depends on the document's keys: the write can land on another member of the document, disappear, or leave a member corrupted, so that reading it fails with "Encountered corrupted JSON type" and a plain `SELECT` of the column drops the connection. Until that second write the row reads back correctly, and `DBCC CHECKTABLE` doesn't report it, even with `EXTENDED_LOGICAL_CHECKS`. Working on text avoids this, and the next patch to a row that an earlier version left in that state puts it right. A write that has already gone astray can't be undone this way.
 
 The cost is a full parse of the document for each patch operation, so the time for one update grows with its size. Measured per update on one server:
 
@@ -161,3 +161,38 @@ The cost is a full parse of the document for each patch operation, so the time f
 | 1 MB | 4.1 ms | 170 ms |
 
 `nvarchar(max)` storage pays none of this.
+
+### Finding Documents an Earlier Version Damaged
+
+Through 5.47.0 patches ran directly on `json`, so a store using the native type may hold documents those two writes damaged. When the write landed on a document's id, its JSON id no longer matches the `id` column, and it won't load. Polecat can find those:
+
+```cs
+// One document type
+var damaged = await store.Advanced.FindDocumentsWithMismatchedIdsAsync<Order>();
+
+// Every document type the store is configured with
+var everything = await store.Advanced.FindDocumentsWithMismatchedIdsAsync();
+
+foreach (var byType in everything.GroupBy(x => x.DocumentType))
+{
+    logger.LogWarning("{Count} damaged {Type} documents", byType.Count(), byType.Key.Name);
+}
+```
+
+It's read-only and safe to run on a live store. It compares the two on the server, a page at a time, so no document bodies come back and a large table costs one pass of the server's time. Pass a page size if a page of the default 5,000 runs out of `CommandTimeout`. Strong-typed and string ids work, soft-deleted documents are included, and it covers every tenant under conjoined tenancy and every database under database-per-tenant. A document type that leaves its id out of the body is never reported.
+
+Each `DocumentIdMismatch` gives the `Id` from the column, which is right, and `StoredId`, what the body holds instead. `IsCorrupted` is true when the server can't read the stored id at all.
+
+::: warning
+**This only finds damage to the id.** The same write can land on any member of a document, or vanish, and nothing stored says what those members should have held, so an empty result doesn't prove a document is intact. If you can rebuild a document, from a projection's events or from a backup, that is the only general answer. `DBCC CHECKTABLE ... WITH EXTENDED_LOGICAL_CHECKS` reports corrupted rows, which this finds only when the corrupted member is the id, but not a write that landed on the wrong member.
+:::
+
+A document whose id was overwritten can be put right from its column, though what the patch meant to write is still lost. On a table with a `uniqueidentifier` id:
+
+```sql
+UPDATE [dbo].[pc_doc_order]
+SET data = JSON_MODIFY(CAST(data AS nvarchar(max)), '$.id', LOWER(CONVERT(nvarchar(36), id)))
+WHERE id = @id;
+```
+
+A corrupted row can't be repaired in place, because every `JSON_MODIFY` of it fails. Replace the whole body, by storing the document again from its source, or delete it.
