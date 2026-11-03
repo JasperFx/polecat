@@ -273,14 +273,20 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
     ///     one registry per database.
     /// </summary>
     internal ManagedTenantPartitions TenantPartitionManager =>
-        _tenantPartitions ??= new ManagedTenantPartitions(
-            "pc_events_tenants",
-            new DbObjectName(DatabaseSchemaName, "pc_tenant_partitions"),
-            column: "tenant_ordinal");
+        LazyInitializer.EnsureInitialized(ref _tenantPartitions, ref _tenantPartitionLock, () =>
+            new ManagedTenantPartitions(
+                "pc_events_tenants",
+                new DbObjectName(DatabaseSchemaName, "pc_tenant_partitions"),
+                column: "tenant_ordinal"));
 
     private PolecatDatabase? _tenantPartitionDatabase;
     private TenantPartitionOrdinalRegistry? _tenantOrdinals;
     private TenantEventSequenceRegistry? _tenantSequences;
+
+    // The three above are built on first use by concurrent sessions, and each holds a cache a second
+    // copy wouldn't share. Two sessions starting at once used to build one each, so a tenant resolved
+    // through one was missing from the other, and an append failed with "no resolved partition ordinal".
+    private object? _tenantPartitionLock;
 
     /// <summary>
     ///     True when anything in the store partitions by tenant — the event store tables
@@ -305,22 +311,24 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
     ///     tenants share the one configured connection/database.
     /// </summary>
     internal TenantPartitionOrdinalRegistry TenantOrdinals =>
-        _tenantOrdinals ??= new TenantPartitionOrdinalRegistry(
-            TenantPartitionManager,
-            _tenantPartitionDatabase ?? throw new InvalidOperationException(
-                "The owning database has not been attached for per-tenant partitioning."),
-            _options,
-            _options.DotNetLogger ?? _options.LogFactory?.CreateLogger<TenantPartitionOrdinalRegistry>()
-            ?? NullLogger<TenantPartitionOrdinalRegistry>.Instance);
+        LazyInitializer.EnsureInitialized(ref _tenantOrdinals, ref _tenantPartitionLock, () =>
+            new TenantPartitionOrdinalRegistry(
+                TenantPartitionManager,
+                _tenantPartitionDatabase ?? throw new InvalidOperationException(
+                    "The owning database has not been attached for per-tenant partitioning."),
+                _options,
+                _options.DotNetLogger ?? _options.LogFactory?.CreateLogger<TenantPartitionOrdinalRegistry>()
+                ?? NullLogger<TenantPartitionOrdinalRegistry>.Instance));
 
     /// <summary>
     ///     Resolves (and lazily provisions) each tenant's ordinal, physical partition, and per-tenant
     ///     event sequence when <see cref="UseTenantPartitionedEvents" /> is enabled.
     /// </summary>
     internal TenantEventSequenceRegistry TenantSequences =>
-        _tenantSequences ??= new TenantEventSequenceRegistry(
-            TenantOrdinals,
-            _options.ConnectionString, DatabaseSchemaName, _options.ResiliencePipeline);
+        LazyInitializer.EnsureInitialized(ref _tenantSequences, ref _tenantPartitionLock, () =>
+            new TenantEventSequenceRegistry(
+                TenantOrdinals,
+                _options.ConnectionString, DatabaseSchemaName, _options.ResiliencePipeline));
 
     /// <summary>
     ///     #852: see <see cref="PolecatProjectionOptions.SkipStaleGapsDespiteLiveTransactionsAfter" />.
