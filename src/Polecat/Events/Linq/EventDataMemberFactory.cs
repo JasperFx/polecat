@@ -19,10 +19,12 @@ internal class EventDataMemberFactory : IMemberResolver
     private readonly JsonNamingPolicy? _namingPolicy;
     private readonly EnumStorage _enumStorage;
     private readonly bool _useReturning;
+    private readonly ISerializer _serializer;
 
     public EventDataMemberFactory(StoreOptions options)
     {
         _enumStorage = options.Serializer.EnumStorage;
+        _serializer = options.Serializer;
         _useReturning = options.UseNativeJsonType;
 
         if (options.Serializer is Serializer s)
@@ -41,6 +43,9 @@ internal class EventDataMemberFactory : IMemberResolver
         return ClrOnlyMembers.TryTranslate(expression, ResolveMember)
                ?? CreateMember(BuildJsonPath(expression), GetMemberType(expression.Member));
     }
+
+    public IQueryableMember ResolveKey(MemberExpression expression, string position)
+        => StoredShape.AssertHasValue(ResolveMember(expression), expression.Member, _serializer, position);
 
     private IQueryableMember CreateMember(string jsonPath, Type memberType)
     {

@@ -111,7 +111,8 @@ internal class GroupBySelectBuilder
                 var memberExpr = newExpr.Arguments[i] as MemberExpression
                     ?? throw new BadLinqExpressionException(
                         $"GroupBy composite key member must be a property, got: {newExpr.Arguments[i]}");
-                var member = ClrOnlyMembers.AssertNoSubquery(_memberFactory.ResolveMember(memberExpr), "in a GroupBy key");
+                var member = ClrOnlyMembers.AssertNoSubquery(
+                    _memberFactory.ResolveKey(memberExpr, "in a GroupBy key"), "in a GroupBy key");
                 _compositeKey[parameters[i].Name!] = KeyValue(member);
                 GroupByColumns.Add(member.TypedLocator);
             }
@@ -119,7 +120,8 @@ internal class GroupBySelectBuilder
         else if (body is MemberExpression memberBody)
         {
             _isCompositeKey = false;
-            var member = ClrOnlyMembers.AssertNoSubquery(_memberFactory.ResolveMember(memberBody), "in a GroupBy key");
+            var member = ClrOnlyMembers.AssertNoSubquery(
+                _memberFactory.ResolveKey(memberBody, "in a GroupBy key"), "in a GroupBy key");
             _simpleKey = KeyValue(member);
             GroupByColumns.Add(member.TypedLocator);
         }

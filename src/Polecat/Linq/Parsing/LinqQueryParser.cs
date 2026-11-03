@@ -573,7 +573,7 @@ internal class LinqQueryParser : ExpressionVisitor
                 $"Polecat cannot translate the OrderBy key '{body}' to SQL. Order by a document member "
                 + "(x => x.Name) or by the scalar a preceding Select(...) projected.");
 
-        var member = _memberFactory.ResolveMember(memberExpr);
+        var member = _memberFactory.ResolveKey(memberExpr, "in an OrderBy");
         Statement.OrderBys.Add((member.TypedLocator, descending));
         OrderByMembers.Add((member, descending));
     }
@@ -654,7 +654,7 @@ internal class LinqQueryParser : ExpressionVisitor
         var keyBody = StripConvert(keyLambda.Body);
 
         var documentMember = ResolveDistinctByKeyMember(keyBody);
-        var member = _memberFactory.ResolveMember(documentMember);
+        var member = _memberFactory.ResolveKey(documentMember, "as a DistinctBy key");
         Statement.DistinctByLocator = member.TypedLocator;
     }
 
