@@ -8,7 +8,13 @@ namespace Polecat.Linq.Parsing;
 ///     One projected column of a "simple" <c>Select()</c> projection: the emitted JSON key and the
 ///     SQL locator that produces its value.
 /// </summary>
-internal sealed record SimpleProjectionColumn(string JsonKey, string Locator, Type MemberType, string? SqlType);
+/// <param name="JsonKey">The key it is written under.</param>
+/// <param name="Locator">The SQL that produces its value, as JSON should hold it.</param>
+/// <param name="MemberType">The CLR type of the member.</param>
+/// <param name="SqlType">The SQL type of <paramref name="Locator" />, or null for nvarchar or a number.</param>
+/// <param name="OrderLocator">What an ordering over this member is written as.</param>
+internal sealed record SimpleProjectionColumn(
+    string JsonKey, string Locator, Type MemberType, string? SqlType, string OrderLocator);
 
 /// <summary>
 ///     Detects whether a <c>Select()</c> projection is "simple" — composed only of (optionally
@@ -103,7 +109,7 @@ internal static class SelectProjectionAnalyzer
         var locator = member.JsonLocator
                       ?? (member.IsBoolean ? $"CAST({member.TypedLocator} AS bit)" : member.TypedLocator);
 
-        return new SimpleProjectionColumn(key, locator, member.MemberType, member.LocatorSqlType);
+        return new SimpleProjectionColumn(key, locator, member.MemberType, member.LocatorSqlType, member.TypedLocator);
     }
 
     private static bool IsRootedAtParameter(MemberExpression expression)

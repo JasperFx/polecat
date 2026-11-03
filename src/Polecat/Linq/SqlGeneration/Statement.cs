@@ -33,6 +33,12 @@ internal class Statement
     public string? DistinctByLocator { get; set; }
 
     /// <summary>
+    ///     When set, the rows are the distinct combinations of these columns, in a derived table, and the
+    ///     select list and the ordering read them from there. See <c>DistinctProjection</c>.
+    /// </summary>
+    public string? DistinctColumns { get; set; }
+
+    /// <summary>
     ///     When set, this statement becomes a derived table and the query is this aggregate over it.
     ///     That is what counting the groups of a grouped query takes, because <c>COUNT(*)</c> in its
     ///     own select list would count the rows of each group instead.
@@ -67,6 +73,12 @@ internal class Statement
         if (DistinctByLocator != null)
         {
             ApplyDistinctBy(builder);
+            return;
+        }
+
+        if (DistinctColumns != null)
+        {
+            ApplyDistinctColumns(builder);
             return;
         }
 
@@ -138,8 +150,6 @@ internal class Statement
     /// </summary>
     private void ApplyDistinctBy(ICommandBuilder builder)
     {
-        var skipOrderBy = IsAggregateSelect();
-
         builder.Append("SELECT ");
 
         // TOP applies to the de-duplicated outer result when there's no offset.
@@ -162,6 +172,40 @@ internal class Statement
         AppendWheres(builder);
 
         builder.Append(") AS __pc_distinct WHERE __pc_distinct_rn = 1");
+
+        AppendOuterOrderingAndPaging(builder);
+    }
+
+    /// <summary>
+    ///     Emits the distinct combinations of <see cref="DistinctColumns" /> as a derived table, reading
+    ///     the select list, the ordering and the page from outside it.
+    /// </summary>
+    private void ApplyDistinctColumns(ICommandBuilder builder)
+    {
+        builder.Append("SELECT ");
+
+        if (Limit.HasValue && !Offset.HasValue)
+        {
+            builder.Append($"TOP({Limit.Value}) ");
+        }
+
+        AppendSelectList(builder);
+
+        builder.Append(" FROM (SELECT DISTINCT ");
+        builder.Append(DistinctColumns!);
+        builder.Append(" FROM ");
+        builder.Append(FromTable);
+
+        AppendWheres(builder);
+
+        builder.Append(") AS __pc_distinct");
+
+        AppendOuterOrderingAndPaging(builder);
+    }
+
+    private void AppendOuterOrderingAndPaging(ICommandBuilder builder)
+    {
+        var skipOrderBy = IsAggregateSelect();
 
         if (OrderBys.Count > 0 && !skipOrderBy)
         {
