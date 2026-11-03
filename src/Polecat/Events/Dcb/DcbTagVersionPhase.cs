@@ -32,6 +32,20 @@ internal readonly record struct DcbTagVersionEntry(
     long LastSeenSequence);
 
 /// <summary>
+///     What a boundary read when at least one of its tags had no <c>pc_dcb_tag_version</c> row, which the
+///     save has to look at again. See <see cref="DcbTagVersionCapture.ReadFor" />.
+/// </summary>
+/// <param name="Query">The boundary's query.</param>
+/// <param name="TenantId">The tenant the boundary read.</param>
+/// <param name="LastSeenSequence">How far the query had read.</param>
+/// <param name="EventCount">How many events it read.</param>
+internal readonly record struct DcbBoundaryRead(
+    EventTagQuery Query,
+    string TenantId,
+    long LastSeenSequence,
+    int EventCount);
+
+/// <summary>
 ///     The DCB boundary check, run as one batch at the top of the save transaction: assert-and-bump the
 ///     rows this session's boundaries captured, and bump the rows it merely appends under.
 /// </summary>
@@ -62,16 +76,30 @@ internal readonly record struct DcbTagVersionEntry(
 ///         Every command emits exactly one row, so the reader walks the batch one result set per entry
 ///         whether or not the entry is an assertion. See gh-515.
 ///     </para>
+///     <para>
+///         Every value a row is given comes from <c>pc_dcb_tag_version_sequence</c>, so a row never holds
+///         the same value twice, even a row deleted and created again. A tombstone relies on that (#890): it
+///         deletes the rows of tags nothing carries any more, and with a counter that restarted, a stale
+///         capture could match the row the next appender creates.
+///     </para>
 /// </remarks>
 internal sealed class DcbTagVersionPhase
 {
+    /// <summary>
+    ///     Asserted when one session read a row twice and saw it move. A row's values only ever go up, so
+    ///     no row can hold this, and the entry cannot create a row either: it loses outright.
+    /// </summary>
+    private const long NeverMatches = -1;
+
     private readonly EventGraph _events;
     private readonly DcbTagVersionEntry[] _ordered;
+    private readonly IReadOnlyList<DcbBoundaryRead> _reads;
 
-    private DcbTagVersionPhase(EventGraph events, DcbTagVersionEntry[] ordered)
+    private DcbTagVersionPhase(EventGraph events, DcbTagVersionEntry[] ordered, IReadOnlyList<DcbBoundaryRead> reads)
     {
         _events = events;
         _ordered = ordered;
+        _reads = reads;
     }
 
     public int Count => _ordered.Length;
@@ -82,7 +110,8 @@ internal sealed class DcbTagVersionPhase
     /// </summary>
     public static DcbTagVersionPhase? Build(EventGraph events,
         IReadOnlyList<DcbTagVersionEntry> captured,
-        IReadOnlyList<DcbTagVersionEntry> appended)
+        IReadOnlyList<DcbTagVersionEntry> appended,
+        IReadOnlyList<DcbBoundaryRead> reads)
     {
         if (captured.Count == 0 && appended.Count == 0) return null;
 
@@ -97,12 +126,18 @@ internal sealed class DcbTagVersionPhase
                 continue;
             }
 
-            // An assertion outranks a bump, and among assertions the OLDEST capture wins: every read the
-            // session made has to still be valid, not just the most recent one.
+            // An assertion outranks a bump. Two reads that saw different values mean the row moved between
+            // them, so the older read is already stale, and every read the session made has to still be
+            // valid. Asserting the lower value used to do that, until #890 let a row disappear: a read of
+            // 7 and a later read of "no row" would have asserted the 0, created the row and won.
             if (entry.CapturedVersion is null) continue;
-            if (existing.CapturedVersion is null || entry.CapturedVersion < existing.CapturedVersion)
+            if (existing.CapturedVersion is null)
             {
                 merged[key] = entry;
+            }
+            else if (existing.CapturedVersion != entry.CapturedVersion)
+            {
+                merged[key] = existing with { CapturedVersion = NeverMatches };
             }
         }
 
@@ -118,12 +153,13 @@ internal sealed class DcbTagVersionPhase
             return string.CompareOrdinal(a.TenantId, b.TenantId);
         });
 
-        return new DcbTagVersionPhase(events, ordered);
+        return new DcbTagVersionPhase(events, ordered, reads);
     }
 
     public void WriteCommands(BatchBuilder builder)
     {
         var table = _events.DcbTagVersionTableName;
+        var sequence = _events.DcbTagVersionSequenceName;
 
         for (var i = 0; i < _ordered.Length; i++)
         {
@@ -148,7 +184,9 @@ internal sealed class DcbTagVersionPhase
             // nothing. Adding SERIALIZABLE here was what deadlocked — see the INSERT branch below.
             builder.Append("update ");
             builder.Append(table);
-            builder.Append(" set version = version + 1 where tag_table = ");
+            builder.Append(" set version = next value for ");
+            builder.Append(sequence);
+            builder.Append(" where tag_table = ");
             var tagTableParam = builder.AppendParameter(entry.TagTable, SqlDbType.VarChar).ParameterName;
             builder.Append(" and tag_value = ");
             var tagValueParam = builder.AppendParameter(entry.TagValue, SqlDbType.VarChar).ParameterName;
@@ -191,13 +229,17 @@ internal sealed class DcbTagVersionPhase
                 builder.Append(tagValueParam);
                 builder.Append(", @");
                 builder.Append(tenantParam);
-                builder.Append(", 1); set @won = 1; end try begin catch");
+                builder.Append(", next value for ");
+                builder.Append(sequence);
+                builder.Append("); set @won = 1; end try begin catch");
 
                 // 2627 = PK violation, 2601 = unique index violation. Anything else is not ours to
                 // swallow.
                 builder.Append(" if error_number() in (2627, 2601) begin update ");
                 builder.Append(table);
-                builder.Append(" set version = version + 1 where tag_table = @");
+                builder.Append(" set version = next value for ");
+                builder.Append(sequence);
+                builder.Append(" where tag_table = @");
                 builder.Append(tagTableParam);
                 builder.Append(" and tag_value = @");
                 builder.Append(tagValueParam);
@@ -216,6 +258,12 @@ internal sealed class DcbTagVersionPhase
             // One row per command either way, so the caller's result-set walk does not have to know
             // which entries were assertions. The value only means anything for the assertions.
             builder.Append(" select @won;");
+        }
+
+        foreach (var read in _reads)
+        {
+            builder.StartNewCommand();
+            EventOperations.WriteTagQueryCountSql(builder, _events, read.Query, read.TenantId, read.LastSeenSequence);
         }
     }
 
@@ -238,6 +286,20 @@ internal sealed class DcbTagVersionPhase
             if (!won && _ordered[i].CapturedVersion is not null)
             {
                 losers.Add(_ordered[i]);
+            }
+        }
+
+        foreach (var read in _reads)
+        {
+            await reader.NextResultAsync(token).ConfigureAwait(false);
+            var remaining = await reader.ReadAsync(token).ConfigureAwait(false) ? reader.GetInt32(0) : 0;
+
+            // Fewer, not different. The read can legitimately have kept fewer events than the query matches,
+            // because an event of a type this application no longer knows is dropped as it is read.
+            if (remaining < read.EventCount && !losers.Any(x => ReferenceEquals(x.Query, read.Query)))
+            {
+                losers.Add(new DcbTagVersionEntry(string.Empty, string.Empty, read.TenantId, 0, read.Query,
+                    read.LastSeenSequence));
             }
         }
 

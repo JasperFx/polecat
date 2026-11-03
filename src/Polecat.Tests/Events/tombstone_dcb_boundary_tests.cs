@@ -135,9 +135,12 @@ public class tombstone_dcb_boundary_tests : OneOffConfigurationsContext
         await session.SaveChangesAsync(Ct);
     }
 
-    /// <summary>The conflict in #890: deleting the row restarts the counter and a stale capture can match.</summary>
+    /// <summary>
+    ///     #890 decided this the other way once the value came from a sequence: nothing can match a row
+    ///     that has gone, and one that comes back holds a value no capture has seen.
+    /// </summary>
     [Fact]
-    public async Task the_counter_row_is_kept()
+    public async Task the_counter_row_goes_with_the_tag()
     {
         await ConfigureAsync();
         var doomed = await AppendAsync(new CourseId(Guid.NewGuid()));
@@ -145,12 +148,15 @@ public class tombstone_dcb_boundary_tests : OneOffConfigurationsContext
 
         await TombstoneAsync(doomed);
 
-        (await VersionRowsAsync()).ShouldBe(1);
+        (await VersionRowsAsync()).ShouldBe(0);
     }
 
-    /// <summary>Events older than the counter have no row, and a boundary reading them captures 0.</summary>
+    /// <summary>
+    ///     Events older than the counter have no row, and a boundary reading them captures 0. That used to
+    ///     get a row here, which wrote the value down in the middle of deleting it (#890).
+    /// </summary>
     [Fact]
-    public async Task a_tag_with_no_counter_row_gets_one()
+    public async Task a_tag_with_no_counter_row_does_not_get_one()
     {
         await ConfigureAsync();
         var doomed = await AppendAsync(new CourseId(Guid.NewGuid()));
@@ -164,7 +170,7 @@ public class tombstone_dcb_boundary_tests : OneOffConfigurationsContext
 
         await TombstoneAsync(doomed);
 
-        (await VersionRowsAsync()).ShouldBe(1);
+        (await VersionRowsAsync()).ShouldBe(0);
     }
 
     [Fact]

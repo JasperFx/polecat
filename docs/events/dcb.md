@@ -387,9 +387,9 @@ The table's shape follows the event store's:
 
 `QueryByTagsAsync`, `EventsExistAsync`, `AggregateByTagsAsync` and `FetchForWritingByTags` leave out
 archived events, as every other event query does. Archiving or un-archiving a stream also moves the
-consistency counter of each tag on its events, so it conflicts with a boundary that read those tags: the
-boundary's decision was made from a set of events that has since changed. Tombstoning a stream does the
-same, for the same reason.
+[version](#consistency-check) of each tag on its events, so it conflicts with a boundary that read those
+tags: the boundary's decision was made from a set of events that has since changed. Tombstoning a stream
+conflicts for the same reason, as [described below](#what-a-tombstone-erases).
 
 The event store explorer's tag lookup (`IEventStore.QueryByTagsAsync`) still shows archived events,
 because it is a diagnostic surface, like its stream reads.
@@ -401,19 +401,67 @@ fewer events and may see `EventsExistAsync` answer `false`.
 
 ### Consistency Check
 
-Polecat keeps a side table, `pc_dcb_tag_version`, holding one row per tag boundary with a counter of the
-commits that have touched it. `FetchForWritingByTags` reads the counter for every tag the query names;
-at `SaveChangesAsync` time, before any events are inserted, Polecat asserts the counter has not moved and
-bumps it with a single `UPDATE ... WHERE version = @captured`. Concurrent savers queue on that row's
-exclusive lock, and the loser gets a `DcbConcurrencyException`.
+Polecat keeps a side table, `pc_dcb_tag_version`, holding one row per tag boundary with a version that
+changes on every commit that touches it. `FetchForWritingByTags` reads the version for every tag the query
+names; at `SaveChangesAsync` time, before any events are inserted, Polecat asserts the version has not
+moved and replaces it with a single `UPDATE ... WHERE version = @captured`. Concurrent savers queue on that
+row's exclusive lock, and the loser gets a `DcbConcurrencyException`.
 
-Every save that appends a tagged event bumps the counter, boundary or not — so an ordinary
+Every save that appends a tagged event moves the version, boundary or not — so an ordinary
 `session.Events.Append(streamId, taggedEvent)` invalidates an in-flight boundary just as another
 boundary save would.
 
 A save that appends nothing does **not** assert its boundaries. A boundary is a condition on an append,
-so a session that read one and then wrote nothing has nothing for it to guard, and bumping the counter
+so a session that read one and then wrote nothing has nothing for it to guard, and moving the version
 would invalidate other sessions over a save that changed nothing.
+
+Every version comes from one sequence per schema, `pc_dcb_tag_version_sequence`, so a value never repeats,
+even on a row that was deleted and created again. That is what lets a tombstone delete rows. The sequence
+is created by the ordinary schema migration, as long as a tag type is registered, and starts above anything
+a row could have counted up to. Rows written by earlier versions keep their values until the next commit
+moves them. Under `AutoCreate.None`, apply the migration before deploying: with a tag type registered, a
+tagged append, an archive or a tombstone can't run without the sequence. A login with `db_datawriter` can
+draw from it. One with grants on individual tables needs `UPDATE` on the sequence too.
+
+### What a Tombstone Erases
+
+A tag can be personal data, and `pc_dcb_tag_version` holds the value as text. So `TombstoneStream` deletes
+the row of every tag on the stream that no other stream in the tenant carries, in the same transaction as
+the events, and its tag rows go with the events. Once a tombstone commits, nothing in
+`pc_event_tag_*` or `pc_dcb_tag_version` holds a value that only that stream carried.
+
+- **A tag another stream carries keeps its row.** The row is shared by value, and the other stream still
+  stores the tag, so deleting it would erase nothing. Its version moves instead. The last stream to go takes
+  it. An archived stream counts as carrying its tags, because its events are still stored.
+- **A tombstone never creates a row.** A tag with no row stays that way. A tag can have events and no row
+  if they were written before this table existed, or tagged later with `AssignTagWhere`.
+- **A boundary still can't save through it.** A boundary that captured a version finds the row moved or
+  gone. A boundary that read events under a tag with no row has no row to lose against, so its save checks
+  that the events it read are still there and throws `DcbConcurrencyException` if they aren't. That check
+  costs one more statement, only on a save whose boundary read events and had a tag with no row.
+- **A concurrent append can't be lost.** A tombstone takes the row before it asks whether another stream
+  carries the tag, and a save takes the row before it inserts an event. So the two queue, and the tombstone
+  sees the appended event or the append creates a new row with a new version.
+- **Tenants are separate.** The row is per tenant, and only the tombstoned stream's tenant is considered.
+
+What this doesn't do:
+
+- **Archiving isn't erasure.** `ArchiveStream` and `UnArchiveStream` keep the events, so they move rows and
+  create missing ones.
+- **Compaction doesn't erase either.** It removes events without touching rows, so a tag that only compacted
+  events carried keeps its row, and tombstoning the stream afterwards can't find it. Delete such a row
+  yourself. `CleanAllEventDataAsync` and `DeleteAllTenantDataAsync` take the rows too.
+- **It doesn't look outside the tag tables.** A value you copied into a projected document or a backup is
+  yours to remove, and the transaction log keeps what it keeps until it is truncated. For a stream you have
+  to keep, use `ApplyEventDataMasking`, which doesn't touch tags.
+- **It doesn't cover a rolling upgrade from 5.47.0 while it runs.** An older node still counts up from the
+  current value, doesn't delete rows, and can create a row at 1. Finish the rollout before relying on this.
+  A row an older node's tombstone leaves behind stays until you delete it.
+
+::: warning Marten differs here
+Marten keeps `mt_dcb_tag_version` rows through a stream delete, and its counters restart if a row is
+removed. Code moving between the two should not assume a tombstone erases tag values on Marten.
+:::
 
 ::: warning
 Through 5.20.0 this check was an `EXISTS` query over the tag tables. That is a non-locking predicate read:

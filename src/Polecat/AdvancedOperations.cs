@@ -571,6 +571,12 @@ public class AdvancedOperations
             {
                 table.SqlServerPartitioning?.WriteDropDdl(writer, table);
             }
+
+            // #890: a sequence isn't a table either, and left behind it would stop a DROP SCHEMA.
+            foreach (var sequence in feature.Objects.OfType<Weasel.SqlServer.Sequence>())
+            {
+                sequence.WriteDropStatement(new SqlServerMigrator(), writer);
+            }
         }
 
         return writer.ToString();
@@ -883,9 +889,8 @@ public class AdvancedOperations
             // Delete natural key tables first (they reference streams), and the tag tables with them.
             // #841: a tag table reaches its events through a cascading foreign key, except under archived
             // partitioning where it has none and its rows would be left behind.
-            // #865: pc_dcb_tag_version has no foreign key at all, and keeps tag values as text. Keeping its
-            // counters is only worth it while a boundary could still be in flight against them, which a
-            // wipe of every stream in every tenant has already ended.
+            // #865: pc_dcb_tag_version has no foreign key at all, and keeps tag values as text. Its sequence
+            // stays, so a boundary still in flight can't match a row created after the wipe (#890).
             await using (var findCmd = conn.CreateCommand())
             {
                 findCmd.CommandText = $"""

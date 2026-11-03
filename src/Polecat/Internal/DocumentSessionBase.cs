@@ -22,6 +22,8 @@ using Weasel.SqlServer;
 
 // The `Events` property on this class shadows the Polecat.Events namespace, so the DCB types have to be
 // reached by alias rather than by `Events.Dcb.X`.
+using DcbBoundaryRead = Polecat.Events.Dcb.DcbBoundaryRead;
+using DcbTagVersionCapture = Polecat.Events.Dcb.DcbTagVersionCapture;
 using DcbTagVersionEntry = Polecat.Events.Dcb.DcbTagVersionEntry;
 using DcbTagVersionPhase = Polecat.Events.Dcb.DcbTagVersionPhase;
 using TagValueStringifier = Polecat.Events.Dcb.TagValueStringifier;
@@ -143,12 +145,23 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     /// </remarks>
     private List<DcbTagVersionEntry>? _capturedDcbRows;
 
-    internal void CaptureDcbBoundary(IReadOnlyList<DcbTagVersionEntry> rows)
+    /// <summary>
+    ///     The boundaries whose events the save has to look at again, because a tag they read has no row
+    ///     (#890). Usually empty.
+    /// </summary>
+    private List<DcbBoundaryRead>? _capturedDcbReads;
+
+    internal void CaptureDcbBoundary(IReadOnlyList<DcbTagVersionEntry> rows, int eventsRead)
     {
         if (rows.Count == 0) return;
 
         _capturedDcbRows ??= new List<DcbTagVersionEntry>(rows.Count);
         _capturedDcbRows.AddRange(rows);
+
+        if (DcbTagVersionCapture.ReadFor(rows, eventsRead) is { } read)
+        {
+            (_capturedDcbReads ??= []).Add(read);
+        }
     }
 
     /// <summary>
@@ -164,6 +177,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         if (!anyTags || (captured is not { Count: > 0 } && !_workTracker.Streams.Any(s => s.Events.Count > 0)))
         {
             _capturedDcbRows?.Clear();
+            _capturedDcbReads?.Clear();
             return;
         }
 
@@ -182,12 +196,16 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         var capturedRows = appendsEvents && captured is { Count: > 0 }
             ? captured.ToArray()
             : Array.Empty<DcbTagVersionEntry>();
+        var capturedReads = appendsEvents && _capturedDcbReads is { Count: > 0 }
+            ? _capturedDcbReads.ToArray()
+            : Array.Empty<DcbBoundaryRead>();
 
         // The captures belong to the unit of work that is ending here either way -- a retry after a
         // conflict re-fetches the boundary and captures it again.
         _capturedDcbRows?.Clear();
+        _capturedDcbReads?.Clear();
 
-        var phase = DcbTagVersionPhase.Build(_eventGraph, capturedRows, appended);
+        var phase = DcbTagVersionPhase.Build(_eventGraph, capturedRows, appended, capturedReads);
         if (phase == null) return;
 
         await using var batch = new SqlBatch();

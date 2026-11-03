@@ -8,6 +8,22 @@ the `Polecat.Mcp` package, which is built on the official ModelContextProtocol S
 with `MapPolecatMcpServer()` from `Polecat.Mcp`; both default to `/polecat/mcp`, and `RequireAuthorization(...)`
 chains the same way. Do not map both on one host: they share a route.
 
+## Upgrading past 5.47.0: DCB tag versions come from a sequence
+
+If you have registered a tag type, the schema gains `pc_dcb_tag_version_sequence`, and every tag version comes
+from it ([polecat#890](https://github.com/JasperFx/polecat/issues/890)). It is an additive change, so any
+`AutoCreate` setting but `None` applies it on first use, and existing rows keep working. Under `AutoCreate.None`,
+apply the migration first, because tagged appends, archives and tombstones fail without the sequence. A login
+granted individual tables rather than `db_datawriter` also needs `UPDATE` on the sequence.
+
+`TombstoneStream` now deletes a tag's `pc_dcb_tag_version` row once no other stream carries it, and no longer
+creates one. See [what a tombstone erases](/events/dcb#what-a-tombstone-erases). A session's two boundaries over
+one tag now conflict whenever they captured different versions. Anything reading `pc_dcb_tag_version.version`
+directly can't treat it as a count of commits any more.
+
+Finish a rolling upgrade before you rely on any of this: a node still on 5.47.0 counts up from the current value
+and doesn't delete rows.
+
 ## Upgrading past 5.47.0: the full-text term column
 
 [polecat#877](https://github.com/JasperFx/polecat/issues/877) widened the full-text token table's `term`

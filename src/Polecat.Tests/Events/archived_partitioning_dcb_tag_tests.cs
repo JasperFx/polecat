@@ -73,6 +73,12 @@ public class archived_partitioning_dcb_tag_tests : IntegrationContext
             FROM sys.tables WHERE schema_id = SCHEMA_ID('arch_dcb_tags');
             IF LEN(@tblSql) > 0 EXEC sp_executesql @tblSql;
 
+            -- 2b'. Sequences belong to the schema as well (#890)
+            DECLARE @seqSql NVARCHAR(MAX) = '';
+            SELECT @seqSql += 'DROP SEQUENCE [arch_dcb_tags].' + QUOTENAME(name) + ';'
+            FROM sys.sequences WHERE schema_id = SCHEMA_ID('arch_dcb_tags');
+            IF LEN(@seqSql) > 0 EXEC sp_executesql @seqSql;
+
             -- 2c. Drop the schema itself
             IF EXISTS (SELECT 1 FROM sys.schemas WHERE name = 'arch_dcb_tags')
                 DROP SCHEMA [arch_dcb_tags];

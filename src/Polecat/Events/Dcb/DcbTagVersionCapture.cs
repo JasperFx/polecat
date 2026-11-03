@@ -26,6 +26,12 @@ namespace Polecat.Events.Dcb;
 ///         creating it here would either hold a lock for the caller's whole think-time or commit a write
 ///         on behalf of a read.
 ///     </para>
+///     <para>
+///         A missing row does not prove the tag has no events, though. Events written before this table
+///         existed have no row, and neither do tags added by <c>AssignTagWhere</c>. A tombstone of such a
+///         stream has no row to move and may not create one (#890), so nothing would tell a boundary that
+///         had read those events. <see cref="ReadFor" /> is how it finds out.
+///     </para>
 /// </remarks>
 internal static class DcbTagVersionCapture
 {
@@ -117,6 +123,19 @@ internal static class DcbTagVersionCapture
         }
 
         return byKey;
+    }
+
+    /// <summary>
+    ///     Non-null when a boundary read events under a tag with no row, so the save has to check they are
+    ///     still there: a row can't say so. Asks nothing of a boundary whose tags all have rows, which is
+    ///     the steady state, or of one that read nothing, which is a first use of the tag.
+    /// </summary>
+    public static DcbBoundaryRead? ReadFor(IReadOnlyList<DcbTagVersionEntry> entries, int eventCount)
+    {
+        if (eventCount == 0 || entries.All(x => x.CapturedVersion != 0)) return null;
+
+        var entry = entries[0];
+        return new DcbBoundaryRead(entry.Query!, entry.TenantId, entry.LastSeenSequence, eventCount);
     }
 
     public static IReadOnlyList<DcbTagVersionEntry> BuildEntries(
