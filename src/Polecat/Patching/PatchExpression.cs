@@ -71,6 +71,14 @@ internal class PatchExpression<T> : IPatchExpression<T>
             }
 
             fragment.Apply(builder);
+        }, builder =>
+        {
+            if (mapping.TenancyStyle == TenancyStyle.Conjoined)
+            {
+                builder.Append("tenant_id = ");
+                builder.AppendParameter(session.TenantId);
+                builder.Append(" AND ");
+            }
         });
         session.WorkTracker.Add(operation);
     }

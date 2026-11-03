@@ -752,6 +752,40 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
     }
 
     /// <summary>
+    ///     #916: what <c>FetchLatest</c> reads when it has nothing cached, for a caller about to fold
+    ///     events onto it.
+    /// </summary>
+    /// <remarks>
+    ///     An aggregate with void <c>Apply</c> methods is folded in place, so folding onto an instance a
+    ///     session holds changes that instance. <c>ProjectLatest</c> did, with the one from the aggregate
+    ///     identity map or, for an Inline aggregate, the document identity map: the next call found its
+    ///     own work and applied the pending events again, a failed save's retry included, and
+    ///     <c>LoadAsync</c> and <c>stream.Aggregate</c> answered with events nothing had committed.
+    /// </remarks>
+    protected async ValueTask<T?> FetchUncachedForFolding<T>(Guid id, CancellationToken cancellation)
+        where T : class
+    {
+        if (CanReadInlineDocument<T>(typeof(Guid)))
+        {
+            return await _session.LoadUntrackedAsync<T>(id, TenantId, cancellation);
+        }
+
+        return await AggregateStreamAsync<T>(id, token: cancellation);
+    }
+
+    /// <inheritdoc cref="FetchUncachedForFolding{T}(Guid, CancellationToken)" />
+    protected async ValueTask<T?> FetchUncachedForFolding<T>(string key, CancellationToken cancellation)
+        where T : class
+    {
+        if (CanReadInlineDocument<T>(typeof(string)))
+        {
+            return await _session.LoadUntrackedAsync<T>(key, TenantId, cancellation);
+        }
+
+        return await AggregateStreamAsync<T>(key, token: cancellation);
+    }
+
+    /// <summary>
     ///     #463: is <typeparamref name="T" /> the subject of an <c>Inline</c> projection whose
     ///     projected document can be loaded by a <paramref name="keyType" />-typed identity?
     /// </summary>

@@ -39,15 +39,41 @@ public class snapshot_document_write_conflict_tests : OneOffConfigurationsContex
         public int Version { get; set; }
     }
 
+    public class LongRevisionedNote : ILongVersioned
+    {
+        public Guid Id { get; set; }
+        public string Name { get; set; } = "";
+        public long Version { get; set; }
+    }
+
+    public class MappedRevisionNote
+    {
+        public Guid Id { get; set; }
+        public string Name { get; set; } = "";
+        public int Revision { get; set; }
+    }
+
     public class TenantedNote
     {
         public Guid Id { get; set; }
         public string Name { get; set; } = "";
     }
 
+    public class TenantedRevisionedNote : IRevisioned
+    {
+        public Guid Id { get; set; }
+        public string Name { get; set; } = "";
+        public int Version { get; set; }
+    }
+
     public override async ValueTask InitializeAsync()
     {
-        ConfigureStore(opts => opts.Schema.For<TenantedNote>().MultiTenanted());
+        ConfigureStore(opts =>
+        {
+            opts.Schema.For<TenantedNote>().MultiTenanted();
+            opts.Schema.For<TenantedRevisionedNote>().MultiTenanted();
+            opts.Schema.For<MappedRevisionNote>().Metadata(m => m.Version.MapTo(x => x.Revision));
+        });
         await base.InitializeAsync();
         await session_isolation_level_tests.AllowSnapshotIsolationAsync(Ct);
         await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync(ct: Ct);
@@ -57,6 +83,8 @@ public class snapshot_document_write_conflict_tests : OneOffConfigurationsContex
         seed.Store(new Note { Id = Guid.NewGuid() });
         seed.Store(new VersionedNote { Id = Guid.NewGuid() });
         seed.Store(new RevisionedNote { Id = Guid.NewGuid() });
+        seed.Store(new LongRevisionedNote { Id = Guid.NewGuid() });
+        seed.Store(new MappedRevisionNote { Id = Guid.NewGuid() });
         await seed.SaveChangesAsync(Ct);
     }
 
@@ -294,6 +322,224 @@ public class snapshot_document_write_conflict_tests : OneOffConfigurationsContex
         session.Store(mine);
 
         await Should.ThrowAsync<ConcurrencyException>(() => session.SaveChangesAsync(Ct));
+    }
+
+    private async Task SeedRevisionedAsync(Guid id)
+    {
+        await using var seed = theStore.LightweightSession();
+        seed.Store(new RevisionedNote { Id = id, Name = "original" });
+        await seed.SaveChangesAsync(Ct);
+    }
+
+    private async Task WriteRevisionedConcurrentlyAsync(Guid id)
+    {
+        await using var writer = theStore.LightweightSession();
+        writer.Store(new RevisionedNote { Id = id, Name = "theirs" });
+        await writer.SaveChangesAsync(Ct);
+    }
+
+    private async Task<RevisionedNote?> StoredRevisionedAsync(Guid id)
+    {
+        await using var query = theStore.QuerySession();
+        return await query.LoadAsync<RevisionedNote>(id, Ct);
+    }
+
+    /// <summary>
+    ///     #916: revision 0 asks for the next revision, so its guard always passes. It kept the hint that
+    ///     lets a guard see the current row, and with nothing to fail it wrote straight over the commit.
+    /// </summary>
+    [Theory]
+    [InlineData(Lightweight)]
+    [InlineData(IdentityMap)]
+    public async Task store_at_revision_0_raises_a_conflict_over_a_concurrent_write(string kind)
+    {
+        var id = Guid.NewGuid();
+        await SeedRevisionedAsync(id);
+
+        await using var session = OpenAtSnapshot(kind);
+        await session.LoadAsync<Note>(Guid.NewGuid(), Ct);
+
+        await WriteRevisionedConcurrentlyAsync(id);
+
+        session.Store(new RevisionedNote { Id = id, Name = "mine" });
+
+        var conflict = await Should.ThrowAsync<SqlException>(() => session.SaveChangesAsync(Ct));
+        conflict.Number.ShouldBe(SnapshotUpdateConflict);
+
+        (await StoredRevisionedAsync(id)).ShouldNotBeNull().Name.ShouldBe("theirs");
+    }
+
+    [Theory]
+    [InlineData(Lightweight)]
+    [InlineData(IdentityMap)]
+    public async Task update_at_revision_0_raises_a_conflict_over_a_concurrent_write(string kind)
+    {
+        var id = Guid.NewGuid();
+        await SeedRevisionedAsync(id);
+
+        await using var session = OpenAtSnapshot(kind);
+        await session.LoadAsync<Note>(Guid.NewGuid(), Ct);
+
+        await WriteRevisionedConcurrentlyAsync(id);
+
+        session.Update(new RevisionedNote { Id = id, Name = "mine" });
+
+        var conflict = await Should.ThrowAsync<SqlException>(() => session.SaveChangesAsync(Ct));
+        conflict.Number.ShouldBe(SnapshotUpdateConflict);
+
+        (await StoredRevisionedAsync(id)).ShouldNotBeNull().Name.ShouldBe("theirs");
+    }
+
+    [Fact]
+    public async Task store_objects_at_revision_0_raises_the_conflict_too()
+    {
+        var id = Guid.NewGuid();
+        await SeedRevisionedAsync(id);
+
+        await using var session = theStore.LightweightSession(AtSnapshot);
+        await session.LoadAsync<Note>(Guid.NewGuid(), Ct);
+
+        await WriteRevisionedConcurrentlyAsync(id);
+
+        session.StoreObjects([new RevisionedNote { Id = id, Name = "mine" }]);
+
+        var conflict = await Should.ThrowAsync<SqlException>(() => session.SaveChangesAsync(Ct));
+        conflict.Number.ShouldBe(SnapshotUpdateConflict);
+    }
+
+    [Fact]
+    public async Task a_long_revision_of_0_raises_the_conflict_too()
+    {
+        var id = Guid.NewGuid();
+        await using (var seed = theStore.LightweightSession())
+        {
+            seed.Store(new LongRevisionedNote { Id = id, Name = "original" });
+            await seed.SaveChangesAsync(Ct);
+        }
+
+        await using var session = theStore.LightweightSession(AtSnapshot);
+        await session.LoadAsync<Note>(Guid.NewGuid(), Ct);
+
+        await using (var writer = theStore.LightweightSession())
+        {
+            writer.Store(new LongRevisionedNote { Id = id, Name = "theirs" });
+            await writer.SaveChangesAsync(Ct);
+        }
+
+        session.Store(new LongRevisionedNote { Id = id, Name = "mine" });
+
+        var conflict = await Should.ThrowAsync<SqlException>(() => session.SaveChangesAsync(Ct));
+        conflict.Number.ShouldBe(SnapshotUpdateConflict);
+    }
+
+    /// <summary>
+    ///     #720: a member named through the metadata DSL is a revision like any other, and 0 on it means
+    ///     the same thing.
+    /// </summary>
+    [Fact]
+    public async Task a_mapped_revision_of_0_raises_the_conflict_too()
+    {
+        var id = Guid.NewGuid();
+        await using (var seed = theStore.LightweightSession())
+        {
+            seed.Store(new MappedRevisionNote { Id = id, Name = "original" });
+            await seed.SaveChangesAsync(Ct);
+        }
+
+        await using var session = theStore.LightweightSession(AtSnapshot);
+        await session.LoadAsync<Note>(Guid.NewGuid(), Ct);
+
+        await using (var writer = theStore.LightweightSession())
+        {
+            writer.Store(new MappedRevisionNote { Id = id, Name = "theirs" });
+            await writer.SaveChangesAsync(Ct);
+        }
+
+        session.Store(new MappedRevisionNote { Id = id, Name = "mine" });
+
+        var conflict = await Should.ThrowAsync<SqlException>(() => session.SaveChangesAsync(Ct));
+        conflict.Number.ShouldBe(SnapshotUpdateConflict);
+    }
+
+    [Fact]
+    public async Task revision_0_through_a_tenant_scope_raises_the_conflict_too()
+    {
+        const string tenant = "tenant_a";
+        var id = Guid.NewGuid();
+
+        await using (var seed = theStore.LightweightSession(new SessionOptions { TenantId = tenant }))
+        {
+            seed.Store(new TenantedRevisionedNote { Id = id, Name = "original" });
+            await seed.SaveChangesAsync(Ct);
+        }
+
+        await using var session = theStore.LightweightSession(AtSnapshot);
+        var scoped = session.ForTenant(tenant);
+        await scoped.LoadAsync<TenantedRevisionedNote>(id, Ct);
+
+        await using (var writer = theStore.LightweightSession(new SessionOptions { TenantId = tenant }))
+        {
+            writer.Store(new TenantedRevisionedNote { Id = id, Name = "theirs" });
+            await writer.SaveChangesAsync(Ct);
+        }
+
+        scoped.Store(new TenantedRevisionedNote { Id = id, Name = "mine" });
+
+        var conflict = await Should.ThrowAsync<SqlException>(() => session.SaveChangesAsync(Ct));
+        conflict.Number.ShouldBe(SnapshotUpdateConflict);
+    }
+
+    /// <summary>
+    ///     An explicit revision has a guard, so it goes on reporting through it even when the same session
+    ///     writes a revision 0 document, and each gets the SQL of its own.
+    /// </summary>
+    [Fact]
+    public async Task an_explicit_revision_beside_revision_0_still_reports_its_own_concurrency_exception()
+    {
+        var stale = Guid.NewGuid();
+        var unrelated = Guid.NewGuid();
+        await SeedRevisionedAsync(stale);
+        await SeedRevisionedAsync(unrelated);
+
+        await using var session = theStore.LightweightSession(AtSnapshot);
+        var mine = await session.LoadAsync<RevisionedNote>(stale, Ct);
+
+        await using (var writer = theStore.LightweightSession())
+        {
+            writer.Store(new RevisionedNote { Id = stale, Name = "theirs" });
+            writer.Store(new RevisionedNote { Id = stale, Name = "theirs again" });
+            await writer.SaveChangesAsync(Ct);
+        }
+
+        session.Store(new RevisionedNote { Id = unrelated, Name = "mine" });
+        mine!.Version = 2;
+        session.Store(mine);
+
+        await Should.ThrowAsync<ConcurrencyException>(() => session.SaveChangesAsync(Ct));
+    }
+
+    [Fact]
+    public async Task with_nothing_concurrent_revision_0_takes_the_next_revision_at_snapshot()
+    {
+        var id = Guid.NewGuid();
+        await SeedRevisionedAsync(id);
+
+        await using var session = theStore.LightweightSession(AtSnapshot);
+
+        var document = new RevisionedNote { Id = id, Name = "mine" };
+        session.Store(document);
+
+        var added = new RevisionedNote { Id = Guid.NewGuid(), Name = "added" };
+        session.Store(added);
+
+        await session.SaveChangesAsync(Ct);
+
+        document.Version.ShouldBe(2);
+        added.Version.ShouldBe(1);
+
+        var stored = await StoredRevisionedAsync(id);
+        stored.ShouldNotBeNull().Name.ShouldBe("mine");
+        stored.Version.ShouldBe(2);
     }
 
     /// <summary>

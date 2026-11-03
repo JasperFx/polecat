@@ -187,7 +187,8 @@ In a `Snapshot` session, `Store` and `Update` on a document with no concurrency 
 update conflict (3960) over a concurrent write, as event appends and your own queued SQL do. So does
 `Store` over a row inserted or deleted since the session's snapshot. Two sessions truly racing to write
 the same new id can get a duplicate key (2627) instead, as a plain `INSERT` would. Either way nothing is
-overwritten, and the save fails.
+overwritten, and the save fails. A document using numeric revisions counts as having no check when its
+revision is 0, because that asks for the next revision and has nothing to fail.
 
 At every other level those writes are `MERGE ... WITH (HOLDLOCK)`, which is what makes concurrent first
 writes of one id safe. SQL Server raises no conflict for a statement carrying that hint, so a `Snapshot`
@@ -202,12 +203,9 @@ The rest of what a `Snapshot` session writes reads the current row, and so repor
 | `Insert` | `DocumentAlreadyExistsException` |
 
 ::: warning These `Snapshot` writes still overwrite
-These do not raise 3960, and a concurrent write to the same row is silently replaced:
-
-- `Store` of a document using numeric revisions with revision 0, which asks for the next revision and so
-  has no check to fail. Set the revision explicitly to get one.
-- Documents written by an inline projection, though an append to the same stream raises 3960 first, so
-  this only reaches a document that other streams or writers also change.
+Documents written by an inline projection do not raise 3960, and a concurrent write to the same row is
+silently replaced. An append to the same stream raises 3960 first, so this only reaches a document that
+other streams or writers also change.
 
 Flat table projections also keep `HOLDLOCK`, but lose nothing by it: each statement is computed by SQL
 from the current row, so `Increment` on a concurrently changed row gives the right total.
