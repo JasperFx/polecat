@@ -296,10 +296,10 @@ internal sealed class NumericLightweightPolecatStorage<TDoc, TId> : LightweightP
         => new NumericClosedShapeInsertOperation<TDoc, TId>(document, Identity(document), tenantId, _descriptor, Revisions(session));
 
     public override Weasel.Storage.IStorageOperation Update(TDoc document, IStorageSession session, string tenantId)
-        => new NumericClosedShapeUpdateOperation<TDoc, TId>(document, Identity(document), tenantId, _descriptor, Revisions(session));
+        => new NumericClosedShapeUpdateOperation<TDoc, TId>(document, Identity(document), tenantId, NumericWriteDescriptorFor(document, session), Revisions(session));
 
     public override Weasel.Storage.IStorageOperation Upsert(TDoc document, IStorageSession session, string tenantId)
-        => new NumericClosedShapeUpsertOperation<TDoc, TId>(document, Identity(document), tenantId, _descriptor, OperationRole.Upsert, Revisions(session));
+        => new NumericClosedShapeUpsertOperation<TDoc, TId>(document, Identity(document), tenantId, NumericWriteDescriptorFor(document, session), OperationRole.Upsert, Revisions(session));
 
     public override Weasel.Storage.IStorageOperation Overwrite(TDoc document, IStorageSession session, string tenantId)
         => new NumericClosedShapeOverwriteOperation<TDoc, TId>(document, Identity(document), tenantId, _descriptor, Revisions(session));
@@ -337,10 +337,10 @@ internal sealed class NumericIdentityMapPolecatStorage<TDoc, TId> : IdentityMapP
         => new NumericClosedShapeInsertOperation<TDoc, TId>(document, Identity(document), tenantId, _descriptor, Revisions(session));
 
     public override Weasel.Storage.IStorageOperation Update(TDoc document, IStorageSession session, string tenantId)
-        => new NumericClosedShapeUpdateOperation<TDoc, TId>(document, Identity(document), tenantId, _descriptor, Revisions(session));
+        => new NumericClosedShapeUpdateOperation<TDoc, TId>(document, Identity(document), tenantId, NumericWriteDescriptorFor(document, session), Revisions(session));
 
     public override Weasel.Storage.IStorageOperation Upsert(TDoc document, IStorageSession session, string tenantId)
-        => new NumericClosedShapeUpsertOperation<TDoc, TId>(document, Identity(document), tenantId, _descriptor, OperationRole.Upsert, Revisions(session));
+        => new NumericClosedShapeUpsertOperation<TDoc, TId>(document, Identity(document), tenantId, NumericWriteDescriptorFor(document, session), OperationRole.Upsert, Revisions(session));
 
     public override Weasel.Storage.IStorageOperation Overwrite(TDoc document, IStorageSession session, string tenantId)
         => new NumericClosedShapeOverwriteOperation<TDoc, TId>(document, Identity(document), tenantId, _descriptor, Revisions(session));

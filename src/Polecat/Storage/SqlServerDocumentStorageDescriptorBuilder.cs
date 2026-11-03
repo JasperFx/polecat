@@ -67,13 +67,14 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
     ///         <b>Only unguarded writes change.</b> A concurrency guard compares against the current row
     ///         and reports <c>ConcurrencyException</c>, so reading one is what makes it work, and an
     ///         insert reads the row it collides with to name that collision. Both keep
-    ///         <see cref="UpsertLockHint" /> at every level.
+    ///         <see cref="UpsertLockHint" /> at every level. A numeric revision of 0 is unguarded in all
+    ///         but name, because it asks for the next revision and has nothing to fail (#916).
     ///     </para>
     /// </remarks>
     private const string SnapshotUpsertLockHint = "UPDLOCK";
 
     /// <param name="forSnapshotSession">
-    ///     True for the descriptor an unversioned document's writes use in a <c>Snapshot</c> session.
+    ///     True for the descriptor a write with no guard uses in a <c>Snapshot</c> session.
     ///     See <see cref="SnapshotUpsertLockHint" />.
     /// </param>
     public static DocumentStorageDescriptor<TDoc, TId> Build<TDoc, TId>(

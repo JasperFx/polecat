@@ -153,7 +153,9 @@ When the flag is on, `slice.PublishMessage(...)` from an inline projection's
 `RaiseSideEffects()` method enqueues the message into the configured `IMessageOutbox`'s
 batch on the active document session. `BeforeCommitAsync` fires inside the session's SQL
 transaction (right before `COMMIT`), and `AfterCommitAsync` fires once the session's
-database changes are durably committed.
+database changes are durably committed. Each commit gets its own batch. A save that fails drops its batch
+without calling `AfterCommitAsync`, and a retry on the same session runs the projection again into a new
+one, so a message is delivered once.
 
 ::: warning
 Inline `RaiseSideEffects()` may **not** call `slice.AppendEvent(...)` — appending events

@@ -122,6 +122,15 @@ session.Patch<Order>(x => x.Status == "Pending")
 await session.SaveChangesAsync();
 ```
 
+The condition is evaluated once, before any action runs, so a patch can change the member it filters on
+and every action still reaches the same documents:
+
+```cs
+session.Patch<Order>(x => x.Status == "Pending")
+    .Set(x => x.Status, "Cancelled")
+    .Set(x => x.CancelledBy, "system");
+```
+
 ## How It Works
 
 Each patch operation generates a SQL `UPDATE` statement using `JSON_MODIFY()`:

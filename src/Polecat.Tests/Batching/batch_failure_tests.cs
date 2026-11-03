@@ -134,6 +134,68 @@ public class batch_failure_tests : IntegrationContext
     }
 
     /// <summary>
+    ///     #916: this used to run the batch again and throw "An attempt was made to transition a task to
+    ///     a final state when it had already completed" from the first item's <c>SetResult</c>.
+    /// </summary>
+    [Fact]
+    public async Task a_second_execute_after_a_failure_says_what_happened()
+    {
+        await using var query = theStore.QuerySession();
+        var batch = query.CreateBatchQuery();
+
+        var refused = batch.Query<int>(Refuse("refused by the guard"));
+
+        await Should.ThrowAsync<SqlException>(() => batch.Execute(Ct));
+
+        var second = await Should.ThrowAsync<InvalidOperationException>(() => batch.Execute(Ct));
+        second.Message.ShouldContain("already been executed");
+
+        // The first failure is still what the item reports
+        (await Should.ThrowAsync<SqlException>(() => refused.WaitAsync(Bound, Ct))).Number.ShouldBe(GuardError);
+    }
+
+    [Fact]
+    public async Task a_second_execute_after_a_success_says_what_happened_and_keeps_the_results()
+    {
+        var id = await SeedUserAsync();
+
+        await using var query = theStore.QuerySession();
+        var batch = query.CreateBatchQuery();
+
+        var load = batch.Load<User>(id);
+
+        await batch.Execute(Ct);
+
+        var second = await Should.ThrowAsync<InvalidOperationException>(() => batch.Execute(Ct));
+        second.Message.ShouldContain("already been executed");
+
+        (await load.WaitAsync(Bound, Ct)).ShouldNotBeNull().Id.ShouldBe(id);
+    }
+
+    /// <summary>
+    ///     The second <c>Execute</c> is the only thing waiting on an item added after the first, so
+    ///     refusing has to finish it or it hangs, as #849 was about.
+    /// </summary>
+    [Fact]
+    public async Task an_item_added_after_execute_faults_with_the_refusal()
+    {
+        var id = await SeedUserAsync();
+
+        await using var query = theStore.QuerySession();
+        var batch = query.CreateBatchQuery();
+
+        _ = batch.Load<User>(id);
+        await batch.Execute(Ct);
+
+        var late = batch.CheckExists<User>(id);
+
+        await Should.ThrowAsync<InvalidOperationException>(() => batch.Execute(Ct));
+
+        var thrown = await Should.ThrowAsync<InvalidOperationException>(() => late.WaitAsync(Bound, Ct));
+        thrown.Message.ShouldContain("already been executed");
+    }
+
+    /// <summary>
     ///     The caller who catches <c>Execute</c> and never touches the items, which is everyone written
     ///     before this fix. A faulted task nobody awaited surfaces through
     ///     <see cref="TaskScheduler.UnobservedTaskException" />, and fatally in a host that sets
