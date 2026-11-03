@@ -1090,9 +1090,20 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
         return new DcbTagVersionTable(this);
     }
 
+    internal Weasel.SqlServer.Sequence BuildDcbTagVersionSequence()
+    {
+        return new Weasel.SqlServer.Sequence(
+            new Weasel.SqlServer.SqlServerObjectName(DatabaseSchemaName, DcbTagVersionTable.SequenceName),
+            DcbTagVersionTable.SequenceStart);
+    }
+
     /// <summary>The schema-qualified name of the DCB tag-version side table (gh-515).</summary>
     internal string DcbTagVersionTableName
         => Polecat.Internal.SqlEscaping.QualifiedName(DatabaseSchemaName, DcbTagVersionTable.TableName);
+
+    /// <summary>The schema-qualified name of the sequence behind every tag version (#890).</summary>
+    internal string DcbTagVersionSequenceName
+        => Polecat.Internal.SqlEscaping.QualifiedName(DatabaseSchemaName, DcbTagVersionTable.SequenceName);
 
     /// <summary>
     ///     Convert a PascalCase type name to a snake_case event type alias.

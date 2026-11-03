@@ -571,6 +571,12 @@ public class AdvancedOperations
             {
                 table.SqlServerPartitioning?.WriteDropDdl(writer, table);
             }
+
+            // #890: a sequence isn't a table either, and left behind it would stop a DROP SCHEMA.
+            foreach (var sequence in feature.Objects.OfType<Weasel.SqlServer.Sequence>())
+            {
+                sequence.WriteDropStatement(new SqlServerMigrator(), writer);
+            }
         }
 
         return writer.ToString();
@@ -702,6 +708,104 @@ public class AdvancedOperations
             await Storage.FullText.FullTextIndexRebuild.RebuildAsync(connectionString, provider.Mapping, batchSize,
                 _store.Options.CommandTimeout, _resilience, token);
         }
+    }
+
+    /// <summary>
+    ///     Find the documents of a type whose stored JSON id doesn't match the <c>id</c> column of their row.
+    ///     Read-only, so it is safe to run on a live store and to run again.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         #907: on SQL Server 2025's native <c>json</c> type, a <c>JSON_MODIFY</c> adding a key can make
+    ///         the next one through an object write to another member of the same object. Patches sent that
+    ///         shape up to 5.47.0, so a patch can have replaced a document's id with a copy of some other
+    ///         member, and that document no longer loads. The <c>id</c> column is untouched, so comparing the
+    ///         two finds it. <c>nvarchar(max)</c> storage was never exposed.
+    ///     </para>
+    ///     <para>
+    ///         ⚠️ <b>This finds damage to the id and nothing else.</b> Which member takes the write depends on
+    ///         the document's keys, it is often not the id, and nothing stored says what any other member
+    ///         should have held. An empty result doesn't prove a document is undamaged.
+    ///     </para>
+    ///     <para>
+    ///         It compares on the server, a page at a time, and brings back no bodies. A soft-deleted
+    ///         document counts. Under conjoined tenancy every tenant's rows are read, and under a
+    ///         database-per-tenant tenancy so is every database. A document type that leaves its id out of
+    ///         the body is never reported.
+    ///     </para>
+    /// </remarks>
+    /// <typeparam name="T">The document type.</typeparam>
+    /// <param name="token">Cancels between pages and during one.</param>
+    /// <returns>One entry per damaged document, empty when there are none.</returns>
+    public Task<IReadOnlyList<DocumentIdMismatch>> FindDocumentsWithMismatchedIdsAsync<T>(
+        CancellationToken token = default)
+        => FindDocumentsWithMismatchedIdsAsync(typeof(T), DocumentIdAudit.DefaultBatchSize, token);
+
+    /// <summary>
+    ///     <see cref="FindDocumentsWithMismatchedIdsAsync{T}(CancellationToken)" /> with a page size of your
+    ///     own, for documents long enough that a page of the default size runs out of
+    ///     <see cref="StoreOptions.CommandTimeout" />.
+    /// </summary>
+    /// <param name="batchSize">How many documents one command compares.</param>
+    /// <param name="token">Cancels between pages and during one.</param>
+    public Task<IReadOnlyList<DocumentIdMismatch>> FindDocumentsWithMismatchedIdsAsync<T>(int batchSize,
+        CancellationToken token = default)
+        => FindDocumentsWithMismatchedIdsAsync(typeof(T), batchSize, token);
+
+    /// <summary>
+    ///     The non-generic twin of <see cref="FindDocumentsWithMismatchedIdsAsync{T}(CancellationToken)" />,
+    ///     for a caller holding a <see cref="Type" />.
+    /// </summary>
+    /// <param name="documentType">The document type.</param>
+    /// <param name="token">Cancels between pages and during one.</param>
+    public Task<IReadOnlyList<DocumentIdMismatch>> FindDocumentsWithMismatchedIdsAsync(Type documentType,
+        CancellationToken token = default)
+        => FindDocumentsWithMismatchedIdsAsync(documentType, DocumentIdAudit.DefaultBatchSize, token);
+
+    /// <summary>
+    ///     <see cref="FindDocumentsWithMismatchedIdsAsync(Type, CancellationToken)" /> with a page size of your
+    ///     own.
+    /// </summary>
+    /// <param name="documentType">The document type.</param>
+    /// <param name="batchSize">How many documents one command compares.</param>
+    /// <param name="token">Cancels between pages and during one.</param>
+    public async Task<IReadOnlyList<DocumentIdMismatch>> FindDocumentsWithMismatchedIdsAsync(Type documentType,
+        int batchSize, CancellationToken token = default)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(batchSize);
+
+        var found = new List<DocumentIdMismatch>();
+        var mapping = _store.GetProvider(documentType).Mapping;
+
+        foreach (var connectionString in AllDatabaseConnectionStrings())
+        {
+            await DocumentIdAudit.FindAsync(connectionString, mapping, batchSize, _store.Options.CommandTimeout,
+                _resilience, found, token);
+        }
+
+        return found;
+    }
+
+    /// <summary>
+    ///     <see cref="FindDocumentsWithMismatchedIdsAsync{T}(CancellationToken)" /> for every document type
+    ///     this store's configuration knows about: each <c>Schema.For&lt;T&gt;()</c> and everything a
+    ///     projection publishes, plus any type this process has used. Group the result by
+    ///     <see cref="DocumentIdMismatch.DocumentType" />.
+    /// </summary>
+    /// <param name="token">Cancels between pages and during one.</param>
+    public async Task<IReadOnlyList<DocumentIdMismatch>> FindDocumentsWithMismatchedIdsAsync(
+        CancellationToken token = default)
+    {
+        ConfiguredDocumentProviders.MaterializeConfigured(_store.Options);
+
+        var found = new List<DocumentIdMismatch>();
+
+        foreach (var mapping in _store.Options.Providers.AllProviders.Select(x => x.Mapping).ToArray())
+        {
+            found.AddRange(await FindDocumentsWithMismatchedIdsAsync(mapping.DocumentType, token));
+        }
+
+        return found;
     }
 
     private async Task CleanForDatabaseAsync(string connStr, Type documentType, CancellationToken token = default)
@@ -883,9 +987,8 @@ public class AdvancedOperations
             // Delete natural key tables first (they reference streams), and the tag tables with them.
             // #841: a tag table reaches its events through a cascading foreign key, except under archived
             // partitioning where it has none and its rows would be left behind.
-            // #865: pc_dcb_tag_version has no foreign key at all, and keeps tag values as text. Keeping its
-            // counters is only worth it while a boundary could still be in flight against them, which a
-            // wipe of every stream in every tenant has already ended.
+            // #865: pc_dcb_tag_version has no foreign key at all, and keeps tag values as text. Its sequence
+            // stays, so a boundary still in flight can't match a row created after the wipe (#890).
             await using (var findCmd = conn.CreateCommand())
             {
                 findCmd.CommandText = $"""
