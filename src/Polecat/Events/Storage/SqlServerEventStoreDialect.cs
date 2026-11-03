@@ -114,6 +114,16 @@ internal sealed class SqlServerEventStoreDialect : IEventStoreSqlDialect
     ///     @tenant_id)</c>. Mirrors the bespoke <c>ProcessStartStreamAsync</c> insert; columns are
     ///     named so the same statement serves both single-tenant and conjoined tables.
     /// </summary>
+    /// <remarks>
+    ///     <b>Under per-tenant partitioning a start has a second statement after the insert.</b> The primary
+    ///     key is <c>(tenant_id, id, tenant_ordinal)</c>, so a stream left on an old ordinal doesn't collide
+    ///     with a start on the tenant's current one, and the save forks it. Nothing else can see that, because
+    ///     a start reads nothing first. The count is one seek per partition, about two logical reads each,
+    ///     which is half of what every append pays in the second branch of
+    ///     <see cref="EventGraph.LockedStreamReadSql" />: asking for <c>tenant_ordinal &lt;&gt; @x</c> is two
+    ///     ranges. <c>NOLOCK</c> is there for the same reason it is in that branch, and it still sees the row
+    ///     just inserted. An append that found no row has already looked, so only a start asks.
+    /// </remarks>
     private static Action<Weasel.Core.ICommandBuilder, StreamAction> BuildInsertStreamCommandConfigurer(
         EventGraph graph, bool isGuid, IStorageDialect dialect)
     {
@@ -152,14 +162,25 @@ internal sealed class SqlServerEventStoreDialect : IEventStoreSqlDialect
             var tenantParam = builder.AppendParameter(stream.TenantId);
             dialect.SetParameterType(tenantParam, StorageColumnType.String);
 
-            if (partitioned)
+            if (!partitioned)
             {
-                builder.Append(", ");
-                var ordinalParam = builder.AppendParameter(ResolveCachedOrdinal(graph, stream));
-                dialect.SetParameterType(ordinalParam, StorageColumnType.Int);
+                builder.Append(")");
+                return;
             }
 
+            builder.Append(", ");
+            var ordinalParam = builder.AppendParameter(ResolveCachedOrdinal(graph, stream));
+            dialect.SetParameterType(ordinalParam, StorageColumnType.Int);
             builder.Append(")");
+
+            if (stream.ActionType == StreamActionType.Start)
+            {
+                // The same parameters again, so the command's budget doesn't change (#834)
+                builder.Append($"; if (select count(*) from {graph.StreamsTableName} with (nolock) "
+                               + $"where tenant_id = @{tenantParam.ParameterName} and id = @{idParam.ParameterName}) > 1 "
+                               + $"throw {PolecatQuickAppendEventsOperation.StreamOnAnotherOrdinalError}, "
+                               + "N'This stream already exists under another partition ordinal of its tenant.', 1");
+            }
         };
     }
 

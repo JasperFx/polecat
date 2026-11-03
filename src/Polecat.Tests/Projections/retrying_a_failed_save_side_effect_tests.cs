@@ -104,6 +104,21 @@ public class EnlistsBeforeEverySave : IDocumentSessionListener
         => Task.CompletedTask;
 }
 
+/// <summary>
+///     Appends every time it is called, which is what a retry on the same session does.
+/// </summary>
+public class AppendsBeforeEverySave(Action<IDocumentSession> append) : IDocumentSessionListener
+{
+    public Task BeforeSaveChangesAsync(IDocumentSession session, CancellationToken token)
+    {
+        append(session);
+        return Task.CompletedTask;
+    }
+
+    public Task AfterCommitAsync(IDocumentSession session, IChangeSet commit, CancellationToken token)
+        => Task.CompletedTask;
+}
+
 public class FailsOnFirstBeforeSave : IDocumentSessionListener
 {
     private int _calls;
@@ -269,6 +284,168 @@ public class retrying_a_failed_save_side_effect_tests
         await session.SaveChangesAsync(Ct);
 
         (await StoredCountAsync(store, id)).ShouldBe(2);
+    }
+
+    private static async Task<long[]> StoredVersionsAsync(DocumentStore store, Guid id)
+    {
+        await using var query = store.QuerySession();
+        return (await query.Events.FetchStreamAsync(id, token: Ct)).Select(x => x.Version).ToArray();
+    }
+
+    private static SessionOptions ListeningWith(params IDocumentSessionListener[] listeners)
+    {
+        var options = new SessionOptions();
+        foreach (var listener in listeners) options.Listeners.Add(listener);
+        return options;
+    }
+
+    [Theory]
+    [InlineData(Lightweight)]
+    [InlineData(IdentityMap)]
+    public async Task an_event_a_listener_appends_is_not_doubled_by_a_retry(string kind)
+    {
+        var (store, _) = await CreateStoreAsync("retry_append_" + kind.ToLowerInvariant());
+        using var disposing = store;
+
+        var id = await SeedTallyAsync(store);
+
+        var listener = new AppendsBeforeEverySave(x => x.Events.Append(id, new RetriedTallied(id)));
+
+        await using var session = Open(store, kind, ListeningWith(listener));
+        session.AddTransactionParticipant(new RetryFailsOnce());
+
+        // Already on the stream when the save starts, so the retry still owes this one
+        session.Events.Append(id, new RetriedTallied(id));
+
+        await Should.ThrowAsync<InvalidOperationException>(() => session.SaveChangesAsync(Ct));
+
+        await session.SaveChangesAsync(Ct);
+
+        (await StoredVersionsAsync(store, id)).ShouldBe([1, 2, 3]);
+        (await StoredCountAsync(store, id)).ShouldBe(3);
+    }
+
+    [Fact]
+    public async Task an_event_a_listener_appends_is_not_doubled_when_the_save_fails_before_its_transaction()
+    {
+        var (store, _) = await CreateStoreAsync("retry_append_early");
+        using var disposing = store;
+
+        var id = await SeedTallyAsync(store);
+
+        var options = ListeningWith(new AppendsBeforeEverySave(x => x.Events.Append(id, new RetriedTallied(id))),
+            new FailsOnFirstBeforeSave());
+
+        await using var session = store.LightweightSession(options);
+        session.Events.Append(id, new RetriedTallied(id));
+
+        await Should.ThrowAsync<InvalidOperationException>(() => session.SaveChangesAsync(Ct));
+
+        await session.SaveChangesAsync(Ct);
+
+        (await StoredVersionsAsync(store, id)).ShouldBe([1, 2, 3]);
+    }
+
+    /// <summary>
+    ///     The stream itself is what the failed attempt added, so all of it goes. Left in place, the retry
+    ///     starts it a second time and collides with itself.
+    /// </summary>
+    [Fact]
+    public async Task a_stream_a_listener_starts_is_started_once_across_a_retry()
+    {
+        var (store, _) = await CreateStoreAsync("retry_start");
+        using var disposing = store;
+
+        var mine = Guid.NewGuid();
+        var theirs = Guid.NewGuid();
+
+        var listener = new AppendsBeforeEverySave(x => x.Events.StartStream(theirs, new RetriedTallied(theirs)));
+
+        await using var session = store.LightweightSession(ListeningWith(listener));
+        session.AddTransactionParticipant(new RetryFailsOnce());
+        session.Events.StartStream(mine, new RetriedTallied(mine));
+
+        await Should.ThrowAsync<InvalidOperationException>(() => session.SaveChangesAsync(Ct));
+
+        await session.SaveChangesAsync(Ct);
+
+        (await StoredVersionsAsync(store, mine)).ShouldBe([1]);
+        (await StoredVersionsAsync(store, theirs)).ShouldBe([1]);
+    }
+
+    [Fact]
+    public async Task a_stream_only_a_listener_touched_is_appended_to_once_across_a_retry()
+    {
+        var (store, _) = await CreateStoreAsync("retry_append_own_stream");
+        using var disposing = store;
+
+        var mine = Guid.NewGuid();
+        var theirs = await SeedTallyAsync(store);
+
+        var listener = new AppendsBeforeEverySave(x => x.Events.Append(theirs, new RetriedTallied(theirs)));
+
+        await using var session = store.LightweightSession(ListeningWith(listener));
+        session.AddTransactionParticipant(new RetryFailsOnce());
+        session.Events.StartStream(mine, new RetriedTallied(mine));
+
+        await Should.ThrowAsync<InvalidOperationException>(() => session.SaveChangesAsync(Ct));
+
+        await session.SaveChangesAsync(Ct);
+
+        (await StoredVersionsAsync(store, theirs)).ShouldBe([1, 2]);
+    }
+
+    /// <summary>
+    ///     What the application does between the attempts belongs to the next one, on the stream the
+    ///     first attempt was trimmed back to.
+    /// </summary>
+    [Fact]
+    public async Task what_the_application_appends_between_attempts_goes_in_with_the_retry()
+    {
+        var (store, _) = await CreateStoreAsync("retry_append_between");
+        using var disposing = store;
+
+        var id = await SeedTallyAsync(store);
+
+        var listener = new AppendsBeforeEverySave(x => x.Events.Append(id, new RetriedTallied(id)));
+
+        await using var session = store.LightweightSession(ListeningWith(listener));
+        session.AddTransactionParticipant(new RetryFailsOnce());
+        var before = session.Events.Append(id, new RetriedTallied(id));
+
+        await Should.ThrowAsync<InvalidOperationException>(() => session.SaveChangesAsync(Ct));
+
+        before.Events.Count.ShouldBe(1);
+
+        session.Events.Append(id, new RetriedTallied(id));
+        await session.SaveChangesAsync(Ct);
+
+        (await StoredVersionsAsync(store, id)).ShouldBe([1, 2, 3, 4]);
+    }
+
+    [Fact]
+    public async Task a_failed_attempt_leaves_only_what_the_application_added_pending()
+    {
+        var (store, _) = await CreateStoreAsync("retry_append_pending");
+        using var disposing = store;
+
+        var mine = Guid.NewGuid();
+        var theirs = Guid.NewGuid();
+
+        var listener = new AppendsBeforeEverySave(x =>
+        {
+            x.Events.Append(mine, new RetriedTallied(mine));
+            x.Events.StartStream(theirs, new RetriedTallied(theirs));
+        });
+
+        await using var session = store.LightweightSession(ListeningWith(listener, new FailsOnFirstBeforeSave()));
+        session.Events.StartStream(mine, new RetriedTallied(mine));
+
+        await Should.ThrowAsync<InvalidOperationException>(() => session.SaveChangesAsync(Ct));
+
+        var pending = ((Polecat.Internal.DocumentSessionBase)session).WorkTracker.Streams;
+        pending.ShouldHaveSingleItem().Id.ShouldBe(mine);
+        pending[0].Events.Count.ShouldBe(1);
     }
 
     private static async Task<Guid> SeedTallyAsync(DocumentStore store)

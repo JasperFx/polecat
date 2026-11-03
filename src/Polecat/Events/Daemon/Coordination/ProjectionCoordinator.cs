@@ -302,6 +302,14 @@ internal class ProjectionCoordinator : ProjectionCoordinatorBase, IProjectionCoo
     ///     built ONCE here rather than per lock, so the action runs once however many databases the
     ///     coordinator spans. AdvisoryLock reads the values in its constructor and keeps no reference, so
     ///     sharing the instance is safe.
+    ///     <para>
+    ///         #916: the database is looked up each time the lock connects, not captured here. The
+    ///         multi-database distributor caches this lock by identifier for as long as it runs, with no way
+    ///         to evict one, and under a dynamic tenancy the identifier is the tenant's. A tenant that left
+    ///         and came back on another database gets the lock it left behind, and that lock has to follow
+    ///         it. What stays cached for a tenant that doesn't come back is the lock's idle monitor timer,
+    ///         until the coordinator stops: letting that go needs a way into the distributor from JasperFx.
+    ///     </para>
     /// </remarks>
     internal static Func<IProjectionDatabase, IAdvisoryLock> BuildLockFactory(StoreOptions options,
         ILoggerFactory loggerFactory)
@@ -310,10 +318,18 @@ internal class ProjectionCoordinator : ProjectionCoordinatorBase, IProjectionCoo
         var lockOptions = options.Events.BuildAdvisoryLockOptions();
 
         return db => new AdvisoryLock(
-            () => new SqlConnection(((PolecatDatabase)db).ConnectionString),
+            () => new SqlConnection(CurrentConnectionString(options, (PolecatDatabase)db)),
             lockLogger,
             db.Identifier,
             lockOptions);
+    }
+
+    private static string CurrentConnectionString(StoreOptions options, PolecatDatabase database)
+    {
+        var current = options.Tenancy?.AllDatabases()
+            .FirstOrDefault(x => string.Equals(x.Identifier, database.Identifier, StringComparison.Ordinal));
+
+        return (current ?? database).ConnectionString;
     }
 
     private static IProjectionDistributor? BuildDistributor(DocumentStore store, ILoggerFactory loggerFactory,

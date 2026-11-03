@@ -177,6 +177,10 @@ unsplit, which is the failure described below. A plain read in a Snapshot sessio
 first append fails instead, with SQL Server's error 3961. Onboard those tenants first with
 `store.Advanced.AddPolecatManagedTenantsAsync`.
 
+Removing a tenant with `store.Advanced.RemovePolecatManagedTenantsAsync` takes the same schema lock and throws if it
+can't have it within `StoreOptions.StartupMigrationLockTimeout`. It reads the registry first, so it finds a tenant that
+another process registered.
+
 Provisioning takes the same schema lock as migrations and the async daemon, so a split doesn't collide with
 them, and new tenants are provisioned one at a time across all your processes. A write waits for that lock
 for up to `StoreOptions.StartupMigrationLockTimeout`, 30 seconds by default, and a session with a transaction
@@ -190,7 +194,8 @@ for different new tenants, the second one reloads the map and takes the next ord
 #### When a split fails
 
 Splitting a partition needs a schema-modification lock, so another session's long transaction on
-`pc_streams` or `pc_events` can make a new tenant's split time out. That does not fail the save. The
+`pc_streams` or `pc_events` can make a new tenant's split time out, and a tenant's first split gives up
+on each table after five seconds rather than the command timeout. That does not fail the save. The
 write goes ahead, and until the split succeeds the tenant's rows on that table sit in a neighbouring
 tenant's partition:
 
@@ -211,6 +216,18 @@ get through on a retry. It keeps logging the warning. `store.Advanced.AddPolecat
 connection's own command timeout, and reports the outcome for each table. Moving rows holds that lock
 for as long as it takes, so run it at a quiet moment and raise `Command Timeout` in the connection string
 if it needs longer.
+
+#### Streams on an old ordinal
+
+A stream row and its events keep the ordinal they were written with, so a tenant removed with
+`TenantDropBehavior.RetainData` and added back on a different ordinal has streams under the old one. They stay
+usable. An append finds the stream, and `StartStream` with one of those ids fails with
+`ExistingStreamIdCollisionException` as it would for any other stream that exists. Finding it takes one seek per
+partition, about two logical reads each, on every `StartStream`.
+
+`FetchStreamAsync` seeks the tenant's current ordinal, reading the registry to get it, so a read never touches
+another tenant's rows. A stream that isn't wholly on that ordinal can't be sought, because nothing records where
+else it has been, so reading one scans `pc_events`, and on locking read committed it can wait on any open append.
 
 ### Tenant-aware async daemon
 

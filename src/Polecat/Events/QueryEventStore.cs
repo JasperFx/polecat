@@ -482,11 +482,13 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
         // ReadStreamAsync path. This method only composes WHERE / ORDER BY.
         await using var cmd = new SqlCommand();
 
-        var sql = $"""
+        var select = $"""
             SELECT {PcEventsRowReader.ComposeSelectColumns(_events.EventOptions)}
             FROM {_events.EventsTableName}
             WHERE stream_id = @stream_id AND tenant_id = @tenant_id
             """;
+
+        var sql = "";
 
         if (!includeArchived)
         {
@@ -514,8 +516,8 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
             cmd.Parameters.AddWithValue("@from_version", fromVersion);
         }
 
-        sql += " ORDER BY version;";
-        cmd.CommandText = sql;
+        sql += " ORDER BY version";
+        cmd.CommandText = _events.StreamEventsSql(select, sql, "@stream_id", "@tenant_id");
 
         var ctx = new EventHydrationContext(
             _events,

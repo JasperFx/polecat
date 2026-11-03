@@ -103,9 +103,96 @@ public class tenant_partitioned_append_lock_tests(TenantPartitionedAppendDatabas
         await session.SaveChangesAsync(Ct).WaitAsync(Bound, Ct);
     }
 
-    // ReadCommittedSnapshot from here on because these go on to load the stream. That read doesn't name
-    // tenant_ordinal, which leads ix_pc_events_stream_and_version here, so it is a scan of pc_events, and with
-    // locking reads it waits on the open append's rows. That is a different lock from the one under test.
+    /// <summary>
+    ///     #916. The read of a stream's events didn't name <c>tenant_ordinal</c>, which leads
+    ///     <c>ix_pc_events_stream_and_version</c> here, so it scanned <c>pc_events</c> and on locking read
+    ///     committed waited on the open append's rows, whichever stream and tenant they were for.
+    /// </summary>
+    [Theory]
+    [InlineData(DatabaseLocking.LockingReadCommitted)]
+    [InlineData(DatabaseLocking.ReadCommittedSnapshot)]
+    [InlineData(DatabaseLocking.OptimizedLocking)]
+    public async Task an_open_append_does_not_hold_up_fetching_another_stream(DatabaseLocking locking)
+    {
+        var store = await CreateTenantedStoreAsync(locking);
+        var streams = await StartStreamsAsync(store, 2, Red);
+
+        await using var inFlight = await InFlightAppend.StartAsync(store, streams[0], Red);
+
+        (await VersionsAsync(store, streams[1], Red).WaitAsync(Bound, Ct)).ShouldBe([1]);
+    }
+
+    [Theory]
+    [InlineData(DatabaseLocking.LockingReadCommitted)]
+    [InlineData(DatabaseLocking.ReadCommittedSnapshot)]
+    [InlineData(DatabaseLocking.OptimizedLocking)]
+    public async Task an_open_append_does_not_hold_up_fetching_in_another_tenant(DatabaseLocking locking)
+    {
+        var store = await CreateTenantedStoreAsync(locking);
+        var reds = await StartStreamsAsync(store, 1, Red);
+        var blues = await StartStreamsAsync(store, 1, Blue);
+
+        await using var inFlight = await InFlightAppend.StartAsync(store, reds[0], Red);
+
+        (await VersionsAsync(store, blues[0], Blue).WaitAsync(Bound, Ct)).ShouldBe([1]);
+    }
+
+    [Theory]
+    [InlineData(DatabaseLocking.LockingReadCommitted)]
+    [InlineData(DatabaseLocking.ReadCommittedSnapshot)]
+    [InlineData(DatabaseLocking.OptimizedLocking)]
+    public async Task an_open_append_does_not_hold_up_a_batched_fetch(DatabaseLocking locking)
+    {
+        var store = await CreateTenantedStoreAsync(locking);
+        var streams = await StartStreamsAsync(store, 2, Red);
+
+        await using var inFlight = await InFlightAppend.StartAsync(store, streams[0], Red);
+
+        await using var query = store.QuerySession(new SessionOptions { TenantId = Red });
+        var batch = query.CreateBatchQuery();
+        var fetched = batch.Events.FetchStream(streams[1]);
+        await batch.Execute(Ct).WaitAsync(Bound, Ct);
+
+        (await fetched).Select(x => x.Version).ShouldBe([1]);
+    }
+
+    [Theory]
+    [InlineData(DatabaseLocking.LockingReadCommitted)]
+    [InlineData(DatabaseLocking.ReadCommittedSnapshot)]
+    [InlineData(DatabaseLocking.OptimizedLocking)]
+    public async Task an_open_append_does_not_hold_up_fetching_a_stream_that_is_not_there(DatabaseLocking locking)
+    {
+        var store = await CreateTenantedStoreAsync(locking);
+        var streams = await StartStreamsAsync(store, 1, Red);
+
+        await using var inFlight = await InFlightAppend.StartAsync(store, streams[0], Red);
+
+        (await VersionsAsync(store, Guid.NewGuid(), Red).WaitAsync(Bound, Ct)).ShouldBeEmpty();
+    }
+
+    /// <summary>
+    ///     What locking read committed still means: a stream with an open append is being written, so its
+    ///     own reader waits for the rows the append has in flight, with or without partitioning.
+    /// </summary>
+    [Fact]
+    public async Task an_open_append_still_holds_up_fetching_its_own_stream_on_locking_reads()
+    {
+        var store = await CreateTenantedStoreAsync(DatabaseLocking.LockingReadCommitted);
+        var streams = await StartStreamsAsync(store, 1, Red);
+
+        await using var inFlight = await InFlightAppend.StartAsync(store, streams[0], Red); // version 2
+
+        var fetch = VersionsAsync(store, streams[0], Red);
+
+        await Task.Delay(LongEnoughToHaveWaited, Ct);
+        fetch.IsCompleted.ShouldBeFalse();
+
+        await inFlight.CommitAsync();
+        (await fetch.WaitAsync(Bound, Ct)).ShouldBe([1, 2]);
+    }
+
+    // ReadCommittedSnapshot from here on because these go on to load the aggregate, which has reads of its
+    // own that this doesn't vouch for on locking reads. That is a different lock from the one under test.
     [Fact]
     public async Task an_open_append_does_not_hold_up_the_exclusive_paths()
     {

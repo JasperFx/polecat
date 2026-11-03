@@ -48,11 +48,36 @@ internal class FetchStreamBatchItem : IBatchQueryItem
 
     public void WriteSql(ICommandBuilder builder)
     {
+        if (!_events.UseTenantPartitionedEvents)
+        {
+            writeSelect(builder, null);
+            return;
+        }
+
+        // The guard names each of these more than once, and a builder's parameter can only be appended
+        // where it is used. This is the batched form of EventGraph.StreamEventsSql.
+        var isString = _streamId is string;
+        builder.Append($"DECLARE @pc_stream_id {(isString ? "varchar(250)" : "uniqueidentifier")} = ");
+        builder.AppendParameter(_streamId, isString ? SqlDbType.VarChar : null);
+        builder.Append(", @pc_tenant_id varchar(250) = ");
+        builder.AppendParameter(_tenantId, SqlDbType.VarChar);
+        builder.Append(";\n");
+
+        builder.Append(_events.StreamOrdinalGuardSql("@pc_stream_id", "@pc_tenant_id"));
+        builder.Append("\n");
+        writeSelect(builder, _events.StreamOrdinalPredicate);
+        builder.Append("ELSE\n");
+        writeSelect(builder, null);
+    }
+
+    private void writeSelect(ICommandBuilder builder, string? ordinalPredicate)
+    {
         builder.Append(
             $"SELECT {PcEventsRowReader.ComposeSelectColumns(_events.EventOptions)} FROM {_events.EventsTableName} WHERE stream_id = ");
         builder.AppendParameter(_streamId, _streamId is string ? SqlDbType.VarChar : null);
         builder.Append(" AND tenant_id = ");
         builder.AppendParameter(_tenantId, SqlDbType.VarChar);
+        if (ordinalPredicate != null) builder.Append(ordinalPredicate);
         builder.Append(" AND is_archived = 0");
 
         if (_version > 0)

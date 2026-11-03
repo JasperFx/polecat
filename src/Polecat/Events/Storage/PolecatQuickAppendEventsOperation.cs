@@ -64,6 +64,20 @@ internal sealed class PolecatQuickAppendEventsOperation
     /// </summary>
     internal const int StreamRowNotUpdatedError = 52905;
 
+    /// <summary>
+    ///     Raised when a start found its stream already there under another of the tenant's partition
+    ///     ordinals, where the primary key can't see it. <see cref="TryTransform" /> turns it into
+    ///     <see cref="ExistingStreamIdCollisionException" />, as it does a 2627.
+    /// </summary>
+    internal const int StreamOnAnotherOrdinalError = 52906;
+
+    /// <summary>
+    ///     SQL Server's number for a duplicate key on a unique index, as opposed to a constraint.
+    /// </summary>
+    private const int DuplicateKeyOnUniqueIndex = 2601;
+
+    private const string StreamVersionIndex = "ix_pc_events_stream_and_version";
+
     private readonly EventGraph _graph;
     private readonly QuickEventStorageDescriptor _descriptor;
 
@@ -527,7 +541,8 @@ internal sealed class PolecatQuickAppendEventsOperation
     /// <summary>
     ///     Map a SQL Server primary-key violation (2627) on the stream INSERT to
     ///     <see cref="ExistingStreamIdCollisionException" /> — the closed-shape equivalent of the
-    ///     bespoke <c>ProcessStartStreamAsync</c> catch. Only meaningful when this op inserts the
+    ///     bespoke <c>ProcessStartStreamAsync</c> catch. <see cref="StreamOnAnotherOrdinalError" /> is the same
+    ///     collision, where the key can't see it. Only meaningful when this op inserts the
     ///     stream row. A stream UPDATE that found no row is the shared expected-version failure, with
     ///     the same -1 for an actual version nobody read.
     /// </summary>
@@ -537,13 +552,18 @@ internal sealed class PolecatQuickAppendEventsOperation
                   ?? original.InnerException as Microsoft.Data.SqlClient.SqlException;
         var id = Stream.Key is not null ? (object)Stream.Key : Stream.Id;
 
-        if (Mode == StreamWriteMode.Insert && sql is { Number: 2627 })
+        if (Mode == StreamWriteMode.Insert && sql is { Number: 2627 or StreamOnAnotherOrdinalError })
         {
             transformed = new Polecat.Exceptions.ExistingStreamIdCollisionException(id);
             return true;
         }
 
-        if (Mode == StreamWriteMode.Update && sql is { Number: StreamRowNotUpdatedError })
+        // The second case is the same failure from further along. The version check comes after the inserts,
+        // so losing a race to an append reaches the event's unique index first. The daemon can lose one,
+        // because its batch reads the version ahead of its transaction, and so can an append on an old ordinal.
+        if (Mode == StreamWriteMode.Update && sql != null
+            && (sql.Number == StreamRowNotUpdatedError
+                || (sql.Number == DuplicateKeyOnUniqueIndex && sql.Message.Contains(StreamVersionIndex, StringComparison.Ordinal))))
         {
             transformed = new EventStreamUnexpectedMaxEventIdException(id, Stream.AggregateType,
                 Stream.ExpectedVersionOnServer!.Value, -1);
