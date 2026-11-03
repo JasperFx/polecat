@@ -652,50 +652,25 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
                 return await new ScalarHandler<TResult>().HandleAsync(reader, token);
 
             default:
-                return await ReadOneGroupAsync<TResult>(reader, parser.ValueMode.Value, grouping.ReadsJson, token);
+                return await ReadOneRowAsync<TResult>(reader, parser.ValueMode.Value, grouping.ReadsJson, token);
         }
     }
 
     /// <summary>
-    ///     First, Single and Last over groups. Reads the row directly rather than through a handler, so
-    ///     nothing has to be closed over <typeparamref name="TResult" /> at runtime.
+    ///     First, Single and Last over rows that are not documents: a scalar in the first column, or a
+    ///     JSON object. The rows are closed over <typeparamref name="TResult" /> statically, so nothing
+    ///     has to be at runtime, and a <c>TOP</c> has already bounded how many there are.
     /// </summary>
     [RequiresDynamicCode("Deserializes a projected row via ISerializer.FromJson.")]
     [RequiresUnreferencedCode("Deserializes a projected row via ISerializer.FromJson.")]
-    private async Task<TResult> ReadOneGroupAsync<TResult>(
+    private async Task<TResult> ReadOneRowAsync<TResult>(
         DbDataReader reader, SingleValueMode mode, bool readsJson, CancellationToken token)
     {
-        if (!await reader.ReadAsync(token))
-        {
-            if (mode is SingleValueMode.First or SingleValueMode.Single or SingleValueMode.Last)
-            {
-                throw new InvalidOperationException("Sequence contains no elements");
-            }
+        var rows = readsJson
+            ? await new GroupByListHandler<TResult>(_session.Serializer).HandleAsync(reader, token)
+            : await new ScalarListHandler<TResult>().HandleAsync(reader, token);
 
-            return default!;
-        }
-
-        TResult result;
-        if (readsJson)
-        {
-            result = _session.Serializer.FromJson<TResult>(reader.GetString(0));
-        }
-        else if (await reader.IsDBNullAsync(0, token))
-        {
-            result = default!;
-        }
-        else
-        {
-            var targetType = Nullable.GetUnderlyingType(typeof(TResult)) ?? typeof(TResult);
-            result = (TResult)ScalarConversion.Convert(reader.GetValue(0), targetType);
-        }
-
-        if (mode is SingleValueMode.Single or SingleValueMode.SingleOrDefault && await reader.ReadAsync(token))
-        {
-            throw new InvalidOperationException("Sequence contains more than one element");
-        }
-
-        return result;
+        return mode.OneOf(rows);
     }
 
     [RequiresDynamicCode("Closes GroupByListHandler<> over TResult's element type via Type.MakeGenericType.")]
@@ -1266,6 +1241,16 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
             // Plain list result
             return await InvokeListHandlerAsync<TResult>(documentType, reader, token, syncRevision, syncGuidVersion,
                 hierarchyMapping, sharedSelectClause);
+        }
+
+        // #916: a Select's row is whatever it projected. Read as the document, a scalar failed as
+        // malformed JSON and everything else as a bad cast.
+        if (parser.SelectExpression != null && parser.ValueMode.Value.TakesOneRow())
+        {
+            return parser.IsScalarSelect
+                ? await ReadOneRowAsync<TResult>(reader, parser.ValueMode.Value, readsJson: false, token)
+                : parser.ValueMode.Value.OneOf(await InvokeProjectionHandlerAsync<IReadOnlyList<TResult>>(
+                    documentType, reader, parser.SelectExpression, token));
         }
 
         switch (parser.ValueMode)
