@@ -31,8 +31,10 @@ namespace Polecat.Linq.Parsing;
 ///     <para>
 ///         ⚠️ <b>Comparing is SQL's business, not .NET's.</b> Two values are the same here if the
 ///         collation says so, so <c>"abc"</c>, <c>"ABC"</c> and <c>"abc  "</c> are one row on a
-///         case-insensitive database. That is what <c>Distinct()</c> over a scalar has always meant, and
-///         <c>docs/documents/querying/linq/operators.md</c> says so.
+///         case-insensitive database. That is what <c>Distinct()</c> over a scalar has always meant. A
+///         <c>GROUP BY</c> can tell the last two apart for free, by adding a column that goes unread. Here
+///         every column is part of the row, so the same answer needs another derived table, and the
+///         docs say what it means instead.
 ///     </para>
 /// </remarks>
 internal static class DistinctProjection
@@ -75,7 +77,7 @@ internal static class DistinctProjection
 
         if (parser.IsScalarSelect)
         {
-            ApplyToScalar(statement, counts);
+            ApplyToScalar(statement, parser.ScalarSelectMember!, counts);
         }
         else
         {
@@ -117,10 +119,19 @@ internal static class DistinctProjection
         return new CompositeSqlFragment(new JsonObjectFragment(members), " AS data");
     }
 
-    private static void ApplyToScalar(Statement statement, bool counts)
+    private static void ApplyToScalar(Statement statement, IQueryableMember member, bool counts)
     {
-        var ordering = statement.OrderBys.FirstOrDefault(x => x.Literal != statement.SelectColumns);
-        if (ordering != null) throw Refuse(ordering);
+        for (var i = 0; i < statement.OrderBys.Count; i++)
+        {
+            var ordering = statement.OrderBys[i];
+            if (ordering.Literal != statement.SelectColumns && ordering.Literal != member.TypedLocator)
+            {
+                throw Refuse(ordering);
+            }
+
+            // The same member, but SELECT DISTINCT only orders by what it selects, in those words.
+            statement.OrderBys[i] = (statement.SelectColumns, ordering.Descending);
+        }
 
         statement.IsDistinct = true;
 

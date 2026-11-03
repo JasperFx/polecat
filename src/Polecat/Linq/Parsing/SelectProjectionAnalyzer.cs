@@ -107,7 +107,7 @@ internal static class SelectProjectionAnalyzer
         // string that is what a predicate wants; written into a JSON object it would be a quoted string
         // that no bool member can read back. As a bit it is written as the JSON literal.
         var locator = member.JsonLocator
-                      ?? (member.IsBoolean ? $"CAST({member.TypedLocator} AS bit)" : member.TypedLocator);
+                      ?? (member.IsBoolean ? $"CAST({member.TypedLocator} AS bit)" : member.ValueLocator());
 
         return new SimpleProjectionColumn(key, locator, member.MemberType, member.LocatorSqlType, member.TypedLocator);
     }

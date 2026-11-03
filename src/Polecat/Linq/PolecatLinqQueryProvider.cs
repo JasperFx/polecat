@@ -1200,13 +1200,13 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
 
             case SingleValueMode.Min:
                 statement.SelectColumns = parser.AggregationMember != null
-                    ? $"MIN({parser.AggregationMember.TypedLocator})"
+                    ? $"MIN({parser.AggregationMember.ValueLocator()})"
                     : "MIN(data)";
                 break;
 
             case SingleValueMode.Max:
                 statement.SelectColumns = parser.AggregationMember != null
-                    ? $"MAX({parser.AggregationMember.TypedLocator})"
+                    ? $"MAX({parser.AggregationMember.ValueLocator()})"
                     : "MAX(data)";
                 break;
 

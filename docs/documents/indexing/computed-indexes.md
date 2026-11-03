@@ -74,8 +74,19 @@ do, because `varchar` holds what the database's code page holds:
   cannot tell from the client which characters the database's code page has.
 - **A value wider than the column reads the document as well**, and a stored value wider than the column
   is not matched by the part of it that fits.
+- **A plain ASCII value is checked against the document too.** `東京` and `??` are the same length and the
+  same in the column, and `ā` is `a` there, so a seek on the column is followed by a comparison with the
+  document on the rows it found. It stays a seek.
+- **A query that reads the value back reads the document.** That is `Select(x => x.UserName)`, a `GroupBy`
+  key, `Distinct`, `DistinctBy`, `Min` and `Max`, because the column would answer `??`. So a default index
+  does not cover them: over 100,000 documents an unfiltered `GroupBy` costs 5,160 reads rather than 588, and
+  155ms rather than 16. A filter on the member still seeks.
+- **`OrderBy` stays on the column**, so `Take(10)` can walk the index. It sorts `東京` as `??`, among the
+  question marks.
 
-If a member holds text outside ASCII, declare the column `nvarchar` and every value seeks:
+If a member holds text outside ASCII, or you want a `GroupBy` or a `Select` served by the index, declare the
+column `nvarchar`. Every value seeks, and there is nothing to read from the document short of a value wider
+than the column:
 
 ```cs
 opts.Schema.For<User>().Index(x => x.UserName, x => x.SqlType = "nvarchar(250)");

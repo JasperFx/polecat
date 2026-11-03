@@ -100,9 +100,9 @@ columns: a member that is an object, a computed value or a constructor call is r
 
 ::: warning SQL decides what is equal
 Rows are compared by the database's collation, so on the default case-insensitive one `abc` and `ABC` are
-one row, and so are `abc` and `abc  `, because `=` pads with spaces. The same goes for a `GroupBy` key, which
-keeps `abc` and `abc  ` apart only by [their length](#simple-key-with-aggregates). Which of the spellings
-comes back is up to SQL Server.
+one row, and so are `abc` and `abc  `, because `=` pads with spaces. Which of the spellings comes back is up
+to SQL Server. Adding the length to a `DISTINCT` would mean reading every value twice, so it is left to mean
+what it means in SQL.
 :::
 
 ## Aggregation
@@ -150,6 +150,9 @@ public async Task group_by_simple_key_with_count()
 ```
 <sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.Tests/Linq/group_by_operator.cs#L22-L41' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_group_by_simple_key_with_count' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
+
+A string key is compared by the database's collation, so on the default case-insensitive one `abc` and `ABC`
+are one group. Trailing spaces do count: `abc` and `abc  ` are two groups, as they are in .NET.
 
 ### Composite Key
 
