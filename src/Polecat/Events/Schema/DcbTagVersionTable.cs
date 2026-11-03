@@ -5,7 +5,7 @@ namespace Polecat.Events.Schema;
 
 /// <summary>
 ///     Weasel table definition for <c>pc_dcb_tag_version</c> — one row per DCB tag boundary, carrying a
-///     monotonic counter of the commits that have touched it.
+///     version that changes on every commit that touches it.
 /// </summary>
 /// <remarks>
 ///     <para>
@@ -27,10 +27,27 @@ namespace Polecat.Events.Schema;
 ///         <see cref="Polecat.Events.Dcb.TagValueStringifier" />. <c>tenant_id</c> is in the key
 ///         unconditionally: under single tenancy every row simply carries the default tenant.
 ///     </para>
+///     <para>
+///         #890: <c>tag_value</c> is the application's value as text, and a tag can be personal data, so a
+///         tombstone deletes the row once no event carries the tag. That is only safe because the version
+///         never repeats: it comes from one sequence per schema, not from counting up the row. A counter
+///         that restarted at 1 when the row came back could match a capture of the row that was deleted,
+///         and a conflict would be lost. See <c>StreamTagVersionBump</c>.
+///     </para>
 /// </remarks>
 internal class DcbTagVersionTable : Table
 {
     public const string TableName = "pc_dcb_tag_version";
+    public const string SequenceName = "pc_dcb_tag_version_sequence";
+
+    /// <summary>
+    ///     Above any value an older store can hold. Rows written before #890 keep their counters, and those
+    ///     count the commits on one tag from 1, so a sequence starting at 1 could give a row a value it has
+    ///     held before. A constant, rather than the table's highest value when the sequence is created,
+    ///     because <c>CREATE SEQUENCE</c> takes only a constant and a script has to be able to run without
+    ///     reading the data. It leaves the rest of the bigint range, about 9,000 times this much.
+    /// </summary>
+    public const long SequenceStart = 1_000_000_000_000_000;
 
     public DcbTagVersionTable(EventGraph events)
         : base(new SqlServerObjectName(events.DatabaseSchemaName, TableName))

@@ -3,6 +3,7 @@ using JasperFx;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Polecat.Tests.Events;
 using Polecat.TestUtils;
 using Shouldly;
 
@@ -234,6 +235,7 @@ public class generated_schema_script_executes
         tables.ShouldContain("pc_streams");
         tables.ShouldContain("pc_events");
         tables.ShouldContain("pc_event_progression");
+        tables.ShouldContain("pc_dcb_tag_version");
 
         // #685: the full-text token table, and the trigger that is the one object here whose create
         // cannot be guarded with an IF. Both have to exist after each pass.
@@ -308,6 +310,11 @@ public class generated_schema_script_executes
             .Index(x => x.Status)
             .ForeignKey<ScriptedCustomer>(x => x.CustomerId)
             .FullTextIndex(Polecat.Storage.FullText.FullTextTokenizer.Porter, x => x.Status);
+
+        // #890: a tag type brings pc_dcb_tag_version and its sequence, which has no OR ALTER and needs a
+        // guard of its own to survive the second pass.
+        opts.Events.AddEventType<StudentEnrolled>();
+        opts.Events.RegisterTagType<CourseId>("scripted_course").ForAggregate<StudentCourseEnrollment>();
     }
 
     private static async Task DropSchemaAsync()

@@ -1431,7 +1431,8 @@ internal class EventOperations : QueryEventStore, IEventOperations
         // Handed to the session rather than queued as an operation: a boundary only belongs in the unit
         // of work if the session actually appends something. See DocumentSessionBase.CaptureDcbBoundary.
         _sessionBase.CaptureDcbBoundary(
-            DcbTagVersionCapture.BuildEntries(targets, capturedByKey, _tenantId, query, lastSeenSequence));
+            DcbTagVersionCapture.BuildEntries(targets, capturedByKey, _tenantId, query, lastSeenSequence),
+            events.Count);
 
         return new EventBoundary<T>(_sessionBase, _events, _tenantId, aggregate, events, lastSeenSequence);
     }
@@ -1488,6 +1489,20 @@ internal class EventOperations : QueryEventStore, IEventOperations
         TagConditionSql.AppendEventKeys(builder, eventGraph, query, tenantId);
         builder.Append($") m INNER JOIN {eventGraph.EventsTableName} e ON {eventGraph.TagToEventJoin("m", "e")}");
         builder.Append(" WHERE e.is_archived = 0 ORDER BY e.seq_id");
+    }
+
+    /// <summary>
+    /// How many of the events a boundary read are still there at save time. See
+    /// <see cref="DcbTagVersionCapture.ReadFor" />.
+    /// </summary>
+    internal static void WriteTagQueryCountSql(ICommandBuilder builder, EventGraph eventGraph, EventTagQuery query,
+        string tenantId, long lastSeenSequence)
+    {
+        builder.Append("SELECT COUNT(*) FROM (");
+        TagConditionSql.AppendEventKeys(builder, eventGraph, query, tenantId);
+        builder.Append($") m INNER JOIN {eventGraph.EventsTableName} e ON {eventGraph.TagToEventJoin("m", "e")}");
+        builder.Append(" WHERE e.is_archived = 0 AND e.seq_id <= ");
+        builder.AppendParameter(lastSeenSequence, System.Data.SqlDbType.BigInt);
     }
 
     /// <summary>
