@@ -165,6 +165,10 @@ await using var session = store.LightweightSession(new SessionOptions
 });
 ```
 
+A retry of a failed `SaveChangesAsync` on the same session calls `BeforeSaveChangesAsync` again. Operations
+and transaction participants it added on the failed attempt are dropped first, so it should add them every
+time rather than remembering that it already has.
+
 ### The IChangeSet
 
 `IChangeSet` is a snapshot of a single committed unit of work, handed to both `IDocumentSessionListener`

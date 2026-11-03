@@ -23,13 +23,19 @@ internal class PatchOperation : Polecat.Internal.IStorageOperation, Weasel.Stora
     private readonly DocumentMapping _mapping;
     private readonly List<Action<ICommandBuilder>> _actions;
     private readonly Action<ICommandBuilder> _whereClauseWriter;
+    private readonly Action<ICommandBuilder>? _matchedRowsScope;
 
+    /// <param name="matchedRowsScope">
+    ///     Given for a patch by filter: what narrows the document ids it matched to the rows it matched,
+    ///     which is its tenant on a conjoined table and nothing otherwise. See <see cref="WriteOnMatchedRows" />.
+    /// </param>
     public PatchOperation(DocumentMapping mapping, List<Action<ICommandBuilder>> actions,
-        Action<ICommandBuilder> whereClauseWriter)
+        Action<ICommandBuilder> whereClauseWriter, Action<ICommandBuilder>? matchedRowsScope = null)
     {
         _mapping = mapping;
         _actions = actions;
         _whereClauseWriter = whereClauseWriter;
+        _matchedRowsScope = matchedRowsScope;
     }
 
     public Type DocumentType => _mapping.DocumentType;
@@ -37,6 +43,12 @@ internal class PatchOperation : Polecat.Internal.IStorageOperation, Weasel.Stora
 
     public void ConfigureCommand(ICommandBuilder builder)
     {
+        if (_matchedRowsScope is not null && _actions.Count > 1)
+        {
+            WriteOnMatchedRows(builder);
+            return;
+        }
+
         foreach (var action in _actions)
         {
             builder.Append($"UPDATE {_mapping.QualifiedTableName} SET data = ");
@@ -44,6 +56,48 @@ internal class PatchOperation : Polecat.Internal.IStorageOperation, Weasel.Stora
             builder.Append(", last_modified = SYSDATETIMEOFFSET() WHERE ");
             _whereClauseWriter(builder);
             builder.Append(";\n");
+        }
+    }
+
+    /// <summary>
+    ///     #916: a filtered patch with several actions, against the rows its filter matched before any of
+    ///     them ran.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         Each action is a statement of its own, because <c>JSON_MODIFY</c> reads <c>data</c> and one
+    ///         can't see what another did to it in a single <c>SET</c>. With the filter on each, the first
+    ///         action could change what the second matched: <c>Patch(x =&gt; x.Status == "new")</c>, setting
+    ///         the status and then anything else, did the rest to no row at all.
+    ///     </para>
+    ///     <para>
+    ///         <c>UPDLOCK</c> is what the filter had as part of an <c>UPDATE</c>, and it is held to the end
+    ///         of the transaction, so a matched row can't change before the actions reach it. It also keeps
+    ///         a <c>Snapshot</c> session's 3960 over a concurrent write, and it reads the current row where
+    ///         the database has read committed snapshot on.
+    ///     </para>
+    ///     <para>
+    ///         The table variable has no key because the table's can be wider than the id, with the
+    ///         partition column in it. It lives in this operation's own batch command, so another patch in
+    ///         the same save doesn't collide with the name.
+    ///     </para>
+    /// </remarks>
+    private void WriteOnMatchedRows(ICommandBuilder builder)
+    {
+        var table = _mapping.QualifiedTableName;
+
+        builder.Append($"DECLARE @pc_patched TABLE (id {DocumentTable.SqlTypeForIdentity(_mapping.InnerIdType)} NOT NULL);\n");
+        builder.Append($"INSERT INTO @pc_patched (id) SELECT id FROM {table} WITH (UPDLOCK) WHERE ");
+        _whereClauseWriter(builder);
+        builder.Append(";\n");
+
+        foreach (var action in _actions)
+        {
+            builder.Append($"UPDATE {table} SET data = ");
+            action(builder);
+            builder.Append(", last_modified = SYSDATETIMEOFFSET() WHERE ");
+            _matchedRowsScope!(builder);
+            builder.Append("id IN (SELECT id FROM @pc_patched);\n");
         }
     }
 

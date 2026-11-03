@@ -80,6 +80,10 @@ All queries in the batch execute in a single database call, significantly reduci
 
 If `Execute()` fails it throws, and every item that has not read its result fails the same way, or is cancelled if the batch was. So awaiting an item after a failed `Execute()` reports the failure rather than waiting forever. An item that read its result before the failure keeps it.
 
+A batch runs once. A second `Execute()` throws `InvalidOperationException`, whether the first one worked or
+not, and nothing is sent. Any item you added in between fails with the same exception. Create a new batch to
+read again.
+
 ## Query Plans
 
 For reusable query specifications, implement `IBatchQueryPlan<T>`:

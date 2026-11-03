@@ -385,6 +385,22 @@ internal partial class QuerySession : IQuerySession, JasperFx.Events.IEventTenan
     }
 
     /// <summary>
+    ///     #916: a by-id load that neither answers from nor adds to anything the session holds, through
+    ///     the same QueryOnly storage a projection reads with, so the instance belongs to the caller.
+    /// </summary>
+    internal async Task<T?> LoadUntrackedAsync<T>(object id, string tenantId, CancellationToken token)
+        where T : notnull
+    {
+        assertNotDisposed();
+        var provider = _providers.GetProvider<T>();
+        await _tableEnsurer.EnsureTableAsync(provider, HasOpenTransaction, token);
+
+        var storage = (Polecat.Storage.ClosedShape.IPolecatObjectStorage<T>)
+            _providers.ClosedShapeGraph.StorageFor<T>().QueryOnly;
+        return await storage.LoadByObjectIdAsync(id, this, tenantId, token);
+    }
+
+    /// <summary>
     ///     polecat#548: batched by-id load against an explicit tenant. See <see cref="LoadForTenantAsync{T}" />.
     /// </summary>
     internal async Task<IReadOnlyList<T>> LoadManyForTenantAsync<T>(

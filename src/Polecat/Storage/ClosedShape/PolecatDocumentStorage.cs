@@ -227,6 +227,21 @@ internal abstract class PolecatDocumentStorage<TDoc, TId>
                 _mapping, _descriptor.Identification, _mapping.StoreOptions, forSnapshotSession: true)
             : _descriptor;
 
+    /// <summary>
+    ///     #916: a numeric write at revision 0 asks for the next revision, so its guard always passes and
+    ///     nothing but the conflict can stop it writing over a concurrent commit, which is the case
+    ///     <see cref="UnguardedWriteDescriptorFor" /> is for. With a revision named, the guard is what
+    ///     answers, and it has to see the current row to do that.
+    /// </summary>
+    /// <remarks>
+    ///     The operation captures its revision after it is built and takes its SQL from this descriptor,
+    ///     so the revision is read here, off the same document.
+    /// </remarks>
+    protected DocumentStorageDescriptor<TDoc, TId> NumericWriteDescriptorFor(TDoc document, IStorageSession session)
+        => Internal.DocumentSessionBase.ExpectedRevisionOf(document, MappedRevisionFor(document)) == 0
+            ? UnguardedWriteDescriptorFor(session)
+            : _descriptor;
+
     private static bool RunsAtSnapshot(IStorageSession session) => session switch
     {
         Internal.DocumentSessionBase documents => documents.RunsAtSnapshotIsolation,

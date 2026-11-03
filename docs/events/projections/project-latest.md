@@ -37,10 +37,16 @@ ValueTask<T?> ProjectLatest<T>(string key, CancellationToken cancellation = defa
 
 ## Behavior
 
-1. Fetches the current committed aggregate state from the database via `FetchLatest<T>()`
-2. Finds any pending (uncommitted) events for that stream in the current session
+1. Finds any pending (uncommitted) events for that stream in the current session
+2. Fetches the current committed aggregate state from the database
 3. Applies the pending events on top using the aggregate's Apply/Create methods
 4. Returns the result
+
+With pending events to apply, the committed state always comes from the database and never from an
+identity map, because an aggregate with void `Apply` methods is changed in place. So the instance you get
+back is your own: the session's cached copy, `stream.Aggregate` and `LoadAsync` still show only what has
+been committed, and calling `ProjectLatest` twice, or again after a failed `SaveChangesAsync`, applies the
+pending events once.
 
 ### When No Pending Events Exist
 

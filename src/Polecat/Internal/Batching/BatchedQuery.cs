@@ -39,6 +39,8 @@ internal class BatchedQuery : IBatchedQuery
     internal void RequireEventStore() => _needsEventStore = true;
     private bool _needsEventStore;
 
+    private bool _executed;
+
     internal void TrackProvider(DocumentProvider provider) => _involvedProviders.Add(provider);
 
     public Task<bool> CheckExists<T>(Guid id) where T : class => AddCheckExists<T>(id);
@@ -126,6 +128,14 @@ internal class BatchedQuery : IBatchedQuery
 
         try
         {
+            // #916: inside the try, so an item added since the first Execute faults rather than hangs
+            if (_executed)
+            {
+                throw new InvalidOperationException(
+                    "This batch has already been executed, and a batch runs once. Create a new one with CreateBatchQuery() to read again.");
+            }
+
+            _executed = true;
             await ExecuteItemsAsync(token);
         }
         catch (Exception failure)

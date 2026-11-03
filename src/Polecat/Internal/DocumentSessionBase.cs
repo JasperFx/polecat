@@ -545,14 +545,19 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     {
         if (op is Weasel.Storage.IRevisionedOperation revisioned)
         {
-            revisioned.Revision = document switch
-            {
-                ILongVersioned longVersioned => longVersioned.Version,
-                IRevisioned rev => rev.Version,
-                _ => mappedRevision ?? 0
-            };
+            revisioned.Revision = ExpectedRevisionOf(document, mappedRevision);
         }
     }
+
+    /// <summary>
+    ///     The revision a document names, which is what an operation expects. 0 asks for the next one.
+    /// </summary>
+    internal static long ExpectedRevisionOf(object document, long? mappedRevision) => document switch
+    {
+        ILongVersioned longVersioned => longVersioned.Version,
+        IRevisioned rev => rev.Version,
+        _ => mappedRevision ?? 0
+    };
 
     internal enum WriteKind
     {
@@ -930,6 +935,12 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
 
     private async Task SaveChangesInternalAsync(CancellationToken token)
     {
+        // #870: anything queued or enlisted past this point belongs to this attempt at the save. #916: and
+        // that starts ahead of the listeners, because a retry calls BeforeSaveChangesAsync again.
+        var operationsBeforeThisAttempt = _workTracker.OperationCount;
+        var participantsBeforeThisAttempt = _transactionParticipants.Count;
+        var messageBatchBeforeThisAttempt = _inlineMessageBatch;
+
         bool reliesOnTransaction;
         try
         {
@@ -953,15 +964,13 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             // that transaction, so it used to stay open, holding the stream lock, until the session was
             // disposed. End it here, as a failure after that point does.
             await abandonOpenTransactionAsync(e);
+            await abandonAttemptAsync(operationsBeforeThisAttempt, participantsBeforeThisAttempt,
+                messageBatchBeforeThisAttempt);
             throw;
         }
 
         using var tx = _transactional.Transaction!;
         var committed = false;
-
-        // #870: anything queued or enlisted past this point belongs to this attempt at the save.
-        var operationsBeforeThisAttempt = _workTracker.OperationCount;
-        var participantsBeforeThisAttempt = _transactionParticipants.Count;
 
         try
         {
@@ -1082,6 +1091,11 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             committed = true;
             _transactional.Transaction = null;
 
+            // #916: a batch belongs to one commit. Kept, the next save on this session would run its
+            // hooks again and deliver what it holds a second time. Marten throws its own away here too.
+            var messageBatch = _inlineMessageBatch;
+            _inlineMessageBatch = null;
+
             // #478: the aggregate write cache is published here and nowhere else. After the commit,
             // so a failed one leaves nothing behind; before the tracker is reset, purely to keep it
             // beside the other post-commit work.
@@ -1148,9 +1162,9 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
                 await listener.AfterCommitAsync(this, commit, afterCommit);
             }
 
-            if (_inlineMessageBatch is not null)
+            if (messageBatch is not null)
             {
-                await _inlineMessageBatch.AfterCommitAsync(afterCommit);
+                await messageBatch.AfterCommitAsync(afterCommit);
             }
         }
         catch (Exception failure)
@@ -1188,8 +1202,8 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
 
             if (!committed)
             {
-                _workTracker.RemoveOperationsFrom(operationsBeforeThisAttempt);
-                await abandonParticipantsFromAsync(participantsBeforeThisAttempt);
+                await abandonAttemptAsync(operationsBeforeThisAttempt, participantsBeforeThisAttempt,
+                    messageBatchBeforeThisAttempt);
             }
 
             throw;
@@ -1218,6 +1232,21 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         cmd.Parameters.AddVarChar("@table", qualifiedTableName);
 
         return await ExecuteScalarAsync(cmd, token) is not (null or DBNull);
+    }
+
+    /// <summary>
+    ///     #870: forget what a failed attempt at a save added, because a retry on this session adds it
+    ///     again. #916: that is the listeners' <c>BeforeSaveChangesAsync</c> as well as the projections,
+    ///     and it includes the message batch, whose messages the projections publish again on the retry.
+    ///     It needs no telling: <c>BeforeCommitAsync</c> wrote inside the transaction that just rolled back,
+    ///     and <c>AfterCommitAsync</c> never ran, so nothing it holds was sent.
+    /// </summary>
+    private async Task abandonAttemptAsync(int operationsBefore, int participantsBefore,
+        IMessageBatch? messageBatchBefore)
+    {
+        _workTracker.RemoveOperationsFrom(operationsBefore);
+        _inlineMessageBatch = messageBatchBefore;
+        await abandonParticipantsFromAsync(participantsBefore);
     }
 
     /// <summary>

@@ -470,31 +470,31 @@ internal class EventOperations : QueryEventStore, IEventOperations
     public async ValueTask<T?> ProjectLatest<T>(Guid id, CancellationToken cancellation = default)
         where T : class
     {
-        var snapshot = await FetchLatest<T>(id, cancellation);
-
-        if (_workTracker.TryFindStream(id, _events.StreamIdScope(_tenantId), out var stream)
-            && stream!.Events.Count > 0)
+        if (!_workTracker.TryFindStream(id, _events.StreamIdScope(_tenantId), out var stream)
+            || stream!.Events.Count == 0)
         {
-            var aggregator = _sessionBase.Options.Projections.AggregatorFor<T>();
-            snapshot = await aggregator.BuildAsync(stream.Events, _sessionBase, snapshot, cancellation);
+            return await FetchLatest<T>(id, cancellation);
         }
 
-        return snapshot;
+        // #916: never onto what FetchLatest finds in a session's cache, see FetchUncachedForFolding
+        var snapshot = await FetchUncachedForFolding<T>(id, cancellation);
+        var aggregator = _sessionBase.Options.Projections.AggregatorFor<T>();
+        return await aggregator.BuildAsync(stream.Events, _sessionBase, snapshot, cancellation);
     }
 
     public async ValueTask<T?> ProjectLatest<T>(string key, CancellationToken cancellation = default)
         where T : class
     {
-        var snapshot = await FetchLatest<T>(key, cancellation);
-
-        if (_workTracker.TryFindStream(key, _events.StreamIdScope(_tenantId), out var stream)
-            && stream!.Events.Count > 0)
+        if (!_workTracker.TryFindStream(key, _events.StreamIdScope(_tenantId), out var stream)
+            || stream!.Events.Count == 0)
         {
-            var aggregator = _sessionBase.Options.Projections.AggregatorFor<T>();
-            snapshot = await aggregator.BuildAsync(stream.Events, _sessionBase, snapshot, cancellation);
+            return await FetchLatest<T>(key, cancellation);
         }
 
-        return snapshot;
+        // #916: never onto what FetchLatest finds in a session's cache, see FetchUncachedForFolding
+        var snapshot = await FetchUncachedForFolding<T>(key, cancellation);
+        var aggregator = _sessionBase.Options.Projections.AggregatorFor<T>();
+        return await aggregator.BuildAsync(stream.Events, _sessionBase, snapshot, cancellation);
     }
 
     public async Task WriteToAggregate<T>(Guid id, Action<IEventStream<T>> writing, CancellationToken cancellation = default)
