@@ -10,6 +10,15 @@ on:
         description: 'Package version (e.g. 0.2.0). Leave blank to use version from csproj.'
         required: false
 
+# Trusted publishing (OIDC), rather than a long-lived NUGET_API_KEY secret, the same as JasperFx,
+# Weasel, Marten, Fisher and Wolverine. NuGet/login exchanges this run's GitHub OIDC token for an API
+# key that expires within the hour, so there is no durable credential to leak or rotate. `id-token:
+# write` lets the runner request that token. The policy on nuget.org names this repository and this
+# workflow's file name, so renaming this file breaks publishing until the policy is updated.
+permissions:
+  contents: read
+  id-token: write
+
 jobs:
   publish:
     runs-on: ubuntu-latest
@@ -51,5 +60,12 @@ jobs:
           dotnet pack src/Polecat.AspNetCore/Polecat.AspNetCore.csproj -c Release --no-build -o ./artifacts $VERSION_ARG
           dotnet pack src/Polecat.EntityFrameworkCore/Polecat.EntityFrameworkCore.csproj -c Release --no-build -o ./artifacts $VERSION_ARG
 
+      # Right before the push, because the key it returns only lasts an hour
+      - name: NuGet login
+        id: nuget_login
+        uses: NuGet/login@v1
+        with:
+          user: jeremydmiller
+
       - name: Push to NuGet
-        run: dotnet nuget push ./artifacts/*.nupkg --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate
+        run: dotnet nuget push ./artifacts/*.nupkg --api-key "${{ steps.nuget_login.outputs.NUGET_API_KEY }}" --source https://api.nuget.org/v3/index.json --skip-duplicate
