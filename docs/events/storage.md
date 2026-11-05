@@ -16,7 +16,7 @@ The main event log table:
 | `bdata` | `varbinary(max)` | Binary event body, `NULL` unless the event type opted in — see [Binary Event Serialization](/events/binary-serialization) |
 | `type` | `nvarchar(250)` | Event type name (snake_case) |
 | `timestamp` | `datetimeoffset` | When the event was recorded |
-| `tenant_id` | `nvarchar(250)` | Tenant identifier |
+| `tenant_id` | `varchar(250)` | Tenant identifier |
 | `dotnet_type` | `nvarchar(500)` | Full .NET type name |
 | `correlation_id` | `nvarchar(250)` | Request correlation |
 | `causation_id` | `nvarchar(250)` | Event causation chain |
@@ -34,7 +34,7 @@ Stream metadata:
 | `version` | `int` | Current stream version |
 | `timestamp` | `datetimeoffset` | Last event timestamp |
 | `created` | `datetimeoffset` | Stream creation time |
-| `tenant_id` | `nvarchar(250)` | Tenant identifier |
+| `tenant_id` | `varchar(250)` | Tenant identifier |
 | `is_archived` | `bit` | Archive flag |
 
 ## pc_event_progression

@@ -65,8 +65,10 @@ this way before 5.48 can't be recovered, and the row it left behind answers to `
 [migration guide](/migration-guide#upgrading-past-5-47-0-string-ids-outside-the-code-page).
 
 ::: warning
-Tenant ids go into the same kind of column and aren't checked. Under the default collation two tenants named
-`東京` and `大阪` are one tenant, so keep tenant ids within the code page.
+Tenant ids go into the same kind of column. Under the default collation two tenants named `東京` and `大阪`
+would be one tenant, each reading the other's documents, so a session for a tenant id the code page can't hold
+(`IDocumentStore.LightweightSession(tenantId)` or `ForTenant`) throws `TenantIdOutsideCodePageException`
+before its first command. `pc_tenants` in the master table is `nvarchar` and isn't affected.
 :::
 
 ### Int / Long with HiLo

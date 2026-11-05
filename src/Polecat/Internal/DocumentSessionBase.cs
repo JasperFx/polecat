@@ -808,6 +808,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         }
 
         assertTenantIsInThisDatabase(tenantId);
+        NoteTenant(tenantId);
 
         tenantSession = new NestedTenantSession(this, tenantId);
         _byTenant[tenantId] = tenantSession;
