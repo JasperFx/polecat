@@ -156,13 +156,41 @@ public class finding_documents_with_mismatched_ids : OneOffConfigurationsContext
             """);
     }
 
+    /// <summary>
+    ///     The state #907 leaves a row in, built through text so it needs no help from the server: a member
+    ///     other than the id's own is where the next write landed, and the id now holds that object.
+    /// </summary>
     [Fact]
     public async Task finds_what_the_bug_leaves_in_the_wrong_member()
     {
         ConfigureFor(true);
         var document = new Plain { Id = Guid.NewGuid() };
         await StoreAsync(document);
+        await DamageAsync<Plain>(document.Id);
+
+        var found = await theStore.Advanced.FindDocumentsWithMismatchedIdsAsync<Plain>(Ct);
+
+        var mismatch = found.ShouldHaveSingleItem();
+        mismatch.Id.ShouldBe(document.Id);
+        mismatch.IsCorrupted.ShouldBeFalse();
+        mismatch.StoredId.ShouldBe("{\"x\":1,\"child\":2}");
+    }
+
+    /// <summary>
+    ///     The same, from the raw T-SQL of the issue. Only a server that still has the bug leaves anything
+    ///     behind: CI pulls the newest SQL Server image, which has been fixed, and there the two updates do
+    ///     exactly what they say. The test then has no precondition to test, so it says so instead of
+    ///     asserting something about a server defect.
+    /// </summary>
+    [Fact]
+    public async Task finds_what_the_server_bug_itself_leaves_in_the_wrong_member()
+    {
+        ConfigureFor(true);
+        var document = new Plain { Id = Guid.NewGuid() };
+        await StoreAsync(document);
         await ApplyTheBugAsync<Plain>(document.Id);
+        Assert.SkipUnless(await IdWasOverwrittenAsync<Plain>(document.Id),
+            "this SQL Server does not have the JSON_MODIFY defect of #907, so the raw statements left the id alone");
 
         var found = await theStore.Advanced.FindDocumentsWithMismatchedIdsAsync<Plain>(Ct);
 
@@ -231,6 +259,10 @@ public class finding_documents_with_mismatched_ids : OneOffConfigurationsContext
         await ApplyTheBugAsync<LeftCorrupted>(corrupted);
         await DamageAsync<LeftCorrupted>(mismatched);
 
+        // An unreadable member can only be made by the defect itself, which newer servers no longer have
+        Assert.SkipUnless(await IdWasOverwrittenAsync<LeftCorrupted>(corrupted),
+            "this SQL Server does not have the JSON_MODIFY defect of #907, so no row could be left unreadable");
+
         await using (var conn = await OpenConnectionAsync())
         await using (var probe = conn.CreateCommand())
         {
@@ -245,6 +277,23 @@ public class finding_documents_with_mismatched_ids : OneOffConfigurationsContext
         found.Single(x => x.IsCorrupted).Id.ShouldBe(corrupted);
         found.Single(x => x.IsCorrupted).StoredId.ShouldBeNull();
         found.Single(x => !x.IsCorrupted).Id.ShouldBe(mismatched);
+    }
+
+    /// <summary>Did the raw statements of #907 damage the id on this server? Unreadable counts as damaged.</summary>
+    private async Task<bool> IdWasOverwrittenAsync<T>(Guid id)
+    {
+        await using var conn = await OpenConnectionAsync();
+        await using var probe = conn.CreateCommand();
+        probe.CommandText = $"SELECT JSON_VALUE(data, '$.id') FROM {TableOf<T>()} WHERE id = '{id}'";
+        try
+        {
+            var stored = await probe.ExecuteScalarAsync(Ct);
+            return !string.Equals(stored as string, id.ToString(), StringComparison.OrdinalIgnoreCase);
+        }
+        catch (SqlException)
+        {
+            return true;
+        }
     }
 
     private async Task<Guid[]> IdsInKeyOrderAsync<T>()
