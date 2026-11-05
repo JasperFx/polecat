@@ -109,12 +109,38 @@ internal static class StreamTagVersionBump
         // In the order DcbTagVersionPhase takes rows, so far as a set-based statement can.
         var registrations = events.TagTypes.OrderBy(x => x.TableSuffix, StringComparer.Ordinal).ToArray();
 
+        // #925: one row at a time, in the order the phase sorts them. A set-based UPDATE takes its row locks
+        // in whatever order the plan produces them, and a tagged append taking the same rows in
+        // (tag_table, tag_value) order then crossed it: each held a row the other wanted. BIN2 is the
+        // ordinal order DcbTagVersionPhase sorts by, which the column's own collation is not.
+        builder.Append("DECLARE @erase_next varchar(250); DECLARE @erase_prev varchar(250);\n");
+
+        var index = 0;
         foreach (var registration in registrations)
         {
+            var tags = $"@erase_tags_{index++}";
+            var tableSuffix = SqlEscaping.LiteralBody(registration.TableSuffix);
+
             builder.Append($"""
 
-                UPDATE v SET version = {Version}
-                {RowsOfTheStreamsTags(events, registration)};
+                DECLARE {tags} TABLE (tag_value varchar(250) COLLATE Latin1_General_BIN2 NOT NULL PRIMARY KEY);
+                INSERT INTO {tags} (tag_value)
+                SELECT DISTINCT CONVERT(varchar(250), {TagValueStringifier.ToSql(registration.SimpleType, "t.value")})
+                FROM {events.EventsTableName} e
+                INNER JOIN {events.TagTableName(registration)} t ON {events.TagToEventJoin("t", "e")}
+                WHERE e.stream_id = @id AND e.tenant_id = @tenant_id;
+
+                SET @erase_prev = NULL;
+                WHILE 1 = 1
+                BEGIN
+                    SET @erase_next = NULL;
+                    SELECT TOP (1) @erase_next = tag_value FROM {tags}
+                        WHERE @erase_prev IS NULL OR tag_value > @erase_prev ORDER BY tag_value;
+                    IF @erase_next IS NULL BREAK;
+                    UPDATE {events.DcbTagVersionTableName} SET version = {Version}
+                        WHERE tag_table = '{tableSuffix}' AND tag_value = @erase_next AND tenant_id = @tenant_id;
+                    SET @erase_prev = @erase_next;
+                END;
 
                 """);
         }
