@@ -31,7 +31,7 @@ Depending on configuration, additional columns may be present:
 
 | Column | Type | When Added |
 | :--- | :--- | :--- |
-| `tenant_id` | `nvarchar(250)` | Conjoined tenancy |
+| `tenant_id` | `varchar(250)` | Conjoined tenancy |
 | `is_deleted` | `bit` | Soft deletes enabled |
 | `deleted_at` | `datetimeoffset` | Soft deletes enabled |
 | `guid_version` | `uniqueidentifier` | `IVersioned` interface |

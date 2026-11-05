@@ -106,6 +106,7 @@ internal partial class QuerySession : IQuerySession, JasperFx.Events.IEventTenan
         Options = options;
         Serializer = options.Serializer;
         TenantId = tenantId;
+        NoteTenant(tenantId);
         _lifetime = lifetime;
         _resilience = options.ResiliencePipeline;
         _providers = providers;
@@ -179,40 +180,44 @@ internal partial class QuerySession : IQuerySession, JasperFx.Events.IEventTenan
     private record CommandExecution(SqlCommand Command, IConnectionLifetime Lifetime);
     private record BatchExecution(SqlBatch Batch, IConnectionLifetime Lifetime);
 
-    internal Task<int> ExecuteAsync(SqlCommand command, CancellationToken token)
+    internal async Task<int> ExecuteAsync(SqlCommand command, CancellationToken token)
     {
         assertNotDisposed();
+        await VerifyTenantsAsync(token).ConfigureAwait(false);
         RequestCount++;
-        return _resilience.ExecuteAsync(
+        return await _resilience.ExecuteAsync(
             static (state, t) => new ValueTask<int>(state.Lifetime.ExecuteAsync(state.Command, t)),
-            new CommandExecution(command, _lifetime), token).AsTask();
+            new CommandExecution(command, _lifetime), token).ConfigureAwait(false);
     }
 
-    internal Task<object?> ExecuteScalarAsync(SqlCommand command, CancellationToken token)
+    internal async Task<object?> ExecuteScalarAsync(SqlCommand command, CancellationToken token)
     {
         assertNotDisposed();
+        await VerifyTenantsAsync(token).ConfigureAwait(false);
         RequestCount++;
-        return _resilience.ExecuteAsync(
+        return await _resilience.ExecuteAsync(
             static (state, t) => new ValueTask<object?>(state.Lifetime.ExecuteScalarAsync(state.Command, t)),
-            new CommandExecution(command, _lifetime), token).AsTask();
+            new CommandExecution(command, _lifetime), token).ConfigureAwait(false);
     }
 
-    internal Task<DbDataReader> ExecuteReaderAsync(SqlCommand command, CancellationToken token)
+    internal async Task<DbDataReader> ExecuteReaderAsync(SqlCommand command, CancellationToken token)
     {
         assertNotDisposed();
+        await VerifyTenantsAsync(token).ConfigureAwait(false);
         RequestCount++;
-        return _resilience.ExecuteAsync(
+        return await _resilience.ExecuteAsync(
             static (state, t) => new ValueTask<DbDataReader>(state.Lifetime.ExecuteReaderAsync(state.Command, t)),
-            new CommandExecution(command, _lifetime), token).AsTask();
+            new CommandExecution(command, _lifetime), token).ConfigureAwait(false);
     }
 
-    internal Task<DbDataReader> ExecuteReaderAsync(SqlBatch batch, CancellationToken token)
+    internal async Task<DbDataReader> ExecuteReaderAsync(SqlBatch batch, CancellationToken token)
     {
         assertNotDisposed();
+        await VerifyTenantsAsync(token).ConfigureAwait(false);
         RequestCount++;
-        return _resilience.ExecuteAsync(
+        return await _resilience.ExecuteAsync(
             static (state, t) => new ValueTask<DbDataReader>(state.Lifetime.ExecuteReaderAsync(state.Batch, t)),
-            new BatchExecution(batch, _lifetime), token).AsTask();
+            new BatchExecution(batch, _lifetime), token).ConfigureAwait(false);
     }
 
     // ── Existence check operations ──────────────────────────────────────

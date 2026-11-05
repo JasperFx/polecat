@@ -66,6 +66,45 @@ internal partial class QuerySession
         return column.CodePageLosing(key);
     }
 
+    // #922: a tenant id the tenant_id columns can't hold is another tenant's once it gets there. Session open
+    // and ForTenant are synchronous and the code page is a question for the server, so a non-ASCII tenant is
+    // noted there and refused before this session's next command. A refused tenant stays refused.
+    private List<string>? _tenantsToVerify;
+    private bool _verifyingTenants;
+
+    internal void NoteTenant(string tenantId)
+    {
+        if (Ascii.IsValid(tenantId)) return;
+
+        _tenantsToVerify ??= [];
+        if (!_tenantsToVerify.Contains(tenantId)) _tenantsToVerify.Add(tenantId);
+    }
+
+    internal async Task VerifyTenantsAsync(CancellationToken token)
+    {
+        // The lookup below runs a command of its own
+        if (_tenantsToVerify is not { Count: > 0 } || _verifyingTenants) return;
+
+        _verifyingTenants = true;
+        try
+        {
+            foreach (var tenantId in _tenantsToVerify.ToArray())
+            {
+                if (await CodePageLosingAsync(_eventGraph.StreamsTableName, tenantId, token).ConfigureAwait(false)
+                    is { } codePage)
+                {
+                    throw new Exceptions.TenantIdOutsideCodePageException(tenantId, codePage);
+                }
+
+                _tenantsToVerify.Remove(tenantId);
+            }
+        }
+        finally
+        {
+            _verifyingTenants = false;
+        }
+    }
+
     internal async ValueTask<List<object>> IdsThatCouldBeStoredAsync(DocumentMapping mapping, List<object> ids,
         CancellationToken token)
     {
