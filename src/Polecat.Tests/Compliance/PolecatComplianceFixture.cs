@@ -311,6 +311,108 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
         return rows;
     }
 
+    // jasperfx#1124. Polecat's unit of work finds a pending stream by (tenant, id) -- polecat#905 --
+    // and ForTenant on a session hands out a tenant-scoped write scope whose events flush with the
+    // parent's SaveChangesAsync. That scope is an ITenantOperations rather than an IDocumentSession,
+    // which is TOperations here, so the fixture overrides ForTenant (as the gate's remarks allow) with
+    // a proxy that routes only `Events` to the tenant scope and everything else to the parent.
+    public override bool SupportsSessionTenantSwitching => true;
+
+    public override IDocumentSession ForTenant(IDocumentSession session, string tenantId)
+        => TenantEventsProxy.Create(session, session.ForTenant(tenantId));
+
+    public class TenantEventsProxy : System.Reflection.DispatchProxy
+    {
+        private IDocumentSession _parent = null!;
+        private ITenantOperations _tenant = null!;
+
+        public static IDocumentSession Create(IDocumentSession parent, ITenantOperations tenant)
+        {
+            var proxy = Create<IDocumentSession, TenantEventsProxy>();
+            var self = (TenantEventsProxy)(object)proxy;
+            self._parent = parent;
+            self._tenant = tenant;
+            return proxy;
+        }
+
+        protected override object? Invoke(System.Reflection.MethodInfo? targetMethod, object?[]? args)
+        {
+            try
+            {
+                if (targetMethod!.Name == "get_Events" && targetMethod.DeclaringType == typeof(IDocumentSession))
+                {
+                    return _tenant.Events;
+                }
+
+                return targetMethod.Invoke(_parent, args);
+            }
+            catch (System.Reflection.TargetInvocationException e) when (e.InnerException != null)
+            {
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(e.InnerException).Throw();
+                throw;
+            }
+        }
+    }
+
+    // jasperfx#1124 / polecat#852. The shared surface cannot hold a transaction open, so this goes
+    // through Polecat's OWN append path and holds the transaction from inside it: a session appends the
+    // event, and a transaction participant -- which runs after the append SQL but before the commit --
+    // reports that the row is written and then parks until the handle is disposed. The event's
+    // seq_id is allocated and its row is written, uncommitted, exactly as an in-flight append is.
+    public override bool SupportsHoldingAnAppendOpen => true;
+
+    public override async Task<IAsyncDisposable> HoldAppendOpenAsync(Guid streamId, object @event,
+        CancellationToken token)
+    {
+        var hold = new HeldAppend(_store);
+        await hold.StartAsync(streamId, @event, token).ConfigureAwait(false);
+        return hold;
+    }
+
+    // The participant is a separate object from the handle on purpose: a session disposes the
+    // participants registered with it, so one that was also the handle would await the very save
+    // that is disposing it.
+    private sealed class HeldAppend : IAsyncDisposable
+    {
+        private readonly DocumentStore _store;
+        private readonly TaskCompletionSource _written = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private Task _saving = Task.CompletedTask;
+
+        public HeldAppend(DocumentStore store) => _store = store;
+
+        public async Task StartAsync(Guid streamId, object @event, CancellationToken token)
+        {
+            _saving = Task.Run(async () =>
+            {
+                await using var session = _store.LightweightSession();
+                session.AddTransactionParticipant(new Participant(this));
+                session.Events.StartStream(streamId, @event);
+                await session.SaveChangesAsync(CancellationToken.None).ConfigureAwait(false);
+            }, CancellationToken.None);
+
+            // A save that fails before the participant runs must surface rather than hang the fact.
+            var first = await Task.WhenAny(_written.Task, _saving).WaitAsync(token).ConfigureAwait(false);
+            if (first == _saving) await _saving.ConfigureAwait(false);
+        }
+
+        private sealed class Participant(HeldAppend owner) : ITransactionParticipant
+        {
+            public async Task BeforeCommitAsync(SqlConnection connection, SqlTransaction transaction,
+                CancellationToken token)
+            {
+                owner._written.TrySetResult();
+                await owner._release.Task.ConfigureAwait(false);
+            }
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            _release.TrySetResult();
+            await _saving.ConfigureAwait(false);
+        }
+    }
+
     /// <summary>
     ///     Polecat derives live aggregators automatically from self-aggregating types; there is no
     ///     explicit registration call to make.
