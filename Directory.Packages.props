@@ -1462,9 +1462,9 @@
                * INERT: weasel#763 (DateOnly/TimeOnly on MySQL and Oracle).
                * MySqlConnector 2.6.1 for GHSA-473q-m89c-ghf8 and JasperFx 2.98.0 ride along; neither is a
                  Weasel.SqlServer surface. -->
-        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.48.0" />
-        <PackageVersion Include="Weasel.SqlServer" Version="9.48.0" />
-        <PackageVersion Include="Weasel.Storage" Version="9.48.0" />
+        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.49.0" />
+        <PackageVersion Include="Weasel.SqlServer" Version="9.49.0" />
+        <PackageVersion Include="Weasel.Storage" Version="9.49.0" />
 
         <!-- Strongly typed IDs. Both generators are test-only: they prove Polecat's value-type id
              support against the two libraries Marten's ValueTypeTests exercise. StronglyTypedId emits
