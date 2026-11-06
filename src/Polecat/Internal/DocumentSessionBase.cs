@@ -1,5 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
+using System.Text;
 using JasperFx;
 using JasperFx.Core.Reflection;
 using JasperFx.Events;
@@ -808,7 +809,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         }
 
         assertTenantIsInThisDatabase(tenantId);
-        NoteTenant(tenantId);
+        AssertTenantFits(tenantId);
 
         tenantSession = new NestedTenantSession(this, tenantId);
         _byTenant[tenantId] = tenantSession;
@@ -1451,15 +1452,71 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             }
         }
 
-        if (_eventGraph.StreamIdentity != JasperFx.Events.StreamIdentity.AsString) return;
+        // #922: the doc_type of a hierarchy is the alias of the subclass written. The operation reports the
+        // root type, so the alias is the document's own.
+        foreach (var operation in _workTracker.Operations)
+        {
+            if (operation is not Operations.ClosedShapeOperationAdapter { Document: { } document }
+                || operation.Role() == OperationRole.Deletion) continue;
+
+            var mapping = _providers.GetProvider(operation.DocumentType).Mapping;
+            if (!mapping.IsHierarchy() || document.GetType() == mapping.DocumentType) continue;
+
+            var alias = mapping.AliasFor(document.GetType());
+            if (await CodePageLosingAsync(mapping.QualifiedTableName, alias, token) is { } aliasCodePage)
+            {
+                throw new Exceptions.ColumnValueOutsideCodePageException("doc_type", alias, aliasCodePage);
+            }
+        }
+
+        var stringStreams = _eventGraph.StreamIdentity == JasperFx.Events.StreamIdentity.AsString;
 
         foreach (var stream in _workTracker.Streams)
         {
             // Only what will be written. A stream fetched for writing and left alone writes nothing.
             if (stream.Events.Count > 0 || stream.AlwaysEnforceConsistency)
             {
-                await AssertStreamKeyFitsAsync(stream, token);
+                if (stringStreams) await AssertStreamKeyFitsAsync(stream, token);
             }
+
+            foreach (var @event in stream.Events)
+            {
+                await assertEventColumnsFitAsync(@event, token);
+            }
+        }
+    }
+
+    // #922: the other varchar columns an event writes. They're the events table's own columns, and a table
+    // takes the database default when it's created, so the streams table's answer stands for them.
+    private async Task assertEventColumnsFitAsync(IEvent @event, CancellationToken token)
+    {
+        // Only when the column is there to lose it: the session seeds a correlation id from Activity.Current
+        if (Options.Events.EnableCorrelationId)
+        {
+            await assertColumnFitsAsync("correlation_id", @event.CorrelationId ?? CorrelationId, token);
+        }
+
+        await assertColumnFitsAsync("dotnet_type", @event.DotNetTypeName, token);
+
+        if (@event.Tags is not { Count: > 0 }) return;
+
+        foreach (var tag in @event.Tags)
+        {
+            var registration = _eventGraph.FindTagType(tag.TagType);
+            if (registration == null || registration.SimpleType != typeof(string)) continue;
+
+            await assertColumnFitsAsync($"tag value ({registration.TableSuffix})",
+                TagValueStringifier.Stringify(registration.ExtractValue(tag.Value)), token);
+        }
+    }
+
+    private async Task assertColumnFitsAsync(string column, string? value, CancellationToken token)
+    {
+        if (value == null || Ascii.IsValid(value)) return;
+
+        if (await CodePageLosingAsync(_eventGraph.StreamsTableName, value, token) is { } codePage)
+        {
+            throw new Exceptions.ColumnValueOutsideCodePageException(column, value, codePage);
         }
     }
 

@@ -20,30 +20,28 @@ public class tenant_id_outside_code_page_tests: OneOffConfigurationsContext
     }
 
     [Fact]
-    public async Task a_session_for_such_a_tenant_is_refused_before_its_first_command()
+    public void a_session_for_such_a_tenant_is_refused_when_it_is_opened()
     {
-        await using var session = theStore.LightweightSession(Tokyo);
-        var ex = await Should.ThrowAsync<TenantIdOutsideCodePageException>(
-            () => session.LoadAsync<StringDoc>("a", Ct));
+        var ex = Should.Throw<TenantIdOutsideCodePageException>(() => theStore.LightweightSession(Tokyo));
         ex.TenantId.ShouldBe(Tokyo);
         ex.CodePage.ShouldBe(1252);
+
+        Should.Throw<TenantIdOutsideCodePageException>(() => theStore.QuerySession(Tokyo));
+        Should.Throw<TenantIdOutsideCodePageException>(() => theStore.IdentitySession(new SessionOptions { TenantId = Tokyo }));
+        Should.Throw<TenantIdOutsideCodePageException>(
+            () => theStore.LightweightSession(new SessionOptions { TenantId = Tokyo }));
     }
 
     [Fact]
-    public async Task a_save_for_such_a_tenant_is_refused()
-    {
-        await using var session = theStore.LightweightSession(Tokyo);
-        session.Store(new StringDoc { Id = "a", Name = "x" });
-        await Should.ThrowAsync<TenantIdOutsideCodePageException>(() => session.SaveChangesAsync(Ct));
-    }
-
-    [Fact]
-    public async Task a_tenant_view_is_refused_on_the_next_command_and_stays_refused()
+    public async Task a_tenant_view_is_refused_when_it_is_named_and_the_session_is_unharmed()
     {
         await using var session = theStore.LightweightSession("red");
-        var view = session.ForTenant(Tokyo);
-        await Should.ThrowAsync<TenantIdOutsideCodePageException>(() => view.LoadAsync<StringDoc>("a", Ct));
-        await Should.ThrowAsync<TenantIdOutsideCodePageException>(() => session.LoadAsync<StringDoc>("a", Ct));
+        Should.Throw<TenantIdOutsideCodePageException>(() => session.ForTenant(Tokyo));
+        Should.Throw<TenantIdOutsideCodePageException>(() => session.ForTenant(Tokyo));
+
+        session.Store(new StringDoc { Id = "a", Name = "x" });
+        await session.SaveChangesAsync(Ct);
+        (await session.LoadAsync<StringDoc>("a", Ct))!.Name.ShouldBe("x");
     }
 
     [Fact]
