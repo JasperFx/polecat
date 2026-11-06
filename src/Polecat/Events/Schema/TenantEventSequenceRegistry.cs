@@ -105,8 +105,7 @@ internal sealed class TenantEventSequenceRegistry
         await _resilience.ExecuteAsync(static async (state, ct) =>
         {
             var (connectionString, schema, ordinal) = state;
-            var sequence = SequenceFor(schema, ordinal);
-            var resource = sequence.Identifier.Name;
+            var resource = SequenceFor(schema, ordinal).Identifier.Name;
 
             await using var conn = new SqlConnection(connectionString);
             await conn.OpenAsync(ct).ConfigureAwait(false);
@@ -118,6 +117,13 @@ internal sealed class TenantEventSequenceRegistry
 
             try
             {
+                // #922: a sequence that has to be created starts past whatever the ordinal still holds. A
+                // tenant removed with RetainData leaves its events behind and drops its sequence, so a
+                // fresh one restarting at 1 hands out seq_ids the retained rows already own, whether the
+                // same tenant comes back or another takes the ordinal. That's a primary key violation,
+                // reported as a false ExistingStreamIdCollisionException on a brand new stream id.
+                var sequence = new Sequence(SequenceFor(schema, ordinal).Identifier,
+                    await nextSeqIdAsync(conn, schema, ordinal, ct).ConfigureAwait(false));
                 await sequence.CreateAsync(conn, ct).ConfigureAwait(false);
             }
             finally
@@ -125,6 +131,24 @@ internal sealed class TenantEventSequenceRegistry
                 await conn.ReleaseGlobalLock(resource, CancellationToken.None).ConfigureAwait(false);
             }
         }, (_connectionString, _schemaName, ordinal), token).ConfigureAwait(false);
+    }
+
+    // 1 for a sequence that exists already (its start value is never read again) or an ordinal with no events
+    private static async Task<long> nextSeqIdAsync(SqlConnection conn, string schema, int ordinal,
+        CancellationToken ct)
+    {
+        await using var cmd = new SqlCommand($"""
+            IF OBJECT_ID(@sequence, N'SO') IS NULL
+                SELECT MAX(seq_id) FROM {Polecat.Internal.SqlEscaping.QualifiedName(schema, "pc_events")}
+                WHERE tenant_ordinal = @ordinal;
+            ELSE
+                SELECT CAST(NULL AS bigint);
+            """, conn);
+        cmd.Parameters.Add("@sequence", System.Data.SqlDbType.NVarChar, 300).Value =
+            SequenceFor(schema, ordinal).Identifier.QualifiedName;
+        cmd.Parameters.Add("@ordinal", System.Data.SqlDbType.Int).Value = ordinal;
+
+        return await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false) is long max ? max + 1 : 1;
     }
 
     internal readonly record struct TenantStorage(int Ordinal, string SequenceName);

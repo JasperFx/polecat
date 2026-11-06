@@ -60,6 +60,8 @@ internal class DocumentTableEnsurer
     private readonly ConcurrentDictionary<string, VarcharKeyColumn> _keyColumns =
         new(StringComparer.OrdinalIgnoreCase);
 
+    internal SqlConnection CreateConnection() => _connectionFactory.Create();
+
     internal VarcharKeyColumn? KeyColumnFor(string table) => _keyColumns.GetValueOrDefault(table);
 
     internal VarcharKeyColumn RememberKeyColumn(string table, VarcharKeyColumn column)

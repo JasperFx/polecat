@@ -68,7 +68,14 @@ this way before 5.48 can't be recovered, and the row it left behind answers to `
 Tenant ids go into the same kind of column. Under the default collation two tenants named `東京` and `大阪`
 would be one tenant, each reading the other's documents, so a session for a tenant id the code page can't hold
 (`IDocumentStore.LightweightSession(tenantId)` or `ForTenant`) throws `TenantIdOutsideCodePageException`
-before its first command. `pc_tenants` in the master table is `nvarchar` and isn't affected.
+at that call, before anything runs under the tenant. The first such tenant a database sees costs one blocking
+round trip to find out the code page; an ASCII tenant id never asks. `pc_tenants` in the master table is
+`nvarchar` and isn't affected.
+
+The other `varchar` columns an event or document writes are held to the same rule: a `correlation_id`, a
+string tag value, an event's `dotnet_type` and a subclass alias in `doc_type` that the code page can't hold
+make `SaveChangesAsync` throw `ColumnValueOutsideCodePageException`. Widening these columns to `nvarchar`
+is a schema change that waits for a major version.
 :::
 
 ### Int / Long with HiLo

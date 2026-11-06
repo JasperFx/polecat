@@ -56,6 +56,26 @@ public class tenants_table_tests
         new StoreOptions { ConnectionString = ConnectionSource.ConnectionString, AutoCreateSchemaObjects = AutoCreate.All },
         ConnectionSource.ConnectionString, schema);
 
+    /// <summary>
+    ///     #922: <c>pc_tenants.tenant_id</c> is nvarchar, so registering a tenant outside the code page of the
+    ///     varchar <c>tenant_id</c> columns loses nothing here. It is the session that refuses such a tenant.
+    /// </summary>
+    [Fact]
+    public async Task tenants_outside_the_varchar_code_page_stay_distinct_in_the_master_table()
+    {
+        var tenancy = TenancyFor(NewSchema());
+
+        await tenancy.AddDatabaseRecordAsync("東京", ConnectionSource.ConnectionString, Ct);
+        await tenancy.AddDatabaseRecordAsync("大阪", ConnectionSource.ConnectionString, Ct);
+        await tenancy.DisableTenantAsync("東京", Ct);
+
+        (await tenancy.AllDisabledAsync(Ct)).ShouldBe(["東京"]);
+        (await tenancy.FindDatabaseAsync("大阪", Ct)).ShouldNotBeNull();
+        await tenancy.DeleteDatabaseRecordAsync("東京", Ct);
+        (await tenancy.AllDisabledAsync(Ct)).ShouldBeEmpty();
+        (await tenancy.FindDatabaseAsync("大阪", Ct)).ShouldNotBeNull();
+    }
+
     [Fact]
     public async Task a_table_the_old_path_created_needs_no_migration()
     {

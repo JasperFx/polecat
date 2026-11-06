@@ -106,12 +106,12 @@ internal partial class QuerySession : IQuerySession, JasperFx.Events.IEventTenan
         Options = options;
         Serializer = options.Serializer;
         TenantId = tenantId;
-        NoteTenant(tenantId);
         _lifetime = lifetime;
         _resilience = options.ResiliencePipeline;
         _providers = providers;
         _tableEnsurer = tableEnsurer;
         _eventGraph = eventGraph;
+        AssertTenantFits(tenantId);
         Logger = options.Logger.StartSession(this);
 
         // #239: seed correlation/causation from the ambient Activity so distributed-tracing context
@@ -183,7 +183,6 @@ internal partial class QuerySession : IQuerySession, JasperFx.Events.IEventTenan
     internal async Task<int> ExecuteAsync(SqlCommand command, CancellationToken token)
     {
         assertNotDisposed();
-        await VerifyTenantsAsync(token).ConfigureAwait(false);
         RequestCount++;
         return await _resilience.ExecuteAsync(
             static (state, t) => new ValueTask<int>(state.Lifetime.ExecuteAsync(state.Command, t)),
@@ -193,7 +192,6 @@ internal partial class QuerySession : IQuerySession, JasperFx.Events.IEventTenan
     internal async Task<object?> ExecuteScalarAsync(SqlCommand command, CancellationToken token)
     {
         assertNotDisposed();
-        await VerifyTenantsAsync(token).ConfigureAwait(false);
         RequestCount++;
         return await _resilience.ExecuteAsync(
             static (state, t) => new ValueTask<object?>(state.Lifetime.ExecuteScalarAsync(state.Command, t)),
@@ -203,7 +201,6 @@ internal partial class QuerySession : IQuerySession, JasperFx.Events.IEventTenan
     internal async Task<DbDataReader> ExecuteReaderAsync(SqlCommand command, CancellationToken token)
     {
         assertNotDisposed();
-        await VerifyTenantsAsync(token).ConfigureAwait(false);
         RequestCount++;
         return await _resilience.ExecuteAsync(
             static (state, t) => new ValueTask<DbDataReader>(state.Lifetime.ExecuteReaderAsync(state.Command, t)),
@@ -213,7 +210,6 @@ internal partial class QuerySession : IQuerySession, JasperFx.Events.IEventTenan
     internal async Task<DbDataReader> ExecuteReaderAsync(SqlBatch batch, CancellationToken token)
     {
         assertNotDisposed();
-        await VerifyTenantsAsync(token).ConfigureAwait(false);
         RequestCount++;
         return await _resilience.ExecuteAsync(
             static (state, t) => new ValueTask<DbDataReader>(state.Lifetime.ExecuteReaderAsync(state.Batch, t)),
