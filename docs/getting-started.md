@@ -67,7 +67,8 @@ builder.Services.AddPolecat(options =>
 runs on one of them at a time. Either way a shard that pauses after a failure is restarted for you. See
 [the async daemon](/events/projections/async-daemon) for the details.
 
-See [Bootstrapping Polecat](/configuration/hostbuilder) for more options.
+See [Bootstrapping Polecat](/configuration/hostbuilder) for more options, and [Schema Migrations](/schema/migrations#choosing-an-approach) for
+the production alternatives to migrating at startup: `db-apply` or `resources setup` as a deployment step, or `db-patch` scripts for a DBA.
 
 ::: tip
 `AddPolecat()` registers `IDocumentStore` as a singleton, and `IDocumentSession` / `IQuerySession` as scoped services. In most cases you should inject a session directly.

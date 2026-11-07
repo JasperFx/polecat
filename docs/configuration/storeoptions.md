@@ -35,7 +35,9 @@ opts.AutoCreateSchemaObjects = AutoCreate.None;
 ```
 
 ::: warning
-In production environments, consider setting `AutoCreate.None` and managing schema migrations separately.
+In production environments, consider setting `AutoCreate.None` and managing schema migrations separately: `dotnet run -- db-apply` or
+`dotnet run -- resources setup` as a deployment step, or [`db-patch`](https://weasel.jasperfx.net/cli/db-patch.html) scripts for a DBA, with
+[`db-assert`](https://weasel.jasperfx.net/cli/db-assert.html) as the gate. See [Schema Migrations](/schema/migrations#choosing-an-approach).
 :::
 
 ## Table Prefix

@@ -45,7 +45,7 @@ Polecat is designed to work alongside other Critter Stack libraries:
 | [Marten](https://martendb.io) | PostgreSQL document database and event store |
 | [Wolverine](https://wolverinefx.net) | Messaging and command processing framework |
 | [JasperFx](https://jasperfx.net) | Core framework and event sourcing abstractions |
-| [Weasel](https://github.com/JasperFx/weasel) | Database schema management |
+| [Weasel](https://weasel.jasperfx.net/) | Database schema management and the `db-*` command line tools |
 
 ## Polecat vs Marten
 

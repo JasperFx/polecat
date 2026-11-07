@@ -1,6 +1,21 @@
 # Schema Migrations
 
-Polecat uses Weasel.SqlServer for diff-based schema migrations.
+Polecat uses [Weasel.SqlServer](https://weasel.jasperfx.net/core/schema-migrations.html) for diff-based schema migrations.
+
+## Choosing an Approach
+
+Polecat always computes a migration the same way: Weasel compares the schema objects your `StoreOptions` describe against the live
+database and produces the DDL for the difference. What you choose is *when* that runs and *who* runs it:
+
+| Approach | How | Typical use |
+|---|---|---|
+| Lazily, on first use | `AutoCreateSchemaObjects = AutoCreate.CreateOrUpdate` (the default), described below | Local development |
+| Once at application startup | `.ApplyAllDatabaseChangesOnStartup()` on `AddPolecat()`, or `services.AddResourceSetupOnStartup()` to set up every JasperFx [stateful resource](https://shared-libs.jasperfx.net/cli/resources.html) in the application, Wolverine's message storage and broker objects included | Development, integration tests, and production deployments where the application owns its schema |
+| As an explicit deployment step | `dotnet run -- `[`db-apply`](https://weasel.jasperfx.net/cli/db-apply.html), or `dotnet run -- resources setup` for every resource at once, with the application itself on `AutoCreate.None` | Production, when the deployment identity may run DDL |
+| From reviewed SQL scripts | `dotnet run -- `[`db-patch`](https://weasel.jasperfx.net/cli/db-patch.html) and [`db-dump`](https://weasel.jasperfx.net/cli/db-dump.html), applied by a DBA or a migration tool, with the application on `AutoCreate.None` | Production, when the application's credentials cannot run DDL |
+
+In every case, `dotnet run -- `[`db-assert`](https://weasel.jasperfx.net/cli/db-assert.html) (or `resources check`) reports whether the database
+matches the configuration without changing anything, and is the right gate for a deployment pipeline.
 
 ## Auto-Create Behavior
 
@@ -14,16 +29,23 @@ opts.AutoCreateSchemaObjects = AutoCreate.CreateOrUpdate;
 
 - Creates document tables on first use
 - Adds new columns when document configuration changes (e.g., enabling soft deletes)
+- Drops columns and indexes that the configuration no longer declares on a table it knows about (removing a duplicated field drops that column and its data)
 - Creates event store tables on startup, including the tables flat table projections write to
 - Creates the HiLo table on first use
-- **Never drops columns or tables**
+- **Never drops a whole table**
 
 ### What Auto-Create Does NOT Do
 
-- Drop existing columns
+- Drop or recreate a table (only `AutoCreate.All` does that, and only when a change cannot be expressed as an `ALTER`)
 - Rename columns
-- Modify column types
-- Delete data
+- Touch objects the configuration does not know about
+
+::: warning `CreateOrUpdate` is not "additive only"
+For a table it manages, the update delta brings the table in line with the configuration in both directions, so a column that is in the
+database and no longer in the configuration is dropped. If a deployment must never lose a schema object, use `AutoCreate.CreateOnly`, which
+refuses the migration instead. This is Weasel behaviour shared by every Critter Stack store; see the
+[AutoCreate policy](https://weasel.jasperfx.net/core/schema-migrations.html#autocreate-policy).
+:::
 
 ## Disabling Auto-Create
 
@@ -33,7 +55,17 @@ For production environments:
 opts.AutoCreateSchemaObjects = AutoCreate.None;
 ```
 
-When auto-create is disabled, you're responsible for ensuring the database schema matches your configuration. Use the [schema export](/schema/exporting) feature to generate DDL scripts.
+When auto-create is disabled, you're responsible for ensuring the database schema matches your configuration. There are three ways to meet that:
+
+- Run `dotnet run -- db-apply` or `dotnet run -- resources setup` as a deployment step. Both are an *explicit* instruction to migrate, so both apply the
+  changes as `CreateOrUpdate` even when the store is configured with `None`, and `CreateOrUpdate` never drops a table.
+- Generate scripts for a DBA with [`db-patch`](https://weasel.jasperfx.net/cli/db-patch.html) (the delta against the live database, plus a rollback
+  file) or [`db-dump`](https://weasel.jasperfx.net/cli/db-dump.html) (the whole schema), or programmatically with the [schema export](/schema/exporting) feature.
+- Keep `.ApplyAllDatabaseChangesOnStartup()` or `AddResourceSetupOnStartup()` registered. They respect `AutoCreate.None` and do nothing under it, so
+  the application can carry the same registration in every environment with the policy deciding whether it acts.
+
+Then gate the deployment with `dotnet run -- `[`db-assert`](https://weasel.jasperfx.net/cli/db-assert.html), which exits non-zero when the database differs
+from the configuration. `None` on its own does not report drift: a missing table surfaces as SQL Server's own `Invalid object name` error.
 
 ## Migration Flow
 
@@ -64,7 +96,7 @@ A session with a transaction open never waits, because a migration waiting on th
 All schema management is delegated to Weasel.SqlServer, which provides:
 
 - **Diff-based migrations** -- Only applies changes that are needed
-- **Safe operations** -- Never drops columns or tables
+- **Bounded operations** -- Never drops a whole table except under `AutoCreate.All`; see the warning above for what `CreateOrUpdate` does drop
 - **Idempotent** -- Safe to run multiple times
 - **Transaction safety** -- Schema changes are transactional
 
@@ -79,14 +111,21 @@ dotnet run -- db-apply
 
 | Command | Does |
 |---|---|
-| `db-apply` | Apply every outstanding migration |
-| `db-assert` | Fail if the database is out of step with the configuration — useful as a deployment gate |
-| `db-dump` | Write the DDL to a file instead of executing it |
-| `resources setup` | Provision every registered resource, Polecat's schema among them |
+| [`db-apply`](https://weasel.jasperfx.net/cli/db-apply.html) | Apply every outstanding migration. `--parallel <n>` walks a fleet of tenant databases concurrently |
+| [`db-assert`](https://weasel.jasperfx.net/cli/db-assert.html) | Fail if the database is out of step with the configuration — useful as a deployment gate |
+| [`db-patch`](https://weasel.jasperfx.net/cli/db-patch.html) | Write the delta against the live database as a SQL file, with a rollback file beside it |
+| [`db-dump`](https://weasel.jasperfx.net/cli/db-dump.html) | Write the whole DDL to a file instead of executing it |
+| [`db-list`](https://weasel.jasperfx.net/cli/db-list.html) | List the databases the host manages, with the identifiers the other commands' `-d` flag takes |
+| [`resources setup`](https://shared-libs.jasperfx.net/cli/resources.html) | Provision every registered resource, Polecat's schema among them |
 | `resources list` / `resources check` | List or verify registered resources |
 
-The `db-*` commands operate on Weasel databases specifically; `resources *` covers every JasperFx
+The `db-*` commands are [Weasel's](https://weasel.jasperfx.net/cli/) and operate on Weasel databases specifically; `resources *` is JasperFx's
+[stateful resource](https://shared-libs.jasperfx.net/cli/resources.html) model and covers every JasperFx
 resource in the application, so on a Wolverine host it also provisions envelope storage and broker
 topology alongside the Polecat schema. Both work against a single database and against every tenant
 database under separate-database or master-table tenancy, and ancillary stores registered with
 `AddPolecatStore<T>()` are included.
+
+The same `Setup()` that `resources setup` runs can run at application startup instead, with
+`services.AddResourceSetupOnStartup()`. For a Polecat-only host that is equivalent to `.ApplyAllDatabaseChangesOnStartup()`; on a host with
+Wolverine it also builds the message storage and any broker objects before the first message moves.
