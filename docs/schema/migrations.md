@@ -102,6 +102,15 @@ All schema management is delegated to Weasel.SqlServer, which provides:
 
 ## Command Line Schema Management
 
+::: tip
+The command line itself comes from JasperFx. Its [command line documentation](https://shared-libs.jasperfx.net/cli/)
+covers wiring up `RunJasperFxCommands`, [writing your own commands](https://shared-libs.jasperfx.net/cli/writing-commands),
+[arguments and flags](https://shared-libs.jasperfx.net/cli/arguments-flags),
+[environment checks](https://shared-libs.jasperfx.net/cli/environment-checks) and `describe`. Since JasperFx 2.101.0
+the commands also run from a Native AOT binary; see [Native AOT](https://shared-libs.jasperfx.net/cli/#native-aot)
+there and [the command line](/configuration/native-aot#the-command-line) on Polecat's Native AOT page.
+:::
+
 With `RunJasperFxCommands(args)` on a host that calls `AddPolecat(...)`, both families of schema
 commands see the Polecat database:
 

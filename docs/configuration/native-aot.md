@@ -318,6 +318,25 @@ your `JsonSerializerContext` instead.
 Measured rather than asserted — `Polecat.AotRuntimeSmoke` publishes native and runs every one of
 those shapes against SQL Server on each build.
 
+## The command line
+
+An application that ends in `RunJasperFxCommands(args)` goes through the JasperFx command line on every
+start, because `run` is the default command. Since JasperFx 2.101.0 that works from a native binary, and
+so do `help`, `describe`, `check-env`, `resources` and `projections`: `JasperFx.SourceGenerator` registers
+the commands at compile time, so none of them is found by reflection. Two things follow:
+
+- **Every assembly that contributes commands must be built with the generator.** JasperFx and
+  JasperFx.Events are; add it to your own application for your own commands. A command from an assembly
+  built without it is missing from `help` in the native binary.
+- **The `db-*` commands are Weasel's,** so they are available natively from the Weasel release built with
+  the generator.
+
+`ApplyJasperFxExtensions` and `RunJasperFxCommands` keep their trimming warnings for assemblies built
+without the generator. Suppress them on an explicit `Main`, as
+[Running the command line in an AOT binary](https://shared-libs.jasperfx.net/codegen/aot#running-the-command-line-in-an-aot-binary)
+shows, and see [Native AOT](https://shared-libs.jasperfx.net/cli/#native-aot) in the JasperFx command line
+documentation for the package reference.
+
 ## How this is tested
 
 Two CI lanes, with deliberately different jobs:
