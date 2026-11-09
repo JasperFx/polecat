@@ -1465,9 +1465,18 @@
                * INERT: weasel#763 (DateOnly/TimeOnly on MySQL and Oracle).
                * MySqlConnector 2.6.1 for GHSA-473q-m89c-ghf8 and JasperFx 2.98.0 ride along; neither is a
                  Weasel.SqlServer surface. -->
-        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.49.0" />
-        <PackageVersion Include="Weasel.SqlServer" Version="9.49.0" />
-        <PackageVersion Include="Weasel.Storage" Version="9.49.0" />
+        <!-- Weasel 9.50.0 (from 9.49.0). ADOPTED as-is, no Polecat code changes. JasperFx floor
+             2.101.0 (Weasel.Core / Weasel.Storage nuspecs), which the pin above satisfies.
+
+               * Weasel.Core and Weasel.EntityFrameworkCore are now built with JasperFx.SourceGenerator,
+                 so db-apply / db-assert / db-patch / db-dump / db-list / db-ef-migration are registered
+                 by a generated [ModuleInitializer] and appear in `help` from a Native AOT binary (they
+                 were missing in a native Polecat app). The generator is a private build-time reference
+                 and does not flow to Polecat.
+               * Otherwise the JasperFx 2.101.0 roll-forward and docs. -->
+        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.50.0" />
+        <PackageVersion Include="Weasel.SqlServer" Version="9.50.0" />
+        <PackageVersion Include="Weasel.Storage" Version="9.50.0" />
 
         <!-- Strongly typed IDs. Both generators are test-only: they prove Polecat's value-type id
              support against the two libraries Marten's ValueTypeTests exercise. StronglyTypedId emits
