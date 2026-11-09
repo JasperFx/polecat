@@ -14,10 +14,20 @@ jobs:
       fail-fast: false
       matrix:
         storage_type: [default, edge]
+        # Each storage leg is split across three runners by a stable hash of the test class
+        # (build/SupervisedTests.cs, --test-shard). Measured on the 2026-11-08 main run: 178
+        # test-minutes on default and 119 on edge, with no stalls and no test over 135s. The time was
+        # the suite's size (3,400 tests on 2026-10-20, 7,348 by 2026-11-06), not a hang, so one runner
+        # per leg had become a ~50 minute job. Three shards come out at roughly 17 and 11 minutes of
+        # test time per job on the same numbers. Public repository: the extra runners cost nothing
+        # but concurrency.
+        shard: [1, 2, 3]
     with:
       NUKE_TARGET: CIPolecat
       STORAGE_TYPE: ${{ matrix.storage_type }}
-      # Polecat.Tests is the workflow's critical path by an order of magnitude (~3,400 tests against
+      SHARD: ${{ matrix.shard }}
+      SHARD_COUNT: 3
+      # Polecat.Tests is the workflow's critical path by an order of magnitude (~7,300 tests against
       # ~2 minutes for every other job), so this job's wall clock IS the PR feedback loop.
       #
       # 4 OVERRIDES the ProcessorCount / 2 clamp (which would make it 2 on a 4-vCPU hosted runner),

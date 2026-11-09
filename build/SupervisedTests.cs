@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
 using System.Text;
 using System.Xml.Linq;
 using Bobcat.Ledger;
@@ -79,6 +80,70 @@ partial class Build
     /// </summary>
     [Parameter("The SQL Server the run is against (default | edge); picks the server and keys the ledger, report and TRX")]
     readonly string Storage = "default";
+
+    /// <summary>
+    ///     Which slice of the suite this run owns (<c>--test-shard 2 --test-shard-count 3</c>), 1-based.
+    ///     CI spreads one storage leg across several runners this way: the suite's ~180 test-minutes on
+    ///     one 4-vCPU runner was a ~50 minute job, and no single test was the problem (the long tail of
+    ///     5–15s tests was). Unset, the run owns the whole suite.
+    /// </summary>
+    /// <remarks>
+    ///     A test CLASS goes to <c>hash(class) mod count</c>, with a hash that is the same in every
+    ///     process (SHA-256 of the name, never <c>string.GetHashCode</c>, which .NET randomizes per
+    ///     process). That is deliberate rather than balanced by the ledger's durations: a duration plan
+    ///     is only consistent if every shard reads the SAME ledger, the ledger fetch is best-effort, and
+    ///     two shards that planned from different ledgers would run a class twice or — silently — not at
+    ///     all. A hash needs no input, so every class lands in exactly one shard by construction; the
+    ///     price measured on the 2026-11-08 run is an imbalance of about 1.1 at three shards. Classes are
+    ///     never split, because xUnit's fixture and static-state contract is per class.
+    /// </remarks>
+    [Parameter("This run's shard of the suite, 1-based; needs --test-shard-count")]
+    readonly int? TestShard;
+
+    [Parameter("How many shards the suite is split into; needs --test-shard")]
+    readonly int? TestShardCount;
+
+    bool IsSharded => TestShardCount is > 1;
+
+    /// <summary>
+    ///     The storage leg plus the shard, for anything one CI job writes that a sibling job of the same
+    ///     run must not overwrite or be confused with: the TRX, the run report, log titles and the job
+    ///     summary. NOT the ledger's name: every shard of a leg reads and writes the same ledger file, so
+    ///     the next run merges all of them (TestLedger.Merge dedupes by run id).
+    /// </summary>
+    string Leg => IsSharded ? $"{Storage}.shard{TestShard}of{TestShardCount}" : Storage;
+
+    /// <summary>The shard a test class belongs to, 1-based. Stable across processes and machines.</summary>
+    static int shardOf(string testClass, int count)
+    {
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(testClass));
+        return (int)(BitConverter.ToUInt32(hash, 0) % (uint)count) + 1;
+    }
+
+    /// <summary>
+    ///     The class a discovered test is declared on: MTP's location when the worker reported one, else
+    ///     the display name less its arguments and method — xUnit's default display name is
+    ///     <c>Namespace.Class.Method(args)</c>.
+    /// </summary>
+    static string testClassOf(WorkerTest test)
+    {
+        if (!string.IsNullOrEmpty(test.TestClass)) return test.TestClass;
+
+        var name = test.DisplayName;
+        var paren = name.IndexOf('(');
+        if (paren >= 0) name = name[..paren];
+        var dot = name.LastIndexOf('.');
+        return dot > 0 ? name[..dot] : name;
+    }
+
+    void validateShard()
+    {
+        if (TestShard is null && TestShardCount is null) return;
+        if (TestShard is not { } shard || TestShardCount is not { } count)
+            throw new ArgumentException("--test-shard and --test-shard-count go together.");
+        if (count < 1 || shard < 1 || shard > count)
+            throw new ArgumentException($"--test-shard {shard} is outside 1..{count}.");
+    }
 
     [Parameter("SQL Server connection string for --storage edge (docker-compose.edge.yml).")]
     readonly string EdgeConnectionString =
@@ -191,8 +256,8 @@ partial class Build
 
         var executable = testHostFor(suite.ProjectPath, framework);
 
-        Log.Information("=== {Project} ({Framework}, {Storage}): supervised run, {Workers} worker(s){Retry} ===",
-            projectName, framework, Storage, workers, DisableTestRetry ? ", retries OFF" : "");
+        Log.Information("=== {Project} ({Framework}, {Leg}): supervised run, {Workers} worker(s){Retry} ===",
+            projectName, framework, Leg, workers, DisableTestRetry ? ", retries OFF" : "");
 
         ensureLaneDatabases(suite, workers);
 
@@ -225,7 +290,7 @@ partial class Build
         if (results.ExitCode != 0)
         {
             throw new InvalidOperationException(
-                $"{projectName} ({framework}, {Storage}): {results.Summarize()} — exit code {results.ExitCode}");
+                $"{projectName} ({framework}, {Leg}): {results.Summarize()} — exit code {results.ExitCode}");
         }
     }
 
@@ -238,9 +303,24 @@ partial class Build
         var known = ledger.KnownDurations();
         supervisor.KnownTestDurations = known.Count > 0 ? known : null;
 
-        supervisor.TestFilter = string.IsNullOrEmpty(TestFilter)
+        validateShard();
+        Func<WorkerTest, bool>? byName = string.IsNullOrEmpty(TestFilter)
             ? null
             : test => test.DisplayName.Contains(TestFilter, StringComparison.OrdinalIgnoreCase);
+
+        if (IsSharded)
+        {
+            var shard = TestShard!.Value;
+            var count = TestShardCount!.Value;
+            supervisor.TestFilter = test => shardOf(testClassOf(test), count) == shard && (byName is null || byName(test));
+
+            // A shard that keeps nothing is a broken split, not a pass.
+            supervisor.FailWhenNoTests = true;
+        }
+        else
+        {
+            supervisor.TestFilter = byName;
+        }
 
         // Opt-in retries only: Bobcat's DefaultFailurePolicy retries a test that says
         // [Trait("Retry", "2")], once, in a fresh process. The budget is the build's.
@@ -297,14 +377,14 @@ partial class Build
         // Bobcat's RunReport.WriteTrx (bobcat#699), which replaced build/TrxWriter.cs. The file name
         // carries the storage leg, so a default and an edge run of one build do not overwrite each
         // other; the framework is already in the directory.
-        var trxPath = Path.Combine(Path.GetDirectoryName(executable)!, "TestResults", $"test-results.{Storage}.trx");
+        var trxPath = Path.Combine(Path.GetDirectoryName(executable)!, "TestResults", $"test-results.{Leg}.trx");
         RunReport.WriteTrx(results, trxPath, new TrxOptions { StartedAt = startedAt, Storage = executable });
         verifyTrx(trxPath, results.Tests.Count);
 
         // The supervisor's own JSON report, uploaded beside the ledger: the primary record of the run,
         // where the ledger is a compaction of it.
         Directory.CreateDirectory(ReportOutput);
-        File.WriteAllText(ReportOutput / $"{suite.Name}.{framework}.{Storage}.report.json", RunReport.ToJson(results));
+        File.WriteAllText(ReportOutput / $"{suite.Name}.{framework}.{Leg}.report.json", RunReport.ToJson(results));
 
         return recorded;
     }
@@ -350,8 +430,8 @@ partial class Build
         var memory = RunResources.For(results);
         var peak = memory.IsMeasured && memory.PeakBytes is { } bytes ? RunResources.Humanize(bytes) : "not measured";
 
-        Log.Information("=== {Project} ({Storage}): {Summary} — {Workers} worker(s), wall clock {Wall:mm\\:ss}, peak worker RSS {Peak} ===",
-            projectName, Storage, results.Summarize(), workers, wallClock, peak);
+        Log.Information("=== {Project} ({Leg}): {Summary} — {Workers} worker(s), wall clock {Wall:mm\\:ss}, peak worker RSS {Peak} ===",
+            projectName, Leg, results.Summarize(), workers, wallClock, peak);
 
         foreach (var flaky in results.PassedOnRetry)
             Log.Warning("  [FLAKY] {Test} — passed on attempt {Attempts}", flaky.DisplayName, flaky.AttemptCount);
@@ -374,9 +454,9 @@ partial class Build
         if (Environment.GetEnvironmentVariable("GITHUB_ACTIONS") != "true") return;
 
         foreach (var flaky in results.PassedOnRetry)
-            Console.WriteLine($"::warning title={projectName} ({Storage}) flaky::{flaky.DisplayName} passed on attempt {flaky.AttemptCount}");
+            Console.WriteLine($"::warning title={projectName} ({Leg}) flaky::{flaky.DisplayName} passed on attempt {flaky.AttemptCount}");
         foreach (var stalled in results.StalledTests.DistinctBy(x => x.DisplayName))
-            Console.WriteLine($"::warning title={projectName} ({Storage}) stalled::{stalled.DisplayName} was in flight {(int)stalled.InFlight.TotalSeconds}s");
+            Console.WriteLine($"::warning title={projectName} ({Leg}) stalled::{stalled.DisplayName} was in flight {(int)stalled.InFlight.TotalSeconds}s");
 
         var summaryPath = Environment.GetEnvironmentVariable("GITHUB_STEP_SUMMARY");
         if (string.IsNullOrEmpty(summaryPath)) return;
@@ -384,7 +464,7 @@ partial class Build
         try
         {
             var md = new StringBuilder();
-            md.AppendLine($"## {projectName} ({framework}, {Storage}) — supervised");
+            md.AppendLine($"## {projectName} ({framework}, {Leg}) — supervised");
             md.AppendLine();
             md.AppendLine("| Tests | Clean | Skipped | Passed on retry | Failed | Indeterminate | Worker faults | Stalled | Workers | Wall clock | Peak worker RSS |");
             md.AppendLine("|---|---|---|---|---|---|---|---|---|---|---|");
