@@ -157,6 +157,23 @@ public class find_database_for_tenant_master_table_tests : IAsyncLifetime
         return (store, tenancy!);
     }
 
+    private static async Task<HashSet<string>> DatabaseNamesAsync()
+    {
+        await using var conn = new SqlConnection(ConnectionSource.MasterConnectionString);
+        await conn.OpenAsync(TestContext.Current.CancellationToken);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT name FROM sys.databases";
+        await using var reader = await cmd.ExecuteReaderAsync(TestContext.Current.CancellationToken);
+
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        while (await reader.ReadAsync(TestContext.Current.CancellationToken)) names.Add(reader.GetString(0));
+        return names;
+    }
+
+    private static bool IsInThisProcessesScope(string name)
+        => name.Equals(ConnectionSource.DatabaseName, StringComparison.OrdinalIgnoreCase)
+           || name.StartsWith(ConnectionSource.Scoped(string.Empty), StringComparison.OrdinalIgnoreCase);
+
     private static async Task<int> CountAsync(string connectionString, string sql)
     {
         await using var conn = new SqlConnection(connectionString);
@@ -193,15 +210,24 @@ public class find_database_for_tenant_master_table_tests : IAsyncLifetime
         {
             await tenancy.AddDatabaseRecordAsync(TenantA, Db(DbA), TestContext.Current.CancellationToken);
 
-            var databasesBefore = await CountAsync(ConnectionSource.MasterConnectionString,
-                "SELECT COUNT(*) FROM sys.databases");
+            var databasesBefore = await DatabaseNamesAsync();
 
             (await ((IEventStore)store).FindDatabaseForTenantAsync(UnknownTenant,
                 TestContext.Current.CancellationToken)).ShouldBeNull();
 
             // No database created, no registry row written, nothing cached for the unknown tenant.
-            (await CountAsync(ConnectionSource.MasterConnectionString, "SELECT COUNT(*) FROM sys.databases"))
-                .ShouldBe(databasesBefore);
+            //
+            // Not a count of sys.databases: that is server-wide, and under the supervised runner the other
+            // lanes are creating and dropping their own databases on the same server while this runs, so
+            // the count moves for reasons that have nothing to do with this call. A database this call
+            // could have created is either in this process's own scope (ConnectionSource.Scoped) or named
+            // for the tenant; another lane's databases are neither. Tests within one process run one at a
+            // time (xunit.runner.json), so nothing else in this scope is moving.
+            var created = (await DatabaseNamesAsync()).Except(databasesBefore, StringComparer.OrdinalIgnoreCase)
+                .Where(name => IsInThisProcessesScope(name)
+                               || name.Contains(UnknownTenant, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            created.ShouldBeEmpty();
             (await CountAsync(Db(ControlDb),
                     $"SELECT COUNT(*) FROM {tenancy.QualifiedTableName} WHERE tenant_id = '{UnknownTenant}'"))
                 .ShouldBe(0);
