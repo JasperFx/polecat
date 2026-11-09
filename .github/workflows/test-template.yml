@@ -21,10 +21,24 @@ on:
         required: false
         type: number
         default: 0
+      # Split one storage leg across several runners: this job owns shard SHARD (1-based) of
+      # SHARD_COUNT, by a stable hash of the test class (build/SupervisedTests.cs, --test-shard). 1 of 1
+      # is the whole suite and leaves every name below exactly as it was.
+      SHARD:
+        required: false
+        type: number
+        default: 1
+      SHARD_COUNT:
+        required: false
+        type: number
+        default: 1
 
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      # Per-job artifact name: sibling shards of one run must not collide on upload.
+      LEDGER_ARTIFACT: test-ledger-${{ inputs.NUKE_TARGET }}-${{ inputs.STORAGE_TYPE }}${{ inputs.SHARD_COUNT > 1 && format('-shard{0}of{1}', inputs.SHARD, inputs.SHARD_COUNT) || '' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -64,8 +78,10 @@ jobs:
           echo "SQL Server failed to become healthy"
           exit 1
 
-      # The last green main run's ledger for this target and server, so lanes are balanced by recent
-      # measured durations. The ledger is a CI artifact only (nothing is committed): each run folds
+      # The last green main run's ledgers for this target and server, so lanes are balanced by recent
+      # measured durations. The pattern takes every shard's ledger (and an unsharded one), because a
+      # shard's classes are only a slice and the files all carry the same name; the build merges
+      # whatever it finds, deduplicated by run id. The ledger is a CI artifact only (nothing is committed): each run folds
       # its own results into the one it fetched and uploads it again below. Best-effort by design: a
       # pruned artifact or a download hiccup costs one run's balancing, which falls back to test
       # counts, and nothing else.
@@ -73,7 +89,7 @@ jobs:
         continue-on-error: true
         run: |
           gh run download --repo "$GITHUB_REPOSITORY" \
-            --name "test-ledger-${{ inputs.NUKE_TARGET }}-${{ inputs.STORAGE_TYPE }}" \
+            --pattern "test-ledger-${{ inputs.NUKE_TARGET }}-${{ inputs.STORAGE_TYPE }}*" \
             --dir previous-ledger \
             $(gh run list --repo "$GITHUB_REPOSITORY" --workflow "${{ github.workflow }}.yml" --branch main \
                 --status success --limit 1 --json databaseId --jq '.[0].databaseId')
@@ -87,7 +103,9 @@ jobs:
         run: |
           WORKERS=""
           if [ "${{ inputs.TEST_WORKERS }}" != "0" ]; then WORKERS="--test-workers ${{ inputs.TEST_WORKERS }}"; fi
-          ./build.sh ${{ inputs.NUKE_TARGET }} --framework net9.0 --storage ${{ inputs.STORAGE_TYPE }} $WORKERS
+          SHARD=""
+          if [ "${{ inputs.SHARD_COUNT }}" != "1" ]; then SHARD="--test-shard ${{ inputs.SHARD }} --test-shard-count ${{ inputs.SHARD_COUNT }}"; fi
+          ./build.sh ${{ inputs.NUKE_TARGET }} --framework net9.0 --storage ${{ inputs.STORAGE_TYPE }} $WORKERS $SHARD
 
       # Every run's ledger, red or green, PR or main — the fetched history plus this run. Only a green
       # main run's is ever read back, by the next run of this workflow.
@@ -95,7 +113,7 @@ jobs:
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
-          name: test-ledger-${{ inputs.NUKE_TARGET }}-${{ inputs.STORAGE_TYPE }}
+          name: ${{ env.LEDGER_ARTIFACT }}
           path: |
             artifacts/test-ledger/
             artifacts/test-reports/
@@ -106,7 +124,7 @@ jobs:
         uses: dorny/test-reporter@v3
         if: ${{ !cancelled() }}
         with:
-          name: xUnit Tests
+          name: xUnit Tests (${{ inputs.STORAGE_TYPE }}${{ inputs.SHARD_COUNT > 1 && format(' {0}/{1}', inputs.SHARD, inputs.SHARD_COUNT) || '' }})
           path: "**/TestResults/*.trx"
           reporter: dotnet-trx
           list-suites: "failed"
