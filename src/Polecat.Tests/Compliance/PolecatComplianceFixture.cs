@@ -710,6 +710,14 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
     /// </summary>
     public override bool SupportsAllTenantStreamStates => true;
 
+    /// <summary>
+    ///     jasperfx#1150 — <c>PolecatDatabase.FetchFirstEventTimestampsAfterAsync</c> answers every position
+    ///     in one command: an <c>OUTER APPLY</c> of <c>TOP (1) ... ORDER BY seq_id</c> over the positions as
+    ///     one <c>OPENJSON</c> parameter, skipping archived events, and filtering by tenant under conjoined
+    ///     tenancy (by the tenant's partition under per-tenant sequencing).
+    /// </summary>
+    public override bool SupportsPendingEventAges => true;
+
     /// <remarks>
     ///     Straight through Polecat's own tenancy rather than by matching
     ///     <see cref="IEventDatabase.Identifier" /> against the config's logical name — the logical

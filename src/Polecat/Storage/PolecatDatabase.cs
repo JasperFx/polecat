@@ -773,6 +773,199 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
     }
 
     /// <summary>
+    ///     jasperfx#1150: for each position, the timestamp of the first live (unarchived) event after it, or
+    ///     null when there is none. Monitoring turns a projection shard's lag in events into a lag in time
+    ///     with it.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         <b>One command, one round trip, whatever the number of positions.</b> SQL Server has no array
+    ///         parameters, so the positions travel as one JSON array and <c>OPENJSON</c> unpacks them (the #363
+    ///         id-list pattern), each lookup being an <c>OUTER APPLY</c> of <c>TOP (1) ... ORDER BY seq_id</c>.
+    ///         One parameter also keeps a large fleet (shards times tenants) clear of the 2100-parameter limit,
+    ///         and the text is fixed per store configuration, so the plan is reused across polls.
+    ///     </para>
+    ///     <para>
+    ///         <b>Every lookup is a seek on the clustered key</b>, which leads with <c>seq_id</c> in every
+    ///         table shape: never a <c>COUNT</c>, never a scan. <c>is_archived = 0</c> skips archived events as
+    ///         <see cref="PolecatEventLoader" /> does, and under archived-stream partitioning it also confines
+    ///         the seek to the active partition.
+    ///     </para>
+    ///     <para>
+    ///         <b>Which tenant a position names.</b> A null tenant means every tenant. A named one filters
+    ///         only where events carry a tenant (conjoined tenancy); under single tenancy every event is the
+    ///         default tenant's and the tenant is ignored. Conjoined without per-tenant sequencing keeps one
+    ///         global <c>seq_id</c>, so the tenant is a residual predicate on the same seek, as it is on the
+    ///         daemon's tenant-scoped load.
+    ///     </para>
+    ///     <para>
+    ///         Under <see cref="Events.EventGraph.UseTenantPartitionedEvents" /> each tenant numbers its own
+    ///         events, so a tenant's position only means anything in its own partition. The lookup names the
+    ///         tenant's CURRENT <c>tenant_ordinal</c> from the registry, which is the partition its sequence
+    ///         belongs to, so the seek is confined to it. Without the ordinal it would seek every partition and
+    ///         walk the other tenants' rows past the position, which is the scan this must not be. A tenant
+    ///         the registry does not have has appended nothing, so it is caught up. Events a tenant left on
+    ///         an earlier ordinal (removed with <c>RetainData</c> and added back on another) are outside its
+    ///         current sequence, and are not looked at.
+    ///     </para>
+    ///     <para>
+    ///         Duplicate positions are looked up once and answered once each, in the order asked.
+    ///     </para>
+    /// </remarks>
+    public async Task<IReadOnlyList<PendingEventAge>> FetchFirstEventTimestampsAfterAsync(
+        IReadOnlyList<(string? TenantId, long Sequence)> positions, CancellationToken token = default)
+    {
+        if (positions.Count == 0) return [];
+
+        // Single tenancy: every event is the default tenant's, so a named tenant narrows nothing.
+        var filtersByTenant = _events.TenancyStyle == TenancyStyle.Conjoined;
+
+        var lookups = new Dictionary<(string? TenantId, long Sequence), int>();
+        var lookupIndexes = new int[positions.Count];
+        for (var i = 0; i < positions.Count; i++)
+        {
+            var key = (filtersByTenant ? positions[i].TenantId : null, positions[i].Sequence);
+            if (!lookups.TryGetValue(key, out var index))
+            {
+                index = lookups.Count;
+                lookups.Add(key, index);
+            }
+
+            lookupIndexes[i] = index;
+        }
+
+        var timestamps = new DateTimeOffset?[lookups.Count];
+
+        try
+        {
+            await _resilience.ExecuteAsync(static async (state, ct) =>
+            {
+                var (connectionString, events, lookups, timestamps) = state;
+
+                await using var conn = new SqlConnection(connectionString);
+                await conn.OpenAsync(ct);
+
+                await using var cmd = conn.CreateCommand();
+                cmd.CommandText = FirstEventTimestampsAfterSql(events);
+                cmd.Parameters.Add(new SqlParameter("@positions", WritePositionsAsJsonArray(lookups))
+                {
+                    SqlDbType = System.Data.SqlDbType.NVarChar
+                });
+
+                await using var reader = await cmd.ExecuteReaderAsync(ct);
+                while (await reader.ReadAsync(ct))
+                {
+                    // pc_events.timestamp is datetimeoffset, so the offset it was stamped with comes back as is
+                    timestamps[reader.GetInt32(0)] = reader.IsDBNull(1) ? null : reader.GetDateTimeOffset(1);
+                }
+            }, (_connectionString, _events, lookups, timestamps), token);
+        }
+        catch (Exception e) when (MissingStorageDetection.IsMissingStorage(e))
+        {
+            // #677: no events table, so nothing has been appended and every position is caught up.
+        }
+
+        var ages = new PendingEventAge[positions.Count];
+        for (var i = 0; i < positions.Count; i++)
+        {
+            ages[i] = new PendingEventAge(positions[i].TenantId, positions[i].Sequence,
+                timestamps[lookupIndexes[i]]);
+        }
+
+        return ages;
+    }
+
+    /// <summary>
+    ///     The statement behind <see cref="FetchFirstEventTimestampsAfterAsync" />: one row per lookup, its
+    ///     index and the timestamp of the first live event after its position (null when there is none).
+    /// </summary>
+    /// <remarks>
+    ///     The <c>WITH</c> clause types the tenant as <c>varchar(250)</c>, the column's own type, so the
+    ///     comparison carries no <c>CONVERT_IMPLICIT</c> (#363).
+    ///     <para>
+    ///         Under per-tenant partitioning a null tenant and a named one take different applies: an
+    ///         <c>OR</c> between them in one predicate would cost the named tenant its partition elimination.
+    ///         The null tenant does not seek <c>pc_events</c> as a whole either. <c>TOP (1) ORDER BY seq_id</c>
+    ///         across partitions has no ordered seek to use, and SQL Server answers it with a clustered index
+    ///         scan and a sort. So it takes each registered tenant's first event past the position, one
+    ///         partition-eliminated seek each, and keeps the lowest sequence of those (the older timestamp
+    ///         on a tie, since tenants' sequences overlap).
+    ///     </para>
+    /// </remarks>
+    internal static string FirstEventTimestampsAfterSql(EventGraph events)
+    {
+        const string positions = """
+            OPENJSON(@positions) WITH (i int '$.i', s bigint '$.s', t varchar(250) '$.t') p
+            """;
+
+        if (events.UseTenantPartitionedEvents)
+        {
+            return $"""
+                SELECT p.i, COALESCE(any_tenant.timestamp, own_tenant.timestamp)
+                FROM {positions}
+                LEFT JOIN {events.TenantPartitionsTableName} r WITH (NOLOCK) ON r.tenant_id = p.t
+                OUTER APPLY (SELECT TOP (1) f.timestamp
+                             FROM {events.TenantPartitionsTableName} every_tenant WITH (NOLOCK)
+                             CROSS APPLY (SELECT TOP (1) e.seq_id, e.timestamp FROM {events.EventsTableName} e
+                                          WHERE e.{events.TenantPartitionManager.Column} = every_tenant.ordinal
+                                            AND e.seq_id > p.s AND e.is_archived = 0
+                                          ORDER BY e.seq_id) f
+                             WHERE p.t IS NULL
+                             ORDER BY f.seq_id, f.timestamp) any_tenant
+                OUTER APPLY (SELECT TOP (1) e.timestamp FROM {events.EventsTableName} e
+                             WHERE e.{events.TenantPartitionManager.Column} = r.ordinal AND e.tenant_id = p.t
+                               AND e.seq_id > p.s AND e.is_archived = 0
+                             ORDER BY e.seq_id) own_tenant;
+                """;
+        }
+
+        var tenantPredicate = events.TenancyStyle == TenancyStyle.Conjoined
+            ? " AND (p.t IS NULL OR e.tenant_id = p.t)"
+            : "";
+
+        return $"""
+            SELECT p.i, first_event.timestamp
+            FROM {positions}
+            OUTER APPLY (SELECT TOP (1) e.timestamp FROM {events.EventsTableName} e
+                         WHERE e.seq_id > p.s AND e.is_archived = 0{tenantPredicate}
+                         ORDER BY e.seq_id) first_event;
+            """;
+    }
+
+    /// <summary>
+    ///     The lookups as one JSON array of <c>{"i":index,"s":sequence,"t":tenant}</c> for <c>OPENJSON</c>,
+    ///     written by hand like the other id lists so this stays trim/AOT-clean.
+    /// </summary>
+    private static string WritePositionsAsJsonArray(Dictionary<(string? TenantId, long Sequence), int> lookups)
+    {
+        var buffer = new System.Buffers.ArrayBufferWriter<byte>();
+        using (var writer = new System.Text.Json.Utf8JsonWriter(buffer))
+        {
+            writer.WriteStartArray();
+            foreach (var ((tenantId, sequence), index) in lookups)
+            {
+                writer.WriteStartObject();
+                writer.WriteNumber("i", index);
+                writer.WriteNumber("s", sequence);
+                if (tenantId == null)
+                {
+                    writer.WriteNull("t");
+                }
+                else
+                {
+                    writer.WriteString("t", tenantId);
+                }
+
+                writer.WriteEndObject();
+            }
+
+            writer.WriteEndArray();
+        }
+
+        return System.Text.Encoding.UTF8.GetString(buffer.WrittenSpan);
+    }
+
+    /// <summary>
     ///     #163 Phase 2 — <see cref="ICrossTenantRebuildSource" />: the tenants to rebuild when
     ///     rebuilding <paramref name="projectionName" /> across all tenants. Source of truth is the
     ///     registered partitions in <c>pc_tenant_partitions</c> (every tenant that has appended events
