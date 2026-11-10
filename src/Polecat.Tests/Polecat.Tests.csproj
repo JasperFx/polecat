@@ -7,6 +7,17 @@
         <OutputType>Exe</OutputType>
     </PropertyGroup>
 
+    <!-- #808: C# 15 unions only exist on .NET 11, and the `union` keyword needs LangVersion preview on
+         the RC SDK (as JasperFx's EventTests). The union tests compile on net11.0 only; the library
+         itself needs no #if, because UnionTypes.IsUnion is false for every type before .NET 11. -->
+    <PropertyGroup Condition="'$(TargetFramework)' == 'net11.0'">
+        <LangVersion>preview</LangVersion>
+    </PropertyGroup>
+
+    <ItemGroup Condition="'$(TargetFramework)' != 'net11.0'">
+        <Compile Remove="Unions/**/*.cs" />
+    </ItemGroup>
+
     <ItemGroup>
         <PackageReference Include="Shouldly" />
         <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" />

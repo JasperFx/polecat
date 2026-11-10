@@ -52,7 +52,8 @@ internal static class ClrOnlyMembers
 
     /// <summary>
     ///     The members of <paramref name="expression" /> that are keys in the stored JSON, root first.
-    ///     <c>Nullable&lt;T&gt;.Value</c> is stepped over, because a nullable is stored as its value.
+    ///     <c>Nullable&lt;T&gt;.Value</c> is stepped over, because a nullable is stored as its value, and so
+    ///     is a union's <c>Value</c> (#808), because a union is stored as its active case.
     /// </summary>
     /// <exception cref="BadLinqExpressionException">
     ///     The chain does not start at the query's parameter, so there is no document for a path to be
@@ -65,7 +66,9 @@ internal static class ClrOnlyMembers
 
         while (current is MemberExpression member)
         {
-            if (!IsNullableValue(member)) keys.Insert(0, member.Member);
+            // #808: a union is stored as its bare case at the union member's own path, so its Value is
+            // no more a key than Nullable<T>.Value is.
+            if (!IsNullableValue(member) && !UnionShape.IsUnionValue(member)) keys.Insert(0, member.Member);
             current = Unwrapped(member.Expression);
         }
 

@@ -645,6 +645,12 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
             return e;
         }
 
+        // #808 / jasperfx#1053: a C# union is stored as its active case, so each case gets its own event
+        // type name and the stored JSON (which STJ writes as the bare case anyway) reads back by that name.
+        // The base EventRegistry.BuildEvent does this too, but this override never reaches it. Always the
+        // value unchanged before .NET 11.
+        eventData = UnionTypes.Unwrap(eventData);
+
         var eventType = EventMappingFor(eventData.GetType());
         return eventType.Wrap(eventData);
     }
@@ -667,7 +673,12 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
 
     public override void AddEventType(Type eventType)
     {
-        EventMappingFor(eventType);
+        // #808: a union is never stored as itself (BuildEvent unwraps it), so registering one registers
+        // each of its cases, nested unions included. Just eventType when it is not a union.
+        foreach (var type in eventType.ExpandToCaseTypes())
+        {
+            EventMappingFor(type);
+        }
     }
 
     /// <summary>
