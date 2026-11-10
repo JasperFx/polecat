@@ -99,12 +99,33 @@ public TripProjection()
 The docs at [side effects](/events/projections/side-effects) and [the async daemon](/events/projections/async-daemon)
 still describe the gate as opt-in; read them as "on unless you set it to `false`".
 
-## Upgrading to 6.0: Aspire and `DbDataSource`
+## Upgrading to 6.0: Aspire and the `SqlConnection` in DI
 
-Handing Polecat a `DbDataSource` or a `SqlConnection` registered in DI (for example by Aspire's
-`AddSqlServerClient`) is **not part of 6.0 yet**; it is tracked as its own piece of work in the .NET 11
-train. Until it lands, configure the connection with a connection string on `StoreOptions`, which Aspire
-supplies through configuration. This section will be replaced by the real guidance when the feature ships.
+New in 6.0, and nothing breaks: a connection string set on `StoreOptions` works exactly as before
+([#810](https://github.com/JasperFx/polecat/issues/810)).
+
+Aspire's `AddSqlServerClient("db")` registers a `SqlConnection` in DI. Polecat can now take its
+connection string from that registration, so you no longer have to read it out of configuration and
+pass it in yourself:
+
+```cs
+builder.AddSqlServerClient("db");
+
+builder.Services.AddPolecat(opts => { /* no connection string */ })
+    .UseSqlConnectionFromServices();   // UseSqlConnectionFromServices("key") for AddKeyedSqlServerClient
+```
+
+- `UseSqlConnectionFromServices()` resolves the connection in a scope when the store is built. It only
+  reads the connection: it never opens or disposes it. The string it reads replaces any
+  `ConnectionString` set in the `AddPolecat` lambda.
+- `opts.Connection(SqlConnection)` does the same from inside the configuration lambda, for a connection you
+  already hold.
+- **There is no `DbDataSource` overload.** Microsoft.Data.SqlClient has no public `DbDataSource`, so the
+  connection string is what is shared. Polecat opens its own pooled connections from it, so they use the
+  same pool and credentials as the registered connection.
+
+See [the `StoreOptions` page](./configuration/storeoptions.md#connection-from-the-container-aspire-addsqlserverclient)
+for the setup, and the OpenTelemetry and health check wiring that goes with it under Aspire.
 
 ## Upgrading to 6.0: there is no pre-generated code path, and nothing to opt into
 
