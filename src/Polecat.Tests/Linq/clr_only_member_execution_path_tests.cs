@@ -1,3 +1,4 @@
+using JasperFx;
 using System.Text.Json;
 using JasperFx.Events;
 using Polecat.Batching;

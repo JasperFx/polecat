@@ -88,8 +88,7 @@ await session.SaveChangesAsync();
 transaction completes, so two callers contending for the same stream — or for two streams in
 opposite order — can lose the lock. SQL Server raises a lock timeout (error 1222) or names one
 transaction the deadlock victim (error 1205), and Polecat translates either into
-`Polecat.Exceptions.StreamLockedException`, which derives from `JasperFx.Events.StreamLockedException`
-and carries the underlying `SqlException` as its `InnerException`.
+`JasperFx.Events.StreamLockedException`, which carries the underlying `SqlException` as its `InnerException`.
 
 **Polecat does not retry this for you, and the count is zero, not five.** SqlClient's configurable
 retry is attached to the *connection*, where it governs `Open()` only; command execution is retried

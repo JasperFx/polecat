@@ -59,7 +59,7 @@ public class event_stream_concurrency_tests : IntegrationContext
         await using var session3 = theStore.LightweightSession();
         session3.Events.Append(streamId, new MembersJoined(2, "Somewhere", ["Charlie"]));
 
-        await Should.ThrowAsync<Polecat.Exceptions.ArchivedStreamException>(session3.SaveChangesAsync(TestContext.Current.CancellationToken));
+        await Should.ThrowAsync<JasperFx.Events.ArchivedStreamException>(session3.SaveChangesAsync(TestContext.Current.CancellationToken));
     }
 
     // ===== Unarchive then append =====
@@ -125,7 +125,7 @@ public class event_stream_concurrency_tests : IntegrationContext
         await using var session2 = theStore.LightweightSession();
         session2.Events.StartStream(streamId, new QuestStarted("Duplicate"));
 
-        await Should.ThrowAsync<Polecat.Exceptions.ExistingStreamIdCollisionException>(session2.SaveChangesAsync(TestContext.Current.CancellationToken));
+        await Should.ThrowAsync<JasperFx.Events.ExistingStreamIdCollisionException>(session2.SaveChangesAsync(TestContext.Current.CancellationToken));
     }
 
     // #781: every insert-mode append maps error 2627, so asking each queued operation in turn let
@@ -152,7 +152,7 @@ public class event_stream_concurrency_tests : IntegrationContext
             session2.Events.StartStream(fresh, new QuestStarted("New"));
         }
 
-        var ex = await Should.ThrowAsync<Polecat.Exceptions.ExistingStreamIdCollisionException>(
+        var ex = await Should.ThrowAsync<JasperFx.Events.ExistingStreamIdCollisionException>(
             session2.SaveChangesAsync(TestContext.Current.CancellationToken));
         ex.Id.ShouldBe(existing);
 

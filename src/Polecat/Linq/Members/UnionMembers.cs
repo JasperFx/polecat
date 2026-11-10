@@ -1,3 +1,4 @@
+using JasperFx;
 using System.Linq.Expressions;
 using JasperFx.Core.Reflection;
 using JasperFx.Events;

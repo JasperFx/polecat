@@ -7,7 +7,7 @@ using Polecat.Tests.Harness;
 using Polecat.TestUtils;
 using Weasel.SqlServer.Tables.Partitioning;
 using Weasel.Storage;
-using ExistingStreamIdCollisionException = Polecat.Exceptions.ExistingStreamIdCollisionException;
+using ExistingStreamIdCollisionException = JasperFx.Events.ExistingStreamIdCollisionException;
 
 namespace Polecat.Tests.Events;
 

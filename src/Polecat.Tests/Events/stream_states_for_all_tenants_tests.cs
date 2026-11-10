@@ -45,7 +45,7 @@ public class stream_states_for_all_tenants_tests
         await using var store = await ConjoinedStoreAsync("ss_all_refused", false, ct);
 
         // Unchanged, and the reason the new member exists: this opener IS a default-tenant session.
-        Should.Throw<Polecat.Exceptions.DefaultTenantUsageDisabledException>(() =>
+        Should.Throw<JasperFx.Events.DefaultTenantUsageDisabledException>(() =>
             ((IEventStore)store).OpenReadOnlyEventStore().QueryStreamStates());
     }
 

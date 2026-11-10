@@ -1,3 +1,4 @@
+using JasperFx;
 using Polecat.Linq;
 using Polecat.Tests.Harness;
 
@@ -5,8 +6,8 @@ namespace Polecat.Tests.Linq;
 
 /// <summary>
 ///     #656. A query Polecat cannot translate is refused with
-///     <see cref="BadLinqExpressionException" /> — which derives from the shared
-///     <see cref="JasperFx.BadLinqExpressionException" /> — and not with a bare
+///     the shared <see cref="JasperFx.BadLinqExpressionException" /> (thrown directly since #944) and
+///     not with a bare
 ///     <c>NotSupportedException</c> that a caller cannot tell apart from every other one in .NET.
 ///     The refusal is a correctness guarantee, so the type has to be catchable and the message has to
 ///     say what IS accepted.
@@ -38,8 +39,8 @@ public class linq_refusal_type_tests : OneOffConfigurationsContext
                 .Where(x => x.Numbers.SequenceEqual(new[] { 1, 2 }))
                 .ToListAsync(TestContext.Current.CancellationToken));
 
-        // Catchable by store-agnostic code, which is the point of the jasperfx#795 lift.
-        ex.ShouldBeAssignableTo<JasperFx.BadLinqExpressionException>();
+        // Exactly the shared type, which store-agnostic code catches (jasperfx#795, #944).
+        ex.ShouldBeOfType<JasperFx.BadLinqExpressionException>();
 
         ex.Message.ShouldContain("SequenceEqual");
         ex.Message.ShouldContain("StartsWith");
@@ -57,7 +58,7 @@ public class linq_refusal_type_tests : OneOffConfigurationsContext
                 .Where(x => (x.Age > 20 ? x.IsActive : !x.IsActive))
                 .ToListAsync(TestContext.Current.CancellationToken));
 
-        ex.ShouldBeAssignableTo<JasperFx.BadLinqExpressionException>();
+        ex.ShouldBeOfType<JasperFx.BadLinqExpressionException>();
         ex.Message.ShouldContain("Polecat cannot translate");
         ex.Message.ShouldContain("AdvancedSql");
     }

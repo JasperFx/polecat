@@ -74,9 +74,8 @@ See [Supported LINQ Operators](/documents/querying/linq/operators) for a complet
 
 ## When a Query Cannot Be Translated
 
-A query Polecat cannot turn into SQL is **refused**, with `Polecat.Linq.BadLinqExpressionException`.
-That type derives from `JasperFx.BadLinqExpressionException`, so store-agnostic code can catch the
-shared type and have it work on Polecat and Fisher alike.
+A query Polecat cannot turn into SQL is **refused**, with `JasperFx.BadLinqExpressionException` —
+the shared type, so store-agnostic code catches the same exception on Polecat and Fisher alike.
 
 The refusal is a correctness guarantee rather than an inconvenience: the alternative to throwing is a
 query that returns plausible but wrong rows. The message names what *is* accepted in that position,

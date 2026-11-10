@@ -88,7 +88,7 @@ internal class EventDataMemberFactory : IMemberResolver
         {
             PropertyInfo p => p.PropertyType,
             FieldInfo f => f.FieldType,
-            _ => throw new Polecat.Linq.BadLinqExpressionException(
+            _ => throw new JasperFx.BadLinqExpressionException(
                 $"Polecat cannot translate the member '{member.Name}': a translatable member is a "
                 + $"property or a field, not a {member.MemberType}.")
         };

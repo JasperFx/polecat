@@ -226,7 +226,7 @@ public class document_diagnostics_criteria_tests
         var queryable = session.Query<CriteriaTicket>().Where(x => x.Severity > 1).Take(3);
 
         var provider = (PolecatLinqQueryProvider)queryable.Provider;
-        Should.Throw<Polecat.Linq.BadLinqExpressionException>(() => provider.TranslateCriteria(queryable.Expression))
+        Should.Throw<JasperFx.BadLinqExpressionException>(() => provider.TranslateCriteria(queryable.Expression))
             .Message.ShouldContain("Take");
 
         var criteria = session.Query<CriteriaTicket>().Where(x => x.Severity > 1).OrderBy(x => x.Title);

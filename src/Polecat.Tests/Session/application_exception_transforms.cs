@@ -1,3 +1,4 @@
+using JasperFx.Events;
 using JasperFx.Core.Exceptions;
 using Microsoft.Data.SqlClient;
 using Polecat.Exceptions;

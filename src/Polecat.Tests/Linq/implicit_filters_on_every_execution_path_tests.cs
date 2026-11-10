@@ -1,3 +1,4 @@
+using JasperFx;
 using System.Linq.Expressions;
 using System.Text.Json;
 using Polecat.Linq;

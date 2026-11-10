@@ -31,7 +31,7 @@ public class ConnectionFactory
     ///         Polecat does not retry a deadlock or a lock timeout internally, and deliberately so: by
     ///         the time 1205 is raised the transaction is already rolled back, so anything worth
     ///         calling a retry is a replay of the whole unit of work, not of one command. The contract
-    ///         is that you get <see cref="Exceptions.StreamLockedException" /> and retry the command at
+    ///         is that you get <see cref="JasperFx.Events.StreamLockedException" /> and retry the command at
     ///         the application layer — e.g. a Wolverine
     ///         <c>OnException&lt;StreamLockedException&gt;().RetryWithCooldown(...)</c> policy. See
     ///         <c>docs/events/appending.md</c>.

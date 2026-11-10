@@ -1,3 +1,4 @@
+using JasperFx;
 using Polecat.Linq;
 using Polecat.Linq.SoftDeletes;
 using Polecat.Tests.Harness;
@@ -11,16 +12,10 @@ namespace Polecat.Tests.Linq;
 /// </summary>
 /// <remarks>
 ///     <para>
-///         <c>Polecat.Linq.BadLinqExpressionException</c> derives from
-///         <c>JasperFx.BadLinqExpressionException</c>, so store-agnostic code — a library written
-///         against the shared document contracts, and expected to run on Polecat or Fisher — can catch
-///         "I cannot answer this correctly" without a per-store catch block.
-///     </para>
-///     <para>
-///         ⚠️ <b>The derivation is the whole feature, and nothing else proves it.</b> Polecat's own
-///         tests all catch the Polecat type, which passes whether or not the base is there — so
-///         dropping the base class would leave every existing LINQ refusal test green and silently
-///         break the one thing the lift was for.
+///         #944 (Polecat 6): Polecat throws <c>JasperFx.BadLinqExpressionException</c> itself. The
+///         <c>Polecat.Linq.BadLinqExpressionException</c> subclass it used to throw is gone, so a
+///         library written against the shared document contracts and expected to run on Polecat or
+///         Fisher catches "I cannot answer this correctly" with no per-store catch block.
 ///     </para>
 ///     <para>
 ///         Marten deliberately stays out of this hierarchy until Marten 10 (marten#5346), so a consumer
@@ -50,7 +45,7 @@ public class store_agnostic_linq_refusal_tests: OneOffConfigurationsContext
                 .MaybeDeleted()
                 .ToListAsync(TestContext.Current.CancellationToken));
 
-        // Still Polecat's own type, so code already catching that keeps working.
-        ex.ShouldBeOfType<BadLinqExpressionException>();
+        // Exactly the shared type, not a Polecat subclass of it.
+        ex.ShouldBeOfType<JasperFx.BadLinqExpressionException>();
     }
 }

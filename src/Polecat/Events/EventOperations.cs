@@ -624,7 +624,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
         }
         catch (Exception e) when (IsLockFailure(e))
         {
-            throw new Exceptions.StreamLockedException(streamId, FindLockFailure(e));
+            throw new JasperFx.Events.StreamLockedException(streamId, FindLockFailure(e));
         }
     }
 
@@ -642,7 +642,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
         }
         catch (Exception e) when (IsLockFailure(e))
         {
-            throw new Exceptions.StreamLockedException(streamKey, FindLockFailure(e));
+            throw new JasperFx.Events.StreamLockedException(streamKey, FindLockFailure(e));
         }
     }
 
@@ -653,7 +653,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
     {
         if (!await _sessionBase.CouldHaveStreamAsync(streamId, token).ConfigureAwait(false))
         {
-            throw new Exceptions.NonExistentStreamException(streamId);
+            throw new JasperFx.Events.NonExistentStreamException(streamId);
         }
 
         await using var cmd = new SqlCommand();
@@ -674,12 +674,12 @@ internal class EventOperations : QueryEventStore, IEventOperations
         }
         catch (Exception e) when (IsLockFailure(e))
         {
-            throw new Exceptions.StreamLockedException(streamId, FindLockFailure(e));
+            throw new JasperFx.Events.StreamLockedException(streamId, FindLockFailure(e));
         }
 
         if (version == 0)
         {
-            throw new Exceptions.NonExistentStreamException(streamId);
+            throw new JasperFx.Events.NonExistentStreamException(streamId);
         }
 
         return version;
@@ -864,7 +864,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
             // reinterpreted; an unlocked read cannot be a lock failure.
             catch (Exception e) when (forExclusive && IsLockFailure(e))
             {
-                throw new Exceptions.StreamLockedException(streamId, FindLockFailure(e));
+                throw new JasperFx.Events.StreamLockedException(streamId, FindLockFailure(e));
             }
 
             if (result != null && result != DBNull.Value)

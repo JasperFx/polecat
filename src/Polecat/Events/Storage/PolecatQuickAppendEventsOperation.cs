@@ -541,7 +541,7 @@ internal sealed class PolecatQuickAppendEventsOperation
 
         if (Mode == StreamWriteMode.Insert && sql is { Number: 2627 or StreamOnAnotherOrdinalError })
         {
-            transformed = new Polecat.Exceptions.ExistingStreamIdCollisionException(id);
+            transformed = new JasperFx.Events.ExistingStreamIdCollisionException(id);
             return true;
         }
 

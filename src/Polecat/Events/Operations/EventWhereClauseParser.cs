@@ -48,7 +48,7 @@ internal class EventWhereClauseParser
             UnaryExpression { NodeType: ExpressionType.Not } unary => ParseNot(unary),
             UnaryExpression { NodeType: ExpressionType.Convert } unary => Parse(unary.Operand),
             MemberExpression member when IsBooleanEventMember(member) => ParseBooleanMember(member, true),
-            _ => throw new Polecat.Linq.BadLinqExpressionException(
+            _ => throw new JasperFx.BadLinqExpressionException(
                 $"Polecat cannot translate '{expression}' to a SQL WHERE clause over the event table "
                 + $"({expression.NodeType}, {expression.GetType().Name}). An event predicate is built from "
                 + "comparisons of IEvent metadata members, && and || over those, !, and a boolean member.")
@@ -68,7 +68,7 @@ internal class EventWhereClauseParser
             return ParseComparison(binary, op);
         }
 
-        throw new Polecat.Linq.BadLinqExpressionException(
+        throw new JasperFx.BadLinqExpressionException(
             $"Polecat cannot translate the binary operator '{binary.NodeType}' in an event WHERE clause. "
             + "Supported operators are ==, !=, <, <=, >, >=, && and ||.");
     }
@@ -86,7 +86,7 @@ internal class EventWhereClauseParser
             return BuildComparisonFilter(member!, value, op);
         }
 
-        throw new Polecat.Linq.BadLinqExpressionException(
+        throw new JasperFx.BadLinqExpressionException(
             $"Polecat cannot translate the event comparison '{binary}': neither side resolves to an "
             + "IEvent metadata member compared against a constant.");
     }
@@ -146,7 +146,7 @@ internal class EventWhereClauseParser
 
         if (!EventColumns.TryGetValue(propName, out var mapping))
         {
-            throw new Polecat.Linq.BadLinqExpressionException(
+            throw new JasperFx.BadLinqExpressionException(
                 $"Polecat cannot translate the IEvent property '{propName}' in an event WHERE clause. "
                 + $"Translatable properties are {string.Join(", ", EventColumns.Keys)}.");
         }

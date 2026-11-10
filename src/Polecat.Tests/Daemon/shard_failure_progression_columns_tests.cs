@@ -183,10 +183,10 @@ public class shard_failure_progression_columns_tests : OneOffConfigurationsConte
         var failure = new ShardFailure
         {
             Category = category,
-            ExceptionType = "Polecat.Exceptions.EventDeserializationFailureException",
+            ExceptionType = "JasperFx.Events.EventDeserializationFailureException",
             RootExceptionType = "System.DivideByZeroException",
             Message = "Boom!",
-            Detail = "Polecat.Exceptions.EventDeserializationFailureException: Boom!\n   at Somewhere",
+            Detail = "JasperFx.Events.EventDeserializationFailureException: Boom!\n   at Somewhere",
             OccurredAt = DateTimeOffset.UtcNow,
             Event = new EventFailureDetails
             {

@@ -273,7 +273,7 @@ internal sealed class SqlServerEventStoreDialect : IEventStoreSqlDialect
 
     /// <summary>
     ///     Maps a SQL Server primary-key violation (error 2627) on the pc_streams insert to
-    ///     <see cref="Exceptions.ExistingStreamIdCollisionException" />. Mirrors the bespoke path's
+    ///     <see cref="JasperFx.Events.ExistingStreamIdCollisionException" />. Mirrors the bespoke path's
     ///     catch in <c>ProcessStartStreamAsync</c>. Returns null for any other exception.
     /// </summary>
     private static Exception? MapInsertStreamException(Exception original, StreamAction stream)
@@ -283,7 +283,7 @@ internal sealed class SqlServerEventStoreDialect : IEventStoreSqlDialect
         if (sql is { Number: 2627 })
         {
             var id = stream.Key is not null ? (object)stream.Key : stream.Id;
-            return new Polecat.Exceptions.ExistingStreamIdCollisionException(id);
+            return new JasperFx.Events.ExistingStreamIdCollisionException(id);
         }
 
         return null;
