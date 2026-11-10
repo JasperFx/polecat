@@ -1155,6 +1155,16 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             // past the commit.
             var afterCommit = CancellationToken.None;
 
+            // #807: the participants' half of the commit, before any listener. It reconciles what
+            // BeforeCommitAsync left pending rather than announcing anything, so a listener that throws
+            // must not leave a participant believing its rows are still to be written. Every participant
+            // ran BeforeCommitAsync inside the transaction that just committed: they stay enlisted until
+            // the session ends, and run again on its next save.
+            foreach (var participant in _transactionParticipants)
+            {
+                await participant.AfterCommitAsync(afterCommit).ConfigureAwait(false);
+            }
+
             // Call AfterCommitAsync on all listeners (global then session)
             foreach (var listener in Options.Listeners)
             {

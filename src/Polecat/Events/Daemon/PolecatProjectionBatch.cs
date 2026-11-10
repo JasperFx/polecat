@@ -372,6 +372,22 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
         // Outside the resilience pipeline so the post-commit hook does not
         // re-fire on a transient retry — by definition the SQL transaction
         // has committed exactly once by the time we reach here.
+        //
+        // #807: the participants first, for the reason the session gives. Unlike the session, a fault
+        // here must not fail the batch: the page and its progression are committed, and a failed batch
+        // would be reprocessed. So it is suppressed best-effort, as the listeners' is below.
+        foreach (var participant in participants)
+        {
+            try
+            {
+                await participant.AfterCommitAsync(CancellationToken.None).ConfigureAwait(false);
+            }
+            catch
+            {
+                // best-effort: the commit already succeeded.
+            }
+        }
+
         if (messageBatch is not null)
         {
             await messageBatch.AfterCommitAsync(CancellationToken.None).ConfigureAwait(false);
