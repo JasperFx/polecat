@@ -48,6 +48,10 @@ internal class PolecatProjectionBatch : ProjectionBatchBase<IDocumentSession>,
     // were handed, or null when no listener runs for this batch.
     private IDocumentSession? _listenerSession;
 
+    // #807: the participants that ran BeforeCommitAsync inside the transaction that committed, set only
+    // once the commit has returned, so a batch that rolled back hands none of them to AfterCommitAsync.
+    private IReadOnlyList<ITransactionParticipant> _committedParticipants = [];
+
     // The change set committed by this batch, populated during ExecuteAsync. Exposed so the
     // subscription runner can hand it to the IChangeListener returned by ProcessEventsAsync.
     public IChangeSet? Commit { get; private set; }
@@ -360,6 +364,8 @@ internal class PolecatProjectionBatch : ProjectionBatchBase<IDocumentSession>,
                 throw;
             }
         }, (_connectionString, allOps, participants, beforeCommit, _store.Options.ExceptionTransforms), token).ConfigureAwait(false);
+
+        _committedParticipants = participants;
     }
 
     /// <summary>
@@ -371,6 +377,22 @@ internal class PolecatProjectionBatch : ProjectionBatchBase<IDocumentSession>,
     /// </summary>
     protected override async Task AfterCommitAsync()
     {
+        // #807: the participants first, for the reason the session gives: AfterCommitAsync reconciles
+        // what BeforeCommitAsync left pending, so a listener must not get in its way. Unlike the session,
+        // a fault here must not fail the batch: the page and its progression are committed, and a failed
+        // batch would be reprocessed. So it is suppressed best-effort, as the listeners' is below.
+        foreach (var participant in _committedParticipants)
+        {
+            try
+            {
+                await participant.AfterCommitAsync(CancellationToken.None).ConfigureAwait(false);
+            }
+            catch
+            {
+                // best-effort: the commit already succeeded.
+            }
+        }
+
         if (_listenerSession is null || Commit is null) return;
 
         foreach (var listener in _store.Options.Projections.AsyncListeners)

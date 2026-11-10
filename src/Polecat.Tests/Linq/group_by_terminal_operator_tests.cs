@@ -2,6 +2,7 @@ using JasperFx;
 using System.Text.Json;
 using Polecat.Linq;
 using Polecat.Linq.CursorPaging;
+using JasperFx.Pagination;
 using Polecat.Pagination;
 using Polecat.Tests.Harness;
 

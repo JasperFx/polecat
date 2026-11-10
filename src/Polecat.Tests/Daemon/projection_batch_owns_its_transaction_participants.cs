@@ -22,6 +22,7 @@ public sealed class RecordingParticipant : ITransactionParticipant, IAsyncDispos
     private readonly ConcurrentQueue<string> _log = new();
 
     public const string RanBeforeCommit = "before commit";
+    public const string RanAfterCommit = "after commit";
     public const string Disposed = "disposed";
 
     public Exception? FailWith { get; init; }
@@ -35,6 +36,12 @@ public sealed class RecordingParticipant : ITransactionParticipant, IAsyncDispos
 
         _log.Enqueue(RanBeforeCommit);
         return FailWith is null ? Task.CompletedTask : Task.FromException(FailWith);
+    }
+
+    public Task AfterCommitAsync(CancellationToken token)
+    {
+        _log.Enqueue(RanAfterCommit);
+        return Task.CompletedTask;
     }
 
     public ValueTask DisposeAsync()
@@ -146,7 +153,9 @@ public class projection_batch_owns_its_transaction_participants : OneOffConfigur
     {
         var attempts = enlisted.ToArray();
 
-        attempts.Last().Log.ShouldBe([RecordingParticipant.RanBeforeCommit, RecordingParticipant.Disposed]);
+        attempts.Last().Log.ShouldBe([
+            RecordingParticipant.RanBeforeCommit, RecordingParticipant.RanAfterCommit, RecordingParticipant.Disposed
+        ]);
 
         foreach (var abandoned in attempts.SkipLast(1))
         {
@@ -218,6 +227,7 @@ public class projection_batch_owns_its_transaction_participants : OneOffConfigur
         agent.Status.ShouldBe(AgentStatus.Paused);
 
         participant.Log.ShouldContain(RecordingParticipant.RanBeforeCommit);
+        participant.Log.ShouldNotContain(RecordingParticipant.RanAfterCommit);
         participant.Log.Last().ShouldBe(RecordingParticipant.Disposed);
     }
 
@@ -252,10 +262,51 @@ public class projection_batch_owns_its_transaction_participants : OneOffConfigur
             session.AddTransactionParticipant(participant);
             await session.SaveChangesAsync(Ct);
 
-            participant.Log.ShouldBe([RecordingParticipant.RanBeforeCommit]);
+            participant.Log.ShouldBe([RecordingParticipant.RanBeforeCommit, RecordingParticipant.RanAfterCommit]);
         }
 
-        participant.Log.ShouldBe([RecordingParticipant.RanBeforeCommit, RecordingParticipant.Disposed]);
+        participant.Log.ShouldBe([
+            RecordingParticipant.RanBeforeCommit, RecordingParticipant.RanAfterCommit, RecordingParticipant.Disposed
+        ]);
+    }
+
+    /// <summary>
+    ///     #807: a participant stays enlisted after its session commits, so each save is a commit it
+    ///     takes part in, and each gets its <c>AfterCommitAsync</c>.
+    /// </summary>
+    [Fact]
+    public async Task each_save_a_participant_takes_part_in_runs_its_after_commit()
+    {
+        var participant = new RecordingParticipant();
+        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync(ct: Ct);
+
+        await using var session = theStore.LightweightSession();
+        session.AddTransactionParticipant(participant);
+        await session.SaveChangesAsync(Ct);
+        await session.SaveChangesAsync(Ct);
+
+        participant.Log.ShouldBe([
+            RecordingParticipant.RanBeforeCommit, RecordingParticipant.RanAfterCommit,
+            RecordingParticipant.RanBeforeCommit, RecordingParticipant.RanAfterCommit
+        ]);
+    }
+
+    /// <summary>
+    ///     #807: a save that rolls back never committed, so nothing is reconciled.
+    /// </summary>
+    [Fact]
+    public async Task a_save_that_rolls_back_does_not_run_after_commit()
+    {
+        var participant = new RecordingParticipant { FailWith = new DivideByZeroException("The participant failed") };
+        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync(ct: Ct);
+
+        await using var session = theStore.LightweightSession();
+        session.AddTransactionParticipant(participant);
+
+        await Should.ThrowAsync<DivideByZeroException>(() => session.SaveChangesAsync(Ct));
+
+        participant.Log.ShouldContain(RecordingParticipant.RanBeforeCommit);
+        participant.Log.ShouldNotContain(RecordingParticipant.RanAfterCommit);
     }
 
     [Fact]

@@ -1,4 +1,6 @@
+using System.Globalization;
 using System.Text.Json;
+using JasperFx.Pagination;
 using Polecat.Linq.Members;
 using Polecat.Linq.SqlGeneration;
 using Weasel.SqlServer;
@@ -30,8 +32,6 @@ namespace Polecat.Linq.CursorPaging;
 /// </remarks>
 internal static class CursorPagination
 {
-    private const string Version = "v1:";
-
     /// <summary>
     ///     The HTTP response header carrying the continuation cursor (mirrors Marten's
     ///     <c>Marten-Continuation</c>).
@@ -71,108 +71,34 @@ internal static class CursorPagination
     /// </summary>
     /// <remarks>
     ///     <para>
-    ///         ⚠️ <b>Written with <see cref="Utf8JsonWriter" />, not <see cref="JsonSerializer" /></b>
-    ///         (polecat#743). This used to be <c>JsonSerializer.Serialize(object?[])</c> — the
-    ///         reflection-default overload, which takes no options, so it never sees a consumer's
-    ///         source-generated <c>JsonSerializerContext</c>. Under Native AOT reflection-based STJ is
-    ///         disabled, so cursor paging threw on every page that had a successor, and there was nothing a
-    ///         consumer could register to stop it. Found by <c>Polecat.AotRuntimeSmoke</c>.
+    ///         #807: the codec is JasperFx's <see cref="CursorCodec" /> (jasperfx#1054), lifted from this
+    ///         class and Fisher's. Its bytes are the ones written here before, so a cursor a client is
+    ///         already holding stays valid across the upgrade; <c>cursor_codec_tests</c> pins them.
+    ///         It writes with <see cref="Utf8JsonWriter" />, never <see cref="JsonSerializer" />, which
+    ///         Native AOT disables (polecat#743).
     ///     </para>
     ///     <para>
-    ///         The bytes are unchanged, which is what keeps a cursor a client is already holding valid across
-    ///         an upgrade: for every value type below, STJ's own converter is a single call to the matching
-    ///         <see cref="Utf8JsonWriter" /> method with the same default encoder, so this writes what it wrote.
-    ///         <c>cursor_codec_tests</c> pins that per type against <see cref="JsonSerializer" /> itself.
-    ///     </para>
-    ///     <para>
-    ///         Anything else the reader hands back is written as a string. That is how a <c>time</c> key
-    ///         travels, as a <see cref="TimeSpan" />, and <see cref="CursorKeyType" /> reads it back from
-    ///         one. ⚠️ NOT as null, which reads as the obvious placeholder and is wrong: a null slot means
-    ///         a NULL key, so the next page would seek from the wrong place.
+    ///         A <c>time</c> key travels as a <see cref="TimeSpan" /> in its constant format, which is what
+    ///         <c>ToString()</c> wrote. ⚠️ NOT as null: a null slot means a NULL key, so the next page
+    ///         would seek from the wrong place.
     ///     </para>
     /// </remarks>
-    public static string Encode(IReadOnlyList<object?> keyValues)
-    {
-        var buffer = new System.Buffers.ArrayBufferWriter<byte>();
-        using (var writer = new Utf8JsonWriter(buffer))
-        {
-            writer.WriteStartArray();
-            foreach (var value in keyValues)
-            {
-                WriteSlot(writer, NormalizeForCursor(value));
-            }
-
-            writer.WriteEndArray();
-        }
-
-        return Version + Convert.ToBase64String(buffer.WrittenSpan);
-    }
-
-    private static void WriteSlot(Utf8JsonWriter writer, object? value)
-    {
-        switch (value)
-        {
-            case null: writer.WriteNullValue(); break;
-            case string x: writer.WriteStringValue(x); break;
-            case Guid x: writer.WriteStringValue(x); break;
-            case bool x: writer.WriteBooleanValue(x); break;
-            case int x: writer.WriteNumberValue(x); break;
-            case long x: writer.WriteNumberValue(x); break;
-            case short x: writer.WriteNumberValue(x); break;
-            case byte x: writer.WriteNumberValue(x); break;
-            case decimal x: writer.WriteNumberValue(x); break;
-            case double x: writer.WriteNumberValue(x); break;
-            case float x: writer.WriteNumberValue(x); break;
-            case DateTimeOffset x: writer.WriteStringValue(x); break;
-            case DateTime x: writer.WriteStringValue(x); break;
-
-            // A string, not a null: see the remarks on Encode.
-            default: writer.WriteStringValue(value.ToString()); break;
-        }
-    }
+    public static string Encode(IReadOnlyList<object?> keyValues) => Codec.Encode(keyValues);
 
     /// <summary>
-    ///     Decodes a cursor into typed sort-key values, one per ordering key. The values are typed by
-    ///     each ordering member's CLR type — the cursor payload itself carries no type information.
+    ///     Decodes a cursor into typed sort-key values, one per ordering key. Each value is typed by the
+    ///     SQL type its ordering key's locator is cast to (<see cref="CursorKeyType" />), which is what it
+    ///     is bound as — the cursor payload itself carries no type information.
     /// </summary>
     public static object?[] Decode(string cursor,
         IReadOnlyList<(IQueryableMember Member, bool Descending)> orderBy)
     {
-        if (!cursor.StartsWith(Version, StringComparison.Ordinal))
-        {
-            throw new ArgumentException(
-                $"Unrecognized or unversioned cursor. Expected a '{Version}' prefixed value.", nameof(cursor));
-        }
+        var values = Codec.Decode(cursor, orderBy.Select(x => CursorKeyType.For(x.Member).ReadType).ToArray());
 
-        // Parsed with JsonDocument rather than JsonSerializer.Deserialize<JsonElement[]>, for the reason
-        // Encode's remarks give: the reflection-default overload cannot run under Native AOT (#743).
-        JsonElement[] slots;
-        try
+        // Every other key can legitimately be NULL. The identity cannot, so this was not issued here.
+        for (var i = 0; i < values.Length; i++)
         {
-            using var document = JsonDocument.Parse(Convert.FromBase64String(cursor[Version.Length..]));
-            slots = document.RootElement.ValueKind switch
-            {
-                JsonValueKind.Array => document.RootElement.EnumerateArray().Select(x => x.Clone()).ToArray(),
-                JsonValueKind.Null => [],
-                _ => throw new JsonException("A cursor payload is a JSON array.")
-            };
-        }
-        catch (Exception ex) when (ex is FormatException or JsonException)
-        {
-            throw new ArgumentException("Malformed cursor payload.", nameof(cursor), ex);
-        }
-
-        if (slots.Length != orderBy.Count)
-        {
-            throw new ArgumentException(
-                $"Cursor carries {slots.Length} key(s) but the query orders by {orderBy.Count}. The cursor does not match this query's ordering.",
-                nameof(cursor));
-        }
-
-        var values = new object?[slots.Length];
-        for (var i = 0; i < slots.Length; i++)
-        {
-            values[i] = ConvertSlot(slots[i], orderBy[i].Member, cursor);
+            if (values[i] is null && orderBy[i].Member is IdMember) throw MalformedSlot(null);
         }
 
         return values;
@@ -256,31 +182,32 @@ internal static class CursorPagination
         }
     }
 
-    // Read-side values arrive already normalized to CLR primitives / Guid / DateTimeOffset, which STJ
-    // serializes losslessly. Guid/DateTimeOffset become strings; numbers/bools stay native.
-    private static object? NormalizeForCursor(object? value) =>
-        value is DBNull ? null : value;
+    private static readonly PolecatCursorCodec Codec = new();
 
-    private static object? ConvertSlot(JsonElement slot, IQueryableMember member, string cursor)
+    /// <summary>
+    ///     The shared codec, typed the way Polecat binds: a slot is read as the CLR type of its key's SQL
+    ///     type rather than of its member, so an enum stored by name reads back as the string it is bound as.
+    /// </summary>
+    private sealed class PolecatCursorCodec : CursorCodec
     {
-        if (slot.ValueKind == JsonValueKind.Null)
-        {
-            // Every other key can legitimately be NULL. The identity cannot, so this was not issued here.
-            return member is IdMember ? throw MalformedSlot(cursor, null) : null;
-        }
-
         // ⚠️ A cursor is client input. A slot of the wrong shape is a bad request rather than a fault,
-        // and StreamPagedByCursor turns only an ArgumentException into a 400.
-        try
+        // and StreamPagedByCursor turns only an ArgumentException into a 400. Thrown from here rather
+        // than left to the base, so it keeps the message Polecat has always given it.
+        protected override object? ConvertSlot(JsonElement slot, Type keyType)
         {
-            return CursorKeyType.For(member).Read(slot);
-        }
-        catch (Exception ex) when (ex is FormatException or InvalidOperationException or OverflowException)
-        {
-            throw MalformedSlot(cursor, ex);
+            try
+            {
+                return keyType == typeof(TimeSpan)
+                    ? TimeSpan.Parse(slot.GetString()!, CultureInfo.InvariantCulture)
+                    : base.ConvertSlot(slot, keyType);
+            }
+            catch (Exception ex) when (ex is FormatException or InvalidOperationException or OverflowException)
+            {
+                throw MalformedSlot(ex);
+            }
         }
     }
 
-    private static ArgumentException MalformedSlot(string cursor, Exception? inner)
-        => new("Malformed cursor payload.", nameof(cursor), inner);
+    private static ArgumentException MalformedSlot(Exception? inner)
+        => new("Malformed cursor payload.", "cursor", inner);
 }

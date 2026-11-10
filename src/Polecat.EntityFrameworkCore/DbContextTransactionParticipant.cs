@@ -43,6 +43,7 @@ internal class DbContextTransactionParticipant<TDbContext> : ITransactionPartici
     private readonly DocumentSessionBase? _session;
     private bool _released;
     private bool _disposed;
+    private bool _acceptAfterCommit;
 
     /// <param name="dbContext">The context to flush, and to own.</param>
     /// <param name="placeholderConnection">The connection to release, if the context has its own.</param>
@@ -89,15 +90,30 @@ internal class DbContextTransactionParticipant<TDbContext> : ITransactionPartici
             // its statements run, before anything has committed. A failure between here and the
             // commit rolls those rows back and the pipeline replays the block, into a change tracker
             // that believes it has nothing left to write, so attempt 2 commits the progression
-            // without the rows. Marten accepts in an AfterCommitAsync hook; there is no need for one
-            // here, because this context dies with the batch and is never flushed after its commit.
+            // without the rows. Accepted in AfterCommitAsync instead, as Marten does (#807).
             await DbContext.SaveChangesAsync(acceptAllChangesOnSuccess: false, token);
+            _acceptAfterCommit = true;
         }
 
         // Idempotent, because disposal releases it too — this line used to be the ONLY release, so a
         // projection that threw while applying, an optimistic-concurrency failure in SaveChangesAsync,
         // or a throw from anywhere above skipped it entirely.
         await ReleaseAsync();
+    }
+
+    /// <summary>
+    ///     #807: the daemon batch's flush left its changes unaccepted so a retried attempt could write
+    ///     them again. Once the batch has committed there is nothing left to retry, so accept them.
+    /// </summary>
+    public Task AfterCommitAsync(CancellationToken token)
+    {
+        if (_acceptAfterCommit && !_disposed)
+        {
+            _acceptAfterCommit = false;
+            DbContext.ChangeTracker.AcceptAllChanges();
+        }
+
+        return Task.CompletedTask;
     }
 
     private async ValueTask ReleaseAsync()

@@ -1,4 +1,5 @@
 using Polecat.Linq;
+using JasperFx.Pagination;
 using Polecat.Pagination;
 using Polecat.Tests.Harness;
 using Shouldly;
