@@ -226,7 +226,7 @@ public class Serializer : ISerializer, Weasel.Storage.IStorageSerializer
     [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode", Justification = SharedSerializerSuppression)]
     public async ValueTask<T> FromJsonAsync<T>(Stream stream, CancellationToken cancellationToken = default)
     {
-        return (await JsonSerializer.DeserializeAsync<T>(stream, _options, cancellationToken))!;
+        return (await JsonSerializer.DeserializeAsync<T>(stream, _options, cancellationToken).ConfigureAwait(false))!;
     }
 
     [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode", Justification = SharedSerializerSuppression)]
@@ -234,7 +234,7 @@ public class Serializer : ISerializer, Weasel.Storage.IStorageSerializer
     public async ValueTask<object> FromJsonAsync(Type type, Stream stream,
         CancellationToken cancellationToken = default)
     {
-        return (await JsonSerializer.DeserializeAsync(stream, type, _options, cancellationToken))!;
+        return (await JsonSerializer.DeserializeAsync(stream, type, _options, cancellationToken).ConfigureAwait(false))!;
     }
 
     public static JsonSerializerOptions DefaultOptions()

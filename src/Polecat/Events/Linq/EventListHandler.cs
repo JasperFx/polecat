@@ -32,7 +32,7 @@ internal class EventListHandler
         var results = new List<IEvent>();
         var sqlReader = reader.AsSqlDataReader();
 
-        while (await sqlReader.ReadAsync(token))
+        while (await sqlReader.ReadAsync(token).ConfigureAwait(false))
         {
             var seqId = sqlReader.GetInt64(0);
             var eventId = sqlReader.GetGuid(1);

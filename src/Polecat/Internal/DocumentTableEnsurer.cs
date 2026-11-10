@@ -115,7 +115,7 @@ internal class DocumentTableEnsurer
             return;
         }
 
-        await _semaphore.WaitAsync(token);
+        await _semaphore.WaitAsync(token).ConfigureAwait(false);
         try
         {
             // Double-check after acquiring lock
@@ -127,13 +127,13 @@ internal class DocumentTableEnsurer
             Interlocked.Increment(ref _schemaEnsureExecutions);
 
             await using var conn = _connectionFactory.Create();
-            await conn.OpenAsync(token);
+            await conn.OpenAsync(token).ConfigureAwait(false);
 
             // #868: serialized against the daemon and against other stores and processes. The semaphore
             // above only keeps this ensurer from racing itself. Always taken in that order, semaphore then
             // lock, and nothing here waits on a semaphore while it holds the lock.
-            await using var migrationLock = await SchemaMigrationLock.HoldForFirstUseAsync(
-                _options, conn, insideTransaction, token);
+            await using var migrationLock = (await SchemaMigrationLock.HoldForFirstUseAsync(
+                _options, conn, insideTransaction, token).ConfigureAwait(false));
             if (migrationLock is null) return;
 
             var migrator = new SqlServerMigrator();
@@ -142,8 +142,8 @@ internal class DocumentTableEnsurer
             if (provider.Mapping.IsNumericId && !_hiloTableEnsured)
             {
                 var hiloTable = new HiloTable(provider.Mapping.DatabaseSchemaName);
-                var hiloMigration = await SchemaMigration.DetermineAsync(conn, token, hiloTable);
-                await migrator.ApplyAllAsync(conn, hiloMigration, AutoCreate.CreateOrUpdate, ct: token);
+                var hiloMigration = await SchemaMigration.DetermineAsync(conn, token, hiloTable).ConfigureAwait(false);
+                await migrator.ApplyAllAsync(conn, hiloMigration, AutoCreate.CreateOrUpdate, ct: token).ConfigureAwait(false);
                 _hiloTableEnsured = true;
             }
 
@@ -152,7 +152,7 @@ internal class DocumentTableEnsurer
             // SQL Server rejects ALTER COLUMN while a default constraint references the column, and
             // Weasel's diff emits only a bare ALTER COLUMN — so this drops the default, widens (data
             // preserved — never a drop/recreate), then restores the default. No-op once bigint.
-            await WidenVersionColumnIfNeededAsync(conn, provider.Mapping.QualifiedTableName, token);
+            await WidenVersionColumnIfNeededAsync(conn, provider.Mapping.QualifiedTableName, token).ConfigureAwait(false);
 
             // Use Weasel SchemaMigration to create or update the document table.
             // #255: an externally-managed partitioned table is provisioned ONCE (CreateOnly) and
@@ -167,19 +167,19 @@ internal class DocumentTableEnsurer
             // id column, which trips InvalidCastException in the shared writeable selectors (they
             // read GetFieldValue<TInner>). Convert it to the inner primitive type in place — drop
             // PK, ALTER COLUMN, re-add PK — before Weasel diffs the table, so the diff stays clean.
-            await ConvertStrongTypedIdColumnIfNeededAsync(conn, provider.Mapping, table, token);
+            await ConvertStrongTypedIdColumnIfNeededAsync(conn, provider.Mapping, table, token).ConfigureAwait(false);
 
             // #335: a tenant-partitioned document table created after tenants already exist must
             // bake the full boundary set into its CREATE — hydrate the shared partition manager's
             // tenant map from pc_tenant_partitions first (cached; a no-op after the first call).
             if (provider.Mapping.TenantPartitioned)
             {
-                await _options.EventGraph.TenantPartitionManager.InitializeAsync(conn, token);
+                await _options.EventGraph.TenantPartitionManager.InitializeAsync(conn, token).ConfigureAwait(false);
             }
             var autoCreate = provider.Mapping.Partitioning is { ExternallyManaged: true }
                 ? AutoCreate.CreateOnly
                 : AutoCreate.CreateOrUpdate;
-            var migration = await SchemaMigration.DetermineAsync(conn, token, table);
+            var migration = await SchemaMigration.DetermineAsync(conn, token, table).ConfigureAwait(false);
 
             // #684: the computed columns, secondary indexes and foreign keys the mapping declares are
             // part of `table` now, so this ONE migration applies them -- they used to follow as raw DDL
@@ -192,7 +192,7 @@ internal class DocumentTableEnsurer
             // per-statement catch had to work with anyway.
             try
             {
-                await migrator.ApplyAllAsync(conn, migration, autoCreate, ct: token);
+                await migrator.ApplyAllAsync(conn, migration, autoCreate, ct: token).ConfigureAwait(false);
             }
             catch (SqlException e) when (IsMissingVectorType(e) && provider.Mapping.VectorIndexes.Count > 0)
             {
@@ -230,14 +230,14 @@ internal class DocumentTableEnsurer
                 // timeout inside whichever request got here first, and it would fail the same way on every
                 // request after it. A table left as it was keeps working as it did; see FullTextTokenTable.
                 var tokenTables = ftObjects.Where(x => x is Storage.FullText.FullTextTokenTable).ToArray();
-                var tokenTableMigration = await SchemaMigration.DetermineAsync(conn, token, tokenTables);
+                var tokenTableMigration = await SchemaMigration.DetermineAsync(conn, token, tokenTables).ConfigureAwait(false);
                 if (tokenTableMigration.Difference == SchemaPatchDifference.Create)
                 {
-                    await migrator.ApplyAllAsync(conn, tokenTableMigration, AutoCreate.CreateOrUpdate, ct: token);
+                    await migrator.ApplyAllAsync(conn, tokenTableMigration, AutoCreate.CreateOrUpdate, ct: token).ConfigureAwait(false);
                 }
 
-                var ftMigration = await SchemaMigration.DetermineAsync(conn, token, ftObjects.Except(tokenTables).ToArray());
-                await migrator.ApplyAllAsync(conn, ftMigration, AutoCreate.CreateOrUpdate, ct: token);
+                var ftMigration = await SchemaMigration.DetermineAsync(conn, token, ftObjects.Except(tokenTables).ToArray()).ConfigureAwait(false);
+                await migrator.ApplyAllAsync(conn, ftMigration, AutoCreate.CreateOrUpdate, ct: token).ConfigureAwait(false);
 
                 // The backfill is a DATA migration and deliberately not a schema object: a trigger only
                 // fires on writes made after it exists, so a declaration against a store that already
@@ -245,7 +245,7 @@ internal class DocumentTableEnsurer
                 // answers empty. Idempotent, so running it on every ensure is correct rather than merely
                 // harmless. It follows the migration because it writes to the table that migration
                 // creates.
-                await Storage.FullText.FullTextBackfill.RunAsync(conn, provider.Mapping, _options.CommandTimeout);
+                await Storage.FullText.FullTextBackfill.RunAsync(conn, provider.Mapping, _options.CommandTimeout).ConfigureAwait(false);
             }
 
             // #685: JSON indexes are no longer rendered here. They are declared on DocumentTable
@@ -262,7 +262,7 @@ internal class DocumentTableEnsurer
         }
 
         // Create foreign keys (deferred — referenced tables must exist first)
-        await EnsureForeignKeysAsync(provider, insideTransaction, token);
+        await EnsureForeignKeysAsync(provider, insideTransaction, token).ConfigureAwait(false);
     }
 
     private async Task EnsureForeignKeysAsync(DocumentProvider provider, bool insideTransaction,
@@ -277,20 +277,20 @@ internal class DocumentTableEnsurer
         foreach (var fk in provider.Mapping.ForeignKeys)
         {
             var refProvider = _providerRegistry.GetProvider(fk.ReferenceDocumentType);
-            await EnsureTableAsync(refProvider, insideTransaction, token);
+            await EnsureTableAsync(refProvider, insideTransaction, token).ConfigureAwait(false);
         }
 
-        await _semaphore.WaitAsync(token);
+        await _semaphore.WaitAsync(token).ConfigureAwait(false);
         try
         {
             if (_fksEnsured.ContainsKey(provider.Mapping.DocumentType)) return;
 
             await using var conn = _connectionFactory.Create();
-            await conn.OpenAsync(token);
+            await conn.OpenAsync(token).ConfigureAwait(false);
 
             // #868: a new constraint is DDL like any other. See EnsureTableAsync.
-            await using var migrationLock = await SchemaMigrationLock.HoldForFirstUseAsync(
-                _options, conn, insideTransaction, token);
+            await using var migrationLock = (await SchemaMigrationLock.HoldForFirstUseAsync(
+                _options, conn, insideTransaction, token).ConfigureAwait(false));
             if (migrationLock is null) return;
 
             // #684: re-diff the table WITH its constraints, now that every referenced table exists. The
@@ -317,8 +317,8 @@ internal class DocumentTableEnsurer
                 : AutoCreate.CreateOrUpdate;
 
             var migrator = new SqlServerMigrator();
-            var migration = await SchemaMigration.DetermineAsync(conn, token, table);
-            await migrator.ApplyAllAsync(conn, migration, autoCreate, ct: token);
+            var migration = await SchemaMigration.DetermineAsync(conn, token, table).ConfigureAwait(false);
+            await migrator.ApplyAllAsync(conn, migration, autoCreate, ct: token).ConfigureAwait(false);
 
             _fksEnsured.TryAdd(provider.Mapping.DocumentType, true);
         }
@@ -361,7 +361,7 @@ internal class DocumentTableEnsurer
                     ALTER TABLE {qualifiedTableName} ALTER COLUMN [version] bigint NOT NULL;
             END
             """;
-        await cmd.ExecuteNonQueryAsync(token);
+        await cmd.ExecuteNonQueryAsync(token).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -419,7 +419,7 @@ internal class DocumentTableEnsurer
                 ALTER TABLE {qualifiedTableName} ADD CONSTRAINT {table.PrimaryKeyName} PRIMARY KEY ({pkColumnList});
             END
             """;
-        await cmd.ExecuteNonQueryAsync(token);
+        await cmd.ExecuteNonQueryAsync(token).ConfigureAwait(false);
     }
 
     public async Task EnsureTablesAsync(IEnumerable<DocumentProvider> providers, bool insideTransaction,
@@ -427,7 +427,7 @@ internal class DocumentTableEnsurer
     {
         foreach (var provider in providers)
         {
-            await EnsureTableAsync(provider, insideTransaction, token);
+            await EnsureTableAsync(provider, insideTransaction, token).ConfigureAwait(false);
         }
     }
 
@@ -467,13 +467,13 @@ internal class DocumentTableEnsurer
             if (_ensured.ContainsKey(docType) || _foundInsideTransaction.ContainsKey(docType)) continue;
 
             if (_options.AutoCreateSchemaObjects != AutoCreate.None
-                && await tableExists(provider.Mapping.QualifiedTableName, token))
+                && await tableExists(provider.Mapping.QualifiedTableName, token).ConfigureAwait(false))
             {
                 _foundInsideTransaction.TryAdd(docType, provider);
                 continue;
             }
 
-            await EnsureTableAsync(provider, insideTransaction: true, token);
+            await EnsureTableAsync(provider, insideTransaction: true, token).ConfigureAwait(false);
         }
     }
 
@@ -512,21 +512,21 @@ internal class DocumentTableEnsurer
             return;
         }
 
-        await _eventStoreSemaphore.WaitAsync(token);
+        await _eventStoreSemaphore.WaitAsync(token).ConfigureAwait(false);
         try
         {
             if (_eventStoreEnsured) return;
 
             await using var conn = _connectionFactory.Create();
-            await conn.OpenAsync(token);
+            await conn.OpenAsync(token).ConfigureAwait(false);
 
             // #868: the semaphore above covers this ensurer in this process. The daemon applies this same
             // schema through PolecatDatabase.EnsureStorageExistsAsync, so without this a session's first
             // write and the daemon both read an empty catalog, and whoever ran second failed with
             // "There is already an object named 'fk_pc_events_stream_id' in the database". A loser waits
             // here, then the diff below finds the schema already there and comes out empty.
-            await using var migrationLock = await SchemaMigrationLock.HoldForFirstUseAsync(
-                _options, conn, insideTransaction, token);
+            await using var migrationLock = (await SchemaMigrationLock.HoldForFirstUseAsync(
+                _options, conn, insideTransaction, token).ConfigureAwait(false));
             if (migrationLock is null) return;
 
             var migrator = new SqlServerMigrator();
@@ -536,12 +536,12 @@ internal class DocumentTableEnsurer
             // boundary set (cached; a no-op after the first call).
             if (_options.EventGraph.AnyTenantPartitioning)
             {
-                await _options.EventGraph.TenantPartitionManager.InitializeAsync(conn, token);
+                await _options.EventGraph.TenantPartitionManager.InitializeAsync(conn, token).ConfigureAwait(false);
             }
 
             var eventSchema = new Events.Schema.EventStoreFeatureSchema(_options);
-            var migration = await SchemaMigration.DetermineAsync(conn, token, eventSchema.Objects);
-            await migrator.ApplyAllAsync(conn, migration, AutoCreate.CreateOrUpdate, ct: token);
+            var migration = await SchemaMigration.DetermineAsync(conn, token, eventSchema.Objects).ConfigureAwait(false);
+            await migrator.ApplyAllAsync(conn, migration, AutoCreate.CreateOrUpdate, ct: token).ConfigureAwait(false);
 
             _eventStoreEnsured = true;
         }

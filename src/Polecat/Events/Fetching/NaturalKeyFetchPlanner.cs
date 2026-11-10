@@ -33,7 +33,7 @@ internal static class NaturalKeyFetchPlanner
             nameof(naturalKeyValue), "Natural key value cannot be null.");
 
         // Single-round-trip: look up stream id from natural key table, join to streams for locking
-        await session.BeginTransactionAsync(cancellation);
+        await session.BeginTransactionAsync(cancellation).ConfigureAwait(false);
 
         await using var cmd = new SqlCommand();
 
@@ -66,9 +66,9 @@ internal static class NaturalKeyFetchPlanner
         object? streamId = null;
         bool streamExists = false;
 
-        await using (var reader = (await session.ExecuteReaderAsync(cmd, cancellation)).AsSqlDataReader())
+        await using (var reader = (await session.ExecuteReaderAsync(cmd, cancellation).ConfigureAwait(false)).AsSqlDataReader())
         {
-            if (await reader.ReadAsync(cancellation))
+            if (await reader.ReadAsync(cancellation).ConfigureAwait(false))
             {
                 version = reader.GetInt64(0);
                 streamId = isGuidStream ? (object)reader.GetGuid(1) : reader.GetString(1);
@@ -90,22 +90,22 @@ internal static class NaturalKeyFetchPlanner
             if (isGuidStream)
             {
                 var guidId = (Guid)streamId!;
-                var streamEvents = await queryEventStore.FetchStreamAsync(guidId, token: cancellation);
+                var streamEvents = await queryEventStore.FetchStreamAsync(guidId, token: cancellation).ConfigureAwait(false);
                 if (streamEvents.Count > 0)
                 {
                     var aggregator = session.Options.Projections.AggregatorFor<T>();
-                    aggregate = await aggregator.BuildAsync(streamEvents, session, null, cancellation);
+                    aggregate = await aggregator.BuildAsync(streamEvents, session, null, cancellation).ConfigureAwait(false);
                     if (aggregate != null) QueryEventStore.TrySetIdentity(aggregate, guidId);
                 }
             }
             else
             {
                 var key = (string)streamId!;
-                var streamEvents = await queryEventStore.FetchStreamAsync(key, token: cancellation);
+                var streamEvents = await queryEventStore.FetchStreamAsync(key, token: cancellation).ConfigureAwait(false);
                 if (streamEvents.Count > 0)
                 {
                     var aggregator = session.Options.Projections.AggregatorFor<T>();
-                    aggregate = await aggregator.BuildAsync(streamEvents, session, null, cancellation);
+                    aggregate = await aggregator.BuildAsync(streamEvents, session, null, cancellation).ConfigureAwait(false);
                     if (aggregate != null) QueryEventStore.TrySetIdentity(aggregate, key);
                 }
             }

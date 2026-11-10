@@ -9,9 +9,9 @@ internal class ScalarHandler<T> : IQueryHandler<T>
 {
     public async Task<T> HandleAsync(DbDataReader reader, CancellationToken token)
     {
-        await reader.ReadAsync(token);
+        await reader.ReadAsync(token).ConfigureAwait(false);
 
-        if (await reader.IsDBNullAsync(0, token))
+        if (await reader.IsDBNullAsync(0, token).ConfigureAwait(false))
         {
             return default!;
         }

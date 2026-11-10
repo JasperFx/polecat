@@ -86,7 +86,7 @@ public partial class DocumentStore
                 if (domainEvent != null)
                 {
                     var built = await aggregator.BuildAsync(
-                        new List<IEvent> { domainEvent }, session, current, ct);
+                        new List<IEvent> { domainEvent }, session, current, ct).ConfigureAwait(false);
                     after = built ?? current;
                 }
             }

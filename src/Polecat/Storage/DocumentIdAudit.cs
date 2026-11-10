@@ -56,12 +56,12 @@ internal static class DocumentIdAudit
         var exists = await resilience.ExecuteAsync(static async (state, ct) =>
         {
             await using var conn = new SqlConnection(state.connectionString);
-            await conn.OpenAsync(ct);
+            await conn.OpenAsync(ct).ConfigureAwait(false);
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = "SELECT OBJECT_ID(@table, 'U');";
             cmd.Parameters.Add(new SqlParameter("@table", SqlDbType.NVarChar, 512) { Value = state.mapping.QualifiedTableName });
-            return await cmd.ExecuteScalarAsync(ct) is not (null or DBNull);
-        }, (connectionString, mapping), token);
+            return await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false) is not (null or DBNull);
+        }, (connectionString, mapping), token).ConfigureAwait(false);
 
         if (!exists) return;
 
@@ -76,10 +76,10 @@ internal static class DocumentIdAudit
             var (next, page, unreadable) = await resilience.ExecuteAsync(static async (state, ct) =>
             {
                 await using var conn = new SqlConnection(state.connectionString);
-                await conn.OpenAsync(ct);
+                await conn.OpenAsync(ct).ConfigureAwait(false);
                 return await ReadPageAsync(conn, state.mapping, state.sql, state.size, state.commandTimeout,
-                    state.last, state.database, ct);
-            }, (connectionString, mapping, sql, size, commandTimeout, last, database), token);
+                    state.last, state.database, ct).ConfigureAwait(false);
+            }, (connectionString, mapping, sql, size, commandTimeout, last, database), token).ConfigureAwait(false);
 
             if (next is not { } key) return;
 
@@ -129,20 +129,20 @@ internal static class DocumentIdAudit
 
         var page = new List<DocumentIdMismatch>();
 
-        await using var reader = await cmd.ExecuteReaderAsync(token);
-        if (!await reader.ReadAsync(token)) return (null, page, false);
+        await using var reader = (await cmd.ExecuteReaderAsync(token).ConfigureAwait(false));
+        if (!await reader.ReadAsync(token).ConfigureAwait(false)) return (null, page, false);
 
         var next = new Key(reader.GetValue(0), conjoined ? reader.GetValue(1) : null);
 
         try
         {
-            await reader.NextResultAsync(token);
-            while (await reader.ReadAsync(token))
+            await reader.NextResultAsync(token).ConfigureAwait(false);
+            while (await reader.ReadAsync(token).ConfigureAwait(false))
             {
                 page.Add(new DocumentIdMismatch(
                     mapping.DocumentType,
                     mapping.WrapId(reader.GetValue(0)),
-                    await reader.IsDBNullAsync(1, token) ? null : reader.GetString(1),
+                    await reader.IsDBNullAsync(1, token).ConfigureAwait(false) ? null : reader.GetString(1),
                     conjoined ? reader.GetString(2) : null,
                     database));
             }

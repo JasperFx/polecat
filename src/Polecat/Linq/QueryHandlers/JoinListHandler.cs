@@ -30,7 +30,7 @@ internal class JoinListHandler<TOuter, TInner, TResult> : IQueryHandler<IReadOnl
     public async Task<IReadOnlyList<TResult>> HandleAsync(DbDataReader reader, CancellationToken token)
     {
         var list = new List<TResult>();
-        while (await reader.ReadAsync(token))
+        while (await reader.ReadAsync(token).ConfigureAwait(false))
         {
             var outerJson = reader.GetString(0);
             var outer = _serializer.FromJson<TOuter>(outerJson);

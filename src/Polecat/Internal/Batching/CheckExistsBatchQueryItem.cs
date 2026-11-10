@@ -42,7 +42,7 @@ internal class CheckExistsBatchQueryItem<T> : IBatchQueryItem where T : class
 
     public async Task ReadResultSetAsync(DbDataReader reader, CancellationToken token)
     {
-        if (await reader.ReadAsync(token))
+        if (await reader.ReadAsync(token).ConfigureAwait(false))
         {
             _tcs.SetResult(reader.GetBoolean(0));
         }

@@ -74,11 +74,11 @@ internal class TransactionalConnection : IAlwaysConnectedLifetime
     public async ValueTask BeginTransactionAsync(CancellationToken token)
     {
         AssertWritesAreAllowed();
-        await EnsureConnectionOpenAsync(token);
+        await EnsureConnectionOpenAsync(token).ConfigureAwait(false);
         if (Transaction != null) return;
 
         _transactionFailure = null;
-        Transaction = await SqlTransactionRequests.BeginAsync(_connection!, _isolationLevel, token);
+        Transaction = await SqlTransactionRequests.BeginAsync(_connection!, _isolationLevel, token).ConfigureAwait(false);
     }
 
     public void AssertTransactionIsUsable()
@@ -116,7 +116,7 @@ internal class TransactionalConnection : IAlwaysConnectedLifetime
         if (_connection == null)
         {
             _connection = _connectionFactory.Create();
-            await _connection.OpenAsync(token);
+            await _connection.OpenAsync(token).ConfigureAwait(false);
         }
     }
 
@@ -124,12 +124,12 @@ internal class TransactionalConnection : IAlwaysConnectedLifetime
     {
         if (HoldsTransactionForSession)
         {
-            await BeginTransactionAsync(token);
+            await BeginTransactionAsync(token).ConfigureAwait(false);
             return;
         }
 
         AssertTransactionIsUsable();
-        await EnsureConnectionOpenAsync(token);
+        await EnsureConnectionOpenAsync(token).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -150,14 +150,14 @@ internal class TransactionalConnection : IAlwaysConnectedLifetime
 
     public async Task<int> ExecuteAsync(SqlCommand command, CancellationToken token)
     {
-        await PrepareToExecuteAsync(token);
+        await PrepareToExecuteAsync(token).ConfigureAwait(false);
         command.Connection = _connection;
         if (Transaction != null) command.Transaction = Transaction;
         command.CommandTimeout = CommandTimeout;
 
         try
         {
-            return await command.ExecuteNonQueryAsync(token);
+            return await command.ExecuteNonQueryAsync(token).ConfigureAwait(false);
         }
         catch (SqlException e)
         {
@@ -168,14 +168,14 @@ internal class TransactionalConnection : IAlwaysConnectedLifetime
 
     public async Task<object?> ExecuteScalarAsync(SqlCommand command, CancellationToken token)
     {
-        await PrepareToExecuteAsync(token);
+        await PrepareToExecuteAsync(token).ConfigureAwait(false);
         command.Connection = _connection;
         if (Transaction != null) command.Transaction = Transaction;
         command.CommandTimeout = CommandTimeout;
 
         try
         {
-            return await command.ExecuteScalarAsync(token);
+            return await command.ExecuteScalarAsync(token).ConfigureAwait(false);
         }
         catch (SqlException e)
         {
@@ -186,14 +186,14 @@ internal class TransactionalConnection : IAlwaysConnectedLifetime
 
     public async Task<DbDataReader> ExecuteReaderAsync(SqlCommand command, CancellationToken token)
     {
-        await PrepareToExecuteAsync(token);
+        await PrepareToExecuteAsync(token).ConfigureAwait(false);
         command.Connection = _connection;
         if (Transaction != null) command.Transaction = Transaction;
         command.CommandTimeout = CommandTimeout;
 
         try
         {
-            return await command.ExecuteReaderAsync(token);
+            return await command.ExecuteReaderAsync(token).ConfigureAwait(false);
         }
         catch (SqlException e)
         {
@@ -204,14 +204,14 @@ internal class TransactionalConnection : IAlwaysConnectedLifetime
 
     public async Task<DbDataReader> ExecuteReaderAsync(SqlBatch batch, CancellationToken token)
     {
-        await PrepareToExecuteAsync(token);
+        await PrepareToExecuteAsync(token).ConfigureAwait(false);
         batch.Connection = _connection;
         if (Transaction != null) batch.Transaction = Transaction;
         batch.Timeout = CommandTimeout;
 
         try
         {
-            return await batch.ExecuteReaderAsync(token);
+            return await batch.ExecuteReaderAsync(token).ConfigureAwait(false);
         }
         catch (SqlException e)
         {
@@ -262,7 +262,7 @@ internal class TransactionalConnection : IAlwaysConnectedLifetime
             await using var command = new SqlCommand(ResetIsolationLevelSql, _connection);
             command.CommandTimeout = CommandTimeout;
             await _resilience.ExecuteAsync(
-                static (c, t) => new ValueTask<int>(c.ExecuteNonQueryAsync(t)), command, CancellationToken.None);
+                static (c, t) => new ValueTask<int>(c.ExecuteNonQueryAsync(t)), command, CancellationToken.None).ConfigureAwait(false);
         }
         catch (Exception)
         {
@@ -279,8 +279,8 @@ internal class TransactionalConnection : IAlwaysConnectedLifetime
 
     public async ValueTask DisposeAsync()
     {
-        if (Transaction != null) await Transaction.DisposeAsync();
-        await ResetIsolationLevelAsync();
-        if (_connection != null) await _connection.DisposeAsync();
+        if (Transaction != null) await Transaction.DisposeAsync().ConfigureAwait(false);
+        await ResetIsolationLevelAsync().ConfigureAwait(false);
+        if (_connection != null) await _connection.DisposeAsync().ConfigureAwait(false);
     }
 }

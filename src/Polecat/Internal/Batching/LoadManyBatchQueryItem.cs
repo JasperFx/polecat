@@ -37,9 +37,9 @@ internal class LoadManyBatchQueryItem<T> : IBatchQueryItem where T : class
     {
         var selector = _storage.BuildLoadSelector(_session);
         var results = new List<T>();
-        while (await reader.ReadAsync(token))
+        while (await reader.ReadAsync(token).ConfigureAwait(false))
         {
-            results.Add(await selector.ResolveAsync(reader, token));
+            results.Add(await selector.ResolveAsync(reader, token).ConfigureAwait(false));
         }
 
         _tcs.SetResult(results);

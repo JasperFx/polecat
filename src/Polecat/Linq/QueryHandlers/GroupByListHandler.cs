@@ -24,7 +24,7 @@ internal class GroupByListHandler<T> : IQueryHandler<IReadOnlyList<T>>
     {
         var results = new List<T>();
 
-        while (await reader.ReadAsync(token))
+        while (await reader.ReadAsync(token).ConfigureAwait(false))
         {
             var json = reader.GetString(0);
             var item = _serializer.FromJson<T>(json);

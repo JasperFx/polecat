@@ -37,7 +37,7 @@ internal class PolecatProjectionStorage<TDoc, TId> : IProjectionStorage<TDoc, TI
     private async Task EnsureTableExistsAsync(CancellationToken cancellation)
     {
         if (_tableEnsured) return;
-        await _session.EnsureTableForProviderAsync(_provider, cancellation);
+        await _session.EnsureTableForProviderAsync(_provider, cancellation).ConfigureAwait(false);
         _tableEnsured = true;
     }
 
@@ -179,11 +179,11 @@ internal class PolecatProjectionStorage<TDoc, TId> : IProjectionStorage<TDoc, TI
 
     public async Task<TDoc> LoadAsync(TId id, CancellationToken cancellation)
     {
-        await EnsureTableExistsAsync(cancellation);
-        if (!await _session.CouldHaveIdAsync(_provider.Mapping, id!, cancellation)) return default!;
+        await EnsureTableExistsAsync(cancellation).ConfigureAwait(false);
+        if (!await _session.CouldHaveIdAsync(_provider.Mapping, id!, cancellation).ConfigureAwait(false)) return default!;
 
         var doc = await Storage.LoadByObjectIdAsync(id, (Weasel.Storage.IStorageSession)_session, TenantId,
-            cancellation);
+            cancellation).ConfigureAwait(false);
         return doc ?? default!;
     }
 
@@ -193,14 +193,14 @@ internal class PolecatProjectionStorage<TDoc, TId> : IProjectionStorage<TDoc, TI
         var dict = new Dictionary<TId, TDoc>();
         if (identities.Length == 0) return dict;
 
-        await EnsureTableExistsAsync(cancellationToken);
+        await EnsureTableExistsAsync(cancellationToken).ConfigureAwait(false);
 
         var ids = await _session.IdsThatCouldBeStoredAsync(_provider.Mapping,
-            identities.Select(x => (object)x!).ToList(), cancellationToken);
+            identities.Select(x => (object)x!).ToList(), cancellationToken).ConfigureAwait(false);
         if (ids.Count == 0) return dict;
 
         var docs = await Storage.LoadManyByObjectIdsAsync(ids, (Weasel.Storage.IStorageSession)_session, TenantId,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
         foreach (var doc in docs)
         {
             dict[Identity(doc)] = doc;

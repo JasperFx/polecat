@@ -62,9 +62,9 @@ internal static class FullTextIndexRebuild
         await resilience.ExecuteAsync(static async (state, ct) =>
         {
             await using var conn = new SqlConnection(state.connectionString);
-            await conn.OpenAsync(ct);
-            await AssertTriggerIsCurrentAsync(conn, state.mapping, ct);
-        }, (connectionString, mapping), token);
+            await conn.OpenAsync(ct).ConfigureAwait(false);
+            await AssertTriggerIsCurrentAsync(conn, state.mapping, ct).ConfigureAwait(false);
+        }, (connectionString, mapping), token).ConfigureAwait(false);
 
         Key? last = null;
         do
@@ -72,10 +72,10 @@ internal static class FullTextIndexRebuild
             last = await resilience.ExecuteAsync(static async (state, ct) =>
             {
                 await using var conn = new SqlConnection(state.connectionString);
-                await conn.OpenAsync(ct);
+                await conn.OpenAsync(ct).ConfigureAwait(false);
                 return await RebuildBatchAsync(conn, state.mapping, state.batchSize, state.commandTimeout,
-                    state.last, ct);
-            }, (connectionString, mapping, batchSize, commandTimeout, last), token);
+                    state.last, ct).ConfigureAwait(false);
+            }, (connectionString, mapping, batchSize, commandTimeout, last), token).ConfigureAwait(false);
         } while (last != null);
     }
 
@@ -98,8 +98,8 @@ internal static class FullTextIndexRebuild
             }
         }
 
-        await using var reader = await cmd.ExecuteReaderAsync(token);
-        if (!await reader.ReadAsync(token)) return null;
+        await using var reader = (await cmd.ExecuteReaderAsync(token).ConfigureAwait(false));
+        if (!await reader.ReadAsync(token).ConfigureAwait(false)) return null;
 
         return new Key(reader.GetValue(0), conjoined ? reader.GetValue(1) : null);
     }
@@ -151,7 +151,7 @@ internal static class FullTextIndexRebuild
         CancellationToken token)
     {
         var trigger = new FullTextTrigger(mapping, mapping.FullTextIndexes);
-        var migration = await SchemaMigration.DetermineAsync(conn, token, new FullTextTokenTable(mapping), trigger);
+        var migration = await SchemaMigration.DetermineAsync(conn, token, new FullTextTokenTable(mapping), trigger).ConfigureAwait(false);
 
         if (migration.Difference != SchemaPatchDifference.None)
         {

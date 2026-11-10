@@ -136,7 +136,7 @@ internal class BatchedQuery : IBatchedQuery
             }
 
             _executed = true;
-            await ExecuteItemsAsync(token);
+            await ExecuteItemsAsync(token).ConfigureAwait(false);
         }
         catch (Exception failure)
         {
@@ -154,11 +154,11 @@ internal class BatchedQuery : IBatchedQuery
     private async Task ExecuteItemsAsync(CancellationToken token)
     {
         // Ensure tables exist for all involved document types
-        await _tableEnsurer.EnsureTablesAsync(_involvedProviders, _session.HasOpenTransaction, token);
+        await _tableEnsurer.EnsureTablesAsync(_involvedProviders, _session.HasOpenTransaction, token).ConfigureAwait(false);
 
         if (_needsEventStore)
         {
-            await _tableEnsurer.EnsureEventStoreSchemaAsync(_session.HasOpenTransaction, token);
+            await _tableEnsurer.EnsureEventStoreSchemaAsync(_session.HasOpenTransaction, token).ConfigureAwait(false);
         }
 
         // Build the combined batch (connection-less; lifetime sets it at execution)
@@ -171,17 +171,17 @@ internal class BatchedQuery : IBatchedQuery
         }
 
         builder.Compile();
-        await using var reader = await _session.ExecuteReaderAsync(batch, token);
+        await using var reader = (await _session.ExecuteReaderAsync(batch, token).ConfigureAwait(false));
 
         // Process each result set
         for (var i = 0; i < _items.Count; i++)
         {
             if (i > 0)
             {
-                await reader.NextResultAsync(token);
+                await reader.NextResultAsync(token).ConfigureAwait(false);
             }
 
-            await _items[i].ReadResultSetAsync(reader, token);
+            await _items[i].ReadResultSetAsync(reader, token).ConfigureAwait(false);
         }
     }
 

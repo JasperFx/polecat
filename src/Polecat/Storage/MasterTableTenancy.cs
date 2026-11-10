@@ -186,7 +186,7 @@ public class MasterTableTenancy : ITenancy, IDynamicTenantSource<string>
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = $"SELECT tenant_id, connection_string FROM {table} WHERE is_disabled = 0;";
 
-            await using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+            await using var reader = (await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false));
             while (await reader.ReadAsync(ct).ConfigureAwait(false))
             {
                 list.Add((reader.GetString(0), reader.GetString(1)));
@@ -344,7 +344,7 @@ public class MasterTableTenancy : ITenancy, IDynamicTenantSource<string>
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = $"SELECT tenant_id FROM {table} WHERE is_disabled = 1;";
 
-            await using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+            await using var reader = (await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false));
             while (await reader.ReadAsync(ct).ConfigureAwait(false))
             {
                 list.Add(reader.GetString(0));
@@ -473,7 +473,7 @@ public class MasterTableTenancy : ITenancy, IDynamicTenantSource<string>
                 $"SELECT connection_string, is_disabled FROM {table} WHERE tenant_id = @id;";
             cmd.Parameters.AddWithValue("@id", tenantId);
 
-            await using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+            await using var reader = (await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false));
             if (!await reader.ReadAsync(ct).ConfigureAwait(false))
             {
                 return new TenantLookup(TenantLookupStatus.Unknown, null);
@@ -538,8 +538,8 @@ public class MasterTableTenancy : ITenancy, IDynamicTenantSource<string>
                 await using var conn = new SqlConnection(connectionString);
                 await conn.OpenAsync(ct).ConfigureAwait(false);
 
-                await using var migrationLock = await SchemaMigrationLock.HoldForFirstUseAsync(
-                    options, conn, insideTransaction: false, ct, schema).ConfigureAwait(false);
+                await using var migrationLock = (await SchemaMigrationLock.HoldForFirstUseAsync(
+                    options, conn, insideTransaction: false, ct, schema).ConfigureAwait(false));
 
                 var migration = await SchemaMigration.DetermineAsync(conn, ct, new TenantsTable(schema))
                     .ConfigureAwait(false);

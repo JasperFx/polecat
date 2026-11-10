@@ -106,7 +106,7 @@ public partial class DocumentStore : IDocumentStoreDiagnostics
         var rows = new List<StoredDocument>();
         await using (var page = query.BuildPage(conn))
         {
-            await using var reader = await page.ExecuteReaderAsync(token).ConfigureAwait(false);
+            await using var reader = (await page.ExecuteReaderAsync(token).ConfigureAwait(false));
             while (await reader.ReadAsync(token).ConfigureAwait(false))
             {
                 rows.Add(ReadStoredDocument(reader, query.Mapping));
@@ -517,7 +517,7 @@ public partial class DocumentStore : IDocumentStoreDiagnostics
         if (conjoined) cmd.Parameters.AddVarChar("@tenant", normalized ?? DefaultTenantId());
         if (filterByDocType) cmd.Parameters.AddVarChar("@doc_type", mapping.AliasFor(requestedType));
 
-        await using var reader = await cmd.ExecuteReaderAsync(token).ConfigureAwait(false);
+        await using var reader = (await cmd.ExecuteReaderAsync(token).ConfigureAwait(false));
         return await reader.ReadAsync(token).ConfigureAwait(false)
             ? ReadStoredDocument(reader, mapping)
             : null;

@@ -32,6 +32,6 @@ public static class CursorPagingQueryableExtensions
                 "ToJsonPageByCursorAsync can only be used with Polecat IQueryable instances.");
         }
 
-        return await provider.ExecuteCursorPageJsonAsync(queryable.Expression, cursor, pageSize, token);
+        return await provider.ExecuteCursorPageJsonAsync(queryable.Expression, cursor, pageSize, token).ConfigureAwait(false);
     }
 }

@@ -92,7 +92,7 @@ internal sealed class OnDemandTransactionalConnection : IAlwaysConnectedLifetime
     public async ValueTask BeginTransactionAsync(CancellationToken token)
     {
         _isPinned = true;
-        await _pinned.BeginTransactionAsync(token);
+        await _pinned.BeginTransactionAsync(token).ConfigureAwait(false);
     }
 
     public void AssertTransactionIsUsable() => _pinned.AssertTransactionIsUsable();
@@ -123,7 +123,7 @@ internal sealed class OnDemandTransactionalConnection : IAlwaysConnectedLifetime
 
     public async ValueTask DisposeAsync()
     {
-        await _pinned.DisposeAsync();
-        await _pooled.DisposeAsync();
+        await _pinned.DisposeAsync().ConfigureAwait(false);
+        await _pooled.DisposeAsync().ConfigureAwait(false);
     }
 }

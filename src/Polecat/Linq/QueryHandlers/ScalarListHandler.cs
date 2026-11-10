@@ -11,9 +11,9 @@ internal class ScalarListHandler<T> : IQueryHandler<IReadOnlyList<T>>
     public async Task<IReadOnlyList<T>> HandleAsync(DbDataReader reader, CancellationToken token)
     {
         var list = new List<T>();
-        while (await reader.ReadAsync(token))
+        while (await reader.ReadAsync(token).ConfigureAwait(false))
         {
-            if (await reader.IsDBNullAsync(0, token))
+            if (await reader.IsDBNullAsync(0, token).ConfigureAwait(false))
             {
                 list.Add(default!);
             }

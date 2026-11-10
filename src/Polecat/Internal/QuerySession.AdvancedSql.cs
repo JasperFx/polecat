@@ -24,10 +24,10 @@ internal partial class QuerySession : IAdvancedSql
         foreach (var p in sqlParams) cmd.Parameters.Add(p);
 
         Logger.OnBeforeExecute(commandText);
-        await using var dbReader = await ExecuteReaderAsync(cmd, token);
+        await using var dbReader = (await ExecuteReaderAsync(cmd, token).ConfigureAwait(false));
 
         var list = new List<T>();
-        while (await dbReader.ReadAsync(token))
+        while (await dbReader.ReadAsync(token).ConfigureAwait(false))
         {
             // #676: CastResult like every other overload. The inline Convert.ChangeType this replaces
             // relied on that method's identity fast path to pass a document or JSON object through,
@@ -54,10 +54,10 @@ internal partial class QuerySession : IAdvancedSql
         foreach (var p in sqlParams) cmd.Parameters.Add(p);
 
         Logger.OnBeforeExecute(commandText);
-        await using var dbReader = await ExecuteReaderAsync(cmd, token);
+        await using var dbReader = (await ExecuteReaderAsync(cmd, token).ConfigureAwait(false));
 
         var list = new List<(T1, T2)>();
-        while (await dbReader.ReadAsync(token))
+        while (await dbReader.ReadAsync(token).ConfigureAwait(false))
         {
             var v1 = CastResult<T1>(reader1.ReadValue(dbReader, 0));
             var v2 = CastResult<T2>(reader2.ReadValue(dbReader, reader1.ColumnCount));
@@ -84,10 +84,10 @@ internal partial class QuerySession : IAdvancedSql
         foreach (var p in sqlParams) cmd.Parameters.Add(p);
 
         Logger.OnBeforeExecute(commandText);
-        await using var dbReader = await ExecuteReaderAsync(cmd, token);
+        await using var dbReader = (await ExecuteReaderAsync(cmd, token).ConfigureAwait(false));
 
         var list = new List<(T1, T2, T3)>();
-        while (await dbReader.ReadAsync(token))
+        while (await dbReader.ReadAsync(token).ConfigureAwait(false))
         {
             var offset = 0;
             var v1 = CastResult<T1>(reader1.ReadValue(dbReader, offset));
@@ -116,9 +116,9 @@ internal partial class QuerySession : IAdvancedSql
         foreach (var p in sqlParams) cmd.Parameters.Add(p);
 
         Logger.OnBeforeExecute(commandText);
-        await using var dbReader = await ExecuteReaderAsync(cmd, token);
+        await using var dbReader = (await ExecuteReaderAsync(cmd, token).ConfigureAwait(false));
 
-        while (await dbReader.ReadAsync(token))
+        while (await dbReader.ReadAsync(token).ConfigureAwait(false))
         {
             yield return CastResult<T>(reader1.ReadValue(dbReader, 0));
         }
@@ -139,9 +139,9 @@ internal partial class QuerySession : IAdvancedSql
         foreach (var p in sqlParams) cmd.Parameters.Add(p);
 
         Logger.OnBeforeExecute(commandText);
-        await using var dbReader = await ExecuteReaderAsync(cmd, token);
+        await using var dbReader = (await ExecuteReaderAsync(cmd, token).ConfigureAwait(false));
 
-        while (await dbReader.ReadAsync(token))
+        while (await dbReader.ReadAsync(token).ConfigureAwait(false))
         {
             var v1 = CastResult<T1>(reader1.ReadValue(dbReader, 0));
             var v2 = CastResult<T2>(reader2.ReadValue(dbReader, reader1.ColumnCount));
@@ -165,9 +165,9 @@ internal partial class QuerySession : IAdvancedSql
         foreach (var p in sqlParams) cmd.Parameters.Add(p);
 
         Logger.OnBeforeExecute(commandText);
-        await using var dbReader = await ExecuteReaderAsync(cmd, token);
+        await using var dbReader = (await ExecuteReaderAsync(cmd, token).ConfigureAwait(false));
 
-        while (await dbReader.ReadAsync(token))
+        while (await dbReader.ReadAsync(token).ConfigureAwait(false))
         {
             var offset = 0;
             var v1 = CastResult<T1>(reader1.ReadValue(dbReader, offset));
@@ -230,10 +230,10 @@ internal partial class QuerySession : IAdvancedSql
         var text = DescribeBatch(owned);
 
         Logger.OnBeforeExecute(text);
-        await using var dbReader = await ExecuteReaderAsync(owned, token);
+        await using var dbReader = (await ExecuteReaderAsync(owned, token).ConfigureAwait(false));
 
         var list = new List<T>();
-        while (await dbReader.ReadAsync(token))
+        while (await dbReader.ReadAsync(token).ConfigureAwait(false))
         {
             list.Add(CastResult<T>(reader1.ReadValue(dbReader, 0)));
         }
@@ -252,10 +252,10 @@ internal partial class QuerySession : IAdvancedSql
         var text = DescribeBatch(owned);
 
         Logger.OnBeforeExecute(text);
-        await using var dbReader = await ExecuteReaderAsync(owned, token);
+        await using var dbReader = (await ExecuteReaderAsync(owned, token).ConfigureAwait(false));
 
         var list = new List<(T1, T2)>();
-        while (await dbReader.ReadAsync(token))
+        while (await dbReader.ReadAsync(token).ConfigureAwait(false))
         {
             var v1 = CastResult<T1>(reader1.ReadValue(dbReader, 0));
             var v2 = CastResult<T2>(reader2.ReadValue(dbReader, reader1.ColumnCount));

@@ -89,8 +89,8 @@ public partial class DocumentStore
         cmd.Parameters.AddWithValue("@count", count);
         if (tenantId != null) cmd.Parameters.AddVarChar("@tenant_id", tenantId);
 
-        await using var reader = await session.ExecuteReaderAsync(cmd, ct);
-        while (await reader.ReadAsync(ct))
+        await using var reader = (await session.ExecuteReaderAsync(cmd, ct).ConfigureAwait(false));
+        while (await reader.ReadAsync(ct).ConfigureAwait(false))
         {
             results.Add(PcStreamsRowReader.ReadStreamSummary(reader, JasperFx.StorageConstants.DefaultTenantId));
         }
@@ -178,8 +178,8 @@ public partial class DocumentStore
         // Explorer path doesn't need EventTypeCache (no EventMappingFor call).
         var slots = MetadataSlots.Compute(Events.EventOptions);
 
-        await using var reader = await session.ExecuteReaderAsync(cmd, ct);
-        while (await reader.ReadAsync(ct))
+        await using var reader = (await session.ExecuteReaderAsync(cmd, ct).ConfigureAwait(false));
+        while (await reader.ReadAsync(ct).ConfigureAwait(false))
         {
             yield return PcEventsRowReader.ReadEventRecord(reader, ctx, slots);
         }
@@ -259,8 +259,8 @@ public partial class DocumentStore
         cmd.Parameters.AddUncheckedKey("@id", resolvedStreamId);
         if (tenantId != null) cmd.Parameters.AddVarChar("@tenant_id", tenantId);
 
-        await using var reader = await session.ExecuteReaderAsync(cmd, ct);
-        if (!await reader.ReadAsync(ct))
+        await using var reader = (await session.ExecuteReaderAsync(cmd, ct).ConfigureAwait(false));
+        if (!await reader.ReadAsync(ct).ConfigureAwait(false))
         {
             return null;
         }
@@ -390,8 +390,8 @@ public partial class DocumentStore
             defaultTenantId: tenantId);
         var slots = MetadataSlots.Compute(options);
 
-        await using var reader = await session.ExecuteReaderAsync(cmd, ct);
-        while (await reader.ReadAsync(ct))
+        await using var reader = (await session.ExecuteReaderAsync(cmd, ct).ConfigureAwait(false));
+        while (await reader.ReadAsync(ct).ConfigureAwait(false))
         {
             yield return PcEventsRowReader.ReadEventRecord(reader, ctx, slots);
         }
@@ -416,11 +416,11 @@ public partial class DocumentStore
         if (Events.StreamIdentity == StreamIdentity.AsGuid)
         {
             var guid = identity is Guid g ? g : Guid.Parse(identity.ToString()!);
-            events = await session.Events.FetchStreamAsync(guid, version: version, token: ct);
+            events = await session.Events.FetchStreamAsync(guid, version: version, token: ct).ConfigureAwait(false);
         }
         else
         {
-            events = await session.Events.FetchStreamAsync(identity.ToString()!, version: version, token: ct);
+            events = await session.Events.FetchStreamAsync(identity.ToString()!, version: version, token: ct).ConfigureAwait(false);
         }
 
         TAggregate? state = default;
@@ -428,7 +428,7 @@ public partial class DocumentStore
         if (events.Count > 0)
         {
             var aggregator = Options.Projections.AggregatorFor<TAggregate>();
-            state = await aggregator.BuildAsync(events, session, default!, ct);
+            state = await aggregator.BuildAsync(events, session, default!, ct).ConfigureAwait(false);
             applied = events.Count;
         }
 
@@ -621,7 +621,7 @@ public partial class DocumentStore
         // AllProjectionProgress runs inside Options.ResiliencePipeline the same way the session-bound
         // explorer reads do, and it is already per-database -- which is the whole point here.
         foreach (var state in await database.AllProjectionProgress(
-                     shardsAreTenantScoped ? tenantId : null, ct))
+                     shardsAreTenantScoped ? tenantId : null, ct).ConfigureAwait(false))
         {
             // The high-water row is not a shard's progress, and it is no longer where
             // EventStoreSequence comes from either — see headSequenceAsync.
@@ -631,10 +631,10 @@ public partial class DocumentStore
             }
         }
 
-        var head = await headSequenceAsync(database, ct);
+        var head = await headSequenceAsync(database, ct).ConfigureAwait(false);
 
         // #591: the running daemon's answer, where one is reachable at all.
-        var shardStates = await shardStatesAsync(Coordinator, database);
+        var shardStates = await shardStatesAsync(Coordinator, database).ConfigureAwait(false);
 
         // #200: drive off the registered projection sources (not
         // AllProjectionNames(), which quote-wraps each name for SQL-list
@@ -809,12 +809,12 @@ public partial class DocumentStore
     {
         if (count <= 0) return Array.Empty<StreamSummary>();
 
-        var databases = await ((IEventStore)this).AllDatabases();
+        var databases = await ((IEventStore)this).AllDatabases().ConfigureAwait(false);
 
         var merged = new List<StreamSummary>(capacity: count * Math.Max(databases.Count, 1));
         foreach (var database in databases)
         {
-            merged.AddRange(await recentStreamsAsync(RequirePolecatDatabase(database), count, tenantId, ct));
+            merged.AddRange(await recentStreamsAsync(RequirePolecatDatabase(database), count, tenantId, ct).ConfigureAwait(false));
         }
 
         return merged

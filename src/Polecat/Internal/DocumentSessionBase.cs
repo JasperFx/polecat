@@ -216,9 +216,9 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         builder.Compile();
 
         IReadOnlyList<DcbTagVersionEntry> losers;
-        await using (var reader = await ExecuteReaderAsync(batch, token))
+        await using (var reader = (await ExecuteReaderAsync(batch, token).ConfigureAwait(false)))
         {
-            losers = await phase.ReadLosersAsync(reader, token);
+            losers = await phase.ReadLosersAsync(reader, token).ConfigureAwait(false);
         }
 
         if (losers.Count == 0) return;
@@ -374,7 +374,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
 
             try
             {
-                await disposable.DisposeAsync();
+                await disposable.DisposeAsync().ConfigureAwait(false);
             }
             catch (Exception e)
             {
@@ -384,7 +384,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
 
         _transactionParticipants.Clear();
 
-        await base.DisposeAsync();
+        await base.DisposeAsync().ConfigureAwait(false);
 
         if (failures is not null)
         {
@@ -398,12 +398,12 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     /// </remarks>
     internal async Task BeginTransactionAsync(CancellationToken token)
     {
-        await _transactional.BeginTransactionAsync(token);
+        await _transactional.BeginTransactionAsync(token).ConfigureAwait(false);
     }
 
     internal async Task EnsureTableForProviderAsync(DocumentProvider provider, CancellationToken token)
     {
-        await _tableEnsurer.EnsureTablesAsync([provider], HasOpenTransaction, token);
+        await _tableEnsurer.EnsureTablesAsync([provider], HasOpenTransaction, token).ConfigureAwait(false);
     }
 
     public void Store<T>(T document) where T : notnull
@@ -946,7 +946,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         var started = Stopwatch.GetTimestamp();
         try
         {
-            await SaveChangesInternalAsync(token);
+            await SaveChangesInternalAsync(token).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -974,7 +974,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         {
             // #832: before any listener or DDL runs on behalf of a save that cannot happen.
             _transactional.AssertWritesAreAllowed();
-            await prepareToSaveChangesAsync(token);
+            await prepareToSaveChangesAsync(token).ConfigureAwait(false);
 
             // Was the caller already relying on this transaction before the save? An exclusive fetch's
             // lock or a Snapshot session's view of the data is that, and neither comes back if the server
@@ -982,7 +982,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             // caller has seen, so losing it fails this save and nothing else.
             reliesOnTransaction = _transactional.Transaction != null || _transactional.HoldsTransactionForSession;
 
-            await _transactional.BeginTransactionAsync(token);
+            await _transactional.BeginTransactionAsync(token).ConfigureAwait(false);
         }
         catch (Exception e)
         {
@@ -991,9 +991,9 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             // A save that fails or is cancelled before the `using var tx` below has not taken ownership of
             // that transaction, so it used to stay open, holding the stream lock, until the session was
             // disposed. End it here, as a failure after that point does.
-            await abandonOpenTransactionAsync(e);
+            await abandonOpenTransactionAsync(e).ConfigureAwait(false);
             await abandonAttemptAsync(operationsBeforeThisAttempt, participantsBeforeThisAttempt,
-                messageBatchBeforeThisAttempt, eventsBeforeThisAttempt);
+                messageBatchBeforeThisAttempt, eventsBeforeThisAttempt).ConfigureAwait(false);
             throw;
         }
 
@@ -1005,11 +1005,11 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             // gh-515: the DCB boundary check, run BEFORE the events are inserted so this session's own
             // appends can't trip it. It asserts-and-bumps the pc_dcb_tag_version rows the session's
             // boundaries captured, and bumps the rows it merely appends under, in one sorted phase.
-            await AssertDcbBoundariesAsync(token);
+            await AssertDcbBoundariesAsync(token).ConfigureAwait(false);
 
             // Process event streams through the shared Weasel.Storage.EventStorage<TId> hierarchy
             // (SqlServerEventStoreDialect + PolecatQuickAppendEventsOperation) — #273.
-            await ProcessStreamsClosedShapeAsync(token);
+            await ProcessStreamsClosedShapeAsync(token).ConfigureAwait(false);
 
             // Apply inline projections — projected document ops are queued into _workTracker
             if (_inlineProjections.Length > 0 && _workTracker.Streams.Count > 0)
@@ -1017,7 +1017,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
                 var streams = _workTracker.Streams.ToList();
                 foreach (var projection in _inlineProjections)
                 {
-                    await projection.ApplyAsync(this, streams, token);
+                    await projection.ApplyAsync(this, streams, token).ConfigureAwait(false);
                 }
 
                 // Ensure document tables exist for any additional projected types. #868: this is the one
@@ -1031,12 +1031,12 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
                         .Where(t => t != typeof(object))
                         .Distinct()
                         .Select(t => _providers.GetProvider(t));
-                    await _tableEnsurer.EnsureProjectedTablesAsync(newTypes, tableExistsAsync, token);
+                    await _tableEnsurer.EnsureProjectedTablesAsync(newTypes, tableExistsAsync, token).ConfigureAwait(false);
                 }
 
                 // #919: what the projections just queued. Nothing has been sent for it yet, and the
                 // streams the projections came from roll back with the refusal.
-                await AssertStringKeysFitAsync(token);
+                await AssertStringKeysFitAsync(token).ConfigureAwait(false);
             }
 
             // Process document operations using BatchBuilder/SqlBatch. gh-515: the DCB boundary check is
@@ -1061,8 +1061,8 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
                 try
                 {
                     var exceptions = new List<Exception>();
-                    await using var reader = await ExecuteReaderAsync(batch, token);
-                    await Operations.OperationResultSets.ApplyAsync(reader, operations, exceptions, token);
+                    await using var reader = (await ExecuteReaderAsync(batch, token).ConfigureAwait(false));
+                    await OperationResultSets.ApplyAsync(reader, operations, exceptions, token).ConfigureAwait(false);
 
                     if (exceptions.Count == 1)
                     {
@@ -1103,15 +1103,15 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             // Call transaction participants (e.g., EF Core DbContext) before commit
             foreach (var participant in _transactionParticipants)
             {
-                await participant.BeforeCommitAsync(_transactional.Connection!, tx, token);
+                await participant.BeforeCommitAsync(_transactional.Connection!, tx, token).ConfigureAwait(false);
             }
 
             if (_inlineMessageBatch is not null)
             {
-                await _inlineMessageBatch.BeforeCommitAsync(token);
+                await _inlineMessageBatch.BeforeCommitAsync(token).ConfigureAwait(false);
             }
 
-            await SqlTransactionRequests.CommitAsync(tx, token);
+            await SqlTransactionRequests.CommitAsync(tx, token).ConfigureAwait(false);
 
             // #832: cleared here rather than in the finally. A committed SqlTransaction reports a null
             // Connection exactly as a dead one does, so a post-commit hook that reads through this session
@@ -1158,12 +1158,12 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             // Call AfterCommitAsync on all listeners (global then session)
             foreach (var listener in Options.Listeners)
             {
-                await listener.AfterCommitAsync(this, commit, afterCommit);
+                await listener.AfterCommitAsync(this, commit, afterCommit).ConfigureAwait(false);
             }
 
             foreach (var listener in _sessionListeners)
             {
-                await listener.AfterCommitAsync(this, commit, afterCommit);
+                await listener.AfterCommitAsync(this, commit, afterCommit).ConfigureAwait(false);
             }
 
             // #485 / jasperfx#679: the store-agnostic post-commit listeners, after the store-native
@@ -1183,17 +1183,17 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             // explicitly.
             foreach (var listener in Options.CommitListeners)
             {
-                await listener.AfterCommitAsync(this, commit, afterCommit);
+                await listener.AfterCommitAsync(this, commit, afterCommit).ConfigureAwait(false);
             }
 
             foreach (var listener in _sessionCommitListeners)
             {
-                await listener.AfterCommitAsync(this, commit, afterCommit);
+                await listener.AfterCommitAsync(this, commit, afterCommit).ConfigureAwait(false);
             }
 
             if (messageBatch is not null)
             {
-                await messageBatch.AfterCommitAsync(afterCommit);
+                await messageBatch.AfterCommitAsync(afterCommit).ConfigureAwait(false);
             }
         }
         catch (Exception failure)
@@ -1214,7 +1214,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
 
                 try
                 {
-                    await SqlTransactionRequests.RollbackAsync(tx);
+                    await SqlTransactionRequests.RollbackAsync(tx).ConfigureAwait(false);
                 }
                 catch (Exception e)
                 {
@@ -1232,7 +1232,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             if (!committed)
             {
                 await abandonAttemptAsync(operationsBeforeThisAttempt, participantsBeforeThisAttempt,
-                    messageBatchBeforeThisAttempt, eventsBeforeThisAttempt);
+                    messageBatchBeforeThisAttempt, eventsBeforeThisAttempt).ConfigureAwait(false);
             }
 
             throw;
@@ -1260,7 +1260,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         await using var cmd = new SqlCommand("SELECT OBJECT_ID(@table);");
         cmd.Parameters.AddVarChar("@table", qualifiedTableName);
 
-        return await ExecuteScalarAsync(cmd, token) is not (null or DBNull);
+        return await ExecuteScalarAsync(cmd, token).ConfigureAwait(false) is not (null or DBNull);
     }
 
     /// <summary>
@@ -1278,7 +1278,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         _workTracker.RemoveOperationsFrom(operationsBefore);
         _workTracker.RemoveEventsSince(eventsBefore);
         _inlineMessageBatch = messageBatchBefore;
-        await abandonParticipantsFromAsync(participantsBefore);
+        await abandonParticipantsFromAsync(participantsBefore).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -1316,7 +1316,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         {
             try
             {
-                await disposable.DisposeAsync();
+                await disposable.DisposeAsync().ConfigureAwait(false);
             }
             catch (Exception e)
             {
@@ -1334,12 +1334,12 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         // Call BeforeSaveChangesAsync on all listeners (global then session)
         foreach (var listener in Options.Listeners)
         {
-            await listener.BeforeSaveChangesAsync(this, token);
+            await listener.BeforeSaveChangesAsync(this, token).ConfigureAwait(false);
         }
 
         foreach (var listener in _sessionListeners)
         {
-            await listener.BeforeSaveChangesAsync(this, token);
+            await listener.BeforeSaveChangesAsync(this, token).ConfigureAwait(false);
         }
 
         // Ensure document tables exist for pending operations (skip non-document ops like FlatTable)
@@ -1351,14 +1351,14 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
                 .Distinct()
                 .Select(t => _providers.GetProvider(t));
 
-            await _tableEnsurer.EnsureTablesAsync(typesNeeded, HasOpenTransaction, token);
+            await _tableEnsurer.EnsureTablesAsync(typesNeeded, HasOpenTransaction, token).ConfigureAwait(false);
         }
 
         // #870: tables an earlier save's projections wrote to and only looked up, because it was already
         // inside its transaction by then. This is the first chance to do the rest of an ensure for them.
         if (!HasOpenTransaction)
         {
-            await _tableEnsurer.EnsureTablesFoundInsideTransactionAsync(token);
+            await _tableEnsurer.EnsureTablesFoundInsideTransactionAsync(token).ConfigureAwait(false);
         }
 
         // Pre-create document tables for projected types that projections may query. #548: this set comes
@@ -1368,7 +1368,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         if (_inlineProjections.Length > 0 && _workTracker.Streams.Count > 0)
         {
             await _tableEnsurer.EnsureTablesAsync(Options.Projections.InlineProjectedProviders, HasOpenTransaction,
-                token);
+                token).ConfigureAwait(false);
         }
 
         // #219: ensure the event store schema exists before appending — the event-sourcing analogue
@@ -1378,12 +1378,12 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         // here, which is why this says so (#868).
         if (_workTracker.Streams.Any(s => s.Events.Any()))
         {
-            await _tableEnsurer.EnsureEventStoreSchemaAsync(HasOpenTransaction, token);
+            await _tableEnsurer.EnsureEventStoreSchemaAsync(HasOpenTransaction, token).ConfigureAwait(false);
         }
 
         // #919: past the ensures so the columns are there to ask about, and ahead of the provisioning
         // below so a refused save leaves nothing behind.
-        await AssertStringKeysFitAsync(token);
+        await AssertStringKeysFitAsync(token).ConfigureAwait(false);
 
         // #335: tenant-partitioned documents — resolve (and lazily provision, mirroring the event
         // append path) the partition ordinal for every tenant this flush writes under, BEFORE the
@@ -1395,17 +1395,17 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         var projectsInline = _inlineProjections.Length > 0 && _workTracker.Streams.Any(s => s.Events.Any());
         if (Options.Policies.DocumentTenantPartitioningEnabled && (_workTracker.Operations.Count > 0 || projectsInline))
         {
-            await _eventGraph.TenantOrdinals.ResolveAsync(TenantId, HasOpenTransaction, token);
+            await _eventGraph.TenantOrdinals.ResolveAsync(TenantId, HasOpenTransaction, token).ConfigureAwait(false);
             foreach (var adapter in _workTracker.Operations.OfType<Operations.ClosedShapeOperationAdapter>())
             {
-                await _eventGraph.TenantOrdinals.ResolveAsync(adapter.SessionTenantId, HasOpenTransaction, token);
+                await _eventGraph.TenantOrdinals.ResolveAsync(adapter.SessionTenantId, HasOpenTransaction, token).ConfigureAwait(false);
             }
 
             if (projectsInline)
             {
                 foreach (var stream in _workTracker.Streams.Where(s => s.Events.Any()))
                 {
-                    await _eventGraph.TenantOrdinals.ResolveAsync(stream.TenantId, HasOpenTransaction, token);
+                    await _eventGraph.TenantOrdinals.ResolveAsync(stream.TenantId, HasOpenTransaction, token).ConfigureAwait(false);
                 }
             }
         }
@@ -1423,7 +1423,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         {
             foreach (var stream in _workTracker.Streams.Where(s => s.Events.Any()))
             {
-                await _eventGraph.TenantSequences.ResolveAsync(stream.TenantId, HasOpenTransaction, token);
+                await _eventGraph.TenantSequences.ResolveAsync(stream.TenantId, HasOpenTransaction, token).ConfigureAwait(false);
             }
         }
     }
@@ -1451,11 +1451,11 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         {
             if (operation is Operations.IStreamKeyedOperation { StreamId: string streamKey })
             {
-                if (!await CouldHaveStreamAsync(streamKey, token)) _workTracker.Remove(operation);
+                if (!await CouldHaveStreamAsync(streamKey, token).ConfigureAwait(false)) _workTracker.Remove(operation);
             }
             else if (operation is IStorageOperation { DocumentId: { } id and not (Guid or int or long) })
             {
-                await assertDocumentIdFitsAsync(operation, id, token);
+                await assertDocumentIdFitsAsync(operation, id, token).ConfigureAwait(false);
             }
         }
 
@@ -1470,7 +1470,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             if (!mapping.IsHierarchy() || document.GetType() == mapping.DocumentType) continue;
 
             var alias = mapping.AliasFor(document.GetType());
-            if (await CodePageLosingAsync(mapping.QualifiedTableName, alias, token) is { } aliasCodePage)
+            if (await CodePageLosingAsync(mapping.QualifiedTableName, alias, token).ConfigureAwait(false) is { } aliasCodePage)
             {
                 throw new Exceptions.ColumnValueOutsideCodePageException("doc_type", alias, aliasCodePage);
             }
@@ -1483,12 +1483,12 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             // Only what will be written. A stream fetched for writing and left alone writes nothing.
             if (stream.Events.Count > 0 || stream.AlwaysEnforceConsistency)
             {
-                if (stringStreams) await AssertStreamKeyFitsAsync(stream, token);
+                if (stringStreams) await AssertStreamKeyFitsAsync(stream, token).ConfigureAwait(false);
             }
 
             foreach (var @event in stream.Events)
             {
-                await assertEventColumnsFitAsync(@event, token);
+                await assertEventColumnsFitAsync(@event, token).ConfigureAwait(false);
             }
         }
     }
@@ -1500,10 +1500,10 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         // Only when the column is there to lose it: the session seeds a correlation id from Activity.Current
         if (Options.Events.EnableCorrelationId)
         {
-            await assertColumnFitsAsync("correlation_id", @event.CorrelationId ?? CorrelationId, token);
+            await assertColumnFitsAsync("correlation_id", @event.CorrelationId ?? CorrelationId, token).ConfigureAwait(false);
         }
 
-        await assertColumnFitsAsync("dotnet_type", @event.DotNetTypeName, token);
+        await assertColumnFitsAsync("dotnet_type", @event.DotNetTypeName, token).ConfigureAwait(false);
 
         if (@event.Tags is not { Count: > 0 }) return;
 
@@ -1513,7 +1513,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             if (registration == null || registration.SimpleType != typeof(string)) continue;
 
             await assertColumnFitsAsync($"tag value ({registration.TableSuffix})",
-                TagValueStringifier.Stringify(registration.ExtractValue(tag.Value)), token);
+                TagValueStringifier.Stringify(registration.ExtractValue(tag.Value)), token).ConfigureAwait(false);
         }
     }
 
@@ -1521,7 +1521,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     {
         if (value == null || Ascii.IsValid(value)) return;
 
-        if (await CodePageLosingAsync(_eventGraph.StreamsTableName, value, token) is { } codePage)
+        if (await CodePageLosingAsync(_eventGraph.StreamsTableName, value, token).ConfigureAwait(false) is { } codePage)
         {
             throw new Exceptions.ColumnValueOutsideCodePageException(column, value, codePage);
         }
@@ -1533,7 +1533,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         var mapping = _providers.GetProvider(operation.DocumentType).Mapping;
         if (mapping.StringKeyOf(id) is not { } key) return;
 
-        if (await CodePageLosingAsync(mapping.QualifiedTableName, key, token) is not { } codePage) return;
+        if (await CodePageLosingAsync(mapping.QualifiedTableName, key, token).ConfigureAwait(false) is not { } codePage) return;
 
         if (operation.Role() == OperationRole.Deletion)
         {
@@ -1548,7 +1548,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     internal async Task AssertStreamKeyFitsAsync(StreamAction stream, CancellationToken token)
     {
         if (stream.Key is { } key
-            && await CodePageLosingAsync(_eventGraph.StreamsTableName, key, token) is { } codePage)
+            && await CodePageLosingAsync(_eventGraph.StreamsTableName, key, token).ConfigureAwait(false) is { } codePage)
         {
             throw Exceptions.StringIdOutsideCodePageException.ForStream(key, stream.AggregateType,
                 _eventGraph.StreamsTableName, codePage);
@@ -1568,8 +1568,8 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         if (!exclusive && !_transactional.HoldsTransactionForSession) return;
 
         // Provisioning is what reads pc_tenant_partitions, so the schema has to be there first
-        await EnsureEventStoreSchemaAsync(token);
-        await _eventGraph.TenantSequences.ResolveAsync(tenantId, HasOpenTransaction, token);
+        await EnsureEventStoreSchemaAsync(token).ConfigureAwait(false);
+        await _eventGraph.TenantSequences.ResolveAsync(tenantId, HasOpenTransaction, token).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -1606,7 +1606,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             else
             {
                 _transactional.RefuseWrites(cause);
-                await SqlTransactionRequests.RollbackAsync(tx);
+                await SqlTransactionRequests.RollbackAsync(tx).ConfigureAwait(false);
             }
         }
         catch (Exception e)
@@ -1615,7 +1615,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         }
         finally
         {
-            await tx.DisposeAsync();
+            await tx.DisposeAsync().ConfigureAwait(false);
         }
     }
 
@@ -1698,7 +1698,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
                     // Reuse the bespoke assert: unlike the shared AssertStreamVersionOperation (which
                     // throws on any missing stream), Polecat treats a not-found stream with expected
                     // version 0 as consistent (0 == 0), matching FetchForWriting on a new stream.
-                    await AssertStreamVersionAsync(stream, token);
+                    await AssertStreamVersionAsync(stream, token).ConfigureAwait(false);
                 }
 
                 continue;
@@ -1710,7 +1710,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             }
         }
 
-        var states = await ReadStreamStatesForClosedShapeAsync(appendingStreams, token);
+        var states = await ReadStreamStatesForClosedShapeAsync(appendingStreams, token).ConfigureAwait(false);
 
         foreach (var stream in _workTracker.Streams)
         {
@@ -1721,7 +1721,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
 
             // Per-tenant partitioning: resolve (and lazily provision) the stream tenant's partition
             // ordinal + sequence once per stream before building the append op.
-            var (partitionOrdinal, partitionSequenceName) = await ResolvePartitionForClosedShapeAsync(stream, token);
+            var (partitionOrdinal, partitionSequenceName) = await ResolvePartitionForClosedShapeAsync(stream, token).ConfigureAwait(false);
 
             if (stream.ActionType == StreamActionType.Start)
             {
@@ -1762,7 +1762,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
 
         if (ops.Count == 0) return;
 
-        await ExecuteClosedShapeEventOperationsAsync(ops, token);
+        await ExecuteClosedShapeEventOperationsAsync(ops, token).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -1792,15 +1792,15 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
 
         foreach (var stream in streams)
         {
-            await AssertStreamKeyFitsAsync(stream, token); // #919
+            await AssertStreamKeyFitsAsync(stream, token).ConfigureAwait(false); // #919
         }
 
         // One batched locking read for the whole group instead of one round trip per action.
-        var states = await ReadStreamStatesForClosedShapeAsync(streams, token);
+        var states = await ReadStreamStatesForClosedShapeAsync(streams, token).ConfigureAwait(false);
 
         foreach (var stream in streams)
         {
-            var (partitionOrdinal, partitionSequenceName) = await ResolvePartitionForClosedShapeAsync(stream, token);
+            var (partitionOrdinal, partitionSequenceName) = await ResolvePartitionForClosedShapeAsync(stream, token).ConfigureAwait(false);
 
             var streamId = isGuid ? (object)stream.Id : stream.Key!;
             var (currentVersion, exists, archived) = states.TryGetValue((TenantOf(stream), streamId), out var state)
@@ -1837,7 +1837,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         if (!_eventGraph.UseTenantPartitionedEvents) return (null, null);
 
         // Past the locking read by now, so a tenant whose SPLIT failed has to wait for the next save (#892)
-        var storage = await _eventGraph.TenantSequences.ResolveAsync(stream.TenantId, insideTransaction: true, token);
+        var storage = await _eventGraph.TenantSequences.ResolveAsync(stream.TenantId, insideTransaction: true, token).ConfigureAwait(false);
         return (storage.Ordinal, storage.SequenceName);
     }
 
@@ -1910,7 +1910,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
 
         foreach (var tenant in streams.GroupBy(TenantOf).OrderBy(x => x.Key, StringComparer.Ordinal))
         {
-            await readStreamStatesForTenantAsync(tenant.Key, tenant.ToList(), states, token);
+            await readStreamStatesForTenantAsync(tenant.Key, tenant.ToList(), states, token).ConfigureAwait(false);
         }
 
         return states;
@@ -1936,8 +1936,8 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             cmd.Parameters.AddVarChar("@tenant_id", tenantId);
 
             // Through the db-neutral seam so the session logger sees the stream-state read
-            await using var reader = await ExecuteReaderAsync((System.Data.Common.DbCommand)cmd, token);
-            if (await reader.ReadAsync(token))
+            await using var reader = (await ExecuteReaderAsync((System.Data.Common.DbCommand)cmd, token).ConfigureAwait(false));
+            if (await reader.ReadAsync(token).ConfigureAwait(false))
             {
                 states[(tenantId, streamId)] = (reader.GetInt64(0), true, reader.GetBoolean(1));
             }
@@ -1971,8 +1971,8 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         batchCmd.Parameters.AddVarChar("@tenant_id", tenantId);
 
         // Through the db-neutral seam so the session logger sees the stream-state read
-        await using var batchReader = await ExecuteReaderAsync((System.Data.Common.DbCommand)batchCmd, token);
-        while (await batchReader.ReadAsync(token))
+        await using var batchReader = (await ExecuteReaderAsync((System.Data.Common.DbCommand)batchCmd, token).ConfigureAwait(false));
+        while (await batchReader.ReadAsync(token).ConfigureAwait(false))
         {
             var id = isGuid ? (object)batchReader.GetGuid(0) : batchReader.GetString(0);
             states[(tenantId, id)] = (batchReader.GetInt64(1), true, batchReader.GetBoolean(2));
@@ -2029,8 +2029,8 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         var exceptions = new List<Exception>();
         try
         {
-            await using var reader = await ExecuteReaderAsync(batch, token);
-            await Operations.OperationResultSets.ApplyAsync(reader, operations, exceptions, token);
+            await using var reader = (await ExecuteReaderAsync(batch, token).ConfigureAwait(false));
+            await OperationResultSets.ApplyAsync(reader, operations, exceptions, token).ConfigureAwait(false);
         }
         catch (SqlException ex)
         {
@@ -2066,8 +2066,8 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         cmd.Parameters.AddIdParameter("@id", streamId);
         cmd.Parameters.AddVarChar("@tenant_id", TenantOf(stream));
 
-        await using var reader = await ExecuteReaderAsync(cmd, token);
-        if (!await reader.ReadAsync(token))
+        await using var reader = (await ExecuteReaderAsync(cmd, token).ConfigureAwait(false));
+        if (!await reader.ReadAsync(token).ConfigureAwait(false))
         {
             // Stream doesn't exist — consistent only if expected version is 0
             if (stream.ExpectedVersionOnServer!.Value != 0)

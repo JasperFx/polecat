@@ -192,9 +192,9 @@ internal class EventLinqQueryProvider : IPolecatAsyncQueryProvider,
         parser.Statement.Apply(builder);
         builder.Compile();
 
-        await using var reader = await _session.ExecuteReaderAsync(batch, token);
+        await using var reader = (await _session.ExecuteReaderAsync(batch, token).ConfigureAwait(false));
 
-        return await HandleResultAsync<TResult>(reader, parser, token);
+        return await HandleResultAsync<TResult>(reader, parser, token).ConfigureAwait(false);
     }
 
     [RequiresDynamicCode("Routes to handler invocations that close generic handler types over the event/event-data type via Type.MakeGenericType.")]
@@ -206,7 +206,7 @@ internal class EventLinqQueryProvider : IPolecatAsyncQueryProvider,
         {
             if (parser.SelectExpression != null && parser.IsScalarSelect)
             {
-                return await InvokeScalarListHandlerAsync<TResult>(reader, token);
+                return await InvokeScalarListHandlerAsync<TResult>(reader, token).ConfigureAwait(false);
             }
 
             // #875: nothing below projects, so a list of events met a cast to a list of something else.
@@ -219,20 +219,20 @@ internal class EventLinqQueryProvider : IPolecatAsyncQueryProvider,
             {
                 // Return IReadOnlyList<IEvent>
                 var handler = new EventListHandler(_session.Serializer, _events);
-                var events = await handler.HandleAsync(reader, token);
+                var events = await handler.HandleAsync(reader, token).ConfigureAwait(false);
                 return (TResult)(object)events;
             }
 
             // QueryRawEventDataOnly: deserialize from data column
             var documentType = FindDocumentType();
-            return await InvokeListHandlerAsync<TResult>(documentType, reader, token);
+            return await InvokeListHandlerAsync<TResult>(documentType, reader, token).ConfigureAwait(false);
         }
 
         // #916: the same goes for one row, which was read as an event or as the event's data.
         if (parser.SelectExpression != null && parser.ValueMode.Value.TakesOneRow())
         {
             return parser.IsScalarSelect
-                ? parser.ValueMode.Value.OneOf(await new ScalarListHandler<TResult>().HandleAsync(reader, token))
+                ? parser.ValueMode.Value.OneOf(await new ScalarListHandler<TResult>().HandleAsync(reader, token).ConfigureAwait(false))
                 : throw RefuseProjection(parser);
         }
 
@@ -242,19 +242,19 @@ internal class EventLinqQueryProvider : IPolecatAsyncQueryProvider,
             case SingleValueMode.Single:
             case SingleValueMode.Last:
                 if (_isAllEvents && parser.SelectExpression == null)
-                    return await HandleSingleEventAsync<TResult>(reader, token, canBeNull: false);
+                    return await HandleSingleEventAsync<TResult>(reader, token, canBeNull: false).ConfigureAwait(false);
                 return await InvokeOneResultHandlerAsync<TResult>(
                     FindDocumentType(), reader, token, canBeNull: false,
-                    canBeMultiples: parser.ValueMode != SingleValueMode.Single);
+                    canBeMultiples: parser.ValueMode != SingleValueMode.Single).ConfigureAwait(false);
 
             case SingleValueMode.FirstOrDefault:
             case SingleValueMode.SingleOrDefault:
             case SingleValueMode.LastOrDefault:
                 if (_isAllEvents && parser.SelectExpression == null)
-                    return await HandleSingleEventAsync<TResult>(reader, token, canBeNull: true);
+                    return await HandleSingleEventAsync<TResult>(reader, token, canBeNull: true).ConfigureAwait(false);
                 return await InvokeOneResultHandlerAsync<TResult>(
                     FindDocumentType(), reader, token, canBeNull: true,
-                    canBeMultiples: parser.ValueMode != SingleValueMode.SingleOrDefault);
+                    canBeMultiples: parser.ValueMode != SingleValueMode.SingleOrDefault).ConfigureAwait(false);
 
             case SingleValueMode.Count:
             case SingleValueMode.LongCount:
@@ -263,11 +263,11 @@ internal class EventLinqQueryProvider : IPolecatAsyncQueryProvider,
             case SingleValueMode.Max:
             case SingleValueMode.Average:
                 var scalarHandler = new ScalarHandler<TResult>();
-                return await scalarHandler.HandleAsync(reader, token);
+                return await scalarHandler.HandleAsync(reader, token).ConfigureAwait(false);
 
             case SingleValueMode.Any:
                 var anyHandler = new AnyHandler();
-                var anyResult = await anyHandler.HandleAsync(reader, token);
+                var anyResult = await anyHandler.HandleAsync(reader, token).ConfigureAwait(false);
                 return (TResult)(object)anyResult;
 
             default:
@@ -284,7 +284,7 @@ internal class EventLinqQueryProvider : IPolecatAsyncQueryProvider,
         DbDataReader reader, CancellationToken token, bool canBeNull)
     {
         var handler = new EventListHandler(_session.Serializer, _events);
-        var events = await handler.HandleAsync(reader, token);
+        var events = await handler.HandleAsync(reader, token).ConfigureAwait(false);
 
         if (events.Count == 0)
         {
@@ -331,7 +331,7 @@ internal class EventLinqQueryProvider : IPolecatAsyncQueryProvider,
         var handlerType = handler.GetType();
         var handleMethod = handlerType.GetMethod("HandleAsync")!;
         var task = (Task)handleMethod.Invoke(handler, [reader, token])!;
-        await task;
+        await task.ConfigureAwait(false);
 
         var resultProperty = task.GetType().GetProperty("Result")!;
         return (TResult)resultProperty.GetValue(task)!;
@@ -386,7 +386,7 @@ internal class EventLinqQueryProvider : IPolecatAsyncQueryProvider,
         var handlerType = handler.GetType();
         var handleMethod = handlerType.GetMethod("HandleAsync")!;
         var task = (Task)handleMethod.Invoke(handler, [reader, token])!;
-        await task;
+        await task.ConfigureAwait(false);
 
         var resultProperty = task.GetType().GetProperty("Result")!;
         return (TResult)resultProperty.GetValue(task)!;

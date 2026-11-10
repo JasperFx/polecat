@@ -106,11 +106,11 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
     private async Task<ParsedQuery> PrepareAsync(Expression expression, CancellationToken token)
     {
         var query = Parse(expression, TenantIdForFilter);
-        await _tableEnsurer.EnsureTableAsync(query.Provider, _session.HasOpenTransaction, token);
+        await _tableEnsurer.EnsureTableAsync(query.Provider, _session.HasOpenTransaction, token).ConfigureAwait(false);
 
         if (query.Parser.NonStaleDataTimeout is { } timeout)
         {
-            await WaitForNonStaleDataAsync(timeout, token);
+            await WaitForNonStaleDataAsync(timeout, token).ConfigureAwait(false);
         }
 
         return query;
@@ -277,7 +277,7 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
 
     internal async Task<string> ExecuteJsonArrayAsync(Expression expression, CancellationToken token)
     {
-        var query = await PrepareAsync(expression, token);
+        var query = await PrepareAsync(expression, token).ConfigureAwait(false);
         var parser = query.Parser;
 
         if (parser.GroupByKeySelector != null && parser.GroupJoinData == null)
@@ -295,11 +295,11 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
         parser.Statement.Apply(builder);
         builder.Compile();
 
-        await using var reader = await _session.ExecuteReaderAsync(batch, token);
+        await using var reader = (await _session.ExecuteReaderAsync(batch, token).ConfigureAwait(false));
 
         var sb = new StringBuilder("[");
         var first = true;
-        while (await reader.ReadAsync(token))
+        while (await reader.ReadAsync(token).ConfigureAwait(false))
         {
             if (!first) sb.Append(',');
             sb.Append(reader.GetString(0));
@@ -319,7 +319,7 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
     internal async Task<(string Json, long Version)?> ExecuteJsonFirstWithVersionAsync(
         Expression expression, CancellationToken token)
     {
-        var query = await PrepareAsync(expression, token);
+        var query = await PrepareAsync(expression, token).ConfigureAwait(false);
         var parser = query.Parser;
         AssertNotGroupedOrJoined(parser, nameof(JsonQueryExtensions.ToJsonFirstWithVersionAsync));
 
@@ -334,8 +334,8 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
         parser.Statement.Apply(builder);
         builder.Compile();
 
-        await using var reader = await _session.ExecuteReaderAsync(batch, token);
-        if (!await reader.ReadAsync(token)) return null;
+        await using var reader = (await _session.ExecuteReaderAsync(batch, token).ConfigureAwait(false));
+        if (!await reader.ReadAsync(token).ConfigureAwait(false)) return null;
 
         var json = reader.GetString(0);
         var version = reader.GetInt64(1);
@@ -367,7 +367,7 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
                 "pageSize must be greater than or equal to 1.");
         }
 
-        var query = await PrepareAsync(expression, token);
+        var query = await PrepareAsync(expression, token).ConfigureAwait(false);
         var parser = query.Parser;
         AssertNotGroupedOrJoined(parser, nameof(JsonQueryExtensions.StreamPagedJsonArray));
 
@@ -385,11 +385,11 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
         parser.Statement.Apply(builder);
         builder.Compile();
 
-        await using var reader = await _session.ExecuteReaderAsync(batch, token);
+        await using var reader = (await _session.ExecuteReaderAsync(batch, token).ConfigureAwait(false));
 
         // Read the first row up front: the window-function total lives on every row, so a zero-row
         // page (empty match, or paging past the end) simply has no total → totalItemCount = 0.
-        var hasFirst = await reader.ReadAsync(token);
+        var hasFirst = await reader.ReadAsync(token).ConfigureAwait(false);
         var total = hasFirst ? reader.GetInt32(1) : 0;
 
         var pageCount = total > 0 ? (int)Math.Ceiling(total / (double)pageSize) : 0;
@@ -402,19 +402,19 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
             $"\"hasNextPage\":{(hasNextPage ? "true" : "false")}," +
             $"\"hasPreviousPage\":{(hasPreviousPage ? "true" : "false")}," +
             "\"items\":[";
-        await destination.WriteAsync(Encoding.UTF8.GetBytes(prefix), token);
+        await destination.WriteAsync(Encoding.UTF8.GetBytes(prefix), token).ConfigureAwait(false);
 
         if (hasFirst)
         {
-            await destination.WriteAsync(Encoding.UTF8.GetBytes(reader.GetString(0)), token);
-            while (await reader.ReadAsync(token))
+            await destination.WriteAsync(Encoding.UTF8.GetBytes(reader.GetString(0)), token).ConfigureAwait(false);
+            while (await reader.ReadAsync(token).ConfigureAwait(false))
             {
-                await destination.WriteAsync(","u8.ToArray(), token);
-                await destination.WriteAsync(Encoding.UTF8.GetBytes(reader.GetString(0)), token);
+                await destination.WriteAsync(","u8.ToArray(), token).ConfigureAwait(false);
+                await destination.WriteAsync(Encoding.UTF8.GetBytes(reader.GetString(0)), token).ConfigureAwait(false);
             }
         }
 
-        await destination.WriteAsync("]}"u8.ToArray(), token);
+        await destination.WriteAsync("]}"u8.ToArray(), token).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -433,7 +433,7 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
                 "pageSize must be greater than or equal to 1.");
         }
 
-        var query = await PrepareAsync(expression, token);
+        var query = await PrepareAsync(expression, token).ConfigureAwait(false);
         var parser = query.Parser;
         AssertNotGroupedOrJoined(parser, nameof(CursorPagingQueryableExtensions.ToJsonPageByCursorAsync));
 
@@ -473,13 +473,13 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
         parser.Statement.Apply(builder);
         builder.Compile();
 
-        await using var reader = await _session.ExecuteReaderAsync(batch, token);
+        await using var reader = (await _session.ExecuteReaderAsync(batch, token).ConfigureAwait(false));
 
         var page = new StringBuilder("[");
         var count = 0;
         var hasMore = false;
         object?[]? lastKeys = null;
-        while (await reader.ReadAsync(token))
+        while (await reader.ReadAsync(token).ConfigureAwait(false))
         {
             // The probe row: there is a next page, and nothing of the row itself is needed.
             if (count == pageSize)
@@ -568,7 +568,7 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
     [RequiresUnreferencedCode("LINQ-to-SQL execution reflects over the document type (Activator.CreateInstance on handler types, MethodInfo.Invoke on HandleAsync). AOT consumers must preserve handler + document members through DAM or source generation.")]
     public async Task<TResult> ExecuteAsync<TResult>(Expression expression, CancellationToken token)
     {
-        var query = await PrepareAsync(expression, token);
+        var query = await PrepareAsync(expression, token).ConfigureAwait(false);
         var parser = query.Parser;
         var provider = query.Provider;
         var documentType = query.DocumentType;
@@ -576,13 +576,13 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
         // Route to GroupJoin execution if detected
         if (parser.GroupJoinData != null)
         {
-            return await ExecuteGroupJoinAsync<TResult>(parser, token);
+            return await ExecuteGroupJoinAsync<TResult>(parser, token).ConfigureAwait(false);
         }
 
         // Route to GroupBy execution if detected
         if (parser.GroupByKeySelector != null)
         {
-            return await ExecuteGroupByAsync<TResult>(query, token);
+            return await ExecuteGroupByAsync<TResult>(query, token).ConfigureAwait(false);
         }
 
         // Apply Distinct, which needs the select list single-value mode replaces
@@ -612,10 +612,10 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
         parser.Statement.Apply(builder);
         builder.Compile();
 
-        await using var reader = await _session.ExecuteReaderAsync(batch, token);
+        await using var reader = (await _session.ExecuteReaderAsync(batch, token).ConfigureAwait(false));
 
         return await HandleResultAsync<TResult>(reader, parser, documentType, token, syncRevision, syncGuidVersion,
-            isHierarchy ? provider.Mapping : null, sharedSelectClause);
+            isHierarchy ? provider.Mapping : null, sharedSelectClause).ConfigureAwait(false);
     }
 
     [RequiresDynamicCode("GroupBy execution closes GroupByListHandler<>/ScalarListHandler<> over the projected type via Type.MakeGenericType.")]
@@ -632,18 +632,18 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
         parser.Statement.Apply(batchBuilder);
         batchBuilder.Compile();
 
-        await using var reader = await _session.ExecuteReaderAsync(batch, token);
+        await using var reader = (await _session.ExecuteReaderAsync(batch, token).ConfigureAwait(false));
 
         switch (parser.ValueMode)
         {
             case null:
                 // Check if the select is a complex JSON projection or scalar
                 return grouping.ReadsJson
-                    ? await InvokeGroupByListHandlerAsync<TResult>(reader, parser.SelectExpression!, token)
-                    : await InvokeScalarListHandlerAsync<TResult>(reader, token);
+                    ? await InvokeGroupByListHandlerAsync<TResult>(reader, parser.SelectExpression!, token).ConfigureAwait(false)
+                    : await InvokeScalarListHandlerAsync<TResult>(reader, token).ConfigureAwait(false);
 
             case SingleValueMode.Any:
-                return (TResult)(object)await new AnyHandler().HandleAsync(reader, token);
+                return (TResult)(object)await new AnyHandler().HandleAsync(reader, token).ConfigureAwait(false);
 
             case SingleValueMode.Count:
             case SingleValueMode.LongCount:
@@ -651,10 +651,10 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
             case SingleValueMode.Min:
             case SingleValueMode.Max:
             case SingleValueMode.Average:
-                return await new ScalarHandler<TResult>().HandleAsync(reader, token);
+                return await new ScalarHandler<TResult>().HandleAsync(reader, token).ConfigureAwait(false);
 
             default:
-                return await ReadOneRowAsync<TResult>(reader, parser.ValueMode.Value, grouping.ReadsJson, token);
+                return await ReadOneRowAsync<TResult>(reader, parser.ValueMode.Value, grouping.ReadsJson, token).ConfigureAwait(false);
         }
     }
 
@@ -669,8 +669,8 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
         DbDataReader reader, SingleValueMode mode, bool readsJson, CancellationToken token)
     {
         var rows = readsJson
-            ? await new GroupByListHandler<TResult>(_session.Serializer).HandleAsync(reader, token)
-            : await new ScalarListHandler<TResult>().HandleAsync(reader, token);
+            ? await new GroupByListHandler<TResult>(_session.Serializer).HandleAsync(reader, token).ConfigureAwait(false)
+            : await new ScalarListHandler<TResult>().HandleAsync(reader, token).ConfigureAwait(false);
 
         return mode.OneOf(rows);
     }
@@ -703,8 +703,8 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
         // Resolve providers for both sides
         var outerProvider = _providers.GetProvider(joinData.OuterElementType);
         var innerProvider = _providers.GetProvider(joinData.InnerElementType);
-        await _tableEnsurer.EnsureTableAsync(outerProvider, _session.HasOpenTransaction, token);
-        await _tableEnsurer.EnsureTableAsync(innerProvider, _session.HasOpenTransaction, token);
+        await _tableEnsurer.EnsureTableAsync(outerProvider, _session.HasOpenTransaction, token).ConfigureAwait(false);
+        await _tableEnsurer.EnsureTableAsync(innerProvider, _session.HasOpenTransaction, token).ConfigureAwait(false);
 
         var outerMapping = outerProvider.Mapping;
         var innerMapping = innerProvider.Mapping;
@@ -824,13 +824,13 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
         joinStatement.Apply(builder);
         builder.Compile();
 
-        await using var reader = await _session.ExecuteReaderAsync(batch, token);
+        await using var reader = (await _session.ExecuteReaderAsync(batch, token).ConfigureAwait(false));
 
         // Handle scalar results (Count, etc.)
         if (parser.ValueMode is SingleValueMode.Count or SingleValueMode.LongCount)
         {
             var scalarHandler = new ScalarHandler<TResult>();
-            return await scalarHandler.HandleAsync(reader, token);
+            return await scalarHandler.HandleAsync(reader, token).ConfigureAwait(false);
         }
 
         // Rewrite the result selector and compile
@@ -850,7 +850,7 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
         return await InvokeJoinHandlerAsync<TResult>(
             joinData.OuterElementType, joinData.InnerElementType,
             rewrittenSelector, joinData.IsLeftJoin,
-            reader, parser.ValueMode, token);
+            reader, parser.ValueMode, token).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -1233,22 +1233,22 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
                 if (parser.IsScalarSelect)
                 {
                     // Scalar select: read values directly from the column
-                    return await InvokeScalarListHandlerAsync<TResult>(reader, token);
+                    return await InvokeScalarListHandlerAsync<TResult>(reader, token).ConfigureAwait(false);
                 }
 
                 // Distinct rows are a JSON object each, like a GroupBy's: see DistinctProjection
                 if (parser.Statement.DistinctColumns != null)
                 {
-                    return await InvokeGroupByListHandlerAsync<TResult>(reader, parser.SelectExpression, token);
+                    return await InvokeGroupByListHandlerAsync<TResult>(reader, parser.SelectExpression, token).ConfigureAwait(false);
                 }
 
                 // Complex projection: read documents then project
-                return await InvokeProjectionHandlerAsync<TResult>(documentType, reader, parser.SelectExpression, token);
+                return await InvokeProjectionHandlerAsync<TResult>(documentType, reader, parser.SelectExpression, token).ConfigureAwait(false);
             }
 
             // Plain list result
             return await InvokeListHandlerAsync<TResult>(documentType, reader, token, syncRevision, syncGuidVersion,
-                hierarchyMapping, sharedSelectClause);
+                hierarchyMapping, sharedSelectClause).ConfigureAwait(false);
         }
 
         // #916: a Select's row is whatever it projected. Read as the document, a scalar failed as
@@ -1258,9 +1258,9 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
             var readsJson = parser.Statement.DistinctColumns != null;
 
             return parser.IsScalarSelect || readsJson
-                ? await ReadOneRowAsync<TResult>(reader, parser.ValueMode.Value, readsJson, token)
+                ? await ReadOneRowAsync<TResult>(reader, parser.ValueMode.Value, readsJson, token).ConfigureAwait(false)
                 : parser.ValueMode.Value.OneOf(await InvokeProjectionHandlerAsync<IReadOnlyList<TResult>>(
-                    documentType, reader, parser.SelectExpression, token));
+                    documentType, reader, parser.SelectExpression, token).ConfigureAwait(false));
         }
 
         switch (parser.ValueMode)
@@ -1272,7 +1272,7 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
                     documentType, reader, token, canBeNull: false,
                     canBeMultiples: parser.ValueMode == SingleValueMode.First || parser.ValueMode == SingleValueMode.Last,
                     syncRevision: syncRevision, syncGuidVersion: syncGuidVersion, hierarchyMapping: hierarchyMapping,
-                    sharedSelectClause: sharedSelectClause);
+                    sharedSelectClause: sharedSelectClause).ConfigureAwait(false);
 
             case SingleValueMode.FirstOrDefault:
             case SingleValueMode.SingleOrDefault:
@@ -1281,7 +1281,7 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
                     documentType, reader, token, canBeNull: true,
                     canBeMultiples: parser.ValueMode != SingleValueMode.SingleOrDefault,
                     syncRevision: syncRevision, syncGuidVersion: syncGuidVersion, hierarchyMapping: hierarchyMapping,
-                    sharedSelectClause: sharedSelectClause);
+                    sharedSelectClause: sharedSelectClause).ConfigureAwait(false);
 
             case SingleValueMode.Count:
             case SingleValueMode.LongCount:
@@ -1290,11 +1290,11 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
             case SingleValueMode.Max:
             case SingleValueMode.Average:
                 var scalarHandler = new ScalarHandler<TResult>();
-                return await scalarHandler.HandleAsync(reader, token);
+                return await scalarHandler.HandleAsync(reader, token).ConfigureAwait(false);
 
             case SingleValueMode.Any:
                 var anyHandler = new AnyHandler();
-                var anyResult = await anyHandler.HandleAsync(reader, token);
+                var anyResult = await anyHandler.HandleAsync(reader, token).ConfigureAwait(false);
                 return (TResult)(object)anyResult;
 
             default:
@@ -1469,7 +1469,7 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
                 var (connectionString, eventGraph, asyncShardNames, tenantId) = state;
 
                 await using var conn = new SqlConnection(connectionString);
-                await conn.OpenAsync(ct);
+                await conn.OpenAsync(ct).ConfigureAwait(false);
 
                 // Get high water mark
                 long highWater;
@@ -1489,7 +1489,7 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
                         cmd.Parameters.AddVarChar("@tenant_id", tenantId);
                     }
 
-                    var result = await cmd.ExecuteScalarAsync(ct);
+                    var result = await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
                     highWater = result is long seq ? seq : 0;
                 }
 
@@ -1500,9 +1500,9 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
                 await using (var cmd = conn.CreateCommand())
                 {
                     cmd.CommandText = $"SELECT name, last_seq_id FROM {eventGraph.ProgressionTableName};";
-                    await using var reader = await cmd.ExecuteReaderAsync(ct);
+                    await using var reader = (await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false));
                     var foundShards = new HashSet<string>();
-                    while (await reader.ReadAsync(ct))
+                    while (await reader.ReadAsync(ct).ConfigureAwait(false))
                     {
                         var name = reader.GetString(0);
                         if (name == "HighWaterMark") continue;
@@ -1521,11 +1521,11 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
                     // All registered shards must exist and be caught up
                     return allCaughtUp && foundShards.SetEquals(asyncShardNames);
                 }
-            }, (options.ConnectionString, eventGraph, asyncShardNames, tenantId), token);
+            }, (options.ConnectionString, eventGraph, asyncShardNames, tenantId), token).ConfigureAwait(false);
 
             if (nonStale) return;
 
-            await Task.Delay(100, token);
+            await Task.Delay(100, token).ConfigureAwait(false);
         }
 
         throw new TimeoutException(

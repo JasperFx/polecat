@@ -9,7 +9,7 @@ internal class AnyHandler : IQueryHandler<bool>
 {
     public async Task<bool> HandleAsync(DbDataReader reader, CancellationToken token)
     {
-        await reader.ReadAsync(token);
+        await reader.ReadAsync(token).ConfigureAwait(false);
         return reader.GetInt32(0) == 1;
     }
 }
