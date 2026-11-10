@@ -107,7 +107,7 @@ public class closed_shape_event_append_tests : IntegrationContext
         await using var second = theStore.LightweightSession();
         second.Events.StartStream(streamId, new QuestStarted("Second"));
 
-        await Should.ThrowAsync<Polecat.Exceptions.ExistingStreamIdCollisionException>(async () =>
+        await Should.ThrowAsync<JasperFx.Events.ExistingStreamIdCollisionException>(async () =>
             await second.SaveChangesAsync());
     }
 
@@ -313,7 +313,7 @@ public class closed_shape_event_append_tests : IntegrationContext
         await using var appendSession = theStore.LightweightSession();
         appendSession.Events.Append(streamId, new MembersJoined(2, "Cave", ["Bilbo"]));
 
-        var ex = await Should.ThrowAsync<Polecat.Exceptions.ArchivedStreamException>(async () =>
+        var ex = await Should.ThrowAsync<JasperFx.Events.ArchivedStreamException>(async () =>
             await appendSession.SaveChangesAsync());
         ex.Message.ShouldContain("archived");
     }

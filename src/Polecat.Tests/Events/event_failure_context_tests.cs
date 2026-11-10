@@ -1,3 +1,4 @@
+using JasperFx.Events;
 using JasperFx.Events.Daemon;
 using Polecat.Exceptions;
 

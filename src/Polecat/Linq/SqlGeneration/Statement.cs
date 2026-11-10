@@ -1,3 +1,4 @@
+using JasperFx;
 using Weasel.SqlServer;
 
 namespace Polecat.Linq.SqlGeneration;

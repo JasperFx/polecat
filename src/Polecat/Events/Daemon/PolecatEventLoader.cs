@@ -364,7 +364,7 @@ internal class PolecatEventLoader : IEventLoader
                     // An upcast that throws is a payload-shape problem like any other failed
                     // deserialization, so it carries the same ShardFailureCategory and obeys the same
                     // SkipSerializationErrors policy rather than pausing the shard as something new.
-                    throw new Polecat.Exceptions.EventDeserializationFailureException(seqId, typeName, ex);
+                    throw new JasperFx.Events.EventDeserializationFailureException(seqId, typeName, ex);
                 }
 
                 mapping = _events.EventMappingFor(transformation!.EventType);
@@ -384,7 +384,7 @@ internal class PolecatEventLoader : IEventLoader
                     // paused by an unregistered event type reports UnknownEventType with the offending
                     // sequence rather than classifying as Other with no detail. The daemon does not sniff
                     // exception type names — the exception has to declare its own kind.
-                    throw new Polecat.Exceptions.UnknownEventTypeException(dotNetTypeName, seqId);
+                    throw new JasperFx.Events.UnknownEventTypeException(dotNetTypeName, seqId);
                 }
 
                 try
@@ -402,7 +402,7 @@ internal class PolecatEventLoader : IEventLoader
                     // #368 / jasperfx#565: report the store's type alias (the `type` column) rather than the
                     // assembly-qualified dotnet_type, matching what ShardFailure.Event.EventTypeName carries
                     // everywhere else and what a client-side consumer can act on.
-                    throw new Polecat.Exceptions.EventDeserializationFailureException(seqId, typeName, ex);
+                    throw new JasperFx.Events.EventDeserializationFailureException(seqId, typeName, ex);
                 }
 
                 mapping = _events.EventMappingFor(resolvedType);

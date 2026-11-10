@@ -1,3 +1,4 @@
+using JasperFx;
 using Polecat.Internal;
 using Polecat.Linq.Parsing;
 

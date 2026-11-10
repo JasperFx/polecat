@@ -14,6 +14,28 @@ Polecat 6.0 has no runtime code generation and no pre-generated code to load. Th
   public `Apply`/`Create` methods (see the 4.0.0 notes below).
 - Applications that publish with Native AOT follow [the AOT consumer contract](./configuration/native-aot.md).
 
+## Upgrading to 6.0: event store and LINQ exceptions are the JasperFx types
+
+Polecat 6.0 throws the shared JasperFx exception types directly ([#944](https://github.com/JasperFx/polecat/issues/944)).
+The Polecat subclasses that only existed to keep the old names are deleted, so a `catch` naming one of
+them no longer compiles. Catch the JasperFx type instead; it is the type 5.x was already throwing
+underneath, and it carries the same members, so nothing else changes:
+
+| Removed in 6.0 | Catch instead |
+|---|---|
+| `Polecat.Exceptions.StreamLockedException` | `JasperFx.Events.StreamLockedException` |
+| `Polecat.Exceptions.ExistingStreamIdCollisionException` | `JasperFx.Events.ExistingStreamIdCollisionException` |
+| `Polecat.Exceptions.NonExistentStreamException` | `JasperFx.Events.NonExistentStreamException` |
+| `Polecat.Exceptions.UnknownEventTypeException` | `JasperFx.Events.UnknownEventTypeException` |
+| `Polecat.Exceptions.EventDeserializationFailureException` | `JasperFx.Events.EventDeserializationFailureException` |
+| `Polecat.Exceptions.DefaultTenantUsageDisabledException` | `JasperFx.Events.DefaultTenantUsageDisabledException` |
+| `Polecat.Exceptions.ArchivedStreamException` | `JasperFx.Events.ArchivedStreamException` |
+| `Polecat.Linq.BadLinqExpressionException` | `JasperFx.BadLinqExpressionException` |
+| `Polecat.Exceptions.InvalidStreamException` (obsolete since 5.x, never thrown) | `JasperFx.Events.ArchivedStreamException` |
+
+A Wolverine policy such as `OnException<JasperFx.Events.StreamLockedException>()` already matched
+and is unaffected.
+
 ## Deprecation: `MapPolecatMcp`
 
 `Polecat.AspNetCore`'s built-in `MapPolecatMcp()` is now `[Obsolete]` and will be **removed in the

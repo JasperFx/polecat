@@ -1,3 +1,4 @@
+using JasperFx;
 using System.Collections;
 using System.Linq.Expressions;
 using Polecat.Linq.Members;

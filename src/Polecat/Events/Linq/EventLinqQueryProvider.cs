@@ -275,7 +275,7 @@ internal class EventLinqQueryProvider : IPolecatAsyncQueryProvider,
         }
     }
 
-    private static Polecat.Linq.BadLinqExpressionException RefuseProjection(LinqQueryParser parser)
+    private static JasperFx.BadLinqExpressionException RefuseProjection(LinqQueryParser parser)
         => new($"Polecat cannot translate the Select '{parser.SelectExpression}' in an event query, which "
                + "can project a single scalar member. Materialize the events with ToListAsync() and "
                + "project them in memory.");
@@ -473,7 +473,7 @@ internal class EventLinqQueryProvider : IPolecatAsyncQueryProvider,
             }
         }
 
-        throw new Polecat.Linq.BadLinqExpressionException($"Cannot determine the element type from: {expression.Type}");
+        throw new JasperFx.BadLinqExpressionException($"Cannot determine the element type from: {expression.Type}");
     }
 
     // The shared JasperFx.Events.Documents terminators dispatch through these four primitives, each

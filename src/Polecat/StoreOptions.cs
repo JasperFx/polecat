@@ -479,7 +479,7 @@ public class StoreOptions
     ///     documents. Configuring a database-per-tenant tenancy —
     ///     <see cref="MultiTenantedDatabases" /> or <see cref="MultiTenantedMasterTable" /> — turns
     ///     this off automatically, so a session or daemon opened with no tenant fails loudly with a
-    ///     <see cref="Exceptions.DefaultTenantUsageDisabledException" /> rather than silently
+    ///     <see cref="JasperFx.Events.DefaultTenantUsageDisabledException" /> rather than silently
     ///     landing on whichever database happens to back
     ///     <see cref="ConnectionString" />. A default tenant is never required to configure
     ///     database-per-tenant multi-tenancy.

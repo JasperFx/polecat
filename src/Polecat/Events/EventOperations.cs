@@ -406,11 +406,163 @@ internal class EventOperations : QueryEventStore, IEventOperations, IEventOperat
         return await aggregator.BuildAsync(stream.Events, _sessionBase, snapshot, cancellation).ConfigureAwait(false);
     }
 
+    public async Task WriteToAggregate<T>(Guid id, Action<IEventStream<T>> writing, CancellationToken cancellation = default)
+        where T : class
+    {
+        var stream = await FetchForWriting<T>(id, cancellation).ConfigureAwait(false);
+        writing(stream);
+        await _sessionBase.SaveChangesAsync(cancellation).ConfigureAwait(false);
+    }
+
+    public async Task WriteToAggregate<T>(string key, Action<IEventStream<T>> writing, CancellationToken cancellation = default)
+        where T : class
+    {
+        var stream = await FetchForWriting<T>(key, cancellation).ConfigureAwait(false);
+        writing(stream);
+        await _sessionBase.SaveChangesAsync(cancellation).ConfigureAwait(false);
+    }
+
+    public async Task WriteToAggregate<T>(Guid id, Func<IEventStream<T>, Task> writing, CancellationToken cancellation = default)
+        where T : class
+    {
+        var stream = await FetchForWriting<T>(id, cancellation).ConfigureAwait(false);
+        await writing(stream).ConfigureAwait(false);
+        await _sessionBase.SaveChangesAsync(cancellation).ConfigureAwait(false);
+    }
+
+    public async Task WriteToAggregate<T>(string key, Func<IEventStream<T>, Task> writing, CancellationToken cancellation = default)
+        where T : class
+    {
+        var stream = await FetchForWriting<T>(key, cancellation).ConfigureAwait(false);
+        await writing(stream).ConfigureAwait(false);
+        await _sessionBase.SaveChangesAsync(cancellation).ConfigureAwait(false);
+    }
+
+    public async Task WriteToAggregate<T>(Guid id, int initialVersion, Action<IEventStream<T>> writing, CancellationToken cancellation = default)
+        where T : class
+    {
+        var stream = await FetchForWriting<T>(id, initialVersion, cancellation).ConfigureAwait(false);
+        writing(stream);
+        await _sessionBase.SaveChangesAsync(cancellation).ConfigureAwait(false);
+    }
+
+    public async Task WriteToAggregate<T>(Guid id, int initialVersion, Func<IEventStream<T>, Task> writing, CancellationToken cancellation = default)
+        where T : class
+    {
+        var stream = await FetchForWriting<T>(id, initialVersion, cancellation).ConfigureAwait(false);
+        await writing(stream).ConfigureAwait(false);
+        await _sessionBase.SaveChangesAsync(cancellation).ConfigureAwait(false);
+    }
+
+    public async Task WriteToAggregate<T>(string key, int initialVersion, Action<IEventStream<T>> writing, CancellationToken cancellation = default)
+        where T : class
+    {
+        var stream = await FetchForWriting<T>(key, initialVersion, cancellation).ConfigureAwait(false);
+        writing(stream);
+        await _sessionBase.SaveChangesAsync(cancellation).ConfigureAwait(false);
+    }
+
+    public async Task WriteToAggregate<T>(string key, int initialVersion, Func<IEventStream<T>, Task> writing, CancellationToken cancellation = default)
+        where T : class
+    {
+        var stream = await FetchForWriting<T>(key, initialVersion, cancellation).ConfigureAwait(false);
+        await writing(stream).ConfigureAwait(false);
+        await _sessionBase.SaveChangesAsync(cancellation).ConfigureAwait(false);
+    }
+
+    public async Task WriteExclusivelyToAggregate<T>(Guid id, Action<IEventStream<T>> writing, CancellationToken cancellation = default)
+        where T : class
+    {
+        var stream = await FetchForExclusiveWriting<T>(id, cancellation).ConfigureAwait(false);
+        writing(stream);
+        await _sessionBase.SaveChangesAsync(cancellation).ConfigureAwait(false);
+    }
+
+    public async Task WriteExclusivelyToAggregate<T>(string key, Action<IEventStream<T>> writing, CancellationToken cancellation = default)
+        where T : class
+    {
+        var stream = await FetchForExclusiveWriting<T>(key, cancellation).ConfigureAwait(false);
+        writing(stream);
+        await _sessionBase.SaveChangesAsync(cancellation).ConfigureAwait(false);
+    }
+
+    public async Task WriteExclusivelyToAggregate<T>(Guid id, Func<IEventStream<T>, Task> writing, CancellationToken cancellation = default)
+        where T : class
+    {
+        var stream = await FetchForExclusiveWriting<T>(id, cancellation).ConfigureAwait(false);
+        await writing(stream).ConfigureAwait(false);
+        await _sessionBase.SaveChangesAsync(cancellation).ConfigureAwait(false);
+    }
+
+    public async Task WriteExclusivelyToAggregate<T>(string key, Func<IEventStream<T>, Task> writing, CancellationToken cancellation = default)
+        where T : class
+    {
+        var stream = await FetchForExclusiveWriting<T>(key, cancellation).ConfigureAwait(false);
+        await writing(stream).ConfigureAwait(false);
+        await _sessionBase.SaveChangesAsync(cancellation).ConfigureAwait(false);
+    }
+
+    public async Task AppendOptimistic(Guid streamId, CancellationToken token, params object[] events)
+    {
+        var version = await ReadVersionFromExistingStream(streamId, false, token).ConfigureAwait(false);
+        var action = Append(streamId, events);
+        action.ExpectedVersionOnServer = version;
+    }
+
+    public Task AppendOptimistic(Guid streamId, params object[] events)
+        => AppendOptimistic(streamId, CancellationToken.None, events);
+
+    public async Task AppendOptimistic(string streamKey, CancellationToken token, params object[] events)
+    {
+        var version = await ReadVersionFromExistingStream(streamKey, false, token).ConfigureAwait(false);
+        var action = Append(streamKey, events);
+        action.ExpectedVersionOnServer = version;
+    }
+
+    public Task AppendOptimistic(string streamKey, params object[] events)
+        => AppendOptimistic(streamKey, CancellationToken.None, events);
+
+    public async Task AppendExclusive(Guid streamId, CancellationToken token, params object[] events)
+    {
+        try
+        {
+            await _sessionBase.BeginTransactionAsync(token).ConfigureAwait(false);
+            var version = await ReadVersionFromExistingStream(streamId, true, token).ConfigureAwait(false);
+            var action = Append(streamId, events);
+            action.ExpectedVersionOnServer = version;
+        }
+        catch (Exception e) when (IsLockFailure(e))
+        {
+            throw new JasperFx.Events.StreamLockedException(streamId, FindLockFailure(e));
+        }
+    }
+
+    public Task AppendExclusive(Guid streamId, params object[] events)
+        => AppendExclusive(streamId, CancellationToken.None, events);
+
+    public async Task AppendExclusive(string streamKey, CancellationToken token, params object[] events)
+    {
+        try
+        {
+            await _sessionBase.BeginTransactionAsync(token).ConfigureAwait(false);
+            var version = await ReadVersionFromExistingStream(streamKey, true, token).ConfigureAwait(false);
+            var action = Append(streamKey, events);
+            action.ExpectedVersionOnServer = version;
+        }
+        catch (Exception e) when (IsLockFailure(e))
+        {
+            throw new JasperFx.Events.StreamLockedException(streamKey, FindLockFailure(e));
+        }
+    }
+
+    public Task AppendExclusive(string streamKey, params object[] events)
+        => AppendExclusive(streamKey, CancellationToken.None, events);
+
     private async Task<long> ReadVersionFromExistingStream(object streamId, bool forUpdate, CancellationToken token)
     {
         if (!await _sessionBase.CouldHaveStreamAsync(streamId, token).ConfigureAwait(false))
         {
-            throw new Exceptions.NonExistentStreamException(streamId);
+            throw new JasperFx.Events.NonExistentStreamException(streamId);
         }
 
         await using var cmd = new SqlCommand();
@@ -431,12 +583,12 @@ internal class EventOperations : QueryEventStore, IEventOperations, IEventOperat
         }
         catch (Exception e) when (IsLockFailure(e))
         {
-            throw new Exceptions.StreamLockedException(streamId, FindLockFailure(e));
+            throw new JasperFx.Events.StreamLockedException(streamId, FindLockFailure(e));
         }
 
         if (version == 0)
         {
-            throw new Exceptions.NonExistentStreamException(streamId);
+            throw new JasperFx.Events.NonExistentStreamException(streamId);
         }
 
         return version;
@@ -621,7 +773,7 @@ internal class EventOperations : QueryEventStore, IEventOperations, IEventOperat
             // reinterpreted; an unlocked read cannot be a lock failure.
             catch (Exception e) when (forExclusive && IsLockFailure(e))
             {
-                throw new Exceptions.StreamLockedException(streamId, FindLockFailure(e));
+                throw new JasperFx.Events.StreamLockedException(streamId, FindLockFailure(e));
             }
 
             if (result != null && result != DBNull.Value)

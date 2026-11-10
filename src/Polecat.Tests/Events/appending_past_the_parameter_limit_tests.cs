@@ -497,7 +497,7 @@ public partial class appending_past_the_parameter_limit_tests : OneOffConfigurat
             session.Events.StartStream(taken, Pings(600));
             session.Events.StartStream(Guid.NewGuid(), Pings(10));
 
-            var collision = await Should.ThrowAsync<Polecat.Exceptions.ExistingStreamIdCollisionException>(
+            var collision = await Should.ThrowAsync<JasperFx.Events.ExistingStreamIdCollisionException>(
                 session.SaveChangesAsync(Ct));
             collision.Id.ShouldBe(taken);
         }
@@ -680,7 +680,7 @@ public partial class appending_past_the_parameter_limit_tests : OneOffConfigurat
         }, Ct)));
 
         outcomes.Count(x => x is null).ShouldBe(1);
-        outcomes.Single(x => x is not null).ShouldBeOfType<Polecat.Exceptions.ExistingStreamIdCollisionException>();
+        outcomes.Single(x => x is not null).ShouldBeOfType<JasperFx.Events.ExistingStreamIdCollisionException>();
 
         (await EventCountAsync()).ShouldBe(count);
     }

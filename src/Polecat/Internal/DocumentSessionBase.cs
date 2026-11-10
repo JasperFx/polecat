@@ -1738,7 +1738,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
 
                 if (archived)
                 {
-                    throw new Exceptions.ArchivedStreamException(streamId);
+                    throw new JasperFx.Events.ArchivedStreamException(streamId);
                 }
 
                 if (stream.ExpectedVersionOnServer.HasValue && currentVersion != stream.ExpectedVersionOnServer.Value)
@@ -1808,7 +1808,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
 
             if (archived)
             {
-                throw new Exceptions.ArchivedStreamException(streamId);
+                throw new JasperFx.Events.ArchivedStreamException(streamId);
             }
 
             AssignEventMetadataForClosedShape(stream, currentVersion);
