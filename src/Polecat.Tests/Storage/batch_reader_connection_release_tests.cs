@@ -16,8 +16,10 @@ namespace Polecat.Tests.Storage;
 ///     <para>
 ///         <c>AutoClosingLifetime</c> asked for <c>CommandBehavior.CloseConnection</c> on both of its
 ///         reader paths and relied on it for both. Microsoft.Data.SqlClient honours it for a
-///         <see cref="SqlCommand" /> reader and <b>silently ignores it</b> for a <see cref="SqlBatch" />
-///         one, so the batch path leaked a pooled connection per query.
+///         <see cref="SqlCommand" /> reader and <b>silently ignored it</b> for a <see cref="SqlBatch" />
+///         one (through 7.0.x), so the batch path leaked a pooled connection per query. 7.1.1 honours it,
+///         but <c>ConnectionClosingDataReader</c> stays as a harmless guarantee that does not depend on the
+///         driver version; the tests below pin the outcome, not the driver quirk.
 ///     </para>
 ///     <para>
 ///         Why it went unnoticed: the default max pool size is 100, and a process reaches that only
@@ -49,44 +51,6 @@ public class batch_reader_connection_release_tests
             opts.AutoCreateSchemaObjects = AutoCreate.All;
             opts.UseNativeJsonType = ConnectionSource.SupportsNativeJson;
         });
-
-    /// <summary>
-    ///     The ADO.NET fact the fix rests on, asserted rather than assumed.
-    /// </summary>
-    /// <remarks>
-    ///     Written to document the driver's behaviour, not to demand it stay broken: if a future
-    ///     Microsoft.Data.SqlClient starts honouring the flag for batches, this is the one test that
-    ///     fails, its message says the decorator is now redundant, and every other test in the class
-    ///     keeps passing.
-    /// </remarks>
-    [Fact]
-    public async Task sql_batch_does_not_honour_close_connection_so_polecat_must_close_it()
-    {
-        var cs = SmallPool("polecat_batch_behaviour_probe");
-
-        var leaked = false;
-        try
-        {
-            for (var i = 0; i < 25; i++)
-            {
-                var conn = new SqlConnection(cs);
-                await conn.OpenAsync(TestContext.Current.CancellationToken);
-                await using var batch = new SqlBatch { Connection = conn };
-                batch.BatchCommands.Add(new SqlBatchCommand("select 1"));
-                await using var reader = await batch.ExecuteReaderAsync(
-                    System.Data.CommandBehavior.CloseConnection, TestContext.Current.CancellationToken);
-                while (await reader.ReadAsync(TestContext.Current.CancellationToken)) { }
-            }
-        }
-        catch (InvalidOperationException e) when (e.Message.Contains("pool"))
-        {
-            leaked = true;
-        }
-
-        leaked.ShouldBeTrue(
-            "SqlBatch appears to honour CommandBehavior.CloseConnection now — ConnectionClosingDataReader " +
-            "is no longer load-bearing, though it remains correct.");
-    }
 
     /// <summary>
     ///     The SqlCommand control: the same loop on the path where the flag <em>is</em> honoured, so a
