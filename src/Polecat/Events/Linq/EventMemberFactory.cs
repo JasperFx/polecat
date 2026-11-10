@@ -38,7 +38,7 @@ internal class EventMemberFactory : IMemberResolver
         // only a member read off the event can name one.
         if (!ClrOnlyMembers.IsReadOffParameter(expression))
         {
-            throw new Polecat.Linq.BadLinqExpressionException(
+            throw new JasperFx.BadLinqExpressionException(
                 $"Polecat cannot translate '{expression}' in an event LINQ query: {propName} is not a "
                 + "member of the event itself, and the raw event queries have no path into the event "
                 + "body. To filter or order on the body, query the concrete event type with "
@@ -47,7 +47,7 @@ internal class EventMemberFactory : IMemberResolver
 
         if (!EventColumns.TryGetValue(propName, out var mapping))
         {
-            throw new Polecat.Linq.BadLinqExpressionException(
+            throw new JasperFx.BadLinqExpressionException(
                 $"Polecat cannot translate the IEvent property '{propName}' in an event LINQ query. "
                 + $"Translatable properties are {string.Join(", ", EventColumns.Keys)}. To filter on the "
                 + "event body, query the concrete event type instead.");

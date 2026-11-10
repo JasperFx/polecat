@@ -20,115 +20,53 @@ namespace Polecat.Events.Protected;
  */
 
 /// <summary>
-///     Implementation of IEventDataMasking that fetches events, applies masking rules,
-///     and overwrites the event data in the database.
+///     Polecat's half of <see cref="EventDataMaskingBase{TSession}" /> (jasperfx#1048, polecat#806): fetches
+///     the events a pass selects, archived ones included, through a lightweight session, applies the
+///     store's masking rules, and overwrites the rows in one <c>SaveChangesAsync</c>, so a failure commits
+///     nothing.
 /// </summary>
-public class EventDataMasking : IEventDataMasking
+public class EventDataMasking : EventDataMaskingBase<IDocumentSession>
 {
     private readonly DocumentStore _store;
-    private readonly List<Func<IDocumentSession, CancellationToken, Task<IReadOnlyList<IEvent>>>> _sources = new();
-    private readonly Dictionary<string, object> _headers = new();
-    private string? _tenantId;
 
     public EventDataMasking(DocumentStore store)
     {
         _store = store;
     }
 
-    public IEventDataMasking ForTenant(string tenantId)
+    protected override IDocumentSession OpenSession(string? tenantId)
     {
-        _tenantId = tenantId;
-        return this;
+        return string.IsNullOrEmpty(tenantId)
+            ? _store.LightweightSession()
+            : _store.LightweightSession(new SessionOptions { TenantId = tenantId });
     }
 
-    public IEventDataMasking IncludeStream(Guid streamId)
-    {
-        _sources.Add((s, t) => eventsOf(s).FetchStreamIncludingArchivedAsync(streamId, t));
-        return this;
-    }
+    protected override IEventStoreOperations EventsFor(IDocumentSession session) => session.Events;
 
-    public IEventDataMasking IncludeStream(string streamKey)
-    {
-        _sources.Add((s, t) => eventsOf(s).FetchStreamIncludingArchivedAsync(streamKey, t));
-        return this;
-    }
+    protected override Task<IReadOnlyList<IEvent>> FetchStreamIncludingArchivedAsync(IDocumentSession session,
+        Guid streamId, CancellationToken token)
+        => eventsOf(session).FetchStreamIncludingArchivedAsync(streamId, token);
 
-    public IEventDataMasking IncludeStream(Guid streamId, Func<IEvent, bool> filter)
-    {
-        _sources.Add(async (s, t) =>
-        {
-            var raw = await eventsOf(s).FetchStreamIncludingArchivedAsync(streamId, t).ConfigureAwait(false);
-            return raw.Where(filter).ToList();
-        });
-        return this;
-    }
-
-    public IEventDataMasking IncludeStream(string streamKey, Func<IEvent, bool> filter)
-    {
-        _sources.Add(async (s, t) =>
-        {
-            var raw = await eventsOf(s).FetchStreamIncludingArchivedAsync(streamKey, t).ConfigureAwait(false);
-            return raw.Where(filter).ToList();
-        });
-        return this;
-    }
+    protected override Task<IReadOnlyList<IEvent>> FetchStreamIncludingArchivedAsync(IDocumentSession session,
+        string streamKey, CancellationToken token)
+        => eventsOf(session).FetchStreamIncludingArchivedAsync(streamKey, token);
 
     [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
         Justification = "Polecat's own use of its LINQ async wrappers, which carry [RequiresDynamicCode] since #733. This member cannot propagate the annotation -- it implements a JasperFx interface that does not carry one, and annotating an implementation alone is IL2046. A CONSUMER is still warned, at the public entry point they call. ⚠️ This is NOT the suppression #733 removed: that one asserted the path was SAFE. This one records that the path is unsafe and that the diagnostic has nowhere to go from here. Upstream: annotate the JasperFx interface.")]
     [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
         Justification = "Polecat's own use of its LINQ async wrappers, which carry [RequiresDynamicCode] since #733. This member cannot propagate the annotation -- it implements a JasperFx interface that does not carry one, and annotating an implementation alone is IL2046. A CONSUMER is still warned, at the public entry point they call. ⚠️ This is NOT the suppression #733 removed: that one asserted the path was SAFE. This one records that the path is unsafe and that the diagnostic has nowhere to go from here. Upstream: annotate the JasperFx interface.")]
-    public IEventDataMasking IncludeEvents(Expression<Func<IEvent, bool>> filter)
-    {
-        _sources.Add((s, t) => eventsOf(s).QueryAllRawEventsIncludingArchived().Where(filter).ToListAsync(t));
-        return this;
-    }
+    protected override Task<IReadOnlyList<IEvent>> QueryEventsIncludingArchivedAsync(IDocumentSession session,
+        Expression<Func<IEvent, bool>> filter, CancellationToken token)
+        => eventsOf(session).QueryAllRawEventsIncludingArchived().Where(filter).ToListAsync(token);
 
-    public IEventDataMasking AddHeader(string key, object value)
-    {
-        _headers[key] = value;
-        return this;
-    }
+    protected override bool TryMask(IEvent @event) => _store.Events.TryMask(@event);
 
-    public async Task ApplyAsync(CancellationToken token = default)
-    {
-        if (_sources.Count == 0)
-            throw new InvalidOperationException(
-                "You need to specify at least one stream identity or event filter first as part of the Fluent Interface");
-
-        var session = BuildSession();
-
-        foreach (var source in _sources)
-        {
-            var events = await source(session, token).ConfigureAwait(false);
-            foreach (var @event in events)
-            {
-                if (_store.Events.TryMask(@event))
-                {
-                    foreach (var pair in _headers)
-                    {
-                        @event.Headers ??= new();
-                        @event.Headers[pair.Key] = pair.Value;
-                    }
-
-                    session.Events.OverwriteEvent(@event);
-                }
-            }
-        }
-
-        await session.SaveChangesAsync(token).ConfigureAwait(false);
-    }
+    protected override Task SaveChangesAsync(IDocumentSession session, CancellationToken token)
+        => session.SaveChangesAsync(token);
 
     // Archiving a stream takes it out of the normal reads and leaves it on disk, so masking has to reach it.
     // The public reads leave archived rows out, which found nothing, erased nothing and reported success,
     // so every source here goes through the store's own reads that keep them. A filter naming IsArchived
     // still narrows IncludeEvents, so it can still rule them back out.
     private static QueryEventStore eventsOf(IDocumentSession session) => (QueryEventStore)session.Events;
-
-    internal IDocumentSession BuildSession()
-    {
-        if (string.IsNullOrEmpty(_tenantId))
-            return _store.LightweightSession();
-
-        return _store.LightweightSession(new SessionOptions { TenantId = _tenantId });
-    }
 }

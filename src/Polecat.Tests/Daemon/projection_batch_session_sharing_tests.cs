@@ -1,3 +1,4 @@
+using JasperFx.Events.Daemon;
 using Polecat.Events.Daemon;
 using Polecat.Internal;
 using Polecat.Tests.Harness;
@@ -39,7 +40,7 @@ public class projection_batch_session_sharing_tests : OneOffConfigurationsContex
         await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync(
             ct: TestContext.Current.CancellationToken);
 
-        var batch = new PolecatProjectionBatch(theStore, theStore.Options.EventGraph, theStore.Database);
+        var batch = new PolecatProjectionBatch(theStore, theStore.Options.EventGraph, theStore.Database, ShardExecutionMode.Continuous);
         await using var _ = batch;
 
         var tenant = theStore.Options.Tenancy!.DefaultTenantId;
@@ -94,7 +95,7 @@ public class projection_batch_session_sharing_tests : OneOffConfigurationsContex
         await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync(
             ct: TestContext.Current.CancellationToken);
 
-        var batch = new PolecatProjectionBatch(theStore, theStore.Options.EventGraph, theStore.Database);
+        var batch = new PolecatProjectionBatch(theStore, theStore.Options.EventGraph, theStore.Database, ShardExecutionMode.Continuous);
 
         var tenant = theStore.Options.Tenancy!.DefaultTenantId;
         const int slices = 12;
@@ -149,7 +150,7 @@ public class projection_batch_session_sharing_tests : OneOffConfigurationsContex
             await seed.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
-        var batch = new PolecatProjectionBatch(theStore, theStore.Options.EventGraph, theStore.Database);
+        var batch = new PolecatProjectionBatch(theStore, theStore.Options.EventGraph, theStore.Database, ShardExecutionMode.Continuous);
         var tenant = theStore.Options.Tenancy!.DefaultTenantId;
 
         var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

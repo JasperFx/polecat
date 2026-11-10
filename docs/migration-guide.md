@@ -1,5 +1,111 @@
 # Migration Guide
 
+## Upgrading to 6.0: target frameworks and dependency floor
+
+Polecat 6.0 is part of the Critter Stack .NET 11 release train and targets **`net10.0;net11.0`**.
+`net9.0` is no longer built or supported ([polecat#811](https://github.com/JasperFx/polecat/issues/811)).
+An application still on .NET 9 stays on Polecat 5.x until it moves.
+
+The foundation pins move in lockstep, so a consuming project has to move with them:
+
+| Package | 5.50.0 | 6.0 |
+|---|---|---|
+| `JasperFx`, `JasperFx.Events` | 2.102 | 3.0.0 |
+| `Weasel.SqlServer`, `Weasel.Storage` | 9.50.0 | 10.0 |
+| `Microsoft.Data.SqlClient` | 7.0.0 | 7.1.1 |
+| `Microsoft.EntityFrameworkCore.SqlServer` (`Polecat.EntityFrameworkCore`) | 9.x | 10.0 |
+
+Two consequences worth checking in your own projects:
+
+- **Don't pin `Microsoft.Data.SqlClient` below 7.1.1.** Polecat 6.0 is built and tested against it; a lower
+  direct reference in your project is a NuGet package downgrade (NU1605) rather than a quiet override.
+- **`Polecat.EntityFrameworkCore` needs EF Core 10.** An application on EF Core 9 can't take 6.0.
+
+The test-project side of the train (xunit.v3 4.x, Microsoft.Testing.Platform 2.x extension packages) only
+concerns you if you reuse `JasperFx.Events.ComplianceTests`; see the testing notes in the repository's
+`CLAUDE.md`.
+
+## Upgrading to 6.0: `ISerializer` gains UTF-8 byte-path overloads
+
+`Polecat.Serialization.ISerializer` has three new members
+([#801](https://github.com/JasperFx/polecat/issues/801)), so serialization can skip the intermediate
+`string`:
+
+```cs
+T FromJson<T>(ReadOnlySpan<byte> utf8Json);
+object FromJson(Type type, ReadOnlySpan<byte> utf8Json);
+void ToJson(object document, IBufferWriter<byte> writer);
+```
+
+All three are **default interface members**, so an existing custom `ISerializer` still compiles and keeps
+working: the defaults decode or encode through the `string` members you already implement. Override them
+only to avoid the string allocation. The built-in `Serializer` overrides all three and hands the bytes to
+System.Text.Json directly.
+
+`StreamOne`, `StreamMany` and `StreamAggregate` in `Polecat.AspNetCore` now write to
+`Response.BodyWriter` through the `IBufferWriter<byte>` overload. The response body is the same JSON; a
+custom serializer that formats differently on its two paths would show the difference there, so keep the
+string and byte forms equivalent.
+
+## Upgrading to 6.0: dirty tracking semantics
+
+**Nothing changes.** Polecat has never had dirty tracking, and 6.0 does not add it. Sessions are
+lightweight (no tracking) or identity-map only. A document loaded through either one and then mutated is
+**not** persisted by `SaveChangesAsync()`; call `Store`, `Update` or `Insert`. If you are porting code
+from Marten, which tracks changes in its dirty-tracked session type, that is the difference to look for.
+
+## Upgrading to 6.0: union types (.NET 11 only)
+
+On `net11.0`, with C# 15 unions, Polecat supports union-typed document members and events
+([#808](https://github.com/JasperFx/polecat/issues/808)):
+
+- Events: a union-typed event is unwrapped to its active case when appended, and each case is registered
+  as an event type.
+- LINQ over a union-typed document member goes through the union's `Value`: a type test
+  (`x.Payment.Value is Card`), case access (`((Card)x.Payment.Value).Last4`, `(x.Payment.Value as Cash).Amount`,
+  `(int)x.Code.Value`) and null tests are translated. The compiler refuses a union pattern in an expression
+  tree, which is why the query reaches through `Value`.
+- Polecat refuses with `BadLinqExpressionException`, rather than guessing, a type no case is, cases the
+  stored JSON can't tell apart (identical shapes, one JSON kind twice, or cases told apart only by
+  nullable properties), a nested union case, a union compared to a value or ordered or grouped by, and a
+  type test on anything but a union's `Value`.
+
+On `net10.0` no type is a union, so none of this applies and nothing changes for existing code.
+
+## Upgrading to 6.0: `GateSideEffectsBehindPriorVersion` is on by default
+
+As of JasperFx 3.0 ([jasperfx#1075](https://github.com/JasperFx/jasperfx/issues/1075)),
+`Options.GateSideEffectsBehindPriorVersion` defaults to **`true`** for every projection, where it was
+`false` before. See [blue/green projection deploys](/events/projections/async-daemon) for the mechanism.
+
+- **What changes.** When a projection with `Version > 1` starts behind a prior version's persisted
+  progression, the daemon first replays up to the prior version's mark with side effects suppressed, and
+  only emits them past that mark. Previously the new version replayed the whole history and re-fired every
+  side effect. A version-1 projection behaves exactly as before.
+- **Schema effect.** None. The gate reads progression rows Polecat already writes to `pc_event_progression`;
+  nothing is added or migrated.
+- **Cost.** A new projection version's warm-up is a rebuild-mode replay to the prior mark, so a large
+  history takes the time it always took, minus the side effects.
+- **Opting out.** Set it back in the projection's constructor:
+
+```cs
+public TripProjection()
+{
+    Version = 3;
+    Options.GateSideEffectsBehindPriorVersion = false; // re-fire side effects on replay, as before 6.0
+}
+```
+
+The docs at [side effects](/events/projections/side-effects) and [the async daemon](/events/projections/async-daemon)
+still describe the gate as opt-in; read them as "on unless you set it to `false`".
+
+## Upgrading to 6.0: Aspire and `DbDataSource`
+
+Handing Polecat a `DbDataSource` or a `SqlConnection` registered in DI (for example by Aspire's
+`AddSqlServerClient`) is **not part of 6.0 yet**; it is tracked as its own piece of work in the .NET 11
+train. Until it lands, configure the connection with a connection string on `StoreOptions`, which Aspire
+supplies through configuration. This section will be replaced by the real guidance when the feature ships.
+
 ## Upgrading to 6.0: there is no pre-generated code path, and nothing to opt into
 
 Polecat 6.0 has no runtime code generation and no pre-generated code to load. The decision recorded in
@@ -13,6 +119,28 @@ Polecat 6.0 has no runtime code generation and no pre-generated code to load. Th
 - Aggregate evolution uses JasperFx's compile-time source generator, which needs `partial` types and
   public `Apply`/`Create` methods (see the 4.0.0 notes below).
 - Applications that publish with Native AOT follow [the AOT consumer contract](./configuration/native-aot.md).
+
+## Upgrading to 6.0: event store and LINQ exceptions are the JasperFx types
+
+Polecat 6.0 throws the shared JasperFx exception types directly ([#944](https://github.com/JasperFx/polecat/issues/944)).
+The Polecat subclasses that only existed to keep the old names are deleted, so a `catch` naming one of
+them no longer compiles. Catch the JasperFx type instead; it is the type 5.x was already throwing
+underneath, and it carries the same members, so nothing else changes:
+
+| Removed in 6.0 | Catch instead |
+|---|---|
+| `Polecat.Exceptions.StreamLockedException` | `JasperFx.Events.StreamLockedException` |
+| `Polecat.Exceptions.ExistingStreamIdCollisionException` | `JasperFx.Events.ExistingStreamIdCollisionException` |
+| `Polecat.Exceptions.NonExistentStreamException` | `JasperFx.Events.NonExistentStreamException` |
+| `Polecat.Exceptions.UnknownEventTypeException` | `JasperFx.Events.UnknownEventTypeException` |
+| `Polecat.Exceptions.EventDeserializationFailureException` | `JasperFx.Events.EventDeserializationFailureException` |
+| `Polecat.Exceptions.DefaultTenantUsageDisabledException` | `JasperFx.Events.DefaultTenantUsageDisabledException` |
+| `Polecat.Exceptions.ArchivedStreamException` | `JasperFx.Events.ArchivedStreamException` |
+| `Polecat.Linq.BadLinqExpressionException` | `JasperFx.BadLinqExpressionException` |
+| `Polecat.Exceptions.InvalidStreamException` (obsolete since 5.x, never thrown) | `JasperFx.Events.ArchivedStreamException` |
+
+A Wolverine policy such as `OnException<JasperFx.Events.StreamLockedException>()` already matched
+and is unaffected.
 
 ## Deprecation: `MapPolecatMcp`
 

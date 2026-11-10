@@ -214,7 +214,7 @@ public partial class DocumentStore : IDocumentStore
         if (string.IsNullOrEmpty(tenantIdOrDatabaseIdentifier)
             || tenantIdOrDatabaseIdentifier == JasperFx.StorageConstants.DefaultTenantId)
         {
-            throw new Exceptions.DefaultTenantUsageDisabledException();
+            throw new JasperFx.Events.DefaultTenantUsageDisabledException();
         }
     }
 

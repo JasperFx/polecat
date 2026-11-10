@@ -311,7 +311,7 @@ public class string_stream_key_outside_code_page_tests: OneOffConfigurationsCont
         await seedAsync(LostInTheColumn);
 
         await using var session = theStore.LightweightSession();
-        await Should.ThrowAsync<Polecat.Exceptions.NonExistentStreamException>(() =>
+        await Should.ThrowAsync<JasperFx.Events.NonExistentStreamException>(() =>
             session.Events.AppendOptimistic(Tokyo, Ct, new CityVisited("tokyo")));
     }
 
@@ -321,7 +321,7 @@ public class string_stream_key_outside_code_page_tests: OneOffConfigurationsCont
         await seedAsync(LostInTheColumn);
 
         await using var session = theStore.LightweightSession();
-        await Should.ThrowAsync<Polecat.Exceptions.NonExistentStreamException>(() =>
+        await Should.ThrowAsync<JasperFx.Events.NonExistentStreamException>(() =>
             session.Events.AppendExclusive(Tokyo, Ct, new CityVisited("tokyo")));
     }
 

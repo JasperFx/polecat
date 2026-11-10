@@ -1,3 +1,4 @@
+using JasperFx;
 using Polecat.Linq;
 using Polecat.Tests.Harness;
 

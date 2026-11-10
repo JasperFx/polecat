@@ -128,7 +128,7 @@ public class for_tenant_stream_state_tests : IAsyncLifetime
         await using var writer = SessionFor("red");
         writer.ForTenant("blue").Events.Append(streamId, new ForTenantStateHappened(2));
 
-        await Should.ThrowAsync<Polecat.Exceptions.ArchivedStreamException>(() => writer.SaveChangesAsync(Ct));
+        await Should.ThrowAsync<JasperFx.Events.ArchivedStreamException>(() => writer.SaveChangesAsync(Ct));
     }
 
     /// <summary>

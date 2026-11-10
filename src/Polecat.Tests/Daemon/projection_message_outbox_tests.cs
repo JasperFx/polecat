@@ -1,3 +1,4 @@
+using JasperFx.Events.Daemon;
 using JasperFx.Events;
 using Polecat.Events.Aggregation;
 using Polecat.Events.Daemon;
@@ -27,7 +28,7 @@ public class projection_message_outbox_tests : OneOffConfigurationsContext
         await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         var batch = new PolecatProjectionBatch(theStore, theStore.Options.EventGraph,
-            theStore.Database);
+            theStore.Database, ShardExecutionMode.Continuous);
         var session = batch.SessionForTenant(theStore.Options.Tenancy!.DefaultTenantId);
         session.Store(new SimpleDoc { Id = Guid.NewGuid() });
 
@@ -49,7 +50,7 @@ public class projection_message_outbox_tests : OneOffConfigurationsContext
         await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         var batch = new PolecatProjectionBatch(theStore, theStore.Options.EventGraph,
-            theStore.Database);
+            theStore.Database, ShardExecutionMode.Continuous);
         var session = batch.SessionForTenant(theStore.Options.Tenancy!.DefaultTenantId);
         session.Store(new SimpleDoc { Id = Guid.NewGuid() });
 
@@ -77,7 +78,7 @@ public class projection_message_outbox_tests : OneOffConfigurationsContext
         await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         var batch = new PolecatProjectionBatch(theStore, theStore.Options.EventGraph,
-            theStore.Database);
+            theStore.Database, ShardExecutionMode.Continuous);
         var session = batch.SessionForTenant(theStore.Options.Tenancy!.DefaultTenantId);
         session.Store(new SimpleDoc { Id = Guid.NewGuid() });
 
@@ -102,7 +103,7 @@ public class projection_message_outbox_tests : OneOffConfigurationsContext
         await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         var batch = new PolecatProjectionBatch(theStore, theStore.Options.EventGraph,
-            theStore.Database);
+            theStore.Database, ShardExecutionMode.Continuous);
         var session = batch.SessionForTenant(theStore.Options.Tenancy!.DefaultTenantId);
         session.Store(new SimpleDoc { Id = Guid.NewGuid() });
 

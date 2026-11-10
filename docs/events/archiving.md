@@ -30,9 +30,8 @@ names the way back:
 > Event stream 'a1b2…' is archived and cannot be appended to. Call UnArchiveStream to reopen it, or
 > start a new stream.
 
-`Polecat.Exceptions.ArchivedStreamException` derives from `JasperFx.Events.ArchivedStreamException`,
-so store-agnostic code can catch the shared type. (It replaces
-`InvalidStreamException`, which is now obsolete and never thrown.)
+The exception is `JasperFx.Events.ArchivedStreamException`, the type Marten, Polecat and Fisher all
+throw, so store-agnostic code needs one catch.
 
 ::: warning
 Masking reaches archived streams from every source: both kinds of `IncludeStream`, and `IncludeEvents`

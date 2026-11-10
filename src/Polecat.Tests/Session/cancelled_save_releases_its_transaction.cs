@@ -1,3 +1,4 @@
+using JasperFx.Events.Daemon;
 using Polecat.Linq;
 using Microsoft.Data.SqlClient;
 using Polecat.Events.Daemon;
@@ -154,7 +155,7 @@ public class cancelled_save_releases_its_transaction : OneOffConfigurationsConte
     {
         using var cts = new CancellationTokenSource();
 
-        var batch = new PolecatProjectionBatch(theStore, theStore.Options.EventGraph, theStore.Database);
+        var batch = new PolecatProjectionBatch(theStore, theStore.Options.EventGraph, theStore.Database, ShardExecutionMode.Continuous);
         var session = batch.SessionForTenant(theStore.Options.Tenancy!.DefaultTenantId);
         session.Store(new BatchDoc { Id = Guid.NewGuid() });
         session.AddTransactionParticipant(new CancelThenFail(cts));

@@ -1,10 +1,8 @@
-using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using System.Text.Json;
 using JasperFx.Descriptors;
 using JasperFx.Events;
-using JasperFx.Events.Aggregation;
 using JasperFx.Events.Projections;
 using Polecat.Events;
 
@@ -17,218 +15,57 @@ namespace Polecat;
 /// </summary>
 public partial class DocumentStore
 {
-    [UnconditionalSuppressMessage("Trimming", "IL2091:DynamicallyAccessedMembers",
-        Justification = "Forwards to RunProjectionForReferenceTypeAsync<TState> via MakeGenericMethod. Projection step-through is a dev-time / diagnostic IEventStore surface (CritterWatch / projection replay); AOT-publishing apps either avoid the surface entirely or supply a source-generated dispatcher.")]
-    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
-        Justification = "MakeGenericMethod is required to satisfy the aggregator's `class, new()` constraint without changing the public IEventStore.RunProjectionAsync<TState> contract.")]
-    [UnconditionalSuppressMessage("Trimming", "IL2075:DynamicallyAccessedMembers",
-        Justification = "Reads Task<T>.Result via reflection; Task<T> is a framework type whose Result property is intrinsically preserved.")]
+    // jasperfx#1049 (polecat#806): the three replay members forward to the shared
+    // ProjectionStepThrough, which folds through the projection's own dispatch and records each step as
+    // a detached copy read back from the JSON the store would persist. Polecat's own fold recorded live
+    // references, so an aggregate that mutated itself in place showed its final state on every step.
+    private ProjectionStepThrough<IQuerySession>? _stepThrough;
+
     [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
-        Justification = "Calls into RunProjectionForReferenceTypeAsync<TState> which is annotated [RequiresUnreferencedCode]. The explicit interface impl can't propagate the requirement because the interface contract doesn't declare it yet (tracked in jasperfx#262 for the Events-side IEventStore annotation).")]
+        Justification = "ToDomainEvent and the store serializer use STJ over runtime types. Projection step-through is a diagnostic IEventStore surface (CritterWatch / projection replay), and the interface contract does not declare the requirement.")]
+    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
+        Justification = "ToDomainEvent and the store serializer use STJ runtime code generation. Diagnostic IEventStore surface, as above.")]
+    private ProjectionStepThrough<IQuerySession> StepThrough()
+    {
+        return _stepThrough ??= Options.Projections.StepThrough(ToDomainEvent,
+            new ProjectionStateSerializer(
+                state => JsonSerializer.Deserialize<JsonElement>(Options.Serializer.ToJson(state)),
+                (json, type) => Options.Serializer.FromJson(type, json.GetRawText())));
+    }
+
     async Task<ProjectionTimeline<TState>> IEventStore.RunProjectionAsync<TState>(
         string projectionName, object identity, IReadOnlyList<EventRecord> events,
         TState? startingState, CancellationToken ct) where TState : default
     {
-        ArgumentException.ThrowIfNullOrEmpty(projectionName);
-        ArgumentNullException.ThrowIfNull(events);
-
-        if (!Options.Projections.TryFindProjection(projectionName, out _))
-        {
-            throw new ArgumentException(
-                $"Unknown projection '{projectionName}'. Register the projection on StoreOptions.Projections before replaying.",
-                nameof(projectionName));
-        }
-
-        // The interface leaves TState unconstrained, but the aggregator graph
-        // requires a reference-type aggregate. Surface a clear NotSupportedException
-        // for value-typed states until multi-aggregate / DCB projections land.
-        if (typeof(TState).IsValueType)
-        {
-            throw new NotSupportedException(
-                $"RunProjectionAsync requires a reference-typed aggregate state on Polecat. " +
-                $"'{typeof(TState).FullName}' is a value type — multi-aggregate / value-state projections are not yet supported.");
-        }
-
-        // Forward to the strong-typed implementation through reflection so we
-        // can satisfy the aggregator's class constraint without changing the
-        // public contract.
-        var generic = typeof(DocumentStore)
-            .GetMethod(nameof(RunProjectionForReferenceTypeAsync), BindingFlags.NonPublic | BindingFlags.Instance)!
-            .MakeGenericMethod(typeof(TState));
-
-        var resultTask = (Task)generic.Invoke(this, new object?[] { events, startingState, ct })!;
-        await resultTask.ConfigureAwait(false);
-        return (ProjectionTimeline<TState>)resultTask.GetType().GetProperty("Result")!.GetValue(resultTask)!;
-    }
-
-    [RequiresUnreferencedCode("Routes projection events through the aggregator graph + ToDomainEvent reflective deserialization. TState's public members must survive trimming for the aggregator to access them.")]
-    [RequiresDynamicCode("ToDomainEvent routes through ISerializer.FromJson which uses STJ runtime code generation.")]
-    private async Task<ProjectionTimeline<TState>> RunProjectionForReferenceTypeAsync<TState>(
-        IReadOnlyList<EventRecord> events, TState? startingState, CancellationToken ct)
-        where TState : class, new()
-    {
-        var aggregator = Options.Projections.AggregatorFor<TState>();
-
+        var stepThrough = StepThrough();
         await using var session = QuerySession();
-
-        var current = startingState;
-        var steps = new List<ProjectionStepResult<TState>>(events.Count);
-
-        foreach (var record in events)
-        {
-            var domainEvent = ToDomainEvent(record);
-            var before = current;
-            var sw = Stopwatch.StartNew();
-            TState? after = current;
-            Exception? error = null;
-            try
-            {
-                if (domainEvent != null)
-                {
-                    var built = await aggregator.BuildAsync(
-                        new List<IEvent> { domainEvent }, session, current, ct).ConfigureAwait(false);
-                    after = built ?? current;
-                }
-            }
-            catch (Exception ex)
-            {
-                error = ex;
-                after = current;
-            }
-            sw.Stop();
-
-            steps.Add(new ProjectionStepResult<TState>(record, before!, after!, sw.Elapsed, error!));
-            current = after;
-        }
-
-        return new ProjectionTimeline<TState>(steps, current!);
+        return await stepThrough.RunProjectionAsync(projectionName, identity, events, startingState, session, ct)
+            .ConfigureAwait(false);
     }
 
-    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
-        Justification = "MakeGenericMethod over the projection's published state type; required to dispatch into the strong-typed RunProjectionAsync<TState>. Diagnostic IEventStore surface — see RunProjectionAsync above for the rationale.")]
-    [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
-        Justification = "STJ JsonSerializer.Deserialize / SerializeToElement over the projection's published state type. AOT-publishing diagnostic-only consumers should supply an STJ source-generator context.")]
-    [UnconditionalSuppressMessage("Trimming", "IL2075:DynamicallyAccessedMembers",
-        Justification = "Reads Task<T> + ProjectionTimeline<T> properties via reflection. The closed generic types' Result / Steps / FinalState properties are intrinsically preserved by the framework / by this class' own usage.")]
     async Task<ProjectionTimelineRaw> IEventStore.RunProjectionByNameAsync(
         string projectionName, object identity, IReadOnlyList<EventRecord> events,
         JsonElement? startingState, CancellationToken ct)
     {
-        ArgumentException.ThrowIfNullOrEmpty(projectionName);
-        ArgumentNullException.ThrowIfNull(events);
-
-        if (!Options.Projections.TryFindProjection(projectionName, out var source))
-        {
-            throw new ArgumentException(
-                $"Unknown projection '{projectionName}'. Register the projection on StoreOptions.Projections before replaying.",
-                nameof(projectionName));
-        }
-
-        var stateType = source.PublishedTypes().FirstOrDefault()
-            ?? throw new NotSupportedException(
-                $"Projection '{projectionName}' does not publish a strong-typed state — RunProjectionByNameAsync only supports single-aggregate projections on Polecat.");
-
-        var generic = typeof(IEventStore).GetMethod(nameof(IEventStore.RunProjectionAsync))!
-            .MakeGenericMethod(stateType);
-
-        var startingTyped = startingState.HasValue
-            ? JsonSerializer.Deserialize(startingState.Value.GetRawText(), stateType)
-            : null;
-
-        var task = (Task)generic.Invoke(this, new[] { projectionName, identity, events, startingTyped, (object)ct })!;
-        await task.ConfigureAwait(false);
-
-        var typedTimeline = task.GetType().GetProperty("Result")!.GetValue(task)!;
-        var typedSteps = (System.Collections.IEnumerable)typedTimeline.GetType().GetProperty("Steps")!.GetValue(typedTimeline)!;
-        var typedFinal = typedTimeline.GetType().GetProperty("FinalState")!.GetValue(typedTimeline);
-
-        var rawSteps = new List<ProjectionStepResultRaw>(events.Count);
-        foreach (var step in typedSteps)
-        {
-            var stepType = step.GetType();
-            var record = (EventRecord)stepType.GetProperty("Event")!.GetValue(step)!;
-            var beforeVal = stepType.GetProperty("Before")!.GetValue(step);
-            var afterVal = stepType.GetProperty("After")!.GetValue(step);
-            var elapsed = (TimeSpan)stepType.GetProperty("Elapsed")!.GetValue(step)!;
-            var error = (Exception?)stepType.GetProperty("Error")!.GetValue(step);
-
-            rawSteps.Add(new ProjectionStepResultRaw(
-                record,
-                beforeVal is null ? null : JsonSerializer.SerializeToElement(beforeVal, stateType),
-                afterVal is null ? null : JsonSerializer.SerializeToElement(afterVal, stateType),
-                elapsed,
-                error?.Message!));
-        }
-
-        var finalJson = typedFinal is null
-            ? (JsonElement?)null
-            : JsonSerializer.SerializeToElement(typedFinal, stateType);
-
-        return new ProjectionTimelineRaw(rawSteps, finalJson);
+        var stepThrough = StepThrough();
+        await using var session = QuerySession();
+        return await stepThrough.RunProjectionByNameAsync(projectionName, identity, events, startingState, session, ct)
+            .ConfigureAwait(false);
     }
 
     /// <summary>
     ///     #346: MultiStreamProjection stepthrough parity. Replays a fixed event list through a
     ///     registered aggregation projection's <em>real</em> execution path — slice → group →
     ///     <c>EnrichEventsAsync</c> → evolve — fanning the events out across every aggregate identity
-    ///     the projection touches and returning one timeline per identity. Single-stream projections
-    ///     produce exactly one. Stateless; nothing is persisted.
-    ///
-    ///     The fold itself lives in JasperFx.Events on <c>JasperFxAggregationProjectionBase</c> (which
-    ///     every Polecat single/multi-stream projection derives from) and is reached through
-    ///     <see cref="ISteppableAggregation{TQuerySession}" />, so this is a thin adapter: resolve the
-    ///     projection by name, convert the wire events, open a read-only query session, and delegate.
+    ///     the projection touches and returning one timeline per identity. Stateless; nothing is persisted.
     /// </summary>
-    [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
-        Justification = "Calls ToDomainEvent (annotated [RequiresUnreferencedCode]) and STJ over the store serializer output. The explicit interface impl can't propagate the requirement because IEventStore.RunMultiStreamProjectionAsync doesn't declare it (tracked with the sibling replay methods above).")]
-    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
-        Justification = "ToDomainEvent + JsonSerializer.Deserialize<JsonElement> use STJ runtime code generation. Diagnostic IEventStore surface — same rationale as RunProjectionAsync / RunProjectionByNameAsync above.")]
     async Task<MultiAggregateProjectionResult> IEventStore.RunMultiStreamProjectionAsync(
         string projectionName, IReadOnlyList<EventRecord> events, CancellationToken ct)
     {
-        ArgumentException.ThrowIfNullOrEmpty(projectionName);
-        ArgumentNullException.ThrowIfNull(events);
-
-        if (!Options.Projections.TryFindProjection(projectionName, out var source))
-        {
-            throw new ArgumentException(
-                $"Unknown projection '{projectionName}'. Register the projection on StoreOptions.Projections before replaying.",
-                nameof(projectionName));
-        }
-
-        // Only aggregation (single- or multi-stream) projections carry the instrumented fold. The
-        // projection source returned by TryFindProjection is the JasperFxAggregationProjectionBase
-        // instance itself, so for an aggregation projection it casts straight to ISteppableAggregation.
-        if (source is not ISteppableAggregation<IQuerySession> steppable)
-        {
-            throw new NotSupportedException(
-                $"Projection '{projectionName}' is not an aggregation (single- or multi-stream) projection and cannot be stepped through.");
-        }
-
-        // Convert wire events to domain events, keeping a reference-keyed map back to each originating
-        // EventRecord for the fold's toRecord delegate (the fold hands back the same IEvent instances).
-        // Unregistered event types are skipped, matching the single-aggregate replay path above.
-        var recordByEvent = new Dictionary<IEvent, EventRecord>(ReferenceEqualityComparer.Instance);
-        var domainEvents = new List<IEvent>(events.Count);
-        foreach (var record in events)
-        {
-            var domainEvent = ToDomainEvent(record);
-            if (domainEvent is null) continue;
-            recordByEvent[domainEvent] = record;
-            domainEvents.Add(domainEvent);
-        }
-
+        var stepThrough = StepThrough();
         await using var session = QuerySession();
-
-        // serialize: use the store's own serializer so captured snapshots match what the store would
-        // persist (per the ISteppableAggregation contract), then parse to a JsonElement.
-        return await steppable.BuildTimelinesAsync(
-            domainEvents,
-            session,
-            state => state is null ? null : JsonSerializer.Deserialize<JsonElement>(Options.Serializer.ToJson(state)),
-            e => recordByEvent[e],
-            observer: null,
-            ct).ConfigureAwait(false);
+        return await stepThrough.RunMultiStreamProjectionAsync(projectionName, events, session, ct)
+            .ConfigureAwait(false);
     }
 
     /// <summary>

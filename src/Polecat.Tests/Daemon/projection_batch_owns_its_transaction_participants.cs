@@ -312,7 +312,7 @@ public class projection_batch_owns_its_transaction_participants : OneOffConfigur
     [Fact]
     public async Task disposing_a_session_leaves_its_participant_to_the_batch()
     {
-        var batch = new PolecatProjectionBatch(theStore, theStore.Options.EventGraph, theStore.Database);
+        var batch = new PolecatProjectionBatch(theStore, theStore.Options.EventGraph, theStore.Database, ShardExecutionMode.Continuous);
         var participant = new RecordingParticipant();
 
         await using (var session = batch.SessionForTenant(theStore.Options.Tenancy!.DefaultTenantId))
@@ -334,7 +334,7 @@ public class projection_batch_owns_its_transaction_participants : OneOffConfigur
     [Fact]
     public async Task disposing_the_batch_twice_disposes_a_participant_once()
     {
-        var batch = new PolecatProjectionBatch(theStore, theStore.Options.EventGraph, theStore.Database);
+        var batch = new PolecatProjectionBatch(theStore, theStore.Options.EventGraph, theStore.Database, ShardExecutionMode.Continuous);
         var participant = new RecordingParticipant();
 
         batch.SessionForTenant(theStore.Options.Tenancy!.DefaultTenantId).AddTransactionParticipant(participant);
@@ -348,7 +348,7 @@ public class projection_batch_owns_its_transaction_participants : OneOffConfigur
     [Fact]
     public async Task a_participant_that_fails_to_dispose_does_not_strand_the_others()
     {
-        var batch = new PolecatProjectionBatch(theStore, theStore.Options.EventGraph, theStore.Database);
+        var batch = new PolecatProjectionBatch(theStore, theStore.Options.EventGraph, theStore.Database, ShardExecutionMode.Continuous);
         var first = new RecordingParticipant();
         var last = new RecordingParticipant();
 

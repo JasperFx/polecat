@@ -71,6 +71,18 @@ public class StoreOptions
     }
 
     /// <summary>
+    ///     Take the connection string from an existing <see cref="Microsoft.Data.SqlClient.SqlConnection" />,
+    ///     such as the one Aspire's <c>AddSqlServerClient</c> registers. The connection is only read, never
+    ///     opened, and is not disposed here. Polecat opens its own pooled connections from the string, so
+    ///     the pool and the credentials are the same ones the connection would have used.
+    /// </summary>
+    public void Connection(Microsoft.Data.SqlClient.SqlConnection connection)
+    {
+        ArgumentNullException.ThrowIfNull(connection);
+        ConnectionString = connection.ConnectionString;
+    }
+
+    /// <summary>
     ///     The default database schema name. Defaults to "dbo".
     /// </summary>
     public string DatabaseSchemaName
@@ -479,7 +491,7 @@ public class StoreOptions
     ///     documents. Configuring a database-per-tenant tenancy —
     ///     <see cref="MultiTenantedDatabases" /> or <see cref="MultiTenantedMasterTable" /> — turns
     ///     this off automatically, so a session or daemon opened with no tenant fails loudly with a
-    ///     <see cref="Exceptions.DefaultTenantUsageDisabledException" /> rather than silently
+    ///     <see cref="JasperFx.Events.DefaultTenantUsageDisabledException" /> rather than silently
     ///     landing on whichever database happens to back
     ///     <see cref="ConnectionString" />. A default tenant is never required to configure
     ///     database-per-tenant multi-tenancy.

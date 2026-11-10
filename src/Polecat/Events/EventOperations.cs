@@ -33,11 +33,16 @@ namespace Polecat.Events;
     Justification = "Class-level: FindNaturalKeyDefinition<T> reflects PublicProperties on aggregate type T. T flows in from the natural-key-aware Append API on the caller side and is preserved by projection registration.")]
 [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
     Justification = "Class-level: routes through JasperFx.Events generic factories and serializer paths that require runtime code generation. AOT consumers register concrete event types and supply a source-generator-backed ISerializer impl.")]
-internal class EventOperations : QueryEventStore, IEventOperations
+internal class EventOperations : QueryEventStore, IEventOperations, IEventOperationsHost
 {
     private readonly DocumentSessionBase _sessionBase;
     private readonly WorkTracker _workTracker;
     private readonly string _tenantId;
+
+    // The seams PolecatStreamCompacting (jasperfx#1048) queues its work through.
+    internal DocumentSessionBase Session => _sessionBase;
+    internal EventGraph Graph => _events;
+    internal string TenantId => _tenantId;
 
     public EventOperations(DocumentSessionBase session, EventGraph events, StoreOptions options, WorkTracker workTracker, string tenantId)
         : base(session, events, options, tenantId)
@@ -50,11 +55,18 @@ internal class EventOperations : QueryEventStore, IEventOperations
     protected override IQuerySession DocumentReads
         => _tenantId == _sessionBase.TenantId ? _sessionBase : _sessionBase.ForTenant(_tenantId);
 
-    public StreamAction Append(Guid stream, params object[] events)
-    {
-        if (stream == Guid.Empty)
-            throw new ArgumentOutOfRangeException(nameof(stream), "Stream id cannot be empty.");
+    // jasperfx#1047 (polecat#806): StartStream, Append, AppendOptimistic, AppendExclusive, FetchForWriting,
+    // FetchForExclusiveWriting, WriteToAggregate and WriteExclusivelyToAggregate are EventOperationsBase's,
+    // reached through IEventOperationsHost. What follows are the seams it calls, each stamping the tenant of
+    // THIS instance, which under ForTenant is not the session's.
+    private EventOperationsBase? _writes;
 
+    EventOperationsBase IEventOperationsHost.Operations => _writes ??= new SharedWrites(this);
+
+    private EventOperationsBase Writes => ((IEventOperationsHost)this).Operations;
+
+    private StreamAction appendCore(Guid stream, object[] events)
+    {
         var wrapped = WrapEvents(events);
         foreach (var e in wrapped) e.StreamId = stream;
 
@@ -70,11 +82,8 @@ internal class EventOperations : QueryEventStore, IEventOperations
         return action;
     }
 
-    public StreamAction Append(string stream, params object[] events)
+    private StreamAction appendCore(string stream, object[] events)
     {
-        if (string.IsNullOrEmpty(stream))
-            throw new ArgumentOutOfRangeException(nameof(stream), "Stream key cannot be null or empty.");
-
         var wrapped = WrapEvents(events);
         foreach (var e in wrapped) e.StreamKey = stream;
 
@@ -90,167 +99,79 @@ internal class EventOperations : QueryEventStore, IEventOperations
         return action;
     }
 
-    public StreamAction Append(Guid stream, long expectedVersion, params object[] events)
+    private StreamAction startStreamCore(Type? aggregateType, Guid id, object[] events)
     {
-        var action = Append(stream, events);
-        action.ExpectedVersionOnServer = expectedVersion - action.Events.Count;
-        if (action.ExpectedVersionOnServer < 0)
-            throw new ArgumentOutOfRangeException(nameof(expectedVersion),
-                "Expected version cannot be less than the number of events being appended.");
-        return action;
-    }
-
-    public StreamAction Append(string stream, long expectedVersion, params object[] events)
-    {
-        var action = Append(stream, events);
-        action.ExpectedVersionOnServer = expectedVersion - action.Events.Count;
-        if (action.ExpectedVersionOnServer < 0)
-            throw new ArgumentOutOfRangeException(nameof(expectedVersion),
-                "Expected version cannot be less than the number of events being appended.");
-        return action;
-    }
-
-    public StreamAction StartStream(Guid id, params object[] events)
-    {
-        if (id == Guid.Empty)
-            throw new ArgumentOutOfRangeException(nameof(id), "Stream id cannot be empty.");
-
         var wrapped = WrapEvents(events);
         foreach (var e in wrapped) e.StreamId = id;
 
         var action = new StreamAction(id, StreamActionType.Start);
         action.AddEvents(wrapped);
         action.TenantId = _tenantId;
+        action.AggregateType = aggregateType;
         _workTracker.AddStream(action);
         return action;
     }
 
-    public StreamAction StartStream(string streamKey, params object[] events)
+    private StreamAction startStreamCore(Type? aggregateType, string streamKey, object[] events)
     {
-        if (string.IsNullOrEmpty(streamKey))
-            throw new ArgumentOutOfRangeException(nameof(streamKey), "Stream key cannot be null or empty.");
-
         var wrapped = WrapEvents(events);
         foreach (var e in wrapped) e.StreamKey = streamKey;
 
         var action = new StreamAction(streamKey, StreamActionType.Start);
         action.AddEvents(wrapped);
         action.TenantId = _tenantId;
+        action.AggregateType = aggregateType;
         _workTracker.AddStream(action);
         return action;
     }
 
-    public StreamAction StartStream<TAggregate>(Guid id, params object[] events) where TAggregate : class
+    /// <summary>
+    ///     The version AppendOptimistic and AppendExclusive expect. The exclusive read opens the session's
+    ///     transaction first and holds the stream row's lock until it commits.
+    /// </summary>
+    private async Task<long> readStreamVersionCore(object stream, bool exclusive, CancellationToken token)
     {
-        var action = StartStream(id, events);
-        action.AggregateType = typeof(TAggregate);
-        return action;
+        if (!exclusive)
+        {
+            return await ReadVersionFromExistingStream(stream, false, token).ConfigureAwait(false);
+        }
+
+        try
+        {
+            await _sessionBase.BeginTransactionAsync(token).ConfigureAwait(false);
+            return await ReadVersionFromExistingStream(stream, true, token).ConfigureAwait(false);
+        }
+        catch (Exception e) when (IsLockFailure(e))
+        {
+            throw new Exceptions.StreamLockedException(stream, FindLockFailure(e));
+        }
     }
 
-    public StreamAction StartStream<TAggregate>(string streamKey, params object[] events) where TAggregate : class
+    private sealed class SharedWrites(EventOperations operations) : EventOperationsBase
     {
-        var action = StartStream(streamKey, events);
-        action.AggregateType = typeof(TAggregate);
-        return action;
-    }
+        protected override StreamIdentity StreamIdentity => operations._events.StreamIdentity;
 
-    public StreamAction StartStream(params object[] events)
-    {
-        return StartStream(Guid.NewGuid(), events);
-    }
+        protected override StreamAction StartStreamCore(Type? aggregateType, Guid id, object[] events)
+            => operations.startStreamCore(aggregateType, id, events);
 
-    public StreamAction StartStream<TAggregate>(params object[] events) where TAggregate : class
-    {
-        return StartStream<TAggregate>(Guid.NewGuid(), events);
-    }
+        protected override StreamAction StartStreamCore(Type? aggregateType, string streamKey, object[] events)
+            => operations.startStreamCore(aggregateType, streamKey, events);
 
-    // --- IEnumerable<object> + Type-parameter overloads (issue #88) -------
-    // Thin delegators; concrete behavior lives in the params object[] impls
-    // above. These exist so the JasperFx.Events.IEventOperations contract
-    // can be satisfied without forcing callers to materialize arrays.
+        protected override StreamAction AppendCore(Guid stream, object[] events)
+            => operations.appendCore(stream, events);
 
-    public StreamAction Append(Guid stream, IEnumerable<object> events)
-        => Append(stream, events.ToArray());
+        protected override StreamAction AppendCore(string stream, object[] events)
+            => operations.appendCore(stream, events);
 
-    public StreamAction Append(string stream, IEnumerable<object> events)
-        => Append(stream, events.ToArray());
+        protected override Task<long> ReadStreamVersionCore<TId>(TId stream, bool exclusive, CancellationToken token)
+            => operations.readStreamVersionCore(stream, exclusive, token);
 
-    public StreamAction Append(Guid stream, long expectedVersion, IEnumerable<object> events)
-        => Append(stream, expectedVersion, events.ToArray());
+        protected override Task<IEventStream<T>> FetchForWritingCore<T, TId>(TId id, long? expectedVersion,
+            bool exclusive, CancellationToken cancellation)
+            => operations.FetchForWritingInternal<T>(id, exclusive, expectedVersion, cancellation);
 
-    public StreamAction Append(string stream, long expectedVersion, IEnumerable<object> events)
-        => Append(stream, expectedVersion, events.ToArray());
-
-    public StreamAction StartStream(Guid id, IEnumerable<object> events)
-        => StartStream(id, events.ToArray());
-
-    public StreamAction StartStream(string streamKey, IEnumerable<object> events)
-        => StartStream(streamKey, events.ToArray());
-
-    public StreamAction StartStream<TAggregate>(Guid id, IEnumerable<object> events) where TAggregate : class
-        => StartStream<TAggregate>(id, events.ToArray());
-
-    public StreamAction StartStream<TAggregate>(string streamKey, IEnumerable<object> events) where TAggregate : class
-        => StartStream<TAggregate>(streamKey, events.ToArray());
-
-    public StreamAction StartStream(IEnumerable<object> events)
-        => StartStream(events.ToArray());
-
-    public StreamAction StartStream<TAggregate>(IEnumerable<object> events) where TAggregate : class
-        => StartStream<TAggregate>(events.ToArray());
-
-    public StreamAction StartStream(Type aggregateType, Guid id, params object[] events)
-    {
-        var action = StartStream(id, events);
-        action.AggregateType = aggregateType;
-        return action;
-    }
-
-    public StreamAction StartStream(Type aggregateType, Guid id, IEnumerable<object> events)
-        => StartStream(aggregateType, id, events.ToArray());
-
-    public StreamAction StartStream(Type aggregateType, string streamKey, params object[] events)
-    {
-        var action = StartStream(streamKey, events);
-        action.AggregateType = aggregateType;
-        return action;
-    }
-
-    public StreamAction StartStream(Type aggregateType, string streamKey, IEnumerable<object> events)
-        => StartStream(aggregateType, streamKey, events.ToArray());
-
-    public StreamAction StartStream(Type aggregateType, params object[] events)
-    {
-        var action = StartStream(events);
-        action.AggregateType = aggregateType;
-        return action;
-    }
-
-    public StreamAction StartStream(Type aggregateType, IEnumerable<object> events)
-        => StartStream(aggregateType, events.ToArray());
-
-    public async Task<IEventStream<T>> FetchForWriting<T>(Guid id, CancellationToken cancellation = default)
-        where T : class
-    {
-        return await FetchForWritingInternal<T>(id, false, null, cancellation).ConfigureAwait(false);
-    }
-
-    public async Task<IEventStream<T>> FetchForWriting<T>(string key, CancellationToken cancellation = default)
-        where T : class
-    {
-        return await FetchForWritingInternal<T>(key, false, null, cancellation).ConfigureAwait(false);
-    }
-
-    public async Task<IEventStream<T>> FetchForWriting<T>(Guid id, long expectedVersion, CancellationToken cancellation = default)
-        where T : class
-    {
-        return await FetchForWritingInternal<T>(id, false, expectedVersion, cancellation).ConfigureAwait(false);
-    }
-
-    public async Task<IEventStream<T>> FetchForWriting<T>(string key, long expectedVersion, CancellationToken cancellation = default)
-        where T : class
-    {
-        return await FetchForWritingInternal<T>(key, false, expectedVersion, cancellation).ConfigureAwait(false);
+        protected override Task SaveChangesCore(CancellationToken cancellation)
+            => operations._sessionBase.SaveChangesAsync(cancellation);
     }
 
     /// <summary>
@@ -455,18 +376,6 @@ internal class EventOperations : QueryEventStore, IEventOperations
         }
     }
 
-    public async Task<IEventStream<T>> FetchForExclusiveWriting<T>(Guid id, CancellationToken cancellation = default)
-        where T : class
-    {
-        return await FetchForWritingInternal<T>(id, true, null, cancellation).ConfigureAwait(false);
-    }
-
-    public async Task<IEventStream<T>> FetchForExclusiveWriting<T>(string key, CancellationToken cancellation = default)
-        where T : class
-    {
-        return await FetchForWritingInternal<T>(key, true, null, cancellation).ConfigureAwait(false);
-    }
-
     public async ValueTask<T?> ProjectLatest<T>(Guid id, CancellationToken cancellation = default)
         where T : class
     {
@@ -624,7 +533,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
         }
         catch (Exception e) when (IsLockFailure(e))
         {
-            throw new Exceptions.StreamLockedException(streamId, FindLockFailure(e));
+            throw new JasperFx.Events.StreamLockedException(streamId, FindLockFailure(e));
         }
     }
 
@@ -642,7 +551,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
         }
         catch (Exception e) when (IsLockFailure(e))
         {
-            throw new Exceptions.StreamLockedException(streamKey, FindLockFailure(e));
+            throw new JasperFx.Events.StreamLockedException(streamKey, FindLockFailure(e));
         }
     }
 
@@ -653,7 +562,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
     {
         if (!await _sessionBase.CouldHaveStreamAsync(streamId, token).ConfigureAwait(false))
         {
-            throw new Exceptions.NonExistentStreamException(streamId);
+            throw new JasperFx.Events.NonExistentStreamException(streamId);
         }
 
         await using var cmd = new SqlCommand();
@@ -674,12 +583,12 @@ internal class EventOperations : QueryEventStore, IEventOperations
         }
         catch (Exception e) when (IsLockFailure(e))
         {
-            throw new Exceptions.StreamLockedException(streamId, FindLockFailure(e));
+            throw new JasperFx.Events.StreamLockedException(streamId, FindLockFailure(e));
         }
 
         if (version == 0)
         {
-            throw new Exceptions.NonExistentStreamException(streamId);
+            throw new JasperFx.Events.NonExistentStreamException(streamId);
         }
 
         return version;
@@ -864,7 +773,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
             // reinterpreted; an unlocked read cannot be a lock failure.
             catch (Exception e) when (forExclusive && IsLockFailure(e))
             {
-                throw new Exceptions.StreamLockedException(streamId, FindLockFailure(e));
+                throw new JasperFx.Events.StreamLockedException(streamId, FindLockFailure(e));
             }
 
             if (result != null && result != DBNull.Value)
@@ -1155,8 +1064,8 @@ internal class EventOperations : QueryEventStore, IEventOperations
     {
         switch (tryUnwrapStreamIdentity<T, TId>(id))
         {
-            case Guid streamId: return await FetchForWriting<T>(streamId, cancellation).ConfigureAwait(false);
-            case string streamKey: return await FetchForWriting<T>(streamKey, cancellation).ConfigureAwait(false);
+            case Guid streamId: return await Writes.FetchForWriting<T>(streamId, cancellation).ConfigureAwait(false);
+            case string streamKey: return await Writes.FetchForWriting<T>(streamKey, cancellation).ConfigureAwait(false);
         }
 
         var naturalKey = FindNaturalKeyDefinition<T>();
@@ -1169,8 +1078,8 @@ internal class EventOperations : QueryEventStore, IEventOperations
     {
         switch (tryUnwrapStreamIdentity<T, TId>(id))
         {
-            case Guid streamId: return await FetchForExclusiveWriting<T>(streamId, cancellation).ConfigureAwait(false);
-            case string streamKey: return await FetchForExclusiveWriting<T>(streamKey, cancellation).ConfigureAwait(false);
+            case Guid streamId: return await Writes.FetchForExclusiveWriting<T>(streamId, cancellation).ConfigureAwait(false);
+            case string streamKey: return await Writes.FetchForExclusiveWriting<T>(streamKey, cancellation).ConfigureAwait(false);
         }
 
         // FetchForWritingByNaturalKey already uses UPDLOCK, HOLDLOCK for exclusive locking
@@ -1279,7 +1188,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
 
         var request = new StreamCompactingRequest<T>(streamId);
         configure?.Invoke(request);
-        await request.ExecuteAsync(_sessionBase, this, _tenantId).ConfigureAwait(false);
+        await PolecatStreamCompacting.Instance.ExecuteAsync(request, this).ConfigureAwait(false);
     }
 
     public async Task CompactStreamAsync<T>(string streamKey, Action<StreamCompactingRequest<T>>? configure = null)
@@ -1292,7 +1201,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
 
         var request = new StreamCompactingRequest<T>(streamKey);
         configure?.Invoke(request);
-        await request.ExecuteAsync(_sessionBase, this, _tenantId).ConfigureAwait(false);
+        await PolecatStreamCompacting.Instance.ExecuteAsync(request, this).ConfigureAwait(false);
     }
 
     public IEvent BuildEvent(object data) => _events.BuildEvent(data);
@@ -1442,7 +1351,9 @@ internal class EventOperations : QueryEventStore, IEventOperations
             DcbTagVersionCapture.BuildEntries(targets, capturedByKey, _tenantId, query, lastSeenSequence),
             events.Count);
 
-        return new Polecat.Events.Dcb.EventBoundary<T>(_sessionBase, _events, _tenantId, aggregate, events, lastSeenSequence);
+        // jasperfx#1044: the shared boundary appends through THESE operations, which stamp the tenant they
+        // were opened for, so a boundary fetched through ForTenant appends under that tenant.
+        return new JasperFx.Events.Tags.EventBoundary<T>(this, _events, _events.TagTypes, aggregate, events);
     }
 
     public void AssignTagWhere(Expression<Func<IEvent, bool>> expression, object tag)

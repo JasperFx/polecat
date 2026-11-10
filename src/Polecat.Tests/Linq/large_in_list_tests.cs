@@ -1,3 +1,4 @@
+using JasperFx;
 using Microsoft.Data.SqlClient;
 using Polecat.Linq;
 using Polecat.Linq.Members;
