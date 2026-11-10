@@ -30,11 +30,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Install .NET 9.0.x
-        uses: actions/setup-dotnet@v5
-        with:
-          dotnet-version: 9.0.x
-
       - name: Install .NET 10.0.x
         uses: actions/setup-dotnet@v5
         with:

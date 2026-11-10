@@ -41,7 +41,7 @@ using static Nuke.Common.Tools.DotNet.DotNetTasks;
 //     each run downloads the last green main run's, balances on it, folds its own results in and
 //     uploads it again (test-template.yml). Bobcat 1.0 keys it by display name (bobcat#730).
 //
-// The workflow runs `./build.sh CIPolecat --framework net9.0 --storage default` (or edge) and owns
+// The workflow runs `./build.sh CIPolecat --framework net10.0 --storage default` (or edge) and owns
 // nothing but the services: SQL Server comes from docker compose (docker-compose.yml for default,
 // the standalone docker-compose.edge.yml for edge).
 partial class Build

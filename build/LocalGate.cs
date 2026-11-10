@@ -21,7 +21,7 @@ using static Nuke.Common.Tools.DotNet.DotNetTasks;
 // in docker-compose.yml.
 //
 //   ./build.sh LocalGate                        newest framework (net10.0), default storage
-//   ./build.sh LocalGate --framework all        net10.0 and net9.0
+//   ./build.sh LocalGate --framework all        net10.0 and net11.0
 //   ./build.sh LocalGate --aot                  plus aot-smoke and aot-runtime-smoke afterwards
 //   ./build.sh LocalGate --storage edge         against SQL Server 2022 (docker-compose.edge.yml)
 //
@@ -73,7 +73,7 @@ partial class Build
             var clock = Stopwatch.StartNew();
 
             // The test projects declare no framework of their own: Directory.Build.props sets
-            // net9.0;net10.0 for the whole repository, which the gate's project-file reader cannot see.
+            // net10.0;net11.0 for the whole repository, which the gate's project-file reader cannot see.
             var frameworks = TargetFrameworks.Declared(RootDirectory / "Directory.Build.props").ToArray();
             if (frameworks.Length == 0)
             {

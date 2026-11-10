@@ -43,14 +43,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      # 9.0.x runs the test hosts (bin/Release/net9.0); 10.0.x builds and runs the Nuke project,
-      # which targets net10.0.
+      # 10.0.x builds and runs the Nuke project and the net10.0 test hosts (bin/Release/net10.0).
+      # net11.0 is built locally against the 11.0 SDK preview until it ships.
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: |
-            9.0.x
-            10.0.x
+          dotnet-version: 10.0.x
 
       # `edge` is SQL Server 2022 from the standalone docker-compose.edge.yml (container
       # polecat-sqlserver-edge, port 11435); `--storage edge` below points the target at it.
@@ -105,7 +103,7 @@ jobs:
           if [ "${{ inputs.TEST_WORKERS }}" != "0" ]; then WORKERS="--test-workers ${{ inputs.TEST_WORKERS }}"; fi
           SHARD=""
           if [ "${{ inputs.SHARD_COUNT }}" != "1" ]; then SHARD="--test-shard ${{ inputs.SHARD }} --test-shard-count ${{ inputs.SHARD_COUNT }}"; fi
-          ./build.sh ${{ inputs.NUKE_TARGET }} --framework net9.0 --storage ${{ inputs.STORAGE_TYPE }} $WORKERS $SHARD
+          ./build.sh ${{ inputs.NUKE_TARGET }} --framework net10.0 --storage ${{ inputs.STORAGE_TYPE }} $WORKERS $SHARD
 
       # Every run's ledger, red or green, PR or main — the fetched history plus this run. Only a green
       # main run's is ever read back, by the next run of this workflow.

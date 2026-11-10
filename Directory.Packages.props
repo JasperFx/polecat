@@ -884,14 +884,14 @@
         <!-- JasperFx 2.102.0 (from 2.101.0): jasperfx#1150, IEventDatabase.FetchFirstEventTimestampsAfterAsync, the
              timestamp of the first event after a sequence so CritterWatch can report projection lag in time.
              PendingEventAgeCompliance is enrolled in Compliance/polecat_event_store_compliance_wave22.cs. -->
-        <PackageVersion Include="JasperFx" Version="2.102.0" />
-        <PackageVersion Include="JasperFx.Events" Version="2.102.0" />
+        <PackageVersion Include="JasperFx" Version="3.0.0" />
+        <PackageVersion Include="JasperFx.Events" Version="3.0.0" />
         <!--
              The shared cross-store event sourcing compliance suites. Source-only package: the
              suites compile inside Polecat.Tests so JasperFx's aggregate source generator binds
              Polecat's own session types.
         -->
-        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="2.102.0" />
+        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="3.0.0" />
         <!-- Pin the sibling JasperFx packages for parity with Marten 9's matrix
              even though Polecat doesn't currently reference them directly —
              keeps the lockstep matrix coherent when transitive resolution
@@ -899,8 +899,8 @@
              JasperFx.RuntimeCompiler is deliberately NOT pinned: nothing in Polecat references it,
              directly or transitively (projection dispatch is source-generated, and Polecat.AotSmoke
              proves a consumer builds without it), so a pin only invited needless bumps. -->
-        <PackageVersion Include="JasperFx.SourceGenerator" Version="2.102.0" />
-        <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.0.0" />
+        <PackageVersion Include="JasperFx.SourceGenerator" Version="3.0.0" />
+        <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.1.1" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
         <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.0" />
@@ -932,8 +932,8 @@
           1.9.1 and 18.0.6 are the last releases on MTP 1.x. Move these forward together when
           xunit.v3 ships an mtp-v2 build, and not before.
         -->
-        <PackageVersion Include="Microsoft.Testing.Extensions.CodeCoverage" Version="18.0.6" />
-        <PackageVersion Include="Microsoft.Testing.Extensions.TrxReport" Version="1.9.1" />
+        <PackageVersion Include="Microsoft.Testing.Extensions.CodeCoverage" Version="18.12.0" />
+        <PackageVersion Include="Microsoft.Testing.Extensions.TrxReport" Version="2.5.1" />
         <PackageVersion Include="NSubstitute" Version="5.3.0" />
         <PackageVersion Include="Shouldly" Version="4.3.0" />
         <!-- xUnit v3. The test projects reference xunit.v3; Polecat.TestUtils, which is a plain
@@ -945,8 +945,8 @@
              xunit.analyzers) and are switched off for now — see the RemoveXunitAnalyzers target in
              Directory.Build.targets, which also records why this cannot be expressed as an
              ExcludeAssets on any PackageReference here. -->
-        <PackageVersion Include="xunit.v3" Version="3.2.2" />
-        <PackageVersion Include="xunit.v3.extensibility.core" Version="3.2.2" />
+        <PackageVersion Include="xunit.v3" Version="4.0.2" />
+        <PackageVersion Include="xunit.v3.extensibility.core" Version="4.0.2" />
         <!-- Weasel 9.8.0/9.9.0 introduce Weasel.Storage: the dialect-neutral closed-shape
              storage contracts extracted from Marten (marten#4821/#4830, weasel#329/#331) —
              IStorageSession / IStorageDatabase / IStorageSerializer / IDocumentStorage /
@@ -1474,9 +1474,9 @@
                  were missing in a native Polecat app). The generator is a private build-time reference
                  and does not flow to Polecat.
                * Otherwise the JasperFx 2.101.0 roll-forward and docs. -->
-        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="9.50.0" />
-        <PackageVersion Include="Weasel.SqlServer" Version="9.50.0" />
-        <PackageVersion Include="Weasel.Storage" Version="9.50.0" />
+        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="10.0.0-alpha.1" />
+        <PackageVersion Include="Weasel.SqlServer" Version="10.0.0-alpha.1" />
+        <PackageVersion Include="Weasel.Storage" Version="10.0.0-alpha.1" />
 
         <!-- Strongly typed IDs. Both generators are test-only: they prove Polecat's value-type id
              support against the two libraries Marten's ValueTypeTests exercise. StronglyTypedId emits
@@ -1486,7 +1486,7 @@
         <PackageVersion Include="Vogen" Version="7.0.0" />
 
         <!-- Source generators (matched to JasperFx.Events above) -->
-        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="2.102.0" />
+        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="3.0.0" />
 
         <!-- Build automation -->
         <PackageVersion Include="Nuke.Common" Version="9.0.4" />
@@ -1509,16 +1509,29 @@
     <ItemGroup Condition=" '$(TargetFramework)' == 'net10.0' ">
         <PackageVersion Include="System.Security.Cryptography.Pkcs" Version="10.0.13" />
     </ItemGroup>
-    <ItemGroup Condition=" '$(TargetFramework)' == 'net9.0' ">
-        <PackageVersion Include="System.Security.Cryptography.Pkcs" Version="9.0.21" />
+    <ItemGroup Condition=" '$(TargetFramework)' == 'net11.0' ">
+        <PackageVersion Include="System.Security.Cryptography.Pkcs" Version="11.0.0-rc.3.26522.148" />
     </ItemGroup>
 
     <!-- EF Core -->
     <ItemGroup Condition=" '$(TargetFramework)' == 'net10.0' ">
         <PackageVersion Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.0" />
     </ItemGroup>
-    <ItemGroup Condition=" '$(TargetFramework)' == 'net9.0' ">
-        <PackageVersion Include="Microsoft.EntityFrameworkCore.SqlServer" Version="9.0.14" />
+    <!-- net11.0 stays on EF Core 10.x: Weasel 10 binds the EF Core 10 surface on both frameworks
+         (weasel#790; EF Core 10 runs on the .NET 11 runtime), so an EF Core 11 preview breaks it
+         with MissingMethodException (IIndex.get_Properties). -->
+    <ItemGroup Condition=" '$(TargetFramework)' == 'net11.0' ">
+        <PackageVersion Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.0" />
+    </ItemGroup>
+
+    <!-- JasperFx 3.0.0's net11.0 build depends on Microsoft.Extensions.Hosting 11.0.0-rc.3.26522.148,
+         so the Microsoft.Extensions.* packages pinned above must move with it on net11.0 or the
+         restore fails with NU1605 (package downgrade). Same shape as weasel#790. -->
+    <ItemGroup Condition=" '$(TargetFramework)' == 'net11.0' ">
+        <PackageVersion Update="Microsoft.Extensions.DependencyInjection" Version="11.0.0-rc.3.26522.148" />
+        <PackageVersion Update="Microsoft.Extensions.DependencyInjection.Abstractions" Version="11.0.0-rc.3.26522.148" />
+        <PackageVersion Update="Microsoft.Extensions.Hosting" Version="11.0.0-rc.3.26522.148" />
+        <PackageVersion Update="Microsoft.Extensions.Hosting.Abstractions" Version="11.0.0-rc.3.26522.148" />
     </ItemGroup>
 
 </Project>
