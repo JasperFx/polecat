@@ -1147,7 +1147,7 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
         // the database this subscription is running against — routing the default tenant through
         // the tenancy reaches no database at all under database-per-tenant tenancy.
         await using var session = LightweightSession(SessionOptions.ForDatabase(polecatDatabase));
-        batch.RegisterSession(session);
+        batch.AdoptSession(session);
         var listener = await subscription.ProcessEventsAsync(range, range.Agent, session, token).ConfigureAwait(false);
 
         await batch.ExecuteAsync(token).ConfigureAwait(false);

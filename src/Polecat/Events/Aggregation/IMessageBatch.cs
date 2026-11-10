@@ -10,8 +10,8 @@ namespace Polecat.Events.Aggregation;
 /// </summary>
 /// <remarks>
 ///     The batch is enlisted as a post-commit listener on the projection update —
-///     <see cref="BeforeCommitAsync"/> fires inside the projection's SQL
-///     transaction (right before <c>COMMIT</c>), <see cref="AfterCommitAsync"/>
+///     <see cref="JasperFx.Events.Documents.IMessageBatch.BeforeCommitAsync"/> fires inside the projection's SQL
+///     transaction (right before <c>COMMIT</c>), <see cref="JasperFx.Events.Documents.IMessageBatch.AfterCommitAsync"/>
 ///     fires once the projection's database changes are durably committed.
 ///     Implementations (e.g. a future Wolverine.Polecat bridge) buffer messages
 ///     in <c>PublishAsync</c> and flush them in one of the two hooks depending
@@ -20,21 +20,12 @@ namespace Polecat.Events.Aggregation;
 ///     The default outbox registered with <see cref="EventStoreOptions.MessageOutbox"/>
 ///     is <see cref="NulloMessageOutbox"/> — a no-op that drops every published
 ///     message, so projections that don't need messaging incur zero overhead.
+///
+/// <para>
+///     jasperfx#1045 (polecat#806): derives from the shared
+///     <see cref="JasperFx.Events.Documents.IMessageBatch" />, which now declares both hooks, so one
+///     implementation can serve every store. Kept for one release so existing implementers keep
+///     compiling; move to the shared interface.
+/// </para>
 /// </remarks>
-public interface IMessageBatch : IMessageSink
-{
-    /// <summary>
-    ///     Called inside the projection's database transaction, right before
-    ///     <c>COMMIT</c>. Use for "at-least-once" delivery patterns where the
-    ///     downstream outbox must be persisted in the same transaction as the
-    ///     projection write.
-    /// </summary>
-    Task BeforeCommitAsync(CancellationToken token);
-
-    /// <summary>
-    ///     Called once the projection's database changes are durably committed.
-    ///     Use for "best-effort" or external-broker delivery where the messages
-    ///     should only fire after the projection write succeeds.
-    /// </summary>
-    Task AfterCommitAsync(CancellationToken token);
-}
+public interface IMessageBatch : JasperFx.Events.Documents.IMessageBatch;

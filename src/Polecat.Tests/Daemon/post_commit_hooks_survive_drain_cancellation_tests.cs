@@ -1,3 +1,4 @@
+using JasperFx.Events.Daemon;
 using Polecat.Services;
 using Polecat.Events.Aggregation;
 using Polecat.Events.Daemon;
@@ -44,7 +45,7 @@ public class post_commit_hooks_survive_drain_cancellation_tests : OneOffConfigur
         });
         await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
-        var batch = new PolecatProjectionBatch(theStore, theStore.Options.EventGraph, theStore.Database);
+        var batch = new PolecatProjectionBatch(theStore, theStore.Options.EventGraph, theStore.Database, ShardExecutionMode.Continuous);
         var session = batch.SessionForTenant(theStore.Options.Tenancy!.DefaultTenantId);
         session.Store(new DrainDoc { Id = Guid.NewGuid() });
 

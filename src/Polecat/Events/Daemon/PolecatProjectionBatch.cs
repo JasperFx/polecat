@@ -1,13 +1,10 @@
 using System.Collections.Concurrent;
-using System.Linq.Expressions;
 using System.Runtime.ExceptionServices;
-using FastExpressionCompiler;
 using JasperFx.Events;
 using JasperFx.Events.Daemon;
 using JasperFx.Events.Projections;
 using Microsoft.Data.SqlClient;
 using Polly;
-using Polecat.Events.Aggregation;
 using Polecat.Internal;
 using Polecat.Internal.Operations;
 using Polecat.Internal.Sessions;
@@ -23,49 +20,51 @@ namespace Polecat.Events.Daemon;
 ///     Thread-safe: composite projections may call SessionForTenant concurrently.
 ///     All SQL execution is wrapped with Polly resilience.
 /// </summary>
-internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuerySession>,
-    ITransactionParticipantRegistrar
+/// <remarks>
+///     jasperfx#1045 (polecat#806): the store-agnostic half -- the sessions, the events projections raise,
+///     the messages they publish, the order the commit hooks run in, and holding side effects back
+///     outside <see cref="ShardExecutionMode.Continuous" /> -- is <see cref="ProjectionBatchBase{TSession}" />.
+///     What is left here is SQL Server's: the one transaction, the progression rows, the transaction
+///     participants (#867), and the async change listeners.
+/// </remarks>
+internal class PolecatProjectionBatch : ProjectionBatchBase<IDocumentSession>,
+    IProjectionBatch<IDocumentSession, IQuerySession>, ITransactionParticipantRegistrar
 {
     private readonly DocumentStore _store;
     private readonly EventGraph _events;
     private readonly PolecatDatabase _database;
     private readonly string _connectionString;
-    private readonly ShardExecutionMode _mode;
     private readonly ResiliencePipeline _resilience;
-    private readonly ConcurrentBag<IDocumentSession> _sessions = new();
     private readonly ConcurrentQueue<Weasel.Storage.IStorageOperation> _progressOps = new();
 
     // #867: held here and not on the sessions, because this batch is what commits. See AdoptSession.
     private readonly ConcurrentQueue<ITransactionParticipant> _participants = new();
 
-    // #420: StreamActions a projection raised events onto, captured by the three IProjectionBatch
-    // append members and turned into append operations during ExecuteAsync.
-    private readonly List<StreamAction> _raisedEventActions = new();
-    private readonly Lock _raisedEventsLock = new();
+    // #420: the append operations for the events projections raised, built by PlanRaisedEventsAsync and
+    // added to the transaction after the document operations, ahead of the progression row.
+    private List<Weasel.Storage.IStorageOperation> _raisedEventOps = new();
+
+    // Set by ExecuteOperationsInTransactionAsync for AfterCommitAsync: the session the async listeners
+    // were handed, or null when no listener runs for this batch.
+    private IDocumentSession? _listenerSession;
 
     // The change set committed by this batch, populated during ExecuteAsync. Exposed so the
     // subscription runner can hand it to the IChangeListener returned by ProcessEventsAsync.
     public IChangeSet? Commit { get; private set; }
 
-    // Lazily created on first PublishMessageAsync call; reused for every
-    // subsequent publish in this batch. Stays null when no projection
-    // emits a message, so the AfterCommit hook is a no-op for the common
-    // case where no message-bus integration is configured.
-    private IMessageBatch? _messageBatch;
-    private readonly SemaphoreSlim _messageBatchGate = new(1, 1);
-
     public PolecatProjectionBatch(DocumentStore store, EventGraph events, PolecatDatabase database,
-        ShardExecutionMode mode = ShardExecutionMode.Continuous)
+        ShardExecutionMode mode) : base(mode)
     {
         _store = store;
         _events = events;
         _database = database;
         _connectionString = database.ConnectionString;
-        _mode = mode;
         _resilience = store.Options.ResiliencePipeline;
     }
 
-    public IDocumentSession SessionForTenant(string tenantId)
+    protected override JasperFx.Events.Documents.IMessageOutbox Outbox => _store.Options.Events.MessageOutbox;
+
+    protected override IDocumentSession OpenSessionForTenant(string tenantId)
     {
         // #514: bind to the database this batch is working rather than routing tenantId through the
         // tenancy. The batch drains these sessions' work trackers and executes the operations
@@ -81,40 +80,33 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
         // is safe here precisely because this batch never commits through these sessions: it drains
         // their work trackers below and executes every operation on one connection of its own. See
         // DocumentStore.LightweightSessionWithoutHeldConnection.
-        return AdoptSession(_store.LightweightSessionWithoutHeldConnection(
+        return takeParticipantsOf(_store.LightweightSessionWithoutHeldConnection(
             SessionOptions.ForDatabase(tenantId, _database)));
     }
 
     /// <summary>
-    ///     Register an externally-created session with this batch so its pending
-    ///     operations are included in the batch's transaction.
+    ///     Register an externally-created session with this batch so its pending operations, and the
+    ///     transaction participants it picks up, are included in the batch's transaction.
     /// </summary>
-    internal void RegisterSession(IDocumentSession session)
+    internal void AdoptSession(IDocumentSession session)
     {
-        AdoptSession(session);
+        RegisterSession(takeParticipantsOf(session));
     }
 
-    /// <summary>
-    ///     Take in a session whose work this batch will commit, along with whatever transaction
-    ///     participants it picks up.
-    /// </summary>
     /// <remarks>
     ///     #867: a participant belongs to whatever commits its transaction, and for these sessions that
     ///     is this batch. They used to keep their own, and JasperFx disposes a session as soon as an
     ///     event projection's <c>ApplyAsync</c> returns (<c>ProjectionExecution</c>, and
     ///     <c>CompositeIProjectionExecution</c> here), which drained them long before the commit below
-    ///     went looking. The aggregate runner happens to hold its session to the end of the batch, so
-    ///     only event projections lost their participants, silently, while the progression moved past
-    ///     the events. Mirrors Marten, whose ProjectionDocumentSession forwards to ProjectionUpdateBatch.
+    ///     went looking. Mirrors Marten, whose ProjectionDocumentSession forwards to ProjectionUpdateBatch.
     /// </remarks>
-    private IDocumentSession AdoptSession(IDocumentSession session)
+    private IDocumentSession takeParticipantsOf(IDocumentSession session)
     {
         if (session is DocumentSessionBase sessionBase)
         {
             sessionBase.HandParticipantsTo(this);
         }
 
-        _sessions.Add(session);
         return session;
     }
 
@@ -127,7 +119,7 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
         _participants.Enqueue(participant);
     }
 
-    public ValueTask RecordProgress(EventRange range)
+    public override ValueTask RecordProgress(EventRange range)
     {
         var name = range.ShardName.Identity;
         var ceiling = range.SequenceCeiling;
@@ -141,25 +133,51 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
         return ValueTask.CompletedTask;
     }
 
-    public async Task ExecuteAsync(CancellationToken token)
+    /// <summary>
+    ///     #420: turn the captured <see cref="StreamAction" />s into append operations that join
+    ///     this batch's transaction, so raised events commit atomically with the projection
+    ///     documents and the progression row they were produced alongside. Numbering the events needs
+    ///     an async locking read of the stream row, which is why this is not done as they are raised.
+    /// </summary>
+    protected override async Task PlanRaisedEventsAsync(IReadOnlyList<StreamAction> raisedEvents,
+        CancellationToken token)
+    {
+        var ops = new List<Weasel.Storage.IStorageOperation>();
+
+        // One session per tenant, because each append below is bound to the session that will write it.
+        // Opened before the session sweep in ExecuteOperationsInTransactionAsync, so it is picked up by it
+        // and disposed with the rest.
+        foreach (var group in raisedEvents.Where(a => a.Events.Any())
+                     .GroupBy(a => a.TenantId ?? JasperFx.StorageConstants.DefaultTenantId))
+        {
+            var session = (DocumentSessionBase)SessionForTenant(group.Key);
+            // One batched stream-state read per tenant group instead of one per action.
+            var built = await session.BuildRaisedEventAppendsAsync(group.ToList(), token).ConfigureAwait(false);
+            foreach (var op in built)
+            {
+                // The batch configures commands with a null session, so the append has to arrive
+                // already bound to the one that will write it.
+                ops.Add(new SessionBoundOperationAdapter(op, (Weasel.Storage.IStorageSession)session));
+            }
+        }
+
+        _raisedEventOps = ops;
+    }
+
+    protected override async Task ExecuteOperationsInTransactionAsync(Func<CancellationToken, Task> beforeCommit,
+        CancellationToken token)
     {
         // Collect all operations outside the lambda to keep state simple
         var allOps = new List<Weasel.Storage.IStorageOperation>();
 
         // #538: resolve the store's long-lived, per-database ensurer instead of constructing one
         // per batch. DocumentTableEnsurer memoizes on instance state, so a per-batch instance
-        // re-ran the full schema check (SchemaMigration.DetermineAsync + version-column widening +
-        // index DDL) for every projected document type on every single daemon batch — the same bug
-        // class as marten#4946. The store cache is keyed per connection string, so scoping stays
-        // correct under database-per-tenant tenancy.
+        // re-ran the full schema check for every projected document type on every single daemon
+        // batch — the same bug class as marten#4946. The store cache is keyed per connection string,
+        // so scoping stays correct under database-per-tenant tenancy.
         var tableEnsurer = _store.EnsurerFor(_connectionString);
 
-        // #420: built before the session sweep below so any tenant session this creates is picked
-        // up by it (and disposed with the rest). The appends themselves are added after the
-        // document operations, ahead of the progression row.
-        var raisedEventOps = await BuildRaisedEventOperationsAsync(token).ConfigureAwait(false);
-
-        foreach (var session in _sessions)
+        foreach (var session in Sessions)
         {
             if (session is DocumentSessionBase sessionBase)
             {
@@ -198,7 +216,7 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
         }
 
         // #420: raised-event appends ride the same transaction as the documents above.
-        allOps.AddRange(raisedEventOps);
+        allOps.AddRange(_raisedEventOps);
 
         // Add progress operations
         while (_progressOps.TryDequeue(out var progressOp))
@@ -208,7 +226,7 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
 
         // Snapshot the committed change set (document ops + any stream actions) so both the async
         // IChangeListeners below and the subscription runner (via Commit) can see what changed.
-        var streams = _sessions
+        var streams = Sessions
             .OfType<DocumentSessionBase>()
             .SelectMany(s => s.WorkTracker.Streams)
             .ToList();
@@ -216,31 +234,33 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
 
         if (allOps.Count == 0 && _participants.IsEmpty)
         {
+            // jasperfx#1045: the message hook still runs as the last step before a commit, even when
+            // there is nothing to commit, so a projection that only published is not lost.
+            await beforeCommit(token).ConfigureAwait(false);
             return;
         }
 
         // Async daemon commit listeners (Projections.AsyncListeners). Suppressed during rebuilds so a
         // full replay does not re-fire post-commit side effects (mirrors Marten's ShouldApplyListeners).
         var asyncListeners = _store.Options.Projections.AsyncListeners;
-        var applyListeners = _mode != ShardExecutionMode.Rebuild && asyncListeners.Count > 0;
-        IDocumentSession? listenerSession = null;
-        if (applyListeners)
+        if (Mode != ShardExecutionMode.Rebuild && asyncListeners.Count > 0)
         {
             // Any tenant session works for the listener's reads/writes; create a throwaway (tracked for
-            // disposal) if this batch only produced progress rows.
-            listenerSession = _sessions.FirstOrDefault();
-            if (listenerSession == null)
+            // disposal) if this batch only produced progress rows. #683: same reasoning as
+            // OpenSessionForTenant -- this batch drains and executes, so the session has no commit of its
+            // own to be atomic and no reason to pin a connection.
+            _listenerSession = Sessions.FirstOrDefault();
+            if (_listenerSession == null)
             {
-                // #683: same reasoning as SessionForTenant -- this batch drains and executes, so the
-                // session has no commit of its own to be atomic and no reason to pin a connection.
-                listenerSession = AdoptSession(_store.LightweightSessionWithoutHeldConnection(new SessionOptions()));
+                _listenerSession = _store.LightweightSessionWithoutHeldConnection(new SessionOptions());
+                AdoptSession(_listenerSession);
             }
 
             // BeforeCommit runs before the DB commit → "at least once". A throw here aborts the batch
             // before anything is committed, so the exception is allowed to propagate.
             foreach (var listener in asyncListeners)
             {
-                await listener.BeforeCommitAsync(listenerSession, Commit, token).ConfigureAwait(false);
+                await listener.BeforeCommitAsync(_listenerSession, Commit, token).ConfigureAwait(false);
             }
         }
 
@@ -248,16 +268,9 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
         // above, which may have enlisted one, and a retry of the lambda replays this same list.
         var participants = _participants.ToList();
 
-        // Snapshot the message batch (may be null when no projection in this
-        // batch published a message). Passed via state into the resilience
-        // lambda so BeforeCommitAsync runs inside the SQL transaction; the
-        // AfterCommitAsync hook fires once below, after the resilience
-        // pipeline returns successfully.
-        var messageBatch = _messageBatch;
-
         await _resilience.ExecuteAsync(static async (state, ct) =>
         {
-            var (connectionString, ops, txParticipants, msgBatch, transforms) = state;
+            var (connectionString, ops, txParticipants, beforeCommitHook, transforms) = state;
             await using var conn = new SqlConnection(connectionString);
             await conn.OpenAsync(ct).ConfigureAwait(false);
             await using var tx = (await SqlTransactionRequests.BeginAsync(conn, ct).ConfigureAwait(false));
@@ -323,10 +336,8 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
                     await participant.BeforeCommitAsync(conn, tx, ct).ConfigureAwait(false);
                 }
 
-                if (msgBatch is not null)
-                {
-                    await msgBatch.BeforeCommitAsync(ct).ConfigureAwait(false);
-                }
+                // jasperfx#1045: the shared batch's message hook, always the last step before commit.
+                await beforeCommitHook(ct).ConfigureAwait(false);
 
                 await SqlTransactionRequests.CommitAsync(tx, ct).ConfigureAwait(false);
             }
@@ -348,257 +359,33 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
 
                 throw;
             }
-        }, (_connectionString, allOps, participants, messageBatch, _store.Options.ExceptionTransforms), token).ConfigureAwait(false);
-
-        // ⚠️ The post-commit hooks below deliberately do NOT take `token`, and that is load-bearing
-        // as of JasperFx 2.81.0 (jasperfx#953 / #980, polecat#744). A drain that times out calls
-        // CancelAsync on exactly the token this method received, and it can land in the window
-        // between `tx.CommitAsync` returning and these hooks running. The transaction is durably
-        // committed by then and the progression row has advanced, so the page will never be
-        // reprocessed — abandoning its side effects here loses them outright rather than deferring
-        // them. Before 2.81.0 the drain was unbounded, so this token was never cancelled mid-range
-        // and passing it was harmless.
-        //
-        // The listener loop is the worse half. It is still ENTERED with a cancelled token — so the
-        // failure is not a skipped call but any token-honouring work inside the listener throwing —
-        // and the loop suppresses every exception on purpose, so that failure is SILENT: no log
-        // line, no shard failure, no dead letter, for a page whose documents committed.
-        //
-        // The cost of CancellationToken.None is that a slow post-commit flush can outlast the drain
-        // deadline, which is the right trade for an at-most-once side effect on a committed page:
-        // the daemon's hard stop is what bounds shutdown, and losing an outbox flush is not
-        // recoverable while a late one is.
-        //
-        // Outside the resilience pipeline so the post-commit hook does not
-        // re-fire on a transient retry — by definition the SQL transaction
-        // has committed exactly once by the time we reach here.
-        if (messageBatch is not null)
-        {
-            await messageBatch.AfterCommitAsync(CancellationToken.None).ConfigureAwait(false);
-        }
-
-        // AfterCommit runs once, after the transaction is durably committed → "at most once". A faulting
-        // listener must not fail the batch (which would reprocess the page and re-fire side effects), so
-        // exceptions are suppressed best-effort — matching Marten's protective daemon behavior.
-        if (applyListeners)
-        {
-            foreach (var listener in asyncListeners)
-            {
-                try
-                {
-                    await listener.AfterCommitAsync(listenerSession!, Commit, CancellationToken.None)
-                        .ConfigureAwait(false);
-                }
-                catch
-                {
-                    // best-effort: the commit already succeeded; a listener fault is swallowed so the
-                    // shard is not marked failed and the batch is not reprocessed.
-                }
-            }
-        }
-    }
-
-    // #420: the three members JasperFx drives event-raising through. EventSlice.BuildOperations
-    // calls them whenever a projection raises an event; all three were empty, so an async
-    // projection that appends events lost them silently -- no exception, no shard failure, no dead
-    // letter, no log line. The documents committed, the progression row advanced, and the raised
-    // events simply never existed.
-    //
-    // All three funnel into one list because the StreamAction JasperFx hands over already carries
-    // every raised event, and the single-stream-start path passes the SAME instance to each call
-    // (once per event to QuickAppendEventWithVersion, then once to UpdateStreamVersion), so
-    // reference identity dedupes them into one append per stream. The actual operation is built in
-    // ExecuteAsync, because numbering the events correctly needs an async locking read of the
-    // stream row that these synchronous members cannot do.
-
-    public void QuickAppendEventWithVersion(StreamAction action, IEvent @event) => CaptureRaisedEvents(action);
-
-    public void UpdateStreamVersion(StreamAction action) => CaptureRaisedEvents(action);
-
-    public void QuickAppendEvents(StreamAction action) => CaptureRaisedEvents(action);
-
-    private void CaptureRaisedEvents(StreamAction action)
-    {
-        lock (_raisedEventsLock)
-        {
-            // Reference identity, not stream id: two distinct actions for the same stream in one
-            // batch are two real appends, while the same instance arriving three times is one.
-            foreach (var captured in _raisedEventActions)
-            {
-                if (ReferenceEquals(captured, action)) return;
-            }
-
-            _raisedEventActions.Add(action);
-        }
+        }, (_connectionString, allOps, participants, beforeCommit, _store.Options.ExceptionTransforms), token).ConfigureAwait(false);
     }
 
     /// <summary>
-    ///     #420: turn the captured <see cref="StreamAction" />s into append operations that join
-    ///     this batch's transaction, so raised events commit atomically with the projection
-    ///     documents and the progression row they were produced alongside.
+    ///     AfterCommit runs once, after the transaction is durably committed → "at most once", and after
+    ///     the message batch's own after-commit hook (see <see cref="ProjectionBatchBase{TSession}.ExecuteAsync" />
+    ///     for why neither takes the batch's token). A faulting listener must not fail the batch (which
+    ///     would reprocess the page and re-fire side effects), so exceptions are suppressed best-effort —
+    ///     matching Marten's protective daemon behavior.
     /// </summary>
-    private async Task<List<Weasel.Storage.IStorageOperation>> BuildRaisedEventOperationsAsync(
-        CancellationToken token)
+    protected override async Task AfterCommitAsync()
     {
-        List<StreamAction> actions;
-        lock (_raisedEventsLock)
-        {
-            actions = _raisedEventActions.ToList();
-        }
+        if (_listenerSession is null || Commit is null) return;
 
-        var ops = new List<Weasel.Storage.IStorageOperation>();
-        if (actions.Count == 0) return ops;
-
-        // One session per tenant, because each append below is bound to the session that will write it.
-        foreach (var group in actions.Where(a => a.Events.Any())
-                     .GroupBy(a => a.TenantId ?? JasperFx.StorageConstants.DefaultTenantId))
+        foreach (var listener in _store.Options.Projections.AsyncListeners)
         {
-            var session = (DocumentSessionBase)SessionForTenant(group.Key);
-            // One batched stream-state read per tenant group instead of one per action.
-            var built = await session.BuildRaisedEventAppendsAsync(group.ToList(), token).ConfigureAwait(false);
-            foreach (var op in built)
+            try
             {
-                // The batch configures commands with a null session, so the append has to arrive
-                // already bound to the one that will write it.
-                ops.Add(new SessionBoundOperationAdapter(op, (Weasel.Storage.IStorageSession)session));
+                await listener.AfterCommitAsync(_listenerSession, Commit, CancellationToken.None)
+                    .ConfigureAwait(false);
+            }
+            catch
+            {
+                // best-effort: the commit already succeeded; a listener fault is swallowed so the
+                // shard is not marked failed and the batch is not reprocessed.
             }
         }
-
-        return ops;
-    }
-
-    public async Task PublishMessageAsync(object message, string tenantId)
-    {
-        var batch = await CurrentMessageBatchAsync().ConfigureAwait(false);
-        await PublishToBatchAsync(batch, message, tenantId).ConfigureAwait(false);
-    }
-
-    public async Task PublishMessageAsync(object message, MessageMetadata metadata)
-    {
-        var batch = await CurrentMessageBatchAsync().ConfigureAwait(false);
-        await PublishToBatchAsync(batch, message, metadata).ConfigureAwait(false);
-    }
-
-    /// <summary>
-    ///     Lazily obtain the per-batch <see cref="IMessageBatch"/> from the
-    ///     configured <see cref="IMessageOutbox"/>. Created on first publish;
-    ///     stays null if no projection in this batch ever publishes a message,
-    ///     which keeps the AfterCommit hook a no-op for the common case.
-    /// </summary>
-    private async ValueTask<IMessageBatch> CurrentMessageBatchAsync()
-    {
-        if (_messageBatch is not null) return _messageBatch;
-
-        await _messageBatchGate.WaitAsync().ConfigureAwait(false);
-        try
-        {
-            if (_messageBatch is not null) return _messageBatch;
-
-            var session = _sessions.FirstOrDefault()
-                ?? throw new InvalidOperationException(
-                    "Cannot publish a message from a projection batch with no document session.");
-
-            _messageBatch = await _store.Options.Events.MessageOutbox
-                .CreateBatch(session)
-                .ConfigureAwait(false);
-
-            return _messageBatch;
-        }
-        finally
-        {
-            _messageBatchGate.Release();
-        }
-    }
-
-    // Cached generic method definitions — `IMessageSink.PublishAsync<T>` takes
-    // T as the first parameter, so a `GetMethod(name, [typeof(object), …])`
-    // lookup misses (it doesn't match the generic parameter). Filter by arity
-    // and second-param type instead, then close over the runtime message type.
-    private static readonly System.Reflection.MethodInfo PublishWithTenantMethod = typeof(IMessageSink)
-        .GetMethods()
-        .First(m => m.Name == nameof(IMessageSink.PublishAsync)
-                    && m.IsGenericMethodDefinition
-                    && m.GetParameters() is { Length: 2 } parms
-                    && parms[1].ParameterType == typeof(string));
-
-    private static readonly System.Reflection.MethodInfo PublishWithMetadataMethod = typeof(IMessageSink)
-        .GetMethods()
-        .First(m => m.Name == nameof(IMessageSink.PublishAsync)
-                    && m.IsGenericMethodDefinition
-                    && m.GetParameters() is { Length: 2 } parms
-                    && parms[1].ParameterType == typeof(MessageMetadata));
-
-    // Polecat#46 cold-start row: per-message-type delegate caches for the
-    // batch-publish dispatch. Each closes IMessageSink.PublishAsync<T> over
-    // the runtime message type exactly once, then reuses the compiled delegate
-    // for every subsequent publish of the same type. Replaces the prior
-    // MakeGenericMethod + MethodInfo.Invoke per call. Sibling pattern to
-    // Marten#4308's LINQ handler-factory cache, applied to method-closing
-    // (rather than type-closing) generics.
-    private static readonly ConcurrentDictionary<Type, Func<IMessageBatch, object, string, ValueTask>>
-        _publishWithTenantDelegates = new();
-
-    private static readonly ConcurrentDictionary<Type, Func<IMessageBatch, object, MessageMetadata, ValueTask>>
-        _publishWithMetadataDelegates = new();
-
-    [System.Diagnostics.CodeAnalysis.RequiresDynamicCode(
-        "Closes IMessageSink.PublishAsync<T> over runtime message type via MethodInfo.MakeGenericMethod for the per-type cache miss; cached delegate amortizes the cost across subsequent calls.")]
-    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026",
-        Justification = "FastExpressionCompiler.CompileFast inside the cache-miss path; AOT consumers must pre-register the message types they publish per the Polecat AOT publishing guide so this method is never reached at runtime under trimming.")]
-    private static Func<IMessageBatch, object, string, ValueTask> BuildPublishWithTenantDelegate(Type messageType)
-    {
-        var closed = PublishWithTenantMethod.MakeGenericMethod(messageType);
-        var batchParam = Expression.Parameter(typeof(IMessageBatch), "batch");
-        var messageParam = Expression.Parameter(typeof(object), "message");
-        var tenantParam = Expression.Parameter(typeof(string), "tenantId");
-
-        var call = Expression.Call(
-            batchParam,
-            closed,
-            Expression.Convert(messageParam, messageType),
-            tenantParam);
-
-        return Expression.Lambda<Func<IMessageBatch, object, string, ValueTask>>(
-            call, batchParam, messageParam, tenantParam).CompileFast();
-    }
-
-    [System.Diagnostics.CodeAnalysis.RequiresDynamicCode(
-        "Closes IMessageSink.PublishAsync<T> over runtime message type via MethodInfo.MakeGenericMethod for the per-type cache miss; cached delegate amortizes the cost across subsequent calls.")]
-    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026",
-        Justification = "FastExpressionCompiler.CompileFast inside the cache-miss path; AOT consumers must pre-register the message types they publish per the Polecat AOT publishing guide so this method is never reached at runtime under trimming.")]
-    private static Func<IMessageBatch, object, MessageMetadata, ValueTask> BuildPublishWithMetadataDelegate(Type messageType)
-    {
-        var closed = PublishWithMetadataMethod.MakeGenericMethod(messageType);
-        var batchParam = Expression.Parameter(typeof(IMessageBatch), "batch");
-        var messageParam = Expression.Parameter(typeof(object), "message");
-        var metadataParam = Expression.Parameter(typeof(MessageMetadata), "metadata");
-
-        var call = Expression.Call(
-            batchParam,
-            closed,
-            Expression.Convert(messageParam, messageType),
-            metadataParam);
-
-        return Expression.Lambda<Func<IMessageBatch, object, MessageMetadata, ValueTask>>(
-            call, batchParam, messageParam, metadataParam).CompileFast();
-    }
-
-    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("AOT", "IL3050",
-        Justification = "Forwards a method-group reference to BuildPublishWithTenantDelegate, which is [RequiresDynamicCode]. The cascade stops here because IProjectionBatch.PublishMessageAsync (the interface boundary) is not RDC-annotated; propagating the constraint upward would be a downstream API break. Cache-miss path is at most once per message type — AOT consumers pre-register message types per the Polecat AOT publishing guide.")]
-    private static ValueTask PublishToBatchAsync(IMessageBatch batch, object message, string tenantId)
-    {
-        // Lookup-or-compile the per-message-type dispatch delegate; steady-state
-        // calls hit the ConcurrentDictionary directly with no reflective work.
-        var dispatch = _publishWithTenantDelegates.GetOrAdd(message.GetType(), BuildPublishWithTenantDelegate);
-        return dispatch(batch, message, tenantId);
-    }
-
-    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("AOT", "IL3050",
-        Justification = "Forwards a method-group reference to BuildPublishWithMetadataDelegate, which is [RequiresDynamicCode]. The cascade stops here because IProjectionBatch.PublishMessageAsync (the interface boundary) is not RDC-annotated; propagating the constraint upward would be a downstream API break. Cache-miss path is at most once per message type — AOT consumers pre-register message types per the Polecat AOT publishing guide.")]
-    private static ValueTask PublishToBatchAsync(IMessageBatch batch, object message, MessageMetadata metadata)
-    {
-        var dispatch = _publishWithMetadataDelegates.GetOrAdd(message.GetType(), BuildPublishWithMetadataDelegate);
-        return dispatch(batch, message, metadata);
     }
 
     /// <summary>
@@ -611,10 +398,8 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
     ///     composite disposes that batch again. A throw from one participant must not strand the
     ///     others, or the sessions.
     /// </remarks>
-    public async ValueTask DisposeAsync()
+    public override async ValueTask DisposeAsync()
     {
-        _messageBatchGate.Dispose();
-
         List<Exception>? failures = null;
 
         while (_participants.TryDequeue(out var participant))
@@ -631,10 +416,7 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
             }
         }
 
-        foreach (var session in _sessions)
-        {
-            await session.DisposeAsync().ConfigureAwait(false);
-        }
+        await base.DisposeAsync().ConfigureAwait(false);
 
         if (failures is not null)
         {
