@@ -114,13 +114,13 @@ public class AdvancedOperations
 
         // Ensure the table exists
         var ensurer = _store.ResolveTableEnsurer(tenantId);
-        await ensurer.EnsureTableAsync(provider, insideTransaction: false, token);
+        await ensurer.EnsureTableAsync(provider, insideTransaction: false, token).ConfigureAwait(false);
 
         // #335: tenant-partitioned documents — provision the tenant's partition ordinal before the
         // bulk MERGEs resolve it server-side from the registry (cached no-op for known tenants).
         if (mapping.TenantPartitioned)
         {
-            await _store.Events.TenantOrdinals.ResolveAsync(tenantId, insideTransaction: false, token);
+            await _store.Events.TenantOrdinals.ResolveAsync(tenantId, insideTransaction: false, token).ConfigureAwait(false);
         }
 
         var storage = _store.Options.Providers.ClosedShapeGraph.StorageFor<T>().QueryOnly;
@@ -143,14 +143,14 @@ public class AdvancedOperations
         await using var bindingSession = _store.QuerySession(new SessionOptions { TenantId = tenantId });
         var storageSession = (Weasel.Storage.IStorageSession)bindingSession;
 
-        await assertIdsFitAsync(mapping, documents, tenantId, token);
+        await assertIdsFitAsync(mapping, documents, tenantId, token).ConfigureAwait(false);
 
         var connFactory = _store.Options.Tenancy!.GetConnectionFactory(tenantId);
         await _resilience.ExecuteAsync(static async (state, ct) =>
         {
             var (factory, docs, size, docStorage, session, tenant, insertMode) = state;
             await using var conn = factory.Create();
-            await conn.OpenAsync(ct);
+            await conn.OpenAsync(ct).ConfigureAwait(false);
 
             for (var offset = 0; offset < docs.Count; offset += size)
             {
@@ -174,9 +174,9 @@ public class AdvancedOperations
                 builder.Compile();
 
                 var exceptions = new List<Exception>();
-                await using (var reader = await batch.ExecuteReaderAsync(ct))
+                await using (var reader = (await batch.ExecuteReaderAsync(ct).ConfigureAwait(false)))
                 {
-                    await Polecat.Internal.Operations.OperationResultSets.ApplyAsync(reader, operations, exceptions, ct);
+                    await Internal.Operations.OperationResultSets.ApplyAsync(reader, operations, exceptions, ct).ConfigureAwait(false);
                 }
 
                 // The insert-only operation raises DocumentAlreadyExistsException when the row
@@ -196,7 +196,7 @@ public class AdvancedOperations
                     throw new AggregateException(exceptions);
                 }
             }
-        }, (connFactory, documents, batchSize, storage, storageSession, tenantId, mode), token);
+        }, (connFactory, documents, batchSize, storage, storageSession, tenantId, mode), token).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -245,13 +245,13 @@ public class AdvancedOperations
         var mapping = provider.Mapping;
 
         var ensurer = _store.ResolveTableEnsurer(tenantId);
-        await ensurer.EnsureTableAsync(provider, insideTransaction: false, token);
+        await ensurer.EnsureTableAsync(provider, insideTransaction: false, token).ConfigureAwait(false);
 
         // #335: tenant-partitioned documents — provision the tenant's partition ordinal before the
         // version-checked MERGEs resolve it server-side from the registry.
         if (mapping.TenantPartitioned)
         {
-            await _store.Events.TenantOrdinals.ResolveAsync(tenantId, insideTransaction: false, token);
+            await _store.Events.TenantOrdinals.ResolveAsync(tenantId, insideTransaction: false, token).ConfigureAwait(false);
         }
 
         // #273 doc-side convergence: source the version-checked MERGE's full column set from the
@@ -274,7 +274,7 @@ public class AdvancedOperations
             }
         }
 
-        await assertIdsFitAsync(mapping, documents.Select(x => x.Document), tenantId, token);
+        await assertIdsFitAsync(mapping, documents.Select(x => x.Document), tenantId, token).ConfigureAwait(false);
 
         var connFactory = _store.Options.Tenancy!.GetConnectionFactory(tenantId);
 
@@ -282,7 +282,7 @@ public class AdvancedOperations
         {
             var (factory, docs, size, docStorage, tenant) = state;
             await using var conn = factory.Create();
-            await conn.OpenAsync(ct);
+            await conn.OpenAsync(ct).ConfigureAwait(false);
 
             for (var offset = 0; offset < docs.Count; offset += size)
             {
@@ -304,15 +304,15 @@ public class AdvancedOperations
                 // concurrency violation, surfaced for the first missing id (per-row pattern,
                 // matching UpdateOperation / UpsertOperation).
                 var touched = new HashSet<object>();
-                await using (var reader = await batch.ExecuteReaderAsync(ct))
+                await using (var reader = (await batch.ExecuteReaderAsync(ct).ConfigureAwait(false)))
                 {
                     do
                     {
-                        while (await reader.ReadAsync(ct))
+                        while (await reader.ReadAsync(ct).ConfigureAwait(false))
                         {
                             touched.Add(reader.GetValue(0));
                         }
-                    } while (await reader.NextResultAsync(ct));
+                    } while (await reader.NextResultAsync(ct).ConfigureAwait(false));
                 }
 
                 foreach (var (doc, _) in chunk)
@@ -324,7 +324,7 @@ public class AdvancedOperations
                     }
                 }
             }
-        }, (connFactory, documents, batchSize, storage, tenantId), token);
+        }, (connFactory, documents, batchSize, storage, tenantId), token).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -339,10 +339,10 @@ public class AdvancedOperations
         var keys = documents.Select(x => (string)mapping.GetId(x)).Where(x => !Ascii.IsValid(x)).Distinct().ToList();
         if (keys.Count == 0) return;
 
-        await using var session = (Internal.QuerySession)_store.QuerySession(new SessionOptions { TenantId = tenantId });
+        await using var session = ((QuerySession)_store.QuerySession(new SessionOptions { TenantId = tenantId }));
         foreach (var key in keys)
         {
-            if (await session.CodePageLosingAsync(mapping.QualifiedTableName, key, token) is { } codePage)
+            if (await session.CodePageLosingAsync(mapping.QualifiedTableName, key, token).ConfigureAwait(false) is { } codePage)
             {
                 throw Polecat.Exceptions.StringIdOutsideCodePageException.ForDocument(key, mapping.DocumentType,
                     mapping.QualifiedTableName, codePage);
@@ -370,7 +370,7 @@ public class AdvancedOperations
         // operations out through its CompositeDocumentCleaner.
         foreach (var connectionString in AllDatabaseConnectionStrings())
         {
-            await CleanAllDocumentsForDatabaseAsync(connectionString, token);
+            await CleanAllDocumentsForDatabaseAsync(connectionString, token).ConfigureAwait(false);
         }
     }
 
@@ -382,7 +382,7 @@ public class AdvancedOperations
         {
             var (connectionString, schemaName, flatTableNames) = state;
             await using var conn = new SqlConnection(connectionString);
-            await conn.OpenAsync(ct);
+            await conn.OpenAsync(ct).ConfigureAwait(false);
 
             // Find all pc_doc_* tables in the schema
             await using var findCmd = conn.CreateCommand();
@@ -394,9 +394,9 @@ public class AdvancedOperations
             findCmd.Parameters.AddWithValue("@schema", schemaName);
 
             var tables = new List<string>();
-            await using (var reader = await findCmd.ExecuteReaderAsync(ct))
+            await using (var reader = (await findCmd.ExecuteReaderAsync(ct).ConfigureAwait(false)))
             {
-                while (await reader.ReadAsync(ct))
+                while (await reader.ReadAsync(ct).ConfigureAwait(false))
                 {
                     tables.Add(reader.GetString(0));
                 }
@@ -409,11 +409,11 @@ public class AdvancedOperations
                 // configuration, so it is escaped as a bracketed identifier — an embedded `]` in a
                 // table name would otherwise close the bracket early (stored/second-order).
                 deleteCmd.CommandText = $"DELETE FROM {SqlEscaping.QualifiedName(schemaName, table)};";
-                await deleteCmd.ExecuteNonQueryAsync(ct);
+                await deleteCmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
             }
 
-            await DeleteFlatTablesAsync(conn, flatTableNames, ct);
-        }, (connStr, schema, flatTables), token);
+            await DeleteFlatTablesAsync(conn, flatTableNames, ct).ConfigureAwait(false);
+        }, (connStr, schema, flatTables), token).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -478,7 +478,7 @@ public class AdvancedOperations
         // operations out through its CompositeDocumentCleaner.
         foreach (var connectionString in AllDatabaseConnectionStrings())
         {
-            await CompletelyRemoveAllForDatabaseAsync(connectionString, token);
+            await CompletelyRemoveAllForDatabaseAsync(connectionString, token).ConfigureAwait(false);
         }
 
         // #868: the schema a database remembers ensuring has just been dropped, so the next daemon has to
@@ -503,7 +503,7 @@ public class AdvancedOperations
         {
             var (connectionString, schemaName, flatTableNames, partitionDropDdl) = state;
             await using var conn = new SqlConnection(connectionString);
-            await conn.OpenAsync(ct);
+            await conn.OpenAsync(ct).ConfigureAwait(false);
 
             // Drop every foreign key on pc_* tables first so the tables themselves can be
             // dropped in any order ([_] escapes the LIKE wildcard to mean a literal underscore).
@@ -519,7 +519,7 @@ public class AdvancedOperations
                     IF @sql <> N'' EXEC sp_executesql @sql;
                     """;
                 dropFks.Parameters.AddWithValue("@schema", schemaName);
-                await dropFks.ExecuteNonQueryAsync(ct);
+                await dropFks.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
             }
 
             // Find every pc_* base table in the schema and drop it.
@@ -532,8 +532,8 @@ public class AdvancedOperations
                     ORDER BY TABLE_NAME;
                     """;
                 findCmd.Parameters.AddWithValue("@schema", schemaName);
-                await using var reader = await findCmd.ExecuteReaderAsync(ct);
-                while (await reader.ReadAsync(ct))
+                await using var reader = (await findCmd.ExecuteReaderAsync(ct).ConfigureAwait(false));
+                while (await reader.ReadAsync(ct).ConfigureAwait(false))
                 {
                     tables.Add(reader.GetString(0));
                 }
@@ -544,7 +544,7 @@ public class AdvancedOperations
                 await using var dropCmd = conn.CreateCommand();
                 // #390: `table` comes back out of INFORMATION_SCHEMA — escape it as an identifier.
                 dropCmd.CommandText = $"DROP TABLE IF EXISTS {SqlEscaping.QualifiedName(schemaName, table)};";
-                await dropCmd.ExecuteNonQueryAsync(ct);
+                await dropCmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
             }
 
             // FlatTableProjection tables may live outside the pc_ prefix; drop them explicitly.
@@ -553,7 +553,7 @@ public class AdvancedOperations
                 await using var dropCmd = conn.CreateCommand();
                 dropCmd.CommandText =
                     $"IF OBJECT_ID({SqlEscaping.Literal(qualified)}, 'U') IS NOT NULL DROP TABLE {qualified};";
-                await dropCmd.ExecuteNonQueryAsync(ct);
+                await dropCmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
             }
 
             // #718: the modeled pass, LAST -- a partition scheme cannot be dropped while a table or
@@ -563,9 +563,9 @@ public class AdvancedOperations
             {
                 await using var dropPartitions = conn.CreateCommand();
                 dropPartitions.CommandText = partitionDropDdl;
-                await dropPartitions.ExecuteNonQueryAsync(ct);
+                await dropPartitions.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
             }
-        }, (connStr, schema, flatTables, partitionDdl), token);
+        }, (connStr, schema, flatTables, partitionDdl), token).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -632,7 +632,7 @@ public class AdvancedOperations
             // one gets it.
             cmd.CommandText =
                 $"IF OBJECT_ID({SqlEscaping.Literal(qualified)}, 'U') IS NOT NULL DELETE FROM {qualified};";
-            await cmd.ExecuteNonQueryAsync(ct);
+            await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
         }
     }
 
@@ -659,7 +659,7 @@ public class AdvancedOperations
         // operations out through its CompositeDocumentCleaner.
         foreach (var connectionString in AllDatabaseConnectionStrings())
         {
-            await CleanForDatabaseAsync(connectionString, documentType, token);
+            await CleanForDatabaseAsync(connectionString, documentType, token).ConfigureAwait(false);
         }
     }
 
@@ -730,10 +730,10 @@ public class AdvancedOperations
 
         foreach (var connectionString in AllDatabaseConnectionStrings())
         {
-            await _store.EnsurerFor(connectionString).EnsureTableAsync(provider, insideTransaction: false, token);
+            await _store.EnsurerFor(connectionString).EnsureTableAsync(provider, insideTransaction: false, token).ConfigureAwait(false);
 
             await Storage.FullText.FullTextIndexRebuild.RebuildAsync(connectionString, provider.Mapping, batchSize,
-                _store.Options.CommandTimeout, _resilience, token);
+                _store.Options.CommandTimeout, _resilience, token).ConfigureAwait(false);
         }
     }
 
@@ -807,7 +807,7 @@ public class AdvancedOperations
         foreach (var connectionString in AllDatabaseConnectionStrings())
         {
             await DocumentIdAudit.FindAsync(connectionString, mapping, batchSize, _store.Options.CommandTimeout,
-                _resilience, found, token);
+                _resilience, found, token).ConfigureAwait(false);
         }
 
         return found;
@@ -829,7 +829,7 @@ public class AdvancedOperations
 
         foreach (var mapping in _store.Options.Providers.AllProviders.Select(x => x.Mapping).ToArray())
         {
-            found.AddRange(await FindDocumentsWithMismatchedIdsAsync(mapping.DocumentType, token));
+            found.AddRange(await FindDocumentsWithMismatchedIdsAsync(mapping.DocumentType, token).ConfigureAwait(false));
         }
 
         return found;
@@ -843,13 +843,13 @@ public class AdvancedOperations
         {
             var (connectionString, qualifiedTableName) = state;
             await using var conn = new SqlConnection(connectionString);
-            await conn.OpenAsync(ct);
+            await conn.OpenAsync(ct).ConfigureAwait(false);
 
             await using var cmd = conn.CreateCommand();
             cmd.CommandText =
                 $"IF OBJECT_ID({SqlEscaping.Literal(qualifiedTableName)}, 'U') IS NOT NULL DELETE FROM {qualifiedTableName};";
-            await cmd.ExecuteNonQueryAsync(ct);
-        }, (connStr, tableName), token);
+            await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+        }, (connStr, tableName), token).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -893,7 +893,7 @@ public class AdvancedOperations
     public async Task WriteCreationScriptToFileAsync(string path, CancellationToken token = default)
     {
         var script = ToDatabaseScript();
-        await File.WriteAllTextAsync(path, script, token);
+        await File.WriteAllTextAsync(path, script, token).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -935,22 +935,22 @@ public class AdvancedOperations
             {
                 var (connectionString, sqlText, stats) = state;
                 await using var conn = new SqlConnection(connectionString);
-                await conn.OpenAsync(ct);
+                await conn.OpenAsync(ct).ConfigureAwait(false);
                 await using var cmd = conn.CreateCommand();
                 cmd.CommandText = sqlText;
-                await using var reader = await cmd.ExecuteReaderAsync(ct);
+                await using var reader = (await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false));
 
-                if (await reader.ReadAsync(ct))
+                if (await reader.ReadAsync(ct).ConfigureAwait(false))
                     stats.EventCount = reader.GetInt32(0);
 
-                await reader.NextResultAsync(ct);
-                if (await reader.ReadAsync(ct))
+                await reader.NextResultAsync(ct).ConfigureAwait(false);
+                if (await reader.ReadAsync(ct).ConfigureAwait(false))
                     stats.StreamCount = reader.GetInt32(0);
 
-                await reader.NextResultAsync(ct);
-                if (await reader.ReadAsync(ct))
+                await reader.NextResultAsync(ct).ConfigureAwait(false);
+                if (await reader.ReadAsync(ct).ConfigureAwait(false))
                     stats.EventSequenceNumber = Convert.ToInt64(reader.GetValue(0));
-            }, (connStr, sql, statistics), token);
+            }, (connStr, sql, statistics), token).ConfigureAwait(false);
         }
         catch (Exception e) when (Internal.MissingStorageDetection.IsMissingStorage(e))
         {
@@ -988,7 +988,7 @@ public class AdvancedOperations
         // operations out through its CompositeDocumentCleaner.
         foreach (var connectionString in AllDatabaseConnectionStrings())
         {
-            await CleanAllEventDataForDatabaseAsync(connectionString, token);
+            await CleanAllEventDataForDatabaseAsync(connectionString, token).ConfigureAwait(false);
         }
     }
 
@@ -1005,11 +1005,11 @@ public class AdvancedOperations
         {
             var (connectionString, schemaName, evtTable, strmTable, progTable, flatTableNames) = state;
             await using var conn = new SqlConnection(connectionString);
-            await conn.OpenAsync(ct);
+            await conn.OpenAsync(ct).ConfigureAwait(false);
 
             // Flat-table projection output is derived from events; clear it alongside the event data
             // so a reset leaves no stale projected rows (mirrors the natural-key table cleanup below).
-            await DeleteFlatTablesAsync(conn, flatTableNames, ct);
+            await DeleteFlatTablesAsync(conn, flatTableNames, ct).ConfigureAwait(false);
 
             // Delete natural key tables first (they reference streams), and the tag tables with them.
             // #841: a tag table reaches its events through a cascading foreign key, except under archived
@@ -1028,9 +1028,9 @@ public class AdvancedOperations
                 findCmd.Parameters.AddWithValue("@schema", schemaName);
 
                 var nkTables = new List<string>();
-                await using (var reader = await findCmd.ExecuteReaderAsync(ct))
+                await using (var reader = (await findCmd.ExecuteReaderAsync(ct).ConfigureAwait(false)))
                 {
-                    while (await reader.ReadAsync(ct))
+                    while (await reader.ReadAsync(ct).ConfigureAwait(false))
                     {
                         nkTables.Add(reader.GetString(0));
                     }
@@ -1041,7 +1041,7 @@ public class AdvancedOperations
                     await using var deleteCmd = conn.CreateCommand();
                     // #390: natural-key table names are read out of INFORMATION_SCHEMA — escape.
                     deleteCmd.CommandText = $"DELETE FROM {SqlEscaping.QualifiedName(schemaName, table)};";
-                    await deleteCmd.ExecuteNonQueryAsync(ct);
+                    await deleteCmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
                 }
             }
 
@@ -1052,23 +1052,23 @@ public class AdvancedOperations
             {
                 cmd.CommandText =
                     $"IF OBJECT_ID({SqlEscaping.Literal(evtTable)}, 'U') IS NOT NULL DELETE FROM {evtTable};";
-                await cmd.ExecuteNonQueryAsync(ct);
+                await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
             }
 
             await using (var cmd = conn.CreateCommand())
             {
                 cmd.CommandText =
                     $"IF OBJECT_ID({SqlEscaping.Literal(strmTable)}, 'U') IS NOT NULL DELETE FROM {strmTable};";
-                await cmd.ExecuteNonQueryAsync(ct);
+                await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
             }
 
             await using (var cmd = conn.CreateCommand())
             {
                 cmd.CommandText =
                     $"IF OBJECT_ID({SqlEscaping.Literal(progTable)}, 'U') IS NOT NULL DELETE FROM {progTable};";
-                await cmd.ExecuteNonQueryAsync(ct);
+                await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
             }
-        }, (connStr, schema, eventsTable, streamsTable, progressionTable, flatTables), token);
+        }, (connStr, schema, eventsTable, streamsTable, progressionTable, flatTables), token).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -1189,8 +1189,8 @@ public class AdvancedOperations
         await using var conn = _store.Database.CreateConnection();
         await conn.OpenAsync(token).ConfigureAwait(false);
 
-        await using var migrationLock = await Internal.SchemaMigrationLock
-            .HoldForFirstUseAsync(_store.Options, conn, insideTransaction: false, token).ConfigureAwait(false);
+        await using var migrationLock = (await SchemaMigrationLock
+            .HoldForFirstUseAsync(_store.Options, conn, insideTransaction: false, token).ConfigureAwait(false));
 
         // Hydrate + capture the ordinals of the tenants being dropped BEFORE the drop clears the
         // registry rows, so fully-released ordinals can be identified afterwards. From the database rather
@@ -1497,15 +1497,15 @@ public class AdvancedOperations
                     """;
                 find.Parameters.Add("@schema", SqlDbType.NVarChar, 128).Value = schema;
 
-                await using var reader = await find.ExecuteReaderAsync(ct).ConfigureAwait(false);
+                await using var reader = (await find.ExecuteReaderAsync(ct).ConfigureAwait(false));
                 while (await reader.ReadAsync(ct).ConfigureAwait(false))
                 {
                     tables.Add(reader.GetString(0));
                 }
             }
 
-            await using var tx = await Internal.Sessions.SqlTransactionRequests.BeginAsync(
-                conn, IsolationLevel.ReadCommitted, ct).ConfigureAwait(false);
+            await using var tx = (await Internal.Sessions.SqlTransactionRequests.BeginAsync(
+                conn, IsolationLevel.ReadCommitted, ct).ConfigureAwait(false));
 
             foreach (var tenantId in tenants)
             {

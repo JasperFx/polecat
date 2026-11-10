@@ -35,10 +35,10 @@ internal class LoadBatchQueryItem<T> : IBatchQueryItem where T : class
 
     public async Task ReadResultSetAsync(DbDataReader reader, CancellationToken token)
     {
-        if (await reader.ReadAsync(token))
+        if (await reader.ReadAsync(token).ConfigureAwait(false))
         {
             var selector = _storage.BuildLoadSelector(_session);
-            var doc = await selector.ResolveAsync(reader, token);
+            var doc = await selector.ResolveAsync(reader, token).ConfigureAwait(false);
             _tcs.SetResult(doc);
         }
         else

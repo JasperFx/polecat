@@ -69,8 +69,8 @@ internal sealed class TenantDataCleaner
 
             // One transaction: a tenant wipe that fails halfway leaves a tenant that is neither
             // present nor absent, and the caller has no way to tell which tables made it.
-            await using var tx = await SqlTransactionRequests.BeginAsync(
-                conn, IsolationLevel.ReadCommitted, ct).ConfigureAwait(false);
+            await using var tx = (await SqlTransactionRequests.BeginAsync(
+                conn, IsolationLevel.ReadCommitted, ct).ConfigureAwait(false));
 
             // #891: found through the events, so ahead of the loop that deletes those
             foreach (var table in unreachedTagTables)
@@ -153,7 +153,7 @@ internal sealed class TenantDataCleaner
         cmd.Parameters.Add("@schema", SqlDbType.NVarChar, 128).Value = schema;
 
         var tables = new List<string>();
-        await using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+        await using var reader = (await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false));
         while (await reader.ReadAsync(ct).ConfigureAwait(false))
         {
             tables.Add(reader.GetString(0));
@@ -184,7 +184,7 @@ internal sealed class TenantDataCleaner
         cmd.Parameters.Add("@schema", SqlDbType.NVarChar, 128).Value = schema;
 
         var tables = new List<string>();
-        await using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+        await using var reader = (await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false));
         while (await reader.ReadAsync(ct).ConfigureAwait(false))
         {
             tables.Add(reader.GetString(0));
@@ -211,7 +211,7 @@ internal sealed class TenantDataCleaner
         cmd.Parameters.Add("@schema", SqlDbType.NVarChar, 128).Value = schema;
 
         var edges = new List<(string, string)>();
-        await using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+        await using var reader = (await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false));
         while (await reader.ReadAsync(ct).ConfigureAwait(false))
         {
             edges.Add((reader.GetString(0), reader.GetString(1)));

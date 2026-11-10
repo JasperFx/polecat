@@ -82,32 +82,32 @@ internal static class FullTextBackfill
         // or one that was removed -- are cleared first. The rows they hold were tokenized by a rule nothing
         // searches with, and leaving them is only harmless until a key is reused.
         var declaredKeys = string.Join(", ", mapping.FullTextIndexes.Select(x => SqlEscaping.Literal(x.TokenKey)));
-        await executeAsync(conn, $"DELETE FROM {ftTable} WHERE member NOT IN ({declaredKeys});", commandTimeout);
+        await executeAsync(conn, $"DELETE FROM {ftTable} WHERE member NOT IN ({declaredKeys});", commandTimeout).ConfigureAwait(false);
 
         foreach (var index in mapping.FullTextIndexes)
         {
             var key = SqlEscaping.Literal(index.TokenKey);
             var established = await executeAsync(conn,
                 $"SELECT CASE WHEN EXISTS (SELECT 1 FROM {ftTable} WHERE member = {key}) THEN 1 ELSE 0 END;",
-                commandTimeout) == 1;
+                commandTimeout).ConfigureAwait(false) == 1;
 
             // Taken before the list is, so that a document written after it can be told from one on it.
-            var started = await executeAsync<DateTimeOffset>(conn, "SELECT SYSDATETIMEOFFSET();", commandTimeout);
+            var started = await executeAsync<DateTimeOffset>(conn, "SELECT SYSDATETIMEOFFSET();", commandTimeout).ConfigureAwait(false);
 
-            var pending = await executeAsync(conn, ListSql(mapping, index, established, ftTable), commandTimeout);
+            var pending = await executeAsync(conn, ListSql(mapping, index, established, ftTable), commandTimeout).ConfigureAwait(false);
 
             while (pending > 0)
             {
-                pending = await executeAsync(conn, BatchSql(mapping, index, ftTable), commandTimeout, started);
+                pending = await executeAsync(conn, BatchSql(mapping, index, ftTable), commandTimeout, started).ConfigureAwait(false);
             }
         }
 
-        await executeAsync(conn, $"DROP TABLE IF EXISTS {Pending};", commandTimeout);
+        await executeAsync(conn, $"DROP TABLE IF EXISTS {Pending};", commandTimeout).ConfigureAwait(false);
     }
 
     private static async Task<int> executeAsync(SqlConnection conn, string sql, int commandTimeout,
         DateTimeOffset? started = null)
-        => await executeAsync<int>(conn, sql, commandTimeout, started);
+        => await executeAsync<int>(conn, sql, commandTimeout, started).ConfigureAwait(false);
 
     private static async Task<T> executeAsync<T>(SqlConnection conn, string sql, int commandTimeout,
         DateTimeOffset? started = null) where T : struct
@@ -122,7 +122,7 @@ internal static class FullTextBackfill
             cmd.Parameters.Add(new SqlParameter("@batch", SqlDbType.Int) { Value = BatchSize });
         }
 
-        return await cmd.ExecuteScalarAsync(CancellationToken.None) is T value ? value : default;
+        return await cmd.ExecuteScalarAsync(CancellationToken.None).ConfigureAwait(false) is T value ? value : default;
     }
 
     /// <summary>

@@ -39,7 +39,7 @@ internal partial class QuerySession
             : new ValueTask<bool>(true);
 
     private async ValueTask<bool> fitsAsync(string table, string key, CancellationToken token)
-        => await CodePageLosingAsync(table, key, token) == null;
+        => await CodePageLosingAsync(table, key, token).ConfigureAwait(false) == null;
 
     /// <summary>
     ///     The code page that would change <paramref name="key" /> on its way into the id column of
@@ -56,11 +56,11 @@ internal partial class QuerySession
             await using var cmd = new SqlCommand(KeyColumnCodePagesSql);
             cmd.Parameters.AddVarChar("@table", table);
 
-            await using var reader = await ExecuteReaderAsync(cmd, token);
-            await reader.ReadAsync(token);
+            await using var reader = (await ExecuteReaderAsync(cmd, token).ConfigureAwait(false));
+            await reader.ReadAsync(token).ConfigureAwait(false);
             column = _tableEnsurer.RememberKeyColumn(table, new VarcharKeyColumn(
-                await reader.IsDBNullAsync(0, token) ? 0 : reader.GetInt32(0),
-                await reader.IsDBNullAsync(1, token) ? 0 : reader.GetInt32(1)));
+                await reader.IsDBNullAsync(0, token).ConfigureAwait(false) ? 0 : reader.GetInt32(0),
+                await reader.IsDBNullAsync(1, token).ConfigureAwait(false) ? 0 : reader.GetInt32(1)));
         }
 
         return column.CodePageLosing(key);
@@ -110,7 +110,7 @@ internal partial class QuerySession
         var kept = new List<object>(ids.Count);
         foreach (var id in ids)
         {
-            if (await CouldHaveIdAsync(mapping, id, token)) kept.Add(id);
+            if (await CouldHaveIdAsync(mapping, id, token).ConfigureAwait(false)) kept.Add(id);
         }
 
         return kept;

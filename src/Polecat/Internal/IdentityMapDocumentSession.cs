@@ -45,7 +45,7 @@ internal class IdentityMapDocumentSession : DocumentSessionBase
         }
 
         // Load from database
-        var result = await base.LoadInternalAsync<T>(id, token);
+        var result = await base.LoadInternalAsync<T>(id, token).ConfigureAwait(false);
 
         // Cache in identity map
         if (result != null)
@@ -84,7 +84,7 @@ internal class IdentityMapDocumentSession : DocumentSessionBase
         // Load missing from database
         if (missingIds.Count > 0)
         {
-            var loaded = await base.LoadManyInternalAsync<T>(missingIds, token);
+            var loaded = await base.LoadManyInternalAsync<T>(missingIds, token).ConfigureAwait(false);
             var map = GetOrCreateTypeMap(typeof(T));
 
             foreach (var doc in loaded)

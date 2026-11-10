@@ -267,7 +267,7 @@ internal class PolecatEventLoader : IEventLoader
         var page = new EventPage(request.Floor);
 
         await using var conn = new SqlConnection(_connectionString);
-        await conn.OpenAsync(token);
+        await conn.OpenAsync(token).ConfigureAwait(false);
 
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = _commandText;
@@ -298,8 +298,8 @@ internal class PolecatEventLoader : IEventLoader
 
         var skippedEvents = 0;
 
-        await using var reader = await cmd.ExecuteReaderAsync(token);
-        while (await reader.ReadAsync(token))
+        await using var reader = (await cmd.ExecuteReaderAsync(token).ConfigureAwait(false));
+        while (await reader.ReadAsync(token).ConfigureAwait(false))
         {
             var seqId = reader.GetInt64(0);
             var eventId = reader.GetGuid(1);

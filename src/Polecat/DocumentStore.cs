@@ -412,7 +412,7 @@ public partial class DocumentStore : IDocumentStore
 
         if (lifetime.HoldsTransactionForSession)
         {
-            await lifetime.BeginTransactionAsync(token);
+            await lifetime.BeginTransactionAsync(token).ConfigureAwait(false);
         }
 
         return options.Tracking switch

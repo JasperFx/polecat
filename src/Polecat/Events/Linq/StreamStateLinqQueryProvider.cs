@@ -138,9 +138,9 @@ internal class StreamStateLinqQueryProvider : IPolecatAsyncQueryProvider,
         parser.Statement.Apply(builder);
         builder.Compile();
 
-        await using var reader = await _session.ExecuteReaderAsync(batch, token);
+        await using var reader = (await _session.ExecuteReaderAsync(batch, token).ConfigureAwait(false));
 
-        return await HandleResultAsync<TResult>(reader, parser, token);
+        return await HandleResultAsync<TResult>(reader, parser, token).ConfigureAwait(false);
     }
 
     private async Task<TResult> HandleResultAsync<TResult>(
@@ -149,26 +149,26 @@ internal class StreamStateLinqQueryProvider : IPolecatAsyncQueryProvider,
         switch (parser.ValueMode)
         {
             case null:
-                return (TResult)(object)await ReadStreamStatesAsync(reader, token);
+                return (TResult)(object)await ReadStreamStatesAsync(reader, token).ConfigureAwait(false);
 
             case SingleValueMode.First:
             case SingleValueMode.Single:
             case SingleValueMode.Last:
-                return await SingleStreamStateAsync<TResult>(reader, token, canBeNull: false);
+                return await SingleStreamStateAsync<TResult>(reader, token, canBeNull: false).ConfigureAwait(false);
 
             case SingleValueMode.FirstOrDefault:
             case SingleValueMode.SingleOrDefault:
             case SingleValueMode.LastOrDefault:
-                return await SingleStreamStateAsync<TResult>(reader, token, canBeNull: true);
+                return await SingleStreamStateAsync<TResult>(reader, token, canBeNull: true).ConfigureAwait(false);
 
             case SingleValueMode.Count:
             case SingleValueMode.LongCount:
                 var scalarHandler = new ScalarHandler<TResult>();
-                return await scalarHandler.HandleAsync(reader, token);
+                return await scalarHandler.HandleAsync(reader, token).ConfigureAwait(false);
 
             case SingleValueMode.Any:
                 var anyHandler = new AnyHandler();
-                var anyResult = await anyHandler.HandleAsync(reader, token);
+                var anyResult = await anyHandler.HandleAsync(reader, token).ConfigureAwait(false);
                 return (TResult)(object)anyResult;
 
             default:
@@ -182,7 +182,7 @@ internal class StreamStateLinqQueryProvider : IPolecatAsyncQueryProvider,
     {
         var identity = _events.StreamIdentity;
         var results = new List<StreamState>();
-        while (await reader.ReadAsync(token))
+        while (await reader.ReadAsync(token).ConfigureAwait(false))
         {
             results.Add(PcStreamsRowReader.ReadStreamState(reader, identity, _events));
         }
@@ -193,7 +193,7 @@ internal class StreamStateLinqQueryProvider : IPolecatAsyncQueryProvider,
     private async Task<TResult> SingleStreamStateAsync<TResult>(
         DbDataReader reader, CancellationToken token, bool canBeNull)
     {
-        var states = await ReadStreamStatesAsync(reader, token);
+        var states = await ReadStreamStatesAsync(reader, token).ConfigureAwait(false);
         if (states.Count == 0)
         {
             if (!canBeNull) throw new InvalidOperationException("Sequence contains no elements");

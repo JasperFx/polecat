@@ -232,25 +232,25 @@ internal class EventOperations : QueryEventStore, IEventOperations
     public async Task<IEventStream<T>> FetchForWriting<T>(Guid id, CancellationToken cancellation = default)
         where T : class
     {
-        return await FetchForWritingInternal<T>(id, false, null, cancellation);
+        return await FetchForWritingInternal<T>(id, false, null, cancellation).ConfigureAwait(false);
     }
 
     public async Task<IEventStream<T>> FetchForWriting<T>(string key, CancellationToken cancellation = default)
         where T : class
     {
-        return await FetchForWritingInternal<T>(key, false, null, cancellation);
+        return await FetchForWritingInternal<T>(key, false, null, cancellation).ConfigureAwait(false);
     }
 
     public async Task<IEventStream<T>> FetchForWriting<T>(Guid id, long expectedVersion, CancellationToken cancellation = default)
         where T : class
     {
-        return await FetchForWritingInternal<T>(id, false, expectedVersion, cancellation);
+        return await FetchForWritingInternal<T>(id, false, expectedVersion, cancellation).ConfigureAwait(false);
     }
 
     public async Task<IEventStream<T>> FetchForWriting<T>(string key, long expectedVersion, CancellationToken cancellation = default)
         where T : class
     {
-        return await FetchForWritingInternal<T>(key, false, expectedVersion, cancellation);
+        return await FetchForWritingInternal<T>(key, false, expectedVersion, cancellation).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -276,12 +276,12 @@ internal class EventOperations : QueryEventStore, IEventOperations
     /// </remarks>
     public async Task<IReadOnlyList<IEventStream<T>>> FetchManyForWriting<T>(IReadOnlyList<Guid> ids,
         CancellationToken cancellation = default) where T : class
-        => await fetchManyForWritingAsync<T>(assertDistinctStreams(ids, nameof(ids)), cancellation);
+        => await fetchManyForWritingAsync<T>(assertDistinctStreams(ids, nameof(ids)), cancellation).ConfigureAwait(false);
 
     /// <inheritdoc cref="FetchManyForWriting{T}(IReadOnlyList{Guid}, CancellationToken)" />
     public async Task<IReadOnlyList<IEventStream<T>>> FetchManyForWriting<T>(IReadOnlyList<string> keys,
         CancellationToken cancellation = default) where T : class
-        => await fetchManyForWritingAsync<T>(assertDistinctStreams(keys, nameof(keys)), cancellation);
+        => await fetchManyForWritingAsync<T>(assertDistinctStreams(keys, nameof(keys)), cancellation).ConfigureAwait(false);
 
     /// <summary>
     ///     Two handles on one stream in one session would race each other's expected version, so a
@@ -322,10 +322,10 @@ internal class EventOperations : QueryEventStore, IEventOperations
     {
         if (streamIds.Length == 0) return [];
 
-        await _sessionBase.ProvisionEventTenantBeforeHoldingLocksAsync(_tenantId, exclusive: false, cancellation);
+        await _sessionBase.ProvisionEventTenantBeforeHoldingLocksAsync(_tenantId, exclusive: false, cancellation).ConfigureAwait(false);
 
         // ---- round trip 1: every stream's version ----
-        var states = await fetchManyStreamStatesAsync(streamIds, cancellation);
+        var states = await fetchManyStreamStatesAsync(streamIds, cancellation).ConfigureAwait(false);
 
         // ---- in memory: take each stream's write-cache baseline, so the read below can start from it ----
         var baselines = new AggregateBaseline<T>[streamIds.Length];
@@ -348,16 +348,16 @@ internal class EventOperations : QueryEventStore, IEventOperations
             }
         }
 
-        await eventBatch.Execute(cancellation);
+        await eventBatch.Execute(cancellation).ConfigureAwait(false);
 
         var events = new IReadOnlyList<IEvent>[streamIds.Length];
         for (var i = 0; i < streamIds.Length; i++)
         {
-            events[i] = eventReads[i] is null ? [] : await eventReads[i]!;
+            events[i] = eventReads[i] is null ? [] : await eventReads[i].ConfigureAwait(false)!;
         }
 
         // ---- round trip 3, only for a baseline the archiver has outrun ----
-        await refetchArchivedBaselinesAsync(streamIds, states, baselines, events, cancellation);
+        await refetchArchivedBaselinesAsync(streamIds, states, baselines, events, cancellation).ConfigureAwait(false);
 
         var streams = new IEventStream<T>[streamIds.Length];
         for (var i = 0; i < streamIds.Length; i++)
@@ -368,7 +368,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
             T? aggregate = null;
             if (streamExists && version > 0)
             {
-                aggregate = await foldForWritingAsync(streamIds[i], version, events[i], baselines[i], cancellation);
+                aggregate = await foldForWritingAsync(streamIds[i], version, events[i], baselines[i], cancellation).ConfigureAwait(false);
                 cacheAggregateInIdentityMap<T>(streamIds[i], aggregate);
             }
 
@@ -398,12 +398,12 @@ internal class EventOperations : QueryEventStore, IEventOperations
             reads[i] = item.Result;
         }
 
-        await batch.Execute(cancellation);
+        await batch.Execute(cancellation).ConfigureAwait(false);
 
         var states = new StreamState?[streamIds.Length];
         for (var i = 0; i < streamIds.Length; i++)
         {
-            states[i] = await reads[i];
+            states[i] = await reads[i].ConfigureAwait(false);
         }
 
         return states;
@@ -447,24 +447,24 @@ internal class EventOperations : QueryEventStore, IEventOperations
             reads[n] = addFetchStreamItem(batch, streamIds[stale[n]], 1);
         }
 
-        await batch.Execute(cancellation);
+        await batch.Execute(cancellation).ConfigureAwait(false);
 
         for (var n = 0; n < stale.Count; n++)
         {
-            events[stale[n]] = await reads[n];
+            events[stale[n]] = await reads[n].ConfigureAwait(false);
         }
     }
 
     public async Task<IEventStream<T>> FetchForExclusiveWriting<T>(Guid id, CancellationToken cancellation = default)
         where T : class
     {
-        return await FetchForWritingInternal<T>(id, true, null, cancellation);
+        return await FetchForWritingInternal<T>(id, true, null, cancellation).ConfigureAwait(false);
     }
 
     public async Task<IEventStream<T>> FetchForExclusiveWriting<T>(string key, CancellationToken cancellation = default)
         where T : class
     {
-        return await FetchForWritingInternal<T>(key, true, null, cancellation);
+        return await FetchForWritingInternal<T>(key, true, null, cancellation).ConfigureAwait(false);
     }
 
     public async ValueTask<T?> ProjectLatest<T>(Guid id, CancellationToken cancellation = default)
@@ -473,13 +473,13 @@ internal class EventOperations : QueryEventStore, IEventOperations
         if (!_workTracker.TryFindStream(id, _events.StreamIdScope(_tenantId), out var stream)
             || stream!.Events.Count == 0)
         {
-            return await FetchLatest<T>(id, cancellation);
+            return await FetchLatest<T>(id, cancellation).ConfigureAwait(false);
         }
 
         // #916: never onto what FetchLatest finds in a session's cache, see FetchUncachedForFolding
-        var snapshot = await FetchUncachedForFolding<T>(id, cancellation);
+        var snapshot = await FetchUncachedForFolding<T>(id, cancellation).ConfigureAwait(false);
         var aggregator = _sessionBase.Options.Projections.AggregatorFor<T>();
-        return await aggregator.BuildAsync(stream.Events, _sessionBase, snapshot, cancellation);
+        return await aggregator.BuildAsync(stream.Events, _sessionBase, snapshot, cancellation).ConfigureAwait(false);
     }
 
     public async ValueTask<T?> ProjectLatest<T>(string key, CancellationToken cancellation = default)
@@ -488,114 +488,114 @@ internal class EventOperations : QueryEventStore, IEventOperations
         if (!_workTracker.TryFindStream(key, _events.StreamIdScope(_tenantId), out var stream)
             || stream!.Events.Count == 0)
         {
-            return await FetchLatest<T>(key, cancellation);
+            return await FetchLatest<T>(key, cancellation).ConfigureAwait(false);
         }
 
         // #916: never onto what FetchLatest finds in a session's cache, see FetchUncachedForFolding
-        var snapshot = await FetchUncachedForFolding<T>(key, cancellation);
+        var snapshot = await FetchUncachedForFolding<T>(key, cancellation).ConfigureAwait(false);
         var aggregator = _sessionBase.Options.Projections.AggregatorFor<T>();
-        return await aggregator.BuildAsync(stream.Events, _sessionBase, snapshot, cancellation);
+        return await aggregator.BuildAsync(stream.Events, _sessionBase, snapshot, cancellation).ConfigureAwait(false);
     }
 
     public async Task WriteToAggregate<T>(Guid id, Action<IEventStream<T>> writing, CancellationToken cancellation = default)
         where T : class
     {
-        var stream = await FetchForWriting<T>(id, cancellation);
+        var stream = await FetchForWriting<T>(id, cancellation).ConfigureAwait(false);
         writing(stream);
-        await _sessionBase.SaveChangesAsync(cancellation);
+        await _sessionBase.SaveChangesAsync(cancellation).ConfigureAwait(false);
     }
 
     public async Task WriteToAggregate<T>(string key, Action<IEventStream<T>> writing, CancellationToken cancellation = default)
         where T : class
     {
-        var stream = await FetchForWriting<T>(key, cancellation);
+        var stream = await FetchForWriting<T>(key, cancellation).ConfigureAwait(false);
         writing(stream);
-        await _sessionBase.SaveChangesAsync(cancellation);
+        await _sessionBase.SaveChangesAsync(cancellation).ConfigureAwait(false);
     }
 
     public async Task WriteToAggregate<T>(Guid id, Func<IEventStream<T>, Task> writing, CancellationToken cancellation = default)
         where T : class
     {
-        var stream = await FetchForWriting<T>(id, cancellation);
-        await writing(stream);
-        await _sessionBase.SaveChangesAsync(cancellation);
+        var stream = await FetchForWriting<T>(id, cancellation).ConfigureAwait(false);
+        await writing(stream).ConfigureAwait(false);
+        await _sessionBase.SaveChangesAsync(cancellation).ConfigureAwait(false);
     }
 
     public async Task WriteToAggregate<T>(string key, Func<IEventStream<T>, Task> writing, CancellationToken cancellation = default)
         where T : class
     {
-        var stream = await FetchForWriting<T>(key, cancellation);
-        await writing(stream);
-        await _sessionBase.SaveChangesAsync(cancellation);
+        var stream = await FetchForWriting<T>(key, cancellation).ConfigureAwait(false);
+        await writing(stream).ConfigureAwait(false);
+        await _sessionBase.SaveChangesAsync(cancellation).ConfigureAwait(false);
     }
 
     public async Task WriteToAggregate<T>(Guid id, int initialVersion, Action<IEventStream<T>> writing, CancellationToken cancellation = default)
         where T : class
     {
-        var stream = await FetchForWriting<T>(id, initialVersion, cancellation);
+        var stream = await FetchForWriting<T>(id, initialVersion, cancellation).ConfigureAwait(false);
         writing(stream);
-        await _sessionBase.SaveChangesAsync(cancellation);
+        await _sessionBase.SaveChangesAsync(cancellation).ConfigureAwait(false);
     }
 
     public async Task WriteToAggregate<T>(Guid id, int initialVersion, Func<IEventStream<T>, Task> writing, CancellationToken cancellation = default)
         where T : class
     {
-        var stream = await FetchForWriting<T>(id, initialVersion, cancellation);
-        await writing(stream);
-        await _sessionBase.SaveChangesAsync(cancellation);
+        var stream = await FetchForWriting<T>(id, initialVersion, cancellation).ConfigureAwait(false);
+        await writing(stream).ConfigureAwait(false);
+        await _sessionBase.SaveChangesAsync(cancellation).ConfigureAwait(false);
     }
 
     public async Task WriteToAggregate<T>(string key, int initialVersion, Action<IEventStream<T>> writing, CancellationToken cancellation = default)
         where T : class
     {
-        var stream = await FetchForWriting<T>(key, initialVersion, cancellation);
+        var stream = await FetchForWriting<T>(key, initialVersion, cancellation).ConfigureAwait(false);
         writing(stream);
-        await _sessionBase.SaveChangesAsync(cancellation);
+        await _sessionBase.SaveChangesAsync(cancellation).ConfigureAwait(false);
     }
 
     public async Task WriteToAggregate<T>(string key, int initialVersion, Func<IEventStream<T>, Task> writing, CancellationToken cancellation = default)
         where T : class
     {
-        var stream = await FetchForWriting<T>(key, initialVersion, cancellation);
-        await writing(stream);
-        await _sessionBase.SaveChangesAsync(cancellation);
+        var stream = await FetchForWriting<T>(key, initialVersion, cancellation).ConfigureAwait(false);
+        await writing(stream).ConfigureAwait(false);
+        await _sessionBase.SaveChangesAsync(cancellation).ConfigureAwait(false);
     }
 
     public async Task WriteExclusivelyToAggregate<T>(Guid id, Action<IEventStream<T>> writing, CancellationToken cancellation = default)
         where T : class
     {
-        var stream = await FetchForExclusiveWriting<T>(id, cancellation);
+        var stream = await FetchForExclusiveWriting<T>(id, cancellation).ConfigureAwait(false);
         writing(stream);
-        await _sessionBase.SaveChangesAsync(cancellation);
+        await _sessionBase.SaveChangesAsync(cancellation).ConfigureAwait(false);
     }
 
     public async Task WriteExclusivelyToAggregate<T>(string key, Action<IEventStream<T>> writing, CancellationToken cancellation = default)
         where T : class
     {
-        var stream = await FetchForExclusiveWriting<T>(key, cancellation);
+        var stream = await FetchForExclusiveWriting<T>(key, cancellation).ConfigureAwait(false);
         writing(stream);
-        await _sessionBase.SaveChangesAsync(cancellation);
+        await _sessionBase.SaveChangesAsync(cancellation).ConfigureAwait(false);
     }
 
     public async Task WriteExclusivelyToAggregate<T>(Guid id, Func<IEventStream<T>, Task> writing, CancellationToken cancellation = default)
         where T : class
     {
-        var stream = await FetchForExclusiveWriting<T>(id, cancellation);
-        await writing(stream);
-        await _sessionBase.SaveChangesAsync(cancellation);
+        var stream = await FetchForExclusiveWriting<T>(id, cancellation).ConfigureAwait(false);
+        await writing(stream).ConfigureAwait(false);
+        await _sessionBase.SaveChangesAsync(cancellation).ConfigureAwait(false);
     }
 
     public async Task WriteExclusivelyToAggregate<T>(string key, Func<IEventStream<T>, Task> writing, CancellationToken cancellation = default)
         where T : class
     {
-        var stream = await FetchForExclusiveWriting<T>(key, cancellation);
-        await writing(stream);
-        await _sessionBase.SaveChangesAsync(cancellation);
+        var stream = await FetchForExclusiveWriting<T>(key, cancellation).ConfigureAwait(false);
+        await writing(stream).ConfigureAwait(false);
+        await _sessionBase.SaveChangesAsync(cancellation).ConfigureAwait(false);
     }
 
     public async Task AppendOptimistic(Guid streamId, CancellationToken token, params object[] events)
     {
-        var version = await ReadVersionFromExistingStream(streamId, false, token);
+        var version = await ReadVersionFromExistingStream(streamId, false, token).ConfigureAwait(false);
         var action = Append(streamId, events);
         action.ExpectedVersionOnServer = version;
     }
@@ -605,7 +605,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
 
     public async Task AppendOptimistic(string streamKey, CancellationToken token, params object[] events)
     {
-        var version = await ReadVersionFromExistingStream(streamKey, false, token);
+        var version = await ReadVersionFromExistingStream(streamKey, false, token).ConfigureAwait(false);
         var action = Append(streamKey, events);
         action.ExpectedVersionOnServer = version;
     }
@@ -617,8 +617,8 @@ internal class EventOperations : QueryEventStore, IEventOperations
     {
         try
         {
-            await _sessionBase.BeginTransactionAsync(token);
-            var version = await ReadVersionFromExistingStream(streamId, true, token);
+            await _sessionBase.BeginTransactionAsync(token).ConfigureAwait(false);
+            var version = await ReadVersionFromExistingStream(streamId, true, token).ConfigureAwait(false);
             var action = Append(streamId, events);
             action.ExpectedVersionOnServer = version;
         }
@@ -635,8 +635,8 @@ internal class EventOperations : QueryEventStore, IEventOperations
     {
         try
         {
-            await _sessionBase.BeginTransactionAsync(token);
-            var version = await ReadVersionFromExistingStream(streamKey, true, token);
+            await _sessionBase.BeginTransactionAsync(token).ConfigureAwait(false);
+            var version = await ReadVersionFromExistingStream(streamKey, true, token).ConfigureAwait(false);
             var action = Append(streamKey, events);
             action.ExpectedVersionOnServer = version;
         }
@@ -651,7 +651,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
 
     private async Task<long> ReadVersionFromExistingStream(object streamId, bool forUpdate, CancellationToken token)
     {
-        if (!await _sessionBase.CouldHaveStreamAsync(streamId, token))
+        if (!await _sessionBase.CouldHaveStreamAsync(streamId, token).ConfigureAwait(false))
         {
             throw new Exceptions.NonExistentStreamException(streamId);
         }
@@ -666,7 +666,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
         long version = 0;
         try
         {
-            var result = await _sessionBase.ExecuteScalarAsync(cmd, token);
+            var result = await _sessionBase.ExecuteScalarAsync(cmd, token).ConfigureAwait(false);
             if (result != null && result != DBNull.Value)
             {
                 version = (long)result;
@@ -830,11 +830,11 @@ internal class EventOperations : QueryEventStore, IEventOperations
     private async Task<IEventStream<T>> FetchForWritingInternal<T>(object streamId, bool forExclusive,
         long? expectedVersion, CancellationToken cancellation) where T : class
     {
-        await _sessionBase.ProvisionEventTenantBeforeHoldingLocksAsync(_tenantId, forExclusive, cancellation);
+        await _sessionBase.ProvisionEventTenantBeforeHoldingLocksAsync(_tenantId, forExclusive, cancellation).ConfigureAwait(false);
 
         if (forExclusive)
         {
-            await _sessionBase.BeginTransactionAsync(cancellation);
+            await _sessionBase.BeginTransactionAsync(cancellation).ConfigureAwait(false);
         }
 
         // Query stream version
@@ -843,7 +843,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
 
         // #919: a key the column can't hold is a new stream, not the one it collapses onto, and an
         // exclusive fetch has no business locking that one.
-        if (await _sessionBase.CouldHaveStreamAsync(streamId, cancellation))
+        if (await _sessionBase.CouldHaveStreamAsync(streamId, cancellation).ConfigureAwait(false))
         {
             await using var cmd = new SqlCommand();
             cmd.CommandText = forExclusive
@@ -855,7 +855,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
             object? result;
             try
             {
-                result = await _sessionBase.ExecuteScalarAsync(cmd, cancellation);
+                result = await _sessionBase.ExecuteScalarAsync(cmd, cancellation).ConfigureAwait(false);
             }
             // #652: the UPDLOCK/HOLDLOCK read is the one statement here that can lose a deadlock or
             // time out waiting on a lock, and this path had no guard at all — so
@@ -885,7 +885,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
         T? aggregate = null;
         if (streamExists && version > 0)
         {
-            aggregate = await buildForWritingAsync<T>(streamId, version, cancellation);
+            aggregate = await buildForWritingAsync<T>(streamId, version, cancellation).ConfigureAwait(false);
             cacheAggregateInIdentityMap<T>(streamId, aggregate);
         }
 
@@ -971,15 +971,15 @@ internal class EventOperations : QueryEventStore, IEventOperations
 
         // fromVersion is inclusive, so a baseline at version N reads N+1 and after. With no baseline
         // this is `fromVersion: 1`, which is the whole stream -- the uncached behavior, unchanged.
-        var events = await fetchForWritingEventsAsync(streamId, baseline.Version + 1, cancellation);
+        var events = await fetchForWritingEventsAsync(streamId, baseline.Version + 1, cancellation).ConfigureAwait(false);
 
         if (baseline.NeedsArchivalRefetch(events, version))
         {
             baseline = baseline.WithoutAggregate();
-            events = await fetchForWritingEventsAsync(streamId, 1, cancellation);
+            events = await fetchForWritingEventsAsync(streamId, 1, cancellation).ConfigureAwait(false);
         }
 
-        return await foldForWritingAsync(streamId, version, events, baseline, cancellation);
+        return await foldForWritingAsync(streamId, version, events, baseline, cancellation).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -1026,7 +1026,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
         if (events.Count > 0)
         {
             var aggregator = _sessionBase.Options.Projections.AggregatorFor<T>();
-            aggregate = await aggregator.BuildAsync(events, _sessionBase, baseline.Aggregate, cancellation);
+            aggregate = await aggregator.BuildAsync(events, _sessionBase, baseline.Aggregate, cancellation).ConfigureAwait(false);
         }
         else
         {
@@ -1155,13 +1155,13 @@ internal class EventOperations : QueryEventStore, IEventOperations
     {
         switch (tryUnwrapStreamIdentity<T, TId>(id))
         {
-            case Guid streamId: return await FetchForWriting<T>(streamId, cancellation);
-            case string streamKey: return await FetchForWriting<T>(streamKey, cancellation);
+            case Guid streamId: return await FetchForWriting<T>(streamId, cancellation).ConfigureAwait(false);
+            case string streamKey: return await FetchForWriting<T>(streamKey, cancellation).ConfigureAwait(false);
         }
 
         var naturalKey = FindNaturalKeyDefinition<T>();
         return await NaturalKeyFetchPlanner.FetchForWritingByNaturalKey<T, TId>(
-            _sessionBase, _events, _workTracker, naturalKey, id, _tenantId, cancellation);
+            _sessionBase, _events, _workTracker, naturalKey, id, _tenantId, cancellation).ConfigureAwait(false);
     }
 
     public async Task<IEventStream<T>> FetchForExclusiveWriting<T, TId>(TId id, CancellationToken cancellation = default)
@@ -1169,14 +1169,14 @@ internal class EventOperations : QueryEventStore, IEventOperations
     {
         switch (tryUnwrapStreamIdentity<T, TId>(id))
         {
-            case Guid streamId: return await FetchForExclusiveWriting<T>(streamId, cancellation);
-            case string streamKey: return await FetchForExclusiveWriting<T>(streamKey, cancellation);
+            case Guid streamId: return await FetchForExclusiveWriting<T>(streamId, cancellation).ConfigureAwait(false);
+            case string streamKey: return await FetchForExclusiveWriting<T>(streamKey, cancellation).ConfigureAwait(false);
         }
 
         // FetchForWritingByNaturalKey already uses UPDLOCK, HOLDLOCK for exclusive locking
         var naturalKey = FindNaturalKeyDefinition<T>();
         return await NaturalKeyFetchPlanner.FetchForWritingByNaturalKey<T, TId>(
-            _sessionBase, _events, _workTracker, naturalKey, id, _tenantId, cancellation);
+            _sessionBase, _events, _workTracker, naturalKey, id, _tenantId, cancellation).ConfigureAwait(false);
     }
 
     public async ValueTask<T?> FetchLatest<T, TId>(TId id, CancellationToken cancellation = default)
@@ -1184,8 +1184,8 @@ internal class EventOperations : QueryEventStore, IEventOperations
     {
         switch (tryUnwrapStreamIdentity<T, TId>(id))
         {
-            case Guid streamId: return await FetchLatest<T>(streamId, cancellation);
-            case string streamKey: return await FetchLatest<T>(streamKey, cancellation);
+            case Guid streamId: return await FetchLatest<T>(streamId, cancellation).ConfigureAwait(false);
+            case string streamKey: return await FetchLatest<T>(streamKey, cancellation).ConfigureAwait(false);
         }
 
         var naturalKey = FindNaturalKeyDefinition<T>();
@@ -1215,17 +1215,17 @@ internal class EventOperations : QueryEventStore, IEventOperations
             cmd.Parameters.AddVarChar("@tenantId", _tenantId);
         }
 
-        var result = await _sessionBase.ExecuteScalarAsync(cmd, cancellation);
+        var result = await _sessionBase.ExecuteScalarAsync(cmd, cancellation).ConfigureAwait(false);
         if (result == null || result == DBNull.Value) return default;
 
         // Delegate to existing FetchLatest with the resolved stream id
         if (isGuidStream)
         {
-            return await FetchLatest<T>((Guid)result, cancellation);
+            return await FetchLatest<T>((Guid)result, cancellation).ConfigureAwait(false);
         }
         else
         {
-            return await FetchLatest<T>((string)result, cancellation);
+            return await FetchLatest<T>((string)result, cancellation).ConfigureAwait(false);
         }
     }
 
@@ -1304,8 +1304,8 @@ internal class EventOperations : QueryEventStore, IEventOperations
         WriteEventsExistSql(builder, _events, query, _tenantId);
         builder.Compile();
 
-        await using var reader = await _sessionBase.ExecuteReaderAsync(batch, cancellation);
-        return await reader.ReadAsync(cancellation) && reader.GetInt32(0) == 1;
+        await using var reader = (await _sessionBase.ExecuteReaderAsync(batch, cancellation).ConfigureAwait(false));
+        return await reader.ReadAsync(cancellation).ConfigureAwait(false) && reader.GetInt32(0) == 1;
     }
 
     public async Task<IReadOnlyList<IEvent>> QueryByTagsAsync(EventTagQuery query,
@@ -1323,10 +1323,10 @@ internal class EventOperations : QueryEventStore, IEventOperations
         builder.Compile();
 
         var results = new List<IEvent>();
-        await using var dbReader = await _sessionBase.ExecuteReaderAsync(batch, cancellation);
+        await using var dbReader = (await _sessionBase.ExecuteReaderAsync(batch, cancellation).ConfigureAwait(false));
         var reader = dbReader.AsSqlDataReader();
 
-        while (await reader.ReadAsync(cancellation))
+        while (await reader.ReadAsync(cancellation).ConfigureAwait(false))
         {
             var seqId = reader.GetInt64(0);
             var eventId = reader.GetGuid(1);
@@ -1397,11 +1397,11 @@ internal class EventOperations : QueryEventStore, IEventOperations
     public async Task<T?> AggregateByTagsAsync<T>(EventTagQuery query,
         CancellationToken cancellation = default) where T : class
     {
-        var events = await QueryByTagsAsync(query, cancellation);
+        var events = await QueryByTagsAsync(query, cancellation).ConfigureAwait(false);
         if (events.Count == 0) return default;
 
         var aggregator = _sessionBase.Options.Projections.AggregatorFor<T>();
-        return await aggregator.BuildAsync(events, _sessionBase, default, cancellation);
+        return await aggregator.BuildAsync(events, _sessionBase, default, cancellation).ConfigureAwait(false);
     }
 
     public async Task<IEventBoundary<T>> FetchForWritingByTags<T>(EventTagQuery query,
@@ -1410,7 +1410,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
         if (query.Conditions.Count == 0)
             throw new ArgumentException("EventTagQuery must have at least one condition.");
 
-        await _sessionBase.EnsureEventStoreSchemaAsync(cancellation);
+        await _sessionBase.EnsureEventStoreSchemaAsync(cancellation).ConfigureAwait(false);
 
         // gh-515: capture the tag versions FIRST, ahead of the events read. See DcbTagVersionCapture
         // for why the order is load-bearing and not an accident of how this method grew.
@@ -1422,18 +1422,18 @@ internal class EventOperations : QueryEventStore, IEventOperations
             DcbTagVersionCapture.WriteSql(builder, _events, targets, _tenantId);
             builder.Compile();
 
-            await using var captureReader = await _sessionBase.ExecuteReaderAsync(capture, cancellation);
-            capturedByKey = await DcbTagVersionCapture.ReadAsync(captureReader, cancellation);
+            await using var captureReader = (await _sessionBase.ExecuteReaderAsync(capture, cancellation).ConfigureAwait(false));
+            capturedByKey = await DcbTagVersionCapture.ReadAsync(captureReader, cancellation).ConfigureAwait(false);
         }
 
-        var events = await QueryByTagsAsync(query, cancellation);
+        var events = await QueryByTagsAsync(query, cancellation).ConfigureAwait(false);
         var lastSeenSequence = events.Count > 0 ? events.Max(e => e.Sequence) : 0;
 
         T? aggregate = default;
         if (events.Count > 0)
         {
             var aggregator = _sessionBase.Options.Projections.AggregatorFor<T>();
-            aggregate = await aggregator.BuildAsync(events, _sessionBase, default, cancellation);
+            aggregate = await aggregator.BuildAsync(events, _sessionBase, default, cancellation).ConfigureAwait(false);
         }
 
         // Handed to the session rather than queued as an operation: a boundary only belongs in the unit

@@ -19,7 +19,7 @@ internal class ListQueryHandler<T> : IQueryHandler<IReadOnlyList<T>> where T : c
     public async Task<IReadOnlyList<T>> HandleAsync(DbDataReader reader, CancellationToken token)
     {
         var list = new List<T>();
-        while (await reader.ReadAsync(token))
+        while (await reader.ReadAsync(token).ConfigureAwait(false))
         {
             var item = _selector.Resolve(reader);
             list.Add(item);

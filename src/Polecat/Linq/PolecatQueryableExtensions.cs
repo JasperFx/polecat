@@ -83,7 +83,7 @@ public static class PolecatQueryableExtensions
         _ = QueryHandlers.ScalarListHandlerRoot<T>.Rooted;
 
         var provider = GetPolecatProvider(queryable);
-        return await provider.ExecuteAsync<IReadOnlyList<T>>(queryable.Expression, token);
+        return await provider.ExecuteAsync<IReadOnlyList<T>>(queryable.Expression, token).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -94,7 +94,7 @@ public static class PolecatQueryableExtensions
     {
         var provider = GetPolecatProvider(queryable);
         var expression = BuildMethodCallExpression(queryable, nameof(Queryable.First));
-        return (await provider.ExecuteAsync<T?>(expression, token))!;
+        return (await provider.ExecuteAsync<T?>(expression, token).ConfigureAwait(false))!;
     }
 
     /// <summary>
@@ -105,7 +105,7 @@ public static class PolecatQueryableExtensions
     {
         var provider = GetPolecatProvider(queryable);
         var expression = BuildMethodCallExpression(queryable, nameof(Queryable.FirstOrDefault));
-        return await provider.ExecuteAsync<T?>(expression, token);
+        return await provider.ExecuteAsync<T?>(expression, token).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -117,7 +117,7 @@ public static class PolecatQueryableExtensions
     {
         var provider = GetPolecatProvider(queryable);
         var expression = BuildMethodCallExpression(queryable, nameof(Queryable.First), predicate);
-        return (await provider.ExecuteAsync<T?>(expression, token))!;
+        return (await provider.ExecuteAsync<T?>(expression, token).ConfigureAwait(false))!;
     }
 
     /// <summary>
@@ -129,7 +129,7 @@ public static class PolecatQueryableExtensions
     {
         var provider = GetPolecatProvider(queryable);
         var expression = BuildMethodCallExpression(queryable, nameof(Queryable.FirstOrDefault), predicate);
-        return await provider.ExecuteAsync<T?>(expression, token);
+        return await provider.ExecuteAsync<T?>(expression, token).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -140,7 +140,7 @@ public static class PolecatQueryableExtensions
     {
         var provider = GetPolecatProvider(queryable);
         var expression = BuildMethodCallExpression(queryable, nameof(Queryable.Single));
-        return (await provider.ExecuteAsync<T?>(expression, token))!;
+        return (await provider.ExecuteAsync<T?>(expression, token).ConfigureAwait(false))!;
     }
 
     /// <summary>
@@ -151,7 +151,7 @@ public static class PolecatQueryableExtensions
     {
         var provider = GetPolecatProvider(queryable);
         var expression = BuildMethodCallExpression(queryable, nameof(Queryable.SingleOrDefault));
-        return await provider.ExecuteAsync<T?>(expression, token);
+        return await provider.ExecuteAsync<T?>(expression, token).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -162,7 +162,7 @@ public static class PolecatQueryableExtensions
     {
         var provider = GetPolecatProvider(queryable);
         var expression = BuildMethodCallExpression(queryable, nameof(Queryable.Last));
-        return (await provider.ExecuteAsync<T?>(expression, token))!;
+        return (await provider.ExecuteAsync<T?>(expression, token).ConfigureAwait(false))!;
     }
 
     /// <summary>
@@ -173,7 +173,7 @@ public static class PolecatQueryableExtensions
     {
         var provider = GetPolecatProvider(queryable);
         var expression = BuildMethodCallExpression(queryable, nameof(Queryable.LastOrDefault));
-        return await provider.ExecuteAsync<T?>(expression, token);
+        return await provider.ExecuteAsync<T?>(expression, token).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -185,7 +185,7 @@ public static class PolecatQueryableExtensions
     {
         var provider = GetPolecatProvider(queryable);
         var expression = BuildMethodCallExpression(queryable, nameof(Queryable.Last), predicate);
-        return (await provider.ExecuteAsync<T?>(expression, token))!;
+        return (await provider.ExecuteAsync<T?>(expression, token).ConfigureAwait(false))!;
     }
 
     /// <summary>
@@ -196,7 +196,7 @@ public static class PolecatQueryableExtensions
     {
         var provider = GetPolecatProvider(queryable);
         var expression = BuildMethodCallExpression(queryable, nameof(Queryable.Count));
-        return await provider.ExecuteAsync<int>(expression, token);
+        return await provider.ExecuteAsync<int>(expression, token).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -208,7 +208,7 @@ public static class PolecatQueryableExtensions
     {
         var provider = GetPolecatProvider(queryable);
         var expression = BuildMethodCallExpression(queryable, nameof(Queryable.Count), predicate);
-        return await provider.ExecuteAsync<int>(expression, token);
+        return await provider.ExecuteAsync<int>(expression, token).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -219,7 +219,7 @@ public static class PolecatQueryableExtensions
     {
         var provider = GetPolecatProvider(queryable);
         var expression = BuildMethodCallExpression(queryable, nameof(Queryable.LongCount));
-        return await provider.ExecuteAsync<long>(expression, token);
+        return await provider.ExecuteAsync<long>(expression, token).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -230,7 +230,7 @@ public static class PolecatQueryableExtensions
     {
         var provider = GetPolecatProvider(queryable);
         var expression = BuildMethodCallExpression(queryable, nameof(Queryable.Any));
-        return await provider.ExecuteAsync<bool>(expression, token);
+        return await provider.ExecuteAsync<bool>(expression, token).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -242,7 +242,7 @@ public static class PolecatQueryableExtensions
     {
         var provider = GetPolecatProvider(queryable);
         var expression = BuildMethodCallExpression(queryable, nameof(Queryable.Any), predicate);
-        return await provider.ExecuteAsync<bool>(expression, token);
+        return await provider.ExecuteAsync<bool>(expression, token).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -254,7 +254,7 @@ public static class PolecatQueryableExtensions
     {
         var provider = GetPolecatProvider(queryable);
         var expression = BuildMethodCallExpressionWithSelector(queryable, "Sum", selector);
-        return await provider.ExecuteAsync<int>(expression, token);
+        return await provider.ExecuteAsync<int>(expression, token).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -266,7 +266,7 @@ public static class PolecatQueryableExtensions
     {
         var provider = GetPolecatProvider(queryable);
         var expression = BuildMethodCallExpressionWithSelector(queryable, "Sum", selector);
-        return await provider.ExecuteAsync<long>(expression, token);
+        return await provider.ExecuteAsync<long>(expression, token).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -278,7 +278,7 @@ public static class PolecatQueryableExtensions
     {
         var provider = GetPolecatProvider(queryable);
         var expression = BuildMethodCallExpressionWithSelector(queryable, "Sum", selector);
-        return await provider.ExecuteAsync<decimal>(expression, token);
+        return await provider.ExecuteAsync<decimal>(expression, token).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -290,7 +290,7 @@ public static class PolecatQueryableExtensions
     {
         var provider = GetPolecatProvider(queryable);
         var expression = BuildMethodCallExpressionWithSelector(queryable, "Sum", selector);
-        return await provider.ExecuteAsync<double>(expression, token);
+        return await provider.ExecuteAsync<double>(expression, token).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -302,7 +302,7 @@ public static class PolecatQueryableExtensions
     {
         var provider = GetPolecatProvider(queryable);
         var expression = BuildMethodCallExpressionWithSelector(queryable, "Min", selector);
-        return await provider.ExecuteAsync<TResult>(expression, token);
+        return await provider.ExecuteAsync<TResult>(expression, token).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -314,7 +314,7 @@ public static class PolecatQueryableExtensions
     {
         var provider = GetPolecatProvider(queryable);
         var expression = BuildMethodCallExpressionWithSelector(queryable, "Max", selector);
-        return await provider.ExecuteAsync<TResult>(expression, token);
+        return await provider.ExecuteAsync<TResult>(expression, token).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -326,7 +326,7 @@ public static class PolecatQueryableExtensions
     {
         var provider = GetPolecatProvider(queryable);
         var expression = BuildMethodCallExpressionWithSelector(queryable, "Average", selector);
-        return await provider.ExecuteAsync<double>(expression, token);
+        return await provider.ExecuteAsync<double>(expression, token).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -338,7 +338,7 @@ public static class PolecatQueryableExtensions
     {
         var provider = GetPolecatProvider(queryable);
         var expression = BuildMethodCallExpressionWithSelector(queryable, "Average", selector);
-        return await provider.ExecuteAsync<double>(expression, token);
+        return await provider.ExecuteAsync<double>(expression, token).ConfigureAwait(false);
     }
 
     private static IPolecatAsyncQueryProvider GetPolecatProvider<T>(IQueryable<T> queryable)

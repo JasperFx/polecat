@@ -36,12 +36,12 @@ public sealed class OpenTelemetryOptions : JasperFx.OpenTelemetry.OpenTelemetryO
     }
 
     /// <summary>
-    ///     The lazily-created append counter, published on the Polecat
-    ///     <see cref="JasperFx.OpenTelemetry.OpenTelemetryOptions.Meter" />. Created the first time
+    ///     The lazily-created append counter, published on the shared
+    ///     <see cref="PolecatTracing.Meter" />. Created the first time
     ///     it is touched (i.e. when <see cref="EventCountersEnabled" /> is on and events commit).
     /// </summary>
     internal Counter<long> EventAppendCounter =>
-        _eventAppendCounter ??= Meter.CreateCounter<long>(
+        _eventAppendCounter ??= PolecatTracing.Meter.CreateCounter<long>(
             "polecat.event.append",
             "events",
             "Number of events appended to the event store");

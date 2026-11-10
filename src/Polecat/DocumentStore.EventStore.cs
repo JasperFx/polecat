@@ -21,14 +21,13 @@ using Polecat.Storage;
 using Polecat.Subscriptions;
 
 using Polecat.Internal;
+using Polecat.Internal.OpenTelemetry;
 using Polecat.Internal.Sessions;
 namespace Polecat;
 
 public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession>,
     ISubscriptionRunner<ISubscription>
 {
-    private static readonly Meter _meter = new("Polecat");
-    private static readonly ActivitySource _activitySource = new("Polecat");
 
     IEventRegistry IEventStore<IDocumentSession, IQuerySession>.Registry => Events;
 
@@ -49,9 +48,9 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
     AutoCreate IEventStore<IDocumentSession, IQuerySession>.AutoCreateSchemaObjects =>
         Options.AutoCreateSchemaObjects;
 
-    Meter IEventStore.Meter => _meter;
+    Meter IEventStore.Meter => PolecatTracing.Meter;
 
-    ActivitySource IEventStore.ActivitySource => _activitySource;
+    ActivitySource IEventStore.ActivitySource => PolecatTracing.ActivitySource;
 
     string IEventStore.MetricsPrefix => "polecat";
 
@@ -223,7 +222,7 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
             AsyncOptions projectionOptions, CancellationToken token)
     {
         var batch = new PolecatProjectionBatch(this, Events, (PolecatDatabase)database, mode);
-        await batch.RecordProgress(range);
+        await batch.RecordProgress(range).ConfigureAwait(false);
 
         // #259: when rebuilding a snapshot whose aggregate has a [NaturalKey], re-emit the natural-key
         // upserts for this page's events. NaturalKeyProjection.ApplyAsync drives off newly-appended
@@ -402,7 +401,7 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
         Justification = "See above — the type argument is a registered aggregate type resolved through EventGraph.TryResolveAggregateType.")]
     private async Task compactStreamAsync(object streamIdentity, string? tenantId, CancellationToken token)
     {
-        await using var session = string.IsNullOrEmpty(tenantId) ? LightweightSession() : LightweightSession(tenantId);
+        await using var session = (string.IsNullOrEmpty(tenantId) ? LightweightSession() : LightweightSession(tenantId));
 
         var state = streamIdentity is Guid streamId
             ? await session.Events.FetchStreamStateAsync(streamId, token).ConfigureAwait(false)
@@ -668,12 +667,12 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
                 {
                     var (connString, eventsTable) = state;
                     await using var conn = new SqlConnection(connString);
-                    await conn.OpenAsync(ct);
+                    await conn.OpenAsync(ct).ConfigureAwait(false);
                     await using var cmd = conn.CreateCommand();
                     cmd.CommandText = $"SELECT MAX(seq_id) FROM {eventsTable};";
-                    var result = await cmd.ExecuteScalarAsync(ct);
+                    var result = await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
                     return result is null or DBNull ? (long?)null : (long?)Convert.ToInt64(result);
-                }, (Database.ConnectionString, Events.EventsTableName), token);
+                }, (Database.ConnectionString, Events.EventsTableName), token).ConfigureAwait(false);
             }
             catch
             {
@@ -721,12 +720,12 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
             db = Database;
         }
 
-        return await buildProjectionDaemonAsync(db, logger);
+        return await buildProjectionDaemonAsync(db, logger).ConfigureAwait(false);
     }
 
     private async ValueTask<IProjectionDaemon> buildProjectionDaemonAsync(PolecatDatabase db, ILogger logger)
     {
-        await db.EnsureStorageExistsAsync(typeof(IEvent), CancellationToken.None);
+        await db.EnsureStorageExistsAsync(typeof(IEvent), CancellationToken.None).ConfigureAwait(false);
 
         // #847: the detector shares the daemon's logger. It used to get a LoggerFactory of its own with no
         // providers, so "Skipping stale gap", the only trace a skip leaves, went nowhere on this path.
@@ -744,7 +743,7 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
     {
         if (IsSingleDatabase)
         {
-            return await buildProjectionDaemonAsync(SingleDatabase, NullLogger.Instance);
+            return await buildProjectionDaemonAsync(SingleDatabase, NullLogger.Instance).ConfigureAwait(false);
         }
 
         var databases = await Options.Tenancy!.BuildDatabasesAsync().ConfigureAwait(false);
@@ -756,7 +755,7 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
 
         return database == null
             ? throw new ArgumentOutOfRangeException(nameof(id), $"Requested database {id.Identity} cannot be found")
-            : await buildProjectionDaemonAsync(database, NullLogger.Instance);
+            : await buildProjectionDaemonAsync(database, NullLogger.Instance).ConfigureAwait(false);
     }
 
     private static string ResolveConnectionString(IEventDatabase database, StoreOptions options)
@@ -858,7 +857,7 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
         {
             var (connString, progressionTable, names, seqFloor, where, filterParameters) = state;
             await using var conn = new SqlConnection(connString);
-            await conn.OpenAsync(ct);
+            await conn.OpenAsync(ct).ConfigureAwait(false);
 
             if (seqFloor is null or 0)
             {
@@ -869,7 +868,7 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
                     cmd.Parameters.AddVarChar(parameter.Key, parameter.Value);
                 }
 
-                await cmd.ExecuteNonQueryAsync(ct);
+                await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
             }
             else
             {
@@ -887,14 +886,14 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
                         """;
                     cmd.Parameters.AddVarChar("@name", name);
                     cmd.Parameters.AddWithValue("@seq", seqFloor.Value);
-                    await cmd.ExecuteNonQueryAsync(ct);
+                    await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
                 }
             }
         }, (connStr, Events.ProgressionTableName, identities, sequenceFloor, filter.Where,
-            filter.Parameters), token);
+            filter.Parameters), token).ConfigureAwait(false);
 
         await deleteDeadLettersBeingReplayedAsync((PolecatDatabase)database, subscriptionName, sequenceFloor ?? 0,
-            token);
+            token).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -990,7 +989,7 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
         {
             var (connString, progressionTable, name, seqFloor) = state;
             await using var conn = new SqlConnection(connString);
-            await conn.OpenAsync(ct);
+            await conn.OpenAsync(ct).ConfigureAwait(false);
 
             await using var cmd = conn.CreateCommand();
             // HOLDLOCK: see the sibling upsert above and #500.
@@ -1003,8 +1002,8 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
                 """;
             cmd.Parameters.AddVarChar("@name", name);
             cmd.Parameters.AddWithValue("@seq", seqFloor);
-            await cmd.ExecuteNonQueryAsync(ct);
-        }, (connStr, Events.ProgressionTableName, shardName, sequenceFloor), token);
+            await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+        }, (connStr, Events.ProgressionTableName, shardName, sequenceFloor), token).ConfigureAwait(false);
     }
 
     // TeardownExistingProjectionProgressAsync was removed from
@@ -1014,7 +1013,7 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
     async Task IEventStore<IDocumentSession, IQuerySession>.TeardownExistingProjectionStateAsync(
         IEventDatabase database, string subscriptionName, CancellationToken token)
     {
-        await TeardownProjectionStateAsync(database, subscriptionName, token);
+        await TeardownProjectionStateAsync(database, subscriptionName, token).ConfigureAwait(false);
     }
 
     async Task IEventStore<IDocumentSession, IQuerySession>.DeleteProjectionProgressAsync(
@@ -1026,7 +1025,7 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
         {
             var (connString, progressionTable, where, filterParameters) = state;
             await using var conn = new SqlConnection(connString);
-            await conn.OpenAsync(ct);
+            await conn.OpenAsync(ct).ConfigureAwait(false);
 
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = $"DELETE FROM {progressionTable} WHERE {where};";
@@ -1035,9 +1034,9 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
                 cmd.Parameters.AddVarChar(parameter.Key, parameter.Value);
             }
 
-            await cmd.ExecuteNonQueryAsync(ct);
+            await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
         }, (connStr, Events.ProgressionTableName, filter.Where, filter.Parameters), token)
-            .AsTask().TranslatingCancellation("Deleting projection progress", token);
+            .AsTask().TranslatingCancellation("Deleting projection progress", token).ConfigureAwait(false);
     }
 
     // #163 Phase 2 — per-tenant rebuild teardown (jasperfx#407 Phase 2b). A non-null tenantId scopes the
@@ -1050,7 +1049,7 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
         if (tenantId == null)
         {
             await ((IEventStore<IDocumentSession, IQuerySession>)this)
-                .DeleteProjectionProgressAsync(database, subscriptionName, token);
+                .DeleteProjectionProgressAsync(database, subscriptionName, token).ConfigureAwait(false);
             return;
         }
 
@@ -1077,12 +1076,12 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
             {
                 var (connString, progressionTable, identities, tableNames, tenant, isConjoined) = state;
                 await using var conn = new SqlConnection(connString);
-                await conn.OpenAsync(ct);
+                await conn.OpenAsync(ct).ConfigureAwait(false);
 
                 // #180: do the whole tenant teardown in one transaction so a cancellation can only leave
                 // it fully applied or fully rolled back — never a half-reset (progression deleted but
                 // docs kept, or vice versa). pc_event_progression therefore stays consistent on cancel.
-                await using var tx = await SqlTransactionRequests.BeginAsync(conn, ct);
+                await using var tx = (await SqlTransactionRequests.BeginAsync(conn, ct).ConfigureAwait(false));
 
                 foreach (var identity in identities)
                 {
@@ -1090,7 +1089,7 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
                     delProg.Transaction = tx;
                     delProg.CommandText = $"DELETE FROM {progressionTable} WHERE name = @id;";
                     delProg.Parameters.AddVarChar("@id", identity);
-                    await delProg.ExecuteNonQueryAsync(ct);
+                    await delProg.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
                 }
 
                 foreach (var tableName in tableNames)
@@ -1108,12 +1107,12 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
                         ? $"{exists} DELETE FROM {tableName} WHERE tenant_id = @tenant;"
                         : $"{exists} DELETE FROM {tableName};";
                     if (isConjoined) delDocs.Parameters.AddVarChar("@tenant", tenant);
-                    await delDocs.ExecuteNonQueryAsync(ct);
+                    await delDocs.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
                 }
 
-                await SqlTransactionRequests.CommitAsync(tx, ct);
+                await SqlTransactionRequests.CommitAsync(tx, ct).ConfigureAwait(false);
             }, (connStr, Events.ProgressionTableName, shardIdentities, publishedTableNames, tenantId,
-                Options.Events.TenancyStyle == TenancyStyle.Conjoined), token);
+                Options.Events.TenancyStyle == TenancyStyle.Conjoined), token).ConfigureAwait(false);
         }
         catch (Exception ex) when (token.IsCancellationRequested && ex is not OperationCanceledException)
         {
@@ -1127,7 +1126,7 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
         // leaves every other tenant's dead letters alone.
         foreach (var identity in shardIdentities)
         {
-            await deleteDeadLettersBeingReplayedAsync((PolecatDatabase)database, identity, 0, token);
+            await deleteDeadLettersBeingReplayedAsync((PolecatDatabase)database, identity, 0, token).ConfigureAwait(false);
         }
     }
 
@@ -1141,7 +1140,7 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
         // #867: disposed after the session below, and it has to be disposed at all now that any
         // transaction participant the subscription enlists belongs to the batch.
         await using var batch = new PolecatProjectionBatch(this, Events, polecatDatabase, mode);
-        await batch.RecordProgress(range);
+        await batch.RecordProgress(range).ConfigureAwait(false);
 
         // Create a session the subscription can use for reads/writes, and register it with the
         // batch so its pending operations are included in the batch's transaction. #514: bound to
@@ -1149,14 +1148,14 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
         // the tenancy reaches no database at all under database-per-tenant tenancy.
         await using var session = LightweightSession(SessionOptions.ForDatabase(polecatDatabase));
         batch.RegisterSession(session);
-        var listener = await subscription.ProcessEventsAsync(range, range.Agent, session, token);
+        var listener = await subscription.ProcessEventsAsync(range, range.Agent, session, token).ConfigureAwait(false);
 
-        await batch.ExecuteAsync(token);
+        await batch.ExecuteAsync(token).ConfigureAwait(false);
 
         // Invoke post-commit listener if provided
         if (listener is not NullChangeListener)
         {
-            await listener.AfterCommitAsync(session, batch.Commit!, token);
+            await listener.AfterCommitAsync(session, batch.Commit!, token).ConfigureAwait(false);
         }
     }
 
@@ -1267,7 +1266,7 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
         {
             var (connString, progressionTable, where, filterParameters, tableNames) = state;
             await using var conn = new SqlConnection(connString);
-            await conn.OpenAsync(ct);
+            await conn.OpenAsync(ct).ConfigureAwait(false);
 
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = $"DELETE FROM {progressionTable} WHERE {where};";
@@ -1276,7 +1275,7 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
                 cmd.Parameters.AddVarChar(parameter.Key, parameter.Value);
             }
 
-            await cmd.ExecuteNonQueryAsync(ct);
+            await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
 
             foreach (var tableName in tableNames)
             {
@@ -1290,10 +1289,10 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
                 // identifier position, which take different escaping.
                 truncCmd.CommandText =
                     $"IF OBJECT_ID({SqlEscaping.Literal(tableName)}, 'U') IS NOT NULL DELETE FROM {tableName};";
-                await truncCmd.ExecuteNonQueryAsync(ct);
+                await truncCmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
             }
         }, (connStr, Events.ProgressionTableName, filter.Where, filter.Parameters, publishedTableNames),
-            token).AsTask().TranslatingCancellation("Projection teardown", token);
+            token).AsTask().TranslatingCancellation("Projection teardown", token).ConfigureAwait(false);
 
         // #871 item 1: a rebuild replays everything, so a dead letter is rewritten if its event still fails
         // and is stale if it no longer does. Mirrors Marten's teardownProjectionStorage, which does this for
@@ -1305,7 +1304,7 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
         foreach (var name in names)
         {
             await deleteDeadLettersBeingReplayedAsync((PolecatDatabase)database, name, 0, token)
-                .TranslatingCancellation("Projection teardown", token);
+                .TranslatingCancellation("Projection teardown", token).ConfigureAwait(false);
         }
     }
 }

@@ -26,11 +26,11 @@ public static class PagedListExtensions
         if (pageSize < 1)
             throw new ArgumentOutOfRangeException(nameof(pageSize), "Page size must be >= 1.");
 
-        var totalCount = await queryable.CountAsync(token);
+        var totalCount = await queryable.CountAsync(token).ConfigureAwait(false);
         var items = await queryable
             .Skip((pageNumber - 1) * pageSize)
             .Take(pageSize)
-            .ToListAsync(token);
+            .ToListAsync(token).ConfigureAwait(false);
 
         return new PagedList<T>(items, totalCount, pageNumber, pageSize);
     }

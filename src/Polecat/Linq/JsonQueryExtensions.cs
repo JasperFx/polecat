@@ -26,7 +26,7 @@ public static class JsonQueryExtensions
                 "ToJsonArrayAsync can only be used with Polecat IQueryable instances.");
         }
 
-        return await provider.ExecuteJsonArrayAsync(queryable.Expression, token);
+        return await provider.ExecuteJsonArrayAsync(queryable.Expression, token).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -43,7 +43,7 @@ public static class JsonQueryExtensions
                 "ToJsonFirstWithVersionAsync can only be used with Polecat IQueryable instances.");
         }
 
-        var result = await provider.ExecuteJsonFirstWithVersionAsync(queryable.Expression, token);
+        var result = await provider.ExecuteJsonFirstWithVersionAsync(queryable.Expression, token).ConfigureAwait(false);
         return result is { } r ? new DocumentJsonWithVersion(r.Json, r.Version) : null;
     }
 
@@ -74,6 +74,6 @@ public static class JsonQueryExtensions
                 "StreamPagedJsonArray can only be used with Polecat IQueryable instances.");
         }
 
-        await provider.StreamPagedJsonArrayAsync(queryable.Expression, pageNumber, pageSize, destination, token);
+        await provider.StreamPagedJsonArrayAsync(queryable.Expression, pageNumber, pageSize, destination, token).ConfigureAwait(false);
     }
 }

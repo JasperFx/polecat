@@ -200,8 +200,8 @@ internal sealed class TenantPartitionOrdinalRegistry
         await using var conn = _database.CreateConnection();
         await conn.OpenAsync(token).ConfigureAwait(false);
 
-        await using var migrationLock = await SchemaMigrationLock
-            .TryHoldForProvisioningAsync(_options, conn, insideTransaction, token).ConfigureAwait(false);
+        await using var migrationLock = (await SchemaMigrationLock
+            .TryHoldForProvisioningAsync(_options, conn, insideTransaction, token).ConfigureAwait(false));
 
         for (var attempt = 1;; attempt++)
         {
@@ -239,8 +239,8 @@ internal sealed class TenantPartitionOrdinalRegistry
             await using var conn = _splitRetryDatabase.CreateConnection();
             await conn.OpenAsync(token).ConfigureAwait(false);
 
-            await using var migrationLock = await SchemaMigrationLock
-                .TryHoldForProvisioningAsync(_options, conn, insideTransaction: true, token).ConfigureAwait(false);
+            await using var migrationLock = (await SchemaMigrationLock
+                .TryHoldForProvisioningAsync(_options, conn, insideTransaction: true, token).ConfigureAwait(false));
             if (migrationLock is null) return;
 
             var result = await _partitions

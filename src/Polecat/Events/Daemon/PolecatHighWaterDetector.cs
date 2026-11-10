@@ -182,7 +182,7 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
 
     public async Task<HighWaterStatistics> Detect(CancellationToken token)
     {
-        var stats = await LoadStatisticsAsync(token);
+        var stats = await LoadStatisticsAsync(token).ConfigureAwait(false);
 
         if (stats.CurrentMark == stats.HighestSequence)
         {
@@ -191,13 +191,13 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
             // here rather than returned untouched. Everything below this point has, by definition,
             // found work to do.
             forgetHeldMark();
-            await MarkHighWaterAsync(stats.CurrentMark, token);
+            await MarkHighWaterAsync(stats.CurrentMark, token).ConfigureAwait(false);
             return stats;
         }
 
         // Starts (or continues) the clock of any gap it stops at, so that by the time the agent has waited
         // out its own StaleSequenceThreshold and calls DetectInSafeZone, the gap is already that old.
-        await advanceToGapAsync(stats, token);
+        await advanceToGapAsync(stats, token).ConfigureAwait(false);
 
         // #705 / jasperfx#924 — UNCONDITIONAL, where this used to be `if (stats.HasChanged)`.
         // ShardState.LastUpdated is liveness, not progress: a monitor has to be able to tell "caught
@@ -209,14 +209,14 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
         // DaemonSettings.SlowPollingTime (1s by default). That is the price of the field meaning
         // anything at all; a store that skips the write has a LastUpdated that ages exactly like a
         // dead one.
-        await MarkHighWaterAsync(stats.CurrentMark, token);
+        await MarkHighWaterAsync(stats.CurrentMark, token).ConfigureAwait(false);
 
         return stats;
     }
 
     public async Task<HighWaterStatistics> DetectInSafeZone(CancellationToken token)
     {
-        var stats = await LoadStatisticsAsync(token);
+        var stats = await LoadStatisticsAsync(token).ConfigureAwait(false);
 
         if (stats.CurrentMark == stats.HighestSequence)
         {
@@ -225,17 +225,17 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
             // here rather than returned untouched. Everything below this point has, by definition,
             // found work to do.
             forgetHeldMark();
-            await MarkHighWaterAsync(stats.CurrentMark, token);
+            await MarkHighWaterAsync(stats.CurrentMark, token).ConfigureAwait(false);
             return stats;
         }
 
-        var held = await advanceToGapAsync(stats, token);
+        var held = await advanceToGapAsync(stats, token).ConfigureAwait(false);
 
         // #791: aged from when this detector first saw the mark held here, never from last_updated. See
         // _heldMark.
         if (held != null && stats.Timestamp - held.Since > _daemonSettings.StaleSequenceThreshold)
         {
-            var target = await FindSkipTargetAsync(held.Mark, held.Ceiling, token);
+            var target = await FindSkipTargetAsync(held.Mark, held.Ceiling, token).ConfigureAwait(false);
             if (target.HasValue)
             {
                 _logger.LogWarning(
@@ -247,7 +247,7 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
             }
             else if (_stall != null && HasOutlastedCap(_stall, stats.Timestamp, _events))
             {
-                await skipPastStuckAppendAsync(stats, _stall, token);
+                await skipPastStuckAppendAsync(stats, _stall, token).ConfigureAwait(false);
             }
             else
             {
@@ -273,7 +273,7 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
         // DaemonSettings.SlowPollingTime (1s by default). That is the price of the field meaning
         // anything at all; a store that skips the write has a LastUpdated that ages exactly like a
         // dead one.
-        await MarkHighWaterAsync(stats.CurrentMark, token);
+        await MarkHighWaterAsync(stats.CurrentMark, token).ConfigureAwait(false);
 
         return stats;
     }
@@ -284,7 +284,7 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
         {
             var (connectionString, events) = state;
             await using var conn = new SqlConnection(connectionString);
-            await conn.OpenAsync(ct);
+            await conn.OpenAsync(ct).ConfigureAwait(false);
 
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = $"""
@@ -295,16 +295,16 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
 
             var stats = new HighWaterStatistics();
 
-            await using var reader = await cmd.ExecuteReaderAsync(ct);
+            await using var reader = (await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false));
 
             // First result: highest sequence
-            if (await reader.ReadAsync(ct))
+            if (await reader.ReadAsync(ct).ConfigureAwait(false))
             {
                 stats.HighestSequence = reader.GetInt64(0);
             }
 
             // Second result: current mark from progression
-            if (await reader.NextResultAsync(ct) && await reader.ReadAsync(ct))
+            if (await reader.NextResultAsync(ct).ConfigureAwait(false) && await reader.ReadAsync(ct).ConfigureAwait(false))
             {
                 stats.LastMark = reader.GetInt64(0);
                 stats.CurrentMark = stats.LastMark;
@@ -315,7 +315,7 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
             stats.Timestamp = DateTimeOffset.UtcNow;
 
             return stats;
-        }, (_connectionString, _events), token);
+        }, (_connectionString, _events), token).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -331,9 +331,9 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
     private async Task<HeldMark?> advanceToGapAsync(HighWaterStatistics stats, CancellationToken token)
     {
         var mark = stats.CurrentMark;
-        var run = await ReadContiguousRunAsync(mark, token);
+        var run = await ReadContiguousRunAsync(mark, token).ConfigureAwait(false);
 
-        if (await hasLeadingGapAsync(stats, run, token))
+        if (await hasLeadingGapAsync(stats, run, token).ConfigureAwait(false))
         {
             return observeHeldMark(stats, mark, run.First!.Value);
         }
@@ -365,10 +365,10 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
         {
             var (connectionString, events, mark, ceiling) = state;
             await using var conn = new SqlConnection(connectionString);
-            await conn.OpenAsync(ct);
+            await conn.OpenAsync(ct).ConfigureAwait(false);
 
-            return await findHighestCommittedAsync(conn, events, null, mark, ceiling, ct);
-        }, (_connectionString, _events, stall.Mark, stall.Ceiling), token);
+            return await findHighestCommittedAsync(conn, events, null, mark, ceiling, ct).ConfigureAwait(false);
+        }, (_connectionString, _events, stall.Mark, stall.Ceiling), token).ConfigureAwait(false);
 
         if (!target.HasValue) return;
 
@@ -400,7 +400,7 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
         cmd.Parameters.AddWithValue("@ceiling", ceiling);
         if (ordinal != null) cmd.Parameters.AddWithValue("@ordinal", ordinal.Value);
 
-        var result = await cmd.ExecuteScalarAsync(ct);
+        var result = await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
         return result is long target ? target : null;
     }
 
@@ -418,7 +418,7 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
     {
         if (run.First is not { } first || first <= stats.CurrentMark + 1) return false;
 
-        return stats.LastMark > 0 || await FindSkipTargetAsync(stats.CurrentMark, first, token) != first;
+        return stats.LastMark > 0 || await FindSkipTargetAsync(stats.CurrentMark, first, token).ConfigureAwait(false) != first;
     }
 
     /// <summary>
@@ -461,18 +461,18 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
         {
             var (connectionString, events, markValue) = state;
             await using var conn = new SqlConnection(connectionString);
-            await conn.OpenAsync(ct);
+            await conn.OpenAsync(ct).ConfigureAwait(false);
 
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = contiguousRunSql(events, "e.seq_id > @mark") + ";";
             cmd.Parameters.AddWithValue("@mark", markValue);
 
-            await using var reader = await cmd.ExecuteReaderAsync(ct);
-            if (!await reader.ReadAsync(ct)) return default;
+            await using var reader = (await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false));
+            if (!await reader.ReadAsync(ct).ConfigureAwait(false)) return default;
 
             return new ContiguousRun(reader.GetInt64(0), reader.GetInt64(1),
                 reader.IsDBNull(2) ? null : reader.GetInt64(2));
-        }, (_connectionString, _events, mark), token);
+        }, (_connectionString, _events, mark), token).ConfigureAwait(false);
     }
 
     internal async Task<long?> FindSkipTargetAsync(long mark, long ceiling, CancellationToken token)
@@ -481,10 +481,10 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
         {
             var (connectionString, events, markValue, ceilingValue) = state;
             await using var conn = new SqlConnection(connectionString);
-            await conn.OpenAsync(ct);
+            await conn.OpenAsync(ct).ConfigureAwait(false);
 
-            return await findSkipTargetAsync(conn, events, null, markValue, ceilingValue, ct);
-        }, (_connectionString, _events, mark, ceiling), token);
+            return await findSkipTargetAsync(conn, events, null, markValue, ceilingValue, ct).ConfigureAwait(false);
+        }, (_connectionString, _events, mark, ceiling), token).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -539,7 +539,7 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
         cmd.Parameters.AddWithValue("@ceiling", ceiling);
         if (ordinal != null) cmd.Parameters.AddWithValue("@ordinal", ordinal.Value);
 
-        var result = await cmd.ExecuteScalarAsync(ct);
+        var result = await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
         return result is long target ? target : null;
     }
 
@@ -549,7 +549,7 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
         {
             var (connectionString, events, markValue) = state;
             await using var conn = new SqlConnection(connectionString);
-            await conn.OpenAsync(ct);
+            await conn.OpenAsync(ct).ConfigureAwait(false);
 
             await using var cmd = conn.CreateCommand();
             // WITH (UPDLOCK, HOLDLOCK) is load-bearing, not decoration — #500. A bare MERGE takes no
@@ -584,8 +584,8 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
                 """;
 
             cmd.Parameters.AddWithValue("@mark", markValue);
-            await cmd.ExecuteNonQueryAsync(ct);
-        }, (_connectionString, _events, mark), token);
+            await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+        }, (_connectionString, _events, mark), token).ConfigureAwait(false);
     }
 
     // ── #163 Phase 2: vectorized per-tenant high-water ──────────────────────
@@ -614,12 +614,12 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
     {
         if (!_events.UseTenantPartitionedEvents)
         {
-            return HighWaterVector.ForGlobal(await Detect(token));
+            return HighWaterVector.ForGlobal(await Detect(token).ConfigureAwait(false));
         }
 
         if (tenantIds.Count == 0) return new HighWaterVector([]);
 
-        return new HighWaterVector(await LoadPerTenantStatisticsAsync(tenantIds, token));
+        return new HighWaterVector(await LoadPerTenantStatisticsAsync(tenantIds, token).ConfigureAwait(false));
     }
 
     public async Task<HighWaterVector> DetectInSafeZoneForTenantsAsync(
@@ -627,7 +627,7 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
     {
         if (!_events.UseTenantPartitionedEvents)
         {
-            return HighWaterVector.ForGlobal(await DetectInSafeZone(token));
+            return HighWaterVector.ForGlobal(await DetectInSafeZone(token).ConfigureAwait(false));
         }
 
         if (tenantIds.Count == 0) return new HighWaterVector([]);
@@ -636,7 +636,7 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
         // per tenant the two share one rule, because only the non-safe-zone entry point is ever called
         // and confining the stale-gap escape to this one would make it unreachable — see
         // AdvancePerTenantMark's remarks.
-        return new HighWaterVector(await LoadPerTenantStatisticsAsync(tenantIds, token));
+        return new HighWaterVector(await LoadPerTenantStatisticsAsync(tenantIds, token).ConfigureAwait(false));
     }
 
     /// <summary>
@@ -665,7 +665,7 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
             var (connectionString, events, name, markValue, stamp) = state;
 
             await using var conn = new SqlConnection(connectionString);
-            await conn.OpenAsync(ct);
+            await conn.OpenAsync(ct).ConfigureAwait(false);
 
             await using var cmd = conn.CreateCommand();
             // WITH (UPDLOCK, HOLDLOCK) for the same reason as the store-global MarkHighWaterAsync above
@@ -683,8 +683,8 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
             cmd.Parameters.AddVarChar("@name", name);
             cmd.Parameters.AddWithValue("@mark", markValue);
             cmd.Parameters.AddWithValue("@stamp", stamp);
-            await cmd.ExecuteNonQueryAsync(ct);
-        }, (_connectionString, _events, PerTenantHighWaterName(tenantId), sequence, timestamp), token);
+            await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+        }, (_connectionString, _events, PerTenantHighWaterName(tenantId), sequence, timestamp), token).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -742,7 +742,7 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
             var ordinal = events.TenantPartitionManager.Column;
 
             await using var conn = new SqlConnection(connectionString);
-            await conn.OpenAsync(ct);
+            await conn.OpenAsync(ct).ConfigureAwait(false);
 
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = $"""
@@ -774,9 +774,9 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
             cmd.Parameters.AddVarChar("@prefix", PerTenantHighWaterPrefix);
 
             var readings = new List<(HighWaterStatistics Stats, ContiguousRun Run, int? Partition)>();
-            await using (var reader = await cmd.ExecuteReaderAsync(ct))
+            await using (var reader = (await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false)))
             {
-                while (await reader.ReadAsync(ct))
+                while (await reader.ReadAsync(ct).ConfigureAwait(false))
                 {
                     var tenantId = reader.GetString(0);
                     var lastSeqId = reader.GetInt64(1);
@@ -807,12 +807,12 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
             var results = new List<HighWaterStatistics>(readings.Count);
             foreach (var (stats, run, partition) in readings)
             {
-                await advancePerTenantMarkAsync(conn, events, stats, run, partition, staleThreshold, logger, stalls, ct);
+                await advancePerTenantMarkAsync(conn, events, stats, run, partition, staleThreshold, logger, stalls, ct).ConfigureAwait(false);
                 results.Add(stats);
             }
 
             return (IReadOnlyList<HighWaterStatistics>)results;
-        }, (_connectionString, _events, tenantsJson, staleThreshold, logger, _tenantStalls), token);
+        }, (_connectionString, _events, tenantsJson, staleThreshold, logger, _tenantStalls), token).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -876,7 +876,7 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
         var mark = stats.CurrentMark;
         var hasLeadingGap = run.First is { } first && first > mark + 1 &&
                             (stats.LastMark > 0 ||
-                             await findSkipTargetAsync(conn, events, partition, mark, first, ct) != first);
+                             await findSkipTargetAsync(conn, events, partition, mark, first, ct).ConfigureAwait(false) != first);
 
         if (!hasLeadingGap && run.Next == null)
         {
@@ -901,7 +901,7 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
 
         if (stats.TryGetStaleAge(out var timeSinceUpdate) && timeSinceUpdate > staleThreshold)
         {
-            var target = await findSkipTargetAsync(conn, events, partition, heldAt, ceiling, ct);
+            var target = await findSkipTargetAsync(conn, events, partition, heldAt, ceiling, ct).ConfigureAwait(false);
 
             if (target.HasValue)
             {
@@ -921,7 +921,7 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
 
         if (HasOutlastedCap(stall, stats.Timestamp, events))
         {
-            var target = await findHighestCommittedAsync(conn, events, partition, heldAt, stall.Ceiling, ct);
+            var target = await findHighestCommittedAsync(conn, events, partition, heldAt, stall.Ceiling, ct).ConfigureAwait(false);
             if (!target.HasValue) return;
 
             logger.LogWarning(
@@ -974,7 +974,7 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
         {
             var (connectionString, events, database, requested, perMark) = state;
             await using var conn = new SqlConnection(connectionString);
-            await conn.OpenAsync(ct);
+            await conn.OpenAsync(ct).ConfigureAwait(false);
 
             // null = the store-global mark; otherwise one mark per tenant, all of them when none are named.
             IReadOnlyList<string?> marks = [null];
@@ -986,8 +986,8 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
                     await using var list = conn.CreateCommand();
                     list.CommandText =
                         $"SELECT tenant_id FROM {events.TenantPartitionsTableName} ORDER BY tenant_id;";
-                    await using var reader = await list.ExecuteReaderAsync(ct);
-                    while (await reader.ReadAsync(ct)) tenants.Add(reader.GetString(0));
+                    await using var reader = (await list.ExecuteReaderAsync(ct).ConfigureAwait(false));
+                    while (await reader.ReadAsync(ct).ConfigureAwait(false)) tenants.Add(reader.GetString(0));
                 }
 
                 marks = tenants.Cast<string?>().ToList();
@@ -996,7 +996,7 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
             var results = new List<T>(marks.Count);
             foreach (var tenantId in marks)
             {
-                results.Add(await perMark(conn, events, database, tenantId, ct));
+                results.Add(await perMark(conn, events, database, tenantId, ct).ConfigureAwait(false));
             }
 
             return (IReadOnlyList<T>)results;
@@ -1037,8 +1037,8 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
         cmd.Parameters.AddVarChar("@name", markName(tenantId));
         if (tenantId != null) cmd.Parameters.AddVarChar("@tenant", tenantId);
 
-        await using var reader = await cmd.ExecuteReaderAsync(ct);
-        await reader.ReadAsync(ct);
+        await using var reader = (await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false));
+        await reader.ReadAsync(ct).ConfigureAwait(false);
         return new HighWaterMarkPreview(databaseIdentifier, tenantId, reader.GetInt64(0), reader.GetInt64(1),
             reader.GetInt64(2));
     }
@@ -1091,8 +1091,8 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
             Value = (object?)expectedCurrentMark ?? DBNull.Value
         });
 
-        await using var reader = await cmd.ExecuteReaderAsync(ct);
-        await reader.ReadAsync(ct);
+        await using var reader = (await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false));
+        await reader.ReadAsync(ct).ConfigureAwait(false);
         return new HighWaterMarkAdvance(databaseIdentifier, tenantId, (HighWaterAdvanceOutcome)reader.GetInt32(0),
             reader.GetInt64(1), reader.GetInt64(2), reader.GetInt64(3));
     }

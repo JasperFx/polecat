@@ -61,23 +61,23 @@ internal class HiloSequence : HiloSequenceBase
         var numberOfPages = (long)Math.Ceiling((double)floor / MaxLo);
 
         // Guarantee the hilo row exists
-        await AdvanceToNextHi();
+        await AdvanceToNextHi().ConfigureAwait(false);
 
         await _resilience.ExecuteAsync(async (state, ct) =>
         {
             await using var conn = _connectionFactory.Create();
-            await conn.OpenAsync(ct);
+            await conn.OpenAsync(ct).ConfigureAwait(false);
 
             await using var cmd = conn.CreateCommand();
             cmd.CommandText =
                 $"UPDATE {_hiloTable} SET hi_value = @floor WHERE entity_name = @name;";
             cmd.Parameters.AddWithValue("@floor", state);
             cmd.Parameters.AddVarChar("@name", EntityName);
-            await cmd.ExecuteNonQueryAsync(ct);
-        }, numberOfPages);
+            await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+        }, numberOfPages).ConfigureAwait(false);
 
         // Advance again to pick up the new floor
-        await AdvanceToNextHi();
+        await AdvanceToNextHi().ConfigureAwait(false);
     }
 
     public override async Task AdvanceToNextHi(CancellationToken ct = default)
@@ -85,13 +85,13 @@ internal class HiloSequence : HiloSequenceBase
         await _resilience.ExecuteAsync(async (_, cancellation) =>
         {
             await using var conn = _connectionFactory.Create();
-            await conn.OpenAsync(cancellation);
+            await conn.OpenAsync(cancellation).ConfigureAwait(false);
 
-            await EnsureHiloTableAsync(conn, insideTransaction: true, cancellation);
+            await EnsureHiloTableAsync(conn, insideTransaction: true, cancellation).ConfigureAwait(false);
 
             for (var attempts = 0; attempts < Settings.MaxAdvanceToNextHiAttempts; attempts++)
             {
-                var result = await TryGetNextHiAsync(conn, cancellation);
+                var result = await TryGetNextHiAsync(conn, cancellation).ConfigureAwait(false);
                 if (TrySetCurrentHi(result))
                 {
                     return;
@@ -99,7 +99,7 @@ internal class HiloSequence : HiloSequenceBase
             }
 
             throw new HiloSequenceAdvanceToNextHiAttemptsExceededException();
-        }, ct);
+        }, ct).ConfigureAwait(false);
     }
 
     protected override void AdvanceToNextHiSync()
@@ -159,13 +159,13 @@ internal class HiloSequence : HiloSequenceBase
         }
 
         await using var migrationLock =
-            await SchemaMigrationLock.HoldForFirstUseAsync(_options, conn, insideTransaction, ct);
+            (await SchemaMigrationLock.HoldForFirstUseAsync(_options, conn, insideTransaction, ct).ConfigureAwait(false));
         if (migrationLock is null) return;
 
         var table = new HiloTable(_schemaName);
         var migrator = new SqlServerMigrator();
-        var migration = await SchemaMigration.DetermineAsync(conn, ct, table);
-        await migrator.ApplyAllAsync(conn, migration, AutoCreate.CreateOrUpdate, ct: ct);
+        var migration = await SchemaMigration.DetermineAsync(conn, ct, table).ConfigureAwait(false);
+        await migrator.ApplyAllAsync(conn, migration, AutoCreate.CreateOrUpdate, ct: ct).ConfigureAwait(false);
         _tableEnsured = true;
     }
 
@@ -178,7 +178,7 @@ internal class HiloSequence : HiloSequenceBase
             readCmd.CommandText =
                 $"SELECT hi_value FROM {_hiloTable} WHERE entity_name = @entity;";
             readCmd.Parameters.AddVarChar("@entity", EntityName);
-            var raw = await readCmd.ExecuteScalarAsync(ct);
+            var raw = await readCmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
             currentHi = raw == null || raw == DBNull.Value ? null : Convert.ToInt64(raw);
         }
 
@@ -191,7 +191,7 @@ internal class HiloSequence : HiloSequenceBase
                 insertCmd.CommandText =
                     $"INSERT INTO {_hiloTable} (entity_name, hi_value) VALUES (@entity, 0);";
                 insertCmd.Parameters.AddVarChar("@entity", EntityName);
-                await insertCmd.ExecuteNonQueryAsync(ct);
+                await insertCmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
                 return 0;
             }
             catch (SqlException ex) when (ex.Number == 2627)
@@ -210,7 +210,7 @@ internal class HiloSequence : HiloSequenceBase
             updateCmd.Parameters.AddWithValue("@next", nextHi);
             updateCmd.Parameters.AddVarChar("@entity", EntityName);
             updateCmd.Parameters.AddWithValue("@current", currentHi.Value);
-            var rows = await updateCmd.ExecuteNonQueryAsync(ct);
+            var rows = await updateCmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
             return rows == 0 ? -1 : nextHi;
         }
     }

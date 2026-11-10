@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using System.Globalization;
 using System.Resources;
 using JasperFx.Events.Daemon;
@@ -108,7 +109,7 @@ internal static class SqlServerTransientFailures
         10054,  // transport-level error: connection reset by the remote host
         11001,  // host not found (name resolution failed)
         ..SqlConfigurableRetryFactory.BaselineTransientErrors
-    ]);
+    ]).ToFrozenSet();
 
     /// <summary>
     ///     The languages Microsoft.Data.SqlClient ships satellite resources for. A language that is not

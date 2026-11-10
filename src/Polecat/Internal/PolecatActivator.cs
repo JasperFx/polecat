@@ -41,13 +41,13 @@ internal class PolecatActivator : IHostedService
             // Marten's MartenActivator, which iterates Store.Tenancy.BuildDatabases(). Resolved
             // asynchronously so a dynamic tenancy (MasterTableTenancy) reads its control table here.
             var tenantDatabases = _store.Options.Tenancy is { } tenancy
-                ? await tenancy.BuildDatabasesAsync(cancellationToken)
+                ? await tenancy.BuildDatabasesAsync(cancellationToken).ConfigureAwait(false)
                 : [documentStore.Database];
 
             foreach (var database in tenantDatabases)
             {
                 await database.ApplyAllConfiguredChangesToDatabaseAsync(
-                    _store.Options.BuildMigrationLock(), ct: cancellationToken);
+                    _store.Options.BuildMigrationLock(), ct: cancellationToken).ConfigureAwait(false);
             }
 
             // #386: roll every configured rolling-window RANGE partition forward and retire the aged
@@ -57,13 +57,13 @@ internal class PolecatActivator : IHostedService
             // opt-in as the migration itself: applying changes on startup is how a host says "Polecat
             // owns this schema", and retiring a partition is emphatically a schema change.
             await Storage.RollingPartitions.ApplyAsync(tenantDatabases, _logger, rollForward: true, dropAged: true,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
         }
 
         // Run initial data seeders after schema migration
         foreach (var initialData in _store.Options.InitialData)
         {
-            await initialData.Populate(_store, cancellationToken);
+            await initialData.Populate(_store, cancellationToken).ConfigureAwait(false);
         }
     }
 

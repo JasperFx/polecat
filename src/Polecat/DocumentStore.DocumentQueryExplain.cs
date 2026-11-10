@@ -79,7 +79,7 @@ public partial class DocumentStore
         await using var conn = new SqlConnection(query.ConnectionString);
         await conn.OpenAsync(token).ConfigureAwait(false);
 
-        await using var tx = (SqlTransaction)await conn.BeginTransactionAsync(token).ConfigureAwait(false);
+        await using var tx = ((SqlTransaction)await conn.BeginTransactionAsync(token).ConfigureAwait(false));
 
         try
         {
@@ -91,7 +91,7 @@ public partial class DocumentStore
             await using (var page = query.BuildPage(conn))
             {
                 page.Transaction = tx;
-                await using var reader = await page.ExecuteReaderAsync(token).ConfigureAwait(false);
+                await using var reader = (await page.ExecuteReaderAsync(token).ConfigureAwait(false));
 
                 while (await reader.ReadAsync(token).ConfigureAwait(false)) returned++;
 

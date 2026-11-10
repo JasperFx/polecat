@@ -22,7 +22,7 @@ internal class ProjectionListHandler<TSource, TResult> : IQueryHandler<IReadOnly
     public async Task<IReadOnlyList<TResult>> HandleAsync(DbDataReader reader, CancellationToken token)
     {
         var list = new List<TResult>();
-        while (await reader.ReadAsync(token))
+        while (await reader.ReadAsync(token).ConfigureAwait(false))
         {
             var source = _selector.Resolve(reader);
             list.Add(_projection(source));

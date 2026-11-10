@@ -41,7 +41,7 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
     // #420: StreamActions a projection raised events onto, captured by the three IProjectionBatch
     // append members and turned into append operations during ExecuteAsync.
     private readonly List<StreamAction> _raisedEventActions = new();
-    private readonly object _raisedEventsLock = new();
+    private readonly Lock _raisedEventsLock = new();
 
     // The change set committed by this batch, populated during ExecuteAsync. Exposed so the
     // subscription runner can hand it to the IChangeListener returned by ProcessEventsAsync.
@@ -157,7 +157,7 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
         // #420: built before the session sweep below so any tenant session this creates is picked
         // up by it (and disposed with the rest). The appends themselves are added after the
         // document operations, ahead of the progression row.
-        var raisedEventOps = await BuildRaisedEventOperationsAsync(token);
+        var raisedEventOps = await BuildRaisedEventOperationsAsync(token).ConfigureAwait(false);
 
         foreach (var session in _sessions)
         {
@@ -173,10 +173,10 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
                         .Distinct()
                         .Select(t => _store.GetProvider(t));
                     // Not inside a transaction: the batch only opens one further down.
-                    await tableEnsurer.EnsureTablesAsync(providers, insideTransaction: false, token);
+                    await tableEnsurer.EnsureTablesAsync(providers, insideTransaction: false, token).ConfigureAwait(false);
 
                     // #919: a projection can take a document's id from an event's data
-                    await sessionBase.AssertStringKeysFitAsync(token);
+                    await sessionBase.AssertStringKeysFitAsync(token).ConfigureAwait(false);
 
                     allOps.AddRange(workTracker.Operations);
                 }
@@ -193,7 +193,7 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
             foreach (var adapter in allOps.OfType<Polecat.Internal.Operations.ClosedShapeOperationAdapter>())
             {
                 await _store.Events.TenantOrdinals.ResolveAsync(adapter.SessionTenantId, insideTransaction: false,
-                    token);
+                    token).ConfigureAwait(false);
             }
         }
 
@@ -259,8 +259,8 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
         {
             var (connectionString, ops, txParticipants, msgBatch, transforms) = state;
             await using var conn = new SqlConnection(connectionString);
-            await conn.OpenAsync(ct);
-            await using var tx = await SqlTransactionRequests.BeginAsync(conn, ct);
+            await conn.OpenAsync(ct).ConfigureAwait(false);
+            await using var tx = (await SqlTransactionRequests.BeginAsync(conn, ct).ConfigureAwait(false));
 
             try
             {
@@ -288,11 +288,11 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
 
                         try
                         {
-                            var reader = await batch.ExecuteReaderAsync(ct);
+                            var reader = await batch.ExecuteReaderAsync(ct).ConfigureAwait(false);
                             try
                             {
                                 var exceptions = new List<Exception>();
-                                await OperationResultSets.ApplyAsync(reader, ops, exceptions, ct);
+                                await OperationResultSets.ApplyAsync(reader, ops, exceptions, ct).ConfigureAwait(false);
 
                                 if (exceptions.Count > 0)
                                 {
@@ -301,7 +301,7 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
                             }
                             finally
                             {
-                                await reader.DisposeAsync();
+                                await reader.DisposeAsync().ConfigureAwait(false);
                             }
                         }
                         catch (SqlException ex)
@@ -314,21 +314,21 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
                     }
                     finally
                     {
-                        await batch.DisposeAsync();
+                        await batch.DisposeAsync().ConfigureAwait(false);
                     }
                 }
 
                 foreach (var participant in txParticipants)
                 {
-                    await participant.BeforeCommitAsync(conn, tx, ct);
+                    await participant.BeforeCommitAsync(conn, tx, ct).ConfigureAwait(false);
                 }
 
                 if (msgBatch is not null)
                 {
-                    await msgBatch.BeforeCommitAsync(ct);
+                    await msgBatch.BeforeCommitAsync(ct).ConfigureAwait(false);
                 }
 
-                await SqlTransactionRequests.CommitAsync(tx, ct);
+                await SqlTransactionRequests.CommitAsync(tx, ct).ConfigureAwait(false);
             }
             catch
             {
@@ -339,7 +339,7 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
                 // `await using` still disposes the transaction and the connection.
                 try
                 {
-                    await SqlTransactionRequests.RollbackAsync(tx);
+                    await SqlTransactionRequests.RollbackAsync(tx).ConfigureAwait(false);
                 }
                 catch
                 {
@@ -348,7 +348,7 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
 
                 throw;
             }
-        }, (_connectionString, allOps, participants, messageBatch, _store.Options.ExceptionTransforms), token);
+        }, (_connectionString, allOps, participants, messageBatch, _store.Options.ExceptionTransforms), token).ConfigureAwait(false);
 
         // ⚠️ The post-commit hooks below deliberately do NOT take `token`, and that is load-bearing
         // as of JasperFx 2.81.0 (jasperfx#953 / #980, polecat#744). A drain that times out calls
@@ -623,7 +623,7 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
 
             try
             {
-                await disposable.DisposeAsync();
+                await disposable.DisposeAsync().ConfigureAwait(false);
             }
             catch (Exception e)
             {
@@ -633,7 +633,7 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
 
         foreach (var session in _sessions)
         {
-            await session.DisposeAsync();
+            await session.DisposeAsync().ConfigureAwait(false);
         }
 
         if (failures is not null)

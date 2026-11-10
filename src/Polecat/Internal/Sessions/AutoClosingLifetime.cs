@@ -27,19 +27,19 @@ internal class AutoClosingLifetime : IConnectionLifetime
     public async Task<int> ExecuteAsync(SqlCommand command, CancellationToken token)
     {
         await using var conn = _connectionFactory.Create();
-        await conn.OpenAsync(token);
+        await conn.OpenAsync(token).ConfigureAwait(false);
         command.Connection = conn;
         command.CommandTimeout = CommandTimeout;
-        return await command.ExecuteNonQueryAsync(token);
+        return await command.ExecuteNonQueryAsync(token).ConfigureAwait(false);
     }
 
     public async Task<object?> ExecuteScalarAsync(SqlCommand command, CancellationToken token)
     {
         await using var conn = _connectionFactory.Create();
-        await conn.OpenAsync(token);
+        await conn.OpenAsync(token).ConfigureAwait(false);
         command.Connection = conn;
         command.CommandTimeout = CommandTimeout;
-        return await command.ExecuteScalarAsync(token);
+        return await command.ExecuteScalarAsync(token).ConfigureAwait(false);
     }
 
     public async Task<DbDataReader> ExecuteReaderAsync(SqlCommand command, CancellationToken token)
@@ -47,14 +47,14 @@ internal class AutoClosingLifetime : IConnectionLifetime
         var conn = _connectionFactory.Create();
         try
         {
-            await conn.OpenAsync(token);
+            await conn.OpenAsync(token).ConfigureAwait(false);
             command.Connection = conn;
             command.CommandTimeout = CommandTimeout;
-            return await command.ExecuteReaderAsync(CommandBehavior.CloseConnection, token);
+            return await command.ExecuteReaderAsync(CommandBehavior.CloseConnection, token).ConfigureAwait(false);
         }
         catch
         {
-            await conn.DisposeAsync();
+            await conn.DisposeAsync().ConfigureAwait(false);
             throw;
         }
     }
@@ -80,15 +80,15 @@ internal class AutoClosingLifetime : IConnectionLifetime
         var conn = _connectionFactory.Create();
         try
         {
-            await conn.OpenAsync(token);
+            await conn.OpenAsync(token).ConfigureAwait(false);
             batch.Connection = conn;
             batch.Timeout = CommandTimeout;
-            var reader = await batch.ExecuteReaderAsync(token);
+            var reader = await batch.ExecuteReaderAsync(token).ConfigureAwait(false);
             return new ConnectionClosingDataReader(reader, conn);
         }
         catch
         {
-            await conn.DisposeAsync();
+            await conn.DisposeAsync().ConfigureAwait(false);
             throw;
         }
     }

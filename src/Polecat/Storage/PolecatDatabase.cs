@@ -179,7 +179,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
             {
                 var (connectionString, progressionTable, identity) = state;
                 await using var conn = new SqlConnection(connectionString);
-                await conn.OpenAsync(ct);
+                await conn.OpenAsync(ct).ConfigureAwait(false);
 
                 await using var cmd = conn.CreateCommand();
                 cmd.CommandText = $"""
@@ -188,9 +188,9 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
                     """;
                 cmd.Parameters.AddVarChar("@name", identity);
 
-                var result = await cmd.ExecuteScalarAsync(ct);
+                var result = await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
                 return result is long seq ? seq : 0;
-            }, (_connectionString, _events.ProgressionTableName, name.Identity), token);
+            }, (_connectionString, _events.ProgressionTableName, name.Identity), token).ConfigureAwait(false);
         }
         catch (Exception e) when (MissingStorageDetection.IsMissingStorage(e))
         {
@@ -220,13 +220,13 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
             {
                 var (connectionString, progressionTable, identity) = state;
                 await using var conn = new SqlConnection(connectionString);
-                await conn.OpenAsync(ct);
+                await conn.OpenAsync(ct).ConfigureAwait(false);
 
                 await using var cmd = conn.CreateCommand();
                 cmd.CommandText = $"DELETE FROM {progressionTable} WHERE name = @identity;";
                 cmd.Parameters.AddVarChar("@identity", identity);
-                await cmd.ExecuteNonQueryAsync(ct);
-            }, (_connectionString, _events.ProgressionTableName, shardIdentity), token);
+                await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+            }, (_connectionString, _events.ProgressionTableName, shardIdentity), token).ConfigureAwait(false);
         }
         catch (Exception e) when (MissingStorageDetection.IsMissingStorage(e))
         {
@@ -297,7 +297,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
         {
             var (connectionString, progressionTable, shardStates) = s;
             await using var conn = new SqlConnection(connectionString);
-            await conn.OpenAsync(ct);
+            await conn.OpenAsync(ct).ConfigureAwait(false);
 
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = $"""
@@ -359,9 +359,9 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
 
                 // One ExecuteNonQueryAsync per shard, deliberately: each is its own implicit
                 // transaction, so this loop never holds more than a single row lock at a time.
-                await cmd.ExecuteNonQueryAsync(ct);
+                await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
             }
-        }, (_connectionString, _events.ProgressionTableName, ordered), token);
+        }, (_connectionString, _events.ProgressionTableName, ordered), token).ConfigureAwait(false);
     }
 
     public Task<IReadOnlyList<ShardState>> AllProjectionProgress(CancellationToken token = default)
@@ -405,7 +405,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
                 var list = new List<ShardState>();
 
                 await using var conn = new SqlConnection(connectionString);
-                await conn.OpenAsync(ct);
+                await conn.OpenAsync(ct).ConfigureAwait(false);
 
                 await using var cmd = conn.CreateCommand();
                 // #705 / jasperfx#924: last_updated comes back on BOTH shapes and sits last, after the
@@ -426,8 +426,8 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
                         "%:" + ProgressionNameFilter.EscapeLikePattern(tenant));
                 }
 
-                await using var reader = await cmd.ExecuteReaderAsync(ct);
-                while (await reader.ReadAsync(ct))
+                await using var reader = (await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false));
+                while (await reader.ReadAsync(ct).ConfigureAwait(false))
                 {
                     var name = reader.GetString(0);
 
@@ -478,7 +478,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
                 }
 
                 return (IReadOnlyList<ShardState>)list;
-            }, (_connectionString, _events, tenantId), token);
+            }, (_connectionString, _events, tenantId), token).ConfigureAwait(false);
         }
         catch (Exception e) when (MissingStorageDetection.IsMissingStorage(e))
         {
@@ -562,7 +562,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
                 var (connectionString, events, projName, tenant, lookupName) = state;
 
                 await using var conn = new SqlConnection(connectionString);
-                await conn.OpenAsync(ct);
+                await conn.OpenAsync(ct).ConfigureAwait(false);
 
                 await using var cmd = conn.CreateCommand();
                 // #705: last_updated last on both shapes, so existing ordinals do not move.
@@ -571,8 +571,8 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
                     : $"SELECT last_seq_id, last_updated FROM {events.ProgressionTableName} WHERE name = @name;";
                 cmd.Parameters.AddVarChar("@name", lookupName);
 
-                await using var reader = await cmd.ExecuteReaderAsync(ct);
-                if (!await reader.ReadAsync(ct))
+                await using var reader = (await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false));
+                if (!await reader.ReadAsync(ct).ConfigureAwait(false))
                 {
                     // No row for this (projection, tenant) pair yet — the meaningful "not observed" answer.
                     return (ProjectionProgressRow?)null;
@@ -596,7 +596,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
                 {
                     LastUpdated = lastUpdated
                 };
-            }, (_connectionString, _events, projectionName, tenantId, name), token);
+            }, (_connectionString, _events, projectionName, tenantId, name), token).ConfigureAwait(false);
         }
         catch (Exception e) when (MissingStorageDetection.IsMissingStorage(e))
         {
@@ -622,7 +622,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
                 var (connectionString, events, shard) = state;
 
                 await using var conn = new SqlConnection(connectionString);
-                await conn.OpenAsync(ct);
+                await conn.OpenAsync(ct).ConfigureAwait(false);
 
                 await using var cmd = conn.CreateCommand();
                 // #705: last_updated last on both shapes, so existing ordinals do not move.
@@ -631,8 +631,8 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
                     : $"SELECT last_seq_id, last_updated FROM {events.ProgressionTableName} WHERE name = @name;";
                 cmd.Parameters.AddVarChar("@name", shard.Identity);
 
-                await using var reader = await cmd.ExecuteReaderAsync(ct);
-                if (!await reader.ReadAsync(ct))
+                await using var reader = (await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false));
+                if (!await reader.ReadAsync(ct).ConfigureAwait(false))
                 {
                     // No row for this identity yet — the meaningful "not observed" answer.
                     return (ProjectionProgressRow?)null;
@@ -656,7 +656,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
                 {
                     LastUpdated = lastUpdated
                 };
-            }, (_connectionString, _events, name), token);
+            }, (_connectionString, _events, name), token).ConfigureAwait(false);
         }
         catch (Exception e) when (MissingStorageDetection.IsMissingStorage(e))
         {
@@ -674,14 +674,14 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
             {
                 var (connectionString, eventsTable) = state;
                 await using var conn = new SqlConnection(connectionString);
-                await conn.OpenAsync(ct);
+                await conn.OpenAsync(ct).ConfigureAwait(false);
 
                 await using var cmd = conn.CreateCommand();
                 cmd.CommandText = $"SELECT ISNULL(MAX(seq_id), 0) FROM {eventsTable};";
 
-                var result = await cmd.ExecuteScalarAsync(ct);
+                var result = await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
                 return result is long seq ? seq : 0;
-            }, (_connectionString, _events.EventsTableName), token);
+            }, (_connectionString, _events.EventsTableName), token).ConfigureAwait(false);
         }
         catch (Exception e) when (MissingStorageDetection.IsMissingStorage(e))
         {
@@ -698,7 +698,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
             {
                 var (connectionString, eventsTable, ts) = state;
                 await using var conn = new SqlConnection(connectionString);
-                await conn.OpenAsync(ct);
+                await conn.OpenAsync(ct).ConfigureAwait(false);
 
                 await using var cmd = conn.CreateCommand();
                 // Mirror Marten's MartenDatabase.FindEventStoreFloorAtTimeAsync: the floor is the
@@ -712,9 +712,9 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
                     """;
                 cmd.Parameters.AddWithValue("@ts", ts.ToUniversalTime());
 
-                var result = await cmd.ExecuteScalarAsync(ct);
+                var result = await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
                 return result is long seq ? (long?)seq : null;
-            }, (_connectionString, _events.EventsTableName, timestamp), token);
+            }, (_connectionString, _events.EventsTableName, timestamp), token).ConfigureAwait(false);
         }
         catch (Exception e) when (MissingStorageDetection.IsMissingStorage(e))
         {
@@ -741,7 +741,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
     {
         if (tenantId == null)
         {
-            return await FindEventStoreFloorAtTimeAsync(timestamp, token);
+            return await FindEventStoreFloorAtTimeAsync(timestamp, token).ConfigureAwait(false);
         }
 
         try
@@ -750,7 +750,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
             {
                 var (connectionString, eventsTable, ts, tenant) = state;
                 await using var conn = new SqlConnection(connectionString);
-                await conn.OpenAsync(ct);
+                await conn.OpenAsync(ct).ConfigureAwait(false);
 
                 await using var cmd = conn.CreateCommand();
                 cmd.CommandText = $"""
@@ -761,9 +761,9 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
                 // #363: tenant_id is varchar, so bind varchar or the predicate scans.
                 cmd.Parameters.AddVarChar("@tenant_id", tenant);
 
-                var result = await cmd.ExecuteScalarAsync(ct);
+                var result = await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
                 return result is long seq ? (long?)seq : null;
-            }, (_connectionString, _events.EventsTableName, timestamp, tenantId), token);
+            }, (_connectionString, _events.EventsTableName, timestamp, tenantId), token).ConfigureAwait(false);
         }
         catch (Exception e) when (MissingStorageDetection.IsMissingStorage(e))
         {
@@ -843,7 +843,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
                 var (connectionString, events, lookups, timestamps) = state;
 
                 await using var conn = new SqlConnection(connectionString);
-                await conn.OpenAsync(ct);
+                await conn.OpenAsync(ct).ConfigureAwait(false);
 
                 await using var cmd = conn.CreateCommand();
                 cmd.CommandText = FirstEventTimestampsAfterSql(events);
@@ -852,13 +852,13 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
                     SqlDbType = System.Data.SqlDbType.NVarChar
                 });
 
-                await using var reader = await cmd.ExecuteReaderAsync(ct);
-                while (await reader.ReadAsync(ct))
+                await using var reader = (await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false));
+                while (await reader.ReadAsync(ct).ConfigureAwait(false))
                 {
                     // pc_events.timestamp is datetimeoffset, so the offset it was stamped with comes back as is
                     timestamps[reader.GetInt32(0)] = reader.IsDBNull(1) ? null : reader.GetDateTimeOffset(1);
                 }
-            }, (_connectionString, _events, lookups, timestamps), token);
+            }, (_connectionString, _events, lookups, timestamps), token).ConfigureAwait(false);
         }
         catch (Exception e) when (MissingStorageDetection.IsMissingStorage(e))
         {
@@ -1006,7 +1006,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
             var tenants = new List<string>();
 
             await using var conn = new SqlConnection(connectionString);
-            await conn.OpenAsync(ct);
+            await conn.OpenAsync(ct).ConfigureAwait(false);
 
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = $"""
@@ -1014,14 +1014,14 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
                 SELECT tenant_id FROM {tenantPartitionsTable} ORDER BY tenant_id;
                 """;
 
-            await using var reader = await cmd.ExecuteReaderAsync(ct);
-            while (await reader.ReadAsync(ct))
+            await using var reader = (await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false));
+            while (await reader.ReadAsync(ct).ConfigureAwait(false))
             {
                 tenants.Add(reader.GetString(0));
             }
 
             return (IReadOnlyList<string>)tenants;
-        }, (_connectionString, _events.TenantPartitionsTableName), token);
+        }, (_connectionString, _events.TenantPartitionsTableName), token).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -1067,7 +1067,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
         // not reach this database if it didn't.
         await using var session = RequireStore().LightweightSession(SessionOptions.ForDatabase(this));
         session.Store(deadLetterEvent);
-        await session.SaveChangesAsync(token);
+        await session.SaveChangesAsync(token).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -1090,7 +1090,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
             await using var session = RequireStore().QuerySession(SessionOptions.ForDatabase(this));
             return await session.Query<DeadLetterEvent>()
                 .Where(x => x.ProjectionName == projectionName && x.ShardName == shardKey)
-                .LongCountAsync(token);
+                .LongCountAsync(token).ConfigureAwait(false);
         }
         catch (Exception e) when (MissingStorageDetection.IsMissingStorage(e))
         {
@@ -1115,7 +1115,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
         try
         {
             await using var session = RequireStore().QuerySession(SessionOptions.ForDatabase(this));
-            var all = await session.Query<DeadLetterEvent>().ToListAsync(token);
+            var all = await session.Query<DeadLetterEvent>().ToListAsync(token).ConfigureAwait(false);
 
             return all
                 .GroupBy(x => (x.ProjectionName, x.ShardName))
@@ -1146,11 +1146,11 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
         {
             if (tenantId == null)
             {
-                return await FetchDeadLetterCountsAsync(token);
+                return await FetchDeadLetterCountsAsync(token).ConfigureAwait(false);
             }
 
             await using var session = RequireStore().QuerySession(SessionOptions.ForDatabase(this));
-            var all = await session.Query<DeadLetterEvent>().ToListAsync(token);
+            var all = await session.Query<DeadLetterEvent>().ToListAsync(token).ConfigureAwait(false);
 
             return all
                 .Where(x => x.TenantId == tenantId)
@@ -1185,7 +1185,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
             var shardKey = shard.ShardKey;
 
             await using var session = RequireStore().QuerySession(SessionOptions.ForDatabase(this));
-            var all = await session.Query<DeadLetterEvent>().ToListAsync(token);
+            var all = await session.Query<DeadLetterEvent>().ToListAsync(token).ConfigureAwait(false);
 
             return all
                 .Where(x => x.ProjectionName == projectionName && x.ShardName == shardKey
@@ -1225,16 +1225,16 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
             {
                 var (connectionString, table, name, tenant) = state;
                 await using var conn = new SqlConnection(connectionString);
-                await conn.OpenAsync(ct);
+                await conn.OpenAsync(ct).ConfigureAwait(false);
 
                 await using var cmd = conn.CreateCommand();
                 cmd.CommandText = $"SELECT floor_seq_id FROM {table} WHERE name = @name AND tenant_id = @tenant;";
                 cmd.Parameters.AddVarChar("@name", name);
                 cmd.Parameters.AddVarChar("@tenant", tenant);
 
-                var result = await cmd.ExecuteScalarAsync(ct);
+                var result = await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
                 return result is long floor ? floor : (long?)null;
-            }, (_connectionString, _events.ProjectionFloorsTableName, projectionName, FloorTenant(tenantId)), token);
+            }, (_connectionString, _events.ProjectionFloorsTableName, projectionName, FloorTenant(tenantId)), token).ConfigureAwait(false);
         }
         catch (Exception e) when (MissingStorageDetection.IsMissingStorage(e))
         {
@@ -1263,7 +1263,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
         {
             var (connectionString, table, name, tenant, value) = state;
             await using var conn = new SqlConnection(connectionString);
-            await conn.OpenAsync(ct);
+            await conn.OpenAsync(ct).ConfigureAwait(false);
 
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = $"""
@@ -1279,9 +1279,9 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
             cmd.Parameters.AddVarChar("@tenant", tenant);
             cmd.Parameters.Add("@floor", System.Data.SqlDbType.BigInt).Value = value;
 
-            var result = await cmd.ExecuteScalarAsync(ct);
+            var result = await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
             return Convert.ToInt64(result);
-        }, (_connectionString, _events.ProjectionFloorsTableName, projectionName, FloorTenant(tenantId), floor), token);
+        }, (_connectionString, _events.ProjectionFloorsTableName, projectionName, FloorTenant(tenantId), floor), token).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -1295,7 +1295,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
         {
             var (connectionString, table, name, tenant, value) = state;
             await using var conn = new SqlConnection(connectionString);
-            await conn.OpenAsync(ct);
+            await conn.OpenAsync(ct).ConfigureAwait(false);
 
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = value is null
@@ -1322,8 +1322,8 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
                 cmd.Parameters.Add("@floor", System.Data.SqlDbType.BigInt).Value = value.Value;
             }
 
-            await cmd.ExecuteNonQueryAsync(ct);
-        }, (_connectionString, _events.ProjectionFloorsTableName, projectionName, FloorTenant(tenantId), floor), token);
+            await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+        }, (_connectionString, _events.ProjectionFloorsTableName, projectionName, FloorTenant(tenantId), floor), token).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -1412,7 +1412,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
         // operation or a health check, and the apply opens its own connection.
         var migrationLock = _options.BuildMigrationLock();
         await ApplyAllConfiguredChangesToDatabaseAsync(migrationLock, ct: token)
-            .TranslatingCancellation("Ensuring the event store schema", token);
+            .TranslatingCancellation("Ensuring the event store schema", token).ConfigureAwait(false);
 
         // Not unconditionally: under ContinueOnFailures a loser returns as if nothing needed doing, and it
         // has not looked.
@@ -1472,7 +1472,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
 
         if (_events.UseTenantPartitionedEvents)
         {
-            await WaitForEachTenantsProjectionDataAsync(expected, timeout);
+            await WaitForEachTenantsProjectionDataAsync(expected, timeout).ConfigureAwait(false);
             return;
         }
 
@@ -1482,10 +1482,10 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
 
         while (stopwatch.Elapsed < timeout)
         {
-            highWater = await FetchHighestEventSequenceNumber(CancellationToken.None);
+            highWater = await FetchHighestEventSequenceNumber(CancellationToken.None).ConfigureAwait(false);
             if (highWater == 0) return;
 
-            var progress = await AllProjectionProgress(CancellationToken.None);
+            var progress = await AllProjectionProgress(CancellationToken.None).ConfigureAwait(false);
 
             // Filter out the HighWaterMark entry — only check actual projection shards
             projectionProgress = progress
@@ -1498,7 +1498,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
                 return;
             }
 
-            await Task.Delay(100);
+            await Task.Delay(100).ConfigureAwait(false);
         }
 
         throw new TimeoutException(
@@ -1526,8 +1526,8 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
 
         while (stopwatch.Elapsed < timeout)
         {
-            var heights = await FetchEventHeightsByTenantAsync(CancellationToken.None);
-            var progress = await AllProjectionProgress(CancellationToken.None);
+            var heights = await FetchEventHeightsByTenantAsync(CancellationToken.None).ConfigureAwait(false);
+            var progress = await AllProjectionProgress(CancellationToken.None).ConfigureAwait(false);
 
             var shards = progress
                 .Select(state => (state, name: ShardName.TryParse(state.ShardName, out var parsed) ? parsed : null))
@@ -1542,7 +1542,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
 
             if (lagging.Count == 0) return;
 
-            await Task.Delay(100);
+            await Task.Delay(100).ConfigureAwait(false);
         }
 
         throw new TimeoutException(
@@ -1560,7 +1560,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
                 var heights = new Dictionary<string, long>(StringComparer.Ordinal);
 
                 await using var conn = new SqlConnection(connectionString);
-                await conn.OpenAsync(ct);
+                await conn.OpenAsync(ct).ConfigureAwait(false);
 
                 await using var cmd = conn.CreateCommand();
                 cmd.CommandText = $"""
@@ -1572,14 +1572,14 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
                     WHERE h.height IS NOT NULL;
                     """;
 
-                await using var reader = await cmd.ExecuteReaderAsync(ct);
-                while (await reader.ReadAsync(ct))
+                await using var reader = (await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false));
+                while (await reader.ReadAsync(ct).ConfigureAwait(false))
                 {
                     heights[reader.GetString(0)] = reader.GetInt64(1);
                 }
 
                 return (IReadOnlyDictionary<string, long>)heights;
-            }, (_connectionString, _events), token);
+            }, (_connectionString, _events), token).ConfigureAwait(false);
         }
         catch (Exception e) when (MissingStorageDetection.IsMissingStorage(e))
         {
@@ -1708,11 +1708,11 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
         {
             var (connectionString, sqlText) = state;
             await using var conn = new SqlConnection(connectionString);
-            await conn.OpenAsync(token);
+            await conn.OpenAsync(token).ConfigureAwait(false);
 
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = sqlText;
-            await cmd.ExecuteNonQueryAsync(token);
+            await cmd.ExecuteNonQueryAsync(token).ConfigureAwait(false);
         }, (_connectionString, sql), ct).AsTask();
     }
 

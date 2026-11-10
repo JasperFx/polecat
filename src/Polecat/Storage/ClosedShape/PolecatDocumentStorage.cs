@@ -451,7 +451,7 @@ internal abstract class PolecatDocumentStorage<TDoc, TId>
     {
         var command = BuildLoadCommand(id, tenantId);
         var selector = (ISelector<TDoc>)BuildSelector(session);
-        await using var reader = await session.ExecuteReaderAsync(command, token).ConfigureAwait(false);
+        await using var reader = (await session.ExecuteReaderAsync(command, token).ConfigureAwait(false));
         if (!await reader.ReadAsync(token).ConfigureAwait(false))
         {
             return default;
@@ -469,7 +469,7 @@ internal abstract class PolecatDocumentStorage<TDoc, TId>
         var command = BuildLoadManyCommand(ids, tenantId);
         var selector = (ISelector<TDoc>)BuildSelector(session);
         var list = new List<TDoc>();
-        await using var reader = await session.ExecuteReaderAsync(command, token).ConfigureAwait(false);
+        await using var reader = (await session.ExecuteReaderAsync(command, token).ConfigureAwait(false));
         while (await reader.ReadAsync(token).ConfigureAwait(false))
         {
             list.Add(await selector.ResolveAsync(reader, token).ConfigureAwait(false));

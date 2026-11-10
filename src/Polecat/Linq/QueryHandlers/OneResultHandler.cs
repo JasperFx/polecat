@@ -22,7 +22,7 @@ internal class OneResultHandler<T> : IQueryHandler<T?> where T : class
 
     public async Task<T?> HandleAsync(DbDataReader reader, CancellationToken token)
     {
-        var hasResult = await reader.ReadAsync(token);
+        var hasResult = await reader.ReadAsync(token).ConfigureAwait(false);
 
         if (!hasResult)
         {
@@ -34,7 +34,7 @@ internal class OneResultHandler<T> : IQueryHandler<T?> where T : class
 
         var result = _selector.Resolve(reader);
 
-        if (!_canBeMultiples && await reader.ReadAsync(token))
+        if (!_canBeMultiples && await reader.ReadAsync(token).ConfigureAwait(false))
             throw new InvalidOperationException("Sequence contains more than one element");
 
         return result;

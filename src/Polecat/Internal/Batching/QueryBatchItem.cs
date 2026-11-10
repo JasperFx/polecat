@@ -35,7 +35,7 @@ internal class QueryListBatchItem<T> : IBatchQueryItem where T : class
     public async Task ReadResultSetAsync(DbDataReader reader, CancellationToken token)
     {
         var results = new List<T>();
-        while (await reader.ReadAsync(token))
+        while (await reader.ReadAsync(token).ConfigureAwait(false))
         {
             var json = reader.GetString(0); // data column
             var doc = _serializer.FromJson<T>(json);
@@ -69,7 +69,7 @@ internal class QueryCountBatchItem : IBatchQueryItem
 
     public async Task ReadResultSetAsync(DbDataReader reader, CancellationToken token)
     {
-        if (await reader.ReadAsync(token))
+        if (await reader.ReadAsync(token).ConfigureAwait(false))
         {
             _tcs.SetResult(reader.GetInt32(0));
         }
@@ -105,7 +105,7 @@ internal class QueryAnyBatchItem : IBatchQueryItem
 
     public async Task ReadResultSetAsync(DbDataReader reader, CancellationToken token)
     {
-        if (await reader.ReadAsync(token))
+        if (await reader.ReadAsync(token).ConfigureAwait(false))
         {
             _tcs.SetResult(reader.GetInt32(0) == 1);
         }
@@ -145,7 +145,7 @@ internal class QueryFirstOrDefaultBatchItem<T> : IBatchQueryItem where T : class
 
     public async Task ReadResultSetAsync(DbDataReader reader, CancellationToken token)
     {
-        if (await reader.ReadAsync(token))
+        if (await reader.ReadAsync(token).ConfigureAwait(false))
         {
             var json = reader.GetString(0);
             _tcs.SetResult(_serializer.FromJson<T>(json));

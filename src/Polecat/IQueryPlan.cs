@@ -47,7 +47,7 @@ public abstract class QueryListPlan<T> : IQueryPlan<IReadOnlyList<T>>, IBatchQue
         Justification = "Polecat's own use of its LINQ async wrappers, which carry [RequiresDynamicCode] since #733. An EXPLICIT interface implementation cannot propagate the annotation -- the interface does not carry one, and annotating only the implementation is IL2046. A consumer is still warned, at the public entry point they call. ⚠️ NOT the suppression #733 removed: that one asserted the path was SAFE. This records that it is unsafe and that the diagnostic has nowhere left to go.")]
     async Task<IReadOnlyList<T>> IQueryPlan<IReadOnlyList<T>>.Fetch(IQuerySession session, CancellationToken token)
     {
-        return await Query(session).ToListAsync(token);
+        return await Query(session).ToListAsync(token).ConfigureAwait(false);
     }
 
     [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",

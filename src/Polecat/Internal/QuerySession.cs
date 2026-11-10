@@ -184,36 +184,75 @@ internal partial class QuerySession : IQuerySession, JasperFx.Events.IEventTenan
     {
         assertNotDisposed();
         RequestCount++;
-        return await _resilience.ExecuteAsync(
-            static (state, t) => new ValueTask<int>(state.Lifetime.ExecuteAsync(state.Command, t)),
-            new CommandExecution(command, _lifetime), token).ConfigureAwait(false);
+        var started = Stopwatch.GetTimestamp();
+        try
+        {
+            return await _resilience.ExecuteAsync(
+                static (state, t) => new ValueTask<int>(state.Lifetime.ExecuteAsync(state.Command, t)),
+                new CommandExecution(command, _lifetime), token).ConfigureAwait(false);
+        }
+        finally
+        {
+            RecordQueryDuration(started);
+        }
     }
 
     internal async Task<object?> ExecuteScalarAsync(SqlCommand command, CancellationToken token)
     {
         assertNotDisposed();
         RequestCount++;
-        return await _resilience.ExecuteAsync(
-            static (state, t) => new ValueTask<object?>(state.Lifetime.ExecuteScalarAsync(state.Command, t)),
-            new CommandExecution(command, _lifetime), token).ConfigureAwait(false);
+        var started = Stopwatch.GetTimestamp();
+        try
+        {
+            return await _resilience.ExecuteAsync(
+                static (state, t) => new ValueTask<object?>(state.Lifetime.ExecuteScalarAsync(state.Command, t)),
+                new CommandExecution(command, _lifetime), token).ConfigureAwait(false);
+        }
+        finally
+        {
+            RecordQueryDuration(started);
+        }
     }
 
     internal async Task<DbDataReader> ExecuteReaderAsync(SqlCommand command, CancellationToken token)
     {
         assertNotDisposed();
         RequestCount++;
-        return await _resilience.ExecuteAsync(
-            static (state, t) => new ValueTask<DbDataReader>(state.Lifetime.ExecuteReaderAsync(state.Command, t)),
-            new CommandExecution(command, _lifetime), token).ConfigureAwait(false);
+        var started = Stopwatch.GetTimestamp();
+        try
+        {
+            return await _resilience.ExecuteAsync(
+                static (state, t) => new ValueTask<DbDataReader>(state.Lifetime.ExecuteReaderAsync(state.Command, t)),
+                new CommandExecution(command, _lifetime), token).ConfigureAwait(false);
+        }
+        finally
+        {
+            RecordQueryDuration(started);
+        }
     }
 
     internal async Task<DbDataReader> ExecuteReaderAsync(SqlBatch batch, CancellationToken token)
     {
         assertNotDisposed();
         RequestCount++;
-        return await _resilience.ExecuteAsync(
-            static (state, t) => new ValueTask<DbDataReader>(state.Lifetime.ExecuteReaderAsync(state.Batch, t)),
-            new BatchExecution(batch, _lifetime), token).ConfigureAwait(false);
+        var started = Stopwatch.GetTimestamp();
+        try
+        {
+            return await _resilience.ExecuteAsync(
+                static (state, t) => new ValueTask<DbDataReader>(state.Lifetime.ExecuteReaderAsync(state.Batch, t)),
+                new BatchExecution(batch, _lifetime), token).ConfigureAwait(false);
+        }
+        finally
+        {
+            RecordQueryDuration(started);
+        }
+    }
+
+    // Free when nothing listens: the histogram reports Enabled only while a MeterListener subscribes to it.
+    private static void RecordQueryDuration(long started)
+    {
+        var histogram = Polecat.Internal.OpenTelemetry.PolecatTracing.QueryDuration;
+        if (histogram.Enabled) histogram.Record(Stopwatch.GetElapsedTime(started).TotalMilliseconds);
     }
 
     // ── Existence check operations ──────────────────────────────────────
@@ -265,8 +304,8 @@ internal partial class QuerySession : IQuerySession, JasperFx.Events.IEventTenan
     {
         assertNotDisposed();
         var provider = _providers.GetProvider<T>();
-        await _tableEnsurer.EnsureTableAsync(provider, HasOpenTransaction, token);
-        if (!await CouldHaveIdAsync(provider.Mapping, id, token)) return false;
+        await _tableEnsurer.EnsureTableAsync(provider, HasOpenTransaction, token).ConfigureAwait(false);
+        if (!await CouldHaveIdAsync(provider.Mapping, id, token).ConfigureAwait(false)) return false;
 
         await using var cmd = new SqlCommand();
 
@@ -283,7 +322,7 @@ internal partial class QuerySession : IQuerySession, JasperFx.Events.IEventTenan
         Logger.OnBeforeExecute(cmd.CommandText);
         try
         {
-            var result = await ExecuteScalarAsync(cmd, token);
+            var result = await ExecuteScalarAsync(cmd, token).ConfigureAwait(false);
             Logger.LogSuccess(cmd.CommandText);
             return result is true;
         }
@@ -298,22 +337,22 @@ internal partial class QuerySession : IQuerySession, JasperFx.Events.IEventTenan
 
     public async Task<T?> LoadAsync<T>(Guid id, CancellationToken token = default) where T : notnull
     {
-        return await LoadInternalAsync<T>(id, token);
+        return await LoadInternalAsync<T>(id, token).ConfigureAwait(false);
     }
 
     public async Task<T?> LoadAsync<T>(string id, CancellationToken token = default) where T : notnull
     {
-        return await LoadInternalAsync<T>(id, token);
+        return await LoadInternalAsync<T>(id, token).ConfigureAwait(false);
     }
 
     public async Task<T?> LoadAsync<T>(int id, CancellationToken token = default) where T : class
     {
-        return await LoadInternalAsync<T>(id, token);
+        return await LoadInternalAsync<T>(id, token).ConfigureAwait(false);
     }
 
     public async Task<T?> LoadAsync<T>(long id, CancellationToken token = default) where T : class
     {
-        return await LoadInternalAsync<T>(id, token);
+        return await LoadInternalAsync<T>(id, token).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -332,34 +371,34 @@ internal partial class QuerySession : IQuerySession, JasperFx.Events.IEventTenan
         assertNotDisposed();
 
         var mapping = _providers.GetProvider<T>().Mapping;
-        return await LoadInternalAsync<T>(mapping.UnwrapIdentity(id, nameof(id)), token);
+        return await LoadInternalAsync<T>(mapping.UnwrapIdentity(id, nameof(id)), token).ConfigureAwait(false);
     }
 
     protected virtual async Task<T?> LoadInternalAsync<T>(object id, CancellationToken token) where T : notnull
     {
         assertNotDisposed();
         var provider = _providers.GetProvider<T>();
-        await _tableEnsurer.EnsureTableAsync(provider, HasOpenTransaction, token);
-        if (!await CouldHaveIdAsync(provider.Mapping, id, token)) return default;
+        await _tableEnsurer.EnsureTableAsync(provider, HasOpenTransaction, token).ConfigureAwait(false);
+        if (!await CouldHaveIdAsync(provider.Mapping, id, token).ConfigureAwait(false)) return default;
 
         // #273 E2a/E2e: all document loads route through the closed-shape storage layer
         // (shared selectors + dialect commands over the descriptor); subclass types resolve
         // a SubClassPolecatStorage wrapping the hierarchy root's storage.
         var storage = (Polecat.Storage.ClosedShape.IPolecatObjectStorage<T>)
             ((Weasel.Storage.IStorageSession)this).StorageFor<T>();
-        return await storage.LoadByObjectIdAsync(id, this, token);
+        return await storage.LoadByObjectIdAsync(id, this, token).ConfigureAwait(false);
     }
 
     public async Task<IReadOnlyList<T>> LoadManyAsync<T>(IEnumerable<Guid> ids, CancellationToken token = default)
         where T : notnull
     {
-        return await LoadManyInternalAsync<T>(ids.Cast<object>().ToList(), token);
+        return await LoadManyInternalAsync<T>(ids.Cast<object>().ToList(), token).ConfigureAwait(false);
     }
 
     public async Task<IReadOnlyList<T>> LoadManyAsync<T>(IEnumerable<string> ids, CancellationToken token = default)
         where T : notnull
     {
-        return await LoadManyInternalAsync<T>(ids.Cast<object>().ToList(), token);
+        return await LoadManyInternalAsync<T>(ids.Cast<object>().ToList(), token).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -380,12 +419,12 @@ internal partial class QuerySession : IQuerySession, JasperFx.Events.IEventTenan
     {
         assertNotDisposed();
         var provider = _providers.GetProvider<T>();
-        await _tableEnsurer.EnsureTableAsync(provider, HasOpenTransaction, token);
-        if (!await CouldHaveIdAsync(provider.Mapping, id, token)) return default;
+        await _tableEnsurer.EnsureTableAsync(provider, HasOpenTransaction, token).ConfigureAwait(false);
+        if (!await CouldHaveIdAsync(provider.Mapping, id, token).ConfigureAwait(false)) return default;
 
         var storage = (Polecat.Storage.ClosedShape.IPolecatObjectStorage<T>)
             ((Weasel.Storage.IStorageSession)this).StorageFor<T>();
-        return await storage.LoadByObjectIdAsync(id, state, tenantId, token);
+        return await storage.LoadByObjectIdAsync(id, state, tenantId, token).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -397,12 +436,12 @@ internal partial class QuerySession : IQuerySession, JasperFx.Events.IEventTenan
     {
         assertNotDisposed();
         var provider = _providers.GetProvider<T>();
-        await _tableEnsurer.EnsureTableAsync(provider, HasOpenTransaction, token);
-        if (!await CouldHaveIdAsync(provider.Mapping, id, token)) return default;
+        await _tableEnsurer.EnsureTableAsync(provider, HasOpenTransaction, token).ConfigureAwait(false);
+        if (!await CouldHaveIdAsync(provider.Mapping, id, token).ConfigureAwait(false)) return default;
 
         var storage = (Polecat.Storage.ClosedShape.IPolecatObjectStorage<T>)
             _providers.ClosedShapeGraph.StorageFor<T>().QueryOnly;
-        return await storage.LoadByObjectIdAsync(id, this, tenantId, token);
+        return await storage.LoadByObjectIdAsync(id, this, tenantId, token).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -416,14 +455,14 @@ internal partial class QuerySession : IQuerySession, JasperFx.Events.IEventTenan
         if (ids.Count == 0) return [];
 
         var provider = _providers.GetProvider<T>();
-        await _tableEnsurer.EnsureTableAsync(provider, HasOpenTransaction, token);
+        await _tableEnsurer.EnsureTableAsync(provider, HasOpenTransaction, token).ConfigureAwait(false);
 
-        ids = await IdsThatCouldBeStoredAsync(provider.Mapping, ids, token);
+        ids = await IdsThatCouldBeStoredAsync(provider.Mapping, ids, token).ConfigureAwait(false);
         if (ids.Count == 0) return [];
 
         var storage = (Polecat.Storage.ClosedShape.IPolecatObjectStorage<T>)
             ((Weasel.Storage.IStorageSession)this).StorageFor<T>();
-        return await storage.LoadManyByObjectIdsAsync(ids, state, tenantId, token);
+        return await storage.LoadManyByObjectIdsAsync(ids, state, tenantId, token).ConfigureAwait(false);
     }
 
     protected virtual async Task<IReadOnlyList<T>> LoadManyInternalAsync<T>(
@@ -433,15 +472,15 @@ internal partial class QuerySession : IQuerySession, JasperFx.Events.IEventTenan
         if (ids.Count == 0) return [];
 
         var provider = _providers.GetProvider<T>();
-        await _tableEnsurer.EnsureTableAsync(provider, HasOpenTransaction, token);
+        await _tableEnsurer.EnsureTableAsync(provider, HasOpenTransaction, token).ConfigureAwait(false);
 
-        ids = await IdsThatCouldBeStoredAsync(provider.Mapping, ids, token);
+        ids = await IdsThatCouldBeStoredAsync(provider.Mapping, ids, token).ConfigureAwait(false);
         if (ids.Count == 0) return [];
 
         // #273 E2a/E2e: all document loads route through the closed-shape storage layer.
         var storage = (Polecat.Storage.ClosedShape.IPolecatObjectStorage<T>)
             ((Weasel.Storage.IStorageSession)this).StorageFor<T>();
-        return await storage.LoadManyByObjectIdsAsync(ids, this, token);
+        return await storage.LoadManyByObjectIdsAsync(ids, this, token).ConfigureAwait(false);
     }
 
     public IPolecatQueryable<T> Query<T>() where T : notnull
@@ -498,8 +537,8 @@ internal partial class QuerySession : IQuerySession, JasperFx.Events.IEventTenan
     {
         assertNotDisposed();
         var provider = _providers.GetProvider<T>();
-        await _tableEnsurer.EnsureTableAsync(provider, HasOpenTransaction, token);
-        if (!await CouldHaveIdAsync(provider.Mapping, id, token)) return null;
+        await _tableEnsurer.EnsureTableAsync(provider, HasOpenTransaction, token).ConfigureAwait(false);
+        if (!await CouldHaveIdAsync(provider.Mapping, id, token).ConfigureAwait(false)) return null;
 
         await using var cmd = new SqlCommand();
 
@@ -516,7 +555,7 @@ internal partial class QuerySession : IQuerySession, JasperFx.Events.IEventTenan
         Logger.OnBeforeExecute(cmd.CommandText);
         try
         {
-            var result = await ExecuteScalarAsync(cmd, token);
+            var result = await ExecuteScalarAsync(cmd, token).ConfigureAwait(false);
             Logger.LogSuccess(cmd.CommandText);
             return result is string json ? json : null;
         }
@@ -563,6 +602,6 @@ internal partial class QuerySession : IQuerySession, JasperFx.Events.IEventTenan
         if (_disposed) return;
 
         _disposed = true;
-        await _lifetime.DisposeAsync();
+        await _lifetime.DisposeAsync().ConfigureAwait(false);
     }
 }

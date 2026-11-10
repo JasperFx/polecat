@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using System.Reflection;
@@ -14,7 +15,7 @@ namespace Polecat.Events.Operations;
     Justification = "Class-level: evaluates constant sub-expressions in IEvent predicates via Expression.Lambda + Compile — runtime code generation. Event types and their property graph are preserved at the event-LINQ registration boundary on the caller side per the AOT publishing guide.")]
 internal class EventWhereClauseParser
 {
-    private static readonly Dictionary<ExpressionType, string> Operators = new()
+    private static readonly FrozenDictionary<ExpressionType, string> Operators = new Dictionary<ExpressionType, string>()
     {
         { ExpressionType.Equal, "=" },
         { ExpressionType.NotEqual, "!=" },
@@ -22,9 +23,9 @@ internal class EventWhereClauseParser
         { ExpressionType.GreaterThanOrEqual, ">=" },
         { ExpressionType.LessThan, "<" },
         { ExpressionType.LessThanOrEqual, "<=" }
-    };
+    }.ToFrozenDictionary();
 
-    private static readonly Dictionary<string, (string column, string sqlType, Type clrType)> EventColumns = new()
+    private static readonly FrozenDictionary<string, (string column, string sqlType, Type clrType)> EventColumns = new Dictionary<string, (string column, string sqlType, Type clrType)>()
     {
         { "Id", ("id", "uniqueidentifier", typeof(Guid)) },
         { "Sequence", ("seq_id", "bigint", typeof(long)) },
@@ -37,7 +38,7 @@ internal class EventWhereClauseParser
         { "IsArchived", ("is_archived", "bit", typeof(bool)) },
         { "CorrelationId", ("correlation_id", "nvarchar(250)", typeof(string)) },
         { "CausationId", ("causation_id", "nvarchar(250)", typeof(string)) }
-    };
+    }.ToFrozenDictionary();
 
     public ISqlFragment Parse(Expression expression)
     {

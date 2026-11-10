@@ -304,12 +304,12 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
         var pageSize = query.PageSize <= 0 ? 25 : query.PageSize;
         var offset = (pageNumber - 1) * pageSize;
 
-        var total = await queryable.CountAsync(token);
+        var total = await queryable.CountAsync(token).ConfigureAwait(false);
         var events = await queryable
             .OrderBy(e => e.Sequence)
             .Skip(offset)
             .Take(pageSize)
-            .ToListAsync(token);
+            .ToListAsync(token).ConfigureAwait(false);
 
         return new PagedEvents
         {
@@ -448,13 +448,13 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
     public async Task<IReadOnlyList<IEvent>> FetchStreamAsync(Guid streamId, long version = 0,
         DateTimeOffset? timestamp = null, long fromVersion = 0, CancellationToken token = default)
     {
-        return await FetchStreamInternalAsync(streamId, version, timestamp, fromVersion, token);
+        return await FetchStreamInternalAsync(streamId, version, timestamp, fromVersion, token).ConfigureAwait(false);
     }
 
     public async Task<IReadOnlyList<IEvent>> FetchStreamAsync(string streamKey, long version = 0,
         DateTimeOffset? timestamp = null, long fromVersion = 0, CancellationToken token = default)
     {
-        return await FetchStreamInternalAsync(streamKey, version, timestamp, fromVersion, token);
+        return await FetchStreamInternalAsync(streamKey, version, timestamp, fromVersion, token).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -476,8 +476,8 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
     private async Task<IReadOnlyList<IEvent>> FetchStreamInternalAsync(object streamId, long version,
         DateTimeOffset? timestamp, long fromVersion, CancellationToken token, bool includeArchived = false)
     {
-        await _session.EnsureEventStoreSchemaAsync(token); // #219: create event store on first use
-        if (!await _session.CouldHaveStreamAsync(streamId, token)) return [];
+        await _session.EnsureEventStoreSchemaAsync(token).ConfigureAwait(false); // #219: create event store on first use
+        if (!await _session.CouldHaveStreamAsync(streamId, token).ConfigureAwait(false)) return [];
 
         // #57 pc_events half: column projection + per-row hydration live in
         // PcEventsRowReader, shared with the IEventStore explorer's
@@ -536,11 +536,11 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
         var cache = new EventTypeCache();
 
         var results = new List<IEvent>();
-        await using var reader = await _session.ExecuteReaderAsync(cmd, token);
+        await using var reader = (await _session.ExecuteReaderAsync(cmd, token).ConfigureAwait(false));
 
         if (_events.StreamIdentity == StreamIdentity.AsGuid)
         {
-            while (await reader.ReadAsync(token))
+            while (await reader.ReadAsync(token).ConfigureAwait(false))
             {
                 var @event = await PcEventsRowReader
                     .ReadEventAsGuidAsync(reader, ctx, slots, ref cache, token).ConfigureAwait(false);
@@ -549,7 +549,7 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
         }
         else
         {
-            while (await reader.ReadAsync(token))
+            while (await reader.ReadAsync(token).ConfigureAwait(false))
             {
                 var @event = await PcEventsRowReader
                     .ReadEventAsStringAsync(reader, ctx, slots, ref cache, token).ConfigureAwait(false);
@@ -562,7 +562,7 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
 
     public async Task<IEvent<T>?> LoadAsync<T>(Guid id, CancellationToken token = default) where T : class
     {
-        var @event = await LoadInternalAsync(id, token);
+        var @event = await LoadInternalAsync(id, token).ConfigureAwait(false);
         return @event as IEvent<T>;
     }
 
@@ -571,7 +571,7 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
 
     private async Task<IEvent?> LoadInternalAsync(Guid id, CancellationToken token)
     {
-        await _session.EnsureEventStoreSchemaAsync(token); // #219: create event store on first use
+        await _session.EnsureEventStoreSchemaAsync(token).ConfigureAwait(false); // #219: create event store on first use
         // Mirrors FetchStreamInternalAsync but filters by the event UUID
         // rather than stream id, and reads the row's stream_id column to
         // assemble the context (since the caller doesn't know the stream
@@ -585,8 +585,8 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
         cmd.Parameters.AddWithValue("@id", id); // event id — uniqueidentifier
         cmd.Parameters.AddVarChar("@tenant_id", TenantId);
 
-        await using var reader = await _session.ExecuteReaderAsync(cmd, token);
-        if (!await reader.ReadAsync(token)) return null;
+        await using var reader = (await _session.ExecuteReaderAsync(cmd, token).ConfigureAwait(false));
+        if (!await reader.ReadAsync(token).ConfigureAwait(false)) return null;
 
         // Pull stream_id off the row so PcEventsRowReader's stream-id
         // assignment (driven by ctx.StreamId) gets the right value. Ordinal 2
@@ -611,18 +611,18 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
 
     public async Task<StreamState?> FetchStreamStateAsync(Guid streamId, CancellationToken token = default)
     {
-        return await FetchStreamStateInternalAsync(streamId, token);
+        return await FetchStreamStateInternalAsync(streamId, token).ConfigureAwait(false);
     }
 
     public async Task<StreamState?> FetchStreamStateAsync(string streamKey, CancellationToken token = default)
     {
-        return await FetchStreamStateInternalAsync(streamKey, token);
+        return await FetchStreamStateInternalAsync(streamKey, token).ConfigureAwait(false);
     }
 
     private async Task<StreamState?> FetchStreamStateInternalAsync(object streamId, CancellationToken token)
     {
-        await _session.EnsureEventStoreSchemaAsync(token); // #219: create event store on first use
-        if (!await _session.CouldHaveStreamAsync(streamId, token)) return null;
+        await _session.EnsureEventStoreSchemaAsync(token).ConfigureAwait(false); // #219: create event store on first use
+        if (!await _session.CouldHaveStreamAsync(streamId, token).ConfigureAwait(false)) return null;
 
         // #57: column projection + row read live in PcStreamsRowReader so this
         // method, GetRecentStreamsAsync, and GetStreamMetadataAsync all read
@@ -638,8 +638,8 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
         cmd.Parameters.AddIdParameter("@id", streamId);
         cmd.Parameters.AddVarChar("@tenant_id", TenantId);
 
-        await using var reader = await _session.ExecuteReaderAsync(cmd, token);
-        if (await reader.ReadAsync(token))
+        await using var reader = (await _session.ExecuteReaderAsync(cmd, token).ConfigureAwait(false));
+        if (await reader.ReadAsync(token).ConfigureAwait(false))
         {
             return PcStreamsRowReader.ReadStreamState(reader, _events.StreamIdentity, _events);
         }
@@ -651,14 +651,14 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
         DateTimeOffset? timestamp = null, T? state = null, long fromVersion = 0,
         CancellationToken token = default) where T : class
     {
-        return await AggregateStreamInternalAsync<T>(streamId, version, timestamp, state, fromVersion, token);
+        return await AggregateStreamInternalAsync(streamId, version, timestamp, state, fromVersion, token).ConfigureAwait(false);
     }
 
     public async Task<T?> AggregateStreamAsync<T>(string streamKey, long version = 0,
         DateTimeOffset? timestamp = null, T? state = null, long fromVersion = 0,
         CancellationToken token = default) where T : class
     {
-        return await AggregateStreamInternalAsync<T>(streamKey, version, timestamp, state, fromVersion, token);
+        return await AggregateStreamInternalAsync(streamKey, version, timestamp, state, fromVersion, token).ConfigureAwait(false);
     }
 
     private async Task<T?> AggregateStreamInternalAsync<T>(object streamId, long version,
@@ -667,14 +667,14 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
     {
         IReadOnlyList<IEvent> events;
         if (streamId is Guid guid)
-            events = await FetchStreamAsync(guid, version, timestamp, fromVersion, token);
+            events = await FetchStreamAsync(guid, version, timestamp, fromVersion, token).ConfigureAwait(false);
         else
-            events = await FetchStreamAsync((string)streamId, version, timestamp, fromVersion, token);
+            events = await FetchStreamAsync((string)streamId, version, timestamp, fromVersion, token).ConfigureAwait(false);
 
         if (events.Count == 0) return state;
 
         var aggregator = _options.Projections.AggregatorFor<T>();
-        var aggregate = await aggregator.BuildAsync(events, _session, state, token);
+        var aggregate = await aggregator.BuildAsync(events, _session, state, token).ConfigureAwait(false);
         if (aggregate == null) return null;
 
         TrySetIdentity(aggregate, streamId);
@@ -684,13 +684,13 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
     public async Task<T?> AggregateStreamToLastKnownAsync<T>(Guid streamId, long version = 0,
         DateTimeOffset? timestamp = null, CancellationToken token = default) where T : class
     {
-        return await AggregateStreamToLastKnownInternalAsync<T>(streamId, version, timestamp, token);
+        return await AggregateStreamToLastKnownInternalAsync<T>(streamId, version, timestamp, token).ConfigureAwait(false);
     }
 
     public async Task<T?> AggregateStreamToLastKnownAsync<T>(string streamKey, long version = 0,
         DateTimeOffset? timestamp = null, CancellationToken token = default) where T : class
     {
-        return await AggregateStreamToLastKnownInternalAsync<T>(streamKey, version, timestamp, token);
+        return await AggregateStreamToLastKnownInternalAsync<T>(streamKey, version, timestamp, token).ConfigureAwait(false);
     }
 
     private async Task<T?> AggregateStreamToLastKnownInternalAsync<T>(object streamId, long version,
@@ -698,9 +698,9 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
     {
         IReadOnlyList<IEvent> events;
         if (streamId is Guid guid)
-            events = await FetchStreamAsync(guid, version, timestamp, 0, token);
+            events = await FetchStreamAsync(guid, version, timestamp, 0, token).ConfigureAwait(false);
         else
-            events = await FetchStreamAsync((string)streamId, version, timestamp, 0, token);
+            events = await FetchStreamAsync((string)streamId, version, timestamp, 0, token).ConfigureAwait(false);
 
         if (events.Count == 0) return null;
 
@@ -710,7 +710,7 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
         T? aggregate = null;
         while (aggregate == null && eventList.Count > 0)
         {
-            aggregate = await aggregator.BuildAsync(eventList, _session, default, token);
+            aggregate = await aggregator.BuildAsync(eventList, _session, default, token).ConfigureAwait(false);
             eventList = eventList.SkipLast(1).ToList();
         }
 
@@ -734,10 +734,10 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
         // re-aggregated off the stream. See CanReadInlineDocument.
         if (CanReadInlineDocument<T>(typeof(Guid)))
         {
-            return await DocumentReads.LoadAsync<T>(id, cancellation);
+            return await DocumentReads.LoadAsync<T>(id, cancellation).ConfigureAwait(false);
         }
 
-        return await AggregateStreamAsync<T>(id, token: cancellation);
+        return await AggregateStreamAsync<T>(id, token: cancellation).ConfigureAwait(false);
     }
 
     public async ValueTask<T?> FetchLatest<T>(string key, CancellationToken cancellation = default)
@@ -751,10 +751,10 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
         // #463: see CanReadInlineDocument.
         if (CanReadInlineDocument<T>(typeof(string)))
         {
-            return await DocumentReads.LoadAsync<T>(key, cancellation);
+            return await DocumentReads.LoadAsync<T>(key, cancellation).ConfigureAwait(false);
         }
 
-        return await AggregateStreamAsync<T>(key, token: cancellation);
+        return await AggregateStreamAsync<T>(key, token: cancellation).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -773,10 +773,10 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
     {
         if (CanReadInlineDocument<T>(typeof(Guid)))
         {
-            return await _session.LoadUntrackedAsync<T>(id, TenantId, cancellation);
+            return await _session.LoadUntrackedAsync<T>(id, TenantId, cancellation).ConfigureAwait(false);
         }
 
-        return await AggregateStreamAsync<T>(id, token: cancellation);
+        return await AggregateStreamAsync<T>(id, token: cancellation).ConfigureAwait(false);
     }
 
     /// <inheritdoc cref="FetchUncachedForFolding{T}(Guid, CancellationToken)" />
@@ -785,10 +785,10 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
     {
         if (CanReadInlineDocument<T>(typeof(string)))
         {
-            return await _session.LoadUntrackedAsync<T>(key, TenantId, cancellation);
+            return await _session.LoadUntrackedAsync<T>(key, TenantId, cancellation).ConfigureAwait(false);
         }
 
-        return await AggregateStreamAsync<T>(key, token: cancellation);
+        return await AggregateStreamAsync<T>(key, token: cancellation).ConfigureAwait(false);
     }
 
     /// <summary>

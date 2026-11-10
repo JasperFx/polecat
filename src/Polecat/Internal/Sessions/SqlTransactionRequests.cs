@@ -52,11 +52,11 @@ internal static class SqlTransactionRequests
     {
         if (!UsesMars(connection))
         {
-            return (SqlTransaction)await connection.BeginTransactionAsync(isolationLevel, token);
+            return (SqlTransaction)await connection.BeginTransactionAsync(isolationLevel, token).ConfigureAwait(false);
         }
 
         token.ThrowIfCancellationRequested();
-        return await OnDedicatedThread(() => connection.BeginTransaction(isolationLevel));
+        return await OnDedicatedThread(() => connection.BeginTransaction(isolationLevel)).ConfigureAwait(false);
     }
 
     public static Task CommitAsync(SqlTransaction transaction, CancellationToken token)
