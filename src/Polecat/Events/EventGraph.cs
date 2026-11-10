@@ -37,12 +37,10 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
 {
     private readonly StoreOptions _options;
     private readonly ConcurrentDictionary<Type, PolecatEventType> _eventTypes = new();
-    private readonly ConcurrentDictionary<string, Type> _aggregateTypes = new();
 
-    // Memoizes ResolveEventType, including misses (null values) — see the remarks on that method.
-    private readonly ConcurrentDictionary<string, Type?> _eventTypeByDotNetName = new();
-    private readonly List<ITagTypeRegistration> _tagTypes = new();
-    private readonly List<IMasker> _maskers = new();
+    // jasperfx#1043 (polecat#806): the masking rules themselves live on EventRegistry, which exposes no
+    // way to list them, so the rule types are recorded here for AssertMaskingRulesCanRun (#860).
+    private readonly List<Type> _maskedEventTypes = new();
     private readonly Dictionary<Type, Type> _upcastSources = new();
 
     internal EventGraph(StoreOptions options)
@@ -661,8 +659,15 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
         // The generic PolecatEventType<T> is closed ONCE per event type here at registration,
         // so the per-event Wrap call is a plain `new Event<T>((T)data)` with no reflection
         // (mirrors JasperFx.Events.EventTypeData<T>.Wrap). See gh-537.
-        return _eventTypes.GetOrAdd(eventType,
+        if (_eventTypes.TryGetValue(eventType, out var existing)) return existing;
+
+        var mapping = _eventTypes.GetOrAdd(eventType,
             static type => typeof(PolecatEventType<>).CloseAndBuildAs<PolecatEventType>(type));
+
+        // jasperfx#1043: tell EventRegistry's dotnet_type cache about the registration, which seeds its
+        // names and expires any cached miss a newly loaded type could now answer.
+        RegisterDotNetTypeNames(mapping);
+        return mapping;
     }
 
     public override void AddEventType(Type eventType)
@@ -764,45 +769,23 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
         }
     }
 
-    public override Type AggregateTypeFor(string aggregateTypeName)
-    {
-        if (_aggregateTypes.TryGetValue(aggregateTypeName, out var type)) return type;
-        throw new ArgumentOutOfRangeException(nameof(aggregateTypeName),
-            $"Unknown aggregate type name '{aggregateTypeName}'.");
-    }
-
     /// <summary>
-    ///     #370/#373: resolve the alias persisted in <c>pc_streams.type</c> back to its aggregate type, or
-    ///     null when this deployment has no registration for it. The single answer to "what type is this
-    ///     alias" — <see cref="StreamState.AggregateType" /> hydration and the event store explorer's
-    ///     rehydrate-by-name path both come through here.
+    ///     #370/#373: the alias persisted in <c>pc_streams.type</c> is the aggregate type's SIMPLE name.
+    ///     <see cref="EventRegistry.AggregateAliasFor" /> caches it, and that cache is what
+    ///     <see cref="EventRegistry.TryResolveAggregateType" /> reads first (jasperfx#1043).
     /// </summary>
     /// <remarks>
-    ///     <para>
-    ///     Unlike <see cref="AggregateTypeFor" /> this never throws. A stream tagged by a deployment that
-    ///     knew a type this one does not must still report its version and timestamps, and the explorer
-    ///     turns the null into its own argument exception with a message aimed at that caller.
-    ///     </para>
-    ///     <para>
-    ///     Two sources, in order. The alias registry (<c>_aggregateTypes</c>) is authoritative for anything
-    ///     this process wrote, because #373 made the stream insert go through
-    ///     <see cref="AggregateAliasFor" /> as it stamps the column. The registered projections cover
-    ///     everything else — streams written by another process or an earlier run, where nothing has
-    ///     populated the registry yet.
-    ///     </para>
-    ///     <para>
-    ///     Note the alias is the SIMPLE name, because that is what the column stores. Two aggregate types
-    ///     with the same <c>Name</c> in different namespaces therefore share an alias and the first one
-    ///     seen wins. That ambiguity lives in the persisted format, not here — resolving it would mean
-    ///     changing what the column holds.
-    ///     </para>
+    ///     Two aggregate types with the same <c>Name</c> in different namespaces share an alias and the
+    ///     first one seen wins. That ambiguity lives in the persisted format, not here.
     /// </remarks>
-    internal Type? TryResolveAggregateType(string? aggregateTypeName)
+    protected override string AliasFor(Type aggregateType) => aggregateType.Name;
+
+    /// <summary>
+    ///     An alias no <see cref="EventRegistry.AggregateAliasFor" /> call has seen yet, such as a stream
+    ///     written by another process or an earlier run: the registered projections cover those.
+    /// </summary>
+    protected override Type? FindAggregateType(string aggregateTypeName)
     {
-        if (string.IsNullOrEmpty(aggregateTypeName)) return null;
-
-        if (_aggregateTypes.TryGetValue(aggregateTypeName, out var known)) return known;
-
         foreach (var source in _options.Projections.All)
         {
             foreach (var published in source.PublishedTypes())
@@ -810,37 +793,12 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
                 if (string.Equals(published.Name, aggregateTypeName, StringComparison.Ordinal)
                     || string.Equals(published.FullName, aggregateTypeName, StringComparison.Ordinal))
                 {
-                    // Cache it so the next row on this reader is a dictionary hit.
-                    _aggregateTypes.TryAdd(aggregateTypeName, published);
                     return published;
                 }
             }
         }
 
         return null;
-    }
-
-    public override string AggregateAliasFor(Type aggregateType)
-    {
-        _aggregateTypes.TryAdd(aggregateType.Name, aggregateType);
-        return aggregateType.Name;
-    }
-
-    /// <summary>
-    ///     Try to resolve a .NET type from the dotnet_type name stored in the database.
-    /// </summary>
-    /// <remarks>
-    ///     Memoized — <see cref="Type.GetType(string)" /> parses the assembly-qualified name and
-    ///     probes assemblies on every call, and this runs once per event row hydrated. Mirrors
-    ///     Marten's <c>EventGraph.TypeForDotNetName</c> cache, except Polecat tolerates
-    ///     unknown/foreign event types by returning null — so misses are cached too (the null
-    ///     value in the dictionary is the sentinel) and an unrecognized type name stored by some
-    ///     other application does not re-probe assemblies for every row it appears on. See gh-537.
-    /// </remarks>
-    internal Type? ResolveEventType(string? dotNetTypeName)
-    {
-        if (string.IsNullOrEmpty(dotNetTypeName)) return null;
-        return _eventTypeByDotNetName.GetOrAdd(dotNetTypeName, static name => Type.GetType(name));
     }
 
     internal StreamsTable BuildStreamsTable()
@@ -863,44 +821,6 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
         return new EventProjectionFloorsTable(this);
     }
 
-    [RequiresUnreferencedCode("Discovers the tag type's inner value by reflecting over its members. Under trimming or Native AOT use RegisterTagType<TTag, TInner>(Func<TTag, TInner>), which builds the registration from TagTypeRegistration.FromUnwrapper<TTag, TInner>.")]
-    [RequiresDynamicCode("Closes TagTypeRegistration<TTag, TInner> with MakeGenericType. Under Native AOT use RegisterTagType<TTag, TInner>(Func<TTag, TInner>), which builds the registration from TagTypeRegistration.FromUnwrapper<TTag, TInner>.")]
-    public ITagTypeRegistration RegisterTagType<TTag>() where TTag : notnull
-    {
-        var existing = _tagTypes.FirstOrDefault(t => t.TagType == typeof(TTag));
-        if (existing != null) return existing;
-        var registration = TagTypeRegistration.Create<TTag>();
-        _tagTypes.Add(registration);
-        return registration;
-    }
-
-    [RequiresUnreferencedCode("Discovers the tag type's inner value by reflecting over its members. Under trimming or Native AOT use RegisterTagType<TTag, TInner>(Func<TTag, TInner>), which builds the registration from TagTypeRegistration.FromUnwrapper<TTag, TInner>.")]
-    [RequiresDynamicCode("Closes TagTypeRegistration<TTag, TInner> with MakeGenericType. Under Native AOT use RegisterTagType<TTag, TInner>(Func<TTag, TInner>), which builds the registration from TagTypeRegistration.FromUnwrapper<TTag, TInner>.")]
-    public ITagTypeRegistration RegisterTagType<TTag>(string tableSuffix) where TTag : notnull
-    {
-        var existing = _tagTypes.FirstOrDefault(t => t.TagType == typeof(TTag));
-        if (existing != null) return existing;
-        var registration = TagTypeRegistration.Create<TTag>(tableSuffix);
-        _tagTypes.Add(registration);
-        return registration;
-    }
-
-    /// <summary>
-    ///     Register a tag type from an explicit unwrapper that returns its inner value. Trim and
-    ///     Native AOT safe: nothing is discovered by reflection or closed at runtime.
-    /// </summary>
-    public ITagTypeRegistration RegisterTagType<TTag, TInner>(Func<TTag, TInner> unwrapper, string? tableSuffix = null)
-        where TTag : notnull
-    {
-        var existing = _tagTypes.FirstOrDefault(t => t.TagType == typeof(TTag));
-        if (existing != null) return existing;
-        var registration = TagTypeRegistration.FromUnwrapper(unwrapper, tableSuffix);
-        _tagTypes.Add(registration);
-        return registration;
-    }
-
-    public IReadOnlyList<ITagTypeRegistration> TagTypes => _tagTypes;
-
     // ---- #388 / #475: pluggable binary event serialization ------------------------------------
     //
     // Explicit per-type registrations from UseBinarySerializer<TEvent>(...). Types marked with
@@ -915,69 +835,19 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
     // and Polecat.Events in scope -- which is every consumer this promotion exists for -- got CS0104
     // on the bare name, so keeping them broke the shape they were kept for. Proven, not theorized:
     // Polecat's own binary_event_serialization_tests failed exactly that way.
-    private readonly ConcurrentDictionary<Type, JasperFx.Events.IEventBinarySerializer> _binarySerializerByType = new();
-    private readonly ConcurrentDictionary<Type, JasperFx.Events.IEventBinarySerializer?> _binarySerializerResolution = new();
-
-    /// <summary>
-    ///     Store-wide fallback <see cref="JasperFx.Events.IEventBinarySerializer" /> used for event
-    ///     types marked with <see cref="JasperFx.Events.BinaryEventAttribute" /> that have no explicit
-    ///     per-type registration. Null by default, which leaves every event type on the JSON path.
-    /// </summary>
-    public JasperFx.Events.IEventBinarySerializer? DefaultBinarySerializer
-    {
-        get => _defaultBinarySerializer;
-        set
-        {
-            _defaultBinarySerializer = value;
-            _binarySerializerResolution.Clear();
-        }
-    }
-
-    private JasperFx.Events.IEventBinarySerializer? _defaultBinarySerializer;
-
     /// <summary>
     ///     Opt <typeparamref name="TEvent" /> into binary serialization (#388): its payload is written
     ///     to the <c>bdata</c> column instead of <c>data</c>, and read back through the same
-    ///     serializer. Wins over <c>[BinaryEvent]</c> + <see cref="DefaultBinarySerializer" />.
+    ///     serializer. Wins over <c>[BinaryEvent]</c> + <see cref="EventRegistry.DefaultBinarySerializer" />.
+    ///     The registration lives on <see cref="EventRegistry" /> (jasperfx#1043); this overload keeps the
+    ///     fluent return type.
     /// </summary>
-    public EventGraph UseBinarySerializer<TEvent>(JasperFx.Events.IEventBinarySerializer serializer)
+    public new EventGraph UseBinarySerializer<TEvent>(JasperFx.Events.IEventBinarySerializer serializer)
         where TEvent : notnull
     {
-        ArgumentNullException.ThrowIfNull(serializer);
-        _binarySerializerByType[typeof(TEvent)] = serializer;
-        _binarySerializerResolution.Clear();
+        base.UseBinarySerializer<TEvent>(serializer);
         return this;
     }
-
-    /// <summary>
-    ///     The <see cref="JasperFx.Events.IEventBinarySerializer" /> governing
-    ///     <paramref name="eventType" />, or null when that type stays on the JSON path. Explicit
-    ///     registration beats <c>[BinaryEvent]</c> + <see cref="DefaultBinarySerializer" />.
-    /// </summary>
-    /// <exception cref="InvalidOperationException">
-    ///     The type carries <c>[BinaryEvent]</c> but no serializer is configured for it.
-    ///     Deliberately a throw rather than a silent fall back to JSON: a store that quietly ignored
-    ///     the attribute would have write-amplification characteristics that do not match its
-    ///     configuration, which is the whole reason the feature exists.
-    /// </exception>
-    internal JasperFx.Events.IEventBinarySerializer? ResolveBinarySerializerFor(Type eventType)
-        => _binarySerializerResolution.GetOrAdd(eventType, static (type, graph) =>
-        {
-            if (graph._binarySerializerByType.TryGetValue(type, out var explicitSerializer))
-            {
-                return explicitSerializer;
-            }
-
-            if (!type.IsDefined(typeof(JasperFx.Events.BinaryEventAttribute), inherit: false))
-            {
-                return null;
-            }
-
-            return graph._defaultBinarySerializer ?? throw new InvalidOperationException(
-                $"Event type '{type.FullName}' is marked with [BinaryEvent] but no IEventBinarySerializer "
-                + $"is registered. Either call opts.Events.UseBinarySerializer<{type.Name}>(...) explicitly, "
-                + "or set opts.Events.DefaultBinarySerializer to a store-wide fallback.");
-        }, this);
 
     /// <summary>
     ///     The <c>bdata</c> bytes for an event on the write path, or null when the event's type stays
@@ -988,12 +858,8 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
     {
         // Deliberately NOT short-circuited on UsesBinaryEventSerialization: a type marked
         // [BinaryEvent] in a store with no serializer configured has to throw here, and skipping the
-        // resolve for "performance" would turn that into a silent write of JSON. The resolve is a
-        // ConcurrentDictionary hit cached per event type, so a JSON-only store pays one lookup per
-        // appended event and nothing more.
-        var eventType = @event.EventType ?? @event.Data.GetType();
-        var serializer = ResolveBinarySerializerFor(eventType);
-        return serializer?.Serialize(eventType, @event.Data);
+        // resolve would turn that into a silent write of JSON.
+        return SerializeBinaryEventData(@event);
     }
 
     /// <summary>
@@ -1114,11 +980,6 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
     /// </summary>
     public IReadOnlyList<PolecatEventType> AllKnownEventTypes() => _eventTypes.Values.ToList();
 
-    public ITagTypeRegistration? FindTagType(Type tagType)
-    {
-        return _tagTypes.FirstOrDefault(t => t.TagType == tagType);
-    }
-
     internal EventTagTable BuildEventTagTable(ITagTypeRegistration registration)
     {
         return new EventTagTable(this, registration);
@@ -1172,20 +1033,20 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
     ///     Register a policy for how to remove or mask protected information
     ///     for an event type T or series of event types that can be cast to T.
     /// </summary>
-    public void AddMaskingRuleForProtectedInformation<T>(Action<T> action) where T : notnull
+    public new void AddMaskingRuleForProtectedInformation<T>(Action<T> action) where T : notnull
     {
-        ArgumentNullException.ThrowIfNull(action);
-        _maskers.Add(new ActionMasker<T>(action));
+        base.AddMaskingRuleForProtectedInformation(action);
+        _maskedEventTypes.Add(typeof(T));
     }
 
     /// <summary>
     ///     Register a policy for how to remove or mask protected information
     ///     for an event type T, replacing the event data with a new instance.
     /// </summary>
-    public void AddMaskingRuleForProtectedInformation<T>(Func<T, T> func) where T : notnull
+    public new void AddMaskingRuleForProtectedInformation<T>(Func<T, T> func) where T : notnull
     {
-        ArgumentNullException.ThrowIfNull(func);
-        _maskers.Add(new FuncMasker<T>(func));
+        base.AddMaskingRuleForProtectedInformation(func);
+        _maskedEventTypes.Add(typeof(T));
     }
 
     /// <summary>
@@ -1207,7 +1068,7 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
 
         var targets = Upcasters.AllTransformations.Select(x => x.EventType).ToHashSet();
 
-        foreach (var eventType in _maskers.Select(x => x.EventType).Distinct())
+        foreach (var eventType in _maskedEventTypes.Distinct())
         {
             if (targets.Contains(eventType)) continue;
 
@@ -1236,71 +1097,6 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
     ///     that name. See <see cref="AssertMaskingRulesCanRun" />.
     /// </summary>
     internal void RecordUpcastSource(Type oldEventType, Type eventType) => _upcastSources[oldEventType] = eventType;
-
-    internal bool TryMask(IEvent e)
-    {
-        var matched = false;
-        foreach (var masker in _maskers)
-        {
-            // |= and NOT ||=. With the short-circuiting form, the first rule to match an event
-            // stopped every later rule from even being invoked, so only one of several applicable
-            // rules ever ran -- and the operation still reported success. For a right-to-erasure
-            // feature that means protected information silently survives a masking pass. See #422.
-            matched |= masker.TryMask(e);
-        }
-        return matched;
-    }
-}
-
-internal interface IMasker
-{
-    Type EventType { get; }
-
-    bool TryMask(IEvent @event);
-}
-
-internal class ActionMasker<T> : IMasker where T : notnull
-{
-    private readonly Action<T> _masking;
-
-    public ActionMasker(Action<T> masking)
-    {
-        _masking = masking;
-    }
-
-    public Type EventType => typeof(T);
-
-    public bool TryMask(IEvent @event)
-    {
-        if (@event is IEvent<T> e)
-        {
-            _masking(e.Data);
-            return true;
-        }
-        return false;
-    }
-}
-
-internal class FuncMasker<T> : IMasker where T : notnull
-{
-    private readonly Func<T, T> _masking;
-
-    public FuncMasker(Func<T, T> masking)
-    {
-        _masking = masking;
-    }
-
-    public Type EventType => typeof(T);
-
-    public bool TryMask(IEvent @event)
-    {
-        if (@event is Event<T> e)
-        {
-            e.Data = _masking(e.Data);
-            return true;
-        }
-        return false;
-    }
 }
 
 /// <summary>
