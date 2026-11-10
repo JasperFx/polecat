@@ -99,12 +99,33 @@ public TripProjection()
 The docs at [side effects](/events/projections/side-effects) and [the async daemon](/events/projections/async-daemon)
 still describe the gate as opt-in; read them as "on unless you set it to `false`".
 
-## Upgrading to 6.0: Aspire and `DbDataSource`
+## Upgrading to 6.0: Aspire and the `SqlConnection` in DI
 
-Handing Polecat a `DbDataSource` or a `SqlConnection` registered in DI (for example by Aspire's
-`AddSqlServerClient`) is **not part of 6.0 yet**; it is tracked as its own piece of work in the .NET 11
-train. Until it lands, configure the connection with a connection string on `StoreOptions`, which Aspire
-supplies through configuration. This section will be replaced by the real guidance when the feature ships.
+New in 6.0, and nothing breaks: a connection string set on `StoreOptions` works exactly as before
+([#810](https://github.com/JasperFx/polecat/issues/810)).
+
+Aspire's `AddSqlServerClient("db")` registers a `SqlConnection` in DI. Polecat can now take its
+connection string from that registration, so you no longer have to read it out of configuration and
+pass it in yourself:
+
+```cs
+builder.AddSqlServerClient("db");
+
+builder.Services.AddPolecat(opts => { /* no connection string */ })
+    .UseSqlConnectionFromServices();   // UseSqlConnectionFromServices("key") for AddKeyedSqlServerClient
+```
+
+- `UseSqlConnectionFromServices()` resolves the connection in a scope when the store is built. It only
+  reads the connection: it never opens or disposes it. The string it reads replaces any
+  `ConnectionString` set in the `AddPolecat` lambda.
+- `opts.Connection(SqlConnection)` does the same from inside the configuration lambda, for a connection you
+  already hold.
+- **There is no `DbDataSource` overload.** Microsoft.Data.SqlClient has no public `DbDataSource`, so the
+  connection string is what is shared. Polecat opens its own pooled connections from it, so they use the
+  same pool and credentials as the registered connection.
+
+See [the `StoreOptions` page](./configuration/storeoptions.md#connection-from-the-container-aspire-addsqlserverclient)
+for the setup, and the OpenTelemetry and health check wiring that goes with it under Aspire.
 
 ## Upgrading to 6.0: there is no pre-generated code path, and nothing to opt into
 
@@ -141,6 +162,37 @@ underneath, and it carries the same members, so nothing else changes:
 
 A Wolverine policy such as `OnException<JasperFx.Events.StreamLockedException>()` already matched
 and is unaffected.
+
+## Upgrading to 6.0: `IPagedList<T>` and `PagedList<T>` moved to `JasperFx.Pagination`
+
+`Polecat.Pagination.IPagedList<T>` and `Polecat.Pagination.PagedList<T>` are deleted. Polecat 6.0 uses
+the shared JasperFx types, which Fisher uses too ([#807](https://github.com/JasperFx/polecat/issues/807),
+jasperfx#1054). The interface has the same members, so in most code only the `using` changes:
+
+| Removed in 6.0 | Use instead |
+|---|---|
+| `Polecat.Pagination.IPagedList<T>` | `JasperFx.Pagination.IPagedList<T>` |
+| `Polecat.Pagination.PagedList<T>` | `JasperFx.Pagination.PagedList<T>` |
+
+`ToPagedListAsync` stays where it was, in `Polecat.Pagination.PagedListExtensions`, and now returns the
+JasperFx interface. A file that calls it and also names the type needs both directives:
+
+```csharp
+using JasperFx.Pagination;   // IPagedList<T>
+using Polecat.Pagination;    // ToPagedListAsync
+```
+
+Two values change, and both are only for edge cases:
+
+- **An empty page reports `FirstItemOnPage` and `LastItemOnPage` as `0`.** These are now counted from
+  the items actually on the page. In 5.x they were computed from the page number. So asking for page 3
+  of 15 items at 10 per page reported `FirstItemOnPage = 21` and `LastItemOnPage = 15`, which are
+  positions that do not exist. A pager that hides its "showing X to Y" line when the page is empty is
+  unaffected. One that printed those numbers will now print `0`.
+- **A page size of zero gives `PageCount = 0`.** 5.x divided by it.
+
+Paging by cursor is unaffected: continuation cursors are encoded through JasperFx's `CursorCodec` now,
+but the bytes are the same, so a cursor a client already holds stays valid across the upgrade.
 
 ## Deprecation: `MapPolecatMcp`
 
