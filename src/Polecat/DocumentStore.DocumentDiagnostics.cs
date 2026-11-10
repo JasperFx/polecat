@@ -533,12 +533,12 @@ public partial class DocumentStore : IDocumentStoreDiagnostics
     /// </summary>
     private static string SelectionFor(Storage.DocumentMapping mapping)
     {
-        // cast(data as nvarchar(max)) guarantees the column comes back as JSON text whether it is
-        // stored as nvarchar or the native json type.
+        // `data` is the native json type and SqlClient 7.1 hands it back as text through GetString,
+        // so it is selected as-is rather than forced through cast(... as nvarchar(max)).
         var columns = new List<string>
         {
             "cast(id as nvarchar(max))",
-            "cast(data as nvarchar(max))",
+            "data",
             "version",
             "last_modified"
         };
