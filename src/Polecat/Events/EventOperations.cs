@@ -39,6 +39,11 @@ internal class EventOperations : QueryEventStore, IEventOperations
     private readonly WorkTracker _workTracker;
     private readonly string _tenantId;
 
+    // The seams PolecatStreamCompacting (jasperfx#1048) queues its work through.
+    internal DocumentSessionBase Session => _sessionBase;
+    internal EventGraph Graph => _events;
+    internal string TenantId => _tenantId;
+
     public EventOperations(DocumentSessionBase session, EventGraph events, StoreOptions options, WorkTracker workTracker, string tenantId)
         : base(session, events, options, tenantId)
     {
@@ -1279,7 +1284,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
 
         var request = new StreamCompactingRequest<T>(streamId);
         configure?.Invoke(request);
-        await request.ExecuteAsync(_sessionBase, this, _tenantId).ConfigureAwait(false);
+        await PolecatStreamCompacting.Instance.ExecuteAsync(request, this).ConfigureAwait(false);
     }
 
     public async Task CompactStreamAsync<T>(string streamKey, Action<StreamCompactingRequest<T>>? configure = null)
@@ -1292,7 +1297,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
 
         var request = new StreamCompactingRequest<T>(streamKey);
         configure?.Invoke(request);
-        await request.ExecuteAsync(_sessionBase, this, _tenantId).ConfigureAwait(false);
+        await PolecatStreamCompacting.Instance.ExecuteAsync(request, this).ConfigureAwait(false);
     }
 
     public IEvent BuildEvent(object data) => _events.BuildEvent(data);

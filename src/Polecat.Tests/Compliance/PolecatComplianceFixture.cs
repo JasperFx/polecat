@@ -718,6 +718,13 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
     /// </summary>
     public override bool SupportsPendingEventAges => true;
 
+    /// <summary>
+    ///     jasperfx#1048 (polecat#806) — <c>EventDataMasking</c> derives from <c>EventDataMaskingBase</c>, and
+    ///     its <c>*IncludingArchived*</c> reads go through <c>QueryEventStore</c>'s archive-inclusive reads,
+    ///     so a masking pass reaches an archived stream's events.
+    /// </summary>
+    public override bool SupportsMaskingArchivedEvents => true;
+
     /// <remarks>
     ///     Straight through Polecat's own tenancy rather than by matching
     ///     <see cref="IEventDatabase.Identifier" /> against the config's logical name — the logical
