@@ -1,5 +1,19 @@
 # Migration Guide
 
+## Upgrading to 6.0: there is no pre-generated code path, and nothing to opt into
+
+Polecat 6.0 has no runtime code generation and no pre-generated code to load. The decision recorded in
+[#805](https://github.com/JasperFx/polecat/issues/805) is that there is nothing to build:
+
+- The `Polecat.CodeGeneration` package was [removed in 4.8.0](#removed-the-polecat-codegeneration-package-and-document-4-8-0);
+  its generator was never wired into the runtime. Do not reference it.
+- Document and event storage run on the shared closed-shape runtime (`Weasel.Storage`), constructed
+  directly, not compiled. Polecat does not reference `JasperFx.RuntimeCompiler`, and there is no
+  `TypeLoadMode` to set or `codegen write` step to run.
+- Aggregate evolution uses JasperFx's compile-time source generator, which needs `partial` types and
+  public `Apply`/`Create` methods (see the 4.0.0 notes below).
+- Applications that publish with Native AOT follow [the AOT consumer contract](./configuration/native-aot.md).
+
 ## Deprecation: `MapPolecatMcp`
 
 `Polecat.AspNetCore`'s built-in `MapPolecatMcp()` is now `[Obsolete]` and will be **removed in the

@@ -74,7 +74,6 @@ depends on their keys, so a passing test on a small document proves nothing. Go 
 ```
 src/Polecat/                    — main library
 src/Polecat.Tests/              — xUnit integration/unit tests
-src/Polecat.CodeGeneration/     — source generator (netstandard2.0)
 ```
 
 ## Development Environment
