@@ -11,6 +11,37 @@ var store = DocumentStore.For(opts =>
 });
 ```
 
+### Connection from the container (Aspire `AddSqlServerClient`)
+
+Aspire's `AddSqlServerClient("db")` registers a `SqlConnection` in DI. Have the store take its connection
+string from it instead of repeating the string:
+
+```cs
+builder.AddSqlServerClient("db");
+
+builder.Services.AddPolecat(opts => { /* no connection string */ })
+    .UseSqlConnectionFromServices();   // UseSqlConnectionFromServices("key") for AddKeyedSqlServerClient
+```
+
+The connection is resolved in a scope when the store is built, only read and never opened.
+`opts.Connection(SqlConnection)` does the same by hand. Microsoft.Data.SqlClient has no public
+`DbDataSource`, so the connection string is what is shared; Polecat opens its own pooled connections from it.
+
+## OpenTelemetry
+
+Polecat publishes one `ActivitySource` and one `Meter`, both named `Polecat`. Subscribe to both:
+
+```cs
+builder.Services.AddOpenTelemetry()
+    .WithTracing(t => t.AddSource("Polecat"))
+    .WithMetrics(m => m.AddMeter("Polecat"));
+```
+
+Under Aspire the service defaults call `ConfigureOpenTelemetry`; add the two lines there. See
+[the async daemon page](/events/projections/async-daemon#health-check) for the high-water health check,
+which is an ordinary ASP.NET Core health check and so shows up under Aspire's `/health` endpoints once
+`AddPolecatHighWaterHealthCheck()` is registered.
+
 ## Schema Name
 
 By default, Polecat uses the `dbo` schema. You can change this:
