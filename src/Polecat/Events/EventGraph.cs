@@ -156,6 +156,37 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
     public bool EnableSideEffectsOnInlineProjections => _options.Events.EnableSideEffectsOnInlineProjections;
 
     internal string StreamsTableName => Polecat.Internal.SqlEscaping.QualifiedName(DatabaseSchemaName, "pc_streams");
+    private string? _quickAppendPrefix;
+    private string? _quickAppendPrefixPartitioned;
+
+    /// <summary>
+    ///     The static text of a QuickAppend event insert, from <c>insert into</c> through
+    ///     <c>values (</c>. It depends only on options that are fixed once the store serves sessions, so
+    ///     it is built once per shape rather than once per appended event (#802). Bound parameters
+    ///     stay per event; only this text is shared.
+    /// </summary>
+    internal string QuickAppendInsertPrefix(bool partitioned)
+    {
+        if (partitioned)
+            return _quickAppendPrefixPartitioned ??= buildQuickAppendInsertPrefix(true);
+        return _quickAppendPrefix ??= buildQuickAppendInsertPrefix(false);
+    }
+
+    private string buildQuickAppendInsertPrefix(bool partitioned)
+    {
+        var sb = new System.Text.StringBuilder("insert into ");
+        sb.Append(EventsTableName).Append(" (");
+        if (partitioned) sb.Append("seq_id, ").Append(TenantPartitionManager.Column).Append(", ");
+        sb.Append("id, stream_id, version, data, bdata, type, timestamp, tenant_id, dotnet_type");
+        if (EventOptions.EnableCorrelationId) sb.Append(", correlation_id");
+        if (EventOptions.EnableCausationId) sb.Append(", causation_id");
+        if (EventOptions.EnableHeaders) sb.Append(", headers");
+        if (EventOptions.EnableUserName) sb.Append(", user_name");
+        sb.Append(") output inserted.seq_id into ").Append(Polecat.Events.Storage.PolecatQuickAppendEventsOperation.SeqTableVarName);
+        sb.Append(" values (");
+        return sb.ToString();
+    }
+
     internal string EventsTableName => Polecat.Internal.SqlEscaping.QualifiedName(DatabaseSchemaName, "pc_events");
 
     internal string ProgressionTableName =>
