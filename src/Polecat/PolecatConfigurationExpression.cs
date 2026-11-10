@@ -22,6 +22,35 @@ public class PolecatConfigurationExpression
     public IServiceCollection Services { get; }
 
     /// <summary>
+    ///     Take the store's connection string from the <see cref="Microsoft.Data.SqlClient.SqlConnection" />
+    ///     registered in the container, which is what Aspire's <c>AddSqlServerClient</c> (or
+    ///     <c>AddKeyedSqlServerClient</c>, with <paramref name="serviceKey" />) provides. Runs when the store
+    ///     is first built, after any <c>ConnectionString</c> set in the configuration lambda, and replaces it.
+    ///     The connection is resolved in a scope, only read and never opened.
+    /// </summary>
+    /// <remarks>
+    ///     SqlClient has no public <c>DbDataSource</c>, so the connection string is the shareable part.
+    /// </remarks>
+    public PolecatConfigurationExpression UseSqlConnectionFromServices(object? serviceKey = null)
+    {
+        Services.AddSingleton<IConfigurePolecat>(new SqlConnectionFromServices(serviceKey));
+        return this;
+    }
+
+    private sealed class SqlConnectionFromServices(object? serviceKey) : IConfigurePolecat
+    {
+        public void Configure(IServiceProvider services, StoreOptions options)
+        {
+            using var scope = services.CreateScope();
+            var connection = serviceKey == null
+                ? scope.ServiceProvider.GetRequiredService<Microsoft.Data.SqlClient.SqlConnection>()
+                : scope.ServiceProvider.GetRequiredKeyedService<Microsoft.Data.SqlClient.SqlConnection>(serviceKey);
+
+            options.Connection(connection);
+        }
+    }
+
+    /// <summary>
     ///     Use lightweight sessions (no identity map) as the default.
     ///     This is already the default behavior.
     /// </summary>
