@@ -627,7 +627,8 @@ internal class LinqQueryParser : ExpressionVisitor
         {
             if (current.Expression is ParameterExpression)
                 return true;
-            current = current.Expression as MemberExpression;
+            // #808: ((Card)x.Payment.Value).Last4 is read off the document through a union's case.
+            current = UnionMembers.Owner(current);
         }
         return false;
     }

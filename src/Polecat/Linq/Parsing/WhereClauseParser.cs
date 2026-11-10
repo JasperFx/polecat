@@ -61,6 +61,7 @@ internal class WhereClauseParser
             UnaryExpression { NodeType: ExpressionType.Convert } unary => ParsePredicate(unary.Operand),
             MethodCallExpression methodCall => ParseMethodCall(methodCall),
             MemberExpression member when IsBooleanMember(member) => ParseBooleanMember(member, true),
+            TypeBinaryExpression { NodeType: ExpressionType.TypeIs } typeIs => ParseTypeIs(typeIs),
             _ => throw new BadLinqExpressionException(
                 $"Polecat cannot translate '{expression}' to a SQL WHERE clause ({expression.NodeType}, "
                 + $"{expression.GetType().Name}). A predicate is built from member comparisons "
@@ -69,6 +70,25 @@ internal class WhereClauseParser
                 + "query as raw SQL through session.AdvancedSql.QueryAsync<T>(...), or materialize it and "
                 + "filter the results in memory.")
         };
+    }
+
+    /// <summary>
+    ///     #808: <c>x.Payment.Value is Card</c>, the one type test SQL can answer: which case a C#
+    ///     union-typed member holds. The compiler refuses the union pattern <c>x.Payment is Card</c> in an
+    ///     expression tree (CS8122), which is why the test goes through <c>Value</c>.
+    /// </summary>
+    private ISqlFragment ParseTypeIs(TypeBinaryExpression typeIs)
+    {
+        if (StripConvert(typeIs.Expression) is MemberExpression member && UnionMembers.IsUnionValue(member)
+            && IsDocumentMember(member))
+        {
+            return _memberFactory.ResolveUnionTypeTest(member, typeIs.TypeOperand, typeIs);
+        }
+
+        throw new BadLinqExpressionException(
+            $"Polecat cannot translate the type test '{typeIs}' to SQL. The stored JSON carries no .NET "
+            + "type, so the only type test it can answer is which case a C# union-typed member holds "
+            + "(x.Payment.Value is Card). Materialize the query and test the type in memory.");
     }
 
     private ISqlFragment ParseMethodCall(MethodCallExpression expression)
@@ -118,6 +138,14 @@ internal class WhereClauseParser
 
     private ISqlFragment ParseComparison(BinaryExpression binary, string op)
     {
+        // #808: (x.Payment.Value as Card) == null is a type test: the cast is null exactly when the union
+        // holds another case (or none).
+        if (TryParseCaseNullTest(binary.Left, binary.Right, op, out var caseTest)
+            || TryParseCaseNullTest(binary.Right, binary.Left, op, out caseTest))
+        {
+            return caseTest!;
+        }
+
         // Handle modulo: x.Number % 2 == 0 → (member % divisor) op value
         if (TryParseModulo(binary, op, out var moduloFragment))
         {
@@ -166,6 +194,22 @@ internal class WhereClauseParser
             + "document member compared against a constant. Compare a member to a value "
             + "(x.Age > 30), or run the query as raw SQL through "
             + "session.AdvancedSql.QueryAsync<T>(...).");
+    }
+
+    private bool TryParseCaseNullTest(Expression castSide, Expression valueSide, string op,
+        out ISqlFragment? fragment)
+    {
+        fragment = null;
+        if (op is not ("=" or "!=")) return false;
+        if (!UnionMembers.TryGetCaseCast(castSide, out var unionValue, out var caseType)) return false;
+        if (!IsDocumentMember(unionValue) || ParameterFinder.ReferencesParameter(valueSide)) return false;
+
+        // A primitive case compared to a value is an ordinary comparison, below.
+        if (ExtractValue(valueSide) != null) return false;
+
+        var test = _memberFactory.ResolveUnionTypeTest(unionValue, caseType, castSide);
+        fragment = op == "!=" ? test : new NotFragment(test);
+        return true;
     }
 
     private bool TryParseMethodTransform(Expression methodSide, Expression valueSide, string op,
@@ -283,6 +327,19 @@ internal class WhereClauseParser
 
     private ISqlFragment BuildComparisonFilter(IQueryableMember member, object? value, string op)
     {
+        // #808: a case member is compared only on rows holding that case. Its locator is NULL on every
+        // other row, which a null-inclusive != or an == null would otherwise read as a match.
+        if (member is UnionCaseMember caseMember)
+        {
+            return new CompoundWhereFragment("AND", new WhereFragment(caseMember.Guard),
+                BuildMemberComparison(member, value, op));
+        }
+
+        return BuildMemberComparison(member, value, op);
+    }
+
+    private ISqlFragment BuildMemberComparison(IQueryableMember member, object? value, string op)
+    {
         // x.N.HasValue == false is IS NULL, like !x.N.HasValue, rather than a comparison over a CASE.
         if (member is HasValueMember hasValue && value is bool expected)
         {
@@ -341,6 +398,16 @@ internal class WhereClauseParser
     {
         member = null;
         value = null;
+
+        // #808: (int)x.Code.Value > 3 reads the union's primitive case as an int, which StripConvert
+        // would throw away along with the type to compare it as.
+        if (UnionMembers.TryGetCaseCast(memberExpr, out var unionValue, out var caseType)
+            && IsDocumentMember(unionValue))
+        {
+            member = _memberFactory.ResolveUnionCase(unionValue, caseType, memberExpr);
+            value = ExtractValue(valueExpr);
+            return true;
+        }
 
         var unwrappedMember = StripConvert(memberExpr);
 
@@ -477,7 +544,8 @@ internal class WhereClauseParser
             if (current.Expression is ParameterExpression)
                 return true;
 
-            current = current.Expression as MemberExpression;
+            // #808: ((Card)x.Payment.Value).Last4 is read off the document through a union's case.
+            current = UnionMembers.Owner(current);
         }
 
         return false;

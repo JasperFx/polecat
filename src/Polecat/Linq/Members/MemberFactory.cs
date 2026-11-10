@@ -3,11 +3,14 @@ using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using JasperFx.Core.Reflection;
+using JasperFx.Events;
 using Polecat.Internal;
 using Polecat.Linq.Parsing;
+using Polecat.Linq.SqlGeneration;
 using Polecat.Serialization;
 using Polecat.Storage;
 using Weasel.Core;
+using Weasel.Storage;
 
 namespace Polecat.Linq.Members;
 
@@ -23,6 +26,7 @@ internal class MemberFactory : IMemberResolver
     private readonly DocumentMapping _mapping;
     private readonly bool _useReturning;
     private readonly ISerializer _serializer;
+    private readonly JsonSerializerOptions _jsonOptions;
 
     /// <summary>
     ///     The mapping these members belong to. Exposed because a method-call parser sometimes needs
@@ -48,6 +52,16 @@ internal class MemberFactory : IMemberResolver
         // separately and drifted, which is what made a snake_case store's computed columns index a
         // path the serializer never writes.
         _namingPolicy = SerializedNames.PolicyFor(options);
+
+        // #808: what a union's case types are written as. A custom ISerializer is opaque, so its
+        // stand-in is the default options under the policy worked out above, as for every other name.
+        _jsonOptions = options.Serializer is Serializer s
+            ? s.Options
+            : new JsonSerializerOptions
+            {
+                PropertyNamingPolicy = _namingPolicy,
+                DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+            };
     }
 
     public IQueryableMember ResolveMember(MemberExpression expression)
@@ -64,11 +78,86 @@ internal class MemberFactory : IMemberResolver
         var clrOnly = ClrOnlyMembers.TryTranslate(expression, ResolveMember);
         if (clrOnly is ComputedMember computed) return WithStoredEnumForm(computed);
 
-        return clrOnly ?? CreateMember(BuildJsonPath(expression), GetMemberType(expression.Member));
+        // #808: a union, or its Value, is the active case in whatever shape that takes. It can be tested
+        // against null and nothing else, so it is read as something that may be an object.
+        var unionType = UnionTypeAt(expression);
+        if (unionType != null)
+        {
+            return new UnionValueMember(CreateMember(BuildJsonPath(expression), typeof(object)), expression,
+                unionType);
+        }
+
+        var member = clrOnly ?? CreateMember(BuildJsonPath(expression), GetMemberType(expression.Member));
+
+        // #808: ((Card)x.Payment.Value).Last4 reads $.payment.last4 only while the union holds a Card.
+        var casts = UnionMembers.CaseCasts(expression);
+        return casts.Count == 0 ? member : new UnionCaseMember(member, CaseGuard(casts, expression));
     }
 
     public IQueryableMember ResolveKey(MemberExpression expression, string position)
-        => StoredShape.AssertHasValue(ResolveMember(expression), expression.Member, _serializer, position);
+    {
+        if (UnionTypeAt(expression) != null) throw UnionMembers.RefuseKey(expression, position);
+        return StoredShape.AssertHasValue(ResolveMember(expression), expression.Member, _serializer, position);
+    }
+
+    public ISqlFragment ResolveUnionTypeTest(MemberExpression unionValue, Type tested, Expression expression)
+    {
+        var test = TypeTestSql(unionValue, tested, expression);
+        var outer = UnionMembers.CaseCasts(unionValue);
+        return new WhereFragment(outer.Count == 0 ? test : $"({CaseGuard(outer, expression)} and {test})");
+    }
+
+    public IQueryableMember ResolveUnionCase(MemberExpression unionValue, Type caseType, Expression expression)
+    {
+        var member = CreateMember(BuildJsonPath(unionValue), caseType);
+        var casts = new List<(MemberExpression, Type)> { (unionValue, caseType) };
+        casts.AddRange(UnionMembers.CaseCasts(unionValue));
+        return new UnionCaseMember(member, CaseGuard(casts, expression));
+    }
+
+    /// <summary>
+    ///     The union type <paramref name="expression" /> reads, when it reads a union-typed member or that
+    ///     member's <c>Value</c>, rather than a member of one of its cases.
+    /// </summary>
+    private static Type? UnionTypeAt(MemberExpression expression)
+    {
+        if (UnionShape.IsUnionValue(expression)) return UnionMembers.UnionTypeOf(expression);
+
+        var type = Nullable.GetUnderlyingType(expression.Type) ?? expression.Type;
+        return type.IsUnion() ? type : null;
+    }
+
+    private string CaseGuard(IReadOnlyList<(MemberExpression UnionValue, Type CaseType)> casts, Expression expression)
+    {
+        var tests = casts.Select(x => TypeTestSql(x.UnionValue, x.CaseType, expression)).ToArray();
+        return tests.Length == 1 ? tests[0] : "(" + string.Join(" and ", tests) + ")";
+    }
+
+    /// <summary>
+    ///     #808: the SQL that is true when the union at <paramref name="unionValue" /> holds a
+    ///     <paramref name="tested" />, rendered by Weasel's shared <see cref="SqlServerUnionSqlDialect" />.
+    /// </summary>
+    private string TypeTestSql(MemberExpression unionValue, Type tested, Expression expression)
+    {
+        var unionType = UnionMembers.UnionTypeOf(unionValue);
+        var shape = UnionShape.For(unionType, _jsonOptions, _enumStorage == EnumStorage.AsString);
+        var cases = shape.CasesMatching(tested);
+        if (cases.Count == 0)
+        {
+            throw new BadLinqExpressionException(
+                $"Polecat cannot translate '{expression}' to SQL: {tested.ShortNameInCode()} is not a case of "
+                + $"the union {unionType.ShortNameInCode()} (its cases are "
+                + $"{string.Join(", ", shape.CaseTypes.Select(x => x.ShortNameInCode()))}), so no stored value "
+                + "can ever be one. Test for one of the cases.");
+        }
+
+        var path = ClrOnlyMembers.JsonKeys(unionValue).Select(GetJsonPropertyName).ToArray();
+        var tests = cases
+            .Select(x => SqlServerUnionSqlDialect.Instance.TypeTest("data", path, shape.TestFor(x, expression.ToString())))
+            .ToArray();
+
+        return tests.Length == 1 ? tests[0] : "(" + string.Join(" or ", tests) + ")";
+    }
 
     /// <summary>
     ///     #875: SQL computes <c>DayOfWeek</c> as a number, and that is what a predicate compares and a
