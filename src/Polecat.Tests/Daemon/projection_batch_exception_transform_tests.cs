@@ -1,3 +1,4 @@
+using JasperFx.Events.Daemon;
 using JasperFx.Events;
 using JasperFx.MultiTenancy;
 using Microsoft.Data.SqlClient;
@@ -62,7 +63,7 @@ public partial class projection_batch_exception_transform_tests : OneOffConfigur
             await session.SaveChangesAsync(Ct);
         }
 
-        var batch = new PolecatProjectionBatch(theStore, theStore.Options.EventGraph, theStore.Database);
+        var batch = new PolecatProjectionBatch(theStore, theStore.Options.EventGraph, theStore.Database, ShardExecutionMode.Continuous);
         AsyncDisposables.Add(batch);
         return batch;
     }
@@ -130,7 +131,7 @@ public partial class projection_batch_exception_transform_tests : OneOffConfigur
             await session.SaveChangesAsync(Ct);
         }
 
-        var batch = new PolecatProjectionBatch(theStore, theStore.Options.EventGraph, theStore.Database);
+        var batch = new PolecatProjectionBatch(theStore, theStore.Options.EventGraph, theStore.Database, ShardExecutionMode.Continuous);
         AsyncDisposables.Add(batch);
 
         batch.SessionForTenant(JasperFx.StorageConstants.DefaultTenantId)
@@ -152,7 +153,7 @@ public partial class projection_batch_exception_transform_tests : OneOffConfigur
             await session.SaveChangesAsync(Ct);
         }
 
-        var batch = new PolecatProjectionBatch(theStore, theStore.Options.EventGraph, theStore.Database);
+        var batch = new PolecatProjectionBatch(theStore, theStore.Options.EventGraph, theStore.Database, ShardExecutionMode.Continuous);
         AsyncDisposables.Add(batch);
 
         batch.SessionForTenant(JasperFx.StorageConstants.DefaultTenantId)

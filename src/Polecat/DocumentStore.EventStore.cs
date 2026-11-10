@@ -329,7 +329,7 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
     ///     #572: the UNTYPED compaction entry point, whose whole contract is "resolve the aggregate
     ///     type from stream state" — the only form available to a caller holding a runtime
     ///     <see cref="Type" /> rather than a compile-time <c>T</c>. Polecat had the typed execution
-    ///     (<see cref="Events.Protected.StreamCompactingExecution.ExecuteAsync{T}" />) complete and
+    ///     (<see cref="Events.Protected.PolecatStreamCompacting" />) complete and
     ///     this stubbed out, which left a store that could SELECT the streams a compaction policy
     ///     wants — <c>QueryStreamStates()</c>, jasperfx#740 / #534 — and then act on none of them.
     /// </summary>
@@ -1147,7 +1147,7 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
         // the database this subscription is running against — routing the default tenant through
         // the tenancy reaches no database at all under database-per-tenant tenancy.
         await using var session = LightweightSession(SessionOptions.ForDatabase(polecatDatabase));
-        batch.RegisterSession(session);
+        batch.AdoptSession(session);
         var listener = await subscription.ProcessEventsAsync(range, range.Agent, session, token).ConfigureAwait(false);
 
         await batch.ExecuteAsync(token).ConfigureAwait(false);

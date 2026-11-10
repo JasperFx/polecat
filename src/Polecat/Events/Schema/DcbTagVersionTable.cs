@@ -24,7 +24,7 @@ namespace Polecat.Events.Schema;
 ///     <para>
 ///         One table across every registered tag type, discriminated by <c>tag_table</c> (the tag type's
 ///         <c>TableSuffix</c>) — hence the stringified <c>tag_value</c>, see
-///         <see cref="Polecat.Events.Dcb.TagValueStringifier" />. <c>tenant_id</c> is in the key
+///         <see cref="JasperFx.Events.Tags.TagValueStringifier" />. <c>tenant_id</c> is in the key
 ///         unconditionally: under single tenancy every row simply carries the default tenant.
 ///     </para>
 ///     <para>
