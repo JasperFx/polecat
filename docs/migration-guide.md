@@ -142,6 +142,37 @@ underneath, and it carries the same members, so nothing else changes:
 A Wolverine policy such as `OnException<JasperFx.Events.StreamLockedException>()` already matched
 and is unaffected.
 
+## Upgrading to 6.0: `IPagedList<T>` and `PagedList<T>` moved to `JasperFx.Pagination`
+
+`Polecat.Pagination.IPagedList<T>` and `Polecat.Pagination.PagedList<T>` are deleted. Polecat 6.0 uses
+the shared JasperFx types, which Fisher uses too ([#807](https://github.com/JasperFx/polecat/issues/807),
+jasperfx#1054). The interface has the same members, so in most code only the `using` changes:
+
+| Removed in 6.0 | Use instead |
+|---|---|
+| `Polecat.Pagination.IPagedList<T>` | `JasperFx.Pagination.IPagedList<T>` |
+| `Polecat.Pagination.PagedList<T>` | `JasperFx.Pagination.PagedList<T>` |
+
+`ToPagedListAsync` stays where it was, in `Polecat.Pagination.PagedListExtensions`, and now returns the
+JasperFx interface. A file that calls it and also names the type needs both directives:
+
+```csharp
+using JasperFx.Pagination;   // IPagedList<T>
+using Polecat.Pagination;    // ToPagedListAsync
+```
+
+Two values change, and both are only for edge cases:
+
+- **An empty page reports `FirstItemOnPage` and `LastItemOnPage` as `0`.** These are now counted from
+  the items actually on the page. In 5.x they were computed from the page number. So asking for page 3
+  of 15 items at 10 per page reported `FirstItemOnPage = 21` and `LastItemOnPage = 15`, which are
+  positions that do not exist. A pager that hides its "showing X to Y" line when the page is empty is
+  unaffected. One that printed those numbers will now print `0`.
+- **A page size of zero gives `PageCount = 0`.** 5.x divided by it.
+
+Paging by cursor is unaffected: continuation cursors are encoded through JasperFx's `CursorCodec` now,
+but the bytes are the same, so a cursor a client already holds stays valid across the upgrade.
+
 ## Deprecation: `MapPolecatMcp`
 
 `Polecat.AspNetCore`'s built-in `MapPolecatMcp()` is now `[Obsolete]` and will be **removed in the
