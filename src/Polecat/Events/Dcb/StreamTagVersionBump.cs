@@ -44,7 +44,7 @@ internal static class StreamTagVersionBump
 
         foreach (var registration in events.TagTypes)
         {
-            var tagValue = TagValueStringifier.ToSql(registration.SimpleType, "t.value");
+            var tagValue = TagValueSql.ToSql(registration.SimpleType, "t.value");
 
             // CONVERT because a dictionary parameter binds as nvarchar, and comparing that to the
             // varchar key of pc_dcb_tag_version would convert the column and range-lock a scan of it.
@@ -125,7 +125,7 @@ internal static class StreamTagVersionBump
 
                 DECLARE {tags} TABLE (tag_value varchar(250) COLLATE Latin1_General_BIN2 NOT NULL PRIMARY KEY);
                 INSERT INTO {tags} (tag_value)
-                SELECT DISTINCT CONVERT(varchar(250), {TagValueStringifier.ToSql(registration.SimpleType, "t.value")})
+                SELECT DISTINCT CONVERT(varchar(250), {TagValueSql.ToSql(registration.SimpleType, "t.value")})
                 FROM {events.EventsTableName} e
                 INNER JOIN {events.TagTableName(registration)} t ON {events.TagToEventJoin("t", "e")}
                 WHERE e.stream_id = @id AND e.tenant_id = @tenant_id;
@@ -169,7 +169,7 @@ internal static class StreamTagVersionBump
     private static string RowsOfTheStreamsTags(EventGraph events, ITagTypeRegistration registration)
         => $"""
             FROM (
-                    SELECT DISTINCT t.value, {TagValueStringifier.ToSql(registration.SimpleType, "t.value")} AS tag_value
+                    SELECT DISTINCT t.value, {TagValueSql.ToSql(registration.SimpleType, "t.value")} AS tag_value
                     FROM {events.EventsTableName} e
                     INNER JOIN {events.TagTableName(registration)} t ON {events.TagToEventJoin("t", "e")}
                     WHERE e.stream_id = @id AND e.tenant_id = @tenant_id

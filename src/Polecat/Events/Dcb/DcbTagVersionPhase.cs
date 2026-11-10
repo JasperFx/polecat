@@ -14,7 +14,7 @@ namespace Polecat.Events.Dcb;
 ///     The tag type's <see cref="ITagTypeRegistration.TableSuffix" /> — the discriminator that lets one
 ///     side table serve every registered tag type.
 /// </param>
-/// <param name="TagValue">Canonical string form of the tag value, see <see cref="TagValueStringifier" />.</param>
+/// <param name="TagValue">Canonical string form of the tag value, see <see cref="JasperFx.Events.Tags.TagValueStringifier" />.</param>
 /// <param name="TenantId">Owning tenant; the default tenant under single tenancy.</param>
 /// <param name="CapturedVersion">
 ///     The version observed when a boundary read this row, or <c>null</c> when the save merely appends

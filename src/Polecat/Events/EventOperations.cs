@@ -1442,7 +1442,9 @@ internal class EventOperations : QueryEventStore, IEventOperations
             DcbTagVersionCapture.BuildEntries(targets, capturedByKey, _tenantId, query, lastSeenSequence),
             events.Count);
 
-        return new Polecat.Events.Dcb.EventBoundary<T>(_sessionBase, _events, _tenantId, aggregate, events, lastSeenSequence);
+        // jasperfx#1044: the shared boundary appends through THESE operations, which stamp the tenant they
+        // were opened for, so a boundary fetched through ForTenant appends under that tenant.
+        return new JasperFx.Events.Tags.EventBoundary<T>(this, _events, _events.TagTypes, aggregate, events);
     }
 
     public void AssignTagWhere(Expression<Func<IEvent, bool>> expression, object tag)

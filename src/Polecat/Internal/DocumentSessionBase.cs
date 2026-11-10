@@ -28,7 +28,6 @@ using DcbBoundaryRead = Polecat.Events.Dcb.DcbBoundaryRead;
 using DcbTagVersionCapture = Polecat.Events.Dcb.DcbTagVersionCapture;
 using DcbTagVersionEntry = Polecat.Events.Dcb.DcbTagVersionEntry;
 using DcbTagVersionPhase = Polecat.Events.Dcb.DcbTagVersionPhase;
-using TagValueStringifier = Polecat.Events.Dcb.TagValueStringifier;
 
 namespace Polecat.Internal;
 
@@ -259,7 +258,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
                     var registration = _eventGraph.FindTagType(tag.TagType);
                     if (registration == null) continue;
 
-                    var value = TagValueStringifier.Stringify(registration.ExtractValue(tag.Value));
+                    var value = JasperFx.Events.Tags.TagValueStringifier.Stringify(registration.ExtractValue(tag.Value));
                     if (seen.Add((registration.TableSuffix, value, tenantId)))
                     {
                         rows.Add(new DcbTagVersionEntry(
@@ -1513,7 +1512,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             if (registration == null || registration.SimpleType != typeof(string)) continue;
 
             await assertColumnFitsAsync($"tag value ({registration.TableSuffix})",
-                TagValueStringifier.Stringify(registration.ExtractValue(tag.Value)), token).ConfigureAwait(false);
+                JasperFx.Events.Tags.TagValueStringifier.Stringify(registration.ExtractValue(tag.Value)), token).ConfigureAwait(false);
         }
     }
 
