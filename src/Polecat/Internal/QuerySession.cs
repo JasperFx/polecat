@@ -184,36 +184,75 @@ internal partial class QuerySession : IQuerySession, JasperFx.Events.IEventTenan
     {
         assertNotDisposed();
         RequestCount++;
-        return await _resilience.ExecuteAsync(
-            static (state, t) => new ValueTask<int>(state.Lifetime.ExecuteAsync(state.Command, t)),
-            new CommandExecution(command, _lifetime), token).ConfigureAwait(false);
+        var started = Stopwatch.GetTimestamp();
+        try
+        {
+            return await _resilience.ExecuteAsync(
+                static (state, t) => new ValueTask<int>(state.Lifetime.ExecuteAsync(state.Command, t)),
+                new CommandExecution(command, _lifetime), token).ConfigureAwait(false);
+        }
+        finally
+        {
+            RecordQueryDuration(started);
+        }
     }
 
     internal async Task<object?> ExecuteScalarAsync(SqlCommand command, CancellationToken token)
     {
         assertNotDisposed();
         RequestCount++;
-        return await _resilience.ExecuteAsync(
-            static (state, t) => new ValueTask<object?>(state.Lifetime.ExecuteScalarAsync(state.Command, t)),
-            new CommandExecution(command, _lifetime), token).ConfigureAwait(false);
+        var started = Stopwatch.GetTimestamp();
+        try
+        {
+            return await _resilience.ExecuteAsync(
+                static (state, t) => new ValueTask<object?>(state.Lifetime.ExecuteScalarAsync(state.Command, t)),
+                new CommandExecution(command, _lifetime), token).ConfigureAwait(false);
+        }
+        finally
+        {
+            RecordQueryDuration(started);
+        }
     }
 
     internal async Task<DbDataReader> ExecuteReaderAsync(SqlCommand command, CancellationToken token)
     {
         assertNotDisposed();
         RequestCount++;
-        return await _resilience.ExecuteAsync(
-            static (state, t) => new ValueTask<DbDataReader>(state.Lifetime.ExecuteReaderAsync(state.Command, t)),
-            new CommandExecution(command, _lifetime), token).ConfigureAwait(false);
+        var started = Stopwatch.GetTimestamp();
+        try
+        {
+            return await _resilience.ExecuteAsync(
+                static (state, t) => new ValueTask<DbDataReader>(state.Lifetime.ExecuteReaderAsync(state.Command, t)),
+                new CommandExecution(command, _lifetime), token).ConfigureAwait(false);
+        }
+        finally
+        {
+            RecordQueryDuration(started);
+        }
     }
 
     internal async Task<DbDataReader> ExecuteReaderAsync(SqlBatch batch, CancellationToken token)
     {
         assertNotDisposed();
         RequestCount++;
-        return await _resilience.ExecuteAsync(
-            static (state, t) => new ValueTask<DbDataReader>(state.Lifetime.ExecuteReaderAsync(state.Batch, t)),
-            new BatchExecution(batch, _lifetime), token).ConfigureAwait(false);
+        var started = Stopwatch.GetTimestamp();
+        try
+        {
+            return await _resilience.ExecuteAsync(
+                static (state, t) => new ValueTask<DbDataReader>(state.Lifetime.ExecuteReaderAsync(state.Batch, t)),
+                new BatchExecution(batch, _lifetime), token).ConfigureAwait(false);
+        }
+        finally
+        {
+            RecordQueryDuration(started);
+        }
+    }
+
+    // Free when nothing listens: the histogram reports Enabled only while a MeterListener subscribes to it.
+    private static void RecordQueryDuration(long started)
+    {
+        var histogram = Polecat.Internal.OpenTelemetry.PolecatTracing.QueryDuration;
+        if (histogram.Enabled) histogram.Record(Stopwatch.GetElapsedTime(started).TotalMilliseconds);
     }
 
     // ── Existence check operations ──────────────────────────────────────

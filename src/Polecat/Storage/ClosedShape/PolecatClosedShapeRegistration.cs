@@ -212,7 +212,7 @@ internal sealed class PolecatProviderGraph : IProviderGraph
     ///     parameter. #741 — see <see cref="QueryOnlySelectClauseFor" />; this is not a speed cache.
     /// </summary>
     private readonly Dictionary<Type, object> _selectClauses = new();
-    private readonly object _lock = new();
+    private readonly Lock _lock = new();
 
     public PolecatProviderGraph(Internal.DocumentProviderRegistry registry)
     {

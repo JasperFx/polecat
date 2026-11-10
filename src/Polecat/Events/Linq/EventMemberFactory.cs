@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using System.Linq.Expressions;
 using System.Reflection;
 using Polecat.Linq.Members;
@@ -9,7 +10,7 @@ namespace Polecat.Events.Linq;
 /// </summary>
 internal class EventMemberFactory : IMemberResolver
 {
-    private static readonly Dictionary<string, (string column, Type clrType)> EventColumns = new()
+    private static readonly FrozenDictionary<string, (string column, Type clrType)> EventColumns = new Dictionary<string, (string column, Type clrType)>()
     {
         { "Id", ("id", typeof(Guid)) },
         { "Sequence", ("seq_id", typeof(long)) },
@@ -24,7 +25,7 @@ internal class EventMemberFactory : IMemberResolver
         { "CausationId", ("causation_id", typeof(string)) },
         { "UserName", ("user_name", typeof(string)) },
         { "TenantId", ("tenant_id", typeof(string)) }
-    };
+    }.ToFrozenDictionary();
 
     public IQueryableMember ResolveMember(MemberExpression expression)
     {

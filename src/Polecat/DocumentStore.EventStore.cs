@@ -21,14 +21,13 @@ using Polecat.Storage;
 using Polecat.Subscriptions;
 
 using Polecat.Internal;
+using Polecat.Internal.OpenTelemetry;
 using Polecat.Internal.Sessions;
 namespace Polecat;
 
 public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession>,
     ISubscriptionRunner<ISubscription>
 {
-    private static readonly Meter _meter = new("Polecat");
-    private static readonly ActivitySource _activitySource = new("Polecat");
 
     IEventRegistry IEventStore<IDocumentSession, IQuerySession>.Registry => Events;
 
@@ -49,9 +48,9 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
     AutoCreate IEventStore<IDocumentSession, IQuerySession>.AutoCreateSchemaObjects =>
         Options.AutoCreateSchemaObjects;
 
-    Meter IEventStore.Meter => _meter;
+    Meter IEventStore.Meter => PolecatTracing.Meter;
 
-    ActivitySource IEventStore.ActivitySource => _activitySource;
+    ActivitySource IEventStore.ActivitySource => PolecatTracing.ActivitySource;
 
     string IEventStore.MetricsPrefix => "polecat";
 

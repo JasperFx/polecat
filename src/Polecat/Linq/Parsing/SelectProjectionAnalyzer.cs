@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using System.Linq.Expressions;
 using System.Reflection;
 using Polecat.Linq.Members;
@@ -181,7 +182,7 @@ internal static class SelectProjectionAnalyzer
     // Coarse widening ranks: a conversion is widening when the target rank >= the source rank within
     // the same signed/float family. Kept intentionally conservative — anything not covered is treated
     // as non-simple rather than risking a lossy cast being silently translated.
-    private static readonly Dictionary<Type, int> WideningRank = new()
+    private static readonly FrozenDictionary<Type, int> WideningRank = new Dictionary<Type, int>()
     {
         [typeof(sbyte)] = 1,
         [typeof(short)] = 2,
@@ -193,5 +194,5 @@ internal static class SelectProjectionAnalyzer
         [typeof(ulong)] = 4,
         [typeof(float)] = 5,
         [typeof(double)] = 6,
-    };
+    }.ToFrozenDictionary();
 }

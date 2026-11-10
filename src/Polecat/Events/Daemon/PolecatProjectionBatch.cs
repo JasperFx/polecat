@@ -41,7 +41,7 @@ internal class PolecatProjectionBatch : IProjectionBatch<IDocumentSession, IQuer
     // #420: StreamActions a projection raised events onto, captured by the three IProjectionBatch
     // append members and turned into append operations during ExecuteAsync.
     private readonly List<StreamAction> _raisedEventActions = new();
-    private readonly object _raisedEventsLock = new();
+    private readonly Lock _raisedEventsLock = new();
 
     // The change set committed by this batch, populated during ExecuteAsync. Exposed so the
     // subscription runner can hand it to the IChangeListener returned by ProcessEventsAsync.

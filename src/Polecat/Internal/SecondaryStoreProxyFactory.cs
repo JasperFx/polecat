@@ -34,7 +34,7 @@ internal static class SecondaryStoreProxyFactory
     // The ModuleBuilder is process-shared across every secondary-store interface,
     // and ModuleBuilder.DefineType/CreateType are not thread-safe even for distinct
     // type names. Serialise all emission through this gate.
-    private static readonly object _emitLock = new();
+    private static readonly Lock _emitLock = new();
 
     private static readonly Lazy<ModuleBuilder> _module = new(() =>
     {

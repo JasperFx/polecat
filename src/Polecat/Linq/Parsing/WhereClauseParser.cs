@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Linq.Expressions;
@@ -15,7 +16,7 @@ namespace Polecat.Linq.Parsing;
     Justification = "Class-level: evaluates constant sub-expressions in predicates via Expression.Lambda + Compile — runtime code generation. Document/event types and their property graph are preserved at the LINQ registration boundary on the caller side per the AOT publishing guide.")]
 internal class WhereClauseParser
 {
-    private static readonly Dictionary<ExpressionType, string> Operators = new()
+    private static readonly FrozenDictionary<ExpressionType, string> Operators = new Dictionary<ExpressionType, string>()
     {
         { ExpressionType.Equal, "=" },
         { ExpressionType.NotEqual, "!=" },
@@ -23,7 +24,7 @@ internal class WhereClauseParser
         { ExpressionType.GreaterThanOrEqual, ">=" },
         { ExpressionType.LessThan, "<" },
         { ExpressionType.LessThanOrEqual, "<=" }
-    };
+    }.ToFrozenDictionary();
 
     private readonly IMemberResolver _memberFactory;
     private readonly IReadOnlyList<IMethodCallParser>? _additionalParsers;

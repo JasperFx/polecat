@@ -44,6 +44,7 @@ internal class ProjectionCoordinator : ProjectionCoordinatorBase, IProjectionCoo
     // autoRestart and #591's status read both reach it, and under a dynamic tenancy the set grows while
     // they do, so an unguarded read in the loop's own pause check could throw and end the loop for good.
     private readonly Dictionary<string, PolecatProjectionDaemon> _daemons = new();
+    private readonly Lock _daemonsLock = new();
 
     /// <param name="soloTakesNoLocks">
     ///     #847: true from <c>AddAsyncDaemon</c>, which has never taken a lock in
@@ -95,7 +96,7 @@ internal class ProjectionCoordinator : ProjectionCoordinatorBase, IProjectionCoo
 
     protected override IReadOnlyList<IProjectionDaemon> ResolvedDaemons()
     {
-        lock (_daemons)
+        lock (_daemonsLock)
         {
             return _daemons.Values.Cast<IProjectionDaemon>().ToList();
         }
@@ -106,7 +107,7 @@ internal class ProjectionCoordinator : ProjectionCoordinatorBase, IProjectionCoo
     // later ResumeAsync hands back a dead instance instead of building a fresh one.
     protected override void ClearResolvedDaemons()
     {
-        lock (_daemons)
+        lock (_daemonsLock)
         {
             _daemons.Clear();
         }
@@ -170,7 +171,7 @@ internal class ProjectionCoordinator : ProjectionCoordinatorBase, IProjectionCoo
 
     private PolecatProjectionDaemon DaemonFor(PolecatDatabase database)
     {
-        lock (_daemons)
+        lock (_daemonsLock)
         {
             if (!_daemons.TryGetValue(database.Identifier, out var daemon))
             {
@@ -199,7 +200,7 @@ internal class ProjectionCoordinator : ProjectionCoordinatorBase, IProjectionCoo
         var identifiers = current.Select(x => x.Identifier).ToHashSet(StringComparer.Ordinal);
 
         List<KeyValuePair<string, PolecatProjectionDaemon>> departed;
-        lock (_daemons)
+        lock (_daemonsLock)
         {
             departed = _daemons.Where(x => !identifiers.Contains(x.Key)).ToList();
             foreach (var pair in departed)

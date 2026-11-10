@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using System.Text;
@@ -942,14 +943,20 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         OpenTelemetry.TracingSessionDecorator.AddOperationEvents(
             activity, _workTracker.Operations, Options.OpenTelemetry);
 
+        var started = Stopwatch.GetTimestamp();
         try
         {
-        await SaveChangesInternalAsync(token);
+            await SaveChangesInternalAsync(token);
         }
         catch (Exception ex)
         {
             OpenTelemetry.TracingSessionDecorator.RecordException(activity, ex);
             throw;
+        }
+        finally
+        {
+            var duration = OpenTelemetry.PolecatTracing.SaveChangesDuration;
+            if (duration.Enabled) duration.Record(Stopwatch.GetElapsedTime(started).TotalMilliseconds);
         }
     }
 
@@ -1644,6 +1651,14 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     /// </summary>
     private void RecordEventAppendMetrics()
     {
+        var batchSize = OpenTelemetry.PolecatTracing.EventAppendBatchSize;
+        if (batchSize.Enabled)
+        {
+            var total = 0L;
+            foreach (var stream in _workTracker.Streams) total += stream.Events.Count;
+            if (total > 0) batchSize.Record(total);
+        }
+
         if (!Options.OpenTelemetry.EventCountersEnabled) return;
 
         var counter = Options.OpenTelemetry.EventAppendCounter;

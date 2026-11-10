@@ -28,7 +28,7 @@ internal class DocumentMapping
 {
     // The same set that bounds what a strong-typed-id wrapper may wrap — an id and a wrapper's inner
     // value have to be storable in exactly the same column types.
-    private static readonly HashSet<Type> SupportedIdTypes = ValueTypes.SupportedInnerTypes;
+    private static readonly System.Collections.Frozen.FrozenSet<Type> SupportedIdTypes = ValueTypes.SupportedInnerTypes;
 
     private readonly PropertyInfo _idProperty;
     private readonly Type _documentType;

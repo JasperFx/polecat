@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
@@ -23,8 +24,8 @@ internal static class ValueTypes
     ///     The scalar types Polecat can store in a column or compare in a JSON path predicate, and
     ///     therefore the inner types a recognized wrapper may wrap.
     /// </summary>
-    internal static readonly HashSet<Type> SupportedInnerTypes =
-        [typeof(Guid), typeof(string), typeof(int), typeof(long)];
+    internal static readonly FrozenSet<Type> SupportedInnerTypes =
+        new[] { typeof(Guid), typeof(string), typeof(int), typeof(long) }.ToFrozenSet();
 
     // Negative results are cached too, and that is the point: ValueTypeInfo.ForType signals "not a
     // wrapper" by throwing, and only caches successes. Every LINQ member resolution over an ordinary
