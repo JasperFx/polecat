@@ -908,11 +908,11 @@
         <PackageVersion Include="Polly.Core" Version="8.6.5" />
 
         <!-- Code analysis -->
-        <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="4.3.0" />
+        <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="5.9.0" />
         <PackageVersion Include="Microsoft.CodeAnalysis.Analyzers" Version="3.3.4" />
 
         <!-- Testing -->
-        <PackageVersion Include="Alba" Version="8.5.2" />
+        <PackageVersion Include="Alba" Version="9.0.0-rc.3" />
         <!--
           Microsoft Testing Platform extensions, replacing coverlet.collector and the TRX logger,
           both of which are VSTest-only. CodeCoverage is capability parity — no build target asks
