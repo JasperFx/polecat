@@ -62,9 +62,10 @@ public sealed class StreamMany<T> : IResult, IEndpointMetadataProvider
 
         httpContext.Response.StatusCode = OnFoundStatus;
         httpContext.Response.ContentType = ContentType;
-        var json = JsonSerializer.SerializeToUtf8Bytes(results);
-        httpContext.Response.ContentLength = json.Length;
-        await httpContext.Response.Body.WriteAsync(json);
+        // Serialize straight into the response pipe: no intermediate byte[] of the whole array, at
+        // the cost of a chunked (unknown-length) response.
+        await JsonSerializer.SerializeAsync(httpContext.Response.BodyWriter, results,
+            cancellationToken: httpContext.RequestAborted);
     }
 
     /// <summary>

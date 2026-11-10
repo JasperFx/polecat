@@ -91,9 +91,12 @@ public sealed class StreamOne<T> : IResult, IEndpointMetadataProvider
 
         httpContext.Response.StatusCode = OnFoundStatus;
         httpContext.Response.ContentType = ContentType;
-        var json = Encoding.UTF8.GetBytes(result.Json);
-        httpContext.Response.ContentLength = json.Length;
-        await httpContext.Response.Body.WriteAsync(json, httpContext.RequestAborted);
+        // Encode straight into the response pipe's buffers rather than allocating a byte[] copy of
+        // the whole document first; the length is known up front so the response stays unchunked.
+        httpContext.Response.ContentLength = Encoding.UTF8.GetByteCount(result.Json);
+        var writer = httpContext.Response.BodyWriter;
+        Encoding.UTF8.GetBytes(result.Json, writer);
+        await writer.FlushAsync(httpContext.RequestAborted);
     }
 
     /// <summary>

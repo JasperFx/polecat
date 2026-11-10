@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Diagnostics.CodeAnalysis;
 
 namespace Polecat.Serialization;
@@ -30,4 +31,35 @@ public interface ISerializer : Weasel.Core.ISerializer
     [RequiresUnreferencedCode("Default ISerializer uses STJ reflection; AOT consumers should supply a source-generator-backed ISerializer impl.")]
     [RequiresDynamicCode("Default ISerializer uses STJ reflection which requires runtime code generation.")]
     object FromJson(Type type, string json);
+
+    /// <summary>
+    ///     Deserialize UTF-8 encoded JSON bytes to an object of type T without materialising a string.
+    ///     The default implementation decodes to a string and calls <see cref="FromJson{T}(string)" />,
+    ///     so existing custom serializers keep working; <see cref="Serializer" /> overrides it to hand the
+    ///     bytes straight to System.Text.Json.
+    /// </summary>
+    [RequiresUnreferencedCode("Default ISerializer uses STJ reflection; AOT consumers should supply a source-generator-backed ISerializer impl.")]
+    [RequiresDynamicCode("Default ISerializer uses STJ reflection which requires runtime code generation.")]
+    T FromJson<T>(ReadOnlySpan<byte> utf8Json) => FromJson<T>(System.Text.Encoding.UTF8.GetString(utf8Json));
+
+    /// <summary>
+    ///     Deserialize UTF-8 encoded JSON bytes to an object of the specified type. See
+    ///     <see cref="FromJson{T}(ReadOnlySpan{byte})" />.
+    /// </summary>
+    [RequiresUnreferencedCode("Default ISerializer uses STJ reflection; AOT consumers should supply a source-generator-backed ISerializer impl.")]
+    [RequiresDynamicCode("Default ISerializer uses STJ reflection which requires runtime code generation.")]
+    object FromJson(Type type, ReadOnlySpan<byte> utf8Json) => FromJson(type, System.Text.Encoding.UTF8.GetString(utf8Json));
+
+    /// <summary>
+    ///     Serialize a value as UTF-8 JSON straight into <paramref name="writer" /> (a response
+    ///     <c>PipeWriter</c>, a pooled buffer) with no intermediate string. The default implementation
+    ///     goes through <see cref="Weasel.Core.ISerializer.ToJson" />.
+    /// </summary>
+    [RequiresUnreferencedCode("Default ISerializer uses STJ reflection; AOT consumers should supply a source-generator-backed ISerializer impl.")]
+    [RequiresDynamicCode("Default ISerializer uses STJ reflection which requires runtime code generation.")]
+    void ToJson(object document, System.Buffers.IBufferWriter<byte> writer)
+    {
+        var bytes = System.Text.Encoding.UTF8.GetBytes(ToJson(document));
+        writer.Write((ReadOnlySpan<byte>)bytes);
+    }
 }

@@ -20,6 +20,51 @@ public class SerializerTests
     }
 
     [Fact]
+    public void utf8_span_and_buffer_writer_overloads_round_trip_without_a_string()
+    {
+        // Non-ASCII on purpose: a byte path that went through the wrong encoding would mangle it.
+        var original = new TestDocument { Id = Guid.NewGuid(), Name = "héllo ✓", Count = 7 };
+
+        var buffer = new System.Buffers.ArrayBufferWriter<byte>();
+        ((ISerializer)_serializer).ToJson(original, buffer);
+
+        // the bytes are exactly the UTF-8 of the string form
+        System.Text.Encoding.UTF8.GetString(buffer.WrittenSpan).ShouldBe(_serializer.ToJson(original));
+
+        var typed = ((ISerializer)_serializer).FromJson<TestDocument>(buffer.WrittenSpan);
+        typed.Name.ShouldBe("héllo ✓");
+        typed.Count.ShouldBe(7);
+
+        var untyped = (TestDocument)((ISerializer)_serializer).FromJson(typeof(TestDocument), buffer.WrittenSpan);
+        untyped.Id.ShouldBe(original.Id);
+    }
+
+    [Fact]
+    public void a_custom_serializer_that_ignores_the_utf8_overloads_still_works()
+    {
+        // The overloads are default interface members, so an ISerializer written before them compiles
+        // and falls back to its string path.
+        ISerializer custom = new StringOnlySerializer();
+        custom.FromJson<TestDocument>("{\"name\":\"x\",\"count\":3}"u8).Count.ShouldBe(3);
+    }
+
+    private sealed class StringOnlySerializer : ISerializer
+    {
+        private readonly Serializer _inner = new();
+        public Weasel.Core.EnumStorage EnumStorage => _inner.EnumStorage;
+        public Weasel.Core.Casing Casing => _inner.Casing;
+        public string ToJson(object document) => _inner.ToJson(document);
+        public T FromJson<T>(string json) => _inner.FromJson<T>(json);
+        public object FromJson(Type type, string json) => _inner.FromJson(type, json);
+        public T FromJson<T>(Stream stream) => _inner.FromJson<T>(stream);
+        public object FromJson(Type type, Stream stream) => _inner.FromJson(type, stream);
+        public T FromJson<T>(System.Data.Common.DbDataReader reader, int index) => _inner.FromJson<T>(reader, index);
+        public object FromJson(Type type, System.Data.Common.DbDataReader reader, int index) => _inner.FromJson(type, reader, index);
+        public ValueTask<T> FromJsonAsync<T>(Stream stream, CancellationToken cancellationToken = default) => _inner.FromJsonAsync<T>(stream, cancellationToken);
+        public ValueTask<object> FromJsonAsync(Type type, Stream stream, CancellationToken cancellationToken = default) => _inner.FromJsonAsync(type, stream, cancellationToken);
+    }
+
+    [Fact]
     public void serializes_with_camel_case_by_default()
     {
         var doc = new TestDocument { Id = Guid.NewGuid(), Name = "Test", Count = 1 };
