@@ -4,4 +4,4 @@ using Xunit;
 // test database and mutate the same document/aggregate tables (clean-all + seed). Running the
 // test classes in parallel cross-contaminates that shared state (e.g. one class's CleanAllDocuments
 // wiping another's seeded page). Disable assembly-level parallelization so the classes run serially.
-[assembly: CollectionBehavior(DisableTestParallelization = true)]
+[assembly: Xunit.v3.Parallelization(Mode = Xunit.Sdk.ParallelMode.None)]

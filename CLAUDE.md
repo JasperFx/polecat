@@ -139,9 +139,10 @@ Critical path for MVP: Stages 1–5, 7–8, 10–11
 - **TRX for CI**: `dotnet test` cannot emit TRX under MTP — `--logger "trx;..."` and `-- --report-trx`
   both run, exit 0, and silently write nothing. CI runs the test executable directly with
   `--report-trx`; see `.github/workflows/test-template.yml`.
-- **MTP extension packages must stay on the 1.x line** (`TrxReport 1.9.1`, `CodeCoverage 18.0.6`).
-  xunit.v3 is built against Microsoft.Testing.Platform 1.x; anything 2.x makes every test run die at
-  startup with a `TypeLoadException`. See the comment in `Directory.Packages.props`.
+- **MTP extension packages must match xunit.v3's platform line.** xunit.v3 4.x (forced by
+  JasperFx.Events.ComplianceTests 3.0.0) is built against Microsoft.Testing.Platform 2.x, so
+  `TrxReport 2.5.1` / `CodeCoverage 18.12.0`; a mismatch makes every test run die at startup with a
+  `TypeLoadException`. (Before JasperFx 3.0 this was the 1.x line: `TrxReport 1.9.1`, `CodeCoverage 18.0.6`.)
 
 ### Cross-store compliance suites
 
@@ -317,7 +318,7 @@ Every test job runs a Nuke target — `CIPolecat`, `CIAspNetCore`, `CIEfCore` (`
 — and the workflows only provide SQL Server. The same command works locally:
 
 ```
-./build.sh CIPolecat --framework net9.0                     # committed 4 workers, clamped to cores/2
+./build.sh CIPolecat --framework net10.0                     # committed 4 workers, clamped to cores/2
 ./build.sh CIPolecat --test-workers 4 --test-filter dcb_    # one slice; a filter matching nothing fails
 ./build.sh CIPolecat --disable-test-retry                   # measure without even opted-in retries
 ```
@@ -364,7 +365,7 @@ reporting, the ledger), and leaves the same ledger, TRX and JSON report behind.
 ```
 docker compose up -d                          # the gate never starts a container
 ./build.sh LocalGate                          # newest framework (net10.0), SQL Server 2025
-./build.sh LocalGate --framework all          # net10.0 and net9.0 (or --framework net9.0)
+./build.sh LocalGate --framework all          # net10.0 and net9.0 (or --framework net10.0)
 ./build.sh LocalGate --aot                    # plus the aot-smoke and aot-runtime-smoke units
 ./build.sh LocalGate --skip-build             # hosts already built for this configuration
 ./build.sh LocalGate --worker-budget 6        # hosts at once across every unit (default cores / 2)

@@ -1442,7 +1442,7 @@ internal class EventOperations : QueryEventStore, IEventOperations
             DcbTagVersionCapture.BuildEntries(targets, capturedByKey, _tenantId, query, lastSeenSequence),
             events.Count);
 
-        return new EventBoundary<T>(_sessionBase, _events, _tenantId, aggregate, events, lastSeenSequence);
+        return new Polecat.Events.Dcb.EventBoundary<T>(_sessionBase, _events, _tenantId, aggregate, events, lastSeenSequence);
     }
 
     public void AssignTagWhere(Expression<Func<IEvent, bool>> expression, object tag)

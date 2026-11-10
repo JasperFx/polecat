@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Project>
     <PropertyGroup>
-        <TargetFrameworks>net9.0;net10.0</TargetFrameworks>
+        <TargetFrameworks>net10.0;net11.0</TargetFrameworks>
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
         <!--
@@ -50,7 +50,7 @@
         <!--
           Without this, a failing test prints only
 
-            error run failed: Tests failed: '.../TestResults/Polecat.Tests_net9.0_x64.log'
+            error run failed: Tests failed: '.../TestResults/Polecat.Tests_net10.0_x64.log'
 
           and the test name, assertion and stack trace go to that file. CI never publishes it, so a
           red build would carry no indication of what broke — strictly worse than the VSTest bridge,
@@ -59,7 +59,7 @@
         <TestingPlatformShowTestsFailure>true</TestingPlatformShowTestsFailure>
         <!--
           Every database-backed suite here shares schemas between target frameworks, so running the
-          net9.0 and net10.0 suites concurrently makes them drop each other's schemas mid-test. This
+          net10.0 and net11.0 suites concurrently makes them drop each other's schemas mid-test. This
           repo has long documented that as unexplained local flakiness on a bare `dotnet test`
           (duplicate-object and deadlock errors that look like real failures); CI never hit it
           because each job names a single framework explicitly. Serializing the frameworks fixes it
