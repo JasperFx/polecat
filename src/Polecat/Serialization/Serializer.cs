@@ -42,7 +42,7 @@ public class Serializer : ISerializer, Weasel.Storage.IStorageSerializer
     /// </summary>
     /// <remarks>
     ///     This is here rather than on a wrapper because the storage runtime is handed this very
-    ///     object. <see cref="ToJson" /> is deliberately left out of it: it also writes things that are
+    ///     object. <see cref="ToJson(object?)" /> is deliberately left out of it: it also writes things that are
     ///     never stored, such as a live aggregate, and a value doesn't have to fit in a column for that.
     /// </remarks>
     internal bool WritesToNativeJson { get; set; }
@@ -117,7 +117,7 @@ public class Serializer : ISerializer, Weasel.Storage.IStorageSerializer
 
     /// <summary>
     ///     STJ has no type-metadata pollution to strip, so "clean" JSON is identical to
-    ///     <see cref="ToJson" />. (The distinction exists on the shared seam for Newtonsoft's
+    ///     <see cref="ToJson(object?)" />. (The distinction exists on the shared seam for Newtonsoft's
     ///     TypeNameHandling.)
     /// </summary>
     [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode", Justification = SharedSerializerSuppression)]
@@ -190,6 +190,28 @@ public class Serializer : ISerializer, Weasel.Storage.IStorageSerializer
     public object FromJson(Type type, string json)
     {
         return JsonSerializer.Deserialize(json, type, _options)!;
+    }
+
+    [RequiresUnreferencedCode("STJ JsonSerializer.Deserialize<T> uses reflection over T.")]
+    [RequiresDynamicCode("STJ JsonSerializer.Deserialize requires runtime code generation for non-source-generated types.")]
+    public T FromJson<T>(ReadOnlySpan<byte> utf8Json)
+    {
+        return JsonSerializer.Deserialize<T>(utf8Json, _options)!;
+    }
+
+    [RequiresUnreferencedCode("STJ JsonSerializer.Deserialize uses reflection over the supplied type.")]
+    [RequiresDynamicCode("STJ JsonSerializer.Deserialize requires runtime code generation for non-source-generated types.")]
+    public object FromJson(Type type, ReadOnlySpan<byte> utf8Json)
+    {
+        return JsonSerializer.Deserialize(utf8Json, type, _options)!;
+    }
+
+    [RequiresUnreferencedCode("STJ JsonSerializer.Serialize uses reflection over the value's type.")]
+    [RequiresDynamicCode("STJ JsonSerializer.Serialize requires runtime code generation for non-source-generated types.")]
+    public void ToJson(object document, IBufferWriter<byte> writer)
+    {
+        using var jsonWriter = new Utf8JsonWriter(writer);
+        JsonSerializer.Serialize(jsonWriter, document, document.GetType(), _options);
     }
 
     [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode", Justification = SharedSerializerSuppression)]

@@ -124,9 +124,8 @@ public sealed class StreamAggregate<T> : IResult, IEndpointMetadataProvider wher
 
         httpContext.Response.StatusCode = OnFoundStatus;
         httpContext.Response.ContentType = ContentType;
-        var json = JsonSerializer.SerializeToUtf8Bytes(aggregate);
-        httpContext.Response.ContentLength = json.Length;
-        await httpContext.Response.Body.WriteAsync(json, httpContext.RequestAborted);
+        await JsonSerializer.SerializeAsync(httpContext.Response.BodyWriter, aggregate,
+            cancellationToken: httpContext.RequestAborted);
     }
 
     /// <summary>
