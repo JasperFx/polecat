@@ -16,7 +16,8 @@ internal static class ConstructorCache
     private static readonly ConcurrentDictionary<(Type, int), ConstructorInfo> Constructors = new();
 
     [RequiresUnreferencedCode("Reflects over the public constructors of the closed type.")]
-    public static object Create(Type type, params object?[] args)
+    public static object Create(
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] Type type, params object?[] args)
     {
         var ctor = Constructors.GetOrAdd((type, args.Length), static key =>
         {
