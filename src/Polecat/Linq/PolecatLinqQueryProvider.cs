@@ -145,7 +145,7 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
     {
         var elementType = GetElementType(expression);
         var queryableType = typeof(PolecatLinqQueryable<>).MakeGenericType(elementType);
-        return (IQueryable)Activator.CreateInstance(queryableType, this, expression)!;
+        return (IQueryable)ConstructorCache.Create(queryableType, this, expression);
     }
 
     public IQueryable<TElement> CreateQuery<TElement>(Expression expression)
@@ -689,7 +689,7 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
         // return null for a trimmed member rather than throwing, so each `!` was a latent
         // NullReferenceException under Native AOT -- waiting for whichever query shape got
         // here first.
-        var handler = (QueryHandlers.IQueryHandler)Activator.CreateInstance(handlerType, _session.Serializer)!;
+        var handler = (QueryHandlers.IQueryHandler)ConstructorCache.Create(handlerType, _session.Serializer);
 
         return (TResult)(await handler.HandleAsObjectAsync(reader, token).ConfigureAwait(false))!;
     }
@@ -1115,7 +1115,7 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
         // return null for a trimmed member rather than throwing, so each `!` was a latent
         // NullReferenceException under Native AOT -- waiting for whichever query shape got
         // here first.
-        var handler = (QueryHandlers.IQueryHandler)Activator.CreateInstance(handlerType, _session.Serializer, compiledSelector, isLeftJoin)!;
+        var handler = (QueryHandlers.IQueryHandler)ConstructorCache.Create(handlerType, _session.Serializer, compiledSelector, isLeftJoin);
 
         var list = (await handler.HandleAsObjectAsync(reader, token).ConfigureAwait(false))!;
 
@@ -1319,8 +1319,8 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
         else
         {
             var selectorType = typeof(DeserializingSelector<>).MakeGenericType(itemType);
-            selector = Activator.CreateInstance(selectorType, _session.Serializer, syncRevision, syncGuidVersion,
-                hierarchyMapping)!;
+            selector = ConstructorCache.Create(selectorType, _session.Serializer, syncRevision, syncGuidVersion,
+                hierarchyMapping);
         }
 
         var handlerType = typeof(ListQueryHandler<>).MakeGenericType(itemType);
@@ -1393,8 +1393,8 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
         else
         {
             var selectorType = typeof(DeserializingSelector<>).MakeGenericType(documentType);
-            selector = Activator.CreateInstance(selectorType, _session.Serializer, syncRevision, syncGuidVersion,
-                hierarchyMapping)!;
+            selector = ConstructorCache.Create(selectorType, _session.Serializer, syncRevision, syncGuidVersion,
+                hierarchyMapping);
         }
 
         var handlerType = typeof(OneResultHandler<>).MakeGenericType(documentType);

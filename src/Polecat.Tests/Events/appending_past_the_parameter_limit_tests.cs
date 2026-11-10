@@ -708,7 +708,8 @@ public partial class appending_past_the_parameter_limit_tests : OneOffConfigurat
     }
 
     /// <summary>
-    ///     249 events of 8 parameters plus the stream row's 4 is 1996. The 250th makes 2004, which is
+    ///     221 events of 9 parameters (the timestamp is bound since #802) plus the stream row's 4 is 1993.
+    ///     The 222nd makes 2002, which is
     ///     past the budget, so that is where the second command starts. Measuring it on the operation
     ///     list rather than on timing is the proof that an ordinary save is untouched: below this line
     ///     the operation is the very instance the planner built, so its command is the same text it
@@ -716,9 +717,10 @@ public partial class appending_past_the_parameter_limit_tests : OneOffConfigurat
     /// </summary>
     [Theory]
     [InlineData(1, 1)]
-    [InlineData(249, 1)]
-    [InlineData(250, 2)]
-    [InlineData(501, 3)]
+    [InlineData(221, 1)]
+    [InlineData(222, 2)]
+    [InlineData(443, 2)]
+    [InlineData(444, 3)]
     public async Task an_append_only_splits_when_it_has_to(int events, int commands)
     {
         await UseStoreAsync();

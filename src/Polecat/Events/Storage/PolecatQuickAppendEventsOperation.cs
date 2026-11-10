@@ -50,7 +50,8 @@ internal enum StreamWriteMode
 internal sealed class PolecatQuickAppendEventsOperation
     : Weasel.Storage.IStorageOperation, IExceptionTransform
 {
-    private const string SeqTableVar = "@pc_appended_seqs";
+    internal const string SeqTableVarName = "@pc_appended_seqs";
+    private const string SeqTableVar = SeqTableVarName;
     private const string SeqIdVar = "@pc_event_seq";
 
     /// <summary>
@@ -204,8 +205,8 @@ internal sealed class PolecatQuickAppendEventsOperation
     {
         var options = _graph.EventOptions;
 
-        // id, stream_id, version, data, bdata, type, tenant_id, dotnet_type
-        var count = 8;
+        // id, stream_id, version, data, bdata, type, timestamp, tenant_id, dotnet_type
+        var count = 9;
         if (_graph.UseTenantPartitionedEvents) count++;
         if (options.EnableCorrelationId) count++;
         if (options.EnableCausationId) count++;
@@ -304,26 +305,7 @@ internal sealed class PolecatQuickAppendEventsOperation
         {
             var @event = events[eventIndex];
             ordinal++;
-            builder.Append("insert into ");
-            builder.Append(_graph.EventsTableName);
-            builder.Append(" (");
-            // Per-tenant partitioning: seq_id is drawn from the tenant's own sequence (not IDENTITY) and
-            // the row carries the tenant's physical-partition ordinal.
-            if (partitioned)
-            {
-                builder.Append("seq_id, ");
-                builder.Append(_graph.TenantPartitionManager.Column);
-                builder.Append(", ");
-            }
-
-            builder.Append("id, stream_id, version, data, bdata, type, timestamp, tenant_id, dotnet_type");
-            if (options.EnableCorrelationId) builder.Append(", correlation_id");
-            if (options.EnableCausationId) builder.Append(", causation_id");
-            if (options.EnableHeaders) builder.Append(", headers");
-            if (options.EnableUserName) builder.Append(", user_name");
-            builder.Append(") output inserted.seq_id into ");
-            builder.Append(SeqTableVar);
-            builder.Append(" values (");
+            builder.Append(_graph.QuickAppendInsertPrefix(partitioned));
 
             if (partitioned)
             {
@@ -361,7 +343,12 @@ internal sealed class PolecatQuickAppendEventsOperation
             builder.Append(", ");
             Bind(builder, @event.EventTypeName, StorageColumnType.String);
 
-            builder.Append(", SYSDATETIMEOFFSET(), ");
+            // The timestamp the session stamped on the in-memory event, not SYSDATETIMEOFFSET(): the
+            // server clock gave the stored row one value and inline projections / the caller's IEvent
+            // another, so a document projected inline and its rebuilt copy disagreed (#802).
+            builder.Append(", ");
+            Bind(builder, @event.Timestamp, StorageColumnType.Timestamp);
+            builder.Append(", ");
             Bind(builder, @event.TenantId ?? Stream.TenantId, StorageColumnType.String);
 
             builder.Append(", ");
