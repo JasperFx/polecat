@@ -86,17 +86,15 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
         where TId : notnull
     {
         var dialect = SqlServerStorageDialect<TId>.Instance;
-        var writeBinders = new List<IDocumentMetadataBinder<TDoc>>();
-        var readBinders = new List<IDocumentMetadataBinder<TDoc>>();
+
+        // #807: weasel#745's DocumentBinderPlan holds the binder arrays, the version and doc-type read
+        // indexes and the QueryOnly read set this method used to assemble by hand. It records the order
+        // binders are added in and chooses none of its own, so Polecat's column order below is still
+        // Polecat's, and the SELECTs built from these arrays are unchanged.
+        var plan = new DocumentBinderPlan<TDoc>();
 
         DocumentVersionBinder<TDoc>? versionBinder = null;
         DocumentRevisionBinder<TDoc>? revisionBinder = null;
-        // #720: whether the version/revision binder was given a document member to project onto.
-        // Decides whether QueryOnly's SELECT carries the column at all -- see the queryOnlyReadArray
-        // comment below, which used to ask the narrower question "does TDoc implement IVersioned".
-        var versionHasMember = false;
-        var versionReadIndex = -1;
-        var docTypeReadIndex = -1;
         Func<string, Type>? resolveDocumentType = null;
         var isConjoined = mapping.TenancyStyle == TenancyStyle.Conjoined;
 
@@ -106,10 +104,7 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
         if (mapping.IsHierarchy())
         {
             resolveDocumentType = mapping.TypeFor;
-            var docTypeBinder = new DocumentDocTypeBinder<TDoc>("doc_type", dialect, mapping.AliasFor);
-            writeBinders.Add(docTypeBinder);
-            docTypeReadIndex = readBinders.Count;
-            readBinders.Add(docTypeBinder);
+            plan.DocumentType(new DocumentDocTypeBinder<TDoc>("doc_type", dialect, mapping.AliasFor));
         }
 
         // tenant_id: #234 — only CONJOINED tables carry a tenant_id column. Conjoined writes the
@@ -122,11 +117,18 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
                                : null);
         if (isConjoined && tenantMember is not null)
         {
-            readBinders.Add(new DocumentTenantIdBinder<TDoc>(mapping.Metadata.TenantId.Name, tenantMember));
+            plan.Read(new DocumentTenantIdBinder<TDoc>(mapping.Metadata.TenantId.Name, tenantMember));
         }
 
         // guid_version: the optimistic-concurrency vehicle (uniqueidentifier), separate from
         // the always-present numeric version column that MERGE maintains as literal SQL.
+        //
+        // QueryOnly's SELECT omits the version/revision binder only when it has no mapped
+        // member — mirrors Marten's #4602 rule. #720: "has a mapped member" is asked of the
+        // member the binder was actually built with, rather than of IVersioned — a document that
+        // names its version through Metadata(m => m.Version.MapTo(...)) has one too, and dropping
+        // the column from the QueryOnly SELECT leaves that member at its default on every load,
+        // which in turn leaves the next write's concurrency guard with nothing to bind.
         if (mapping.UseOptimisticConcurrency)
         {
             // Parity with the bespoke load path: IVersioned documents get guid_version
@@ -142,11 +144,8 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
                                 ?? (typeof(IVersioned).IsAssignableFrom(typeof(TDoc))
                                     ? typeof(TDoc).GetProperty(nameof(IVersioned.Version))
                                     : null);
-            versionHasMember = versionMember is not null;
             versionBinder = new DocumentVersionBinder<TDoc>("guid_version", dialect, versionMember);
-            writeBinders.Add(versionBinder);
-            versionReadIndex = readBinders.Count;
-            readBinders.Add(versionBinder);
+            plan.Version(versionBinder, read: true, readByQueryOnly: versionMember is not null);
         }
         else if (mapping.UseNumericRevisions)
         {
@@ -154,25 +153,18 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
             // CASE expressions handle auto-increment (Revision = 0) vs explicit revisions.
             var revisionMember = mapping.Metadata.Version.Member
                                  ?? typeof(TDoc).GetProperty("Version");
-            versionHasMember = revisionMember is not null;
             var columnType = mapping.UseLongRevisions ? StorageColumnType.Long : StorageColumnType.Int;
             revisionBinder = new DocumentRevisionBinder<TDoc>("version", dialect, revisionMember, columnType);
-            writeBinders.Add(revisionBinder);
-            versionReadIndex = readBinders.Count;
-            readBinders.Add(revisionBinder);
+            plan.Revision(revisionBinder, read: true, readByQueryOnly: revisionMember is not null);
         }
 
         // dotnet_type: always written, never selected (matches Polecat's current SELECTs).
-        writeBinders.Add(new DocumentDotNetTypeBinder<TDoc>(mapping.Metadata.DotNetType.Name, dialect));
+        plan.Write(new DocumentDotNetTypeBinder<TDoc>(mapping.Metadata.DotNetType.Name, dialect));
 
         // last_modified: always in the table, server-side value.
         var lastModified = new DocumentLastModifiedBinder<TDoc>(
             mapping.Metadata.LastModified.Name, mapping.Metadata.LastModified.Member, ServerTimestamp);
-        writeBinders.Add(lastModified);
-        if (mapping.Metadata.LastModified.Member is not null)
-        {
-            readBinders.Add(lastModified);
-        }
+        AddWrittenBinder(plan, lastModified, mapping.Metadata.LastModified.Member is not null);
 
         // created_at: read-only projection; the INSERT branch bakes SYSDATETIMEOFFSET().
         // Parity: ICreated documents get created_at applied on load.
@@ -182,23 +174,23 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
                                 : null);
         if (createdMember is not null)
         {
-            readBinders.Add(new DocumentCreatedAtBinder<TDoc>(
+            plan.Read(new DocumentCreatedAtBinder<TDoc>(
                 mapping.Metadata.CreatedAt.Name, createdMember, ServerTimestamp));
         }
 
         // Opt-in session-sourced metadata (#241): write slot when enabled, read slot only
         // with a mapped member.
-        AddSessionMetadataBinder(writeBinders, readBinders, mapping.Metadata.CorrelationId,
+        AddSessionMetadataBinder(plan, mapping.Metadata.CorrelationId,
             (name, member) => new DocumentCorrelationIdBinder<TDoc>(name, dialect, member));
-        AddSessionMetadataBinder(writeBinders, readBinders, mapping.Metadata.CausationId,
+        AddSessionMetadataBinder(plan, mapping.Metadata.CausationId,
             (name, member) => new DocumentCausationIdBinder<TDoc>(name, dialect, member));
-        AddSessionMetadataBinder(writeBinders, readBinders, mapping.Metadata.LastModifiedBy,
+        AddSessionMetadataBinder(plan, mapping.Metadata.LastModifiedBy,
             (name, member) => new DocumentLastModifiedByBinder<TDoc>(name, dialect, member));
 
         if (mapping.Metadata.Headers.Enabled)
         {
             // Headers: write-only — the member value comes from the JSON data column.
-            writeBinders.Add(new DocumentHeadersBinder<TDoc>(
+            plan.Write(new DocumentHeadersBinder<TDoc>(
                 mapping.Metadata.Headers.Name, dialect, mapping.Metadata.Headers.Member));
         }
 
@@ -207,26 +199,18 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
         // UPDATE stays with the delete operations.
         if (mapping.DeleteStyle == DeleteStyle.SoftDelete)
         {
-            var isDeleted = new DocumentSoftDeletedBinder<TDoc>(
-                mapping.Metadata.IsSoftDeleted.Name, dialect, mapping.Metadata.IsSoftDeleted.Member);
-            writeBinders.Add(isDeleted);
-            if (mapping.Metadata.IsSoftDeleted.Member is not null)
-            {
-                readBinders.Add(isDeleted);
-            }
+            AddWrittenBinder(plan, new DocumentSoftDeletedBinder<TDoc>(
+                    mapping.Metadata.IsSoftDeleted.Name, dialect, mapping.Metadata.IsSoftDeleted.Member),
+                mapping.Metadata.IsSoftDeleted.Member is not null);
 
             // #421: deleted_at carries a mapped member just like is_deleted, so an ISoftDeleted
             // document (or one using [SoftDeletedAtMetadata] / the fluent DSL) gets DeletedAt
             // populated on load instead of left at default. Read slot only with a mapped member --
             // the SELECT column list is built from this same binder array, so adding one here keeps
             // the read ordinals aligned by construction.
-            var deletedAt = new DocumentSoftDeletedAtBinder<TDoc>(
-                mapping.Metadata.SoftDeletedAt.Name, dialect, mapping.Metadata.SoftDeletedAt.Member);
-            writeBinders.Add(deletedAt);
-            if (mapping.Metadata.SoftDeletedAt.Member is not null)
-            {
-                readBinders.Add(deletedAt);
-            }
+            AddWrittenBinder(plan, new DocumentSoftDeletedAtBinder<TDoc>(
+                    mapping.Metadata.SoftDeletedAt.Name, dialect, mapping.Metadata.SoftDeletedAt.Member),
+                mapping.Metadata.SoftDeletedAt.Member is not null);
         }
 
         // Range-partitioned documents (#211): the duplicated partition column is written on
@@ -236,21 +220,15 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
         if (mapping.HasPartitionColumn)
         {
             partitionBinder = new PolecatPartitionColumnBinder<TDoc>(mapping.Partitioning!);
-            writeBinders.Add(partitionBinder);
+            plan.Write(partitionBinder);
         }
 
-        var writeArray = writeBinders.ToArray();
-        var readArray = readBinders.ToArray();
-        // QueryOnly's SELECT omits the version/revision binder only when it has no mapped
-        // member — mirrors Marten's #4602 rule. #720: "has a mapped member" is now asked of the
-        // member the binder was actually built with, rather than of IVersioned — a document that
-        // names its version through Metadata(m => m.Version.MapTo(...)) has one too, and dropping
-        // the column from the QueryOnly SELECT leaves that member at its default on every load,
-        // which in turn leaves the next write's concurrency guard with nothing to bind.
-        var queryOnlyReadArray = versionReadIndex >= 0 && !versionHasMember
-            ? readArray.Where((_, i) => i != versionReadIndex).ToArray()
-            : readArray;
-        var clientSide = writeArray.Where(b => !b.IsServerSide).ToArray();
+        var writeArray = plan.WriteBinders;
+        var readArray = plan.ReadBinders;
+        var queryOnlyReadArray = plan.QueryOnlyReadBinders;
+        var clientSide = plan.ClientSideWriteBinders;
+        var versionReadIndex = plan.VersionReadIndex;
+        var docTypeReadIndex = plan.DocTypeReadIndex;
 
         var concurrencyMode = mapping.UseOptimisticConcurrency
             ? ConcurrencyMode.Optimistic
@@ -291,8 +269,7 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
     }
 
     private static void AddSessionMetadataBinder<TDoc>(
-        List<IDocumentMetadataBinder<TDoc>> writeBinders,
-        List<IDocumentMetadataBinder<TDoc>> readBinders,
+        DocumentBinderPlan<TDoc> plan,
         Metadata.MetadataColumn column,
         Func<string, System.Reflection.MemberInfo?, IDocumentMetadataBinder<TDoc>> create)
         where TDoc : notnull
@@ -302,11 +279,23 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
             return;
         }
 
-        var binder = create(column.Name, column.Member);
-        writeBinders.Add(binder);
-        if (column.Member is not null)
+        AddWrittenBinder(plan, create(column.Name, column.Member), column.Member is not null);
+    }
+
+    /// <summary>
+    ///     A binder every save writes, and a load reads back only when it has a member to read onto.
+    /// </summary>
+    private static void AddWrittenBinder<TDoc>(DocumentBinderPlan<TDoc> plan, IDocumentMetadataBinder<TDoc> binder,
+        bool readBack)
+        where TDoc : notnull
+    {
+        if (readBack)
         {
-            readBinders.Add(binder);
+            plan.WriteAndRead(binder);
+        }
+        else
+        {
+            plan.Write(binder);
         }
     }
 
