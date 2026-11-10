@@ -3,8 +3,6 @@ using System.Data.Common;
 using System.Diagnostics.CodeAnalysis;
 using System.Text;
 using System.Text.Json;
-using System.Text.Json.Serialization;
-using System.Text.Json.Serialization.Metadata;
 using Weasel.Core;
 
 namespace Polecat.Serialization;
@@ -13,26 +11,25 @@ namespace Polecat.Serialization;
 ///     Default serializer implementation using System.Text.Json.
 /// </summary>
 /// <remarks>
-///     Also implements <see cref="Weasel.Storage.IStorageSerializer" /> — the dialect-neutral
-///     serializer seam of the shared closed-shape storage runtime (weasel#329/#331, #273) — so the
-///     default serializer plugs straight into the shared <c>IStorageSession</c> once Polecat's
-///     sessions retarget onto it.
+///     Everything but what is Polecat's own comes from Weasel.Core's
+///     <see cref="SystemTextJsonSerializer" /> (weasel#555), the copy Polecat and Fisher used to carry
+///     byte for byte (#807). What stays here: the native <c>json</c> column's number rules
+///     (<see cref="WritesToNativeJson" />, #879) and the UTF-8 span and buffer-writer overloads of
+///     Polecat's <see cref="ISerializer" /> (#801).
+///     <para>
+///         Also implements <see cref="Weasel.Storage.IStorageSerializer" />, the dialect-neutral
+///         serializer seam of the shared closed-shape storage runtime (weasel#329/#331, #273), and
+///         every member of it but the two re-implemented below is inherited.
+///     </para>
 /// </remarks>
-public class Serializer : ISerializer, Weasel.Storage.IStorageSerializer
+public class Serializer : SystemTextJsonSerializer, ISerializer, Weasel.Storage.IStorageSerializer
 {
-    private JsonSerializerOptions _options;
-    private EnumStorage _enumStorage = EnumStorage.AsInteger;
-    private Casing _casing = Casing.CamelCase;
-    private CollectionStorage _collectionStorage = CollectionStorage.Default;
-    private NonPublicMembersStorage _nonPublicMembersStorage = NonPublicMembersStorage.Default;
-
-    public Serializer() : this(DefaultOptions())
+    public Serializer()
     {
     }
 
-    public Serializer(JsonSerializerOptions options)
+    public Serializer(JsonSerializerOptions options) : base(options)
     {
-        _options = options ?? throw new ArgumentNullException(nameof(options));
     }
 
     /// <summary>
@@ -42,94 +39,23 @@ public class Serializer : ISerializer, Weasel.Storage.IStorageSerializer
     /// </summary>
     /// <remarks>
     ///     This is here rather than on a wrapper because the storage runtime is handed this very
-    ///     object. <see cref="ToJson(object?)" /> is deliberately left out of it: it also writes things that are
-    ///     never stored, such as a live aggregate, and a value doesn't have to fit in a column for that.
+    ///     object. <see cref="SystemTextJsonSerializer.ToJson(object?)" /> is deliberately left out of
+    ///     it: it also writes things that are never stored, such as a live aggregate, and a value
+    ///     doesn't have to fit in a column for that.
     /// </remarks>
     internal bool WritesToNativeJson { get; set; }
 
-    /// <summary>
-    ///     Provides access to the underlying JsonSerializerOptions for advanced configuration.
-    /// </summary>
-    public JsonSerializerOptions Options => _options;
-
-    public EnumStorage EnumStorage
-    {
-        get => _enumStorage;
-        set
-        {
-            _enumStorage = value;
-            ApplyEnumStorage();
-        }
-    }
-
-    public Casing Casing
-    {
-        get => _casing;
-        set
-        {
-            _casing = value;
-            ApplyCasing();
-        }
-    }
-
-    public CollectionStorage CollectionStorage
-    {
-        get => _collectionStorage;
-        set => _collectionStorage = value;
-    }
-
-    public NonPublicMembersStorage NonPublicMembersStorage
-    {
-        get => _nonPublicMembersStorage;
-        set
-        {
-            _nonPublicMembersStorage = value;
-            ApplyNonPublicMembers();
-        }
-    }
-
-    /// <summary>
-    ///     Apply custom configuration to the underlying JsonSerializerOptions.
-    /// </summary>
-    public void Configure(Action<JsonSerializerOptions> configure)
-    {
-        configure(_options);
-    }
-
-    // #273: the shared members inherited from Weasel.Core.ISerializer are intentionally unannotated
-    // (Marten parity), so their reflection-based STJ bodies suppress the RUC/RDC warnings here rather
-    // than propagating a caller-facing contract the base doesn't declare. AOT consumers supply a
-    // source-generator-backed ISerializer. The two string-based overloads below are Polecat-only
-    // (not on the shared base), so they keep the propagating [RequiresUnreferencedCode]/[RequiresDynamicCode].
     private const string SharedSerializerSuppression =
         "Reflection-based STJ serialize/deserialize is Polecat's documented default; the shared Weasel.Core.ISerializer base is intentionally unannotated for Marten parity, so RUC/RDC is not propagated. AOT consumers supply a source-generator-backed ISerializer.";
 
+    // The base's WriteTo and WriteToParameter are not virtual, so these hide them. The storage
+    // runtime only reaches them through Weasel.Storage.IStorageSerializer, which this class
+    // re-declares, so the interface maps onto these rather than the base's.
+
+    /// <inheritdoc cref="SystemTextJsonSerializer.WriteTo" />
     [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode", Justification = SharedSerializerSuppression)]
     [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode", Justification = SharedSerializerSuppression)]
-    public string ToJson(object? document)
-    {
-        // object? satisfies both Weasel.Core.ISerializer.ToJson(object) and the wider
-        // Weasel.Storage.IStorageSerializer.ToJson(object?) with a single implementation.
-        return JsonSerializer.Serialize(document, document?.GetType() ?? typeof(object), _options);
-    }
-
-    // ---- Weasel.Storage.IStorageSerializer additions (beyond the Weasel.Core.ISerializer base) ----
-
-    /// <summary>
-    ///     STJ has no type-metadata pollution to strip, so "clean" JSON is identical to
-    ///     <see cref="ToJson(object?)" />. (The distinction exists on the shared seam for Newtonsoft's
-    ///     TypeNameHandling.)
-    /// </summary>
-    [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode", Justification = SharedSerializerSuppression)]
-    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode", Justification = SharedSerializerSuppression)]
-    public string ToCleanJson(object? document)
-    {
-        return ToJson(document);
-    }
-
-    [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode", Justification = SharedSerializerSuppression)]
-    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode", Justification = SharedSerializerSuppression)]
-    public void WriteTo(IBufferWriter<byte> writer, object? value)
+    public new void WriteTo(IBufferWriter<byte> writer, object? value)
     {
         if (WritesToNativeJson)
         {
@@ -137,8 +63,7 @@ public class Serializer : ISerializer, Weasel.Storage.IStorageSerializer
             return;
         }
 
-        using var jsonWriter = new Utf8JsonWriter(writer);
-        JsonSerializer.Serialize(jsonWriter, value, value?.GetType() ?? typeof(object), _options);
+        base.WriteTo(writer, value);
     }
 
     /// <summary>
@@ -148,7 +73,7 @@ public class Serializer : ISerializer, Weasel.Storage.IStorageSerializer
     /// </summary>
     [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode", Justification = SharedSerializerSuppression)]
     [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode", Justification = SharedSerializerSuppression)]
-    public void WriteToParameter(DbParameter parameter, object? value)
+    public new void WriteToParameter(DbParameter parameter, object? value)
     {
         if (value is null)
         {
@@ -160,50 +85,18 @@ public class Serializer : ISerializer, Weasel.Storage.IStorageSerializer
         parameter.Value = WritesToNativeJson ? NativeJsonNumbers.ForStorage(json) : json;
     }
 
-    [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode", Justification = SharedSerializerSuppression)]
-    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode", Justification = SharedSerializerSuppression)]
-    public async ValueTask<T> FromJsonAsync<T>(DbDataReader reader, int index,
-        CancellationToken cancellationToken = default)
-    {
-        var json = await reader.GetFieldValueAsync<string>(index, cancellationToken).ConfigureAwait(false);
-        return FromJson<T>(json);
-    }
-
-    [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode", Justification = SharedSerializerSuppression)]
-    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode", Justification = SharedSerializerSuppression)]
-    public async ValueTask<object> FromJsonAsync(Type type, DbDataReader reader, int index,
-        CancellationToken cancellationToken = default)
-    {
-        var json = await reader.GetFieldValueAsync<string>(index, cancellationToken).ConfigureAwait(false);
-        return FromJson(type, json);
-    }
-
-    [RequiresUnreferencedCode("STJ JsonSerializer.Deserialize<T> uses reflection over T.")]
-    [RequiresDynamicCode("STJ JsonSerializer.Deserialize requires runtime code generation for non-source-generated types.")]
-    public T FromJson<T>(string json)
-    {
-        return JsonSerializer.Deserialize<T>(json, _options)!;
-    }
-
-    [RequiresUnreferencedCode("STJ JsonSerializer.Deserialize uses reflection over the supplied type.")]
-    [RequiresDynamicCode("STJ JsonSerializer.Deserialize requires runtime code generation for non-source-generated types.")]
-    public object FromJson(Type type, string json)
-    {
-        return JsonSerializer.Deserialize(json, type, _options)!;
-    }
-
     [RequiresUnreferencedCode("STJ JsonSerializer.Deserialize<T> uses reflection over T.")]
     [RequiresDynamicCode("STJ JsonSerializer.Deserialize requires runtime code generation for non-source-generated types.")]
     public T FromJson<T>(ReadOnlySpan<byte> utf8Json)
     {
-        return JsonSerializer.Deserialize<T>(utf8Json, _options)!;
+        return JsonSerializer.Deserialize<T>(utf8Json, Options)!;
     }
 
     [RequiresUnreferencedCode("STJ JsonSerializer.Deserialize uses reflection over the supplied type.")]
     [RequiresDynamicCode("STJ JsonSerializer.Deserialize requires runtime code generation for non-source-generated types.")]
     public object FromJson(Type type, ReadOnlySpan<byte> utf8Json)
     {
-        return JsonSerializer.Deserialize(utf8Json, type, _options)!;
+        return JsonSerializer.Deserialize(utf8Json, type, Options)!;
     }
 
     [RequiresUnreferencedCode("STJ JsonSerializer.Serialize uses reflection over the value's type.")]
@@ -211,148 +104,6 @@ public class Serializer : ISerializer, Weasel.Storage.IStorageSerializer
     public void ToJson(object document, IBufferWriter<byte> writer)
     {
         using var jsonWriter = new Utf8JsonWriter(writer);
-        JsonSerializer.Serialize(jsonWriter, document, document.GetType(), _options);
-    }
-
-    [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode", Justification = SharedSerializerSuppression)]
-    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode", Justification = SharedSerializerSuppression)]
-    public T FromJson<T>(Stream stream)
-    {
-        return JsonSerializer.Deserialize<T>(stream, _options)!;
-    }
-
-    [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode", Justification = SharedSerializerSuppression)]
-    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode", Justification = SharedSerializerSuppression)]
-    public object FromJson(Type type, Stream stream)
-    {
-        return JsonSerializer.Deserialize(stream, type, _options)!;
-    }
-
-    [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode", Justification = SharedSerializerSuppression)]
-    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode", Justification = SharedSerializerSuppression)]
-    public T FromJson<T>(DbDataReader reader, int index)
-    {
-        var json = reader.GetString(index);
-        return FromJson<T>(json);
-    }
-
-    [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode", Justification = SharedSerializerSuppression)]
-    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode", Justification = SharedSerializerSuppression)]
-    public object FromJson(Type type, DbDataReader reader, int index)
-    {
-        var json = reader.GetString(index);
-        return FromJson(type, json);
-    }
-
-    [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode", Justification = SharedSerializerSuppression)]
-    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode", Justification = SharedSerializerSuppression)]
-    public async ValueTask<T> FromJsonAsync<T>(Stream stream, CancellationToken cancellationToken = default)
-    {
-        return (await JsonSerializer.DeserializeAsync<T>(stream, _options, cancellationToken).ConfigureAwait(false))!;
-    }
-
-    [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode", Justification = SharedSerializerSuppression)]
-    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode", Justification = SharedSerializerSuppression)]
-    public async ValueTask<object> FromJsonAsync(Type type, Stream stream,
-        CancellationToken cancellationToken = default)
-    {
-        return (await JsonSerializer.DeserializeAsync(stream, type, _options, cancellationToken).ConfigureAwait(false))!;
-    }
-
-    public static JsonSerializerOptions DefaultOptions()
-    {
-        return new JsonSerializerOptions
-        {
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-            DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-            WriteIndented = false
-        };
-    }
-
-    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
-        Justification = "JsonStringEnumConverter(JsonNamingPolicy, bool) requires runtime code generation for non-source-generated enum types. The default Serializer is reflection-based by design; AOT consumers should supply a custom ISerializer with the generic JsonStringEnumConverter<TEnum> per-enum.")]
-    private void ApplyEnumStorage()
-    {
-        // Remove any existing JsonStringEnumConverter
-        for (var i = _options.Converters.Count - 1; i >= 0; i--)
-        {
-            if (_options.Converters[i] is JsonStringEnumConverter)
-            {
-                _options.Converters.RemoveAt(i);
-            }
-        }
-
-        if (_enumStorage == EnumStorage.AsString)
-        {
-            _options.Converters.Add(new JsonStringEnumConverter(_options.PropertyNamingPolicy));
-        }
-    }
-
-    private void ApplyCasing()
-    {
-        _options.PropertyNamingPolicy = _casing switch
-        {
-            Casing.CamelCase => JsonNamingPolicy.CamelCase,
-            Casing.SnakeCase => JsonNamingPolicy.SnakeCaseLower,
-            Casing.Default => null,
-            _ => null
-        };
-    }
-
-    [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
-        Justification = "DefaultJsonTypeInfoResolver uses reflection. The whole NonPublicMembers feature is reflection-driven by intent; AOT consumers should supply a custom ISerializer with an STJ source-generator context.")]
-    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
-        Justification = "Same as IL2026.")]
-    [UnconditionalSuppressMessage("Trimming", "IL2075:DynamicallyAccessedMembers",
-        Justification = "Falls back to scanning typeInfo.Type.GetProperties when the JSON property has no usable AttributeProvider. Reflection on user types — keeping public/non-public properties alive is the user's responsibility when opting into NonPublicMembers.")]
-    private void ApplyNonPublicMembers()
-    {
-        if (_nonPublicMembersStorage == NonPublicMembersStorage.Default)
-        {
-            return;
-        }
-
-        var resolver = new DefaultJsonTypeInfoResolver();
-
-        if (_nonPublicMembersStorage.HasFlag(NonPublicMembersStorage.NonPublicSetters))
-        {
-            resolver.Modifiers.Add(typeInfo =>
-            {
-                if (typeInfo.Kind != JsonTypeInfoKind.Object) return;
-
-                foreach (var property in typeInfo.Properties)
-                {
-                    if (property.Set == null)
-                    {
-                        // property.Name is the JSON name (e.g. "name" in camelCase), so look up
-                        // by AttributeProvider which gives us the actual PropertyInfo
-                        var clrProperty = property.AttributeProvider as System.Reflection.PropertyInfo;
-                        if (clrProperty == null)
-                        {
-                            // Fallback: search all properties by case-insensitive match
-                            clrProperty = typeInfo.Type.GetProperties(
-                                    System.Reflection.BindingFlags.Public |
-                                    System.Reflection.BindingFlags.NonPublic |
-                                    System.Reflection.BindingFlags.Instance)
-                                .FirstOrDefault(p => string.Equals(p.Name, property.Name,
-                                    StringComparison.OrdinalIgnoreCase));
-                        }
-
-                        if (clrProperty?.GetSetMethod(true) != null)
-                        {
-                            property.Set = (obj, value) => clrProperty.GetSetMethod(true)!.Invoke(obj, [value]);
-                        }
-                    }
-                }
-            });
-        }
-
-        _options.TypeInfoResolver = resolver;
-
-        if (_nonPublicMembersStorage.HasFlag(NonPublicMembersStorage.NonPublicDefaultConstructor) ||
-            _nonPublicMembersStorage.HasFlag(NonPublicMembersStorage.NonPublicConstructor))
-        {
-            _options.PreferredObjectCreationHandling = JsonObjectCreationHandling.Populate;
-        }
+        JsonSerializer.Serialize(jsonWriter, document, document.GetType(), Options);
     }
 }

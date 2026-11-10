@@ -6,7 +6,8 @@ namespace Polecat.Serialization;
 /// <summary>
 ///     Serialization abstraction for Polecat. Uses System.Text.Json exclusively. Extends the shared
 ///     <see cref="Weasel.Core.ISerializer" /> (the intersection both Critter Stack document stores rely
-///     on) with Polecat's string-based deserialization overloads.
+///     on) with Polecat's UTF-8 span and buffer-writer overloads (#801). The string-based
+///     <c>FromJson</c> overloads it used to re-declare are on that base since weasel#742 (#807).
 /// </summary>
 /// <remarks>
 ///     The default <see cref="Serializer" /> implementation routes through
@@ -18,20 +19,6 @@ namespace Polecat.Serialization;
 /// </remarks>
 public interface ISerializer : Weasel.Core.ISerializer
 {
-    /// <summary>
-    ///     Deserialize a JSON string to an object of type T.
-    /// </summary>
-    [RequiresUnreferencedCode("Default ISerializer uses STJ reflection; AOT consumers should supply a source-generator-backed ISerializer impl.")]
-    [RequiresDynamicCode("Default ISerializer uses STJ reflection which requires runtime code generation.")]
-    T FromJson<T>(string json);
-
-    /// <summary>
-    ///     Deserialize a JSON string to an object of the specified type.
-    /// </summary>
-    [RequiresUnreferencedCode("Default ISerializer uses STJ reflection; AOT consumers should supply a source-generator-backed ISerializer impl.")]
-    [RequiresDynamicCode("Default ISerializer uses STJ reflection which requires runtime code generation.")]
-    object FromJson(Type type, string json);
-
     /// <summary>
     ///     Deserialize UTF-8 encoded JSON bytes to an object of type T without materialising a string.
     ///     The default implementation decodes to a string and calls <see cref="FromJson{T}(string)" />,
