@@ -1,3 +1,4 @@
+using JasperFx.Events.Daemon;
 using JasperFx;
 using JasperFx.Events;
 using JasperFx.Events.Projections;
@@ -33,7 +34,7 @@ public partial class projection_batch_result_set_alignment_tests : OneOffConfigu
 
         await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync(ct: Ct);
 
-        _batch = new PolecatProjectionBatch(theStore, theStore.Options.EventGraph, theStore.Database);
+        _batch = new PolecatProjectionBatch(theStore, theStore.Options.EventGraph, theStore.Database, ShardExecutionMode.Continuous);
         AsyncDisposables.Add(_batch);
     }
 

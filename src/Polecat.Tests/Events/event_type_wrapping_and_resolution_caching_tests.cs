@@ -135,12 +135,14 @@ public class event_type_wrapping_and_resolution_caching_tests
         graph.ResolveEventType(unknown).ShouldBeNull();
         graph.ResolveEventType(unknown).ShouldBeNull();
 
-        var cache = typeof(EventGraph)
-            .GetField("_eventTypeByDotNetName", BindingFlags.Instance | BindingFlags.NonPublic)!
+        // polecat#806 / jasperfx#1043: the cache, misses included, is EventRegistry's now. A miss is
+        // recorded with the registration generation it was probed under, so a later registration that
+        // loads the missing type can still answer it.
+        var misses = typeof(EventRegistry)
+            .GetField("_missedDotNetNames", BindingFlags.Instance | BindingFlags.NonPublic)!
             .GetValue(graph)
-            .ShouldBeOfType<ConcurrentDictionary<string, Type?>>();
+            .ShouldBeOfType<ConcurrentDictionary<string, long>>();
 
-        cache.TryGetValue(unknown, out var cachedMiss).ShouldBeTrue();
-        cachedMiss.ShouldBeNull();
+        misses.ContainsKey(unknown).ShouldBeTrue();
     }
 }

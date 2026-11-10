@@ -52,7 +52,7 @@ internal static class DcbTagVersionCapture
                                    $"Tag type '{condition.TagType.Name}' is not registered. " +
                                    $"Call RegisterTagType<{condition.TagType.Name}>() first.");
 
-            var value = TagValueStringifier.Stringify(registration.ExtractValue(condition.TagValue));
+            var value = JasperFx.Events.Tags.TagValueStringifier.Stringify(registration.ExtractValue(condition.TagValue));
             if (seen.Add((registration.TableSuffix, value)))
             {
                 targets.Add((registration.TableSuffix, value));

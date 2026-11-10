@@ -1,3 +1,4 @@
+using JasperFx.Events.Daemon;
 using Polecat.Events.Daemon;
 using Polecat.Tests.Harness;
 
@@ -45,7 +46,7 @@ public class projection_batch_table_ensurer_tests : OneOffConfigurationsContext
         for (var i = 0; i < 3; i++)
         {
             var batch = new PolecatProjectionBatch(theStore, theStore.Options.EventGraph,
-                theStore.Database);
+                theStore.Database, ShardExecutionMode.Continuous);
             var session = batch.SessionForTenant(theStore.Options.Tenancy!.DefaultTenantId);
             session.Store(new BatchedDoc { Id = Guid.NewGuid() });
 

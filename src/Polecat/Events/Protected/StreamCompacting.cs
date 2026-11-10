@@ -1,146 +1,68 @@
 using JasperFx.Events;
-using JasperFx.Events.Aggregation;
 using JasperFx.Events.Protected;
-using Polecat.Internal;
 
 namespace Polecat.Events.Protected;
 
 /// <summary>
-///     Polecat-side execution of <see cref="StreamCompactingRequest{T}"/> (the
-///     data shape now lives in <see cref="JasperFx.Events.Protected"/> per the
-///     dedupe pillar — see jasperfx#214 and the consuming-product note on
-///     <see cref="StreamCompactingRequest{T}"/>). Each product owns its own
-///     <c>ExecuteAsync</c>; only the request shape and the
-///     <see cref="IEventsArchiver{TOperations}"/> hook are shared.
+///     Polecat's half of <see cref="StreamCompactingExecution{TSession}" /> (jasperfx#1048, polecat#806).
+///     The shared base decides what compaction does: read the stream (or the part of it up to the
+///     request's cutoff), fold it, archive, replace the last event with a <see cref="Compacted{T}" />,
+///     delete the rest, and record the watermark. This class says how, against one tenant-scoped
+///     <see cref="EventOperations" />: the tenant of every operation queued here is the one those
+///     operations were opened for, which is not always the session's (#905).
 /// </summary>
-internal static class StreamCompactingExecution
+/// <remarks>
+///     Nothing here commits. Every operation joins the session's unit of work, so a compaction is
+///     applied by the caller's <c>SaveChangesAsync</c>, as before.
+/// </remarks>
+internal sealed class PolecatStreamCompacting : StreamCompactingExecution<EventOperations>
 {
-    /// <summary>
-    ///     Drive the compaction against a Polecat <see cref="DocumentSessionBase"/>:
-    ///     fetch the events to be replaced, build a <see cref="Compacted{T}"/>
-    ///     snapshot via the aggregator, invoke the request's
-    ///     <see cref="StreamCompactingRequest{T}.Archiver"/> if there is one, then write
-    ///     the replacement event and delete the originals through the session's work
-    ///     tracker. A stream that folds to no aggregate is left alone, and an archiver
-    ///     Polecat cannot call refuses the compaction, because either way the events
-    ///     cannot be got back afterward.
-    /// </summary>
-    /// <param name="request">The compaction to run.</param>
-    /// <param name="session">The session whose unit of work the operations join.</param>
-    /// <param name="stream">Where the events are read from, which a <c>ForTenant</c> view scopes to its tenant.</param>
-    /// <param name="tenantId">The stream's tenant, which is not always the session's (#905).</param>
-    internal static async Task ExecuteAsync<T>(this StreamCompactingRequest<T> request, DocumentSessionBase session,
-        IQueryEventStore stream, string tenantId)
-        where T : class
+    public static readonly PolecatStreamCompacting Instance = new();
+
+    private PolecatStreamCompacting()
     {
-        // 1. Find the aggregator
-        var aggregator = FindAggregator<T>(session);
-
-        // 2. Fetch events
-        IReadOnlyList<IEvent> events;
-        if (session.Options.Events.StreamIdentity == StreamIdentity.AsGuid)
-        {
-            events = await stream.FetchStreamAsync(request.StreamId!.Value, request.Version, request.Timestamp,
-                token: request.CancellationToken).ConfigureAwait(false);
-        }
-        else
-        {
-            events = await stream.FetchStreamAsync(request.StreamKey!, request.Version, request.Timestamp,
-                token: request.CancellationToken).ConfigureAwait(false);
-        }
-
-        if (events.Count == 0) return;
-        if (events is [{ Data: Compacted<T> }]) return;
-
-        // Sequences of all events except the last (the last will be replaced with the compacted snapshot)
-        var sequences = events.Select(x => x.Sequence).Take(events.Count - 1).ToArray();
-
-        request.Version = events[events.Count - 1].Version;
-        request.Sequence = events[events.Count - 1].Sequence;
-
-        // 3. Aggregate to build the snapshot
-        var aggregate = await aggregator.BuildAsync(events, session, default, request.CancellationToken)
-            .ConfigureAwait(false);
-
-        // A stream deleted by its own aggregate (ShouldDelete), at this cutoff if the request set one.
-        // There is no state to snapshot, so going on would swap the whole history for a Compacted<T>
-        // holding null. The stream is left as it is, the archiver included, because it has not been told
-        // about anything that is going to happen.
-        if (aggregate is null) return;
-
-        // 4. Optional archiving. The lifted IEventsArchiver marker is non-generic
-        //    so the data class doesn't have to flow a TOperations parameter; the
-        //    product downcasts to the closed-generic at execution time.
-        //
-        //    BOTH closures are accepted, and that is not belt-and-braces (#423).
-        //    IEventsArchiver<T> is invariant, so IEventsArchiver<IDocumentSession> is NOT an
-        //    IEventsArchiver<IDocumentOperations> even though IDocumentSession derives from
-        //    IDocumentOperations. Polecat closes IEventStore<,> over IDocumentSession, so that is
-        //    the type any JasperFx-generic caller -- the compliance suites included -- will hand
-        //    us, while hand-written Polecat archivers have historically used IDocumentOperations.
-        //    Matching only one of the two made the other silently skip archiving and then delete
-        //    the events anyway, which is the exact opposite of what this hook is for, so anything
-        //    that matches neither is refused rather than skipped.
-        if (request.Archiver is IEventsArchiver<IDocumentSession> sessionArchiver)
-        {
-            await sessionArchiver.MaybeArchiveAsync(session, request, events, request.CancellationToken)
-                .ConfigureAwait(false);
-        }
-        else if (request.Archiver is IEventsArchiver<IDocumentOperations> archiver)
-        {
-            await archiver.MaybeArchiveAsync(session, request, events, request.CancellationToken)
-                .ConfigureAwait(false);
-        }
-        else if (request.Archiver is not null)
-        {
-            throw new InvalidOperationException(
-                $"{request.Archiver.GetType().FullName} cannot archive these events, because Polecat can only call an archiver closed over {typeof(IDocumentSession).FullName} or {typeof(IDocumentOperations).FullName}. Nothing was compacted.");
-        }
-
-        // 5. Replace the last event with the Compacted<T> snapshot
-        var compacted = new Compacted<T>(aggregate,
-            request.StreamId ?? Guid.Empty, request.StreamKey ?? string.Empty);
-
-        var graph = session.Options.EventGraph;
-
-        // #388: the Compacted<T> snapshot follows the same data/bdata rule as any other event —
-        // binary if Compacted<T> itself is opted in, JSON otherwise. The event being REPLACED may
-        // have been the other format; ReplaceEventOperation writes both columns so the row ends up
-        // consistent either way.
-        var binary = graph.ResolveBinarySerializerFor(typeof(Compacted<T>));
-        var serializedBdata = binary?.Serialize(typeof(Compacted<T>), compacted);
-        var serializedData = serializedBdata is null
-            ? session.Options.ToStorageJson(compacted)
-            : EventGraph.JsonPlaceholderForBinaryEvent;
-        var mapping = graph.EventMappingFor(typeof(Compacted<T>));
-
-        var replaceOp = new ReplaceEventOperation(
-            graph, request.Sequence, serializedData, serializedBdata,
-            mapping.EventTypeName, mapping.DotNetTypeName, tenantId);
-
-        session.WorkTracker.Add(replaceOp);
-
-        // 6. Delete the old events
-        if (sequences.Length > 0)
-        {
-            session.WorkTracker.Add(new DeleteEventsOperation(session.Options.EventGraph, sequences,
-                tenantId));
-        }
-
-        // 7. jasperfx#740: record the compaction watermark on pc_streams. request.Version was set
-        //    in step 2 to the version of the last event being folded into the snapshot — the
-        //    cutoff for a partial compaction, the stream's version for a full one — which is what
-        //    StreamState.CompactedVersion reads back so (Version - CompactedVersion) measures
-        //    un-compacted growth.
-        session.WorkTracker.Add(new SetCompactedVersionOperation(
-            graph,
-            (object?)request.StreamId ?? request.StreamKey!,
-            request.Version,
-            tenantId));
     }
 
-    private static IAggregator<T, IQuerySession> FindAggregator<T>(DocumentSessionBase session) where T : class
+    protected override IEventStoreOperations EventsFor(EventOperations session) => session;
+
+    protected override async ValueTask<T?> BuildAggregateAsync<T>(EventOperations session,
+        IReadOnlyList<IEvent> events, CancellationToken token) where T : class
     {
-        return session.Options.Projections.AggregatorFor<T>();
+        var aggregator = session.Session.Options.Projections.AggregatorFor<T>();
+        return await aggregator.BuildAsync(events, session.Session, default, token).ConfigureAwait(false);
+    }
+
+    /// <remarks>
+    ///     BOTH closures are accepted, and that is not belt-and-braces (#423).
+    ///     <c>IEventsArchiver&lt;T&gt;</c> is invariant, so an archiver over <see cref="IDocumentSession" />
+    ///     is not one over <see cref="IDocumentOperations" />. Polecat closes <c>IEventStore&lt;,&gt;</c>
+    ///     over <see cref="IDocumentSession" />, which is what a JasperFx-generic caller hands in, while
+    ///     hand-written Polecat archivers have used <see cref="IDocumentOperations" />. Anything that
+    ///     matches neither is refused by the base class rather than skipped.
+    /// </remarks>
+    protected override async Task<bool> TryArchiveAsync<T>(EventOperations session,
+        StreamCompactingRequest<T> request, IReadOnlyList<IEvent> events) where T : class
+    {
+        return await TryArchiveThroughAsync<IDocumentSession, T>(session.Session, request, events)
+                   .ConfigureAwait(false)
+               || await TryArchiveThroughAsync<IDocumentOperations, T>(session.Session, request, events)
+                   .ConfigureAwait(false);
+    }
+
+    protected override void DeleteEvents(EventOperations session, long[] sequences)
+    {
+        session.Session.WorkTracker.Add(new DeleteEventsOperation(session.Graph, sequences, session.TenantId));
+    }
+
+    /// <summary>
+    ///     jasperfx#740: the compaction watermark on <c>pc_streams</c>, which
+    ///     <c>StreamState.CompactedVersion</c> reads back so (Version - CompactedVersion) measures
+    ///     un-compacted growth.
+    /// </summary>
+    protected override void RecordCompactionWatermark(EventOperations session, Guid? streamId, string? streamKey,
+        long version)
+    {
+        session.Session.WorkTracker.Add(new SetCompactedVersionOperation(session.Graph,
+            (object?)streamId ?? streamKey!, version, session.TenantId));
     }
 }
