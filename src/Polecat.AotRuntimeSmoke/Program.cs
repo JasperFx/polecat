@@ -24,6 +24,7 @@ using Polecat.Linq;
 using Polecat.Linq.CursorPaging;
 using Polecat.Linq.Metadata;
 using Polecat.Linq.SoftDeletes;
+using JasperFx.Pagination;
 using Polecat.Pagination;
 
 var connectionString =

@@ -2,6 +2,12 @@
 
 Polecat provides built-in pagination support via the `IPagedList<T>` interface.
 
+::: tip
+Since Polecat 6, `IPagedList<T>` and `PagedList<T>` are JasperFx's, in the `JasperFx.Pagination`
+namespace, shared with Fisher. `ToPagedListAsync` is still in `Polecat.Pagination`, so a file using both
+needs both `using` directives.
+:::
+
 ## ToPagedListAsync
 
 The simplest way to paginate results:
@@ -30,8 +36,8 @@ The returned `IPagedList<T>` includes:
 | `HasNextPage` | Whether a next page exists |
 | `IsFirstPage` | Whether this is the first page |
 | `IsLastPage` | Whether this is the last page |
-| `FirstItemOnPage` | 1-based index of first item on this page |
-| `LastItemOnPage` | 1-based index of last item on this page |
+| `FirstItemOnPage` | 1-based index of first item on this page, or 0 when the page is empty |
+| `LastItemOnPage` | 1-based index of last item on this page, or 0 when the page is empty |
 
 ## How It Works
 

@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using JasperFx.Pagination;
 using Polecat.Linq;
 
 namespace Polecat.Pagination;
@@ -6,6 +7,14 @@ namespace Polecat.Pagination;
 /// <summary>
 ///     Extension methods for IQueryable to support pagination.
 /// </summary>
+/// <summary>
+///     Offset paging over a Polecat LINQ query.
+/// </summary>
+/// <remarks>
+///     #807: the page it returns is JasperFx's <see cref="IPagedList{T}" /> (jasperfx#1054), which
+///     Polecat's and Fisher's identical copies were lifted into; it is in <c>JasperFx.Pagination</c>
+///     rather than <c>Polecat.Pagination</c>.
+/// </remarks>
 public static class PagedListExtensions
 {
     /// <summary>

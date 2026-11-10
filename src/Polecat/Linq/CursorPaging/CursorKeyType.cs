@@ -33,16 +33,16 @@ namespace Polecat.Linq.CursorPaging;
 internal sealed class CursorKeyType
 {
     private readonly SqlDbType _dbType;
-    private readonly Func<JsonElement, object> _read;
+    private readonly Type _readType;
     private readonly int? _size;
     private readonly byte? _precision;
     private readonly byte? _scale;
 
-    private CursorKeyType(SqlDbType dbType, Func<JsonElement, object> read, int? size = null, byte? precision = null,
+    private CursorKeyType(SqlDbType dbType, Type readType, int? size = null, byte? precision = null,
         byte? scale = null)
     {
         _dbType = dbType;
-        _read = read;
+        _readType = readType;
         _size = size;
         _precision = precision;
         _scale = scale;
@@ -73,25 +73,25 @@ internal sealed class CursorKeyType
 
         return name switch
         {
-            "int" => new CursorKeyType(SqlDbType.Int, static x => x.GetInt32()),
-            "bigint" => new CursorKeyType(SqlDbType.BigInt, static x => x.GetInt64()),
-            "smallint" => new CursorKeyType(SqlDbType.SmallInt, static x => x.GetInt16()),
-            "tinyint" => new CursorKeyType(SqlDbType.TinyInt, static x => x.GetByte()),
-            "bit" => new CursorKeyType(SqlDbType.Bit, static x => x.GetBoolean()),
-            "float" => new CursorKeyType(SqlDbType.Float, static x => x.GetDouble()),
-            "real" => new CursorKeyType(SqlDbType.Real, static x => x.GetSingle()),
-            "decimal" or "numeric" => new CursorKeyType(SqlDbType.Decimal, static x => x.GetDecimal(),
+            "int" => new CursorKeyType(SqlDbType.Int, typeof(int)),
+            "bigint" => new CursorKeyType(SqlDbType.BigInt, typeof(long)),
+            "smallint" => new CursorKeyType(SqlDbType.SmallInt, typeof(short)),
+            "tinyint" => new CursorKeyType(SqlDbType.TinyInt, typeof(byte)),
+            "bit" => new CursorKeyType(SqlDbType.Bit, typeof(bool)),
+            "float" => new CursorKeyType(SqlDbType.Float, typeof(double)),
+            "real" => new CursorKeyType(SqlDbType.Real, typeof(float)),
+            "decimal" or "numeric" => new CursorKeyType(SqlDbType.Decimal, typeof(decimal),
                 precision: Argument(arguments, 0, 18), scale: Argument(arguments, 1, 0)),
-            "uniqueidentifier" => new CursorKeyType(SqlDbType.UniqueIdentifier, static x => x.GetGuid()),
-            "datetime2" => new CursorKeyType(SqlDbType.DateTime2, static x => x.GetDateTime(),
+            "uniqueidentifier" => new CursorKeyType(SqlDbType.UniqueIdentifier, typeof(Guid)),
+            "datetime2" => new CursorKeyType(SqlDbType.DateTime2, typeof(DateTime),
                 scale: Argument(arguments, 0, 7)),
-            "datetime" => new CursorKeyType(SqlDbType.DateTime, static x => x.GetDateTime()),
-            "smalldatetime" => new CursorKeyType(SqlDbType.SmallDateTime, static x => x.GetDateTime()),
-            "date" => new CursorKeyType(SqlDbType.Date, static x => x.GetDateTime()),
-            "datetimeoffset" => new CursorKeyType(SqlDbType.DateTimeOffset, static x => x.GetDateTimeOffset(),
+            "datetime" => new CursorKeyType(SqlDbType.DateTime, typeof(DateTime)),
+            "smalldatetime" => new CursorKeyType(SqlDbType.SmallDateTime, typeof(DateTime)),
+            "date" => new CursorKeyType(SqlDbType.Date, typeof(DateTime)),
+            "datetimeoffset" => new CursorKeyType(SqlDbType.DateTimeOffset, typeof(DateTimeOffset),
                 scale: Argument(arguments, 0, 7)),
             "time" => new CursorKeyType(SqlDbType.Time,
-                static x => TimeSpan.Parse(x.GetString()!, CultureInfo.InvariantCulture),
+                typeof(TimeSpan),
                 scale: Argument(arguments, 0, 7)),
             "nvarchar" or "nchar" => Text(SqlDbType.NVarChar, Length(arguments)),
             "varchar" or "char" => Text(SqlDbType.VarChar, Length(arguments)),
@@ -100,7 +100,7 @@ internal sealed class CursorKeyType
     }
 
     private static CursorKeyType Text(SqlDbType dbType, int? size = null)
-        => new(dbType, static x => x.GetString()!, size);
+        => new(dbType, typeof(string), size);
 
     private static byte Argument(string[] arguments, int index, byte fallback)
         => arguments.Length > index ? byte.Parse(arguments[index], CultureInfo.InvariantCulture) : fallback;
@@ -123,7 +123,10 @@ internal sealed class CursorKeyType
     ///     <see cref="FormatException" />, <see cref="InvalidOperationException" /> or
     ///     <see cref="OverflowException" />, which the caller turns into a malformed cursor.
     /// </summary>
-    public object Read(JsonElement slot) => _read(slot);
+    /// <summary>
+    ///     The CLR type a cursor slot for this key is read as, which is the type it is bound as.
+    /// </summary>
+    public Type ReadType => _readType;
 
     /// <summary>Gives a bound parameter the locator's exact type.</summary>
     public void ApplyTo(SqlParameter parameter)
