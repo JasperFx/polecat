@@ -45,6 +45,7 @@
         "PublishDocs",
         "RebuildDb",
         "Restore",
+        "TakeLocalUpstream",
         "Test",
         "TestAspnetcore",
         "TestEfCore",
@@ -150,6 +151,10 @@
           "type": "string",
           "description": "SQL Server connection string for --storage edge (docker-compose.edge.yml)"
         },
+        "Feed": {
+          "type": "string",
+          "description": "Pack: folder the .nupkg files are copied into. TakeLocalUpstream: folder added as a NuGet source"
+        },
         "Framework": {
           "type": "string"
         },
@@ -199,6 +204,14 @@
           ],
           "description": "Worker processes for a supervised run; overrides the committed count and the ProcessorCount/2 clamp",
           "format": "int32"
+        },
+        "UpstreamVersion": {
+          "type": "string",
+          "description": "TakeLocalUpstream: version of the local JasperFx packages to pin (e.g. 3.0.0-local.1)"
+        },
+        "WeaselVersion": {
+          "type": "string",
+          "description": "TakeLocalUpstream: version of the local Weasel packages to pin (e.g. 10.0.0-local.1)"
         },
         "WorkerBudget": {
           "type": [

@@ -233,6 +233,17 @@ partial class Build : NukeBuild
             }
 
             foreach (var package in packages) Log.Information("  packed {Package}", package);
+
+            if (!string.IsNullOrEmpty(Feed))
+            {
+                Directory.CreateDirectory(Feed);
+                foreach (var package in output.GlobFiles("*.nupkg"))
+                {
+                    File.Copy(package, Path.Combine(Feed, package.Name), true);
+                }
+
+                Log.Information("Copied packed packages into the local feed {Feed}", Feed);
+            }
         });
 
     /// <summary>
