@@ -239,7 +239,7 @@ partial class Build
             workers = ceiling;
         }
 
-        var framework = string.IsNullOrEmpty(Framework) ? "net9.0" : Framework;
+        var framework = string.IsNullOrEmpty(Framework) ? "net10.0" : Framework;
         var projectName = suite.Name;
 
         if (SkipBuild)
@@ -339,6 +339,12 @@ partial class Build
         supervisor.StallAction = StallAction.Report;
         supervisor.HeartbeatInterval = TimeSpan.FromSeconds(30);
         supervisor.ResourceSampleInterval = TimeSpan.FromSeconds(15);
+
+        // Tell a local Bobcat monitor about the run (topology, progress, retries, heartbeats), tagged with
+        // BOBCAT_RUN_TAG so a plan gate sees the run it waits for. With no monitor listening -- every CI
+        // runner -- the probe costs one refused local connection and publishes nothing; BOBCAT_MONITOR=0
+        // turns it off.
+        supervisor.PublishToMonitor = true;
     }
 
     /// <summary>
