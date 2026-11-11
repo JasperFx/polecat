@@ -33,8 +33,9 @@ jobs:
       - name: Install .NET 10.0.x
         uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: 10.0.x
-
+          dotnet-version: |
+            10.0.x
+            11.0.x
       # The AotSmoke Nuke target (build/LocalGate.cs) — the same one `./build.sh LocalGate --aot` runs
       # locally: a Release build of Polecat.AotSmoke, which fails on IL2026/IL2046/IL2055/IL2065/
       # IL2067/IL2070/IL2072/IL2075/IL2090/IL2091/IL2111/IL3050/IL3051.
