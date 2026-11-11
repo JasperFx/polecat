@@ -912,7 +912,7 @@
         <PackageVersion Include="Microsoft.CodeAnalysis.Analyzers" Version="3.3.4" />
 
         <!-- Testing -->
-        <PackageVersion Include="Alba" Version="9.0.0-rc.3" />
+        <PackageVersion Include="Alba" Version="9.0.0" />
         <!--
           Microsoft Testing Platform extensions, replacing coverlet.collector and the TRX logger,
           both of which are VSTest-only. CodeCoverage is capability parity — no build target asks
