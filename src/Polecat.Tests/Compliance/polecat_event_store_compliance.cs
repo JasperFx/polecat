@@ -16,6 +16,9 @@ public class self_aggregating_evolve_compliance
 public class dcb_tag_query_and_consistency_compliance
     : DcbTagQueryAndConsistencyCompliance<PolecatComplianceFixture, IDocumentSession, IQuerySession>;
 
+public class dcb_append_condition_compliance
+    : DcbAppendConditionCompliance<PolecatComplianceFixture, IDocumentSession, IQuerySession>;
+
 public class assign_tag_where_compliance
     : AssignTagWhereCompliance<PolecatComplianceFixture, IDocumentSession, IQuerySession>;
 
