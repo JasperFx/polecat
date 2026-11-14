@@ -121,8 +121,24 @@ builder.Services.AddPolecat(opts => { /* no connection string */ })
 - `opts.Connection(SqlConnection)` does the same from inside the configuration lambda, for a connection you
   already hold.
 - **There is no `DbDataSource` overload.** Microsoft.Data.SqlClient has no public `DbDataSource`, so the
-  connection string is what is shared. Polecat opens its own pooled connections from it, so they use the
-  same pool and credentials as the registered connection.
+  connection string is what is shared. Polecat opens its own pooled connections from it.
+- **The string has to be able to log in by itself, and Polecat refuses a connection whose string can't.**
+  `Connection(SqlConnection)` and `UseSqlConnectionFromServices()` throw an `ArgumentException` when the store
+  is configured, rather than letting it come up and fail its first query with `Login failed`:
+  - **A connection that has already been opened.** SqlClient removes the password from
+    `SqlConnection.ConnectionString` on the first open unless the string says `Persist Security Info=True`.
+    Aspire's registration is a fresh, unopened connection, so it is not affected; a connection you opened
+    yourself, or a singleton something else opened first, is.
+  - **A connection authenticated by a `SqlCredential`, `AccessToken` or `AccessTokenCallback`.** Those live on
+    the connection object, never in the string, and every connection Polecat opens (and every one Weasel
+    opens for migrations) is built from the string alone. Polecat does not carry them across.
+
+  What works: SQL logins whose password is still in the string (an unopened connection, or
+  `Persist Security Info=True`), `Integrated Security=True`, and the `Authentication=Active Directory …` modes
+  that acquire their own token from the string (`Default`, `Managed Identity`, `Workload Identity`,
+  `Interactive`, …), which is how Aspire's Azure SQL integration connects. For anything else, pass the
+  connection string itself with `opts.Connection(string)`. This is the same failure Marten hit with an
+  `NpgsqlDataSource` ([marten#5898](https://github.com/JasperFx/marten/issues/5898)), from a different cause.
 
 See [the `StoreOptions` page](./configuration/storeoptions.md#connection-from-the-container-aspire-addsqlserverclient)
 for the setup, and the OpenTelemetry and health check wiring that goes with it under Aspire.
