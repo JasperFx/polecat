@@ -141,6 +141,27 @@ public class eject_operations : IntegrationContext
         loaded1Again.ShouldNotBeNull();
         ReferenceEquals(loaded1, loaded1Again).ShouldBeFalse();
     }
+
+    [Fact]
+    public async Task eject_forgets_the_version_the_session_tracked_for_the_document()
+    {
+        // #959: Weasel's shared EjectById drops the identity-map entry but not the tracked version, so
+        // the session clears it. Polecat's own storage always did both; this pins it across the move.
+        var doc = new VersionedDoc { Id = Guid.NewGuid(), Name = "tracked" };
+        theSession.Store(doc);
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        await using var session = theStore.LightweightSession();
+        var loaded = await session.LoadAsync<VersionedDoc>(doc.Id, TestContext.Current.CancellationToken);
+        loaded.ShouldNotBeNull();
+
+        var tracker = ((Weasel.Storage.IStorageSession)session).Versions;
+        tracker.VersionFor<VersionedDoc, Guid>(doc.Id).ShouldBe(doc.Version);
+
+        session.Eject(loaded);
+
+        tracker.VersionFor<VersionedDoc, Guid>(doc.Id).ShouldBeNull();
+    }
 }
 
 public class EjectOtherDoc

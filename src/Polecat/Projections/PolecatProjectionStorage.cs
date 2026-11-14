@@ -103,7 +103,7 @@ internal class PolecatProjectionStorage<TDoc, TId> : IProjectionStorage<TDoc, TI
     // a different tenant than the driving session, so flush-time metadata binders write the
     // projection's tenant.
 
-    // QueryOnly flavor deliberately: its ops are identical, and its selector reads no id
+    // QueryOnly flavor deliberately for reads and deletes (#959 moved the write to Lightweight): its selector reads no id
     // column and captures no session version/identity-map state — matching the bespoke
     // projection reads (and avoiding the writeable selectors' typed id read, which cannot
     // materialize Polecat's varchar-stored strongly-typed id columns).
@@ -125,7 +125,10 @@ internal class PolecatProjectionStorage<TDoc, TId> : IProjectionStorage<TDoc, TI
             _provider.Mapping.AssignIdIfMissing(snapshot, _provider.SequenceSource);
         }
 
-        var typed = (Weasel.Storage.IDocumentStorage<TDoc>)Storage;
+        // #959: the write goes through the Lightweight flavour. Weasel's query-only storage refuses
+        // writes, and with no session the two build the same operation over the same descriptor.
+        // Reads stay on QueryOnly, for the selector reasons above.
+        var typed = _session.Providers.ClosedShapeGraph.StorageFor<TDoc>().Lightweight;
         var op = typed.UpsertProjected(snapshot, tenantId);
         // #720: a projected view can name its revision member through the metadata DSL just as a
         // hand-stored document can, and the two have to agree about what the expectation is.
@@ -169,7 +172,7 @@ internal class PolecatProjectionStorage<TDoc, TId> : IProjectionStorage<TDoc, TI
             var deletion = (Storage.ClosedShape.IPolecatDeletionStorage)Storage;
             var id = _provider.Mapping.GetId(snapshot);
             _session.WorkTracker.Add(new UnDeleteByIdOperation(
-                deletion.UndeleteFragment, deletion.IsConjoined, id, tenantId, typeof(TDoc)));
+                deletion.UndeleteFragment!, deletion.IsConjoined, id, tenantId, typeof(TDoc)));
         }
     }
 
