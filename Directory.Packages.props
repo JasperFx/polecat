@@ -1478,9 +1478,15 @@
                  were missing in a native Polecat app). The generator is a private build-time reference
                  and does not flow to Polecat.
                * Otherwise the JasperFx 2.101.0 roll-forward and docs. -->
-        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="10.0.0-alpha.1" />
-        <PackageVersion Include="Weasel.SqlServer" Version="10.0.0-alpha.1" />
-        <PackageVersion Include="Weasel.Storage" Version="10.0.0-alpha.1" />
+        <!-- Weasel 10.0.0-alpha.2 (from alpha.1). Builds with no Polecat change. Taken for the three
+             lifts #807 was waiting on:
+               * weasel#809: MasterTableTenancyBase evicts stale tenants on refresh and tells a disabled
+                 tenant from an unknown one. ADOPTED here: MasterTableTenancy derives from it.
+               * weasel#810: OperationBatchExecutor. Not adopted yet (#807).
+               * weasel#811: public closed-shape document storage bases. Not adopted yet (#959). -->
+        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="10.0.0-alpha.2" />
+        <PackageVersion Include="Weasel.SqlServer" Version="10.0.0-alpha.2" />
+        <PackageVersion Include="Weasel.Storage" Version="10.0.0-alpha.2" />
 
         <!-- Strongly typed IDs. Both generators are test-only: they prove Polecat's value-type id
              support against the two libraries Marten's ValueTypeTests exercise. StronglyTypedId emits

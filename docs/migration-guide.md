@@ -226,6 +226,20 @@ Two values change, and both are only for edge cases:
 Paging by cursor is unaffected: continuation cursors are encoded through JasperFx's `CursorCodec` now,
 but the bytes are the same, so a cursor a client already holds stays valid across the upgrade.
 
+## Upgrading to 6.0: `MasterTableTenancy` runs on Weasel's shared base
+
+`MasterTableTenancy` now derives from Weasel's `MasterTableTenancyBase<PolecatDatabase, DbDataSource>`,
+the control-table runtime Marten and Fisher use too ([#807](https://github.com/JasperFx/polecat/issues/807),
+weasel#809). The `pc_tenants` table, its SQL, case-insensitive tenant ids, the startup migration lock, the
+resilience pipeline and the refusals (`UnknownTenantIdException`, `DisabledTenantException`) are all
+unchanged. Three things a caller can see do change:
+
+| 5.x | 6.0 |
+|---|---|
+| `MasterTableTenancy.TableName`, a `const` | `tenancy.TableName`, an instance property inherited from the base. Its value is still `pc_tenants`. |
+| `IDynamicTenantSource<string>.AllActive()` returned database identifiers (`Polecat_tenant-a`) | It returns the tenant ids (`tenant-a`), as Marten's does. `AllActiveByTenant()` is unchanged. |
+| — | New members from the base: `ClearAllDatabaseRecordsAsync`, `LookupTenantAsync` (unknown, disabled or enabled, with no exception), `ResolveTenantAsync`, `FindCachedDatabase` and `AllTenantIds`. It also implements `IMasterTableMultiTenancy`, `IDisposable` and `IAsyncDisposable`. |
+
 ## Deprecation: `MapPolecatMcp`
 
 `Polecat.AspNetCore`'s built-in `MapPolecatMcp()` is now `[Obsolete]` and will be **removed in the

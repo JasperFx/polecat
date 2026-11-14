@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+using System.Data.Common;
 using JasperFx;
 using JasperFx.Core;
 using JasperFx.Descriptors;
@@ -7,7 +7,9 @@ using Microsoft.Data.SqlClient;
 using Polecat.Internal;
 using Polly;
 using Weasel.Core;
+using Weasel.Core.MultiTenancy;
 using Weasel.SqlServer;
+using Weasel.SqlServer.MultiTenancy;
 
 namespace Polecat.Storage;
 
@@ -20,85 +22,92 @@ namespace Polecat.Storage;
 ///     management.
 /// </summary>
 /// <remarks>
-///     #377: this type also declares <see cref="IDynamicTenantSource{T}" /> so store-agnostic admin
-///     tooling (CritterWatch) can drive the add / disable / enable / remove lifecycle without taking a
-///     reference to Polecat's concrete tenancy types. Mirrors Marten's
-///     <c>MasterTableTenancy: ITenancy, ITenancyWithMasterDatabase, IDynamicTenantSource&lt;string&gt;</c>.
+///     <para>
+///         #807: the control-table runtime — the resolved-database cache, eviction of tenants disabled or
+///         removed on another node (#871, #849), telling a disabled tenant from an unknown one (#655), and
+///         the whole <see cref="IDynamicTenantSource{T}" /> lifecycle (#377) — is Weasel's
+///         <see cref="MasterTableTenancyBase{TDatabase,TDataSource}" /> (weasel#809, Weasel 10.0.0-alpha.2),
+///         shared with Marten and Fisher. The SQL is <see cref="SqlServerMasterTenantTableDialect" />,
+///         which renders exactly the statements this class used to carry. What stays here is Polecat's:
+///         building a <see cref="PolecatDatabase" />, the resilience pipeline, and creating the table
+///         through a Weasel migration under the startup migration lock.
+///     </para>
+///     <para>
+///         Three things are kept as they were rather than taking the base's default, because each one
+///         would otherwise change behaviour on an upgrade: tenant ids compare case-insensitively, as
+///         they always have here (and as the table's default collation does); the table is created by
+///         <see cref="TenantsTable" /> through Weasel rather than by the dialect's guarded DDL string;
+///         and no <c>Application Name</c> is written into a tenant's connection string.
+///     </para>
 /// </remarks>
-public class MasterTableTenancy : ITenancy, IDynamicTenantSource<string>
+public class MasterTableTenancy : MasterTableTenancyBase<PolecatDatabase, DbDataSource>, ITenancy
 {
-    /// <summary>
-    ///     The master tenant-registry table name (unqualified).
-    /// </summary>
-    public const string TableName = "pc_tenants";
-
     private readonly StoreOptions _options;
-    private readonly string _masterConnectionString;
-    private readonly string _schemaName;
     private readonly ResiliencePipeline _resilience;
-
-    private readonly ConcurrentDictionary<string, Entry> _cache =
-        new(StringComparer.OrdinalIgnoreCase);
+    private readonly SemaphoreSlim _provisioning = new(1, 1);
 
     private volatile bool _masterTableEnsured;
-    private readonly SemaphoreSlim _ensureLock = new(1, 1);
 
     internal MasterTableTenancy(StoreOptions options, string masterConnectionString, string schemaName)
+        : base(
+            BuildOptions(masterConnectionString,
+                string.IsNullOrWhiteSpace(schemaName) ? options.DatabaseSchemaName : schemaName),
+            SqlServerMasterTenantTableDialect.DefaultTableName,
+            SqlServerMasterTenantTableDialect.Instance,
+            StringComparer.OrdinalIgnoreCase)
     {
         _options = options;
-        _masterConnectionString = masterConnectionString
-            ?? throw new ArgumentNullException(nameof(masterConnectionString));
-        _schemaName = string.IsNullOrWhiteSpace(schemaName) ? options.DatabaseSchemaName : schemaName;
         _resilience = options.ResiliencePipeline;
     }
 
-    /// <summary>
-    ///     The fully-qualified master table name, e.g. <c>[dbo].[pc_tenants]</c>.
-    /// </summary>
-    public string QualifiedTableName => Internal.SqlEscaping.QualifiedName(_schemaName, TableName);
+    private static MasterTableTenancyOptions<DbDataSource> BuildOptions(string masterConnectionString,
+        string schemaName)
+    {
+        ArgumentNullException.ThrowIfNull(masterConnectionString);
+
+        return new MasterTableTenancyOptions<DbDataSource>(SqlServerProvider.Instance)
+        {
+            ConnectionString = masterConnectionString,
+            SchemaName = schemaName,
+
+            // The base would stamp the entry assembly's name on every tenant connection string. Polecat
+            // never has, and doing it now would give each tenant a different string from the one its
+            // operator registered — and a separate connection pool from any other use of that string.
+            ApplicationName = string.Empty
+        };
+    }
 
     /// <summary>
-    ///     Always <see cref="DatabaseCardinality.DynamicMultiple" /> — the tenant database set is read
-    ///     from the master table and can change while the store is running. Declared publicly so it
-    ///     satisfies both <see cref="ITenancy" /> and <see cref="ITenantedSource{T}" />.
+    ///     The schema the control table lives in.
     /// </summary>
-    public DatabaseCardinality Cardinality => DatabaseCardinality.DynamicMultiple;
+    public string SchemaName => Options.SchemaName;
 
     string ITenancy.DefaultTenantId => StorageConstants.DefaultTenantId;
 
+    /// <summary>
+    ///     The control-plane database. Master table tenancy always has one, so an application never
+    ///     needs to set StoreOptions.ConnectionString as well. polecat#514.
+    /// </summary>
+    public string? SeedConnectionString => Options.ConnectionString;
+
     ConnectionFactory ITenancy.GetConnectionFactory(string tenantId)
     {
-        return ResolveEntry(tenantId).Factory;
+        return new ConnectionFactory(Resolve(tenantId).ConnectionString);
     }
 
     PolecatDatabase ITenancy.GetDatabase(string tenantId)
     {
-        return ResolveEntry(tenantId).Database;
+        return Resolve(tenantId);
     }
 
     IReadOnlyList<PolecatDatabase> ITenancy.AllDatabases()
     {
         // Prime the cache from the master table if nothing has been loaded yet so the
         // resource model / daemon coordinator sees the current tenant set.
-        if (_cache.IsEmpty)
-        {
-            BuildDatabasesAsync().GetAwaiter().GetResult();
-        }
-
-        return _cache.Values.Select(x => x.Database).ToList();
-    }
-
-    private Entry ResolveEntry(string tenantId)
-    {
-        if (_cache.TryGetValue(tenantId, out var cached)) return cached;
-
-        // It is deliberately important *not* to silently swallow the lookup here — an unknown or
-        // disabled tenant must refuse the session, same as SeparateDatabaseTenancy. #655: the two
-        // are now told apart, because they call for different actions.
-        var lookup = LookupTenantAsync(tenantId).GetAwaiter().GetResult();
-        if (lookup.ConnectionString is null) throw RefusalFor(tenantId, lookup.Status);
-
-        return _cache.GetOrAdd(tenantId, id => CreateEntry(id, lookup.ConnectionString));
+        var databases = AllDatabases();
+        return databases.Count == 0
+            ? BuildDatabasesAsync().GetAwaiter().GetResult()
+            : databases;
     }
 
     /// <summary>
@@ -107,111 +116,9 @@ public class MasterTableTenancy : ITenancy, IDynamicTenantSource<string>
     ///     no tenant database is created, and an unknown tenant is not cached, so a tenant added later
     ///     resolves on the next call.
     /// </summary>
-    public async ValueTask<PolecatDatabase?> FindDatabaseAsync(string tenantId, CancellationToken token = default)
+    public ValueTask<PolecatDatabase?> FindDatabaseAsync(string tenantId, CancellationToken token = default)
     {
-        if (_cache.TryGetValue(tenantId, out var cached)) return cached.Database;
-
-        var lookup = await LookupTenantAsync(tenantId, token).ConfigureAwait(false);
-        if (lookup.ConnectionString is null) return null;
-
-        return _cache.GetOrAdd(tenantId, id => CreateEntry(id, lookup.ConnectionString)).Database;
-    }
-
-    /// <summary>
-    ///     The refusal for a tenant this tenancy will not open a session for.
-    /// </summary>
-    /// <remarks>
-    ///     #655 / jasperfx#875. A missing row and a disabled row both used to raise
-    ///     <see cref="UnknownTenantIdException" />, so the operator who had just run CritterWatch's
-    ///     <c>disable_tenant</c> — or the on-call engineer after them — read "Unknown tenant id
-    ///     'acme'" about a tenant that was still registered and had been turned off on purpose.
-    ///     <see cref="DisabledTenantException" /> derives from <see cref="UnknownTenantIdException" />,
-    ///     so nothing that catches the old type stops catching; the message just stops being wrong.
-    /// </remarks>
-    private static UnknownTenantIdException RefusalFor(string tenantId, TenantLookupStatus status)
-    {
-        return status == TenantLookupStatus.Disabled
-            ? new DisabledTenantException(tenantId)
-            : new UnknownTenantIdException(tenantId);
-    }
-
-    private Entry CreateEntry(string tenantId, string connectionString)
-    {
-        var factory = new ConnectionFactory(connectionString);
-        var database = new PolecatDatabase(_options, connectionString, $"Polecat_{tenantId}");
-        return new Entry(factory, database);
-    }
-
-    /// <summary>
-    ///     The control-plane database. Master table tenancy always has one, so an application never
-    ///     needs to set StoreOptions.ConnectionString as well. polecat#514.
-    /// </summary>
-    public string? SeedConnectionString => _masterConnectionString;
-
-    /// <summary>
-    ///     Read every enabled tenant from the master table, bring the in-memory database cache into line
-    ///     with it, and return the tenant databases that leaves. Mirrors Marten's <c>BuildDatabases()</c>,
-    ///     except that it also evicts.
-    /// </summary>
-    /// <remarks>
-    ///     <para>
-    ///         #871 item 3, #849. This used to only add, so a tenant disabled or removed on another node
-    ///         stayed in this node's cache, and went on opening sessions, until the process restarted.
-    ///         Marten closed its equivalent (marten#5629) leaving it to CritterWatch. The eviction is cheap
-    ///         here because the projection coordinator already comes through this method on every
-    ///         leadership cycle, which also makes it the place that stops such a tenant's agents.
-    ///     </para>
-    ///     <para>
-    ///         What that leaves node-local is a node nothing reads the table on. A host with no daemon
-    ///         keeps a tenant it has cached until something calls this,
-    ///         <see cref="ITenantedSource{T}.RefreshAsync" /> or <see cref="DescribeDatabasesAsync" />.
-    ///     </para>
-    ///     <para>
-    ///         A tenant added on this node after the read below and before the eviction is evicted with
-    ///         the rest. That is harmless: the row is there, so the next lookup or read brings it back.
-    ///     </para>
-    /// </remarks>
-    public async Task<IReadOnlyList<PolecatDatabase>> BuildDatabasesAsync(CancellationToken token = default)
-    {
-        await EnsureMasterTableAsync(token).ConfigureAwait(false);
-
-        var rows = await _resilience.ExecuteAsync(static async (state, ct) =>
-        {
-            var (connectionString, table) = state;
-            var list = new List<(string TenantId, string ConnectionString)>();
-
-            await using var conn = new SqlConnection(connectionString);
-            await conn.OpenAsync(ct).ConfigureAwait(false);
-
-            await using var cmd = conn.CreateCommand();
-            cmd.CommandText = $"SELECT tenant_id, connection_string FROM {table} WHERE is_disabled = 0;";
-
-            await using var reader = (await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false));
-            while (await reader.ReadAsync(ct).ConfigureAwait(false))
-            {
-                list.Add((reader.GetString(0), reader.GetString(1)));
-            }
-
-            return list;
-        }, (_masterConnectionString, QualifiedTableName), token).ConfigureAwait(false);
-
-        foreach (var (tenantId, connectionString) in rows)
-        {
-            _cache.AddOrUpdate(
-                tenantId,
-                id => CreateEntry(id, connectionString),
-                (id, existing) => existing.Factory.ConnectionString == connectionString
-                    ? existing
-                    : CreateEntry(id, connectionString));
-        }
-
-        var enabled = rows.Select(x => x.TenantId).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        foreach (var tenantId in _cache.Keys.Where(x => !enabled.Contains(x)))
-        {
-            _cache.TryRemove(tenantId, out _);
-        }
-
-        return _cache.Values.Select(x => x.Database).ToList();
+        return TryFindDatabaseAsync(tenantId, token);
     }
 
     /// <summary>
@@ -227,10 +134,13 @@ public class MasterTableTenancy : ITenancy, IDynamicTenantSource<string>
         // on SeparateDatabaseTenancy.DescribeDatabasesAsync for why these are not collapsed by
         // physical database the way Marten's are.
         var descriptors = new List<DatabaseDescriptor>();
-        foreach (var pair in _cache)
+        foreach (var tenantId in AllTenantIds())
         {
-            var descriptor = pair.Value.Database.Describe();
-            descriptor.TenantIds.Fill(pair.Key);
+            var database = FindCachedDatabase(tenantId);
+            if (database is null) continue;
+
+            var descriptor = database.Describe();
+            descriptor.TenantIds.Fill(tenantId);
             descriptors.Add(descriptor);
         }
 
@@ -241,293 +151,90 @@ public class MasterTableTenancy : ITenancy, IDynamicTenantSource<string>
         };
     }
 
+    // It is deliberately important *not* to silently swallow the lookup here — an unknown or disabled
+    // tenant must refuse the session, same as SeparateDatabaseTenancy. #655: the two are told apart,
+    // because they call for different actions.
+    private PolecatDatabase Resolve(string tenantId)
+    {
+        if (FindCachedDatabase(tenantId) is { } cached) return cached;
+
+        var resolution = ResolveTenantAsync(tenantId).AsTask().GetAwaiter().GetResult();
+        return resolution.Database ?? throw CreateTenantRefusal(tenantId, resolution.Status);
+    }
+
+    protected override DbDataSource BuildDataSource(string connectionString)
+    {
+        return SqlClientFactory.Instance.CreateDataSource(connectionString);
+    }
+
+    protected override PolecatDatabase BuildDatabase(string tenantId, string connectionString)
+    {
+        return new PolecatDatabase(_options, connectionString, $"Polecat_{tenantId}");
+    }
+
     /// <summary>
-    ///     Add (or update) a tenant record mapping <paramref name="tenantId" /> to
-    ///     <paramref name="connectionString" />. The tenant is immediately available to new sessions.
+    ///     #655 / jasperfx#875. A missing row and a disabled row both used to raise
+    ///     <see cref="UnknownTenantIdException" />, so the operator who had just run CritterWatch's
+    ///     <c>disable_tenant</c> — or the on-call engineer after them — read "Unknown tenant id
+    ///     'acme'" about a tenant that was still registered and had been turned off on purpose.
+    ///     <see cref="DisabledTenantException" /> derives from <see cref="UnknownTenantIdException" />,
+    ///     so nothing that catches the old type stops catching; the message just stops being wrong.
     /// </summary>
-    public async Task AddDatabaseRecordAsync(string tenantId, string connectionString,
-        CancellationToken token = default)
+    protected override UnknownTenantIdException CreateTenantRefusal(string tenantId, MasterTenantStatus status)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
-        ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
-
-        await EnsureMasterTableAsync(token).ConfigureAwait(false);
-
-        await _resilience.ExecuteAsync(static async (state, ct) =>
-        {
-            var (masterConn, table, tenantId, connectionString) = state;
-            await using var conn = new SqlConnection(masterConn);
-            await conn.OpenAsync(ct).ConfigureAwait(false);
-
-            await using var cmd = conn.CreateCommand();
-            // Upsert: keep AddDatabaseRecordAsync idempotent and re-enable on re-add.
-            cmd.CommandText = $"""
-                MERGE {table} AS target
-                USING (SELECT @id AS tenant_id) AS source
-                ON target.tenant_id = source.tenant_id
-                WHEN MATCHED THEN
-                    UPDATE SET connection_string = @conn, is_disabled = 0
-                WHEN NOT MATCHED THEN
-                    INSERT (tenant_id, connection_string, is_disabled) VALUES (@id, @conn, 0);
-                """;
-            cmd.Parameters.AddWithValue("@id", tenantId);
-            cmd.Parameters.AddWithValue("@conn", connectionString);
-            await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
-        }, (_masterConnectionString, QualifiedTableName, tenantId, connectionString), token).ConfigureAwait(false);
-
-        // Eagerly cache so the tenant is usable immediately.
-        _cache[tenantId] = CreateEntry(tenantId, connectionString);
+        return status == MasterTenantStatus.Disabled
+            ? new DisabledTenantException(tenantId)
+            : new UnknownTenantIdException(tenantId);
     }
 
     /// <summary>
-    ///     Remove a tenant record entirely. The tenant's database is left untouched.
+    ///     Every control-plane read and write runs through <see cref="StoreOptions.ResiliencePipeline" />.
     /// </summary>
-    public async Task DeleteDatabaseRecordAsync(string tenantId, CancellationToken token = default)
+    protected override async Task<T> ExecuteAsync<T>(Func<CancellationToken, Task<T>> operation,
+        CancellationToken token)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
-
-        await EnsureMasterTableAsync(token).ConfigureAwait(false);
-        await ExecuteByTenantAsync(
-            $"DELETE FROM {QualifiedTableName} WHERE tenant_id = @id;", tenantId, token).ConfigureAwait(false);
-
-        _cache.TryRemove(tenantId, out _);
+        return await _resilience.ExecuteAsync(static async (op, ct) => await op(ct).ConfigureAwait(false),
+            operation, token).ConfigureAwait(false);
     }
 
     /// <summary>
-    ///     Enable a previously-disabled tenant. The tenant becomes routable again on next access.
+    ///     Read at the moment the table is needed, not when the tenancy was configured, so an application
+    ///     that sets <see cref="StoreOptions.AutoCreateSchemaObjects" /> after calling
+    ///     <see cref="StoreOptions.MultiTenantedMasterTable" /> still gets what it asked for.
     /// </summary>
-    public async Task EnableTenantAsync(string tenantId, CancellationToken token = default)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
-
-        await EnsureMasterTableAsync(token).ConfigureAwait(false);
-        await ExecuteByTenantAsync(
-            $"UPDATE {QualifiedTableName} SET is_disabled = 0 WHERE tenant_id = @id;", tenantId, token)
-            .ConfigureAwait(false);
-
-        // Lazily reloaded into the cache on next access.
-    }
+    protected override AutoCreate EffectiveAutoCreate => Options.AutoCreate ?? _options.AutoCreateSchemaObjects;
 
     /// <summary>
-    ///     Disable a tenant without deleting its record. Disabled tenants are evicted from the cache
-    ///     and rejected (as <see cref="UnknownTenantIdException" />) until re-enabled. That is immediate
-    ///     on this node. Another node finds out the next time it reads the master table, which a projection
-    ///     coordinator does on every leadership cycle: see <see cref="BuildDatabasesAsync" />.
-    /// </summary>
-    public async Task DisableTenantAsync(string tenantId, CancellationToken token = default)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
-
-        await EnsureMasterTableAsync(token).ConfigureAwait(false);
-        await ExecuteByTenantAsync(
-            $"UPDATE {QualifiedTableName} SET is_disabled = 1 WHERE tenant_id = @id;", tenantId, token)
-            .ConfigureAwait(false);
-
-        _cache.TryRemove(tenantId, out _);
-    }
-
-    /// <summary>
-    ///     The tenant ids that are currently disabled.
-    /// </summary>
-    public async Task<IReadOnlyList<string>> AllDisabledAsync(CancellationToken token = default)
-    {
-        await EnsureMasterTableAsync(token).ConfigureAwait(false);
-
-        return await _resilience.ExecuteAsync(static async (state, ct) =>
-        {
-            var (connectionString, table) = state;
-            var list = new List<string>();
-
-            await using var conn = new SqlConnection(connectionString);
-            await conn.OpenAsync(ct).ConfigureAwait(false);
-
-            await using var cmd = conn.CreateCommand();
-            cmd.CommandText = $"SELECT tenant_id FROM {table} WHERE is_disabled = 1;";
-
-            await using var reader = (await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false));
-            while (await reader.ReadAsync(ct).ConfigureAwait(false))
-            {
-                list.Add(reader.GetString(0));
-            }
-
-            return (IReadOnlyList<string>)list;
-        }, (_masterConnectionString, QualifiedTableName), token).ConfigureAwait(false);
-    }
-
-    #region IDynamicTenantSource<string>
-
-    // #377: the store-agnostic dynamic-tenancy surface. Every one of these is a thin adapter over the
-    // Polecat-native methods above, which carry an optional CancellationToken and therefore cannot
-    // implement the token-less interface signatures implicitly. Implemented explicitly so the concrete
-    // MasterTableTenancy API stays the (cancellable) one, with no overload ambiguity for callers.
-
-    /// <summary>
-    ///     Resolve the connection string for a tenant. Throws <see cref="UnknownTenantIdException" />
-    ///     for an unknown tenant and the more specific <see cref="DisabledTenantException" /> for a
-    ///     registered-but-disabled one, matching the behavior of opening a session for it.
-    /// </summary>
-    async ValueTask<string> ITenantedSource<string>.FindAsync(string tenantId)
-    {
-        var lookup = await LookupTenantAsync(tenantId).ConfigureAwait(false);
-        if (string.IsNullOrEmpty(lookup.ConnectionString))
-        {
-            throw RefusalFor(tenantId, lookup.Status);
-        }
-
-        return lookup.ConnectionString;
-    }
-
-    /// <summary>
-    ///     Re-read the master table, discarding cached entries for tenants that have since been
-    ///     removed or disabled.
-    /// </summary>
-    async Task ITenantedSource<string>.RefreshAsync()
-    {
-        await BuildDatabasesAsync().ConfigureAwait(false);
-    }
-
-    /// <summary>
-    ///     The identifiers of the tenant databases currently known to this tenancy. Deliberately the
-    ///     database identifiers rather than the raw connection strings so credentials never reach an
-    ///     admin dashboard; mirrors Marten, which returns <c>MartenDatabase.Identifier</c> here.
-    /// </summary>
-    IReadOnlyList<string> ITenantedSource<string>.AllActive()
-    {
-        return _cache.Values.Select(x => x.Database.Identifier).Distinct().ToList();
-    }
-
-    IReadOnlyList<Assignment<string>> ITenantedSource<string>.AllActiveByTenant()
-    {
-        return _cache.Keys.Select(tenantId => new Assignment<string>(tenantId, tenantId)).ToList();
-    }
-
-    Task IDynamicTenantSource<string>.AddTenantAsync(string tenantId, string connectionValue)
-    {
-        return AddDatabaseRecordAsync(tenantId, connectionValue);
-    }
-
-    // NOTE: the auto-assign overload -- Task<string> AddTenantAsync(string, CancellationToken) -- is
-    // deliberately left on its default interface implementation, which throws NotSupportedException.
-    // That is the correct answer for database-per-tenant: there is no pool for Polecat to assign from,
-    // so the caller must supply a connection string. CritterWatch treats an empty connection value as
-    // "auto-assign" and skips sources that throw.
-
-    Task IDynamicTenantSource<string>.DisableTenantAsync(string tenantId)
-    {
-        return DisableTenantAsync(tenantId, CancellationToken.None);
-    }
-
-    Task IDynamicTenantSource<string>.EnableTenantAsync(string tenantId)
-    {
-        return EnableTenantAsync(tenantId, CancellationToken.None);
-    }
-
-    Task IDynamicTenantSource<string>.RemoveTenantAsync(string tenantId)
-    {
-        return DeleteDatabaseRecordAsync(tenantId, CancellationToken.None);
-    }
-
-    Task<IReadOnlyList<string>> IDynamicTenantSource<string>.AllDisabledAsync()
-    {
-        return AllDisabledAsync(CancellationToken.None);
-    }
-
-    #endregion
-
-    private enum TenantLookupStatus
-    {
-        /// <summary>No row in the registry for this tenant id.</summary>
-        Unknown,
-
-        /// <summary>A row exists and <c>is_disabled = 1</c>.</summary>
-        Disabled,
-
-        /// <summary>A row exists and is routable.</summary>
-        Enabled
-    }
-
-    /// <summary>
-    ///     The registry row for a tenant, or the reason there is nothing to route to.
+    ///     Create the master tenant-registry table on first use, through <see cref="TenantsTable" />.
     /// </summary>
     /// <remarks>
-    ///     #655: this used to be a <c>string?</c> from a query filtered on <c>is_disabled = 0</c>,
-    ///     which collapsed "no such tenant" and "that tenant is switched off" into the same null. The
-    ///     filter moves out of the SQL and into the caller so the refusal can say which it was.
-    ///     <see cref="ConnectionString" /> stays null unless the tenant is routable, so a caller that
-    ///     only null-checks cannot accidentally route to a disabled tenant.
+    ///     <para>
+    ///         Every piece of DDL in Polecat goes through Weasel, so this replaces the base's guarded
+    ///         CREATE string with a migration of the table.
+    ///     </para>
+    ///     <para>
+    ///         #883: under the migration lock, because the semaphore below covers one tenancy in one
+    ///         process, and two replicas starting together both found the table missing and the loser
+    ///         failed on the CREATE. Nothing has to worry about a transaction here: this runs as a session
+    ///         is being opened, and a process has finished it before its first session exists.
+    ///     </para>
+    ///     <para>
+    ///         #267: <see cref="AutoCreate.None" /> means the control table is the operator's to provision;
+    ///         no DDL is emitted on what may be a least-privilege connection, and a read against a missing
+    ///         table surfaces as a clean "invalid object" error.
+    ///     </para>
     /// </remarks>
-    private readonly record struct TenantLookup(TenantLookupStatus Status, string? ConnectionString);
-
-    private async Task<TenantLookup> LookupTenantAsync(string tenantId, CancellationToken token = default)
-    {
-        await EnsureMasterTableAsync(token).ConfigureAwait(false);
-
-        return await _resilience.ExecuteAsync(static async (state, ct) =>
-        {
-            var (connectionString, table, tenantId) = state;
-            await using var conn = new SqlConnection(connectionString);
-            await conn.OpenAsync(ct).ConfigureAwait(false);
-
-            await using var cmd = conn.CreateCommand();
-            cmd.CommandText =
-                $"SELECT connection_string, is_disabled FROM {table} WHERE tenant_id = @id;";
-            cmd.Parameters.AddWithValue("@id", tenantId);
-
-            await using var reader = (await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false));
-            if (!await reader.ReadAsync(ct).ConfigureAwait(false))
-            {
-                return new TenantLookup(TenantLookupStatus.Unknown, null);
-            }
-
-            if (reader.GetBoolean(1))
-            {
-                return new TenantLookup(TenantLookupStatus.Disabled, null);
-            }
-
-            return new TenantLookup(TenantLookupStatus.Enabled, reader.GetString(0));
-        }, (_masterConnectionString, QualifiedTableName, tenantId), token).ConfigureAwait(false);
-    }
-
-    private async Task ExecuteByTenantAsync(string sql, string tenantId, CancellationToken token)
-    {
-        await _resilience.ExecuteAsync(static async (state, ct) =>
-        {
-            var (connectionString, sql, tenantId) = state;
-            await using var conn = new SqlConnection(connectionString);
-            await conn.OpenAsync(ct).ConfigureAwait(false);
-
-            await using var cmd = conn.CreateCommand();
-            cmd.CommandText = sql;
-            cmd.Parameters.AddWithValue("@id", tenantId);
-            await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
-        }, (_masterConnectionString, sql, tenantId), token).ConfigureAwait(false);
-    }
-
-    /// <summary>
-    ///     Create the master tenant-registry table on first use. This is a one-time control-plane
-    ///     DDL operation (same documented exception as <c>DocumentTableEnsurer</c>) and is wrapped in
-    ///     the resilience pipeline.
-    /// </summary>
-    /// <remarks>
-    ///     #883: under the migration lock, because the semaphore below covers one tenancy in one process,
-    ///     and two replicas starting together both found the table missing and the loser failed on the
-    ///     CREATE. Nothing has to worry about a transaction here: this runs as a session is being opened,
-    ///     and a process has finished it before its first session exists.
-    /// </remarks>
-    private async Task EnsureMasterTableAsync(CancellationToken token)
+    protected override async Task ProvisionControlTableAsync(CancellationToken token)
     {
         if (_masterTableEnsured) return;
 
-        // #267: honor AutoCreate.None — when the user manages the schema, the pc_tenants control
-        // table is theirs to provision; never emit DDL at runtime on a least-privilege connection.
-        // A later read against a missing table surfaces as a clean "invalid object" error.
-        if (_options.AutoCreateSchemaObjects == AutoCreate.None)
+        if (EffectiveAutoCreate == AutoCreate.None)
         {
             _masterTableEnsured = true;
             return;
         }
 
-        await _ensureLock.WaitAsync(token).ConfigureAwait(false);
+        await _provisioning.WaitAsync(token).ConfigureAwait(false);
         try
         {
             if (_masterTableEnsured) return;
@@ -545,15 +252,13 @@ public class MasterTableTenancy : ITenancy, IDynamicTenantSource<string>
                     .ConfigureAwait(false);
                 await new SqlServerMigrator().ApplyAllAsync(conn, migration, AutoCreate.CreateOrUpdate, ct: ct)
                     .ConfigureAwait(false);
-            }, (_masterConnectionString, _options, _schemaName), token).ConfigureAwait(false);
+            }, (Options.ConnectionString!, _options, Options.SchemaName), token).ConfigureAwait(false);
 
             _masterTableEnsured = true;
         }
         finally
         {
-            _ensureLock.Release();
+            _provisioning.Release();
         }
     }
-
-    private readonly record struct Entry(ConnectionFactory Factory, PolecatDatabase Database);
 }
