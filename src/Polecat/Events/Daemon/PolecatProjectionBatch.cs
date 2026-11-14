@@ -11,6 +11,7 @@ using Polecat.Internal.Sessions;
 using Polecat.Services;
 using Polecat.Storage;
 using Weasel.SqlServer;
+using Weasel.Storage;
 
 namespace Polecat.Events.Daemon;
 
@@ -309,7 +310,11 @@ internal class PolecatProjectionBatch : ProjectionBatchBase<IDocumentSession>,
                             try
                             {
                                 var exceptions = new List<Exception>();
-                                await OperationResultSets.ApplyAsync(reader, ops, exceptions, ct).ConfigureAwait(false);
+                                // Weasel's walk (#807, weasel#810), but not its ExecuteAsync: that throws a single
+                                // collected failure as itself, and JasperFx's GroupedProjectionExecution
+                                // decides what a failed batch means by catching AggregateException.
+                                await OperationBatchExecutor.PostprocessAsync(reader, ops, exceptions,
+                                    OperationBatchOptions.Default, ct).ConfigureAwait(false);
 
                                 if (exceptions.Count > 0)
                                 {

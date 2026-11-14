@@ -12,7 +12,7 @@ namespace Polecat.Tests.Operations;
 
 /// <summary>
 ///     polecat#442 (the marten#5210 class) and #831. These pin the facts
-///     <c>OperationResultSets.ApplyAsync</c>, the one walk over a batch's result sets, is built on.
+///     <c>OperationBatchExecutor</c>'s walk, the one walk over a batch's result sets, is built on.
 ///     <para>
 ///         <b>A batch does not hold one result set per operation.</b> SQL Server's batch reader surfaces
 ///         only <em>real</em> result sets. A pure-DML command contributes none at all, however many

@@ -8,7 +8,7 @@ using Shouldly;
 namespace Polecat.Tests.Operations;
 
 /// <summary>
-///     #831, the twin of marten#5743. Before <c>OperationResultSets</c>, the flush called
+///     #831, the twin of marten#5743. Before the shared result-set walk (now Weasel's <c>OperationBatchExecutor</c>), the flush called
 ///     <c>NextResultAsync</c> once per operation, while a batch only holds a result set for the
 ///     operations that really return one. A no-result operation queued ahead of a versioned write
 ///     stepped the reader past that write's result set, so the write read nothing, which is how it

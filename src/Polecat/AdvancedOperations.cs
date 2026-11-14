@@ -176,7 +176,8 @@ public class AdvancedOperations
                 var exceptions = new List<Exception>();
                 await using (var reader = (await batch.ExecuteReaderAsync(ct).ConfigureAwait(false)))
                 {
-                    await Internal.Operations.OperationResultSets.ApplyAsync(reader, operations, exceptions, ct).ConfigureAwait(false);
+                    await Weasel.Storage.OperationBatchExecutor.PostprocessAsync(reader, operations, exceptions,
+                        Weasel.Storage.OperationBatchOptions.Default, ct).ConfigureAwait(false);
                 }
 
                 // The insert-only operation raises DocumentAlreadyExistsException when the row

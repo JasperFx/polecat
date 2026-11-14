@@ -19,7 +19,7 @@ namespace Polecat.Internal.Operations;
 ///     Raised events reach listeners through the change set's stream collection instead.
 ///     </para>
 /// </summary>
-internal sealed class SessionBoundOperationAdapter : IStorageOperation, IStorageOperationAdapter,
+internal sealed class SessionBoundOperationAdapter : IStorageOperation, IStorageOperationWrapper,
     IExceptionTransform
 {
     private readonly Weasel.Storage.IStorageOperation _inner;
@@ -31,7 +31,7 @@ internal sealed class SessionBoundOperationAdapter : IStorageOperation, IStorage
         _session = session;
     }
 
-    Weasel.Storage.IStorageOperation IStorageOperationAdapter.Inner => _inner;
+    Weasel.Storage.IStorageOperation IStorageOperationWrapper.Inner => _inner;
 
     public Type DocumentType => _inner.DocumentType;
 

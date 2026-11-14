@@ -80,7 +80,7 @@ internal class NaturalKeyUpsertOperation : Polecat.Internal.IStorageOperation, I
         // deliberately. It was first written that way because the flush loop used to advance the
         // reader once per queued operation, and a reading operation landed on a neighbour's result
         // set and reported a conflict for a key that never had one (#831 is what that same walk went
-        // on to do to every versioned document write). OperationResultSets has fixed the walk, but
+        // on to do to every versioned document write). Weasel's OperationBatchExecutor walk (#831) has fixed it, but
         // the guard is still the better shape: @@ROWCOUNT needs no result set at all, it is read in
         // the same batch that set it, and it keeps this operation a NoDataReturnedCall.
         var guard =
