@@ -135,7 +135,7 @@ internal sealed class PolecatQuickAppendEventsOperation
     ///     <para>
     ///         <b>A slice is a whole operation rather than a second command inside this one</b>,
     ///         because two things depend on there being exactly one command per operation.
-    ///         <see cref="Polecat.Internal.Operations.OperationResultSets" /> gives each operation one
+    ///         <see cref="Weasel.Storage.OperationBatchExecutor" /> gives each operation one
     ///         result set, and each slice has one, the trailing <c>SELECT</c> of its own
     ///         <c>@pc_appended_seqs</c>, which is scoped to its command. And
     ///         <see cref="Polecat.Internal.BatchExceptionTransforms" /> finds the operation behind a

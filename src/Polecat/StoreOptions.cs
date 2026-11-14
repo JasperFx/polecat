@@ -534,6 +534,20 @@ public class StoreOptions
     /// </example>
     public JasperFx.Core.Exceptions.ExceptionTransforms ExceptionTransforms { get; } = new();
 
+    private Weasel.Storage.OperationBatchOptions? _operationBatchOptions;
+
+    /// <summary>
+    ///     #807: how a session's flush runs a batch through Weasel's <c>OperationBatchExecutor</c> — the
+    ///     result-set walk that skips <c>NoDataReturnedCall</c> operations, the drain, the surplus guard,
+    ///     and <see cref="ExceptionTransforms" /> through the listener. Built once; the listener reads
+    ///     <see cref="ExceptionTransforms" /> live, so transforms registered later still apply.
+    /// </summary>
+    internal Weasel.Storage.OperationBatchOptions OperationBatchOptions =>
+        _operationBatchOptions ??= new Weasel.Storage.OperationBatchOptions
+        {
+            Listener = new Polecat.Internal.Operations.PolecatOperationBatchListener(ExceptionTransforms)
+        };
+
     /// <summary>
     ///     Custom projection storage providers registered by extensions (e.g., EF Core).
     ///     Keyed by document type, returns a factory that creates IProjectionStorage instances.

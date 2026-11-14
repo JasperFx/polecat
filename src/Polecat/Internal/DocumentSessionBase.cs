@@ -1072,43 +1072,23 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
 
                 try
                 {
-                    var exceptions = new List<Exception>();
-                    await using var reader = (await ExecuteReaderAsync(batch, token).ConfigureAwait(false));
-                    await OperationResultSets.ApplyAsync(reader, operations, exceptions, token).ConfigureAwait(false);
-
-                    if (exceptions.Count == 1)
-                    {
-                        System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(exceptions[0]).Throw();
-                    }
-
-                    if (exceptions.Count > 0)
-                    {
-                        throw new AggregateException(exceptions);
-                    }
+                    // #807 (weasel#810): Weasel's executor walks the result sets, drains the reader so a
+                    // later statement's error is not swallowed (#273 E2b), refuses surplus result sets
+                    // (#831), and gives the operation whose command failed the first chance to name the
+                    // error (#549, #781), then the application's transforms (#849) through the listener.
+                    // That order matters for the 2627 below for the same reason it does in Marten: a
+                    // transform that claims an error Polecat translates replaces that translation.
+                    await Weasel.Storage.OperationBatchExecutor.ExecuteAsync(batch, operations,
+                        (b, t) => ExecuteReaderAsync((SqlBatch)b, t), Options.OperationBatchOptions, token)
+                        .ConfigureAwait(false);
                 }
-                catch (SqlException ex)
+                catch (SqlException ex) when (ex.Number == 2627
+                    && operations.FirstOrDefault(op => op.Role() == OperationRole.Insert) is not null)
                 {
-                    // #549: give a queued operation the chance to name its own SQL error, exactly as
-                    // the daemon's batch flush does (PolecatProjectionBatch.ExecuteAsync, since #916).
-                    //
-                    // #849: this is also where the application's transforms are asked, so it comes
-                    // before the 2627 below for the same reason it does in Marten: one that claims an
-                    // error Polecat translates replaces that translation.
-                    if (BatchExceptionTransforms.TryTransform(ex, batch, operations, Options.ExceptionTransforms,
-                            out var transformed))
-                    {
-                        System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(transformed!).Throw();
-                    }
-
                     // Map duplicate key violation to DocumentAlreadyExistsException
-                    if (ex.Number == 2627
-                        && operations.FirstOrDefault(op => op.Role() == OperationRole.Insert) is { } insertOp)
-                    {
-                        var documentId = insertOp is IStorageOperation bespoke ? bespoke.DocumentId : null;
-                        throw new DocumentAlreadyExistsException(insertOp.DocumentType, documentId!);
-                    }
-
-                    throw;
+                    var insertOp = operations.First(op => op.Role() == OperationRole.Insert);
+                    var documentId = insertOp is IStorageOperation bespoke ? bespoke.DocumentId : null;
+                    throw new DocumentAlreadyExistsException(insertOp.DocumentType, documentId!);
                 }
             }
 
@@ -2048,32 +2028,9 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
 
         builder.Compile();
 
-        var exceptions = new List<Exception>();
-        try
-        {
-            await using var reader = (await ExecuteReaderAsync(batch, token).ConfigureAwait(false));
-            await OperationResultSets.ApplyAsync(reader, operations, exceptions, token).ConfigureAwait(false);
-        }
-        catch (SqlException ex)
-        {
-            if (BatchExceptionTransforms.TryTransform(ex, batch, operations, Options.ExceptionTransforms,
-                    out var transformed))
-            {
-                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(transformed!).Throw();
-            }
-
-            throw;
-        }
-
-        if (exceptions.Count == 1)
-        {
-            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(exceptions[0]).Throw();
-        }
-
-        if (exceptions.Count > 0)
-        {
-            throw new AggregateException(exceptions);
-        }
+        // #807: the same executor and options as the document flush above.
+        await Weasel.Storage.OperationBatchExecutor.ExecuteAsync(batch, operations,
+            (b, t) => ExecuteReaderAsync((SqlBatch)b, t), Options.OperationBatchOptions, token).ConfigureAwait(false);
     }
 
     private async Task AssertStreamVersionAsync(StreamAction stream, CancellationToken token)
