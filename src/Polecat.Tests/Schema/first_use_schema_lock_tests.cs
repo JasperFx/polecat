@@ -872,7 +872,7 @@ public class first_use_schema_lock_tests
 
         await AssertWaitsThenCarriesOnAsync(holder, () => tenancy.AllDisabledAsync(token));
 
-        (await TableExistsAsync(schema, MasterTableTenancy.TableName, token)).ShouldBeTrue();
+        (await TableExistsAsync(schema, tenancy.TableName, token)).ShouldBeTrue();
     }
 
     [Fact]
