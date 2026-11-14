@@ -1,6 +1,3 @@
-using System.Data.Common;
-using JasperFx;
-using Weasel.Core;
 using Weasel.Core.SqlGeneration;
 using Weasel.Storage;
 using Polecat.Internal;
@@ -8,206 +5,47 @@ using Polecat.Internal;
 namespace Polecat.Storage.ClosedShape;
 
 /// <summary>
-///     Closed-shape storage for a registered subclass in a document hierarchy — the Polecat
-///     analog of Marten's <c>SubClassDocumentStorage</c> (#273 phase E2e). Every operation
-///     delegates to the parent (hierarchy root) storage, which owns the table, the descriptor,
-///     and the hierarchical selectors; loads downcast the materialized root-typed document to
-///     the subclass (a row holding a different subclass yields null / is filtered out, matching
-///     Marten's semantics). One wrapper instance exists per closed-shape flavor, wrapping the
-///     parent provider's corresponding flavor.
+///     Storage for a registered sub-class of a document hierarchy (#273 E2e). Since #959 the forwarding to the
+///     hierarchy root's storage is Weasel's <see cref="ClosedShapeSubClassDocumentStorage{TDoc,TRoot,TId}" />
+///     (weasel#811), the wrapper Marten, Polecat and Fisher each used to write; the <c>doc_type</c>
+///     discriminator is <see cref="PolecatSubClassRules{T,TRoot,TId}" />. What stays here are the four
+///     Polecat-only seams, which the root implements and a sub-class narrows to its own rows.
 /// </summary>
 internal sealed class SubClassPolecatStorage<T, TRoot, TId>
-    : IDocumentStorage<T, TId>, IPolecatObjectStorage<T>, IPolecatBatchLoadStorage<T>,
+    : ClosedShapeSubClassDocumentStorage<T, TRoot, TId>, IPolecatObjectStorage<T>, IPolecatBatchLoadStorage<T>,
         IPolecatBulkVersionCheckStorage<T>, IPolecatDeletionStorage
     where T : notnull, TRoot
     where TRoot : notnull
     where TId : notnull
 {
-    private readonly IDocumentStorage<TRoot, TId> _parent;
-    private readonly DocumentMapping _mapping;
     private readonly string _alias;
 
     public SubClassPolecatStorage(IDocumentStorage<TRoot, TId> parent, DocumentMapping mapping)
+        : this(parent, new PolecatSubClassRules<T, TRoot, TId>(mapping))
     {
-        _parent = parent;
-        _mapping = mapping;
-        _alias = mapping.AliasFor(typeof(T));
     }
 
-    private IPolecatObjectStorage<TRoot> ParentBridge => (IPolecatObjectStorage<TRoot>)_parent;
-
-    // ---- identity ----
-
-    public Type SourceType => typeof(TRoot);
-    public Type IdType => typeof(TId);
-    public Type DocumentType => typeof(T);
-    public Type SelectedType => typeof(T);
-
-    public TId Identity(T document) => _parent.Identity(document);
-
-    public object IdentityFor(T document) => _parent.IdentityFor(document);
-
-    public TId AssignIdentity(T document, string tenantId, IStorageDatabase database)
-        => _parent.AssignIdentity(document, tenantId, database);
-
-    public void SetIdentity(T document, TId identity) => _parent.SetIdentity(document, identity);
-
-    public object RawIdentityValue(object id) => _parent.RawIdentityValue(id);
-
-    public object RawIdentityValue(TId id) => _parent.RawIdentityValue(id);
-
-    public void SetIdentityFromString(T document, string identityString)
-        => _parent.SetIdentityFromString(document, identityString);
-
-    public void SetIdentityFromGuid(T document, Guid identityGuid)
-        => _parent.SetIdentityFromGuid(document, identityGuid);
-
-    // ---- storage facts (all the parent's — the subclass shares the root's table + modes) ----
-
-    public bool UseOptimisticConcurrency => _parent.UseOptimisticConcurrency;
-    public bool UseNumericRevisions => _parent.UseNumericRevisions;
-    public TenancyStyle TenancyStyle => _parent.TenancyStyle;
-    public DbObjectName TableName => _parent.TableName;
-    public IOperationFragment DeleteFragment => _parent.DeleteFragment;
-    public IOperationFragment HardDeleteFragment => _parent.HardDeleteFragment;
-    public IOperationFragment? UndeleteFragment => ((IPolecatDeletionStorage)_parent).UndeleteFragment;
-    public bool IsConjoined => ((IPolecatDeletionStorage)_parent).IsConjoined;
-    public bool IsSoftDeleted => ((IPolecatDeletionStorage)_parent).IsSoftDeleted;
-    public IReadOnlyList<IDuplicatedField> DuplicatedFields => _parent.DuplicatedFields;
-
-    // ---- select clause ----
-
-    public string FromObject => _mapping.QualifiedTableName;
-    public string[] SelectFields() => _parent.SelectFields();
-
-    public void Apply(Weasel.Core.ICommandBuilder builder) => _parent.Apply(builder);
-
-    public ISelector BuildSelector(IStorageSession session)
-        => new CastingSelector<T, TRoot>((ISelector<TRoot>)_parent.BuildSelector(session));
-
-    public ISqlFragment FilterDocuments(ISqlFragment query, IStorageSession session)
-        => new AllOfFilter(new[] { _parent.FilterDocuments(query, session), DocTypeFilter() });
-
-    public ISqlFragment? DefaultWhereFragment()
+    private SubClassPolecatStorage(IDocumentStorage<TRoot, TId> parent, PolecatSubClassRules<T, TRoot, TId> rules)
+        : base(parent, rules)
     {
-        var docType = DocTypeFilter();
-        return _parent.DefaultWhereFragment() is { } parentWhere
-            ? new AllOfFilter(new[] { parentWhere, docType })
-            : docType;
+        _alias = rules.Alias;
     }
 
-    private HardCodedFilter DocTypeFilter()
-        => new($"d.doc_type = {SqlEscaping.Literal(_alias)}");
+    private IPolecatObjectStorage<TRoot> ParentBridge => (IPolecatObjectStorage<TRoot>)Root;
+    private IPolecatDeletionStorage ParentDeletion => (IPolecatDeletionStorage)Root;
 
-    public ISqlFragment ByIdFilter(TId id) => _parent.ByIdFilter(id);
+    // ---- IPolecatDeletionStorage: the root's table, so the root's fragments ----
 
-    // ---- load paths (delegate to the parent's hierarchical selectors, downcast) ----
-
-    public DbCommand BuildLoadCommand(TId id, string tenantId) => _parent.BuildLoadCommand(id, tenantId);
-
-    public DbCommand BuildLoadManyCommand(TId[] ids, string tenantId) => _parent.BuildLoadManyCommand(ids, tenantId);
-
-    public async Task<T?> LoadAsync(TId id, IStorageSession session, CancellationToken token)
-    {
-        var doc = await _parent.LoadAsync(id, session, token).ConfigureAwait(false);
-        return doc is T subclass ? subclass : default;
-    }
-
-    public async Task<IReadOnlyList<T>> LoadManyAsync(TId[] ids, IStorageSession session, CancellationToken token)
-        => (await _parent.LoadManyAsync(ids, session, token).ConfigureAwait(false)).OfType<T>().ToList();
-
-    public async Task<T?> LoadProjectedAsync(TId id, IStorageDatabase database, string tenantId,
-        CancellationToken token)
-    {
-        var doc = await _parent.LoadProjectedAsync(id, database, tenantId, token).ConfigureAwait(false);
-        return doc is T subclass ? subclass : default;
-    }
-
-    public async Task<IReadOnlyList<T>> LoadManyProjectedAsync(TId[] ids, IStorageDatabase database, string tenantId,
-        CancellationToken token)
-        => (await _parent.LoadManyProjectedAsync(ids, database, tenantId, token).ConfigureAwait(false))
-            .OfType<T>().ToList();
-
-    // ---- session bookkeeping ----
-
-    public void Store(IStorageSession session, T document) => _parent.Store(session, document);
-
-    public void Store(IStorageSession session, T document, Guid? version) => _parent.Store(session, document, version);
-
-    public void Store(IStorageSession session, T document, long revision) => _parent.Store(session, document, revision);
-
-    public Guid? VersionFor(T document, IStorageSession session) => _parent.VersionFor(document, session);
-
-    // #720: the hierarchy root owns the mapping, so it owns the mapped version/revision member too.
-    // Without these the default interface implementation answers null and a subclass write is the
-    // one shape that silently loses its concurrency guard.
-    public Guid? MappedVersionFor(T document) => _parent.MappedVersionFor(document);
-
-    public long? MappedRevisionFor(T document) => _parent.MappedRevisionFor(document);
-
-    public Guid? MappedVersionForObject(object document) => ParentBridge.MappedVersionForObject(document);
-
-    public long? MappedRevisionForObject(object document) => ParentBridge.MappedRevisionForObject(document);
-
-    public bool TryApplyMappedVersion(T document, Guid version)
-        => _parent.TryApplyMappedVersion(document, version);
-
-    public bool TryApplyMappedRevision(T document, long revision)
-        => _parent.TryApplyMappedRevision(document, revision);
-
-    public void Eject(IStorageSession session, T document) => _parent.Eject(session, document);
-
-    public void EjectById(IStorageSession session, object id) => _parent.EjectById(session, id);
-
-    public void RemoveDirtyTracker(IStorageSession session, object id) => _parent.RemoveDirtyTracker(session, id);
-
-    // ---- write operations ----
-
-    public Weasel.Storage.IStorageOperation Insert(T document, IStorageSession session, string tenantId)
-        => _parent.Insert(document, session, tenantId);
-
-    public Weasel.Storage.IStorageOperation Update(T document, IStorageSession session, string tenantId)
-        => _parent.Update(document, session, tenantId);
-
-    public Weasel.Storage.IStorageOperation Upsert(T document, IStorageSession session, string tenantId)
-        => _parent.Upsert(document, session, tenantId);
-
-    public Weasel.Storage.IStorageOperation Overwrite(T document, IStorageSession session, string tenantId)
-        => _parent.Overwrite(document, session, tenantId);
-
-    public Weasel.Storage.IStorageOperation OverwriteProjected(T document, string tenantId)
-        => _parent.OverwriteProjected(document, tenantId);
-
-    public Weasel.Storage.IStorageOperation UpsertProjected(T document, string tenantId)
-        => _parent.UpsertProjected(document, tenantId);
-
-    public Weasel.Storage.IStorageOperation InsertProjected(T document, string tenantId)
-        => _parent.InsertProjected(document, tenantId);
-
-    public Weasel.Storage.IStorageOperation UpdateProjected(T document, string tenantId)
-        => _parent.UpdateProjected(document, tenantId);
-
-    // ---- deletions ----
-
-    public IDeletion DeleteForDocument(T document, string tenantId) => _parent.DeleteForDocument(document, tenantId);
-
-    public IDeletion HardDeleteForDocument(T document, string tenantId)
-        => _parent.HardDeleteForDocument(document, tenantId);
-
-    public IDeletion DeleteForId(TId id, string tenantId) => _parent.DeleteForId(id, tenantId);
-
-    public IDeletion HardDeleteForId(TId id, string tenantId) => _parent.HardDeleteForId(id, tenantId);
-
-    public Task TruncateDocumentStorageAsync(IStorageDatabase database, CancellationToken ct = default)
-        => database.RunSqlAsync(
-            $"DELETE FROM {_mapping.QualifiedTableName} WHERE doc_type = {SqlEscaping.Literal(_alias)}", ct);
+    public IOperationFragment? UndeleteFragment => ParentDeletion.UndeleteFragment;
+    public bool IsConjoined => ParentDeletion.IsConjoined;
+    public bool IsSoftDeleted => ParentDeletion.IsSoftDeleted;
 
     // ---- batched-query read seam (#273 doc-side convergence) ----
     // Delegate the SELECT + id/tenant/soft-delete filters to the root storage, then constrain
     // to this subclass with a doc_type discriminator so the casting selector cannot see a row
     // of a sibling subclass.
 
-    private IPolecatBatchLoadStorage<TRoot> BatchParent => (IPolecatBatchLoadStorage<TRoot>)_parent;
+    private IPolecatBatchLoadStorage<TRoot> BatchParent => (IPolecatBatchLoadStorage<TRoot>)Root;
 
     public void WriteLoadByIdSql(Weasel.SqlServer.ICommandBuilder builder, object id, string tenantId)
     {
@@ -234,11 +72,11 @@ internal sealed class SubClassPolecatStorage<T, TRoot, TId>
     // upserts for a subclass delegate straight through with the subclass instance.
     public void ConfigureVersionCheckedUpsert(Weasel.SqlServer.ICommandBuilder builder, T document,
         long expectedVersion, string tenantId)
-        => ((IPolecatBulkVersionCheckStorage<TRoot>)_parent)
+        => ((IPolecatBulkVersionCheckStorage<TRoot>)Root)
             .ConfigureVersionCheckedUpsert(builder, document, expectedVersion, tenantId);
 
     public object BulkRawId(T document)
-        => ((IPolecatBulkVersionCheckStorage<TRoot>)_parent).BulkRawId(document);
+        => ((IPolecatBulkVersionCheckStorage<TRoot>)Root).BulkRawId(document);
 
     // ---- IPolecatObjectStorage bridge ----
 
@@ -272,6 +110,9 @@ internal sealed class SubClassPolecatStorage<T, TRoot, TId>
     public void StoreObject(IStorageSession session, object document, Guid? version)
         => ParentBridge.StoreObject(session, document, version);
 
+    public Guid? MappedVersionForObject(object document) => ParentBridge.MappedVersionForObject(document);
+    public long? MappedRevisionForObject(object document) => ParentBridge.MappedRevisionForObject(document);
+
     public Weasel.Storage.IStorageOperation UpsertObject(object document, IStorageSession session, string tenantId)
         => ParentBridge.UpsertObject(document, session, tenantId);
 
@@ -289,19 +130,40 @@ internal sealed class SubClassPolecatStorage<T, TRoot, TId>
 }
 
 /// <summary>
-///     Downcasts a root-typed selector's rows to the subclass type. The LINQ subclass path
-///     always constrains rows with a <c>doc_type</c> filter, so the cast cannot fail there.
+///     #959: the <c>doc_type</c> discriminator for one sub-class of a hierarchy, as Weasel's
+///     <see cref="IClosedShapeSubClassRules{TDoc,TRoot,TId}" />.
 /// </summary>
-internal sealed class CastingSelector<T, TRoot> : ISelector<T>
-    where T : TRoot
+/// <remarks>
+///     <see cref="FilterDocuments" /> and <see cref="DefaultWhereFragment" /> are overridden rather than
+///     left on Weasel's defaults so the filter keeps Polecat's <see cref="AllOfFilter" /> shape, which the
+///     LINQ layer walks as an <c>ICompoundFragment</c>. <see cref="TruncateSql" /> deletes only this
+///     sub-class's rows; Weasel's default would empty the whole hierarchy's table.
+/// </remarks>
+internal sealed class PolecatSubClassRules<T, TRoot, TId> : IClosedShapeSubClassRules<T, TRoot, TId>
+    where T : notnull, TRoot
     where TRoot : notnull
+    where TId : notnull
 {
-    private readonly ISelector<TRoot> _inner;
+    private readonly string _qualifiedTableName;
 
-    public CastingSelector(ISelector<TRoot> inner) => _inner = inner;
+    public PolecatSubClassRules(DocumentMapping rootMapping)
+    {
+        Alias = rootMapping.AliasFor(typeof(T));
+        _qualifiedTableName = rootMapping.QualifiedTableName;
+        DocumentTypeFilter = new HardCodedFilter($"d.doc_type = {SqlEscaping.Literal(Alias)}");
+    }
 
-    public T Resolve(DbDataReader reader) => (T)_inner.Resolve(reader)!;
+    public string Alias { get; }
 
-    public async Task<T> ResolveAsync(DbDataReader reader, CancellationToken token)
-        => (T)(await _inner.ResolveAsync(reader, token).ConfigureAwait(false))!;
+    public ISqlFragment DocumentTypeFilter { get; }
+
+    public ISqlFragment FilterDocuments(IDocumentStorage<TRoot, TId> root, ISqlFragment query, IStorageSession session)
+        => new AllOfFilter(new[] { root.FilterDocuments(query, session), DocumentTypeFilter });
+
+    public ISqlFragment? DefaultWhereFragment(IDocumentStorage<TRoot, TId> root)
+        => root.DefaultWhereFragment() is { } rootWhere
+            ? new AllOfFilter(new[] { rootWhere, DocumentTypeFilter })
+            : DocumentTypeFilter;
+
+    public string? TruncateSql => $"DELETE FROM {_qualifiedTableName} WHERE doc_type = {SqlEscaping.Literal(Alias)}";
 }
