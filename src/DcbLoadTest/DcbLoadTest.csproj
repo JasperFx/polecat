@@ -2,10 +2,16 @@
 
     <PropertyGroup>
         <OutputType>Exe</OutputType>
+        <!-- One TFM: every number in a results table must come from a single runtime -->
+        <TargetFrameworks>net10.0</TargetFrameworks>
+        <IsPackable>false</IsPackable>
     </PropertyGroup>
 
     <ItemGroup>
         <ProjectReference Include="..\Polecat\Polecat.csproj" />
+        <!-- The boundary aggregates' Apply methods are dispatched by the compile-time generator;
+             without it FetchForWritingByTags throws InvalidProjectionException at runtime -->
+        <PackageReference Include="JasperFx.Events.SourceGenerator" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
     </ItemGroup>
 
 </Project>

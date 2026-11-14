@@ -1,169 +1,75 @@
-using System.Diagnostics;
-using JasperFx;
-using JasperFx.Events;
-using Microsoft.Data.SqlClient;
-using Polecat;
+using DcbLoadTest;
 
-// -- Configuration ---------------------------------------------------------------
-const int SEED_STREAMS = 1000;
-const int SEED_EVENTS_PER_STREAM = 10;
-const int BENCH_STREAMS = 200;
-const int BENCH_EVENTS_PER_STREAM = 10;
+// DCB load and behaviour harness, ported from Marten 10.0's src/DcbLoadTest (see its RESULTS-10.0.md).
+// Run in Release against a catalog nothing else is using:
+//
+//   docker compose up -d        (SQL Server 2025 on localhost,11433, container polecat-sqlserver)
+//   dotnet run -c Release --project src/DcbLoadTest -- <scenario> [--out results.md] [--key value]...
+//
+// The harness uses its own database, polecat_dcb_load by default (--database <name>), created through
+// master if it does not exist. POLECAT_DCB_LOAD_DATABASE overrides the whole connection string. Max Pool
+// Size is raised to at least --max-pool (400). Every scenario variant gets a fresh schema.
+//
+// --scopes TagValue,TagValueRecordingEventTypes,TagValueAndEventType narrows every scenario's matrix
+// (default TagValue,TagValueAndEventType). There is no --modes: Polecat stores tags in tag tables only.
 
-var connectionString =
-    Environment.GetEnvironmentVariable("POLECAT_TESTING_DATABASE")
-    ?? "Server=localhost,11433;User Id=sa;Password=P@55w0rd;Timeout=5;MultipleActiveResultSets=True;Initial Catalog=master;Encrypt=False";    ;
+var settings = new Settings(args);
+Report.Open(settings);
 
-Console.WriteLine("DCB Load Test - Append into large database (SQL Server)");
-Console.WriteLine($"  Seed: {SEED_STREAMS} streams x {SEED_EVENTS_PER_STREAM} events = {SEED_STREAMS * SEED_EVENTS_PER_STREAM} events");
-Console.WriteLine($"  Bench: {BENCH_STREAMS} streams x {BENCH_EVENTS_PER_STREAM} events = {BENCH_STREAMS * BENCH_EVENTS_PER_STREAM} events");
-Console.WriteLine(new string('-', 90));
-
-// -- Helpers ---------------------------------------------------------------------
-async Task DropAllEventStoreTablesAsync()
+// Microsoft.Data.SqlClient has no asynchronous BeginTransaction / Commit (see Polecat's
+// SqlTransactionRequests), so every save blocks a thread-pool thread for those round trips. With 50
+// concurrent requests the pool starts below that (min = core count) and injects threads slowly, so
+// the first variant of a run could pay for the ramp. --min-threads (default 256; 0 leaves the runtime
+// default) pre-sizes the pool so the ramp is not inside any measurement. It is in the header line.
+var minThreads = settings.Int("min-threads", 256);
+if (minThreads > 0)
 {
-    await using var conn = new SqlConnection(connectionString);
-    await conn.OpenAsync();
-    await using var cmd = conn.CreateCommand();
-    cmd.CommandText = """
-        DECLARE @sql NVARCHAR(MAX) = '';
-        SELECT @sql = @sql + 'DROP TABLE [dbo].[' + TABLE_NAME + ']; '
-        FROM INFORMATION_SCHEMA.TABLES
-        WHERE TABLE_SCHEMA = 'dbo' AND TABLE_NAME LIKE 'pc_event_tag_%';
-        EXEC sp_executesql @sql;
-        IF OBJECT_ID('dbo.pc_events', 'U') IS NOT NULL DROP TABLE dbo.pc_events;
-        IF OBJECT_ID('dbo.pc_streams', 'U') IS NOT NULL DROP TABLE dbo.pc_streams;
-        IF OBJECT_ID('dbo.pc_event_progression', 'U') IS NOT NULL DROP TABLE dbo.pc_event_progression;
-        """;
-    await cmd.ExecuteNonQueryAsync();
+    ThreadPool.GetMinThreads(out _, out var io);
+    ThreadPool.SetMinThreads(minThreads, Math.Max(io, minThreads));
 }
 
-DocumentStore CreateStore()
+if (settings.Scenario is "append" or "read" or "contend" or "crossed" or "growth" or "legacy")
 {
-    return DocumentStore.For(opts =>
-    {
-        opts.ConnectionString = connectionString;
-        opts.AutoCreateSchemaObjects = AutoCreate.All;
-        opts.Events.RegisterTagType<CustomerId>("customer");
-        opts.Events.RegisterTagType<RegionId>("region");
-    });
+    await Sql.EnsureDatabase(settings);
 }
 
-var results = new List<(string Scenario, int Iterations, TimeSpan Elapsed)>();
-
-// -- Seed large DB ---------------------------------------------------------------
-Console.WriteLine("\nPreparing large database...");
-await DropAllEventStoreTablesAsync();
-
-using (var store = CreateStore())
+switch (settings.Scenario)
 {
-    await store.Database.ApplyAllConfiguredChangesToDatabaseAsync();
+    case "append":
+        // --repeats 3 --single-saves 2000 --batch-saves 400 --concurrent-saves 100 --writers 16
+        await AppendScenario.Run(settings);
+        break;
 
-    Console.Write($"  Seeding {SEED_STREAMS * SEED_EVENTS_PER_STREAM} tagged events...");
-    var sw = Stopwatch.StartNew();
+    case "read":
+        // --seed-streams 100000 (x10 events) --iterations 1000 --seed-writers 8 --seed-streams-per-save 50 --reseed
+        await ReadScenario.Run(settings);
+        break;
 
-    for (var s = 0; s < SEED_STREAMS; s++)
-    {
-        await using var session = store.LightweightSession();
-        var streamId = Guid.NewGuid();
-        var customerId = new CustomerId(Guid.NewGuid());
-        var regionId = new RegionId($"region-{s % 10}");
+    case "contend":
+        // --concurrency 50 --rounds 5 --app-retries 2 --capacity 100 --book 0,0.2,1 --write-retries on,off
+        await ContentionScenario.Run(settings, crossed: false);
+        break;
 
-        for (var e = 0; e < SEED_EVENTS_PER_STREAM; e++)
-        {
-            object data = e % 2 == 0
-                ? new OrderPlaced($"ORD-{s}-{e}", 99.99m + e)
-                : new OrderShipped($"TRACK-{s}-{e}");
+    case "crossed":
+        // --concurrency 50 --rounds 5 --classes 4 --book 0.5 --write-retries on,off
+        await ContentionScenario.Run(settings, crossed: true);
+        break;
 
-            var evt = session.Events.BuildEvent(data);
-            evt.WithTag(customerId, regionId);
-            session.Events.Append(streamId, evt);
-        }
+    case "growth":
+        // --tag-values 200000 --seconds 300 --writers 16 --fillfactors none,70 --sample-seconds 30
+        // --sample-mode DETAILED|SAMPLED|LIMITED --update-stats
+        await GrowthScenario.Run(settings);
+        break;
 
-        await session.SaveChangesAsync();
-    }
+    case "legacy":
+        // The harness's original append benchmark: --seed-streams 1000 --bench-streams 200
+        await LegacyScenario.Run(settings);
+        break;
 
-    sw.Stop();
-    Console.WriteLine($" done in {sw.Elapsed.TotalSeconds:N1}s");
-
-    // -- Benchmark: No Tags ---
-    Console.Write($"  No Tags...");
-    {
-        var bsw = Stopwatch.StartNew();
-        var totalEvents = 0;
-
-        for (var s = 0; s < BENCH_STREAMS; s++)
-        {
-            await using var session = store.LightweightSession();
-            var streamId = Guid.NewGuid();
-
-            for (var e = 0; e < BENCH_EVENTS_PER_STREAM; e++)
-            {
-                object data = e % 2 == 0
-                    ? new OrderPlaced($"ORD-bench-{s}-{e}", 99.99m + e)
-                    : new OrderShipped($"TRACK-bench-{s}-{e}");
-                session.Events.Append(streamId, data);
-            }
-
-            await session.SaveChangesAsync();
-            totalEvents += BENCH_EVENTS_PER_STREAM;
-        }
-
-        bsw.Stop();
-        results.Add(("No Tags", totalEvents, bsw.Elapsed));
-        Console.WriteLine($" {totalEvents} events in {bsw.Elapsed.TotalMilliseconds:N1}ms ({totalEvents / bsw.Elapsed.TotalSeconds:N1} events/sec)");
-    }
-
-    // -- Benchmark: With Tags ---
-    Console.Write($"  With Tags...");
-    {
-        var bsw = Stopwatch.StartNew();
-        var totalEvents = 0;
-
-        for (var s = 0; s < BENCH_STREAMS; s++)
-        {
-            await using var session = store.LightweightSession();
-            var streamId = Guid.NewGuid();
-            var customerId = new CustomerId(Guid.NewGuid());
-            var regionId = new RegionId($"region-{s % 10}");
-
-            for (var e = 0; e < BENCH_EVENTS_PER_STREAM; e++)
-            {
-                object data = e % 2 == 0
-                    ? new OrderPlaced($"ORD-bench-{s}-{e}", 99.99m + e)
-                    : new OrderShipped($"TRACK-bench-{s}-{e}");
-
-                var evt = session.Events.BuildEvent(data);
-                evt.WithTag(customerId, regionId);
-                session.Events.Append(streamId, evt);
-            }
-
-            await session.SaveChangesAsync();
-            totalEvents += BENCH_EVENTS_PER_STREAM;
-        }
-
-        bsw.Stop();
-        results.Add(("With Tags", totalEvents, bsw.Elapsed));
-        Console.WriteLine($" {totalEvents} events in {bsw.Elapsed.TotalMilliseconds:N1}ms ({totalEvents / bsw.Elapsed.TotalSeconds:N1} events/sec)");
-    }
+    default:
+        Console.WriteLine("usage: DcbLoadTest <append|read|contend|crossed|growth|legacy> [--out file.md] [--key value]...");
+        Console.WriteLine("See the comments in Program.cs for each scenario's options.");
+        return 1;
 }
 
-// -- Results summary -------------------------------------------------------------
-Console.WriteLine();
-Console.WriteLine(new string('=', 90));
-Console.WriteLine($"{"Scenario",-40} {"Events",10} {"Total (ms)",12} {"Events/sec",12}");
-Console.WriteLine(new string('-', 90));
-foreach (var (scenario, iterations, elapsed) in results)
-{
-    var opsPerSec = elapsed.TotalSeconds > 0
-        ? (iterations / elapsed.TotalSeconds).ToString("N1")
-        : "N/A";
-    Console.WriteLine($"{scenario,-40} {iterations,10} {elapsed.TotalMilliseconds,12:N1} {opsPerSec,12}");
-}
-Console.WriteLine(new string('=', 90));
-
-// -- Types -----------------------------------------------------------------------
-record OrderPlaced(string OrderId, decimal Amount);
-record OrderShipped(string TrackingNumber);
-record CustomerId(Guid Value);
-record RegionId(string Value);
+return 0;
