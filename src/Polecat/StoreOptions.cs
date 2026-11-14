@@ -1188,6 +1188,17 @@ public class EventStoreOptions : IEventStoreInstrumentation
     }
 
     /// <summary>
+    ///     polecat#973 (marten#5887): what makes a later append conflict with a boundary read by
+    ///     <c>FetchForWritingByTags</c>. The default, <see cref="Polecat.Events.DcbConflictScope.TagValueAndEventType" />,
+    ///     honours the event types a query condition names, as the DCB specification's append condition does.
+    ///     <see cref="Polecat.Events.DcbConflictScope.TagValue" /> is what Polecat 5 did. Read the remarks on
+    ///     <see cref="Polecat.Events.DcbConflictScope" /> before changing it on a running system, and before
+    ///     rolling Polecat 6 out beside Polecat 5 nodes.
+    /// </summary>
+    public Polecat.Events.DcbConflictScope DcbConflictScope { get; set; } =
+        Polecat.Events.DcbConflictScope.TagValueAndEventType;
+
+    /// <summary>
     ///     Register a tag type for Dynamic Consistency Boundary (DCB) support.
     ///     Creates a tag table with an auto-generated suffix.
     /// </summary>

@@ -127,7 +127,7 @@ public abstract class tombstone_tag_erasure_concurrency_tests : IAsyncLifetime
         await using var conn = new SqlConnection(ConnectionSource.ConnectionStringFor(_database));
         await conn.OpenAsync(Ct);
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"SELECT COUNT(*) FROM [{Schema}].[pc_dcb_tag_version] WHERE tag_value = '{tagValue}'";
+        cmd.CommandText = $"SELECT COUNT(*) FROM [{Schema}].[pc_dcb_tag_version] WHERE CHARINDEX(':', tag_table) = 0 AND tag_value = '{tagValue}'";
         return Convert.ToInt64(await cmd.ExecuteScalarAsync(Ct));
     }
 
@@ -252,7 +252,7 @@ public abstract class tombstone_tag_erasure_concurrency_tests : IAsyncLifetime
         (await cmd.ExecuteScalarAsync(Ct)).ShouldBe(0);
 
         foreach (var course in courses) await AppendAsync(course);
-        cmd.CommandText = $"SELECT COUNT(*) FROM [{Schema}].[pc_dcb_tag_version]";
+        cmd.CommandText = $"SELECT COUNT(*) FROM [{Schema}].[pc_dcb_tag_version] WHERE CHARINDEX(':', tag_table) = 0";
         (await cmd.ExecuteScalarAsync(Ct)).ShouldBe(courses.Length);
     }
 }

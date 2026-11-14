@@ -401,27 +401,84 @@ fewer events and may see `EventsExistAsync` answer `false`.
 
 ### Consistency Check
 
-Polecat keeps a side table, `pc_dcb_tag_version`, holding one row per tag boundary with a version that
-changes on every commit that touches it. `FetchForWritingByTags` reads the version for every tag the query
-names; at `SaveChangesAsync` time, before any events are inserted, Polecat asserts the version has not
-moved and replaces it with a single `UPDATE ... WHERE version = @captured`. Concurrent savers queue on that
-row's exclusive lock, and the loser gets a `DcbConcurrencyException`.
+Polecat keeps a side table, `pc_dcb_tag_version`, holding a version per tag value that moves whenever an
+event carrying that tag value is appended. `FetchForWritingByTags` reads the version for every tag the query
+names. At `SaveChangesAsync` time, before any events are inserted, Polecat checks those versions have not
+moved. A boundary's save fails with `DcbConcurrencyException` exactly when an event its query matches was
+appended after it read, which is the DCB specification's append condition.
+
+**Reading a tag is not writing it.** The check locks each row the boundary read and compares it, and does
+not move it. Only the tags on the events the save appends move a version. So two boundaries over the same
+tag value both commit as long as neither appends an event the other's query matches. Through 5.x the check
+also moved every version it read, so any two boundaries over one tag value conflicted (#972).
+
+A row the boundary read and the save also appends under is checked and moved by one
+`UPDATE ... WHERE version = @captured`. A row it only read is read `WITH (UPDLOCK, ROWLOCK)` and compared.
+Either way concurrent saves over one row queue on its lock, and the second one compares against what the
+first committed. The update lock does not hold up a `FetchForWritingByTags` read of the row, and it is a
+locking read, so a check under `READ_COMMITTED_SNAPSHOT` still waits for and sees an append in flight. Every
+row a save checks or moves is locked in one sorted pass, so two saves that each read the tag the other
+appends under lose with a `DcbConcurrencyException` and never deadlock.
 
 Every save that appends a tagged event moves the version, boundary or not — so an ordinary
 `session.Events.Append(streamId, taggedEvent)` invalidates an in-flight boundary just as another
 boundary save would.
 
-A save that appends nothing does **not** assert its boundaries. A boundary is a condition on an append,
-so a session that read one and then wrote nothing has nothing for it to guard, and moving the version
-would invalidate other sessions over a save that changed nothing.
+A save that appends nothing does **not** check its boundaries. A boundary is a condition on an append,
+so a session that read one and then wrote nothing has nothing for it to guard.
 
-Every version comes from one sequence per schema, `pc_dcb_tag_version_sequence`, so a value never repeats,
-even on a row that was deleted and created again. That is what lets a tombstone delete rows. The sequence
+Every version a commit moves comes from one sequence per schema, `pc_dcb_tag_version_sequence`, so a value
+never repeats, even on a row that was deleted and created again. The one other value a row holds is 0, which
+a boundary's check writes when the row did not exist yet, so that it has a row to lock. 0 is also what a
+missing row reads as, and both mean that nothing carrying the tag has been appended since. That is what lets a tombstone delete rows. The sequence
 is created by the ordinary schema migration, as long as a tag type is registered, and starts above anything
 a row could have counted up to. Rows written by earlier versions keep their values until the next commit
 moves them. Under `AutoCreate.None`, apply the migration before deploying: with a tag type registered, a
 tagged append, an archive or a tombstone can't run without the sequence. A login with `db_datawriter` can
 draw from it. One with grants on individual tables needs `UPDATE` on the sequence too.
+
+### Conflict Scope: Event Types Count
+
+A query condition can name event types as well as a tag value, as `Or<AssignmentSubmitted, StudentId>(id)`
+and `AndEventsOfType<...>()` do. By default an event of a type the condition does **not** name is not a
+conflict, even when it carries the condition's tag value. The boundary never read it, and the DCB
+specification's append condition is defined by what the query matches. To do that, Polecat keeps a second
+version per (tag value, event type), a row in the same table keyed `{tag suffix}:{event type name}`, and a
+condition naming event types is checked against those rows.
+
+`opts.Events.DcbConflictScope` controls this:
+
+| `DcbConflictScope` | Checks | Maintains per-event-type versions |
+| :--- | :--- | :--- |
+| `TagValueAndEventType` (default) | per event type where the condition names types, per tag value where it doesn't | yes |
+| `TagValueRecordingEventTypes` | per tag value | yes |
+| `TagValue` | per tag value, whatever the event type (what Polecat 5 did) | no |
+
+```cs
+var store = DocumentStore.For(opts =>
+{
+    opts.ConnectionString = connectionString;
+    opts.Events.RegisterTagType<StudentId>("student");
+
+    // What Polecat 5 did: any event carrying the tag value conflicts, whatever its type
+    opts.Events.DcbConflictScope = DcbConflictScope.TagValue;
+});
+```
+
+The per-event-type versions cost one more row write per (tag value, event type) pair a save appends. The
+version table holds roughly one more row per (tag value, event type) pair ever appended. See
+[`src/DcbLoadTest/RESULTS-6.0.md`](https://github.com/JasperFx/polecat/blob/main/src/DcbLoadTest/RESULTS-6.0.md)
+for measurements.
+
+::: warning Rolling out the event-type scope
+A node checking per-event-type versions can't see appends from a node that doesn't maintain them: a Polecat
+5 node, or one configured with `TagValue`. While both run, a conflict can be missed. Either stop every node
+that appends tagged events before starting Polecat 6, or roll out Polecat 6 with
+`DcbConflictScope.TagValueRecordingEventTypes` first and switch to the default once no older node is left.
+Events appended before the switch have no per-event-type version, which reads as 0. That is safe, and a
+boundary over them runs one more existence check on its save until the next append of that type moves the
+version.
+:::
 
 ### What a Tombstone Erases
 
@@ -443,6 +500,8 @@ the events, and its tag rows go with the events. Once a tombstone commits, nothi
   carries the tag, and a save takes the row before it inserts an event. So the two queue, and the tombstone
   sees the appended event or the append creates a new row with a new version.
 - **Tenants are separate.** The row is per tenant, and only the tombstoned stream's tenant is considered.
+- **Per-event-type rows go the same way.** A `{suffix}:{event type}` row is deleted once no other stream
+  in the tenant carries the tag value on an event of that type, whatever `DcbConflictScope` is configured.
 
 What this doesn't do:
 

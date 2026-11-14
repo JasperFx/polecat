@@ -48,7 +48,7 @@ public class tombstone_dcb_boundary_tests : OneOffConfigurationsContext
     {
         await using var conn = await OpenConnectionAsync();
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"SELECT COUNT(*) FROM [{nameof(tombstone_dcb_boundary_tests)}].[pc_dcb_tag_version]";
+        cmd.CommandText = $"SELECT COUNT(*) FROM [{nameof(tombstone_dcb_boundary_tests)}].[pc_dcb_tag_version] WHERE CHARINDEX(':', tag_table) = 0";
         return (int)(await cmd.ExecuteScalarAsync(Ct))!;
     }
 

@@ -27,6 +27,7 @@ using Weasel.SqlServer;
 using DcbBoundaryRead = Polecat.Events.Dcb.DcbBoundaryRead;
 using DcbTagVersionCapture = Polecat.Events.Dcb.DcbTagVersionCapture;
 using DcbTagVersionEntry = Polecat.Events.Dcb.DcbTagVersionEntry;
+using DcbTagVersionKeys = Polecat.Events.Dcb.DcbTagVersionKeys;
 using DcbTagVersionPhase = Polecat.Events.Dcb.DcbTagVersionPhase;
 
 namespace Polecat.Internal;
@@ -141,8 +142,8 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     /// <remarks>
     ///     Held rather than queued as operations because a DCB boundary is a condition on an APPEND. A
     ///     session that reads a boundary, decides there is nothing to do, and saves has written nothing
-    ///     for the condition to guard — and asserting it anyway would bump the row, invalidating every
-    ///     concurrent session's boundary over a save that changed nothing.
+    ///     for the condition to guard — and checking it anyway would hold row locks a concurrent session
+    ///     with events to append is waiting on.
     /// </remarks>
     private List<DcbTagVersionEntry>? _capturedDcbRows;
 
@@ -185,8 +186,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         var appended = CollectAppendedTagRows();
 
         // A boundary guards an APPEND. A session that read one and then wrote nothing has nothing for it
-        // to guard, and asserting anyway would bump the row and invalidate every concurrent session's
-        // boundary over a save that changed nothing. The gate is "does this save append anything", not
+        // to guard, and checking anyway would lock rows for a save that changed nothing. The gate is "does this save append anything", not
         // "does it append under a tag" — matching Marten, so a boundary means the same thing in both
         // stores.
         var appendsEvents = _workTracker.Streams.Any(s => s.Events.Count > 0);
@@ -245,6 +245,10 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         var rows = new List<DcbTagVersionEntry>();
         var seen = new HashSet<(string, string, string)>();
 
+        // #973: anything but DcbConflictScope.TagValue also moves a version per (tag value, event type), the
+        // one a condition naming event types is checked against under TagValueAndEventType.
+        var recordEventTypes = _eventGraph.RecordsDcbEventTypeVersions;
+
         foreach (var stream in _workTracker.Streams)
         {
             foreach (var @event in stream.Events)
@@ -263,6 +267,15 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
                     {
                         rows.Add(new DcbTagVersionEntry(
                             registration.TableSuffix, value, tenantId, null, null, 0));
+                    }
+
+                    if (!recordEventTypes) continue;
+
+                    var byType = DcbTagVersionKeys.ForEventType(registration.TableSuffix,
+                        @event.EventTypeName ?? _eventGraph.EventMappingFor(@event.EventType).EventTypeName);
+                    if (seen.Add((byType, value, tenantId)))
+                    {
+                        rows.Add(new DcbTagVersionEntry(byType, value, tenantId, null, null, 0));
                     }
                 }
             }
@@ -1002,7 +1015,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         try
         {
             // gh-515: the DCB boundary check, run BEFORE the events are inserted so this session's own
-            // appends can't trip it. It asserts-and-bumps the pc_dcb_tag_version rows the session's
+            // appends can't trip it. It checks the pc_dcb_tag_version rows the session's
             // boundaries captured, and bumps the rows it merely appends under, in one sorted phase.
             await AssertDcbBoundariesAsync(token).ConfigureAwait(false);
 

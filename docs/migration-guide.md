@@ -10,7 +10,7 @@ The foundation pins move in lockstep, so a consuming project has to move with th
 
 | Package | 5.50.0 | 6.0 |
 |---|---|---|
-| `JasperFx`, `JasperFx.Events` | 2.102 | 3.0.0 |
+| `JasperFx`, `JasperFx.Events` | 2.102 | 3.2.0 |
 | `Weasel.SqlServer`, `Weasel.Storage` | 9.50.0 | 10.0 |
 | `Microsoft.Data.SqlClient` | 7.0.0 | 7.1.1 |
 | `Microsoft.EntityFrameworkCore.SqlServer` (`Polecat.EntityFrameworkCore`) | 9.x | 10.0 |
@@ -98,6 +98,38 @@ public TripProjection()
 
 The docs at [side effects](/events/projections/side-effects) and [the async daemon](/events/projections/async-daemon)
 still describe the gate as opt-in; read them as "on unless you set it to `false`".
+
+## Upgrading to 6.0: DCB conflicts honour event types, and a check no longer bumps what it read
+
+Two changes to `FetchForWritingByTags` ([polecat#972](https://github.com/JasperFx/polecat/issues/972),
+[polecat#973](https://github.com/JasperFx/polecat/issues/973), ported from Marten's
+[marten#5887](https://github.com/JasperFx/marten/issues/5887)). Both make fewer saves fail, and neither makes
+a save that should fail succeed.
+
+- **Reading a tag no longer writes it.** A boundary's save used to move the version of every tag it read, so
+  two boundaries over one tag value always conflicted, even when neither appended anything the other's query
+  matches. Now only the tags on appended events move a version. This needs no configuration and is safe in a
+  rolling upgrade.
+- **An event of a type the query does not select is no longer a conflict.** The new
+  `opts.Events.DcbConflictScope` defaults to `DcbConflictScope.TagValueAndEventType`, which keeps a version
+  per (tag value, event type) as well as per tag value. Under it a condition naming event types (for example
+  `AndEventsOfType<...>()`) conflicts only with appended events of those types. `DcbConflictScope.TagValue`
+  is what 5.x did.
+
+**The second change needs care in a rolling upgrade.** A 6.0 node checking per-event-type versions can't see
+tagged appends from a 5.x node, which doesn't maintain them, so a conflict between the two can be missed.
+Choose one:
+
+1. Stop every node that appends tagged events, then start 6.0.
+2. Deploy 6.0 with `opts.Events.DcbConflictScope = DcbConflictScope.TagValueRecordingEventTypes`. It checks
+   exactly as 5.x did and maintains the new versions. Once no 5.x node is left, remove the setting.
+
+To keep 5.x's behaviour altogether, set `DcbConflictScope.TagValue`.
+
+There is no schema change. The per-event-type versions are rows in the existing `pc_dcb_tag_version`, keyed
+`{tag suffix}:{event type name}`. That key has to fit the 250-character `tag_table` column, and an append
+whose key wouldn't is refused with a message saying so. The table grows by about one row per (tag value,
+event type) pair ever appended; see the [DCB docs](/events/dcb#conflict-scope-event-types-count).
 
 ## Upgrading to 6.0: Aspire and the `SqlConnection` in DI
 

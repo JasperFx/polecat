@@ -81,8 +81,8 @@ public class tombstone_tag_erasure_tests : OneOffConfigurationsContext
     }
 
     private Task<long> VersionRowsAsync(object? tagValue = null)
-        => ScalarAsync($"SELECT COUNT(*) FROM [{Schema}].[pc_dcb_tag_version]"
-                       + (tagValue == null ? "" : $" WHERE tag_value = '{tagValue}'"));
+        => ScalarAsync($"SELECT COUNT(*) FROM [{Schema}].[pc_dcb_tag_version] WHERE CHARINDEX(':', tag_table) = 0"
+                       + (tagValue == null ? "" : $" AND tag_value = '{tagValue}'"));
 
     private Task DeleteVersionRowsAsync() => ExecuteAsync($"DELETE FROM [{Schema}].[pc_dcb_tag_version]");
 
@@ -163,9 +163,9 @@ public class tombstone_tag_erasure_tests : OneOffConfigurationsContext
 
         await TombstoneAsync(doomed);
 
-        (await ScalarAsync($"SELECT COUNT(*) FROM [{Schema}].[pc_dcb_tag_version] WHERE tag_table = 'erase_course'"))
+        (await ScalarAsync($"SELECT COUNT(*) FROM [{Schema}].[pc_dcb_tag_version] WHERE CHARINDEX(':', tag_table) = 0 AND tag_table = 'erase_course'"))
             .ShouldBe(0);
-        (await ScalarAsync($"SELECT COUNT(*) FROM [{Schema}].[pc_dcb_tag_version] WHERE tag_table = 'erase_student'"))
+        (await ScalarAsync($"SELECT COUNT(*) FROM [{Schema}].[pc_dcb_tag_version] WHERE CHARINDEX(':', tag_table) = 0 AND tag_table = 'erase_student'"))
             .ShouldBe(1);
     }
 
@@ -546,9 +546,9 @@ public class tombstone_tag_erasure_tests : OneOffConfigurationsContext
             await red.SaveChangesAsync(Ct);
         }
 
-        (await ScalarAsync($"SELECT COUNT(*) FROM [{Schema}].[pc_dcb_tag_version] WHERE tenant_id = 'red'"))
+        (await ScalarAsync($"SELECT COUNT(*) FROM [{Schema}].[pc_dcb_tag_version] WHERE CHARINDEX(':', tag_table) = 0 AND tenant_id = 'red'"))
             .ShouldBe(0);
-        (await ScalarAsync($"SELECT COUNT(*) FROM [{Schema}].[pc_dcb_tag_version] WHERE tenant_id = 'blue'"))
+        (await ScalarAsync($"SELECT COUNT(*) FROM [{Schema}].[pc_dcb_tag_version] WHERE CHARINDEX(':', tag_table) = 0 AND tenant_id = 'blue'"))
             .ShouldBe(1);
         (await ScalarAsync($"SELECT COUNT(*) FROM [{Schema}].[pc_event_tag_erase_course]")).ShouldBe(1);
     }
@@ -564,7 +564,7 @@ public class tombstone_tag_erasure_tests : OneOffConfigurationsContext
         await ExecuteAsync(
             $"DELETE FROM [{Schema}].[pc_dcb_tag_version] WHERE tag_value = '{course.Value}'");
         var before = await ScalarAsync(
-            $"SELECT version FROM [{Schema}].[pc_dcb_tag_version] WHERE tag_value = '{moved.Value}'");
+            $"SELECT version FROM [{Schema}].[pc_dcb_tag_version] WHERE CHARINDEX(':', tag_table) = 0 AND tag_value = '{moved.Value}'");
 
         await using (var session = theStore.LightweightSession())
         {
@@ -573,7 +573,7 @@ public class tombstone_tag_erasure_tests : OneOffConfigurationsContext
         }
 
         (await VersionRowsAsync(course.Value)).ShouldBe(1);
-        (await ScalarAsync($"SELECT version FROM [{Schema}].[pc_dcb_tag_version] WHERE tag_value = '{moved.Value}'"))
+        (await ScalarAsync($"SELECT version FROM [{Schema}].[pc_dcb_tag_version] WHERE CHARINDEX(':', tag_table) = 0 AND tag_value = '{moved.Value}'"))
             .ShouldBeGreaterThan(before);
     }
 
@@ -636,11 +636,11 @@ public class tombstone_tag_erasure_tests : OneOffConfigurationsContext
         {
             var first = await AppendAsync(course);
             seen.Add(await ScalarAsync(
-                $"SELECT version FROM [{Schema}].[pc_dcb_tag_version] WHERE tag_value = '{course.Value}'")).ShouldBeTrue();
+                $"SELECT version FROM [{Schema}].[pc_dcb_tag_version] WHERE CHARINDEX(':', tag_table) = 0 AND tag_value = '{course.Value}'")).ShouldBeTrue();
 
             var second = await AppendAsync(course);
             seen.Add(await ScalarAsync(
-                $"SELECT version FROM [{Schema}].[pc_dcb_tag_version] WHERE tag_value = '{course.Value}'")).ShouldBeTrue();
+                $"SELECT version FROM [{Schema}].[pc_dcb_tag_version] WHERE CHARINDEX(':', tag_table) = 0 AND tag_value = '{course.Value}'")).ShouldBeTrue();
 
             await TombstoneAsync(first);
             await TombstoneAsync(second);
@@ -727,7 +727,7 @@ public class tombstone_tag_erasure_across_tenants_in_a_database_tests : IAsyncLi
         await using var conn = new SqlConnection(ConnectionSource.ConnectionStringFor(Database));
         await conn.OpenAsync(Ct);
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"SELECT tenant_id FROM [{Schema}].[pc_dcb_tag_version]";
+        cmd.CommandText = $"SELECT tenant_id FROM [{Schema}].[pc_dcb_tag_version] WHERE CHARINDEX(':', tag_table) = 0";
         (await cmd.ExecuteScalarAsync(Ct)).ShouldBe("alpha-neighbour");
     }
 }
@@ -792,7 +792,7 @@ public class tombstone_tag_erasure_under_tenant_partitioning_tests : IAsyncLifet
         async Task<int> RowsAsync(string tenant)
         {
             var rows = await TestSchema.QueryAsync(
-                $"SELECT COUNT(*) FROM [{Schema}].[pc_dcb_tag_version] WHERE tenant_id = '{tenant}'");
+                $"SELECT COUNT(*) FROM [{Schema}].[pc_dcb_tag_version] WHERE CHARINDEX(':', tag_table) = 0 AND tenant_id = '{tenant}'");
             return (int)rows[0][0];
         }
 

@@ -36,14 +36,21 @@ namespace Polecat.Events.Dcb;
 internal static class DcbTagVersionCapture
 {
     /// <summary>
-    ///     The distinct (tag table, stringified value) pairs a boundary query names. Distinct by the pair
-    ///     alone: the side table is keyed by tag, not by the condition's optional event-type filter, so
-    ///     two conditions over one tag are one row.
+    ///     The distinct (tag table, stringified value) rows a boundary query is checked against.
     /// </summary>
+    /// <remarks>
+    ///     A condition with no event type is checked against its tag value's row, which every event carrying
+    ///     the value moves. #973: under <see cref="DcbConflictScope.TagValueAndEventType" /> a condition that
+    ///     names an event type is checked against that type's own row instead, which only events of the type
+    ///     move -- so an event of a type the query does not select is not a conflict, as the DCB
+    ///     specification's append condition says. Under the other scopes the event type is ignored, and two
+    ///     conditions over one tag value are one row.
+    /// </remarks>
     public static List<(string TagTable, string TagValue)> TargetsFor(EventGraph events, EventTagQuery query)
     {
         var targets = new List<(string, string)>(query.Conditions.Count);
         var seen = new HashSet<(string, string)>();
+        var byEventType = events.ChecksDcbEventTypeVersions;
 
         foreach (var condition in query.Conditions)
         {
@@ -53,9 +60,17 @@ internal static class DcbTagVersionCapture
                                    $"Call RegisterTagType<{condition.TagType.Name}>() first.");
 
             var value = JasperFx.Events.Tags.TagValueStringifier.Stringify(registration.ExtractValue(condition.TagValue));
-            if (seen.Add((registration.TableSuffix, value)))
+
+            // The same event type name the events read filters on (see TagConditionSql), so the version
+            // checked and the events read describe the same set of events.
+            var tagTable = byEventType && condition.EventType != null
+                ? DcbTagVersionKeys.ForEventType(registration.TableSuffix,
+                    events.EventMappingFor(condition.EventType).EventTypeName)
+                : registration.TableSuffix;
+
+            if (seen.Add((tagTable, value)))
             {
-                targets.Add((registration.TableSuffix, value));
+                targets.Add((tagTable, value));
             }
         }
 

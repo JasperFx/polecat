@@ -884,14 +884,18 @@
         <!-- JasperFx 2.102.0 (from 2.101.0): jasperfx#1150, IEventDatabase.FetchFirstEventTimestampsAfterAsync, the
              timestamp of the first event after a sequence so CritterWatch can report projection lag in time.
              PendingEventAgeCompliance is enrolled in Compliance/polecat_event_store_compliance_wave22.cs. -->
-        <PackageVersion Include="JasperFx" Version="3.0.0" />
-        <PackageVersion Include="JasperFx.Events" Version="3.0.0" />
+        <!-- JasperFx 3.2.0 (from 3.0.0, polecat#975): jasperfx#1183 adds DcbAppendConditionCompliance and
+             ComplianceStoreConfig.DisableWriteRetries (the DCB append condition raced, marten#5887), and
+             jasperfx#1184 gives a [BoundaryAggregate] with an Id member the string-keyed evolver.
+             Enrolled in Compliance/polecat_event_store_compliance.cs. -->
+        <PackageVersion Include="JasperFx" Version="3.2.0" />
+        <PackageVersion Include="JasperFx.Events" Version="3.2.0" />
         <!--
              The shared cross-store event sourcing compliance suites. Source-only package: the
              suites compile inside Polecat.Tests so JasperFx's aggregate source generator binds
              Polecat's own session types.
         -->
-        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="3.0.0" />
+        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="3.2.0" />
         <!-- Pin the sibling JasperFx packages for parity with Marten 9's matrix
              even though Polecat doesn't currently reference them directly —
              keeps the lockstep matrix coherent when transitive resolution
@@ -899,7 +903,7 @@
              JasperFx.RuntimeCompiler is deliberately NOT pinned: nothing in Polecat references it,
              directly or transitively (projection dispatch is source-generated, and Polecat.AotSmoke
              proves a consumer builds without it), so a pin only invited needless bumps. -->
-        <PackageVersion Include="JasperFx.SourceGenerator" Version="3.0.0" />
+        <PackageVersion Include="JasperFx.SourceGenerator" Version="3.2.0" />
         <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.1.1" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
@@ -1486,7 +1490,7 @@
         <PackageVersion Include="Vogen" Version="7.0.0" />
 
         <!-- Source generators (matched to JasperFx.Events above) -->
-        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="3.0.0" />
+        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="3.2.0" />
 
         <!-- Build automation -->
         <PackageVersion Include="Nuke.Common" Version="9.0.4" />
