@@ -116,6 +116,14 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
         // member to ask for it -- the suite just calls the IEventDatabase members.
         options.Events.EnableProjectionFloors = true;
 
+        // marten#5887: the DCB append condition facts race saves against each other, and a retried
+        // deadlock commits -- with the default retry on, those facts cannot tell a save that queued
+        // for a lock from one that deadlocked.
+        if (config.DisableWriteRetries)
+        {
+            options.ConfigurePolly(_ => { });
+        }
+
         if (config.MaxConcurrentRebuildsPerDatabase.HasValue)
         {
             options.DaemonSettings.MaxConcurrentRebuildsPerDatabase = config.MaxConcurrentRebuildsPerDatabase;

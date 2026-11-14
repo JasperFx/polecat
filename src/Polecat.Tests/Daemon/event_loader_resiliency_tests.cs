@@ -20,16 +20,26 @@ public class event_loader_resiliency_tests : IntegrationContext
     {
     }
 
+    /// <summary>
+    ///     A schema of its own. These tests plant events no store can deserialize, and they used to plant
+    ///     them in the shared <c>dbo</c> schema and leave them there. Any later test in the same process
+    ///     whose daemon reads every event in <c>dbo</c>, such as <c>subscription_tests</c>, then died on
+    ///     <c>UnknownEventTypeException</c> -- but only when the shard happened to run this class first.
+    /// </summary>
+    private const string Schema = "event_loader_resiliency";
+
     public override async ValueTask InitializeAsync()
     {
         await base.InitializeAsync();
+        await StoreOptions(opts => opts.DatabaseSchemaName = Schema);
+
         // Clean slate for each test
         await using var conn = await OpenConnectionAsync();
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            DELETE FROM [dbo].[pc_events];
-            DELETE FROM [dbo].[pc_streams];
-            DELETE FROM [dbo].[pc_event_progression];
+        cmd.CommandText = $"""
+            DELETE FROM [{Schema}].[pc_events];
+            DELETE FROM [{Schema}].[pc_streams];
+            DELETE FROM [{Schema}].[pc_event_progression];
             """;
         await cmd.ExecuteNonQueryAsync();
     }
@@ -225,8 +235,8 @@ public class event_loader_resiliency_tests : IntegrationContext
         await using (var cmd = conn.CreateCommand())
         {
             cmd.Transaction = tx;
-            cmd.CommandText = """
-                INSERT INTO [dbo].[pc_streams] (id, type, version, timestamp, created, tenant_id)
+            cmd.CommandText = $"""
+                INSERT INTO [{Schema}].[pc_streams] (id, type, version, timestamp, created, tenant_id)
                 VALUES (@id, NULL, 1, SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET(), @tenant_id);
                 """;
             cmd.Parameters.AddWithValue("@id", streamId);
@@ -238,8 +248,8 @@ public class event_loader_resiliency_tests : IntegrationContext
         await using (var cmd = conn.CreateCommand())
         {
             cmd.Transaction = tx;
-            cmd.CommandText = """
-                INSERT INTO [dbo].[pc_events]
+            cmd.CommandText = $"""
+                INSERT INTO [{Schema}].[pc_events]
                     (id, stream_id, version, data, type, timestamp, tenant_id, dotnet_type)
                 VALUES (@id, @stream_id, 1, @data, @type, SYSDATETIMEOFFSET(), @tenant_id, @dotnet_type);
                 """;

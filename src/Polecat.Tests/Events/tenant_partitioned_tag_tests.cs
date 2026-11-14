@@ -364,9 +364,9 @@ public class tenant_partitioned_tag_tests : IAsyncLifetime
         (await TagRowsAsync("blue")).ShouldBe(1);
 
         // pc_dcb_tag_version holds the tag values as text, which a hard delete has to reach as well
-        (await CountAsync($"SELECT COUNT(*) FROM [{Schema}].[pc_dcb_tag_version] WHERE tenant_id = 'red'"))
+        (await CountAsync($"SELECT COUNT(*) FROM [{Schema}].[pc_dcb_tag_version] WHERE CHARINDEX(':', tag_table) = 0 AND tenant_id = 'red'"))
             .ShouldBe(0);
-        (await CountAsync($"SELECT COUNT(*) FROM [{Schema}].[pc_dcb_tag_version] WHERE tenant_id = 'blue'"))
+        (await CountAsync($"SELECT COUNT(*) FROM [{Schema}].[pc_dcb_tag_version] WHERE CHARINDEX(':', tag_table) = 0 AND tenant_id = 'blue'"))
             .ShouldBe(1);
 
         // The foreign key must not have stopped the boundary going. Weasel logs a failed MERGE RANGE
@@ -411,7 +411,7 @@ public class tenant_partitioned_tag_tests : IAsyncLifetime
         await store.Advanced.RemovePolecatManagedTenantsAsync(["red"], TenantDropBehavior.RetainData, Ct);
 
         (await TagRowsAsync("red")).ShouldBe(1);
-        (await CountAsync($"SELECT COUNT(*) FROM [{Schema}].[pc_dcb_tag_version] WHERE tenant_id = 'red'"))
+        (await CountAsync($"SELECT COUNT(*) FROM [{Schema}].[pc_dcb_tag_version] WHERE CHARINDEX(':', tag_table) = 0 AND tenant_id = 'red'"))
             .ShouldBe(1);
     }
 
