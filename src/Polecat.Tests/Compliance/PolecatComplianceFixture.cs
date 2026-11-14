@@ -536,31 +536,15 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
         return await task.ConfigureAwait(false);
     }
 
-    // #318. UnArchiveStream is genuinely Polecat-only -- Marten has no equivalent, which is why the
-    // gate defaults false and the operation is off the shared IEventStoreOperations. Like
-    // ArchiveStream it takes effect on SaveChanges rather than immediately.
+    // #318. UnArchiveStream(Guid|string) reverses ArchiveStream, queued until SaveChanges. Now on the
+    // shared IEventStoreOperations (JasperFx/marten#5476), so the suite drives it through
+    // session.Events directly and the fixture's old UnArchiveStream hook is gone.
     public override bool SupportsUnarchiveStream => true;
 
     // #772. TombstoneStream(Guid|string) is a hard DELETE of the stream, its events and its tag
     // rows, queued until SaveChanges. Now on the shared IEventStoreOperations (jasperfx#1014), so
     // the suite drives it through session.Events directly.
     public override bool SupportsTombstoneStream => true;
-
-    public override void UnArchiveStream(IDocumentSession session, object streamIdentity)
-    {
-        switch (streamIdentity)
-        {
-            case Guid streamId:
-                session.Events.UnArchiveStream(streamId);
-                break;
-            case string streamKey:
-                session.Events.UnArchiveStream(streamKey);
-                break;
-            default:
-                throw new ArgumentOutOfRangeException(nameof(streamIdentity),
-                    $"Polecat streams are identified by Guid or string, not {streamIdentity.GetType().FullName}");
-        }
-    }
 
     // jasperfx#763 / #420. Polecat has a real message outbox (StoreOptions.MessageOutbox, defaulting
     // to NulloMessageOutbox) that the projection batch vends from, so the outbox facts run rather

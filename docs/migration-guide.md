@@ -194,6 +194,30 @@ Two values change, and both are only for edge cases:
 Paging by cursor is unaffected: continuation cursors are encoded through JasperFx's `CursorCodec` now,
 but the bytes are the same, so a cursor a client already holds stays valid across the upgrade.
 
+## Upgrading to 6.0: stream lifecycle members come from `IEventStoreOperations`
+
+`Polecat.Events.IEventOperations` no longer declares its own copies of these members. They come only
+from the shared `JasperFx.Events.IEventStoreOperations` that it inherits:
+
+| Member | On the shared interface since |
+|---|---|
+| `UnArchiveStream(Guid)` / `UnArchiveStream(string)` | JasperFx/marten#5476 (jasperfx#1186) |
+| `TombstoneStream(Guid)` / `TombstoneStream(string)` | jasperfx#1014 |
+| `CompactStreamAsync<T>(Guid, …)` / `CompactStreamAsync<T>(string, …)` | jasperfx#635 |
+
+The signatures, defaults and behaviour are unchanged, so **source** compiles as before:
+`session.Events.UnArchiveStream(id)` binds to the inherited member. 5.x re-declared them with `new`
+only for **binary** compatibility ([#774](https://github.com/JasperFx/polecat/pull/774),
+[#776](https://github.com/JasperFx/polecat/pull/776)). An assembly compiled against Polecat 5.x refers
+to these members through `Polecat.Events.IEventOperations`, and the runtime does not search base
+interfaces to resolve that reference. **Recompile any assembly built against Polecat 5.x** that calls
+them, such as an in-house extension package, or it throws `MissingMethodException` at the call. Code
+that names `JasperFx.Events.IEventStoreOperations` is unaffected.
+
+`FetchLatest<T>(Guid|string)` keeps its declaration on `IEventOperations`. It is declared on both of
+that interface's parents, so the redeclaration is what keeps `session.Events.FetchLatest<T>(...)` from
+being ambiguous.
+
 ## Deprecation: `MapPolecatMcp`
 
 `Polecat.AspNetCore`'s built-in `MapPolecatMcp()` is now `[Obsolete]` and will be **removed in the
