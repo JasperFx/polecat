@@ -16,10 +16,10 @@ namespace Polecat.Events;
 /// CompletelyReplaceEvent) now lives in <see cref="JasperFx.Events.IEventStoreOperations"/>
 /// and its parent <see cref="JasperFx.Events.IEventOperations"/>. This interface
 /// inherits the canonical contracts and adds the Polecat-specific extras:
-/// <list type="bullet">
-///   <item><c>UnArchiveStream</c> — a Polecat-specific archive-lifecycle operation not yet
-///   present in the canonical surface.</item>
-/// </list>
+/// <c>UnArchiveStream(Guid|string)</c>, the reversal of <c>ArchiveStream</c>, was one of those
+/// extras until JasperFx/marten#5476 lifted it onto <see cref="JasperFx.Events.IEventStoreOperations"/>.
+/// Like <c>TombstoneStream</c> it is still re-declared here with <c>new</c> so assemblies compiled
+/// against older Polecat keep binding to it.
 /// <c>TombstoneStream(Guid|string)</c>, the hard delete of a stream, was one of those extras
 /// until jasperfx#1014 (2.90.0) lifted it onto <see cref="JasperFx.Events.IEventStoreOperations"/>.
 /// It is still re-declared here with <c>new</c> so assemblies compiled against older Polecat
@@ -40,15 +40,21 @@ namespace Polecat.Events;
 /// </remarks>
 public interface IEventOperations : JasperFx.Events.IEventStoreOperations, IQueryEventStore
 {
-    /// <summary>
-    ///     Remove the archived flag from a stream and all its events by Guid id.
-    /// </summary>
-    void UnArchiveStream(Guid streamId);
+    // UnArchiveStream was lifted onto JasperFx.Events.IEventStoreOperations for JasperFx/marten#5476,
+    // as default members that throw. The declarations stay here, re-declared with `new`, for the
+    // same BINARY-compatibility reason as TombstoneStream below: an assembly compiled against an
+    // earlier Polecat -- WolverineFx.Polecat's PolecatOps.UnArchiveStream among them -- calls them
+    // through a member reference whose parent is Polecat.Events.IEventOperations, and the runtime
+    // does not search base interfaces to resolve one, so deleting them would make every such call
+    // throw MissingMethodException. `new` keeps CS0108 quiet, and EventOperations' one public method
+    // per overload satisfies both interface slots, so the shared member is implemented too (the
+    // StreamArchivingCompliance unarchive facts call it through IEventStoreOperations).
 
-    /// <summary>
-    ///     Remove the archived flag from a stream and all its events by string key.
-    /// </summary>
-    void UnArchiveStream(string streamKey);
+    /// <inheritdoc cref="JasperFx.Events.IEventStoreOperations.UnArchiveStream(Guid)" />
+    new void UnArchiveStream(Guid streamId);
+
+    /// <inheritdoc cref="JasperFx.Events.IEventStoreOperations.UnArchiveStream(string)" />
+    new void UnArchiveStream(string streamKey);
 
     // TombstoneStream was lifted onto JasperFx.Events.IEventStoreOperations in jasperfx#1014
     // (2.90.0), but the declarations stay here, re-declared with `new`, for BINARY compatibility.
