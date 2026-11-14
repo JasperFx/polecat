@@ -18,8 +18,7 @@ namespace Polecat.Storage.ClosedShape;
 /// </summary>
 internal sealed class SubClassPolecatStorage<T, TRoot, TId>
     : IDocumentStorage<T, TId>, IPolecatObjectStorage<T>, IPolecatBatchLoadStorage<T>,
-        IPolecatBulkVersionCheckStorage<T>, IPolecatDeletionStorage,
-        IPolecatMappedConcurrencyStorage<T>
+        IPolecatBulkVersionCheckStorage<T>, IPolecatDeletionStorage
     where T : notnull, TRoot
     where TRoot : notnull
     where TId : notnull
@@ -71,7 +70,7 @@ internal sealed class SubClassPolecatStorage<T, TRoot, TId>
     public DbObjectName TableName => _parent.TableName;
     public IOperationFragment DeleteFragment => _parent.DeleteFragment;
     public IOperationFragment HardDeleteFragment => _parent.HardDeleteFragment;
-    public IOperationFragment UndeleteFragment => ((IPolecatDeletionStorage)_parent).UndeleteFragment;
+    public IOperationFragment? UndeleteFragment => ((IPolecatDeletionStorage)_parent).UndeleteFragment;
     public bool IsConjoined => ((IPolecatDeletionStorage)_parent).IsConjoined;
     public bool IsSoftDeleted => ((IPolecatDeletionStorage)_parent).IsSoftDeleted;
     public IReadOnlyList<IDuplicatedField> DuplicatedFields => _parent.DuplicatedFields;
@@ -151,10 +150,10 @@ internal sealed class SubClassPolecatStorage<T, TRoot, TId>
     public long? MappedRevisionForObject(object document) => ParentBridge.MappedRevisionForObject(document);
 
     public bool TryApplyMappedVersion(T document, Guid version)
-        => ((IPolecatMappedConcurrencyStorage<TRoot>)_parent).TryApplyMappedVersion(document, version);
+        => _parent.TryApplyMappedVersion(document, version);
 
     public bool TryApplyMappedRevision(T document, long revision)
-        => ((IPolecatMappedConcurrencyStorage<TRoot>)_parent).TryApplyMappedRevision(document, revision);
+        => _parent.TryApplyMappedRevision(document, revision);
 
     public void Eject(IStorageSession session, T document) => _parent.Eject(session, document);
 
@@ -284,6 +283,9 @@ internal sealed class SubClassPolecatStorage<T, TRoot, TId>
 
     public IDeletion HardDeletionForDocument(object document, string tenantId)
         => ParentBridge.HardDeletionForDocument(document, tenantId);
+
+    public void ClearTrackedVersions(IStorageSession session, object id)
+        => ParentBridge.ClearTrackedVersions(session, id);
 }
 
 /// <summary>

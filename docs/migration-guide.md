@@ -240,6 +240,30 @@ unchanged. Three things a caller can see do change:
 | `IDynamicTenantSource<string>.AllActive()` returned database identifiers (`Polecat_tenant-a`) | It returns the tenant ids (`tenant-a`), as Marten's does. `AllActiveByTenant()` is unchanged. |
 | — | New members from the base: `ClearAllDatabaseRecordsAsync`, `LookupTenantAsync` (unknown, disabled or enabled, with no exception), `ResolveTenantAsync`, `FindCachedDatabase` and `AllTenantIds`. It also implements `IMasterTableMultiTenancy`, `IDisposable` and `IAsyncDisposable`. |
 
+## Upgrading to 6.0: an identity-map session refuses a second instance of a mapped document
+
+Polecat's document storage now runs on Weasel's shared closed-shape storage, the same storage Marten
+uses ([#959](https://github.com/JasperFx/polecat/issues/959), weasel#811). In an identity-map session,
+storing a **different instance** of a document whose id the session already maps now throws
+`InvalidOperationException`. Polecat 5.x replaced the mapped instance silently.
+
+```csharp
+await using var session = store.IdentitySession();
+
+var loaded = await session.LoadAsync<Order>(id);   // mapped
+session.Store(new Order { Id = id, Total = 10 });   // 6.0: InvalidOperationException
+```
+
+Two instances of one document, both stored in one session, end as last-write-wins, which can't be told
+apart from a lost update. That is why Marten refuses it (weasel#740). Any of these keeps working:
+
+- Store the instance the session handed you. Storing the *same* instance again is fine.
+- Call `session.Eject(loaded)` first, then store the new instance.
+- Implement `IEquatable<T>` on the type. A C# `record` already does. The type has then said what "the
+  same document" means, and a second instance is accepted.
+
+Lightweight sessions (`LightweightSession()`) keep no identity map and are unaffected.
+
 ## Deprecation: `MapPolecatMcp`
 
 `Polecat.AspNetCore`'s built-in `MapPolecatMcp()` is now `[Obsolete]` and will be **removed in the

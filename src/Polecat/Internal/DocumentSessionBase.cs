@@ -758,8 +758,9 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
                 + "if it should be.");
         }
 
+        // #959: Polecat's rules always supply the fragment; it is nullable only on Weasel's interface.
         _workTracker.Add(new UndoDeleteWhereOperation(
-            storage.UndeleteFragment, storage.IsConjoined, TenantId, fragment, typeof(T)));
+            storage.UndeleteFragment!, storage.IsConjoined, TenantId, fragment, typeof(T)));
     }
 
     /// <summary>
@@ -775,7 +776,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         assertNotDisposed();
         var storage = ClosedShapeDeletionStorageFor<T>();
         _workTracker.Add(new Operations.UndoDeleteWhereOperation(
-            storage.UndeleteFragment, storage.IsConjoined, TenantId, new IdEqualsFragment(id, idType), typeof(T),
+            storage.UndeleteFragment!, storage.IsConjoined, TenantId, new IdEqualsFragment(id, idType), typeof(T),
             movesVersion: true));
     }
 
@@ -911,20 +912,13 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     /// </summary>
     private void ApplyMappedVersion<T>(T document, Guid version) where T : notnull
     {
-        if (((Weasel.Storage.IStorageSession)this).StorageFor<T>() is
-            Storage.ClosedShape.IPolecatMappedConcurrencyStorage<T> mapped)
-        {
-            mapped.TryApplyMappedVersion(document, version);
-        }
+        // #959: on Weasel's IDocumentStorage<T> since weasel#811; false when there is no mapped member.
+        ((Weasel.Storage.IStorageSession)this).StorageFor<T>().TryApplyMappedVersion(document, version);
     }
 
     private void ApplyMappedRevision<T>(T document, long revision) where T : notnull
     {
-        if (((Weasel.Storage.IStorageSession)this).StorageFor<T>() is
-            Storage.ClosedShape.IPolecatMappedConcurrencyStorage<T> mapped)
-        {
-            mapped.TryApplyMappedRevision(document, revision);
-        }
+        ((Weasel.Storage.IStorageSession)this).StorageFor<T>().TryApplyMappedRevision(document, revision);
     }
 
     public void QueueSqlCommand(string sql, params object[] parameterValues)
@@ -2109,7 +2103,15 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         if (provider.Mapping.DocumentType == typeof(T))
         {
             var session = (Weasel.Storage.IStorageSession)this;
-            session.StorageFor<T>().EjectById(session, id);
+            var storage = session.StorageFor<T>();
+            storage.EjectById(session, id);
+
+            // #959: Weasel's EjectById drops the identity-map entry but not the version the session
+            // tracked for the id, which Polecat's own storage always cleared too.
+            if (storage is Storage.ClosedShape.IPolecatObjectWriteStorage polecat)
+            {
+                polecat.ClearTrackedVersions(session, id);
+            }
         }
     }
 
