@@ -27,6 +27,21 @@ The connection is resolved in a scope when the store is built, only read and nev
 `opts.Connection(SqlConnection)` does the same by hand. Microsoft.Data.SqlClient has no public
 `DbDataSource`, so the connection string is what is shared; Polecat opens its own pooled connections from it.
 
+Only the connection's `ConnectionString` is kept, so it has to be able to log in by itself. Both entry points
+throw an `ArgumentException` at configuration time for a connection whose string cannot:
+
+| The connection… | Supported? |
+|---|---|
+| Was never opened, SQL login with `Password` in the string (Aspire's registration) | Yes |
+| Uses `Integrated Security=True` | Yes |
+| Uses `Authentication=Active Directory Default`, `Managed Identity`, `Workload Identity`, `Interactive`, … | Yes — SqlClient acquires the token from the string |
+| Has been opened, with `Persist Security Info=True` | Yes |
+| Has been opened, without `Persist Security Info=True` | **No** — SqlClient strips the password on the first open |
+| Is authenticated by a `SqlCredential` | **No** — the credential is not in the string |
+| Is authenticated by an `AccessToken` or `AccessTokenCallback` | **No** — the token is not in the string |
+
+For the unsupported cases, pass the full connection string with `opts.Connection(string)` instead.
+
 ## OpenTelemetry
 
 Polecat publishes one `ActivitySource` and one `Meter`, both named `Polecat`. Subscribe to both:
