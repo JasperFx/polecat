@@ -45,14 +45,14 @@ internal class EventListHandler
             var dotNetTypeName = sqlReader.IsDBNull(8) ? null : sqlReader.GetString(8);
             var isArchived = sqlReader.GetBoolean(9);
             // #388: non-null bdata means the payload is binary, not in the JSON `data` column.
-            var bdata = sqlReader.IsDBNull(10) ? null : sqlReader.GetFieldValue<byte[]>(10);
+            var isBinary = !sqlReader.IsDBNull(10);
 
             object data;
             IEventType mapping;
 
             // #561 / jasperfx#752: upcast FIRST, so the dotnet_type hint below cannot shadow a
             // registered transformation (marten#4680). See EventGraph.TryFindUpcast.
-            if (_events.TryFindUpcast(typeName, bdata, out var transformation))
+            if (_events.TryFindUpcast(typeName, isBinary, out var transformation))
             {
                 data = await _events.UpcastAsync(transformation, json, _serializer, token)
                     .ConfigureAwait(false);
@@ -63,7 +63,7 @@ internal class EventListHandler
                 var resolvedType = _events.ResolveEventType(dotNetTypeName);
                 if (resolvedType == null) continue;
 
-                data = _events.DeserializeEventData(resolvedType, json, bdata, _serializer);
+                data = _events.DeserializeEventData(resolvedType, json, sqlReader, 10, _serializer);
                 mapping = _events.EventMappingFor(resolvedType);
             }
 

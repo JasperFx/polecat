@@ -84,7 +84,7 @@ public partial class DocumentStore
         object? raw;
         Type clrType;
 
-        if (Events.TryFindUpcast(record.EventTypeName, bdata: null, out var transformation))
+        if (Events.TryFindUpcast(record.EventTypeName, isBinary: false, out var transformation))
         {
             clrType = transformation.EventType;
             raw = Events.Upcast(transformation, record.Data.GetRawText(), Options.Serializer);

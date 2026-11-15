@@ -1,3 +1,5 @@
+using System.Data.Common;
+using System.Buffers;
 using System.Collections.Concurrent;
 using System.Data;
 using System.Diagnostics.CodeAnalysis;
@@ -903,8 +905,8 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
     ///     the call every Polecat hydration path makes BEFORE default deserialization.
     /// </summary>
     /// <param name="eventTypeName">The stored <c>pc_events.type</c> alias.</param>
-    /// <param name="bdata">
-    ///     The row's <c>bdata</c> column. Non-null means the row was written by an
+    /// <param name="isBinary">
+    ///     Whether the row's <c>bdata</c> column is non-null, which means the row was written by an
     ///     <see cref="IEventBinarySerializer" /> (#388), and upcasting deliberately does not apply:
     ///     the shared <c>IUpcastPayload</c> is a JSON contract — <c>As&lt;T&gt;</c> and
     ///     <c>AsJsonDocument</c> both presuppose a JSON body — so a binary row has nothing an upcast
@@ -934,10 +936,10 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
     ///         and keeps its unmodified hydration path.
     ///     </para>
     /// </remarks>
-    internal bool TryFindUpcast(string? eventTypeName, byte[]? bdata,
+    internal bool TryFindUpcast(string? eventTypeName, bool isBinary,
         [NotNullWhen(true)] out UpcastTransformation? transformation)
     {
-        if (bdata is not null || !Upcasters.HasAny || eventTypeName is null)
+        if (isBinary || !Upcasters.HasAny || eventTypeName is null)
         {
             transformation = null;
             return false;
@@ -985,9 +987,23 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
         }
     }
 
-    internal object DeserializeEventData(Type resolvedType, string json, byte[]? bdata, ISerializer serializer)
+    /// <summary>
+    ///     Deserialize the event payload of the row <paramref name="reader" /> is on: the JSON
+    ///     <paramref name="json" /> when its <c>bdata</c> column is null, otherwise the binary payload
+    ///     through the type's <see cref="IEventBinarySerializer" /> (#388).
+    /// </summary>
+    /// <remarks>
+    ///     #981 (jasperfx#1187): the binary payload is read into a buffer rented from
+    ///     <see cref="ArrayPool{T}.Shared" /> and handed to the serializer as a span, rather than first
+    ///     copied into a new exact-length array per event. Deserialization is synchronous and the
+    ///     serializer must not hold on to the span, so the buffer goes back to the pool before this
+    ///     returns. It is cleared on return, because event payloads can carry data a masking rule exists
+    ///     to protect.
+    /// </remarks>
+    internal object DeserializeEventData(Type resolvedType, string json, DbDataReader reader, int bdataOrdinal,
+        ISerializer serializer)
     {
-        if (bdata is null) return serializer.FromJson(resolvedType, json);
+        if (reader.IsDBNull(bdataOrdinal)) return serializer.FromJson(resolvedType, json);
 
         var binary = ResolveBinarySerializerFor(resolvedType)
                      ?? throw new InvalidOperationException(
@@ -996,7 +1012,24 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
                          + $"opts.Events.UseBinarySerializer<{resolvedType.Name}>(...) or set "
                          + "opts.Events.DefaultBinarySerializer — the event cannot be read without it.");
 
-        return binary.Deserialize(resolvedType, bdata);
+        var length = checked((int)reader.GetBytes(bdataOrdinal, 0, null, 0, 0));
+        var buffer = ArrayPool<byte>.Shared.Rent(length);
+        try
+        {
+            var read = 0;
+            while (read < length)
+            {
+                var chunk = (int)reader.GetBytes(bdataOrdinal, read, buffer, read, length - read);
+                if (chunk == 0) break;
+                read += chunk;
+            }
+
+            return binary.Deserialize(resolvedType, new ReadOnlySpan<byte>(buffer, 0, read));
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer, clearArray: true);
+        }
     }
 
     /// <summary>

@@ -1095,14 +1095,14 @@ internal class EventOperations : QueryEventStore, IEventOperations, IEventOperat
             var tenantId = reader.GetString(7);
             var dotNetTypeName = reader.IsDBNull(8) ? null : reader.GetString(8);
             var isArchived = reader.GetBoolean(9);
-            var bdata = reader.IsDBNull(10) ? null : reader.GetFieldValue<byte[]>(10); // #388
+            var isBinary = !reader.IsDBNull(10); // #388
 
             object data;
             IEventType mapping;
 
             // #561 / jasperfx#752: upcast FIRST, so the dotnet_type hint below cannot shadow a
             // registered transformation (marten#4680). See EventGraph.TryFindUpcast.
-            if (_events.TryFindUpcast(typeName, bdata, out var transformation))
+            if (_events.TryFindUpcast(typeName, isBinary, out var transformation))
             {
                 data = await _events
                     .UpcastAsync(transformation, json, _sessionBase.Serializer, cancellation)
@@ -1114,7 +1114,7 @@ internal class EventOperations : QueryEventStore, IEventOperations, IEventOperat
                 var resolvedType = _events.ResolveEventType(dotNetTypeName);
                 if (resolvedType == null) continue;
 
-                data = _events.DeserializeEventData(resolvedType, json, bdata, _sessionBase.Serializer);
+                data = _events.DeserializeEventData(resolvedType, json, reader, 10, _sessionBase.Serializer);
                 mapping = _events.EventMappingFor(resolvedType);
             }
 
@@ -1304,7 +1304,7 @@ internal class EventOperations : QueryEventStore, IEventOperations, IEventOperat
         var tenantId = reader.GetString(7);
         var dotNetTypeName = reader.IsDBNull(8) ? null : reader.GetString(8);
         var isArchived = reader.GetBoolean(9);
-        var bdata = reader.IsDBNull(10) ? null : reader.GetFieldValue<byte[]>(10); // #388
+        var isBinary = !reader.IsDBNull(10); // #388
 
         object data;
         IEventType mapping;
@@ -1313,7 +1313,7 @@ internal class EventOperations : QueryEventStore, IEventOperations, IEventOperat
         // BATCHED DCB read, whose result is materialized synchronously inside the batch's own
         // reader walk, so an async-only registration correctly throws here rather than being
         // silently downgraded.
-        if (eventGraph.TryFindUpcast(typeName, bdata, out var transformation))
+        if (eventGraph.TryFindUpcast(typeName, isBinary, out var transformation))
         {
             data = eventGraph.Upcast(transformation, json, serializer);
             mapping = eventGraph.EventMappingFor(transformation.EventType);
@@ -1323,7 +1323,7 @@ internal class EventOperations : QueryEventStore, IEventOperations, IEventOperat
             var resolvedType = eventGraph.ResolveEventType(dotNetTypeName);
             if (resolvedType == null) return null;
 
-            data = eventGraph.DeserializeEventData(resolvedType, json, bdata, serializer);
+            data = eventGraph.DeserializeEventData(resolvedType, json, reader, 10, serializer);
             mapping = eventGraph.EventMappingFor(resolvedType);
         }
 

@@ -312,7 +312,7 @@ internal class PolecatEventLoader : IEventLoader
             var dotNetTypeName = reader.IsDBNull(8) ? null : reader.GetString(8);
             var isArchived = reader.GetBoolean(9);
             // #388: non-null bdata means this row's payload is binary, not JSON.
-            var bdata = reader.IsDBNull(10) ? null : reader.GetFieldValue<byte[]>(10);
+            var isBinary = !reader.IsDBNull(10);
 
             // #550: how far this query actually got, whether or not the row survives into the page.
             // EventPage.CalculateCeiling uses it to avoid claiming progress past rows nobody read when a
@@ -331,7 +331,7 @@ internal class PolecatEventLoader : IEventLoader
             // NEW types -- so a legacy row would otherwise be discarded here before anything got a
             // chance to upcast it, and for a raw-JSON transformation the old CLR type may not even
             // exist to put on the list. Mirrors the SQL push-down in BuildCommandText.
-            var upcastable = _events.TryFindUpcast(typeName, bdata, out var transformation);
+            var upcastable = _events.TryFindUpcast(typeName, isBinary, out var transformation);
 
             if (!upcastable && _allowedDotNetTypes != null && dotNetTypeName != null &&
                 !_allowedDotNetTypes.Contains(dotNetTypeName))
@@ -389,7 +389,7 @@ internal class PolecatEventLoader : IEventLoader
 
                 try
                 {
-                    data = _events.DeserializeEventData(resolvedType, json, bdata, _options.Serializer);
+                    data = _events.DeserializeEventData(resolvedType, json, reader, 10, _options.Serializer);
                 }
                 catch (Exception ex)
                 {
