@@ -172,7 +172,9 @@ public class dynamic_tenant_source_tests : IAsyncLifetime
             source.AllActiveByTenant().Select(x => x.TenantId)
                 .OrderBy(x => x, StringComparer.Ordinal)
                 .ShouldBe([TenantA, TenantB]);
-            source.AllActive().Count.ShouldBe(2);
+            // #807: the tenant ids, as Marten's does, now that both run on Weasel's
+            // MasterTableTenancyBase. 5.x returned database identifiers ("Polecat_tenant-a").
+            source.AllActive().OrderBy(x => x, StringComparer.Ordinal).ShouldBe([TenantA, TenantB]);
 
             // A disabled tenant drops out of the active set on the next refresh.
             await source.DisableTenantAsync(TenantB);

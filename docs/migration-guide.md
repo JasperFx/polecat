@@ -10,7 +10,7 @@ The foundation pins move in lockstep, so a consuming project has to move with th
 
 | Package | 5.50.0 | 6.0 |
 |---|---|---|
-| `JasperFx`, `JasperFx.Events` | 2.102 | 3.0.0 |
+| `JasperFx`, `JasperFx.Events` | 2.102 | 3.2.0 |
 | `Weasel.SqlServer`, `Weasel.Storage` | 9.50.0 | 10.0 |
 | `Microsoft.Data.SqlClient` | 7.0.0 | 7.1.1 |
 | `Microsoft.EntityFrameworkCore.SqlServer` (`Polecat.EntityFrameworkCore`) | 9.x | 10.0 |
@@ -99,6 +99,38 @@ public TripProjection()
 The docs at [side effects](/events/projections/side-effects) and [the async daemon](/events/projections/async-daemon)
 still describe the gate as opt-in; read them as "on unless you set it to `false`".
 
+## Upgrading to 6.0: DCB conflicts honour event types, and a check no longer bumps what it read
+
+Two changes to `FetchForWritingByTags` ([polecat#972](https://github.com/JasperFx/polecat/issues/972),
+[polecat#973](https://github.com/JasperFx/polecat/issues/973), ported from Marten's
+[marten#5887](https://github.com/JasperFx/marten/issues/5887)). Both make fewer saves fail, and neither makes
+a save that should fail succeed.
+
+- **Reading a tag no longer writes it.** A boundary's save used to move the version of every tag it read, so
+  two boundaries over one tag value always conflicted, even when neither appended anything the other's query
+  matches. Now only the tags on appended events move a version. This needs no configuration and is safe in a
+  rolling upgrade.
+- **An event of a type the query does not select is no longer a conflict.** The new
+  `opts.Events.DcbConflictScope` defaults to `DcbConflictScope.TagValueAndEventType`, which keeps a version
+  per (tag value, event type) as well as per tag value. Under it a condition naming event types (for example
+  `AndEventsOfType<...>()`) conflicts only with appended events of those types. `DcbConflictScope.TagValue`
+  is what 5.x did.
+
+**The second change needs care in a rolling upgrade.** A 6.0 node checking per-event-type versions can't see
+tagged appends from a 5.x node, which doesn't maintain them, so a conflict between the two can be missed.
+Choose one:
+
+1. Stop every node that appends tagged events, then start 6.0.
+2. Deploy 6.0 with `opts.Events.DcbConflictScope = DcbConflictScope.TagValueRecordingEventTypes`. It checks
+   exactly as 5.x did and maintains the new versions. Once no 5.x node is left, remove the setting.
+
+To keep 5.x's behaviour altogether, set `DcbConflictScope.TagValue`.
+
+There is no schema change. The per-event-type versions are rows in the existing `pc_dcb_tag_version`, keyed
+`{tag suffix}:{event type name}`. That key has to fit the 250-character `tag_table` column, and an append
+whose key wouldn't is refused with a message saying so. The table grows by about one row per (tag value,
+event type) pair ever appended; see the [DCB docs](/events/dcb#conflict-scope-event-types-count).
+
 ## Upgrading to 6.0: Aspire and the `SqlConnection` in DI
 
 New in 6.0, and nothing breaks: a connection string set on `StoreOptions` works exactly as before
@@ -121,8 +153,24 @@ builder.Services.AddPolecat(opts => { /* no connection string */ })
 - `opts.Connection(SqlConnection)` does the same from inside the configuration lambda, for a connection you
   already hold.
 - **There is no `DbDataSource` overload.** Microsoft.Data.SqlClient has no public `DbDataSource`, so the
-  connection string is what is shared. Polecat opens its own pooled connections from it, so they use the
-  same pool and credentials as the registered connection.
+  connection string is what is shared. Polecat opens its own pooled connections from it.
+- **The string has to be able to log in by itself, and Polecat refuses a connection whose string can't.**
+  `Connection(SqlConnection)` and `UseSqlConnectionFromServices()` throw an `ArgumentException` when the store
+  is configured, rather than letting it come up and fail its first query with `Login failed`:
+  - **A connection that has already been opened.** SqlClient removes the password from
+    `SqlConnection.ConnectionString` on the first open unless the string says `Persist Security Info=True`.
+    Aspire's registration is a fresh, unopened connection, so it is not affected; a connection you opened
+    yourself, or a singleton something else opened first, is.
+  - **A connection authenticated by a `SqlCredential`, `AccessToken` or `AccessTokenCallback`.** Those live on
+    the connection object, never in the string, and every connection Polecat opens (and every one Weasel
+    opens for migrations) is built from the string alone. Polecat does not carry them across.
+
+  What works: SQL logins whose password is still in the string (an unopened connection, or
+  `Persist Security Info=True`), `Integrated Security=True`, and the `Authentication=Active Directory …` modes
+  that acquire their own token from the string (`Default`, `Managed Identity`, `Workload Identity`,
+  `Interactive`, …), which is how Aspire's Azure SQL integration connects. For anything else, pass the
+  connection string itself with `opts.Connection(string)`. This is the same failure Marten hit with an
+  `NpgsqlDataSource` ([marten#5898](https://github.com/JasperFx/marten/issues/5898)), from a different cause.
 
 See [the `StoreOptions` page](./configuration/storeoptions.md#connection-from-the-container-aspire-addsqlserverclient)
 for the setup, and the OpenTelemetry and health check wiring that goes with it under Aspire.
@@ -217,6 +265,44 @@ that names `JasperFx.Events.IEventStoreOperations` is unaffected.
 `FetchLatest<T>(Guid|string)` keeps its declaration on `IEventOperations`. It is declared on both of
 that interface's parents, so the redeclaration is what keeps `session.Events.FetchLatest<T>(...)` from
 being ambiguous.
+
+## Upgrading to 6.0: `MasterTableTenancy` runs on Weasel's shared base
+
+`MasterTableTenancy` now derives from Weasel's `MasterTableTenancyBase<PolecatDatabase, DbDataSource>`,
+the control-table runtime Marten and Fisher use too ([#807](https://github.com/JasperFx/polecat/issues/807),
+weasel#809). The `pc_tenants` table, its SQL, case-insensitive tenant ids, the startup migration lock, the
+resilience pipeline and the refusals (`UnknownTenantIdException`, `DisabledTenantException`) are all
+unchanged. Three things a caller can see do change:
+
+| 5.x | 6.0 |
+|---|---|
+| `MasterTableTenancy.TableName`, a `const` | `tenancy.TableName`, an instance property inherited from the base. Its value is still `pc_tenants`. |
+| `IDynamicTenantSource<string>.AllActive()` returned database identifiers (`Polecat_tenant-a`) | It returns the tenant ids (`tenant-a`), as Marten's does. `AllActiveByTenant()` is unchanged. |
+| — | New members from the base: `ClearAllDatabaseRecordsAsync`, `LookupTenantAsync` (unknown, disabled or enabled, with no exception), `ResolveTenantAsync`, `FindCachedDatabase` and `AllTenantIds`. It also implements `IMasterTableMultiTenancy`, `IDisposable` and `IAsyncDisposable`. |
+
+## Upgrading to 6.0: an identity-map session refuses a second instance of a mapped document
+
+Polecat's document storage now runs on Weasel's shared closed-shape storage, the same storage Marten
+uses ([#959](https://github.com/JasperFx/polecat/issues/959), weasel#811). In an identity-map session,
+storing a **different instance** of a document whose id the session already maps now throws
+`InvalidOperationException`. Polecat 5.x replaced the mapped instance silently.
+
+```csharp
+await using var session = store.IdentitySession();
+
+var loaded = await session.LoadAsync<Order>(id);   // mapped
+session.Store(new Order { Id = id, Total = 10 });   // 6.0: InvalidOperationException
+```
+
+Two instances of one document, both stored in one session, end as last-write-wins, which can't be told
+apart from a lost update. That is why Marten refuses it (weasel#740). Any of these keeps working:
+
+- Store the instance the session handed you. Storing the *same* instance again is fine.
+- Call `session.Eject(loaded)` first, then store the new instance.
+- Implement `IEquatable<T>` on the type. A C# `record` already does. The type has then said what "the
+  same document" means, and a second instance is accepted.
+
+Lightweight sessions (`LightweightSession()`) keep no identity map and are unaffected.
 
 ## Deprecation: `MapPolecatMcp`
 

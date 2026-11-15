@@ -135,42 +135,17 @@ internal static class PolecatClosedShapeRegistration
         var descriptor = SqlServerDocumentStorageDescriptorBuilder.Build(
             mapping, identification, mapping.StoreOptions);
 
-        var queryOnly = new QueryOnlyPolecatStorage<TDoc, TId>(mapping, descriptor);
-        var lightweight = BuildLightweight(mapping, descriptor);
-        var identityMap = BuildIdentityMap(mapping, descriptor);
+        // #959: Weasel's public closed-shape bases (weasel#811), one rules object per document type.
+        var rules = new PolecatStorageRules<TDoc, TId>(mapping, descriptor);
+        var queryOnly = new PolecatQueryOnlyStorage<TDoc, TId>(descriptor, rules);
+        var lightweight = new PolecatLightweightStorage<TDoc, TId>(descriptor, rules);
+        var identityMap = new PolecatIdentityMapStorage<TDoc, TId>(descriptor, rules);
 
         // Polecat has no dirty tracking by design — the DirtyTracking slot gets the
         // IdentityMap storage (the closest tracking mode Polecat offers).
         return new DocumentProvider<TDoc>(queryOnly, lightweight, identityMap, identityMap);
     }
 
-    private static LightweightPolecatStorage<TDoc, TId> BuildLightweight<TDoc, TId>(
-        DocumentMapping mapping, DocumentStorageDescriptor<TDoc, TId> descriptor)
-        where TDoc : notnull
-        where TId : notnull
-        => descriptor.ConcurrencyMode switch
-        {
-            ConcurrencyMode.Optimistic => new OptimisticLightweightPolecatStorage<TDoc, TId>(mapping, descriptor),
-            ConcurrencyMode.Numeric => new NumericLightweightPolecatStorage<TDoc, TId>(mapping, descriptor),
-            _ => new UnversionedLightweightPolecatStorage<TDoc, TId>(mapping, descriptor)
-        };
-
-    private static IdentityMapPolecatStorage<TDoc, TId> BuildIdentityMap<TDoc, TId>(
-        DocumentMapping mapping, DocumentStorageDescriptor<TDoc, TId> descriptor)
-        where TDoc : notnull
-        where TId : notnull
-        => descriptor.ConcurrencyMode switch
-        {
-            ConcurrencyMode.Optimistic => new OptimisticIdentityMapPolecatStorage<TDoc, TId>(mapping, descriptor),
-            ConcurrencyMode.Numeric => new NumericIdentityMapPolecatStorage<TDoc, TId>(mapping, descriptor),
-            _ => new UnversionedIdentityMapPolecatStorage<TDoc, TId>(mapping, descriptor)
-        };
-
-    /// <summary>
-    ///     Builds the closed-shape provider for a registered SUBCLASS (#273 E2e): each flavor
-    ///     is a <see cref="SubClassPolecatStorage{T,TRoot,TId}" /> wrapping the hierarchy
-    ///     root's corresponding flavor from <paramref name="rootProvider" />.
-    /// </summary>
     internal static object BuildSubClassProviderFor(DocumentMapping rootMapping, Type subclassType,
         object rootProvider)
     {

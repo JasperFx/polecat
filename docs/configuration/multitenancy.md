@@ -282,10 +282,9 @@ await source.EnableTenantAsync("tenant-a");
 // been removed or disabled elsewhere
 await source.RefreshAsync();
 
-// The currently active tenants. AllActive() returns the tenant *database
-// identifiers* rather than raw connection strings, so credentials never reach an
-// admin dashboard
-IReadOnlyList<string> databases = source.AllActive();
+// The currently active tenants. AllActive() returns tenant ids rather than raw
+// connection strings, so credentials never reach an admin dashboard
+IReadOnlyList<string> tenantIds = source.AllActive();
 IReadOnlyList<Assignment<string>> byTenant = source.AllActiveByTenant();
 
 // Remove the registry record entirely. The tenant database itself is untouched

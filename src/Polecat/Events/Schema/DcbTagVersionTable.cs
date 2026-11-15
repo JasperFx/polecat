@@ -16,10 +16,15 @@ namespace Polecat.Events.Schema;
 ///         routinely spans distinct streams. Every racer committed. See gh-515.
 ///     </para>
 ///     <para>
-///         Against a single row the check becomes a write conflict instead of a read. The row is
-///         captured at <c>FetchForWritingByTags</c> time and asserted-and-bumped at save time by an
-///         <c>UPDATE ... WHERE version = @captured</c>, so concurrent savers queue on the row's own
-///         exclusive lock rather than racing past each other.
+///         Against a single row the check becomes a lock conflict instead of a read. The row is
+///         captured at <c>FetchForWritingByTags</c> time and compared under a lock at save time, so
+///         concurrent savers queue on the row rather than racing past each other. Only an appended event
+///         carrying the tag moves the version (#972); see <c>DcbTagVersionPhase</c>.
+///     </para>
+///     <para>
+///         #973: <c>tag_table</c> also holds <c>{suffix}:{event type name}</c>, a version per (tag value,
+///         event type) that a condition naming event types is checked against. See
+///         <see cref="Polecat.Events.DcbConflictScope" /> and <c>DcbTagVersionKeys</c>.
 ///     </para>
 ///     <para>
 ///         One table across every registered tag type, discriminated by <c>tag_table</c> (the tag type's

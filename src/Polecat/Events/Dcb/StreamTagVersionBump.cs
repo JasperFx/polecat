@@ -48,6 +48,20 @@ internal static class StreamTagVersionBump
 
             // CONVERT because a dictionary parameter binds as nvarchar, and comparing that to the
             // varchar key of pc_dcb_tag_version would convert the column and range-lock a scan of it.
+            // #973: under a scope that keeps per-event-type versions, the archive moves those too, or a
+            // boundary checked by event type would save straight through it.
+            var byEventType = events.RecordsDcbEventTypeVersions
+                ? $"""
+
+                    UNION
+                    SELECT DISTINCT {EventTypeKeySql(registration, "e")} AS tag_table,
+                        {tagValue} AS tag_value, CONVERT(varchar(250), @tenant_id) AS tenant_id
+                    FROM {events.TagTableName(registration)} t
+                    INNER JOIN {events.EventsTableName} e ON {events.TagToEventJoin("t", "e")}
+                    WHERE e.stream_id = @id AND e.tenant_id = @tenant_id AND {FitsKeySql(registration, "e")}
+                """
+                : string.Empty;
+
             builder.Append($"""
 
                 MERGE {events.DcbTagVersionTableName} WITH (HOLDLOCK) AS target
@@ -56,7 +70,7 @@ internal static class StreamTagVersionBump
                         {tagValue} AS tag_value, CONVERT(varchar(250), @tenant_id) AS tenant_id
                     FROM {events.TagTableName(registration)} t
                     INNER JOIN {events.EventsTableName} e ON {events.TagToEventJoin("t", "e")}
-                    WHERE e.stream_id = @id AND e.tenant_id = @tenant_id
+                    WHERE e.stream_id = @id AND e.tenant_id = @tenant_id{byEventType}
                 ) AS source
                 ON target.tag_table = source.tag_table AND target.tag_value = source.tag_value
                     AND target.tenant_id = source.tenant_id
@@ -106,46 +120,65 @@ internal static class StreamTagVersionBump
 
         builder.Append($"\nDECLARE {Version} bigint = NEXT VALUE FOR {events.DcbTagVersionSequenceName};\n");
 
-        // In the order DcbTagVersionPhase takes rows, so far as a set-based statement can.
-        var registrations = events.TagTypes.OrderBy(x => x.TableSuffix, StringComparer.Ordinal).ToArray();
+        // #925: one row at a time, in the order DcbTagVersionPhase sorts them. A set-based UPDATE takes its
+        // row locks in whatever order the plan produces them, and a tagged append taking the same rows in
+        // (tag_table, tag_value) order then crossed it: each held a row the other wanted. BIN2 is the ordinal
+        // order the phase sorts by, which the columns' own collation is not.
+        //
+        // #973: the per-event-type rows are in the same list, keyed "{suffix}:{type}", so they are taken in the
+        // same single order as the tag value rows, as the phase takes them. They are erased whatever the
+        // configured DcbConflictScope: the tag value is the application's data either way, and a store that
+        // ran under another scope earlier may still hold them.
+        builder.Append($"""
 
-        // #925: one row at a time, in the order the phase sorts them. A set-based UPDATE takes its row locks
-        // in whatever order the plan produces them, and a tagged append taking the same rows in
-        // (tag_table, tag_value) order then crossed it: each held a row the other wanted. BIN2 is the
-        // ordinal order DcbTagVersionPhase sorts by, which the column's own collation is not.
-        builder.Append("DECLARE @erase_next varchar(250); DECLARE @erase_prev varchar(250);\n");
+            DECLARE @erase_rows TABLE (
+                tag_table varchar(250) COLLATE Latin1_General_BIN2 NOT NULL,
+                tag_value varchar(250) COLLATE Latin1_General_BIN2 NOT NULL,
+                PRIMARY KEY (tag_table, tag_value));
+            DECLARE @erase_table varchar(250); DECLARE @erase_value varchar(250);
+            DECLARE @erase_prev_table varchar(250); DECLARE @erase_prev_value varchar(250);
 
-        var index = 0;
-        foreach (var registration in registrations)
+            """);
+
+        foreach (var registration in events.TagTypes)
         {
-            var tags = $"@erase_tags_{index++}";
-            var tableSuffix = SqlEscaping.LiteralBody(registration.TableSuffix);
+            var tagValue = $"CONVERT(varchar(250), {TagValueSql.ToSql(registration.SimpleType, "t.value")})";
 
             builder.Append($"""
 
-                DECLARE {tags} TABLE (tag_value varchar(250) COLLATE Latin1_General_BIN2 NOT NULL PRIMARY KEY);
-                INSERT INTO {tags} (tag_value)
-                SELECT DISTINCT CONVERT(varchar(250), {TagValueSql.ToSql(registration.SimpleType, "t.value")})
+                INSERT INTO @erase_rows (tag_table, tag_value)
+                SELECT DISTINCT '{SqlEscaping.LiteralBody(registration.TableSuffix)}', {tagValue}
                 FROM {events.EventsTableName} e
                 INNER JOIN {events.TagTableName(registration)} t ON {events.TagToEventJoin("t", "e")}
-                WHERE e.stream_id = @id AND e.tenant_id = @tenant_id;
-
-                SET @erase_prev = NULL;
-                WHILE 1 = 1
-                BEGIN
-                    SET @erase_next = NULL;
-                    SELECT TOP (1) @erase_next = tag_value FROM {tags}
-                        WHERE @erase_prev IS NULL OR tag_value > @erase_prev ORDER BY tag_value;
-                    IF @erase_next IS NULL BREAK;
-                    UPDATE {events.DcbTagVersionTableName} SET version = {Version}
-                        WHERE tag_table = '{tableSuffix}' AND tag_value = @erase_next AND tenant_id = @tenant_id;
-                    SET @erase_prev = @erase_next;
-                END;
+                WHERE e.stream_id = @id AND e.tenant_id = @tenant_id
+                UNION
+                SELECT DISTINCT {EventTypeKeySql(registration, "e")}, {tagValue}
+                FROM {events.EventsTableName} e
+                INNER JOIN {events.TagTableName(registration)} t ON {events.TagToEventJoin("t", "e")}
+                WHERE e.stream_id = @id AND e.tenant_id = @tenant_id AND {FitsKeySql(registration, "e")};
 
                 """);
         }
 
-        foreach (var registration in registrations)
+        builder.Append($"""
+
+            WHILE 1 = 1
+            BEGIN
+                SET @erase_table = NULL;
+                SELECT TOP (1) @erase_table = tag_table, @erase_value = tag_value FROM @erase_rows
+                    WHERE @erase_prev_table IS NULL OR tag_table > @erase_prev_table
+                        OR (tag_table = @erase_prev_table AND tag_value > @erase_prev_value)
+                    ORDER BY tag_table, tag_value;
+                IF @erase_table IS NULL BREAK;
+                UPDATE {events.DcbTagVersionTableName} SET version = {Version}
+                    WHERE tag_table = @erase_table AND tag_value = @erase_value AND tenant_id = @tenant_id;
+                SET @erase_prev_table = @erase_table;
+                SET @erase_prev_value = @erase_value;
+            END;
+
+            """);
+
+        foreach (var registration in events.TagTypes)
         {
             builder.Append($"""
 
@@ -158,9 +191,32 @@ internal static class StreamTagVersionBump
                         WHERE c.value = s.value AND o.tenant_id = @tenant_id AND o.stream_id <> @id
                     );
 
+                DELETE v
+                {RowsOfTheStreamsTagsByEventType(events, registration)}
+                WHERE v.version = {Version}
+                    AND NOT EXISTS (
+                        SELECT 1 FROM {events.TagTableName(registration)} c
+                        INNER JOIN {events.EventsTableName} o ON {events.TagToEventJoin("c", "o")}
+                        WHERE c.value = s.value AND o.type = s.type AND o.tenant_id = @tenant_id
+                            AND o.stream_id <> @id
+                    );
+
                 """);
         }
     }
+
+    /// <summary>
+    ///     The SQL form of <see cref="DcbTagVersionKeys.ForEventType" />, from an events alias.
+    /// </summary>
+    private static string EventTypeKeySql(ITagTypeRegistration registration, string events)
+        => $"CONVERT(varchar(250), '{SqlEscaping.LiteralBody(registration.TableSuffix)}{DcbTagVersionKeys.Separator}' + {events}.type)";
+
+    /// <summary>
+    ///     A key too long for the column has no row: <see cref="DcbTagVersionKeys.ForEventType" /> refuses to
+    ///     make one rather than truncate it, so neither may the SQL.
+    /// </summary>
+    private static string FitsKeySql(ITagTypeRegistration registration, string events)
+        => $"LEN({events}.type) <= {DcbTagVersionKeys.MaxLength - registration.TableSuffix.Length - 1}";
 
     // A loop from the stream's events to exact keys, by hint, because the table is small until it isn't.
     // Left to itself the optimizer reads every row of the tag type, taking update locks as it goes, and two
@@ -177,5 +233,20 @@ internal static class StreamTagVersionBump
                 INNER LOOP JOIN {events.DcbTagVersionTableName} v WITH (FORCESEEK)
                     ON v.tag_table = '{SqlEscaping.LiteralBody(registration.TableSuffix)}'
                         AND v.tag_value = s.tag_value AND v.tenant_id = @tenant_id
+            """;
+
+    // The per-event-type form of RowsOfTheStreamsTags (#973), carrying the event type so the delete can ask
+    // whether another stream still has an event of that type with the tag.
+    private static string RowsOfTheStreamsTagsByEventType(EventGraph events, ITagTypeRegistration registration)
+        => $"""
+            FROM (
+                    SELECT DISTINCT t.value, e.type, {TagValueSql.ToSql(registration.SimpleType, "t.value")} AS tag_value,
+                        {EventTypeKeySql(registration, "e")} AS tag_table
+                    FROM {events.EventsTableName} e
+                    INNER JOIN {events.TagTableName(registration)} t ON {events.TagToEventJoin("t", "e")}
+                    WHERE e.stream_id = @id AND e.tenant_id = @tenant_id AND {FitsKeySql(registration, "e")}
+                ) s
+                INNER LOOP JOIN {events.DcbTagVersionTableName} v WITH (FORCESEEK)
+                    ON v.tag_table = s.tag_table AND v.tag_value = s.tag_value AND v.tenant_id = @tenant_id
             """;
 }

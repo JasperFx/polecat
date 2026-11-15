@@ -27,6 +27,7 @@ using Weasel.SqlServer;
 using DcbBoundaryRead = Polecat.Events.Dcb.DcbBoundaryRead;
 using DcbTagVersionCapture = Polecat.Events.Dcb.DcbTagVersionCapture;
 using DcbTagVersionEntry = Polecat.Events.Dcb.DcbTagVersionEntry;
+using DcbTagVersionKeys = Polecat.Events.Dcb.DcbTagVersionKeys;
 using DcbTagVersionPhase = Polecat.Events.Dcb.DcbTagVersionPhase;
 
 namespace Polecat.Internal;
@@ -141,8 +142,8 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     /// <remarks>
     ///     Held rather than queued as operations because a DCB boundary is a condition on an APPEND. A
     ///     session that reads a boundary, decides there is nothing to do, and saves has written nothing
-    ///     for the condition to guard — and asserting it anyway would bump the row, invalidating every
-    ///     concurrent session's boundary over a save that changed nothing.
+    ///     for the condition to guard — and checking it anyway would hold row locks a concurrent session
+    ///     with events to append is waiting on.
     /// </remarks>
     private List<DcbTagVersionEntry>? _capturedDcbRows;
 
@@ -185,8 +186,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         var appended = CollectAppendedTagRows();
 
         // A boundary guards an APPEND. A session that read one and then wrote nothing has nothing for it
-        // to guard, and asserting anyway would bump the row and invalidate every concurrent session's
-        // boundary over a save that changed nothing. The gate is "does this save append anything", not
+        // to guard, and checking anyway would lock rows for a save that changed nothing. The gate is "does this save append anything", not
         // "does it append under a tag" — matching Marten, so a boundary means the same thing in both
         // stores.
         var appendsEvents = _workTracker.Streams.Any(s => s.Events.Count > 0);
@@ -245,6 +245,10 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         var rows = new List<DcbTagVersionEntry>();
         var seen = new HashSet<(string, string, string)>();
 
+        // #973: anything but DcbConflictScope.TagValue also moves a version per (tag value, event type), the
+        // one a condition naming event types is checked against under TagValueAndEventType.
+        var recordEventTypes = _eventGraph.RecordsDcbEventTypeVersions;
+
         foreach (var stream in _workTracker.Streams)
         {
             foreach (var @event in stream.Events)
@@ -263,6 +267,15 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
                     {
                         rows.Add(new DcbTagVersionEntry(
                             registration.TableSuffix, value, tenantId, null, null, 0));
+                    }
+
+                    if (!recordEventTypes) continue;
+
+                    var byType = DcbTagVersionKeys.ForEventType(registration.TableSuffix,
+                        @event.EventTypeName ?? _eventGraph.EventMappingFor(@event.EventType).EventTypeName);
+                    if (seen.Add((byType, value, tenantId)))
+                    {
+                        rows.Add(new DcbTagVersionEntry(byType, value, tenantId, null, null, 0));
                     }
                 }
             }
@@ -745,8 +758,9 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
                 + "if it should be.");
         }
 
+        // #959: Polecat's rules always supply the fragment; it is nullable only on Weasel's interface.
         _workTracker.Add(new UndoDeleteWhereOperation(
-            storage.UndeleteFragment, storage.IsConjoined, TenantId, fragment, typeof(T)));
+            storage.UndeleteFragment!, storage.IsConjoined, TenantId, fragment, typeof(T)));
     }
 
     /// <summary>
@@ -762,7 +776,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         assertNotDisposed();
         var storage = ClosedShapeDeletionStorageFor<T>();
         _workTracker.Add(new Operations.UndoDeleteWhereOperation(
-            storage.UndeleteFragment, storage.IsConjoined, TenantId, new IdEqualsFragment(id, idType), typeof(T),
+            storage.UndeleteFragment!, storage.IsConjoined, TenantId, new IdEqualsFragment(id, idType), typeof(T),
             movesVersion: true));
     }
 
@@ -898,20 +912,13 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     /// </summary>
     private void ApplyMappedVersion<T>(T document, Guid version) where T : notnull
     {
-        if (((Weasel.Storage.IStorageSession)this).StorageFor<T>() is
-            Storage.ClosedShape.IPolecatMappedConcurrencyStorage<T> mapped)
-        {
-            mapped.TryApplyMappedVersion(document, version);
-        }
+        // #959: on Weasel's IDocumentStorage<T> since weasel#811; false when there is no mapped member.
+        ((Weasel.Storage.IStorageSession)this).StorageFor<T>().TryApplyMappedVersion(document, version);
     }
 
     private void ApplyMappedRevision<T>(T document, long revision) where T : notnull
     {
-        if (((Weasel.Storage.IStorageSession)this).StorageFor<T>() is
-            Storage.ClosedShape.IPolecatMappedConcurrencyStorage<T> mapped)
-        {
-            mapped.TryApplyMappedRevision(document, revision);
-        }
+        ((Weasel.Storage.IStorageSession)this).StorageFor<T>().TryApplyMappedRevision(document, revision);
     }
 
     public void QueueSqlCommand(string sql, params object[] parameterValues)
@@ -1002,7 +1009,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         try
         {
             // gh-515: the DCB boundary check, run BEFORE the events are inserted so this session's own
-            // appends can't trip it. It asserts-and-bumps the pc_dcb_tag_version rows the session's
+            // appends can't trip it. It checks the pc_dcb_tag_version rows the session's
             // boundaries captured, and bumps the rows it merely appends under, in one sorted phase.
             await AssertDcbBoundariesAsync(token).ConfigureAwait(false);
 
@@ -1059,43 +1066,23 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
 
                 try
                 {
-                    var exceptions = new List<Exception>();
-                    await using var reader = (await ExecuteReaderAsync(batch, token).ConfigureAwait(false));
-                    await OperationResultSets.ApplyAsync(reader, operations, exceptions, token).ConfigureAwait(false);
-
-                    if (exceptions.Count == 1)
-                    {
-                        System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(exceptions[0]).Throw();
-                    }
-
-                    if (exceptions.Count > 0)
-                    {
-                        throw new AggregateException(exceptions);
-                    }
+                    // #807 (weasel#810): Weasel's executor walks the result sets, drains the reader so a
+                    // later statement's error is not swallowed (#273 E2b), refuses surplus result sets
+                    // (#831), and gives the operation whose command failed the first chance to name the
+                    // error (#549, #781), then the application's transforms (#849) through the listener.
+                    // That order matters for the 2627 below for the same reason it does in Marten: a
+                    // transform that claims an error Polecat translates replaces that translation.
+                    await Weasel.Storage.OperationBatchExecutor.ExecuteAsync(batch, operations,
+                        (b, t) => ExecuteReaderAsync((SqlBatch)b, t), Options.OperationBatchOptions, token)
+                        .ConfigureAwait(false);
                 }
-                catch (SqlException ex)
+                catch (SqlException ex) when (ex.Number == 2627
+                    && operations.FirstOrDefault(op => op.Role() == OperationRole.Insert) is not null)
                 {
-                    // #549: give a queued operation the chance to name its own SQL error, exactly as
-                    // the daemon's batch flush does (PolecatProjectionBatch.ExecuteAsync, since #916).
-                    //
-                    // #849: this is also where the application's transforms are asked, so it comes
-                    // before the 2627 below for the same reason it does in Marten: one that claims an
-                    // error Polecat translates replaces that translation.
-                    if (BatchExceptionTransforms.TryTransform(ex, batch, operations, Options.ExceptionTransforms,
-                            out var transformed))
-                    {
-                        System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(transformed!).Throw();
-                    }
-
                     // Map duplicate key violation to DocumentAlreadyExistsException
-                    if (ex.Number == 2627
-                        && operations.FirstOrDefault(op => op.Role() == OperationRole.Insert) is { } insertOp)
-                    {
-                        var documentId = insertOp is IStorageOperation bespoke ? bespoke.DocumentId : null;
-                        throw new DocumentAlreadyExistsException(insertOp.DocumentType, documentId!);
-                    }
-
-                    throw;
+                    var insertOp = operations.First(op => op.Role() == OperationRole.Insert);
+                    var documentId = insertOp is IStorageOperation bespoke ? bespoke.DocumentId : null;
+                    throw new DocumentAlreadyExistsException(insertOp.DocumentType, documentId!);
                 }
             }
 
@@ -2035,32 +2022,9 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
 
         builder.Compile();
 
-        var exceptions = new List<Exception>();
-        try
-        {
-            await using var reader = (await ExecuteReaderAsync(batch, token).ConfigureAwait(false));
-            await OperationResultSets.ApplyAsync(reader, operations, exceptions, token).ConfigureAwait(false);
-        }
-        catch (SqlException ex)
-        {
-            if (BatchExceptionTransforms.TryTransform(ex, batch, operations, Options.ExceptionTransforms,
-                    out var transformed))
-            {
-                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(transformed!).Throw();
-            }
-
-            throw;
-        }
-
-        if (exceptions.Count == 1)
-        {
-            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(exceptions[0]).Throw();
-        }
-
-        if (exceptions.Count > 0)
-        {
-            throw new AggregateException(exceptions);
-        }
+        // #807: the same executor and options as the document flush above.
+        await Weasel.Storage.OperationBatchExecutor.ExecuteAsync(batch, operations,
+            (b, t) => ExecuteReaderAsync((SqlBatch)b, t), Options.OperationBatchOptions, token).ConfigureAwait(false);
     }
 
     private async Task AssertStreamVersionAsync(StreamAction stream, CancellationToken token)
@@ -2139,7 +2103,15 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         if (provider.Mapping.DocumentType == typeof(T))
         {
             var session = (Weasel.Storage.IStorageSession)this;
-            session.StorageFor<T>().EjectById(session, id);
+            var storage = session.StorageFor<T>();
+            storage.EjectById(session, id);
+
+            // #959: Weasel's EjectById drops the identity-map entry but not the version the session
+            // tracked for the id, which Polecat's own storage always cleared too.
+            if (storage is Storage.ClosedShape.IPolecatObjectWriteStorage polecat)
+            {
+                polecat.ClearTrackedVersions(session, id);
+            }
         }
     }
 

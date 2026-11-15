@@ -13,7 +13,7 @@ namespace Polecat.Storage;
 internal class TenantsTable : AdditiveTable
 {
     public TenantsTable(string schemaName)
-        : base(new SqlServerObjectName(schemaName, MasterTableTenancy.TableName))
+        : base(new SqlServerObjectName(schemaName, Weasel.SqlServer.MultiTenancy.SqlServerMasterTenantTableDialect.DefaultTableName))
     {
         AddColumn("tenant_id", "nvarchar(200)").AsPrimaryKey().NotNull();
         AddColumn("connection_string", "nvarchar(max)").NotNull();

@@ -19,11 +19,11 @@ using Weasel.Storage;
 namespace Polecat.Tests.Operations;
 
 /// <summary>
-///     #831. <see cref="OperationResultSets" /> matches a batch's result sets to its operations by what
+///     #831. Weasel's <see cref="OperationBatchExecutor" /> matches a batch's result sets to its operations by what
 ///     each operation declares, so a declaration that is wrong misaligns every read behind it. This
 ///     class measures the declaration rather than trusting it: each operation shape goes into a real
 ///     batch ahead of a sentinel, the result sets the reader walks through before the sentinel are
-///     counted, and the count has to agree with <see cref="OperationResultSets.ReturnsResultSet" />.
+///     counted, and the count has to agree with <see cref="OperationBatchExecutor.ReturnsResultSet" />.
 /// </summary>
 /// <remarks>
 ///     <para>
@@ -67,7 +67,7 @@ public class operation_result_set_census_tests : OneOffConfigurationsContext
             .GetTypes()
             .Where(t => t is { IsAbstract: false, IsInterface: false })
             .Where(t => typeof(Weasel.Core.IStorageOperation).IsAssignableFrom(t))
-            .Where(t => !typeof(IStorageOperationAdapter).IsAssignableFrom(t))
+            .Where(t => !typeof(IStorageOperationWrapper).IsAssignableFrom(t))
             .Where(t => !typeof(NoDataReturnedCall).IsAssignableFrom(t))
             .Except(returnsResultSet)
             .Select(t => t.FullName)
@@ -131,7 +131,7 @@ public class operation_result_set_census_tests : OneOffConfigurationsContext
         async Task check(string name, DocumentSessionBase session, Weasel.Storage.IStorageOperation operation)
         {
             var measured = await resultSetsContributedByAsync(session, operation);
-            var declared = OperationResultSets.ReturnsResultSet(operation) ? 1 : 0;
+            var declared = OperationBatchExecutor.ReturnsResultSet(operation) ? 1 : 0;
             if (measured != declared)
             {
                 disagreements.Add($"{name}: declared {declared}, SQL Server returned {measured}");

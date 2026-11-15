@@ -95,6 +95,19 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
     public bool EnableProjectionFloors => _options.Events.EnableProjectionFloors;
 
     /// <summary>
+    ///     #973: whether appends maintain a <c>pc_dcb_tag_version</c> row per (tag value, event type) as well
+    ///     as the one per tag value. See <see cref="DcbConflictScope" />.
+    /// </summary>
+    internal bool RecordsDcbEventTypeVersions => _options.Events.DcbConflictScope != DcbConflictScope.TagValue;
+
+    /// <summary>
+    ///     #973: whether a boundary condition naming an event type checks that type's own version rather
+    ///     than the tag value's. See <see cref="DcbConflictScope" />.
+    /// </summary>
+    internal bool ChecksDcbEventTypeVersions =>
+        _options.Events.DcbConflictScope == DcbConflictScope.TagValueAndEventType;
+
+    /// <summary>
     ///     #905: the tenant that narrows a search of a unit of work for a stream. Under conjoined tenancy a
     ///     stream id is only unique within a tenant, and <c>ForTenant</c> puts several tenants in one save,
     ///     so it is the stream's own. Otherwise the id is the whole key of pc_streams and two tenants naming

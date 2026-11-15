@@ -123,7 +123,9 @@ public class AdvancedOperations
             await _store.Events.TenantOrdinals.ResolveAsync(tenantId, insideTransaction: false, token).ConfigureAwait(false);
         }
 
-        var storage = _store.Options.Providers.ClosedShapeGraph.StorageFor<T>().QueryOnly;
+        // #959: the Lightweight flavour, because Weasel's query-only storage refuses writes. The
+        // *Projected operations take no session, so the two build the same operation.
+        var storage = _store.Options.Providers.ClosedShapeGraph.StorageFor<T>().Lightweight;
 
         // Pre-process: assign ids + sync ITenanted before the operations serialize each document
         // (route id generation through the shared identity strategy, same as single-doc Store).
@@ -176,7 +178,8 @@ public class AdvancedOperations
                 var exceptions = new List<Exception>();
                 await using (var reader = (await batch.ExecuteReaderAsync(ct).ConfigureAwait(false)))
                 {
-                    await Internal.Operations.OperationResultSets.ApplyAsync(reader, operations, exceptions, ct).ConfigureAwait(false);
+                    await Weasel.Storage.OperationBatchExecutor.PostprocessAsync(reader, operations, exceptions,
+                        Weasel.Storage.OperationBatchOptions.Default, ct).ConfigureAwait(false);
                 }
 
                 // The insert-only operation raises DocumentAlreadyExistsException when the row
