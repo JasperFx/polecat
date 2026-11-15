@@ -73,13 +73,90 @@ public class StoreOptions
     /// <summary>
     ///     Take the connection string from an existing <see cref="Microsoft.Data.SqlClient.SqlConnection" />,
     ///     such as the one Aspire's <c>AddSqlServerClient</c> registers. The connection is only read, never
-    ///     opened, and is not disposed here. Polecat opens its own pooled connections from the string, so
-    ///     the pool and the credentials are the same ones the connection would have used.
+    ///     opened, and is not disposed here. Only <see cref="Microsoft.Data.SqlClient.SqlConnection.ConnectionString" />
+    ///     is kept: Polecat opens its own pooled connections from that string.
     /// </summary>
+    /// <remarks>
+    ///     The string has to be able to log in on its own, and two kinds of connection give one that
+    ///     cannot. Both are refused here with an <see cref="ArgumentException" /> rather than surfacing
+    ///     later as "Login failed" on the store's first query:
+    ///     <list type="bullet">
+    ///         <item>
+    ///             A connection that has been opened, unless its string says <c>Persist Security Info=True</c>.
+    ///             SqlClient removes the password from <c>ConnectionString</c> on the first open.
+    ///         </item>
+    ///         <item>
+    ///             A connection authenticated by a <see cref="Microsoft.Data.SqlClient.SqlCredential" />,
+    ///             <c>AccessToken</c> or <c>AccessTokenCallback</c>. Those live on the connection, never in
+    ///             the string, and Polecat (and Weasel, for migrations) build every connection from the
+    ///             string alone.
+    ///         </item>
+    ///     </list>
+    ///     Integrated Security, and the <c>Authentication=Active Directory …</c> modes that acquire their
+    ///     own token (Default, Managed Identity, Workload Identity, Interactive, …), are carried by the
+    ///     string and work.
+    /// </remarks>
     public void Connection(Microsoft.Data.SqlClient.SqlConnection connection)
     {
         ArgumentNullException.ThrowIfNull(connection);
+
+        var refusal = WhyTheConnectionStringCannotLogIn(connection);
+        if (refusal != null)
+        {
+            throw new ArgumentException(
+                $"Polecat cannot use this SqlConnection: {refusal} Polecat keeps only the connection's " +
+                "ConnectionString and opens its own connections from it. Pass the full connection string " +
+                "instead (opts.Connection(string), e.g. from builder.Configuration.GetConnectionString(...)), " +
+                "or use a form of authentication the string carries by itself: a password with " +
+                "Persist Security Info=True, Integrated Security, or Authentication=Active Directory Default / " +
+                "Managed Identity.",
+                nameof(connection));
+        }
+
         ConnectionString = connection.ConnectionString;
+    }
+
+    private static string? WhyTheConnectionStringCannotLogIn(Microsoft.Data.SqlClient.SqlConnection connection)
+    {
+        if (connection.Credential != null)
+        {
+            return "it is authenticated by a SqlCredential, which SqlConnection.ConnectionString does not carry.";
+        }
+
+        if (connection.AccessToken != null)
+        {
+            return "it is authenticated by an AccessToken, which SqlConnection.ConnectionString does not carry.";
+        }
+
+        if (connection.AccessTokenCallback != null)
+        {
+            return "it is authenticated by an AccessTokenCallback, which SqlConnection.ConnectionString does not carry.";
+        }
+
+        var builder = new Microsoft.Data.SqlClient.SqlConnectionStringBuilder(connection.ConnectionString);
+        if (builder.IntegratedSecurity || string.IsNullOrEmpty(builder.UserID) || !string.IsNullOrEmpty(builder.Password))
+        {
+            return null;
+        }
+
+        // A User ID with no password only means something is missing for the modes that log in with
+        // one. Managed Identity, for one, puts a client id in User ID and needs nothing else.
+        var needsPassword = builder.Authentication switch
+        {
+            Microsoft.Data.SqlClient.SqlAuthenticationMethod.NotSpecified => true,
+            Microsoft.Data.SqlClient.SqlAuthenticationMethod.SqlPassword => true,
+            Microsoft.Data.SqlClient.SqlAuthenticationMethod.ActiveDirectoryServicePrincipal => true,
+#pragma warning disable CS0618 // ActiveDirectoryPassword is obsolete, but still a mode a string can name
+            Microsoft.Data.SqlClient.SqlAuthenticationMethod.ActiveDirectoryPassword => true,
+#pragma warning restore CS0618
+            _ => false
+        };
+
+        return needsPassword
+            ? $"its connection string has User ID '{builder.UserID}' but no password. SqlClient removes the " +
+              "password from SqlConnection.ConnectionString once a connection has been opened, unless the " +
+              "string says Persist Security Info=True."
+            : null;
     }
 
     /// <summary>
