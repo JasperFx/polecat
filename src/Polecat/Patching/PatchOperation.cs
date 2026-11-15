@@ -125,7 +125,18 @@ internal class PatchOperation : Polecat.Internal.IStorageOperation, Weasel.Stora
     ///         This has a price, because it replaces a change to the stored value with a full parse.
     ///         Per update, measured on the same server: 0.7ms to 0.9ms at 1KB, 1.0ms to 2.8ms at 10KB,
     ///         1.7ms to 14.8ms at 100KB and 4.1ms to 170ms at 1MB. <c>nvarchar(max)</c> pays nothing, the
-    ///         cast is a no-op. If a later build fixes this, here is the one place to take it out.
+    ///         cast is a no-op.
+    ///     </para>
+    ///     <para>
+    ///         ⚠️ <b>SQL Server 2025 CU7 (17.0.4065.4) fixed the damage, and the cast still can't go</b>
+    ///         (#907, bisected on the published images: RTM-CU5, CU6 and CU6-GDR1 17.0.4060.2 damage;
+    ///         CU7, CU8 and CU11 don't). With this set to the bare <c>data</c> column on CU11, every patching
+    ///         test passed except one shape: adding to a list whose parent objects are absent
+    ///         (<c>adding_to_a_list_creates_an_absent_parent</c>, all four <c>Adding</c> forms), which SQL
+    ///         Server refuses on <c>json</c> with "JSON data type cannot be used when its feature switch is
+    ///         off". Through text it passes. Gating the cast on the server's version would trade a silent
+    ///         defect on old builds for loud ones on new builds in shapes nobody has measured, so it stays on
+    ///         every write until both are gone.
     ///     </para>
     /// </remarks>
     private const string Document = "CAST(data AS nvarchar(max))";

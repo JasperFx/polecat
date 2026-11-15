@@ -149,7 +149,13 @@ Patching is more efficient than loading, modifying, and re-saving a document bec
 
 ### Patching and the Native `json` Type
 
-The `CAST` above is deliberate. On SQL Server 2025 RTM-CU5, a `JSON_MODIFY` that adds a key directly to a `json` value leaves it in a state where the next `JSON_MODIFY` through an object can go wrong. Which way depends on the document's keys: the write can land on another member of the document, disappear, or leave a member corrupted, so that reading it fails with "Encountered corrupted JSON type" and a plain `SELECT` of the column drops the connection. Until that second write the row reads back correctly, and `DBCC CHECKTABLE` doesn't report it, even with `EXTENDED_LOGICAL_CHECKS`. Working on text avoids this, and the next patch to a row that an earlier version left in that state puts it right. A write that has already gone astray can't be undone this way.
+The `CAST` above is deliberate, for two reasons.
+
+**SQL Server 2025 before CU7 can damage a document.** On those builds, a `JSON_MODIFY` that adds a key directly to a `json` value leaves it in a state where the next `JSON_MODIFY` through an object can go wrong. Which way depends on the document's keys: the write can land on another member of the document, disappear, or leave a member corrupted, so that reading it fails with "Encountered corrupted JSON type" and a plain `SELECT` of the column drops the connection. Until that second write the row reads back correctly, and `DBCC CHECKTABLE` doesn't report it, even with `EXTENDED_LOGICAL_CHECKS`. Working on text avoids this, and the next patch to a row that an earlier version left in that state puts it right. A write that has already gone astray can't be undone this way.
+
+Microsoft fixed this in **SQL Server 2025 CU7** (17.0.4065.4). The defect reproduces on RTM-CU5, CU6 and CU6-GDR1 (17.0.4060.2), and not on CU7, CU8 or CU11. If you store documents as `json`, run CU7 or later.
+
+**Some patches need text on every build.** Even on CU11, a `JSON_MODIFY` straight on a `json` value that adds to a list whose parent objects don't exist yet (`Append`, `Insert` and their `IfNotExists` forms on `x => x.Middle.Deep.Tags` when `Middle` is absent) is refused with "JSON data type cannot be used when its feature switch is off". Through text it succeeds. So Polecat keeps the `CAST` on every server rather than dropping it from CU7 on.
 
 The cost is a full parse of the document for each patch operation, so the time for one update grows with its size. Measured per update on one server:
 

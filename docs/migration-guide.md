@@ -414,6 +414,11 @@ this, but it can't undo what's stored, so if you store documents as `json` and h
 [`Advanced.FindDocumentsWithMismatchedIdsAsync()`](/documents/partial-updates-patching#finding-documents-an-earlier-version-damaged)
 once. It only finds damage to a document's id. `nvarchar(max)` storage was never affected.
 
+The defect is SQL Server's, and Microsoft fixed it in SQL Server 2025 **CU7** (17.0.4065.4). Earlier builds,
+RTM through CU6-GDR1, still have it for anything else that writes to a `json` column with `JSON_MODIFY`, so run
+CU7 or later. Polecat's patches go through text on every build regardless; see
+[Patching and the Native `json` Type](/documents/partial-updates-patching#patching-and-the-native-json-type).
+
 ## Upgrading past 5.47.0: the full-text term column
 
 [polecat#877](https://github.com/JasperFx/polecat/issues/877) widened the full-text token table's `term`
