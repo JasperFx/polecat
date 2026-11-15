@@ -143,6 +143,15 @@ Critical path for MVP: Stages 1–5, 7–8, 10–11
   `TrxReport 2.5.1` / `CodeCoverage 18.12.0`; a mismatch makes every test run die at startup with a
   `TypeLoadException`. (Before JasperFx 3.0 this was the 1.x line: `TrxReport 1.9.1`, `CodeCoverage 18.0.6`.)
 
+### Bobcat specifications (`src/Polecat.Specs`)
+
+Given/When/Then specifications on Bobcat's store-only `CritterStackSpec`, today for C# union support
+(#808). **net11.0 only**, so the net10.0 CI workflows never run them; `./build.sh LocalGate` does, as its
+fourth suite, on every `--framework`. The project takes `WolverineFx.Bobcat` (where `CritterStackSpec`
+ships from Bobcat 1.0.0-rc.2), and with it WolverineFx, which is why the specs are a project of their
+own rather than a folder in `Polecat.Tests`. Specs run one at a time (store-only acts attribute events
+by stream), and `ThenMatches` compares types, so an expected list must be the type the query returns.
+
 ### Cross-store compliance suites
 
 Event sourcing behavior that Polecat and Marten both have belongs in

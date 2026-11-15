@@ -1,0 +1,47 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <!--
+      #808: Bobcat specifications for Polecat's C# union support. net11.0 only, because unions are
+      C# 15 / .NET 11, and the `union` keyword needs LangVersion preview on the RC SDK (as Polecat.Tests'
+      Unions/ folder does).
+
+      A project of its own rather than a folder in Polecat.Tests: CritterStackSpec ships in
+      WolverineFx.Bobcat (from Bobcat 1.0.0-rc.2), so the specs bring WolverineFx in transitively, and
+      Polecat.Tests should not depend on Wolverine.
+    -->
+    <PropertyGroup>
+        <TargetFrameworks>net11.0</TargetFrameworks>
+        <LangVersion>preview</LangVersion>
+        <OutputType>Exe</OutputType>
+        <IsPackable>false</IsPackable>
+        <!-- BOBCAT033 is IDE discovery through Microsoft.NET.Test.Sdk, which this repository no longer
+             references (xUnit v3 on Microsoft.Testing.Platform runs the executable directly). -->
+        <NoWarn>$(NoWarn);BOBCAT033</NoWarn>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <PackageReference Include="xunit.v3" />
+        <PackageReference Include="Bobcat" />
+        <PackageReference Include="Bobcat.Xunit" />
+        <PackageReference Include="Bobcat.Generators" />
+        <PackageReference Include="WolverineFx.Bobcat" />
+        <PackageReference Include="Shouldly" />
+        <PackageReference Include="Microsoft.Testing.Extensions.TrxReport" />
+        <!-- WolverineFx 7.0.0-alpha.2's net11.0 build takes the GA Microsoft.Extensions 11.0.0, above the
+             rc.3 pins Directory.Packages.props carries for net11.0; anything lower is NU1605. -->
+        <PackageReference Include="Microsoft.Extensions.Hosting" VersionOverride="11.0.0" />
+        <PackageReference Include="Microsoft.Extensions.DependencyInjection" VersionOverride="11.0.0" />
+        <PackageReference Include="JasperFx.Events.SourceGenerator" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\Polecat\Polecat.csproj" />
+        <ProjectReference Include="..\Polecat.TestUtils\Polecat.TestUtils.csproj" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <Using Include="Xunit" />
+        <Using Include="Shouldly" />
+    </ItemGroup>
+
+</Project>
