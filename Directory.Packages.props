@@ -1489,9 +1489,21 @@
                  tenant from an unknown one. ADOPTED here: MasterTableTenancy derives from it.
                * weasel#810: OperationBatchExecutor. Not adopted yet (#807).
                * weasel#811: public closed-shape document storage bases. Not adopted yet (#959). -->
-        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="10.0.0-alpha.2" />
-        <PackageVersion Include="Weasel.SqlServer" Version="10.0.0-alpha.2" />
-        <PackageVersion Include="Weasel.Storage" Version="10.0.0-alpha.2" />
+        <!-- Weasel 10.0.0-alpha.3 (from alpha.2). Builds with no Polecat change. JasperFx floor 3.0.0
+             (Weasel.Core / Weasel.Storage nuspecs), satisfied by the 3.3.0 pins above.
+               * weasel#832: OperationBatchExecutor lets only the failing statement's operation translate
+                 a batch error. Polecat is unaffected: SqlClient names DbException.BatchCommand, which
+                 still wins (polecat#781). The positional fallback only applies where it is null.
+                 BatchExceptionTransforms' own fallback still asks every operation in order.
+               * weasel#833: HiloSequenceBase's sync and async advances can now overlap. Polecat's
+                 HiloSequence reserves each block with its own optimistic UPDATE and installs it
+                 through TrySetCurrentHi, so every advance gets a distinct block: unaffected.
+               * weasel#831: optional WriteEventBdata pools per-event bdata. NOT ADOPTED: it needs Polecat
+                 to dispose operations after the unit of work (it does not today), and the SqlServer
+                 dialect to bind a MemoryStream over the slice (SqlClient takes no ReadOnlyMemory). -->
+        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="10.0.0-alpha.3" />
+        <PackageVersion Include="Weasel.SqlServer" Version="10.0.0-alpha.3" />
+        <PackageVersion Include="Weasel.Storage" Version="10.0.0-alpha.3" />
 
         <!-- Strongly typed IDs. Both generators are test-only: they prove Polecat's value-type id
              support against the two libraries Marten's ValueTypeTests exercise. StronglyTypedId emits
