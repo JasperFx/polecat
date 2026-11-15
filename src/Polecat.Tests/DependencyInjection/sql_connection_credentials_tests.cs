@@ -68,6 +68,9 @@ public class sql_connection_credentials_tests
         {
             opts.Connection(connection);
             opts.DatabaseSchemaName = "sql_connection_credentials";
+            // The edge lane (SQL Server 2022) has no native json type, so the document table has to
+            // be created as nvarchar(max) there, as every other hand-built test store does.
+            opts.UseNativeJsonType = ConnectionSource.SupportsNativeJson;
         });
 
         await using var session = store.QuerySession();

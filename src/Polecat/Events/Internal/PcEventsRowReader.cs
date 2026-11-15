@@ -218,9 +218,9 @@ internal static class PcEventsRowReader
         }
 
         var typeName = reader.GetString(5);
-        var bdata = reader.IsDBNull(10) ? null : reader.GetFieldValue<byte[]>(10);
+        var isBinary = !reader.IsDBNull(10);
 
-        return ctx.EventGraph.TryFindUpcast(typeName, bdata, out transformation);
+        return ctx.EventGraph.TryFindUpcast(typeName, isBinary, out transformation);
     }
 
     /// <summary>
@@ -292,7 +292,7 @@ internal static class PcEventsRowReader
         // #388: non-null bdata is the per-row discriminator. Reading it here (rather than inside the
         // optional-metadata slot loop) keeps the dispatch on a fixed ordinal and off the JSON path's
         // hot loop — a store with no binary events pays one IsDBNull per row.
-        var bdata = reader.IsDBNull(10) ? null : reader.GetFieldValue<byte[]>(10);
+        var isBinary = !reader.IsDBNull(10);
 
         object data;
         IEventType mapping;
@@ -301,7 +301,7 @@ internal static class PcEventsRowReader
         // authority rule: a registered transformation is the authoritative reading of the stored
         // event type name, so the dotnet_type hint below must never get a chance to shadow it. See
         // EventGraph.TryFindUpcast.
-        if (ctx.EventGraph.TryFindUpcast(typeName, bdata, out var transformation))
+        if (ctx.EventGraph.TryFindUpcast(typeName, isBinary, out var transformation))
         {
             data = ctx.EventGraph.Upcast(transformation, json, ctx.Serializer);
             mapping = ctx.EventGraph.EventMappingFor(transformation.EventType);
@@ -316,7 +316,7 @@ internal static class PcEventsRowReader
             // this collapses N dictionary lookups into 1 per distinct type.
             mapping = cache.LookupOrAdd(ctx.EventGraph, resolvedType);
 
-            data = ctx.EventGraph.DeserializeEventData(resolvedType, json, bdata, ctx.Serializer);
+            data = ctx.EventGraph.DeserializeEventData(resolvedType, json, reader, 10, ctx.Serializer);
         }
 
         var @event = mapping.Wrap(data);

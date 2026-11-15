@@ -15,20 +15,18 @@ namespace Polecat.Events;
 /// ProjectLatest, ArchiveStream, tag queries, natural-key fetches, OverwriteEvent,
 /// CompletelyReplaceEvent) now lives in <see cref="JasperFx.Events.IEventStoreOperations"/>
 /// and its parent <see cref="JasperFx.Events.IEventOperations"/>. This interface
-/// inherits the canonical contracts and adds the Polecat-specific extras:
-/// <list type="bullet">
-///   <item><c>UnArchiveStream</c> — a Polecat-specific archive-lifecycle operation not yet
-///   present in the canonical surface.</item>
-/// </list>
-/// <c>TombstoneStream(Guid|string)</c>, the hard delete of a stream, was one of those extras
-/// until jasperfx#1014 (2.90.0) lifted it onto <see cref="JasperFx.Events.IEventStoreOperations"/>.
-/// It is still re-declared here with <c>new</c> so assemblies compiled against older Polecat
-/// keep binding to it.
-/// <c>CompactStreamAsync&lt;T&gt;</c> was one of those extras until jasperfx#635 (2.41.0) lifted
-/// it onto <see cref="JasperFx.Events.IEventStoreOperations"/> alongside the
-/// <see cref="StreamCompactingRequest{T}"/> data shape it already shared. Execution still depends
-/// on Polecat's product-specific <see cref="Polecat.Events.Protected.PolecatStreamCompacting"/> extension;
-/// only the declaration is now canonical.
+/// inherits the canonical contracts.
+/// <para>
+/// Polecat 6.0 dropped the <c>new</c> re-declarations of <c>UnArchiveStream(Guid|string)</c>
+/// (lifted for JasperFx/marten#5476), <c>TombstoneStream(Guid|string)</c> (jasperfx#1014) and
+/// <c>CompactStreamAsync&lt;T&gt;(Guid|string, ...)</c> (jasperfx#635). They existed only so that
+/// assemblies compiled against Polecat 5.x, whose member references name this interface, kept
+/// binding (#774, #776). A major version breaks that anyway, so these members now come only from
+/// <see cref="JasperFx.Events.IEventStoreOperations"/>; source that calls them through
+/// <c>session.Events</c> compiles unchanged, but a 5.x-compiled assembly must be recompiled.
+/// <see cref="StreamCompactingRequest{T}"/> is the shared data shape; execution still depends on
+/// Polecat's product-specific <see cref="Polecat.Events.Protected.PolecatStreamCompacting"/> extension.
+/// </para>
 /// Note: <c>FetchForWritingByTags&lt;T&gt;(EventTagQuery)</c> is now inherited
 /// from <see cref="JasperFx.Events.IEventStoreOperations"/> per the dedupe
 /// pillar (lifted in JasperFx/jasperfx#270 once Polecat reached DCB parity via
@@ -40,52 +38,14 @@ namespace Polecat.Events;
 /// </remarks>
 public interface IEventOperations : JasperFx.Events.IEventStoreOperations, IQueryEventStore
 {
-    /// <summary>
-    ///     Remove the archived flag from a stream and all its events by Guid id.
-    /// </summary>
-    void UnArchiveStream(Guid streamId);
-
-    /// <summary>
-    ///     Remove the archived flag from a stream and all its events by string key.
-    /// </summary>
-    void UnArchiveStream(string streamKey);
-
-    // TombstoneStream was lifted onto JasperFx.Events.IEventStoreOperations in jasperfx#1014
-    // (2.90.0), but the declarations stay here, re-declared with `new`, for BINARY compatibility.
-    // An assembly compiled against Polecat <= 5.41 calls them through a member reference whose
-    // parent is Polecat.Events.IEventOperations, and the runtime does not search base interfaces
-    // when it resolves one. Removing them in #773 made every such call throw MissingMethodException
-    // -- WolverineFx.Polecat 6.50.2's PolecatOps.TombstoneStream among them. `new` keeps CS0108
-    // quiet; EventOperations' one public method satisfies both interface slots.
-
-    /// <inheritdoc cref="JasperFx.Events.IEventStoreOperations.TombstoneStream(Guid)" />
-    new void TombstoneStream(Guid streamId);
-
-    /// <inheritdoc cref="JasperFx.Events.IEventStoreOperations.TombstoneStream(string)" />
-    new void TombstoneStream(string streamKey);
-
-    // CompactStreamAsync<T> was lifted onto JasperFx.Events.IEventStoreOperations in jasperfx#635
-    // (2.41.0) as default-implemented members that throw. #425 then deleted the local copy, citing
-    // CS0121 ambiguity, and that broke BINARY compatibility from 5.11.0 on: an assembly compiled
-    // against Polecat <= 5.10 calls it through a member reference whose parent is
-    // Polecat.Events.IEventOperations, and the runtime does not search base interfaces to resolve
-    // it, so the call threw MissingMethodException. Re-declaring with `new` (as TombstoneStream and
-    // FetchLatest do) restores that without the ambiguity: `new` hides the inherited declaration, so
-    // a call site through this interface binds to exactly one member. EventOperations' public
-    // overloads satisfy both interface slots.
-
-    /// <inheritdoc cref="JasperFx.Events.IEventStoreOperations.CompactStreamAsync{T}(Guid, Action{StreamCompactingRequest{T}})" />
-    new Task CompactStreamAsync<T>(Guid streamId, Action<StreamCompactingRequest<T>>? configure = null) where T : class;
-
-    /// <inheritdoc cref="JasperFx.Events.IEventStoreOperations.CompactStreamAsync{T}(string, Action{StreamCompactingRequest{T}})" />
-    new Task CompactStreamAsync<T>(string streamKey, Action<StreamCompactingRequest<T>>? configure = null) where T : class;
-
     // FetchLatest is declared on two parent interfaces — JasperFx.Events.IEventStoreOperations
     // (where Marten put it canonically) and Polecat.Events.IQueryEventStore (kept on the
     // read-side as a Polecat convenience). Both declarations have identical signatures
     // and resolve to the same impl on EventOperations, but the C# compiler can't pick
     // between them through Polecat.IEventOperations, so we re-declare with `new` to
     // collapse the diamond at this level and keep the caller-facing surface unambiguous.
+    // Unlike the binary-compatibility shims 6.0 removed, this one is load-bearing at the SOURCE
+    // level: without it every session.Events.FetchLatest<T>(...) call is CS0121.
 
     /// <inheritdoc cref="IQueryEventStore.FetchLatest{T}(Guid, CancellationToken)" />
     new ValueTask<T?> FetchLatest<T>(Guid id, CancellationToken cancellation = default) where T : class;

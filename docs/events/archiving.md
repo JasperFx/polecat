@@ -55,7 +55,13 @@ session.Events.UnArchiveStream(streamId);
 await session.SaveChangesAsync();
 ```
 
-This sets `is_archived = 0` on both tables, making the stream active again.
+This sets `is_archived = 0` on both tables, making the stream active again. The stream keeps the
+version it had, so an append at an expected version or through `FetchForWriting` builds on it.
+Unarchiving a stream that isn't archived, or doesn't exist, does nothing.
+
+`UnArchiveStream(Guid)` and `UnArchiveStream(string)` are also on the shared
+`JasperFx.Events.IEventStoreOperations`, next to `ArchiveStream`, so code written against that interface
+rather than against Polecat can reopen a stream too.
 
 ## Reading archived events
 
