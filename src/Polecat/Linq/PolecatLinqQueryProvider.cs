@@ -3,6 +3,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Data.Common;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
+using System.Runtime.CompilerServices;
 using System.Text;
 using Microsoft.Data.SqlClient;
 using Polecat.Internal;
@@ -586,6 +587,32 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
             return await ExecuteGroupByAsync<TResult>(query, token).ConfigureAwait(false);
         }
 
+        var shape = PrepareDocumentStatement(query);
+
+        // Build SQL and execute via BatchBuilder/SqlBatch
+        await using var batch = CompileStatement(parser);
+        await using var reader = (await _session.ExecuteReaderAsync(batch, token).ConfigureAwait(false));
+
+        return await HandleResultAsync<TResult>(reader, parser, documentType, token, shape.SyncRevision,
+            shape.SyncGuidVersion, shape.HierarchyMapping, shape.SharedSelectClause).ConfigureAwait(false);
+    }
+
+    /// <summary>How the rows of a document query (not a GroupBy or a GroupJoin) are materialized.</summary>
+    private sealed record DocumentStatementShape(
+        bool SyncRevision,
+        bool SyncGuidVersion,
+        DocumentMapping? HierarchyMapping,
+        Weasel.Storage.ISelectClause? SharedSelectClause);
+
+    /// <summary>
+    ///     Finishes the statement of a document query, shared by <see cref="ExecuteAsync{TResult}" /> and
+    ///     <see cref="ExecuteStreamAsync{T}" /> so the two can't select different columns.
+    /// </summary>
+    private DocumentStatementShape PrepareDocumentStatement(ParsedQuery query)
+    {
+        var parser = query.Parser;
+        var provider = query.Provider;
+
         // Apply Distinct, which needs the select list single-value mode replaces
         DistinctProjection.ApplyTo(parser, query.Members);
 
@@ -597,26 +624,144 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
         // then the QueryOnlyReadBinders' columns in binder order) and rows resolve through
         // the shared QueryOnly selector — for subclasses that is a SubClassPolecatStorage
         // downcasting over the root's hierarchical selector.
-        bool syncRevision = provider.Mapping.UseNumericRevisions;
-        bool syncGuidVersion = provider.Mapping.UseOptimisticConcurrency;
-        bool isHierarchy = provider.Mapping.IsHierarchy();
         Weasel.Storage.ISelectClause? sharedSelectClause = null;
         if (parser.Statement.SelectColumns == "data" && parser.Statement.DistinctColumns == null)
         {
-            sharedSelectClause = _providers.ClosedShapeGraph.QueryOnlySelectClauseFor(documentType);
+            sharedSelectClause = _providers.ClosedShapeGraph.QueryOnlySelectClauseFor(query.DocumentType);
             parser.Statement.SelectColumns = string.Join(", ", sharedSelectClause.SelectFields());
         }
 
-        // Build SQL and execute via BatchBuilder/SqlBatch
-        await using var batch = new SqlBatch();
+        return new DocumentStatementShape(
+            provider.Mapping.UseNumericRevisions,
+            provider.Mapping.UseOptimisticConcurrency,
+            provider.Mapping.IsHierarchy() ? provider.Mapping : null,
+            sharedSelectClause);
+    }
+
+    private static SqlBatch CompileStatement(LinqQueryParser parser)
+    {
+        var batch = new SqlBatch();
         var builder = new BatchBuilder(batch);
         parser.Statement.Apply(builder);
         builder.Compile();
+        return batch;
+    }
 
+    /// <summary>
+    ///     #801: runs the query and hands its rows out as they are read, for
+    ///     <see cref="PolecatQueryableExtensions.ToAsyncEnumerable{T}" />.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         Every shape <c>ToListAsync()</c> reads row by row streams: whole documents, scalar and
+    ///         projected <c>Select()</c>s, <c>Distinct()</c> and <c>GroupBy()</c>. A <c>GroupJoin</c> does
+    ///         not: it gathers each outer row's inner rows, so it has read them all before it can return
+    ///         one, and it is materialized and then handed out.
+    ///     </para>
+    ///     <para>
+    ///         The reader stays open, holding the session's connection, until the enumeration ends or is
+    ///         disposed. Opening it goes through the session's resilience pipeline like any other read; a
+    ///         failure part-way through a stream is not retried, because rows have already been handed out.
+    ///     </para>
+    /// </remarks>
+    [RequiresDynamicCode("Streaming LINQ execution closes ListQueryHandler<>/ProjectionListHandler<,>/DeserializingSelector<> over the document type via Type.MakeGenericType.")]
+    [RequiresUnreferencedCode("Streaming LINQ execution reflects over handler and selector types (Activator.CreateInstance).")]
+    public async IAsyncEnumerable<T> ExecuteStreamAsync<T>(Expression expression,
+        [EnumeratorCancellation] CancellationToken token)
+    {
+        var query = await PrepareAsync(expression, token).ConfigureAwait(false);
+        var parser = query.Parser;
+
+        if (parser.GroupJoinData != null)
+        {
+            var joined = await ExecuteGroupJoinAsync<IReadOnlyList<T>>(parser, token).ConfigureAwait(false);
+            foreach (var item in joined)
+            {
+                yield return item;
+            }
+
+            yield break;
+        }
+
+        IStreamingQueryHandler<T> handler;
+        if (parser.GroupByKeySelector != null)
+        {
+            var grouping = new GroupBySelectBuilder(query.Members);
+            grouping.ApplyTo(parser);
+            handler = grouping.ReadsJson
+                ? new GroupByListHandler<T>(_session.Serializer)
+                : new ScalarListHandler<T>();
+        }
+        else
+        {
+            var shape = PrepareDocumentStatement(query);
+            handler = StreamingHandlerFor<T>(parser, query.DocumentType, shape);
+        }
+
+        if (parser.ValueMode != null)
+        {
+            // Unreachable through ToAsyncEnumerable, whose expression has no terminal operator.
+            throw new BadLinqExpressionException(
+                $"ToAsyncEnumerable() cannot stream a query ending in {parser.ValueMode}.");
+        }
+
+        await using var batch = CompileStatement(parser);
         await using var reader = (await _session.ExecuteReaderAsync(batch, token).ConfigureAwait(false));
 
-        return await HandleResultAsync<TResult>(reader, parser, documentType, token, syncRevision, syncGuidVersion,
-            isHierarchy ? provider.Mapping : null, sharedSelectClause).ConfigureAwait(false);
+        await foreach (var item in handler.StreamAsync(reader, token).ConfigureAwait(false))
+        {
+            yield return item;
+        }
+    }
+
+    /// <summary>The row reader for a document query's rows, mirroring <see cref="HandleResultAsync{TResult}" />.</summary>
+    [RequiresDynamicCode("Closes ListQueryHandler<>/ProjectionListHandler<,>/DeserializingSelector<> over the document type via Type.MakeGenericType.")]
+    [RequiresUnreferencedCode("Activator.CreateInstance over handler and selector types.")]
+    private IStreamingQueryHandler<T> StreamingHandlerFor<T>(LinqQueryParser parser, Type documentType,
+        DocumentStatementShape shape)
+    {
+        if (parser.SelectExpression != null)
+        {
+            if (parser.IsScalarSelect)
+            {
+                return new ScalarListHandler<T>();
+            }
+
+            // Distinct rows are a JSON object each, like a GroupBy's: see DistinctProjection
+            if (parser.Statement.DistinctColumns != null)
+            {
+                return new GroupByListHandler<T>(_session.Serializer);
+            }
+
+            var projectionType = typeof(ProjectionListHandler<,>).MakeGenericType(documentType, typeof(T));
+            return (IStreamingQueryHandler<T>)Activator.CreateInstance(projectionType, _session.Serializer,
+                parser.SelectExpression)!;
+        }
+
+        var selector = DocumentSelectorFor(documentType, shape.SyncRevision, shape.SyncGuidVersion,
+            shape.HierarchyMapping, shape.SharedSelectClause);
+        var listType = typeof(ListQueryHandler<>).MakeGenericType(documentType);
+
+        // IStreamingQueryHandler is covariant, so a handler over a document type streams as any type it
+        // derives from.
+        return (IStreamingQueryHandler<T>)Activator.CreateInstance(listType, selector)!;
+    }
+
+    [RequiresDynamicCode("Closes DeserializingSelector<> over itemType via Type.MakeGenericType.")]
+    [RequiresUnreferencedCode("Activator.CreateInstance over the selector type.")]
+    private object DocumentSelectorFor(Type itemType, bool syncRevision, bool syncGuidVersion,
+        DocumentMapping? hierarchyMapping, Weasel.Storage.ISelectClause? sharedSelectClause)
+    {
+        // #273 E2d: root documents materialize through the shared QueryOnly selector,
+        // whose layout matches the SELECT columns the shared select clause produced.
+        if (sharedSelectClause != null)
+        {
+            return sharedSelectClause.BuildSelector((Weasel.Storage.IStorageSession)_session);
+        }
+
+        var selectorType = typeof(DeserializingSelector<>).MakeGenericType(itemType);
+        return ConstructorCache.Create(selectorType, _session.Serializer, syncRevision, syncGuidVersion,
+            hierarchyMapping);
     }
 
     [RequiresDynamicCode("GroupBy execution closes GroupByListHandler<>/ScalarListHandler<> over the projected type via Type.MakeGenericType.")]
@@ -1310,20 +1455,8 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
         bool syncRevision = false, bool syncGuidVersion = false, DocumentMapping? hierarchyMapping = null,
         Weasel.Storage.ISelectClause? sharedSelectClause = null)
     {
-        // #273 E2d: root documents materialize through the shared QueryOnly selector,
-        // whose layout matches the SELECT columns the shared select clause produced.
-        object selector;
-        if (sharedSelectClause != null)
-        {
-            selector = sharedSelectClause.BuildSelector((Weasel.Storage.IStorageSession)_session);
-        }
-        else
-        {
-            var selectorType = typeof(DeserializingSelector<>).MakeGenericType(itemType);
-            selector = ConstructorCache.Create(selectorType, _session.Serializer, syncRevision, syncGuidVersion,
-                hierarchyMapping);
-        }
-
+        var selector = DocumentSelectorFor(itemType, syncRevision, syncGuidVersion, hierarchyMapping,
+            sharedSelectClause);
         var handlerType = typeof(ListQueryHandler<>).MakeGenericType(itemType);
 
         // #741: cast to the NON-GENERIC IQueryHandler rather than reflecting for HandleAsync.

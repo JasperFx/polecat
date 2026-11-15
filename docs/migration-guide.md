@@ -75,6 +75,17 @@ System.Text.Json directly.
 custom serializer that formats differently on its two paths would show the difference there, so keep the
 string and byte forms equivalent.
 
+`StreamMany` no longer materializes a list first. It reads through the new
+[`ToAsyncEnumerable()`](./documents/querying/linq/#streaming-results), which hands a query's rows out as
+they are read, and writes each one to the response as it arrives. The body is the same JSON, sent
+chunked. A query that fails still fails before anything is written; a failure part-way through the rows
+now cuts the response short instead of failing it whole.
+
+Two things stay on `string`, because SqlClient can't do better against a native `json` column
+([#801](https://github.com/JasperFx/polecat/issues/801)). Reading one as a `Stream` or as bytes is
+refused or mangles non-ASCII text, and a UTF-8 byte parameter is refused as an operand type clash.
+Polecat reads and writes `json` as text until SqlClient offers a byte path.
+
 ## Upgrading to 6.0: dirty tracking semantics
 
 **Nothing changes.** Polecat has never had dirty tracking, and 6.0 does not add it. Sessions are

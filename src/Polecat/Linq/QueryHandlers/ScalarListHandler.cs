@@ -6,23 +6,34 @@ namespace Polecat.Linq.QueryHandlers;
 /// <summary>
 ///     Reads a list of scalar values from a query (e.g., Select(x => x.Name)).
 /// </summary>
-internal class ScalarListHandler<T> : IQueryHandler<IReadOnlyList<T>>
+internal class ScalarListHandler<T> : IQueryHandler<IReadOnlyList<T>>, IStreamingQueryHandler<T>
 {
+    public async IAsyncEnumerable<T> StreamAsync(DbDataReader reader,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken token)
+    {
+        while (await reader.ReadAsync(token).ConfigureAwait(false))
+        {
+            yield return await ReadRowAsync(reader, token).ConfigureAwait(false);
+        }
+    }
+
+    private static async ValueTask<T> ReadRowAsync(DbDataReader reader, CancellationToken token)
+    {
+        if (await reader.IsDBNullAsync(0, token).ConfigureAwait(false))
+        {
+            return default!;
+        }
+
+        var targetType = Nullable.GetUnderlyingType(typeof(T)) ?? typeof(T);
+        return (T)ScalarConversion.Convert(reader.GetValue(0), targetType);
+    }
+
     public async Task<IReadOnlyList<T>> HandleAsync(DbDataReader reader, CancellationToken token)
     {
         var list = new List<T>();
         while (await reader.ReadAsync(token).ConfigureAwait(false))
         {
-            if (await reader.IsDBNullAsync(0, token).ConfigureAwait(false))
-            {
-                list.Add(default!);
-            }
-            else
-            {
-                var value = reader.GetValue(0);
-                var targetType = Nullable.GetUnderlyingType(typeof(T)) ?? typeof(T);
-                list.Add((T)ScalarConversion.Convert(value, targetType));
-            }
+            list.Add(await ReadRowAsync(reader, token).ConfigureAwait(false));
         }
 
         return list;

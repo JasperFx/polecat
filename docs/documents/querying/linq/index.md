@@ -48,6 +48,33 @@ var pagedList = await session.Query<User>()
 
 See [Paging](/documents/querying/linq/paging) for more details.
 
+## Streaming Results
+
+`ToAsyncEnumerable()` runs the query and hands its rows out as they are read, so a large result set is
+never held in memory all at once:
+
+```cs
+await foreach (var user in session.Query<User>()
+                   .Where(x => x.Internal)
+                   .OrderBy(x => x.LastName)
+                   .ToAsyncEnumerable(cancellationToken))
+{
+    await writer.WriteLineAsync($"{user.LastName},{user.FirstName}");
+}
+```
+
+- The query runs when enumeration starts, not when `ToAsyncEnumerable()` is called.
+- The session's connection stays busy until the enumeration ends or is disposed. Finish the `await
+  foreach` (or break out of it) before using the session for anything else.
+- Whole documents, scalar and projected `Select()`s, `Distinct()` and `GroupBy()` stream row by row. A
+  `GroupJoin`, and the event-store queryables (`QueryAllRawEvents()`, `QueryRawEventDataOnly<T>()`), read
+  their whole result first and then hand it out.
+- Opening the query goes through the store's resilience pipeline. A failure part-way through is not
+  retried, because rows have already been handed out.
+
+Import `Polecat.Linq`. Without it, .NET 10's `System.Linq.AsyncEnumerable.ToAsyncEnumerable()` binds
+instead and fails, because Polecat has no synchronous execution.
+
 ## How It Works
 
 LINQ queries are translated to SQL using `JSON_VALUE()` to extract properties from the JSON document:

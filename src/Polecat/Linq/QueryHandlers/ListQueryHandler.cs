@@ -7,7 +7,7 @@ namespace Polecat.Linq.QueryHandlers;
 ///     the shared selector contract — either the closed-shape QueryOnly selector (root
 ///     documents, #273 E2d) or Polecat's DeserializingSelector (subclass + event queries).
 /// </summary>
-internal class ListQueryHandler<T> : IQueryHandler<IReadOnlyList<T>> where T : class
+internal class ListQueryHandler<T> : IQueryHandler<IReadOnlyList<T>>, IStreamingQueryHandler<T> where T : class
 {
     private readonly Weasel.Storage.ISelector<T> _selector;
 
@@ -26,5 +26,14 @@ internal class ListQueryHandler<T> : IQueryHandler<IReadOnlyList<T>> where T : c
         }
 
         return list;
+    }
+
+    public async IAsyncEnumerable<T> StreamAsync(DbDataReader reader,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken token)
+    {
+        while (await reader.ReadAsync(token).ConfigureAwait(false))
+        {
+            yield return _selector.Resolve(reader);
+        }
     }
 }

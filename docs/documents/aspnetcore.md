@@ -49,6 +49,12 @@ app.MapGet("/issues/open",
 Returns `200 application/json` with a JSON array body. An empty result set yields `[]`,
 not a 404.
 
+The rows are written to the response as they are read
+([`ToAsyncEnumerable()`](/documents/querying/linq/#streaming-results)), so the whole result set is
+never in memory, and the response is chunked rather than carrying a `Content-Length`. The query runs
+before anything is written, so a query that fails still fails the request with nothing sent. A failure
+after rows have started flowing cuts the response short.
+
 ### StreamPaged — one page of documents plus paging metadata
 
 ```csharp
@@ -238,8 +244,9 @@ app.MapPost("/issues",
 
 ::: tip
 `StreamOne<T>` and `StreamPaged<T>` stream the raw persisted document JSON straight through
-(no deserialize/reserialize). `StreamMany<T>` and `StreamAggregate<T>` materialize via the
-regular query/projection path and serialize through `System.Text.Json`. All of them eliminate
+(no deserialize/reserialize). `StreamMany<T>` reads its rows through the regular query path one at a
+time, and `StreamAggregate<T>` builds its aggregate through the projection path; both serialize through
+`System.Text.Json`. All of them eliminate
 the endpoint boilerplate (null-check, status code, content type, OpenAPI metadata).
 
 `StreamMany<T>`, `StreamPaged<T>` and `StreamPagedByCursor<T>` honor a `Select()`: a page is what the

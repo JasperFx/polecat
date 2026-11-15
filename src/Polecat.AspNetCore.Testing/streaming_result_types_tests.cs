@@ -48,6 +48,46 @@ public class streaming_result_types_tests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task stream_many_streams_every_row_in_one_array()
+    {
+        var store = _host.Services.GetRequiredService<IDocumentStore>();
+        await using (var session = store.LightweightSession())
+        {
+            for (var i = 1; i <= 250; i++)
+            {
+                session.Store(new StreamingIssue { Id = Guid.NewGuid(), Title = $"Issue {i}", Number = i });
+            }
+
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        var result = await _host.Scenario(s =>
+        {
+            s.Get.Url("/api/issues");
+            s.StatusCodeShouldBe(200);
+        });
+
+        var issues = result.ReadAsJson<List<StreamingIssue>>()!;
+        issues.Select(x => x.Number).OrderBy(x => x).ShouldBe(Enumerable.Range(1, 250));
+    }
+
+    /// <summary>
+    ///     #801: StreamMany runs its query on the first read, before it sets the status or writes a byte,
+    ///     so a query that fails still fails the request rather than sending a 200 with a broken body.
+    /// </summary>
+    [Fact]
+    public async Task stream_many_fails_a_refused_query_before_writing_anything()
+    {
+        var ex = await Should.ThrowAsync<Exception>(() => _host.Scenario(s =>
+        {
+            s.Get.Url("/api/issues-refused");
+            s.StatusCodeShouldBe(500);
+        }));
+
+        ex.ToString().ShouldContain("BadLinqExpressionException");
+    }
+
+    [Fact]
     public async Task stream_one_returns_404_when_not_found()
     {
         await _host.Scenario(s =>
