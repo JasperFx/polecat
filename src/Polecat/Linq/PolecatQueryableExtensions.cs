@@ -87,6 +87,29 @@ public static class PolecatQueryableExtensions
     }
 
     /// <summary>
+    ///     Executes the query and returns its results as they are read, without holding the whole result
+    ///     set in memory. Use it to read or write out a large result set a row at a time.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         The query runs when enumeration starts, and the session's connection stays busy until the
+    ///         enumeration ends or is disposed, so finish (or dispose) it before using the session again.
+    ///     </para>
+    ///     <para>
+    ///         Document queries, scalar and projected <c>Select()</c>s, <c>Distinct()</c> and <c>GroupBy()</c>
+    ///         stream. A <c>GroupJoin</c> and the event-store queryables (<c>QueryAllRawEvents()</c>,
+    ///         <c>QueryRawEventDataOnly&lt;T&gt;()</c>) read their whole result first, then hand it out.
+    ///     </para>
+    /// </remarks>
+    public static IAsyncEnumerable<T> ToAsyncEnumerable<T>(
+        this IQueryable<T> queryable, CancellationToken token = default)
+    {
+        _ = QueryHandlers.ScalarListHandlerRoot<T>.Rooted;
+
+        return GetPolecatProvider(queryable).ExecuteStreamAsync<T>(queryable.Expression, token);
+    }
+
+    /// <summary>
     ///     Asynchronously returns the first element of a sequence.
     /// </summary>
     public static async Task<T> FirstAsync<T>(

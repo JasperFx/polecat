@@ -41,3 +41,16 @@ internal interface IQueryHandler<T> : IQueryHandler
     async Task<object?> IQueryHandler.HandleAsObjectAsync(DbDataReader reader, CancellationToken token)
         => await HandleAsync(reader, token).ConfigureAwait(false);
 }
+
+/// <summary>
+///     #801: a list handler that can also hand its rows out one at a time, for
+///     <see cref="PolecatQueryableExtensions.ToAsyncEnumerable{T}" />.
+/// </summary>
+/// <remarks>
+///     Kept beside <see cref="IQueryHandler{T}.HandleAsync" /> rather than replacing it: building a list
+///     through an async iterator would put the iterator's cost on every <c>ToListAsync()</c>.
+/// </remarks>
+internal interface IStreamingQueryHandler<out T>
+{
+    IAsyncEnumerable<T> StreamAsync(DbDataReader reader, CancellationToken token);
+}

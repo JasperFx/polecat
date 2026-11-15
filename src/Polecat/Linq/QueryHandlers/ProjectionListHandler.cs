@@ -8,7 +8,8 @@ namespace Polecat.Linq.QueryHandlers;
 /// <summary>
 ///     Reads full documents and projects them using a compiled Select lambda.
 /// </summary>
-internal class ProjectionListHandler<TSource, TResult> : IQueryHandler<IReadOnlyList<TResult>> where TSource : class
+internal class ProjectionListHandler<TSource, TResult> : IQueryHandler<IReadOnlyList<TResult>>, IStreamingQueryHandler<TResult>
+    where TSource : class
 {
     private readonly DeserializingSelector<TSource> _selector;
     private readonly Func<TSource, TResult> _projection;
@@ -29,5 +30,14 @@ internal class ProjectionListHandler<TSource, TResult> : IQueryHandler<IReadOnly
         }
 
         return list;
+    }
+
+    public async IAsyncEnumerable<TResult> StreamAsync(DbDataReader reader,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken token)
+    {
+        while (await reader.ReadAsync(token).ConfigureAwait(false))
+        {
+            yield return _projection(_selector.Resolve(reader));
+        }
     }
 }

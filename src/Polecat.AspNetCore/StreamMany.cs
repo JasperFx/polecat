@@ -52,20 +52,22 @@ public sealed class StreamMany<T> : IResult, IEndpointMetadataProvider
         Justification = "IResult.ExecuteAsync is not RUC-annotated; the contract lives on this override.")]
     [UnconditionalSuppressMessage("AOT", "IL3051",
         Justification = "IResult.ExecuteAsync is not RDC-annotated; the contract lives on this override.")]
-    [RequiresDynamicCode("StreamMany<T>.ExecuteAsync calls JsonSerializer.SerializeToUtf8Bytes(IReadOnlyList<T>) which uses STJ runtime codegen. AOT consumers must supply a JsonSerializerContext for T (e.g. via a custom IResult implementation that threads a JsonTypeInfo<T>) or switch to a source-generator-backed serializer.")]
+    [RequiresDynamicCode("StreamMany<T>.ExecuteAsync calls JsonSerializer.SerializeAsync(IAsyncEnumerable<T>), which uses STJ runtime codegen. AOT consumers must supply a JsonSerializerContext for T (e.g. via a custom IResult implementation that threads a JsonTypeInfo<T>) or switch to a source-generator-backed serializer.")]
     [RequiresUnreferencedCode("StreamMany<T>.ExecuteAsync reflects over T's properties via STJ. AOT consumers must preserve T's serialized members through DynamicallyAccessedMembers or source generation.")]
     public async Task ExecuteAsync(HttpContext httpContext)
     {
         ArgumentNullException.ThrowIfNull(httpContext);
 
-        var results = await _queryable.ToListAsync();
-
+        // #801: the rows go from the reader to the response pipe one at a time, so the whole result set
+        // is never in memory, at the cost of a chunked (unknown-length) response. The query runs on the
+        // serializer's first read, before it has flushed anything, so a query that fails still fails the
+        // request with nothing sent (stream_many_fails_a_refused_query_before_writing_anything). Only a
+        // failure after rows are flowing can cut the body short, which no streaming response can avoid.
+        var token = httpContext.RequestAborted;
         httpContext.Response.StatusCode = OnFoundStatus;
         httpContext.Response.ContentType = ContentType;
-        // Serialize straight into the response pipe: no intermediate byte[] of the whole array, at
-        // the cost of a chunked (unknown-length) response.
-        await JsonSerializer.SerializeAsync(httpContext.Response.BodyWriter, results,
-            cancellationToken: httpContext.RequestAborted);
+        await JsonSerializer.SerializeAsync(httpContext.Response.BodyWriter, _queryable.ToAsyncEnumerable(token),
+            cancellationToken: token);
     }
 
     /// <summary>

@@ -63,6 +63,12 @@ public static class TestApp
         app.MapGet("/api/issues", async (IQuerySession session) =>
             new StreamMany<StreamingIssue>(session.Query<StreamingIssue>()));
 
+        // #801: a query Polecat refuses (a conditional in a Where), so StreamMany's query fails on its
+        // first read. That has to happen before anything is written to the response.
+        app.MapGet("/api/issues-refused", (IQuerySession session) =>
+            new StreamMany<StreamingIssue>(session.Query<StreamingIssue>()
+                .Where(x => x.IsOpen ? x.Number > 1 : x.Number < 1)));
+
         // StreamPaged endpoint — returns one page of documents plus paging metadata in one round trip
         app.MapGet("/api/issues/paged/{pageNumber:int}/{pageSize:int}",
             (int pageNumber, int pageSize, IQuerySession session) =>
