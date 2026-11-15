@@ -181,6 +181,14 @@ partial class Build
     sealed record SupervisedSuite(string Lanes, string ProjectPath, int Workers)
     {
         public string Name => Path.GetFileNameWithoutExtension(ProjectPath);
+
+        /// <summary>
+        ///     The frameworks the project builds for, when it is not the repository's whole
+        ///     <c>&lt;TargetFrameworks&gt;</c>. The gate falls back to a project's newest declared
+        ///     framework when the selected one isn't among them, so a net11.0-only suite runs on
+        ///     net11.0 under every <c>--framework</c>.
+        /// </summary>
+        public string[]? Frameworks { get; init; }
     }
 
     /// <summary>
@@ -198,8 +206,15 @@ partial class Build
     static readonly SupervisedSuite EfCoreTests =
         new("efcore", "src/Polecat.EntityFrameworkCore.Tests/Polecat.EntityFrameworkCore.Tests.csproj", Workers: 1);
 
+    /// <summary>
+    ///     #808: the Bobcat specifications for union support, about a second. net11.0 only (C# 15
+    ///     unions), so the net10.0 CI workflows never run it, and the local gate is where it runs.
+    /// </summary>
+    static readonly SupervisedSuite PolecatSpecs =
+        new("specs", "src/Polecat.Specs/Polecat.Specs.csproj", Workers: 1) { Frameworks = ["net11.0"] };
+
     /// <summary>Every supervised suite, longest first.</summary>
-    static readonly SupervisedSuite[] Suites = [PolecatTests, AspNetCoreTests, EfCoreTests];
+    static readonly SupervisedSuite[] Suites = [PolecatTests, AspNetCoreTests, EfCoreTests, PolecatSpecs];
 
     Target CIPolecat => _ => _
         .Executes(() => RunSupervised(PolecatTests));

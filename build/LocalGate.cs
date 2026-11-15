@@ -105,7 +105,7 @@ partial class Build
                     .Check($"SQL Server ({Storage}) answers at {server}", pingServer));
 
                 gate.Project(RootDirectory / suite.ProjectPath, suite.Workers)
-                    .Targeting(frameworks)
+                    .Targeting(suite.Frameworks ?? frameworks)
                     .On(track)
                     .Supervise((_, supervisor) => configureSupervisor(supervisor, ledgers[suite.Name]))
                     .LaunchingWith(unit =>
