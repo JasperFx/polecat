@@ -68,6 +68,18 @@
         <TestTfmsInParallel>false</TestTfmsInParallel>
     </PropertyGroup>
 
+    <!--
+      Runtime-async (#970, Critter Stack plan decision D4; mirrors JasperFx's JasperFxRuntimeAsync and
+      Wolverine's WolverineRuntimeAsync). The net11.0 assemblies compile with the C# compiler's runtime-async
+      feature unless a build passes -p:PolecatRuntimeAsync=false. net11.0 only: on net10.0 the compiler
+      refuses it (SYSLIB5007) and the runtime will not load it. Needs Roslyn 5.x (the .NET 11 SDK's).
+      Changing it does not trigger a recompile, so clean bin/ and obj/ between a build with it and a build
+      without. src/Polecat.Tests/Compilation/runtime_async_defaults_970.cs pins the default.
+    -->
+    <PropertyGroup Condition="'$(PolecatRuntimeAsync)' != 'false' And '$(TargetFramework)' == 'net11.0'">
+        <Features>$(Features);runtime-async=on</Features>
+    </PropertyGroup>
+
     <ItemGroup>
         <None Include="$(MSBuildThisFileDirectory)logo.png" Pack="true" PackagePath="" Visible="false" />
         <None Include="$(MSBuildProjectDirectory)/README.md" Pack="true" PackagePath="" Visible="false"

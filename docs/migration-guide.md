@@ -25,6 +25,34 @@ The test-project side of the train (xunit.v3 4.x, Microsoft.Testing.Platform 2.x
 concerns you if you reuse `JasperFx.Events.ComplianceTests`; see the testing notes in the repository's
 `CLAUDE.md`.
 
+## Upgrading to 6.0: the net11.0 build uses runtime-async
+
+On `net11.0`, Polecat's own assemblies are compiled with the C# compiler's **runtime-async** feature
+([#970](https://github.com/JasperFx/polecat/issues/970), Critter Stack plan decision D4). The runtime runs
+Polecat's `async` methods directly instead of through compiler-built state machines, which removes most of
+the allocations an `await` used to cost. The `net10.0` build is unchanged: the .NET 10 runtime cannot load
+runtime-async code. JasperFx and Wolverine make the same default on `net11.0`.
+
+Nothing in Polecat's API changes. What can look different is what async code looks like at runtime:
+
+- **Stack traces** of exceptions thrown through Polecat's async methods.
+- **Debugger stepping** through Polecat's async code.
+- **APM agents and profilers** that hook async state machines. Check yours against the `net11.0` build.
+
+Polecat has no runtime code generation, so there is no generated-code switch to set. The
+JasperFx.Events source generator's output, such as aggregate evolvers, compiles as part of **your**
+project, so your project's compiler settings decide whether that code uses runtime-async.
+
+The opt-out is a build property of Polecat itself, so it applies when you build Polecat from source:
+
+```bash
+dotnet build -p:PolecatRuntimeAsync=false
+```
+
+Changing the switch does not trigger a recompile; clean `bin/` and `obj/` first. A `net11.0` application
+consuming the NuGet package always gets the runtime-async `net11.0` assembly; until a release ships with
+the default turned off, the only other way out is to target `net10.0`.
+
 ## Upgrading to 6.0: `ISerializer` gains UTF-8 byte-path overloads
 
 `Polecat.Serialization.ISerializer` has three new members
