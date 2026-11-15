@@ -80,6 +80,10 @@ src/Polecat.Tests/              — xUnit integration/unit tests
 
 - Docker Compose (`docker-compose.yml`) provides SQL Server 2025 (`mcr.microsoft.com/mssql/server:2025-latest`) on port **11433**
 - SA password: `P@55w0rd`
+- `2025-latest` is whatever was pulled last, and a stale local image can be months behind CI's (which
+  pulls fresh). Builds before CU7 (17.0.4065.4) still have SQL Server's #907 `JSON_MODIFY` damage, so
+  `docker compose pull` before trusting a local result on native `json`; `SELECT @@VERSION` says which
+  CU you have.
 - Connection (see `Polecat.TestUtils/ConnectionSource.cs`): `Server=localhost,11433;User Id=sa;Password=P@55w0rd;Timeout=5;MultipleActiveResultSets=True;Initial Catalog=master;Encrypt=False`
 - Override the connection string via the `POLECAT_TESTING_DATABASE` environment variable (used in CI)
 - Tests run against the `master` database, isolated per-test by `DatabaseSchemaName` — there is no dedicated `polecat_testing` database
