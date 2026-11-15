@@ -305,6 +305,45 @@ that names `JasperFx.Events.IEventStoreOperations` is unaffected.
 that interface's parents, so the redeclaration is what keeps `session.Events.FetchLatest<T>(...)` from
 being ambiguous.
 
+## Upgrading to 6.0: the event store runs on JasperFx's shared bases
+
+Polecat 6.0 adopts the event-store pieces JasperFx 3.0 lifted out of the stores
+([#806](https://github.com/JasperFx/polecat/issues/806), [#958](https://github.com/JasperFx/polecat/pull/958)),
+and deletes its own copies:
+
+| Piece | Now |
+|---|---|
+| Projection step-through (`RunProjectionAsync`, `RunProjectionByNameAsync`, `RunMultiStreamProjectionAsync`) | JasperFx's `StepThrough`. This fixes the live-reference bug: the old replay handed later steps the same object it had already reported. |
+| Event registry (aliases, masking rules, binary serializers, tag types, `dotnet_type` cache) | `EventRegistry`, with `EventGraph` overriding only what is SQL Server's. |
+| DCB tags (`FetchForWritingByTags`, single and batched) | The shared `EventBoundary<T>`. |
+| Masking and compaction | `EventDataMaskingBase<IDocumentSession>` and `StreamCompactingExecution<EventOperations>`. |
+| The async daemon's projection batch | `ProjectionBatchBase<IDocumentSession>`. `IMessageOutbox` and `IMessageBatch` derive from the `JasperFx.Events.Documents` interfaces. |
+| `StartStream`, `Append`, `AppendOptimistic`, `AppendExclusive`, `FetchForWriting`, `FetchForExclusiveWriting`, `WriteToAggregate`, `WriteExclusivelyToAggregate` | `EventOperationsBase`. Polecat supplies only the tenant-stamping seams. |
+
+The shared bases bring behaviour that Marten and Fisher already had:
+
+- **Side effects wait for continuous mode.** A daemon batch holds back raised events and published
+  messages in `ShardExecutionMode.Rebuild` and `CatchUp`, so replaying history doesn't send them again.
+- **A projection that publishes without writing a document** opens a default-tenant session instead of
+  throwing, and the message batch's before-commit hook runs even when the batch has nothing to commit.
+- **Calling the wrong identity overload throws.** A `Guid` overload on a string-identity store, or a
+  string overload on a `Guid` store, throws `InvalidOperationException`.
+- **`StartStream` with no events throws `EmptyEventStreamException`.** An id-less `StartStream` gets a
+  CombGuid on a `Guid` store and a new string key on a string store.
+- **Masking** refuses an empty `ForTenant` and unsequenced events, and masks an event once when two
+  sources both select it.
+- **A cached miss in the `dotnet_type` cache** now expires when a new event type is registered.
+
+Two pieces of the lift are deliberately **not** adopted:
+
+- **The client-side append planner** (`ClientSideAppendPlanner`) is for stores that read the stream row
+  before deciding. Polecat decides collision, version and archived status on the server, in the one
+  `UPDATE … OUTPUT` round trip it has always made (QuickAppend only). Adopting the planner would add a
+  stream-row read to every save and move the version check to the client, so Polecat keeps its own
+  path, as Marten does.
+- **A shared event-loader base** doesn't exist in JasperFx yet. `PolecatEventLoader` stays Polecat's
+  own until one is lifted.
+
 ## Upgrading to 6.0: `MasterTableTenancy` runs on Weasel's shared base
 
 `MasterTableTenancy` now derives from Weasel's `MasterTableTenancyBase<PolecatDatabase, DbDataSource>`,
