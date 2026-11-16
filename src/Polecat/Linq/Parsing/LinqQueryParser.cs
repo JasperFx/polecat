@@ -920,7 +920,12 @@ internal class LinqQueryParser : ExpressionVisitor
     {
         // #875: a second Select reads the first, whatever the first one projected.
         var lambda = GetLambda(node.Arguments[1]);
-        if (lambda.Parameters.Count != 1) AssertOperatorIsTranslatable(node);
+        if (lambda.Parameters.Count != 1)
+        {
+            throw new BadLinqExpressionException(
+                "Polecat cannot translate the Select() overload that passes each row's index: SQL rows have no "
+                + "position until they are read. Materialize the query with ToListAsync() and project in memory.");
+        }
 
         SelectExpression = SelectExpression == null ? lambda : ProjectedMembers.Rewrite(SelectExpression, lambda);
         ApplySelect();
