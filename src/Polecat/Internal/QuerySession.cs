@@ -1,6 +1,7 @@
 using System.Data.Common;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
+using System.Linq.Expressions;
 using JasperFx;
 using Microsoft.Data.SqlClient;
 using Polly;
@@ -575,6 +576,22 @@ internal partial class QuerySession : IQuerySession, JasperFx.Events.IEventTenan
         }
 
         return polecatProvider.BuildSql(queryable.Expression, TenantId);
+    }
+
+    // gh-1018 (marten#5916): the terminal is composed onto the expression exactly as the async operator
+    // composes it for execution, and rendered by the same BuildSql
+    public string ToSql<T>(IQueryable<T> queryable, FetchType fetchType)
+        => previewProviderFor(queryable)
+            .BuildSql(PreviewTerminals.Compose(queryable.Expression, typeof(T), fetchType), TenantId);
+
+    public string ToSql<T, TResult>(IQueryable<T> queryable, Expression<Func<IQueryable<T>, TResult>> terminal)
+        => previewProviderFor(queryable)
+            .BuildSql(PreviewTerminals.Compose(queryable.Expression, terminal), TenantId);
+
+    private static PolecatLinqQueryProvider previewProviderFor<T>(IQueryable<T> queryable)
+    {
+        return queryable.Provider as PolecatLinqQueryProvider
+               ?? throw new InvalidOperationException("ToSql can only be used with Polecat IQueryable instances.");
     }
 
     // ── Disposal ────────────────────────────────────────────────────────

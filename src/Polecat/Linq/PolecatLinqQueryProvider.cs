@@ -83,6 +83,10 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
     /// </remarks>
     private ParsedQuery Parse(Expression expression, string tenantId)
     {
+        // gh-1015: Join / LeftJoin / RightJoin become the GroupJoin(...).SelectMany(...) every path below already
+        // reads. Before the document type is found, because a RightJoin's queried document is its inner one.
+        expression = JoinOperatorRewriter.Rewrite(expression);
+
         var documentType = FindDocumentType(expression);
         var provider = _providers.GetProvider(documentType);
 
@@ -124,11 +128,11 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
     /// </summary>
     private static void AssertNotGroupedOrJoined(LinqQueryParser parser, string operation)
     {
-        if (parser.GroupByKeySelector != null || parser.GroupJoinData != null)
+        if (parser.GroupByKeySelector != null || parser.GroupJoinData != null || parser.Flatten != null)
         {
             throw new BadLinqExpressionException(
-                $"{operation} has no translation for a GroupBy or a GroupJoin, whose rows are not documents. "
-                + "Materialize the query with ToListAsync() instead.");
+                $"{operation} has no translation for a GroupBy, a GroupJoin or a SelectMany, whose rows are not "
+                + "documents. Materialize the query with ToListAsync() instead.");
         }
     }
 
@@ -193,6 +197,13 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
             return BuildStatement(query);
         }
 
+        // gh-1016: the flattened rows are prepared as execution prepares them
+        if (query.Parser.Flatten != null)
+        {
+            PrepareFlattenedStatement(query);
+            return query.Parser.Statement;
+        }
+
         PrepareDocumentStatement(query);
         return query.Parser.Statement;
     }
@@ -212,11 +223,11 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
                 + "Run the query on its own.");
         }
 
-        if (query.Parser.GroupByKeySelector != null)
+        if (query.Parser.GroupByKeySelector != null || query.Parser.Flatten != null)
         {
             throw new BadLinqExpressionException(
-                "A GroupBy cannot join a batched query, whose rows are read as documents. Run the query "
-                + "on its own.");
+                "A GroupBy or a SelectMany cannot join a batched query, whose rows are read as documents. Run the "
+                + "query on its own.");
         }
 
         return BuildStatement(query);
@@ -477,6 +488,16 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
         var orderBy = parser.OrderByMembers;
         CursorPagination.ValidateOrdering(orderBy);
 
+        // gh-1012: a cursor carries the values of member keys. A computed key (or a vector distance) orders the
+        // page but has no value in the cursor, so the next page would be sought without it.
+        if (parser.Statement.OrderBys.Count != orderBy.Count)
+        {
+            throw new BadLinqExpressionException(
+                $"{nameof(CursorPagingQueryableExtensions.ToJsonPageByCursorAsync)} needs every ordering key to be a "
+                + "document member, because the cursor carries their values. Order by members (ending with Id), "
+                + "or page with Skip and Take instead.");
+        }
+
         // Select the page's JSON plus each ordering-key column (aliased) so the cursor is built from
         // the last row without hydrating the document. The page is whatever the query selects, so a
         // Select() used to hide a field keeps hiding it (#836); the keys ride alongside it unprojected.
@@ -614,6 +635,11 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
             return await ExecuteGroupByAsync<TResult>(query, token).ConfigureAwait(false);
         }
 
+        if (parser.Flatten != null)
+        {
+            return await ExecuteFlattenedAsync<TResult>(query, token).ConfigureAwait(false);
+        }
+
         var shape = PrepareDocumentStatement(query);
 
         // Build SQL and execute via BatchBuilder/SqlBatch
@@ -698,6 +724,18 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
     {
         var query = await PrepareAsync(expression, token).ConfigureAwait(false);
         var parser = query.Parser;
+
+        // gh-1016: a SelectMany's rows are projected in memory from pairs, so they are read and handed out
+        if (parser.Flatten != null)
+        {
+            var flattened = await ExecuteFlattenedAsync<IReadOnlyList<T>>(query, token).ConfigureAwait(false);
+            foreach (var item in flattened)
+            {
+                yield return item;
+            }
+
+            yield break;
+        }
 
         if (parser.GroupJoinData != null)
         {
@@ -953,12 +991,22 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
             // to be skipped without a word, so the rows came back in whatever order SQL Server chose; a cast
             // was stepped over whether or not it changed the order.
             var key = LinqQueryParser.StripOrderPreservingConvert(ordering.Body);
-            if (!sides.TryResolve(key, ordering, out var member, out var alias))
+            string locator;
+            if (sides.TryResolve(key, ordering, out var member, out var alias))
             {
-                throw LinqQueryParser.RefuseOrderingKey(key);
+                locator = JoinStatement.AliasLocator(member.TypedLocator, alias);
             }
-
-            var locator = JoinStatement.AliasLocator(member.TypedLocator, alias);
+            else if (ScalarTranslation.TryTranslate(key,
+                         new AliasedSideMembers(ordering, outerMemberFactory, innerMemberFactory), out var computed,
+                         out var reason))
+            {
+                // gh-1012 (marten#5968): a key computed from either side, or both
+                locator = computed.Sql;
+            }
+            else
+            {
+                throw LinqQueryParser.RefuseOrderingKey(key, reason);
+            }
 
             // gh-997: the keys arrive most significant first, and SQL Server refuses a column named
             // twice in ORDER BY. A repeated key can never break a tie, so it is dropped.
@@ -1138,6 +1186,104 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
         }
 
         return (TResult)items[0]!;
+    }
+
+    /// <summary>
+    ///     gh-1016: finishes the statement of a <c>SelectMany()</c> over a collection the documents hold, for
+    ///     execution and for <c>ToSql()</c> alike.
+    /// </summary>
+    private static void PrepareFlattenedStatement(ParsedQuery query)
+    {
+        var parser = query.Parser;
+
+        // Distinct compares what it selects, so the rows have to be one scalar SQL can see
+        if (parser.IsDistinct && parser.ValueMode != SingleValueMode.Any && !parser.TrySelectInSql())
+        {
+            throw new BadLinqExpressionException(
+                $"Polecat cannot translate Distinct() over '{parser.SelectExpression!.Body}' after a SelectMany(): SQL "
+                + "has to compare the rows, and it can compare a scalar. Select a scalar first, or materialize the "
+                + "query with ToListAsync() and use Distinct() in memory.");
+        }
+
+        DistinctProjection.ApplyTo(parser, query.Members);
+
+        // Rows to project in memory read the element, and its parent when the projection does
+        var readsRows = parser.ValueMode == null || parser.ValueMode.Value.TakesOneRow();
+        if (readsRows && !parser.IsScalarSelect)
+        {
+            var flatten = parser.Flatten!;
+            parser.Statement.SelectFragment = new LiteralSqlFragment(
+                flatten.ReadsParent(parser.SelectExpression!)
+                    ? $"{FlattenData.ElementJson} AS __pc_e, data"
+                    : $"{FlattenData.ElementJson} AS __pc_e");
+        }
+
+        ApplySingleValueMode(parser);
+    }
+
+    [RequiresDynamicCode("Closes FlattenedRowsHandler<,,> and Func<,,> over the parent, element and result types via Type.MakeGenericType.")]
+    [RequiresUnreferencedCode("Reflects over FlattenedRowsHandler<,,> (Activator.CreateInstance).")]
+    private async Task<TResult> ExecuteFlattenedAsync<TResult>(ParsedQuery query, CancellationToken token)
+    {
+        var parser = query.Parser;
+        PrepareFlattenedStatement(query);
+
+        await using var batch = CompileStatement(parser);
+        await using var reader = await _session.ExecuteReaderAsync(batch, token).ConfigureAwait(false);
+
+        switch (parser.ValueMode)
+        {
+            case SingleValueMode.Any:
+                return (TResult)(object)await new AnyHandler().HandleAsync(reader, token).ConfigureAwait(false);
+
+            case SingleValueMode.Count or SingleValueMode.LongCount or SingleValueMode.Sum or SingleValueMode.Min
+                or SingleValueMode.Max or SingleValueMode.Average:
+                return await new ScalarHandler<TResult>().HandleAsync(reader, token).ConfigureAwait(false);
+        }
+
+        if (parser.IsScalarSelect)
+        {
+            return parser.ValueMode == null
+                ? await InvokeScalarListHandlerAsync<TResult>(reader, token).ConfigureAwait(false)
+                : await ReadOneRowAsync<TResult>(reader, parser.ValueMode.Value, false, token).ConfigureAwait(false);
+        }
+
+        var flatten = parser.Flatten!;
+        var elementType = ResultElementType<TResult>();
+        var projection = flatten.ToProjection(parser.SelectExpression!);
+        var handlerType = typeof(FlattenedRowsHandler<,,>).MakeGenericType(query.DocumentType,
+            projection.Parameters[1].Type, elementType);
+        var compiled = Expression.Lambda(
+            typeof(Func<,,>).MakeGenericType(query.DocumentType, projection.Parameters[1].Type, elementType),
+            Expression.Convert(projection.Body, elementType), projection.Parameters).Compile();
+
+        var handler = (QueryHandlers.IQueryHandler)Activator.CreateInstance(handlerType, _session.Serializer, compiled,
+            flatten.ReadsParent(parser.SelectExpression!))!;
+        var list = (System.Collections.IList)(await handler.HandleAsObjectAsync(reader, token).ConfigureAwait(false))!;
+
+        if (parser.ValueMode == null) return (TResult)list;
+
+        var rows = (System.Collections.IList)Activator.CreateInstance(typeof(List<>).MakeGenericType(elementType), list)!;
+        return SingleOrOneRow<TResult>(rows, parser.ValueMode.Value);
+    }
+
+    /// <summary>First, Single or Last over rows already read, the way LINQ to Objects answers them.</summary>
+    private static TResult SingleOrOneRow<TResult>(System.Collections.IList rows, SingleValueMode mode)
+    {
+        var many = mode is SingleValueMode.Single or SingleValueMode.SingleOrDefault;
+        if (many && rows.Count > 1) throw new InvalidOperationException("Sequence contains more than one element");
+
+        if (rows.Count == 0)
+        {
+            if (mode is SingleValueMode.First or SingleValueMode.Single or SingleValueMode.Last)
+            {
+                throw new InvalidOperationException("Sequence contains no elements");
+            }
+
+            return default!;
+        }
+
+        return (TResult)rows[0]!;
     }
 
     private static void ApplySingleValueMode(LinqQueryParser parser)

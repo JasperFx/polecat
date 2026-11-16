@@ -36,7 +36,8 @@ namespace Polecat.Linq.Members;
 /// </remarks>
 internal static class ClrOnlyMembers
 {
-    private const string JsonValuePrefix = "JSON_VALUE(data,";
+    // gh-1016: any JSON column, the document's data or a flattened element
+    private const string JsonValuePrefix = "JSON_VALUE(";
 
     private static readonly PropertyInfo ArrayLength = typeof(Array).GetProperty(nameof(Array.Length))!;
 
@@ -62,15 +63,56 @@ internal static class ClrOnlyMembers
     /// </exception>
     public static IReadOnlyList<MemberInfo> JsonKeys(MemberExpression expression)
     {
-        var keys = new List<MemberInfo>();
+        var segments = JsonPath(expression);
+        if (segments.Any(x => x.Member == null))
+        {
+            throw new BadLinqExpressionException(
+                $"Polecat cannot translate '{expression}' to SQL here: it reads through an index into a "
+                + "collection, which this position cannot follow. Materialize the query and finish the work in "
+                + "memory.");
+        }
+
+        return segments.Select(x => x.Member!).ToList();
+    }
+
+    /// <summary>
+    ///     <see cref="JsonKeys" /> with the indexes along the chain as well (gh-1014): the segments of the path
+    ///     to <paramref name="expression" />, root first, each a stored member or a position in an array.
+    /// </summary>
+    /// <exception cref="BadLinqExpressionException">
+    ///     The chain does not start at the query's parameter, or an index along it is negative or computed
+    ///     from the document.
+    /// </exception>
+    public static IReadOnlyList<PathSegment> JsonPath(Expression expression)
+    {
+        var segments = new List<PathSegment>();
         var current = Unwrapped(expression);
 
-        while (current is MemberExpression member)
+        while (true)
         {
-            // #808: a union is stored as its bare case at the union member's own path, so its Value is
-            // no more a key than Nullable<T>.Value is.
-            if (!IsNullableValue(member) && !UnionShape.IsUnionValue(member)) keys.Insert(0, member.Member);
-            current = Unwrapped(member.Expression);
+            if (current is MemberExpression member)
+            {
+                // #808: a union is stored as its bare case at the union member's own path, so its Value is
+                // no more a key than Nullable<T>.Value is.
+                if (!IsNullableValue(member) && !UnionShape.IsUnionValue(member))
+                {
+                    segments.Insert(0, new PathSegment(member.Member, 0));
+                }
+
+                current = Unwrapped(member.Expression);
+                continue;
+            }
+
+            if (current != null && DocumentPaths.TryGetIndex(current, out var collection, out var index))
+            {
+                segments.Insert(0, DocumentPaths.IsDictionary(collection.Type)
+                    ? new PathSegment(null, 0, DocumentPaths.KeyValue(index, expression))
+                    : new PathSegment(null, DocumentPaths.IndexValue(index, expression)));
+                current = Unwrapped(collection);
+                continue;
+            }
+
+            break;
         }
 
         if (current is not ParameterExpression)
@@ -81,7 +123,7 @@ internal static class ClrOnlyMembers
                 + "value before the query, or materialize the query and finish the work in memory.");
         }
 
-        return keys;
+        return segments;
     }
 
     /// <summary>
@@ -99,7 +141,8 @@ internal static class ClrOnlyMembers
     /// <param name="resolve">The caller's own resolver, for the member this one is read off.</param>
     /// <exception cref="BadLinqExpressionException">A CLR-only member with no translation.</exception>
     public static IQueryableMember? TryTranslate(
-        MemberExpression expression, Func<MemberExpression, IQueryableMember> resolve)
+        MemberExpression expression, Func<MemberExpression, IQueryableMember> resolve,
+        Func<Expression, IQueryableMember>? resolvePath = null)
     {
         if (expression.Expression is not { } ownerExpression) return null;
 
@@ -118,7 +161,18 @@ internal static class ClrOnlyMembers
 
         // A scalar projected by an earlier Select, or the result of a method call, has no stored
         // member to read this off: .Select(x => x.Name).Where(n => n.Length > 3) is the common one.
-        if (Unwrapped(ownerExpression) is not MemberExpression ownerMember)
+        // gh-1014: an index into a stored collection is as stored as a member: x.Names[1].Length.
+        var unwrappedOwner = Unwrapped(ownerExpression)!;
+        Func<IQueryableMember> owner;
+        if (unwrappedOwner is MemberExpression ownerMember)
+        {
+            owner = () => resolve(ownerMember);
+        }
+        else if (resolvePath != null && DocumentPaths.IsIndexPath(unwrappedOwner))
+        {
+            owner = () => resolvePath(unwrappedOwner);
+        }
+        else
         {
             throw Refuse(expression, "It is not read off a stored document member.");
         }
@@ -128,15 +182,15 @@ internal static class ClrOnlyMembers
             // HasValue is the only other member Nullable<T> has that can reach here.
             return expression.Member.Name == nameof(Nullable<int>.Value)
                 ? null
-                : new HasValueMember(resolve(ownerMember));
+                : new HasValueMember(owner());
         }
 
-        if (isCollection) return CollectionCount(expression, resolve(ownerMember));
+        if (isCollection) return CollectionCount(expression, owner());
 
         // Length is the only instance property a string has.
-        if (ownerType == typeof(string)) return StringLength(expression, resolve(ownerMember));
+        if (ownerType == typeof(string)) return StringLength(expression, owner());
 
-        if (IsDateOrTime(ownerType)) return DatePart(expression, resolve(ownerMember));
+        if (IsDateOrTime(ownerType)) return DatePart(expression, owner());
 
         throw Refuse(expression, $"No member of {ownerType.Name} translates.");
     }

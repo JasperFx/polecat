@@ -60,6 +60,13 @@ internal class Statement
     /// </remarks>
     public PageDefinition? InnerPage { get; private set; }
 
+    /// <summary>
+    ///     gh-1016: when set, the JSON path of the collection a <c>SelectMany()</c> flattens. Each row the
+    ///     statement reads becomes one row per element, through <c>CROSS APPLY OPENJSON(data, path) AS
+    ///     __pc_elem</c>, after <see cref="Wheres" /> and any <see cref="InnerPage" /> have chosen the parents.
+    /// </summary>
+    public string? FlattenPath { get; set; }
+
     /// <summary>Filters on the rows of <see cref="InnerPage" />, from a <c>Where</c> written after the page.</summary>
     public List<ISqlFragment> PageFilters { get; } = [];
 
@@ -69,7 +76,8 @@ internal class Statement
     /// </summary>
     public bool TryWrapPage()
     {
-        if (InnerPage != null) return false;
+        // gh-1016: the page would have to be of the flattened rows, a second level of derived table
+        if (InnerPage != null || FlattenPath != null) return false;
 
         InnerPage = new PageDefinition([..OrderBys], Limit, Offset);
         OrderBys.Clear();
@@ -376,6 +384,7 @@ internal class Statement
         if (InnerPage == null)
         {
             builder.Append(FromTable);
+            AppendFlatten(builder, "data");
             AppendWheres(builder, Wheres);
             return;
         }
@@ -412,7 +421,15 @@ internal class Statement
         }
 
         builder.Append(") AS __pc_page");
+        AppendFlatten(builder, "__pc_page.data");
         AppendWheres(builder, PageFilters);
+    }
+
+    private void AppendFlatten(ICommandBuilder builder, string dataColumn)
+    {
+        if (FlattenPath == null) return;
+
+        builder.Append($" CROSS APPLY OPENJSON({dataColumn}, '{FlattenPath}') AS __pc_elem");
     }
 
     private static void AppendWheres(ICommandBuilder builder, List<ISqlFragment> wheres)

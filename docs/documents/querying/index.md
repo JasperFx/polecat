@@ -81,7 +81,11 @@ does not name Polecat.
 Preview the generated SQL for any LINQ query:
 
 ```cs
-var sql = session.Query<User>()
-    .Where(x => x.LastName == "Smith")
-    .ToSql();
+var query = session.Query<User>().Where(x => x.LastName == "Smith");
+
+var sql = session.ToSql(query);                      // what ToListAsync() sends
+var count = session.ToSql(query, FetchType.Count);   // what CountAsync() sends
+var sum = session.ToSql(query, q => q.Sum(x => x.Age)); // what SumAsync(x => x.Age) sends
 ```
+
+See [SQL Preview](/diagnostics#sql-preview) for every terminal operator.

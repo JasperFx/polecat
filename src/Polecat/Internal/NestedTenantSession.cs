@@ -152,6 +152,12 @@ internal class NestedTenantSession : ITenantOperations
     public string ToSql<T>(IQueryable<T> queryable) where T : class
         => _parent.ToSql(queryable);
 
+    public string ToSql<T>(IQueryable<T> queryable, FetchType fetchType)
+        => _parent.ToSql(queryable, fetchType);
+
+    public string ToSql<T, TResult>(IQueryable<T> queryable, Expression<Func<IQueryable<T>, TResult>> terminal)
+        => _parent.ToSql(queryable, terminal);
+
     public Task<T> QueryByPlanAsync<T>(IQueryPlan<T> plan, CancellationToken token = default)
         => _parent.QueryByPlanAsync(plan, token);
 

@@ -10,6 +10,47 @@ one in a predicate:
 | `x.Tags.IsEmpty()` | the same count, against `0` |
 | `x.Tags == null`, `x.Tags != null` | whether the array is there at all |
 
+## Indexing
+
+An index into an array or a list, or a key of a dictionary, is read as a JSON path anywhere a member can be:
+
+```cs
+.Where(x => x.Values[1] == 3)
+.Where(x => x.Grid[1][0] > 6 && x.Children[0].Name == "first")
+.OrderBy(x => x.Values.ElementAt(2))
+.Select(x => x.Scores["math"])
+```
+
+The index has to be known before the query runs: a constant, a captured local or a static. One past the end
+reads as missing, so it matches no comparison and a scalar `Select` of it reads the type's default, where
+LINQ-to-Objects would throw. A negative index is refused.
+
+## SelectMany
+
+`SelectMany()` flattens a collection the documents hold, of child documents or of values, enums and strings:
+
+```cs
+var lines = await session.Query<Order>()
+    .Where(x => x.Status == "open")
+    .OrderBy(x => x.Number).Take(10)
+    .SelectMany(x => x.Lines)
+    .Where(l => l.Quantity > 1)
+    .ToListAsync();
+
+var tags = await session.Query<Post>().SelectMany(x => x.Tags).Distinct().ToListAsync();
+
+var rows = await session.Query<Order>()
+    .SelectMany(x => x.Lines, (x, l) => new { x.Number, l.Sku })
+    .ToListAsync();
+```
+
+It is `CROSS APPLY OPENJSON(data, '$.lines')`. Everything before it chooses the parents, so a `Take()` or
+`Skip()` in front of it pages the documents, and one after it pages the flattened rows. The rows come back in
+LINQ's order: the parents' ordering, then each element's position in its collection. `Where`, `OrderBy`,
+`Select`, `Distinct` (of a scalar), `First`, `Single`, `Count`, `Any` and the aggregates all work after it.
+One `SelectMany()` is translated per query, and not after a `Select`, `GroupBy` or `Distinct`. The JSON
+streaming, cursor paging and batched query paths refuse it, because its rows are not documents.
+
 ::: warning `Any`, `All` and `Count()` are not translated
 `x.Items.Any()`, `x.Items.Any(i => i.Quantity > 10)`, `x.Items.All(...)` and the `x.Items.Count()` method
 are all refused with a `BadLinqExpressionException`, rather than being run against nothing. So are

@@ -22,7 +22,8 @@ public class ProjectedOrderingInner
 // statement selected, the document's JSON body: SQL Server 2025's native json refuses to sort it ("The JSON
 // data type cannot be compared or sorted"), and json text would have sorted the documents as text. Marten
 // computes the projection in SQL; Polecat has no exact translation of a computed projection yet, so it refuses
-// with BadLinqExpressionException. ORDER BY data is never emitted.
+// with BadLinqExpressionException. ORDER BY data is never emitted. gh-1017 then translated the computed value
+// itself, so these order exactly, and what has no exact translation is still refused.
 public class order_by_after_computed_select_tests : OneOffConfigurationsContext
 {
     private static readonly string[] Pool = ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf"];
@@ -53,9 +54,66 @@ public class order_by_after_computed_select_tests : OneOffConfigurationsContext
         "to_upper", "then_skip_take", "first"
     ];
 
+    // gh-1017 (marten#5955, #5942): the ordering is read through the projection, so it orders by the computed
+    // value itself, translated exactly. gh-998 refused these until that translation existed.
     [Theory]
     [MemberData(nameof(ComputedShapes))]
-    public async Task an_ordering_over_a_computed_projection_is_refused(string shape)
+    public async Task an_ordering_over_a_computed_projection_orders_the_computed_values(string shape)
+    {
+        await SeedAsync();
+        await using var session = theStore.QuerySession();
+        var q = session.Query<ProjectedOrderingDoc>();
+        var docs = Docs.AsQueryable();
+
+        switch (shape)
+        {
+            case "modulo":
+                (await q.Select(x => x.Number * 7 % 11).OrderBy(n => n).ToListAsync(Ct))
+                    .ShouldBe(docs.Select(x => x.Number * 7 % 11).OrderBy(n => n).ToList());
+                break;
+            case "modulo_descending":
+                (await q.Select(x => x.Number % 3).OrderByDescending(n => n).ToListAsync(Ct))
+                    .ShouldBe(docs.Select(x => x.Number % 3).OrderByDescending(n => n).ToList());
+                break;
+            case "concatenation":
+                (await q.Select(x => x.Name + "z" + x.Number).OrderByDescending(n => n).ToListAsync(Ct))
+                    .ShouldBe(docs.Select(x => x.Name + "z" + x.Number).OrderByDescending(n => n).ToList());
+                break;
+            case "id_to_string":
+                // Every Guid has its hyphens in the same places, so ordinal and collation orders agree
+                (await q.Select(x => x.Id.ToString()).OrderBy(s => s).ToListAsync(Ct))
+                    .ShouldBe(docs.Select(x => x.Id.ToString()).OrderBy(s => s, StringComparer.Ordinal).ToList());
+                break;
+            case "widening_then_multiply":
+                (await q.Select(x => (long)x.Number * 1_000_000_000L).OrderBy(n => n).ToListAsync(Ct))
+                    .ShouldBe(docs.Select(x => (long)x.Number * 1_000_000_000L).OrderBy(n => n).ToList());
+                break;
+            case "negation":
+                (await q.Select(x => -x.Number).OrderBy(n => n).ToListAsync(Ct))
+                    .ShouldBe(docs.Select(x => -x.Number).OrderBy(n => n).ToList());
+                break;
+            case "to_upper":
+                (await q.Select(x => x.Name.ToUpper()).OrderBy(n => n).ToListAsync(Ct))
+                    .ShouldBe(docs.Select(x => x.Name.ToUpper()).OrderBy(n => n).ToList());
+                break;
+            case "then_skip_take":
+                (await q.Select(x => x.Number % 4).OrderBy(n => n).Skip(2).Take(3).ToListAsync(Ct))
+                    .ShouldBe(docs.Select(x => x.Number % 4).OrderBy(n => n).Skip(2).Take(3).ToList());
+                break;
+            case "first":
+                (await q.Select(x => x.Number * 2).OrderByDescending(n => n).FirstAsync(Ct)).ShouldBe(20);
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(shape));
+        }
+    }
+
+    // What has no exact translation is still refused rather than ordered by something else
+    [Theory]
+    [InlineData("math_call")]
+    [InlineData("narrowing")]
+    [InlineData("conditional")]
+    public async Task an_ordering_over_an_untranslatable_projection_is_refused(string shape)
     {
         await SeedAsync();
         await using var session = theStore.QuerySession();
@@ -63,16 +121,9 @@ public class order_by_after_computed_select_tests : OneOffConfigurationsContext
 
         Func<Task> query = shape switch
         {
-            "modulo" => () => q.Select(x => x.Number * 7 % 11).OrderBy(n => n).ToListAsync(Ct),
-            "modulo_descending" => () => q.Select(x => x.Number % 3).OrderByDescending(n => n).ToListAsync(Ct),
-            "concatenation" => () => q.Select(x => x.Name + "z" + x.Number).OrderByDescending(n => n).ToListAsync(Ct),
-            "id_to_string" => () => q.Select(x => x.Id.ToString()).OrderBy(s => s).ToListAsync(Ct),
-            "widening_then_multiply" => () =>
-                q.Select(x => (long)x.Number * 1_000_000_000L).OrderBy(n => n).ToListAsync(Ct),
-            "negation" => () => q.Select(x => -x.Number).OrderBy(n => n).ToListAsync(Ct),
-            "to_upper" => () => q.Select(x => x.Name.ToUpper()).OrderBy(n => n).ToListAsync(Ct),
-            "then_skip_take" => () => q.Select(x => x.Number % 4).OrderBy(n => n).Skip(2).Take(3).ToListAsync(Ct),
-            "first" => () => q.Select(x => x.Number * 2).OrderByDescending(n => n).FirstAsync(Ct),
+            "math_call" => () => q.Select(x => Math.Abs(x.Number - 5)).OrderBy(n => n).ToListAsync(Ct),
+            "narrowing" => () => q.Select(x => (byte)(x.Number * 100)).OrderBy(n => n).ToListAsync(Ct),
+            "conditional" => () => q.Select(x => x.Number > 5 ? 1 : 0).OrderBy(n => n).ToListAsync(Ct),
             _ => throw new ArgumentOutOfRangeException(nameof(shape))
         };
 

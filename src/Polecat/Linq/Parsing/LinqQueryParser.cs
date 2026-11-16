@@ -18,9 +18,10 @@ namespace Polecat.Linq.Parsing;
     Justification = "Class-level: compiles join / order-by / select-clause sub-expressions via Expression.Lambda — runtime code generation. The expression trees originate at the LINQ registration boundary where document/event types are preserved per the AOT publishing guide.")]
 internal class LinqQueryParser : ExpressionVisitor
 {
-    private readonly IMemberResolver _memberFactory;
+    private IMemberResolver _memberFactory;
+    private readonly IReadOnlyList<Methods.IMethodCallParser>? _additionalMethodParsers;
     private readonly SoftDeleteTarget _softDeleteTarget;
-    private readonly WhereClauseParser _whereParser;
+    private WhereClauseParser _whereParser;
 
     public Statement Statement { get; }
     public SingleValueMode? ValueMode { get; private set; }
@@ -29,6 +30,12 @@ internal class LinqQueryParser : ExpressionVisitor
     ///     If a GroupJoin+SelectMany pattern was detected, holds the parsed join data.
     /// </summary>
     public GroupJoinData? GroupJoinData { get; private set; }
+
+    /// <summary>
+    ///     gh-1016: set once a <c>SelectMany()</c> has flattened a collection the documents hold. The rows from
+    ///     then on are its elements; see <see cref="HandleSelectMany" />.
+    /// </summary>
+    public FlattenData? Flatten { get; private set; }
 
     /// <summary>
     ///     For aggregation methods (Sum, Min, Max, Average), the member selector expression.
@@ -154,6 +161,7 @@ internal class LinqQueryParser : ExpressionVisitor
     {
         _memberFactory = memberFactory;
         _softDeleteTarget = softDeleteTarget;
+        _additionalMethodParsers = additionalMethodParsers;
         _whereParser = new WhereClauseParser(memberFactory, additionalMethodParsers);
         Statement = new Statement { FromTable = fromTable };
     }
@@ -294,6 +302,9 @@ internal class LinqQueryParser : ExpressionVisitor
                 break;
             case "Average":
                 HandleAggregation(node, SingleValueMode.Average);
+                break;
+            case "SelectMany":
+                HandleSelectMany(node);
                 break;
             case "Select" when GroupByKeySelector != null:
                 HandleGroupBySelect(node);
@@ -439,6 +450,10 @@ internal class LinqQueryParser : ExpressionVisitor
             OuterElementType = outerType,
             InnerElementType = innerType
         };
+
+        // gh-1015: a GroupJoin rewritten from Join()/LeftJoin()/RightJoin() is refused under the name it was written as
+        GroupJoinData.Operator = JoinOperatorRewriter.OperatorOf(GroupJoinData.GroupJoinResultSelector)
+                                 ?? GroupJoinData.Operator;
     }
 
     /// <summary>
@@ -461,7 +476,7 @@ internal class LinqQueryParser : ExpressionVisitor
         {
             if (join.SelectManyCollectionSelector != null)
             {
-                throw JoinedRows.Refusal(
+                throw join.Refusal(
                     "a second SelectMany() flattens the joined rows again, and Polecat translates one join per "
                     + "query. Materialize the join with ToListAsync() and flatten it in memory");
             }
@@ -472,7 +487,7 @@ internal class LinqQueryParser : ExpressionVisitor
 
         if (join.SelectManyCollectionSelector == null)
         {
-            throw JoinedRows.Refusal(
+            throw join.Refusal(
                 $"{name}() comes between GroupJoin() and SelectMany(). Apply it after the SelectMany(), to the "
                 + "joined rows");
         }
@@ -503,7 +518,7 @@ internal class LinqQueryParser : ExpressionVisitor
             case "Select":
                 if (IsDistinct)
                 {
-                    throw JoinedRows.Refusal(
+                    throw join.Refusal(
                         "Select() after Distinct() projects the distinct rows, and Polecat compares the rows of "
                         + "the last projection. Apply the Select() before the Distinct()");
                 }
@@ -513,7 +528,7 @@ internal class LinqQueryParser : ExpressionVisitor
 
             case "Last" or "LastOrDefault" or "Sum" or "Min" or "Max" or "Average" or "GroupBy" or "DistinctBy"
                 or "OrderedByVectorDistance" or "GroupJoin":
-                throw JoinedRows.Refusal(
+                throw join.Refusal(
                     $"{name}() after the join has no translation. Materialize the joined rows with ToListAsync() "
                     + "and finish the work in memory");
 
@@ -530,7 +545,7 @@ internal class LinqQueryParser : ExpressionVisitor
     {
         if (Statement.Limit.HasValue || Statement.Offset.HasValue)
         {
-            throw JoinedRows.Refusal(
+            throw GroupJoinData!.Refusal(
                 $"{name}() comes after Take() or Skip(), and Polecat pages the joined rows last. Apply {name}() "
                 + "before the paging");
         }
@@ -573,6 +588,14 @@ internal class LinqQueryParser : ExpressionVisitor
 
     private void HandleGroupJoinOrderBy(MethodCallExpression node, bool descending, bool replace)
     {
+        // gh-1013: a key the same for every row cannot reorder them. It still starts a new ordering, so the
+        // keys of the earlier one are left to break the ties of whatever comes next.
+        if (!ReadsTheRow.In(GetLambda(node.Arguments[1]).Body))
+        {
+            if (replace) _joinOrderingChainEnd = 0;
+            return;
+        }
+
         // gh-1001: read through the projection now, so a later Select() cannot change what it orders by
         var lambda = GroupJoinData!.ReadThroughRow(GetLambda(node.Arguments[1]));
 
@@ -624,7 +647,7 @@ internal class LinqQueryParser : ExpressionVisitor
         chainEnd++;
     }
 
-    private void AddOrdering(OrderByClause ordering, IQueryableMember? member, bool startsTheOrdering)
+    private void AddOrdering(OrderByClause? ordering, IQueryableMember? member, bool startsTheOrdering)
     {
         // gh-997 over gh-996's page: OrderBy(a).Take(5).OrderBy(b) sorts the page, and the page's rows arrive
         // in a's order, so LINQ's stable sort leaves a to break b's ties, exactly as if no Take() came between.
@@ -633,6 +656,19 @@ internal class LinqQueryParser : ExpressionVisitor
         if (startsTheOrdering && Statement.InnerPage != null && Statement.OrderBys.Count == 0 && !IsDistinct)
         {
             Statement.OrderBys.AddRange(Statement.InnerPage.OrderBys);
+        }
+
+        // gh-1013 (marten#5950): a key the same for every row adds nothing to the ORDER BY. An OrderBy() of one
+        // still starts a new ordering, so the keys after it go in front of the earlier ones.
+        if (ordering == null)
+        {
+            if (startsTheOrdering)
+            {
+                _orderingChainEnd = 0;
+                _memberOrderingChainEnd = 0;
+            }
+
+            return;
         }
 
         PlaceOrdering(Statement.OrderBys, ref _orderingChainEnd, ordering, ordering.Literal, o => o.Literal,
@@ -708,7 +744,9 @@ internal class LinqQueryParser : ExpressionVisitor
         // OrderBy(x => x.Name, StringComparer.Ordinal) came back in the column's collation order instead.
         // A comparer is .NET code SQL Server cannot run, so the overload is refused on every path -- this is
         // the one place documents, GroupBy and GroupJoin orderings all come through.
-        if (node.Arguments.Count > 2)
+        // gh-1013: a key that reads nothing from the row orders nothing, whatever compares it, so it is dropped
+        // with its comparer like LINQ to Objects' stable sort drops it.
+        if (node.Arguments.Count > 2 && ReadsTheRow.In(GetLambda(node.Arguments[1]).Body))
         {
             throw new BadLinqExpressionException(
                 $"Polecat cannot translate {node.Method.Name}() with an IComparer: SQL Server orders by the "
@@ -727,6 +765,10 @@ internal class LinqQueryParser : ExpressionVisitor
             // nothing until the GroupBy builder has the projection. Resolving it here as a member
             // would quietly order by a JSON path that does not exist.
             RefuseAfterAGroupedPage(node.Method.Name);
+
+            // gh-1013: a key the same for every group cannot reorder them
+            if (!ReadsTheRow.In(GetLambda(node.Arguments[1]).Body)) return;
+
             if (replace) GroupByOrderings.Clear();
             GroupByOrderings.Add((GetLambda(node.Arguments[1]), descending));
         }
@@ -752,56 +794,78 @@ internal class LinqQueryParser : ExpressionVisitor
     ///     <see cref="ProjectedMembers" />.
     /// </summary>
     /// <remarks>
-    ///     A projected scalar is left to the existing rules: <c>OrderBy(n =&gt; n)</c> orders by the select
-    ///     list, and a member of one is refused, as the docs have said since #840.
+    ///     gh-1017 (marten#5942, #5955): a projected scalar is substituted like any other projection, so
+    ///     <c>Select(x =&gt; x.Number * 2).Where(n =&gt; n &gt; 4)</c> filters on <c>x.Number * 2 &gt; 4</c> and
+    ///     <c>Select(x =&gt; x.Name).OrderBy(n =&gt; n.Length)</c> orders by the name's length. It used to be left
+    ///     as it was, and the member of a projected scalar was refused.
     /// </remarks>
     private LambdaExpression OnTheDocument(LambdaExpression lambda)
-        => SelectExpression == null || SelectProjectionAnalyzer.IsScalar(lambda.Parameters[0].Type)
-            ? lambda
-            : ProjectedMembers.Rewrite(SelectExpression, lambda);
+        => SelectExpression == null ? lambda : ProjectedMembers.Rewrite(SelectExpression, lambda);
 
     private void HandleOrderBy(MethodCallExpression node, bool descending, bool replace)
     {
-        var lambda = OnTheDocument(GetLambda(node.Arguments[1]));
+        var written = GetLambda(node.Arguments[1]);
+
+        // gh-1013 (marten#5950): a literal, a static or a captured local is the same for every row, so the
+        // stable sort leaves the rows as they were. A static is never read off the document, whatever its name.
+        if (!ReadsTheRow.In(written.Body))
+        {
+            AddOrdering(null, null, replace);
+            return;
+        }
+
+        var lambda = OnTheDocument(written);
 
         // gh-999: only a cast that cannot change the order is stepped over. (byte)x.Number orders 256
         // before 255, so ordering by x.Number underneath it would be silently wrong.
         var body = StripOrderPreservingConvert(lambda.Body);
 
-        // After Select(x => x.Name), OrderBy(x => x) has a ParameterExpression body
-        if (body is ParameterExpression)
+        if (body is MemberExpression memberExpr && IsDocumentMember(memberExpr))
         {
-            // gh-998: only a projected document member has a column to order by. Anything else is
-            // computed in memory after the rows are read, and what the statement selects is the
-            // document's JSON body, which native json refuses to sort and json text sorts as text.
-            // gh-999: Select(x => (byte)x.Number) reads x.Number, and is narrowed in memory.
-            if (ScalarSelectMember == null || SelectNarrowsItsMember()) throw RefuseOrderingTheProjection(lambda);
-
-            // Order by the projected scalar, through an index where it has one like any other ordering
-            AddOrdering((ScalarSelectMember.TypedLocator, descending), null, replace);
+            var member = _memberFactory.ResolveKey(memberExpr, "in an OrderBy");
+            AddOrdering((member.TypedLocator, descending), member, replace);
             return;
         }
 
-        var memberExpr = body as MemberExpression ?? throw RefuseOrderingKey(body);
+        // gh-1014 (marten#5949): x.Values[1], x.Grid[1][0]
+        if (DocumentPaths.IsIndexPath(body))
+        {
+            var member = _memberFactory.ResolvePath(body);
+            AddOrdering((member.TypedLocator, descending), member, replace);
+            return;
+        }
 
-        var member = _memberFactory.ResolveKey(memberExpr, "in an OrderBy");
-        AddOrdering((member.TypedLocator, descending), member, replace);
+        // gh-1012 (marten#5957): a key computed from the row, translated exactly or refused
+        if (ScalarTranslation.TryTranslate(body, _memberFactory, out var computed, out var reason))
+        {
+            AddOrdering((computed.Sql, descending), null, replace);
+            return;
+        }
+
+        // gh-998: a projection of something that is not a member has no column to order by
+        if (written.Body is ParameterExpression && SelectExpression != null) throw RefuseOrderingTheProjection(written);
+
+        // Bug_2213: a key over something that is not the document, (x.First ?? x.Second).Name, is refused as
+        // the OrderBy() key it is
+        throw RefuseOrderingKey(body, reason);
     }
 
     /// <summary>
     ///     The refusal for an ordering key with no exact translation, here and over a join.
     /// </summary>
-    internal static BadLinqExpressionException RefuseOrderingKey(Expression key)
+    internal static BadLinqExpressionException RefuseOrderingKey(Expression key, string? reason = null)
     {
         // gh-999: a cast is named, because it is the one key that used to be quietly stepped over
         var why = key is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } cast
             ? $" The cast to {cast.Type.Name} can change the order of the values it converts, and ordering by "
               + "the value underneath it would not be the same ordering."
-            : "";
+            : string.IsNullOrEmpty(reason) ? "" : $" It has no exact translation: {reason}.";
 
         return new BadLinqExpressionException(
-            $"Polecat cannot translate the OrderBy key '{key}' to SQL.{why} Order by a document member "
-            + "(x => x.Name) or by the scalar a preceding Select(...) projected.");
+            $"Polecat cannot translate the OrderBy() key '{key}' to SQL.{why} Order by a document member "
+            + "(x => x.Name), an index into one (x => x.Values[1]), or a value computed from them with "
+            + "arithmetic, concatenation, ToUpper(), ToLower(), Length or ToString() of an integer, or by the "
+            + "scalar a preceding Select(...) projected. Otherwise materialize the query and order it in memory.");
     }
 
     private bool SelectNarrowsItsMember()
@@ -860,8 +924,122 @@ internal class LinqQueryParser : ExpressionVisitor
     {
         // #875: a second Select reads the first, whatever the first one projected.
         var lambda = GetLambda(node.Arguments[1]);
-        SelectExpression = SelectExpression == null ? lambda : ProjectedMembers.Rewrite(SelectExpression, lambda);
+        if (lambda.Parameters.Count != 1)
+        {
+            throw new BadLinqExpressionException(
+                "Polecat cannot translate the Select() overload that passes each row's index: SQL rows have no "
+                + "position until they are read. Materialize the query with ToListAsync() and project in memory.");
+        }
 
+        SelectExpression = SelectExpression == null ? lambda : ProjectedMembers.Rewrite(SelectExpression, lambda);
+        ApplySelect();
+    }
+
+    /// <summary>
+    ///     gh-1016 (marten#5928, #5921, #5933, #5940, #5941): <c>SelectMany()</c> over a collection the documents
+    ///     hold -- child documents, values, enums, strings -- with or without a result selector.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         Everything before it chose the parents: their filters, and their ordering and page, which become a
+    ///         derived table if there is a page (marten#5928: <c>Take(3).SelectMany(...)</c> flattens three
+    ///         parents). Each parent then becomes a row per element through
+    ///         <c>CROSS APPLY OPENJSON(data, '$.path') AS __pc_elem</c>, and everything after it reads those rows.
+    ///     </para>
+    ///     <para>
+    ///         The rows keep LINQ's order: the parents' ordering, then each element's position. A later
+    ///         <c>OrderBy()</c> leads, with that order behind it to break its ties, as LINQ's stable sort does.
+    ///     </para>
+    ///     <para>
+    ///         Later lambdas are read through the row: a member of the element resolves against
+    ///         <c>__pc_elem.[value]</c>, a member of the parent (through a result selector) against <c>data</c>. A
+    ///         scalar element is a <see cref="Members.FlattenedValue{T}" />'s <c>Value</c>, so every rule written for a
+    ///         member, <c>w.Length</c> and <c>c != Colour.Red</c> included, applies to it unchanged.
+    ///     </para>
+    /// </remarks>
+    private void HandleSelectMany(MethodCallExpression node)
+    {
+        if (Flatten != null)
+        {
+            throw new BadLinqExpressionException(
+                "Polecat cannot translate a second SelectMany(): it flattens one collection per query. Materialize "
+                + "the query with ToListAsync() and flatten the rest in memory.");
+        }
+
+        if (GroupByKeySelector != null || SelectExpression != null || IsDistinct || Statement.DistinctByLocator != null
+            || ValueMode != null)
+        {
+            throw new BadLinqExpressionException(
+                "Polecat cannot translate SelectMany() after a Select(), GroupBy(), Distinct() or DistinctBy(): it "
+                + "flattens a collection of the queried documents. Apply those after the SelectMany().");
+        }
+
+        var collection = GetLambda(node.Arguments[1]);
+        if (collection.Parameters.Count != 1)
+        {
+            throw new BadLinqExpressionException(
+                "Polecat cannot translate the SelectMany() overload that passes each document's index. Flatten the "
+                + "collection without it.");
+        }
+
+        var body = StripConvert(collection.Body);
+        var isPath = body is MemberExpression member && IsDocumentMember(member) || DocumentPaths.IsIndexPath(body);
+        var elementType = isPath ? FlattenData.ElementTypeOf(body.Type) : null;
+        var elements = _memberFactory.ForElements();
+
+        if (elementType == null || elements == null)
+        {
+            throw new BadLinqExpressionException(
+                $"Polecat cannot translate the SelectMany() collection '{collection.Body}' to SQL. It flattens a "
+                + "collection the document holds (x => x.Lines), or the rows of a GroupJoin(); anything else, "
+                + "materialize the query with ToListAsync() and flatten it in memory.");
+        }
+
+        var path = FlattenData.PathOf(_memberFactory.ResolvePath(body).RawLocator)
+                   ?? throw new BadLinqExpressionException(
+                       $"Polecat cannot translate SelectMany() over '{collection.Body}': it is not stored in the JSON body.");
+
+        // The parents' page, if there is one, becomes a derived table that is flattened. A page of a page has no
+        // second level to go to.
+        if (Statement.IsPaged && !Statement.TryWrapPage())
+        {
+            throw new BadLinqExpressionException(
+                "Polecat cannot translate SelectMany() over rows that a Take() or Skip() paged and then reordered or "
+                + "filtered and paged again. Materialize the query with ToListAsync() and flatten in memory.");
+        }
+
+        var parentOrder = Statement.InnerPage?.OrderBys ?? [..Statement.OrderBys];
+        Statement.OrderBys.Clear();
+        if (parentOrder.Count > 0)
+        {
+            Statement.OrderBys.AddRange(parentOrder);
+            Statement.OrderBys.Add((FlattenData.Position, false));
+        }
+
+        OrderByMembers.Clear();
+        _orderingChainEnd = Statement.OrderBys.Count;
+        _memberOrderingChainEnd = 0;
+        Statement.FlattenPath = path;
+
+        Flatten = FlattenData.For(collection.Parameters[0], elementType);
+        _memberFactory = new FlattenedRowMembers(_memberFactory, elements, Flatten.Element);
+        _whereParser = new WhereClauseParser(_memberFactory, _additionalMethodParsers);
+
+        // The row: the element, or what the result selector made of the parent and the element
+        var row = node.Arguments.Count > 2
+            ? Flatten.Row(GetLambda(node.Arguments[2]))
+            : Expression.Lambda(Flatten.ElementValue, Flatten.Parent, Flatten.Element);
+
+        SelectExpression = row;
+        ApplySelect();
+    }
+
+    /// <summary>
+    ///     What the statement selects for <see cref="SelectExpression" />: a scalar member read in SQL, or the
+    ///     document to project in memory.
+    /// </summary>
+    private void ApplySelect()
+    {
         Statement.SelectColumns = "data";
         ScalarSelectMember = null;
 
@@ -871,9 +1049,14 @@ internal class LinqQueryParser : ExpressionVisitor
         if (body is UnaryExpression { NodeType: ExpressionType.Convert } convert)
             body = convert.Operand;
 
-        if (body is MemberExpression memberExpr && IsDocumentMember(memberExpr))
+        // gh-1014 (marten#5949): an index into a collection is read in SQL like a member, so one past the end
+        // reads the default as Marten's does, and a negative one is refused rather than thrown in memory.
+        var isPath = body is MemberExpression memberExpr && IsDocumentMember(memberExpr)
+                     || DocumentPaths.IsIndexPath(body);
+
+        if (isPath)
         {
-            var member = _memberFactory.ResolveMember(memberExpr);
+            var member = _memberFactory.ResolvePath(body);
 
             // #875: JSON_VALUE reads NULL for an object or an array, so this returned a null for every
             // row. It is projected in memory like the shapes below, which is also the right answer for
@@ -888,18 +1071,9 @@ internal class LinqQueryParser : ExpressionVisitor
         // and project in-memory after deserialization
     }
 
-    private static bool IsDocumentMember(MemberExpression expression)
-    {
-        var current = expression;
-        while (current != null)
-        {
-            if (current.Expression is ParameterExpression)
-                return true;
-            // #808: ((Card)x.Payment.Value).Last4 is read off the document through a union's case.
-            current = UnionMembers.Owner(current);
-        }
-        return false;
-    }
+    // #808: ((Card)x.Payment.Value).Last4 is read off the document through a union's case, and gh-1014:
+    // x.Items[0].Name through an index.
+    private static bool IsDocumentMember(MemberExpression expression) => DocumentPaths.IsRooted(expression);
 
     /// <summary>
     ///     The member behind a Select that is a simple scalar member access.
@@ -910,6 +1084,31 @@ internal class LinqQueryParser : ExpressionVisitor
     ///     Whether the Select is a simple scalar member access.
     /// </summary>
     public bool IsScalarSelect => ScalarSelectMember != null;
+
+    /// <summary>
+    ///     gh-1017 (marten#5942): makes a computed scalar <c>Select()</c> read its value from SQL rather than
+    ///     compute it in memory, for an operator that needs SQL to see the value -- <c>Distinct()</c> has to
+    ///     compare it. False when the projection has no exact translation.
+    /// </summary>
+    /// <remarks>
+    ///     Only when asked: a computed projection that nothing downstream needs in SQL is still computed in
+    ///     memory, by .NET, which is exact by definition.
+    /// </remarks>
+    public bool TrySelectInSql()
+    {
+        if (IsScalarSelect) return true;
+        if (SelectExpression == null) return false;
+
+        if (!ScalarTranslation.TryTranslate(StripOrderPreservingConvert(SelectExpression.Body), _memberFactory,
+                out var computed, out _))
+        {
+            return false;
+        }
+
+        Statement.SelectColumns = computed.Sql;
+        ScalarSelectMember = computed.AsMember();
+        return true;
+    }
 
     private void HandleDistinctBy(MethodCallExpression node)
     {
@@ -1026,10 +1225,12 @@ internal class LinqQueryParser : ExpressionVisitor
     {
         ValueMode = mode;
 
-        // Aggregations have a selector: Sum(x => x.Age)
+        // Aggregations have a selector: Sum(x => x.Age). gh-1017: without one, after a Select(), the value
+        // aggregated is what the Select() projected: Select(x => x.Number % 3).Sum().
+        LambdaExpression lambda;
         if (node.Arguments.Count > 1)
         {
-            var lambda = GetLambda(node.Arguments[1]);
+            lambda = GetLambda(node.Arguments[1]);
 
             // After a GroupBy the selector reads the projection, which is not a document member.
             if (GroupByKeySelector != null)
@@ -1039,22 +1240,50 @@ internal class LinqQueryParser : ExpressionVisitor
             }
 
             lambda = OnTheDocument(lambda);
-
-            var memberExpr = StripConvert(lambda.Body) as MemberExpression
-                ?? throw new BadLinqExpressionException(
-                    $"Polecat cannot translate the {mode}() selector '{lambda.Body}' to SQL. Aggregate over "
-                    + "a document member, e.g. Sum(x => x.Amount).");
-
-            var member = _memberFactory.ResolveMember(memberExpr);
-
-            if (member is ComputedMember { IsSubquery: true })
-            {
-                AggregateOverDerivedTable(member, mode);
-                return;
-            }
-
-            AggregationMember = member;
         }
+        else if (SelectExpression != null && GroupByKeySelector == null)
+        {
+            lambda = SelectExpression;
+        }
+        else
+        {
+            return;
+        }
+
+        var member = ResolveAggregatedValue(lambda, mode);
+
+        if (member is ComputedMember { IsSubquery: true })
+        {
+            AggregateOverDerivedTable(member, mode);
+            return;
+        }
+
+        AggregationMember = member;
+    }
+
+    /// <summary>
+    ///     What an aggregate reads: a document member, an index into one, or (gh-1017, marten#5942) a value
+    ///     computed from them that <see cref="ScalarTranslation" /> translates exactly.
+    /// </summary>
+    private IQueryableMember ResolveAggregatedValue(LambdaExpression lambda, SingleValueMode mode)
+    {
+        var body = StripConvert(lambda.Body);
+
+        if (body is MemberExpression memberExpr && IsDocumentMember(memberExpr) || DocumentPaths.IsIndexPath(body))
+        {
+            return _memberFactory.ResolvePath(body);
+        }
+
+        // The convert is kept here: Sum(x => (long)x.Number) sums longs, and (int)x.Amount truncates first
+        if (ScalarTranslation.TryTranslate(StripOrderPreservingConvert(lambda.Body), _memberFactory, out var computed,
+                out var reason))
+        {
+            return computed.AsMember();
+        }
+
+        throw new BadLinqExpressionException(
+            $"Polecat cannot translate the {mode}() selector '{lambda.Body}' to SQL: {reason}. Aggregate over "
+            + "a document member, e.g. Sum(x => x.Amount), or a value computed from members with arithmetic.");
     }
 
     /// <summary>

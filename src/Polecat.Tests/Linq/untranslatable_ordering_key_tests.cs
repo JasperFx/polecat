@@ -37,7 +37,7 @@ public class CastKeyOrder
 //   * over GroupJoin(...).SelectMany(...) any key that was not a plain member of the joined row was skipped
 //     without a word, so the rows came back in whatever order SQL Server chose. It is refused now.
 //
-// Translating computed keys (arithmetic, concatenation) is the Marten parity follow-up, not this.
+// gh-1012 then translated computed keys (arithmetic, concatenation); what has no exact translation stays refused.
 public class untranslatable_ordering_key_tests : OneOffConfigurationsContext
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
@@ -162,11 +162,9 @@ public class untranslatable_ordering_key_tests : OneOffConfigurationsContext
         await session.SaveChangesAsync(Ct);
     }
 
-    public static TheoryData<string> UntranslatableJoinKeys =>
-    [
-        "negation", "negation_descending", "modulo_then_member", "concatenation", "outer_arithmetic_then_inner",
-        "math_call", "conditional", "narrowing", "outer_negation_then_inner", "then_by_negation"
-    ];
+    // gh-1012 translates negation, %, concatenation and arithmetic over either side (see
+    // computed_ordering_keys_over_joins_tests); these have no exact translation and stay refused.
+    public static TheoryData<string> UntranslatableJoinKeys => ["math_call", "conditional", "narrowing"];
 
     [Theory]
     [MemberData(nameof(UntranslatableJoinKeys))]
@@ -181,17 +179,9 @@ public class untranslatable_ordering_key_tests : OneOffConfigurationsContext
 
         Func<Task> query = shape switch
         {
-            "negation" => () => rows.OrderBy(r => -r.Amount).ToListAsync(Ct),
-            "negation_descending" => () => rows.OrderByDescending(r => -r.Amount).ToListAsync(Ct),
-            "modulo_then_member" => () => rows.OrderBy(r => r.Amount % 10).ThenBy(r => r.Amount).ToListAsync(Ct),
-            "concatenation" => () => rows.OrderBy(r => r.Name + r.Status).ToListAsync(Ct),
-            "outer_arithmetic_then_inner" => () =>
-                rows.OrderBy(r => r.Rank * -3 + 1).ThenBy(r => r.Amount).ToListAsync(Ct),
             "math_call" => () => rows.OrderBy(r => Math.Abs(r.Amount - 25)).ToListAsync(Ct),
             "conditional" => () => rows.OrderBy(r => r.Amount > 25 ? 0 : 1).ToListAsync(Ct),
             "narrowing" => () => rows.OrderBy(r => (short)r.Amount).ToListAsync(Ct),
-            "outer_negation_then_inner" => () => rows.OrderBy(r => -r.Rank).ThenBy(r => r.Amount).ToListAsync(Ct),
-            "then_by_negation" => () => rows.OrderBy(r => r.Name).ThenBy(r => -r.Amount).ToListAsync(Ct),
             _ => throw new ArgumentOutOfRangeException(nameof(shape))
         };
 

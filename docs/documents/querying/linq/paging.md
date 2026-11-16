@@ -101,7 +101,8 @@ end of the set.
 - Mixed ascending/descending orderings are supported; the seek predicate flips direction per key.
 - **A key has to be a scalar.** Numbers, strings, `bool`, `Guid`, enums in either storage mode, `DateTime`,
   `DateTimeOffset`, `DateOnly`, `TimeOnly` and strong-typed ids all work. Ordering by an object or a
-  collection is refused on the first page, rather than handing out a cursor that cannot be redeemed.
+  collection is refused on the first page, rather than handing out a cursor that cannot be redeemed. So is a
+  computed key such as `x.Number % 3`, whose value the cursor would have to carry.
 - **A `Select()` is honored.** A page is the projected JSON, the same as `ToJsonArrayAsync`, and an ordering
   key does not have to be one of the projected members. A projection that cannot be translated to a
   server-side JSON object, such as a scalar or a method call, is refused.
