@@ -176,8 +176,26 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
         return batch.BatchCommands[0].CommandText;
     }
 
+    /// <summary>
+    ///     The statement <see cref="ExecuteAsync{TResult}" /> would run for <paramref name="expression" />,
+    ///     for <c>ToSql()</c> and the query-plan tests.
+    /// </summary>
+    /// <remarks>
+    ///     gh-1002 (marten#5916): a document query is finished by <see cref="PrepareDocumentStatement" />,
+    ///     the same preparation execution uses, so the preview carries the select list execution reads
+    ///     with -- <c>data, guid_version</c> for an <c>IVersioned</c> document rather than <c>data</c>.
+    /// </remarks>
     internal Statement BuildStatement(Expression expression, string tenantId)
-        => BuildStatement(Parse(expression, tenantId));
+    {
+        var query = Parse(expression, tenantId);
+        if (query.Parser.GroupJoinData != null || query.Parser.GroupByKeySelector != null)
+        {
+            return BuildStatement(query);
+        }
+
+        PrepareDocumentStatement(query);
+        return query.Parser.Statement;
+    }
 
     /// <summary>
     ///     <see cref="BuildStatement(Expression, string)" /> for a query joining a batch, which runs
@@ -445,6 +463,15 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
             throw new BadLinqExpressionException(
                 $"{nameof(CursorPagingQueryableExtensions.ToJsonPageByCursorAsync)} has no translation for a "
                 + "Distinct(), because a cursor names one document. Page it with Skip and Take instead.");
+        }
+
+        // gh-996: the seek predicate and the cursor's keys are the query's own, not a page's.
+        if (parser.Statement.InnerPage != null)
+        {
+            throw new BadLinqExpressionException(
+                $"{nameof(CursorPagingQueryableExtensions.ToJsonPageByCursorAsync)} has no translation for a "
+                + "query that reorders or filters the rows of a Take() or Skip(). Page it with Skip and Take "
+                + "instead.");
         }
 
         var orderBy = parser.OrderByMembers;
@@ -905,71 +932,64 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
             joinStatement.InnerWheres.Add(new AliasedSqlFragment(where, "inner_t"));
         }
 
-        // Handle Count/First/Single terminal operators
-        if (parser.ValueMode != null)
+        var resultSelector = joinData.SelectManyResultSelector ?? throw GroupJoinData.MissingResultSelector();
+        var rowSelector = JoinedRows.OnTheDocuments(joinData, resultSelector);
+        var sides = new JoinSides(rowSelector, outerMemberFactory, innerMemberFactory);
+
+        // gh-1001: a Where() after the join, or the predicate of a First()/Count()/Any(), filters the side
+        // its members come from. It used to be resolved against the outer document whatever it named.
+        foreach (var predicate in joinData.PostJoinPredicates)
         {
-            switch (parser.ValueMode)
-            {
-                case SingleValueMode.Count:
-                    joinStatement.SelectColumns = "COUNT(*)";
-                    break;
-                case SingleValueMode.LongCount:
-                    joinStatement.SelectColumns = "CAST(COUNT(*) AS bigint)";
-                    break;
-                case SingleValueMode.First:
-                case SingleValueMode.FirstOrDefault:
-                    joinStatement.Limit = 1;
-                    break;
-                case SingleValueMode.Single:
-                case SingleValueMode.SingleOrDefault:
-                    joinStatement.Limit = 2;
-                    break;
-            }
+            sides.AddPredicate(joinData, predicate, joinStatement);
         }
 
-        // Transfer pagination from the parser's Statement
-        if (parser.Statement.Limit.HasValue && !joinStatement.Limit.HasValue)
-        {
-            joinStatement.Limit = parser.Statement.Limit;
-        }
-        if (parser.Statement.Offset.HasValue)
-        {
-            joinStatement.Offset = parser.Statement.Offset;
-        }
-
-        // Resolve OrderBy expressions captured after SelectMany.
-        // These reference the projected anonymous type — map each member to
-        // the correct table (outer or inner) via the result selector.
-        var memberOriginMap = BuildMemberOriginMap(joinData);
+        // gh-1001: the members of an ordering resolve through the projection too. They used to be rebuilt
+        // on the GroupJoin's anonymous row, so x.c.Number read '$.c.number' -- null for every row.
         foreach (var (orderByLambda, descending) in joinData.OrderByExpressions)
         {
-            var body = LinqQueryParser.StripConvert(orderByLambda.Body);
-            if (body is MemberExpression memberExpr)
+            var ordering = JoinedRows.OnTheDocuments(joinData, orderByLambda);
+            if (sides.TryResolve(LinqQueryParser.StripConvert(ordering.Body), ordering, out var member, out var alias))
             {
-                var memberName = memberExpr.Member.Name;
-                var (factory, alias) = memberOriginMap.TryGetValue(memberName, out var origin) && origin == "inner"
-                    ? (innerMemberFactory, "inner_t")
-                    : (outerMemberFactory, "outer_t");
+                var locator = JoinStatement.AliasLocator(member.TypedLocator, alias);
 
-                // Resolve via the correct member factory using the original property on the document type
-                var docProperty = origin == "inner"
-                    ? FindOriginalProperty(joinData, memberName, isOuter: false)
-                    : FindOriginalProperty(joinData, memberName, isOuter: true);
-
-                if (docProperty != null)
+                // gh-997: the keys arrive most significant first, and SQL Server refuses a column named
+                // twice in ORDER BY. A repeated key can never break a tie, so it is dropped.
+                if (!joinStatement.OrderBys.Exists(o => o.Locator == locator))
                 {
-                    var docMember = factory.ResolveMember(docProperty);
-                    var locator = JoinStatement.AliasLocator(docMember.TypedLocator, alias);
-
-                    // gh-997: the keys arrive most significant first, and SQL Server refuses a column named
-                    // twice in ORDER BY. A repeated key can never break a tie, so it is dropped.
-                    if (!joinStatement.OrderBys.Exists(o => o.Locator == locator))
-                    {
-                        joinStatement.OrderBys.Add((locator, descending));
-                    }
+                    joinStatement.OrderBys.Add((locator, descending));
                 }
             }
         }
+
+        joinStatement.Limit = parser.Statement.Limit;
+        joinStatement.Offset = parser.Statement.Offset;
+
+        switch (parser.ValueMode)
+        {
+            case SingleValueMode.Count:
+                joinStatement.Aggregate = JoinAggregate.Count;
+                break;
+            case SingleValueMode.LongCount:
+                joinStatement.Aggregate = JoinAggregate.LongCount;
+                break;
+            case SingleValueMode.Any:
+                joinStatement.Aggregate = JoinAggregate.Any;
+                break;
+            case SingleValueMode.First:
+            case SingleValueMode.FirstOrDefault:
+                joinStatement.Limit = Math.Min(joinStatement.Limit ?? 1, 1);
+                break;
+            case SingleValueMode.Single:
+            case SingleValueMode.SingleOrDefault:
+                joinStatement.Limit = Math.Min(joinStatement.Limit ?? 2, 2);
+                break;
+        }
+
+        // gh-1001: Distinct() compares the projected rows, so they are read from a derived table of the
+        // projected columns. It used to be ignored. Whether there is a row does not depend on it.
+        var distinct = parser.IsDistinct && parser.ValueMode != SingleValueMode.Any
+            ? sides.ApplyDistinct(joinStatement)
+            : (JoinSides.DistinctShape?)null;
 
         // Build SQL and execute
         await using var batch = new SqlBatch();
@@ -979,31 +999,42 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
 
         await using var reader = (await _session.ExecuteReaderAsync(batch, token).ConfigureAwait(false));
 
-        // Handle scalar results (Count, etc.)
-        if (parser.ValueMode is SingleValueMode.Count or SingleValueMode.LongCount)
+        // Handle scalar results (Count, Any)
+        if (parser.ValueMode is SingleValueMode.Count or SingleValueMode.LongCount or SingleValueMode.Any)
         {
             var scalarHandler = new ScalarHandler<TResult>();
             return await scalarHandler.HandleAsync(reader, token).ConfigureAwait(false);
         }
 
-        // Rewrite the result selector and compile
-        var resultSelector = joinData.SelectManyResultSelector;
-        if (resultSelector == null)
+        if (distinct != null)
         {
-            throw new BadLinqExpressionException(
-                "Polecat cannot translate a GroupJoin without a following SelectMany. Write "
-                + "GroupJoin(...).SelectMany(...), which is the shape a LEFT JOIN is expressed in.");
+            return await ReadDistinctJoinRowsAsync<TResult>(distinct.Value, reader, parser.ValueMode, token)
+                .ConfigureAwait(false);
         }
-
-        var rewrittenSelector = JoinResultSelectorRewriter.Rewrite(
-            joinData.GroupJoinResultSelector, resultSelector,
-            joinData.OuterElementType, joinData.InnerElementType);
 
         // Use reflection to invoke the generic handler
         return await InvokeJoinHandlerAsync<TResult>(
             joinData.OuterElementType, joinData.InnerElementType,
-            rewrittenSelector, joinData.IsLeftJoin,
+            rowSelector, joinData.IsLeftJoin,
             reader, parser.ValueMode, token).ConfigureAwait(false);
+    }
+
+    [RequiresDynamicCode("Closes GroupByListHandler<>/ScalarListHandler<> over the projected type via Type.MakeGenericType.")]
+    [RequiresUnreferencedCode("Deserializes the projected rows of a distinct join.")]
+    private async Task<TResult> ReadDistinctJoinRowsAsync<TResult>(
+        JoinSides.DistinctShape shape, DbDataReader reader, SingleValueMode? valueMode, CancellationToken token)
+    {
+        var elementType = ResultElementType<TResult>();
+        var handlerType = shape == JoinSides.DistinctShape.Object
+            ? typeof(GroupByListHandler<>).MakeGenericType(elementType)
+            : typeof(ScalarListHandler<>).MakeGenericType(elementType);
+
+        var handler = shape == JoinSides.DistinctShape.Object
+            ? (QueryHandlers.IQueryHandler)ConstructorCache.Create(handlerType, _session.Serializer)
+            : (QueryHandlers.IQueryHandler)ConstructorCache.Create(handlerType);
+
+        var list = (await handler.HandleAsObjectAsync(reader, token).ConfigureAwait(false))!;
+        return SingleOrList<TResult>((System.Collections.IList)list, valueMode);
     }
 
     /// <summary>
@@ -1017,7 +1048,8 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
             SoftDeleteTarget.For(innerMapping));
         inner.Parse(joinData.InnerSourceExpression);
 
-        if (inner.Statement.Limit.HasValue || inner.Statement.Offset.HasValue || inner.ValueMode.HasValue
+        if (inner.Statement.Limit.HasValue || inner.Statement.Offset.HasValue
+            || inner.Statement.InnerPage != null || inner.ValueMode.HasValue
             || inner.SelectExpression != null || inner.GroupByKeySelector != null || inner.GroupJoinData != null)
         {
             throw new BadLinqExpressionException(
@@ -1026,175 +1058,6 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
         }
 
         return inner;
-    }
-
-    /// <summary>
-    ///     Builds a map from anonymous result type member names to "outer" or "inner"
-    ///     by tracing through the SelectMany result selector and GroupJoin result selector.
-    /// </summary>
-    private static Dictionary<string, string> BuildMemberOriginMap(GroupJoinData joinData)
-    {
-        var map = new Dictionary<string, string>();
-
-        if (joinData.SelectManyResultSelector?.Body is not NewExpression resultNew || resultNew.Members == null)
-            return map;
-
-        // Parse GroupJoin result selector to know which anonymous member = outer, which = inner collection
-        var groupJoinResultSelector = joinData.GroupJoinResultSelector;
-        var outerParam = groupJoinResultSelector.Parameters[0];
-        var innerCollectionParam = groupJoinResultSelector.Parameters[1];
-        var gjMemberMap = new Dictionary<string, string>(); // member name → "outer" or "inner"
-
-        if (groupJoinResultSelector.Body is NewExpression gjNew && gjNew.Members != null)
-        {
-            for (var i = 0; i < gjNew.Members.Count; i++)
-            {
-                if (gjNew.Arguments[i] == outerParam)
-                    gjMemberMap[gjNew.Members[i].Name] = "outer";
-                else if (gjNew.Arguments[i] == innerCollectionParam)
-                    gjMemberMap[gjNew.Members[i].Name] = "inner";
-            }
-        }
-
-        // Now trace each member of the SelectMany result selector
-        var smTempParam = joinData.SelectManyResultSelector.Parameters[0]; // temp (anonymous from GroupJoin)
-        var smInnerParam = joinData.SelectManyResultSelector.Parameters[1]; // o (inner element)
-
-        for (var i = 0; i < resultNew.Members.Count; i++)
-        {
-            var resultMemberName = resultNew.Members[i].Name;
-            var arg = resultNew.Arguments[i];
-
-            // Trace back to determine origin
-            var origin = TraceExpressionOrigin(arg, smTempParam, smInnerParam, gjMemberMap);
-            if (origin != null)
-            {
-                map[resultMemberName] = origin;
-            }
-        }
-
-        return map;
-    }
-
-    private static string? TraceExpressionOrigin(
-        Expression expr,
-        ParameterExpression tempParam,
-        ParameterExpression innerParam,
-        Dictionary<string, string> gjMemberMap)
-    {
-        // Direct parameter reference: o → inner
-        if (expr == innerParam) return "inner";
-
-        // Member access chain: trace to root
-        if (expr is MemberExpression member)
-        {
-            var root = GetRootExpression(member);
-            if (root == innerParam) return "inner";
-            if (root == tempParam)
-            {
-                // Find the first member after temp: temp.c → "c"
-                var firstMember = GetFirstMemberAfterParam(member, tempParam);
-                if (firstMember != null && gjMemberMap.TryGetValue(firstMember, out var origin))
-                    return origin;
-            }
-        }
-
-        // Conditional (ternary) — check both branches
-        if (expr is ConditionalExpression cond)
-        {
-            return TraceExpressionOrigin(cond.IfTrue, tempParam, innerParam, gjMemberMap)
-                ?? TraceExpressionOrigin(cond.IfFalse, tempParam, innerParam, gjMemberMap);
-        }
-
-        return null;
-    }
-
-    private static Expression GetRootExpression(MemberExpression expr)
-    {
-        Expression current = expr;
-        while (current is MemberExpression m)
-            current = m.Expression!;
-        return current;
-    }
-
-    private static string? GetFirstMemberAfterParam(MemberExpression expr, ParameterExpression param)
-    {
-        var chain = new List<string>();
-        Expression? current = expr;
-        while (current is MemberExpression m)
-        {
-            chain.Insert(0, m.Member.Name);
-            current = m.Expression;
-        }
-
-        // chain[0] is the first member after the parameter (e.g., "c" in temp.c.Name)
-        return chain.Count > 0 && current == param ? chain[0] : null;
-    }
-
-    /// <summary>
-    ///     Finds the original MemberExpression on the document type for an anonymous type member.
-    ///     Traces through the SelectMany result selector to find the source expression.
-    /// </summary>
-    private static MemberExpression? FindOriginalProperty(GroupJoinData joinData, string memberName, bool isOuter)
-    {
-        if (joinData.SelectManyResultSelector?.Body is not NewExpression resultNew || resultNew.Members == null)
-            return null;
-
-        for (var i = 0; i < resultNew.Members.Count; i++)
-        {
-            if (resultNew.Members[i].Name != memberName) continue;
-
-            // Trace the argument back to the document property
-            var documentType = isOuter ? joinData.OuterElementType : joinData.InnerElementType;
-            return RerootOnTheDocument(resultNew.Arguments[i], documentType);
-        }
-
-        return null;
-    }
-
-    /// <summary>
-    ///     <c>z.x.Rank</c> re-rooted at the document it reads, as <c>x.Rank</c> on a parameter of
-    ///     <paramref name="documentType" />, or null where the expression is not a member of that document.
-    /// </summary>
-    /// <remarks>
-    ///     gh-997. The chain is anchored at the node nearest its root whose type IS the document type. It
-    ///     used to be anchored at the root's own type, which for an outer member is the GroupJoin's anonymous
-    ///     type, so <c>z.x.Rank</c> kept the anonymous member and read <c>$.x.rank</c>: a path no document
-    ///     has, so every ordering by an outer member silently ordered by NULL.
-    /// </remarks>
-    private static MemberExpression? RerootOnTheDocument(Expression expr, Type documentType)
-    {
-        var chain = new List<MemberExpression>();
-        var current = expr;
-        while (current is MemberExpression m)
-        {
-            chain.Insert(0, m);
-            current = m.Expression;
-        }
-
-        // chain[0] is the member nearest the root. Rebuild from the first member read off the document:
-        // y.Amount starts at the root, z.x.Rank one past the member that IS the document.
-        int anchor;
-        if (current?.Type == documentType)
-        {
-            anchor = 0;
-        }
-        else
-        {
-            var document = chain.FindIndex(m => m.Type == documentType);
-            if (document < 0) return null;
-            anchor = document + 1;
-        }
-
-        if (anchor >= chain.Count) return null;
-
-        Expression result = Expression.Parameter(documentType, "x");
-        for (var i = anchor; i < chain.Count; i++)
-        {
-            result = Expression.MakeMemberAccess(result, chain[i].Member);
-        }
-
-        return result as MemberExpression;
     }
 
     private static string ResolveKeyLocator(Expression keyBody, MemberFactory memberFactory)
@@ -1218,18 +1081,7 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
         DbDataReader reader, SingleValueMode? valueMode,
         CancellationToken token)
     {
-        // Determine the result element type
-        // TResult is IReadOnlyList<TElement> for list results, or TElement for single results
-        Type resultElementType;
-        if (typeof(TResult).IsGenericType &&
-            typeof(TResult).GetGenericTypeDefinition() == typeof(IReadOnlyList<>))
-        {
-            resultElementType = typeof(TResult).GetGenericArguments()[0];
-        }
-        else
-        {
-            resultElementType = typeof(TResult);
-        }
+        var resultElementType = ResultElementType<TResult>();
 
         // Compile the rewritten selector to a Func<TOuter, TInner?, TResultElement>
         var funcType = typeof(Func<,,>).MakeGenericType(outerType, innerType, resultElementType);
@@ -1245,30 +1097,40 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
         var handler = (QueryHandlers.IQueryHandler)ConstructorCache.Create(handlerType, _session.Serializer, compiledSelector, isLeftJoin);
 
         var list = (await handler.HandleAsObjectAsync(reader, token).ConfigureAwait(false))!;
+        return SingleOrList<TResult>((System.Collections.IList)list, valueMode);
+    }
 
-        // For single-value modes, extract the single element
-        if (valueMode is SingleValueMode.First or SingleValueMode.FirstOrDefault
-            or SingleValueMode.Single or SingleValueMode.SingleOrDefault)
+    /// <summary>TResult is IReadOnlyList&lt;TElement&gt; for list results, or TElement for single results.</summary>
+    private static Type ResultElementType<TResult>()
+        => typeof(TResult).IsGenericType && typeof(TResult).GetGenericTypeDefinition() == typeof(IReadOnlyList<>)
+            ? typeof(TResult).GetGenericArguments()[0]
+            : typeof(TResult);
+
+    /// <summary>The joined rows, or for a First()/Single() the one row they answer.</summary>
+    private static TResult SingleOrList<TResult>(System.Collections.IList items, SingleValueMode? valueMode)
+    {
+        if (valueMode is not (SingleValueMode.First or SingleValueMode.FirstOrDefault
+            or SingleValueMode.Single or SingleValueMode.SingleOrDefault))
         {
-            var items = (System.Collections.IList)list;
-            if (valueMode is SingleValueMode.Single or SingleValueMode.SingleOrDefault && items.Count > 1)
-            {
-                throw new InvalidOperationException("Sequence contains more than one element");
-            }
-
-            if (items.Count == 0)
-            {
-                if (valueMode is SingleValueMode.First or SingleValueMode.Single)
-                {
-                    throw new InvalidOperationException("Sequence contains no elements");
-                }
-                return default!;
-            }
-
-            return (TResult)items[0]!;
+            return (TResult)items;
         }
 
-        return (TResult)list;
+        if (valueMode is SingleValueMode.Single or SingleValueMode.SingleOrDefault && items.Count > 1)
+        {
+            throw new InvalidOperationException("Sequence contains more than one element");
+        }
+
+        if (items.Count == 0)
+        {
+            if (valueMode is SingleValueMode.First or SingleValueMode.Single)
+            {
+                throw new InvalidOperationException("Sequence contains no elements");
+            }
+
+            return default!;
+        }
+
+        return (TResult)items[0]!;
     }
 
     private static void ApplySingleValueMode(LinqQueryParser parser)
@@ -1282,65 +1144,57 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
 
         switch (parser.ValueMode)
         {
+            // gh-995: a Take() in front narrows these rather than being replaced by them, so Take(0).First()
+            // has no row and Take(1).Single() has exactly one.
             case SingleValueMode.First:
             case SingleValueMode.FirstOrDefault:
-                statement.Limit = 1;
+                statement.Limit = Math.Min(statement.Limit ?? 1, 1);
                 break;
 
             case SingleValueMode.Single:
             case SingleValueMode.SingleOrDefault:
                 // Fetch 2 rows to detect "more than one element"
-                statement.Limit = 2;
+                statement.Limit = Math.Min(statement.Limit ?? 2, 2);
                 break;
 
             case SingleValueMode.Last:
             case SingleValueMode.LastOrDefault:
-                // Reverse the ordering and take 1
-                for (var i = 0; i < statement.OrderBys.Count; i++)
-                {
-                    statement.OrderBys[i] = statement.OrderBys[i].Reversed();
-                }
-                statement.Limit = 1;
+                statement.ReadLastRow();
                 break;
 
+            // gh-995: over a page these aggregate a derived table of the page; see Statement.SelectAggregate.
             case SingleValueMode.Count:
-                statement.SelectColumns = "COUNT(*)";
+                statement.SelectAggregate(_ => "COUNT(*)", "1");
                 break;
 
             case SingleValueMode.LongCount:
-                statement.SelectColumns = "CAST(COUNT(*) AS bigint)";
+                statement.SelectAggregate(_ => "CAST(COUNT(*) AS bigint)", "1");
                 break;
 
             case SingleValueMode.Any:
-                // Wrap in EXISTS
-                var innerSelect = statement.SelectColumns;
                 statement.SelectColumns = "1";
-                statement.Limit = 1;
+                // gh-995: Take(0).Any() is false whatever the table holds, so its TOP(0) is kept rather than
+                // widened. A Skip is left alone: one row past it is exactly what Skip(k).Any() asks.
+                statement.Limit = statement.Limit == 0 ? 0 : 1;
                 statement.IsExistsWrapper = true;
                 break;
 
             case SingleValueMode.Sum:
-                statement.SelectColumns = parser.AggregationMember != null
-                    ? $"ISNULL(SUM({parser.AggregationMember.TypedLocator}), 0)"
-                    : "ISNULL(SUM(data), 0)";
+                statement.SelectAggregate(v => $"ISNULL(SUM({v}), 0)",
+                    parser.AggregationMember?.TypedLocator ?? "data");
                 break;
 
             case SingleValueMode.Min:
-                statement.SelectColumns = parser.AggregationMember != null
-                    ? $"MIN({parser.AggregationMember.ValueLocator()})"
-                    : "MIN(data)";
+                statement.SelectAggregate(v => $"MIN({v})", parser.AggregationMember?.ValueLocator() ?? "data");
                 break;
 
             case SingleValueMode.Max:
-                statement.SelectColumns = parser.AggregationMember != null
-                    ? $"MAX({parser.AggregationMember.ValueLocator()})"
-                    : "MAX(data)";
+                statement.SelectAggregate(v => $"MAX({v})", parser.AggregationMember?.ValueLocator() ?? "data");
                 break;
 
             case SingleValueMode.Average:
-                statement.SelectColumns = parser.AggregationMember != null
-                    ? $"AVG(CAST({parser.AggregationMember.TypedLocator} AS float))"
-                    : "AVG(CAST(data AS float))";
+                statement.SelectAggregate(v => $"AVG(CAST({v} AS float))",
+                    parser.AggregationMember?.TypedLocator ?? "data");
                 break;
         }
     }

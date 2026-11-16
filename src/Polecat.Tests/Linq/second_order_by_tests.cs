@@ -71,7 +71,18 @@ public class second_order_by_tests : OneOffConfigurationsContext
         ["where_then_reorder"] = q => q.Where(x => x.Number > 2).OrderBy(x => x.Name).OrderBy(x => x.Category),
         ["reorder_then_take"] = q => q.OrderBy(x => x.Number).OrderByDescending(x => x.Category).Take(3),
         ["reorder_then_skip_take"] = q =>
-            q.OrderBy(x => x.Name).OrderBy(x => x.Score).ThenByDescending(x => x.Category).Skip(2).Take(4)
+            q.OrderBy(x => x.Name).OrderBy(x => x.Score).ThenByDescending(x => x.Category).Skip(2).Take(4),
+
+        // With gh-996's page: the page's rows arrive in its own order, and LINQ's sort is stable, so the
+        // ordering inside the page breaks the ties of the one written after it
+        ["order_take_reorder"] = q => q.OrderBy(x => x.Name).Take(6).OrderBy(x => x.Category),
+        ["order_skip_take_reorder"] = q =>
+            q.OrderByDescending(x => x.Number).Skip(1).Take(6).OrderBy(x => x.Score),
+        ["order_take_where_reorder"] = q =>
+            q.OrderBy(x => x.Name).Take(6).Where(x => x.Number > 1).OrderByDescending(x => x.Category),
+        ["order_take_two_chains"] = q =>
+            q.OrderBy(x => x.Name).Take(6).OrderBy(x => x.Score).OrderBy(x => x.Category),
+        ["order_take_reorder_by_the_same_key"] = q => q.OrderBy(x => x.Name).Take(5).OrderByDescending(x => x.Name)
     };
 
     public static TheoryData<string> ChainNames() => new(Chains.Keys);
@@ -128,6 +139,32 @@ public class second_order_by_tests : OneOffConfigurationsContext
 
         orderBy.ShouldStartWith("ORDER BY JSON_VALUE(data, '$.name') DESC, ", Case.Sensitive, sql);
         orderBy.Split("$.name").Length.ShouldBe(2, sql);
+    }
+
+    // The page's ordering stays inside the page AND follows the later ordering outside it
+    [Fact]
+    public async Task an_ordering_after_a_page_is_tie_broken_by_the_pages_ordering()
+    {
+        await using var session = theStore.QuerySession();
+
+        var sql = session.ToSql(session.Query<ReorderedDoc>().OrderBy(x => x.Name).Take(6).OrderBy(x => x.Category));
+        var outer = sql[sql.LastIndexOf("ORDER BY", StringComparison.OrdinalIgnoreCase)..];
+
+        outer.ShouldBe("ORDER BY JSON_VALUE(data, '$.category'), JSON_VALUE(data, '$.name')", sql);
+        sql.ShouldContain("TOP(6)", Case.Sensitive, sql);
+    }
+
+    [Fact]
+    public async Task last_after_an_ordering_after_a_page()
+    {
+        await SeedAsync();
+        await using var session = theStore.QuerySession();
+
+        var expected = Docs.OrderBy(x => x.Name).Take(6).OrderBy(x => x.Category).Last();
+        var actual = await session.Query<ReorderedDoc>().OrderBy(x => x.Name).Take(6).OrderBy(x => x.Category)
+            .LastAsync(TestContext.Current.CancellationToken);
+
+        actual.Number.ShouldBe(expected.Number);
     }
 
     [Fact]
