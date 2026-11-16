@@ -439,6 +439,10 @@ internal class LinqQueryParser : ExpressionVisitor
             OuterElementType = outerType,
             InnerElementType = innerType
         };
+
+        // gh-1015: a GroupJoin rewritten from Join()/LeftJoin()/RightJoin() is refused under the name it was written as
+        GroupJoinData.Operator = JoinOperatorRewriter.OperatorOf(GroupJoinData.GroupJoinResultSelector)
+                                 ?? GroupJoinData.Operator;
     }
 
     /// <summary>
@@ -461,7 +465,7 @@ internal class LinqQueryParser : ExpressionVisitor
         {
             if (join.SelectManyCollectionSelector != null)
             {
-                throw JoinedRows.Refusal(
+                throw join.Refusal(
                     "a second SelectMany() flattens the joined rows again, and Polecat translates one join per "
                     + "query. Materialize the join with ToListAsync() and flatten it in memory");
             }
@@ -472,7 +476,7 @@ internal class LinqQueryParser : ExpressionVisitor
 
         if (join.SelectManyCollectionSelector == null)
         {
-            throw JoinedRows.Refusal(
+            throw join.Refusal(
                 $"{name}() comes between GroupJoin() and SelectMany(). Apply it after the SelectMany(), to the "
                 + "joined rows");
         }
@@ -503,7 +507,7 @@ internal class LinqQueryParser : ExpressionVisitor
             case "Select":
                 if (IsDistinct)
                 {
-                    throw JoinedRows.Refusal(
+                    throw join.Refusal(
                         "Select() after Distinct() projects the distinct rows, and Polecat compares the rows of "
                         + "the last projection. Apply the Select() before the Distinct()");
                 }
@@ -513,7 +517,7 @@ internal class LinqQueryParser : ExpressionVisitor
 
             case "Last" or "LastOrDefault" or "Sum" or "Min" or "Max" or "Average" or "GroupBy" or "DistinctBy"
                 or "OrderedByVectorDistance" or "GroupJoin":
-                throw JoinedRows.Refusal(
+                throw join.Refusal(
                     $"{name}() after the join has no translation. Materialize the joined rows with ToListAsync() "
                     + "and finish the work in memory");
 
@@ -530,7 +534,7 @@ internal class LinqQueryParser : ExpressionVisitor
     {
         if (Statement.Limit.HasValue || Statement.Offset.HasValue)
         {
-            throw JoinedRows.Refusal(
+            throw GroupJoinData!.Refusal(
                 $"{name}() comes after Take() or Skip(), and Polecat pages the joined rows last. Apply {name}() "
                 + "before the paging");
         }

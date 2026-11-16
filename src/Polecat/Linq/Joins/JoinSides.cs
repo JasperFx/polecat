@@ -53,14 +53,14 @@ internal sealed class JoinSides
 
             if (reads.Except([outerParameter, innerParameter]).Any())
             {
-                throw JoinedRows.Refusal(
+                throw join.Refusal(
                     $"the filter '{conjunct}' reads the group of matches rather than one joined row. Filter the "
                     + "members the SelectMany() result selector projects");
             }
 
             if (reads.Contains(outerParameter) && reads.Contains(innerParameter))
             {
-                throw JoinedRows.Refusal(
+                throw join.Refusal(
                     $"the filter '{conjunct}' compares the two sides of the join with each other, which has no "
                     + "translation. Filter each side on its own, or finish the comparison in memory");
             }
@@ -69,14 +69,18 @@ internal sealed class JoinSides
             {
                 // Marten refuses the same thing (marten#5910): the inner filter goes in the LEFT JOIN's ON clause,
                 // which keeps every outer row without a surviving match -- the rows the filter after the join
-                // should have removed.
+                // should have removed. gh-1015: a RightJoin() is a left join with its sides swapped, so there it is
+                // the RightJoin's OUTER side that this refuses a filter on.
                 if (join.IsLeftJoin)
                 {
-                    throw JoinedRows.Refusal(
-                        "a Where() on the inner side of a left join (SelectMany over DefaultIfEmpty()) applied after "
-                        + "the join would be applied to the inner rows before joining, which keeps the outer rows the "
-                        + "filter should remove. If that is what you mean, filter the inner source before the join; for "
-                        + "the rows that have a match, use an inner join");
+                    var (optional, kept) = join.Operator == "RightJoin()"
+                        ? ("the outer side of a right join (RightJoin())", "inner")
+                        : ("the inner side of a left join (LeftJoin(), or SelectMany over DefaultIfEmpty())", "outer");
+
+                    throw join.Refusal(
+                        $"a Where() on {optional} applied after the join would be applied to that side's rows before "
+                        + $"joining, which keeps the {kept} rows the filter should remove. If that is what you mean, "
+                        + "filter that source before the join; for the rows that have a match, use an inner join");
                 }
 
                 statement.InnerWheres.Add(new AliasedSqlFragment(new WhereClauseParser(_inner).Parse(conjunct),

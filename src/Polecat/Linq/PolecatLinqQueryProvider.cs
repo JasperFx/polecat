@@ -83,6 +83,10 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
     /// </remarks>
     private ParsedQuery Parse(Expression expression, string tenantId)
     {
+        // gh-1015: Join / LeftJoin / RightJoin become the GroupJoin(...).SelectMany(...) every path below already
+        // reads. Before the document type is found, because a RightJoin's queried document is its inner one.
+        expression = JoinOperatorRewriter.Rewrite(expression);
+
         var documentType = FindDocumentType(expression);
         var provider = _providers.GetProvider(documentType);
 

@@ -34,29 +34,47 @@ namespace Polecat.Linq.Joins;
 /// </remarks>
 internal static class GroupJoinSources
 {
+    /// <summary>How the refusals name a hand-written join.</summary>
+    public const string GroupJoinOperator = "GroupJoin(...).SelectMany(...)";
+
     public static void AssertTranslatable(MethodCallExpression groupJoin)
     {
         // (outer, inner, outerKey, innerKey, resultSelector[, comparer])
-        if (groupJoin.Arguments.Count > 5 && groupJoin.Arguments[5] is not ConstantExpression { Value: null })
-        {
-            throw Refusal(
-                "the overload that takes an IEqualityComparer cannot be translated to SQL, which compares the "
-                + "stored keys with the column's own collation. Drop the comparer, or materialize both sides and "
-                + "join them in memory");
-        }
-
-        AssertOnlyFiltered(groupJoin.Arguments[0], "outer");
-        AssertIsDocumentQuery(groupJoin.Arguments[1]);
+        AssertNoComparer(groupJoin.Arguments.Count > 5 ? groupJoin.Arguments[5] : null, GroupJoinOperator);
+        AssertOnlyFiltered(groupJoin.Arguments[0], "outer", GroupJoinOperator, isDocumentQuery: false);
+        AssertIsDocumentQuery(groupJoin.Arguments[1], "inner", GroupJoinOperator);
     }
 
-    private static void AssertOnlyFiltered(Expression source, string side)
+    /// <summary>
+    ///     gh-1015: <paramref name="comparer" />, the <c>IEqualityComparer</c> argument of a join if it has one, is
+    ///     absent or the null a .NET 11 overload's optional parameter carries.
+    /// </summary>
+    public static void AssertNoComparer(Expression? comparer, string operatorName)
+    {
+        if (comparer is null or ConstantExpression { Value: null }) return;
+
+        throw Refusal(operatorName,
+            "the overload that takes an IEqualityComparer cannot be translated to SQL, which compares the "
+            + "stored keys with the column's own collation. Drop the comparer, or materialize both sides and "
+            + "join them in memory");
+    }
+
+    /// <summary>
+    ///     Only filters come before the join on <paramref name="source" />. With
+    ///     <paramref name="isDocumentQuery" />, the message says the source has to be a filtered
+    ///     <c>Query&lt;T&gt;()</c>, which is what an inner source -- and both sources of a <c>RightJoin()</c> -- is.
+    /// </summary>
+    public static void AssertOnlyFiltered(Expression source, string side, string operatorName, bool isDocumentQuery)
     {
         var current = source;
         while (current is MethodCallExpression call)
         {
-            if (call.Method.Name is nameof(Queryable.SelectMany) or nameof(Queryable.GroupJoin))
+            // gh-1015: a Join()/LeftJoin()/RightJoin() earlier on the outer chain arrives here already rewritten
+            // to its SelectMany(); one on an inner source is never rewritten, so it arrives under its own name.
+            if (call.Method.Name is nameof(Queryable.SelectMany) or nameof(Queryable.GroupJoin)
+                or nameof(Queryable.Join) or "LeftJoin" or "RightJoin" or "FullJoin")
             {
-                throw Refusal(
+                throw Refusal(operatorName,
                     $"its {side} source is itself a join, and Polecat translates one join per query. Query the "
                     + "first join and combine it with the third source in memory, or write the SQL yourself with "
                     + "session.AdvancedSql.QueryAsync<T>(...)");
@@ -64,23 +82,23 @@ internal static class GroupJoinSources
 
             if (!IsFilter(call))
             {
-                throw Refusal(side == "outer"
-                    ? $"only Where() may come before it on the outer source, and this query applies "
+                throw Refusal(operatorName, isDocumentQuery
+                    ? $"the {side} source may only be session.Query<T>() filtered by Where(), and it applies "
+                      + $"{call.Method.Name}(). Move that operator after the join"
+                    : $"only Where() may come before it on the {side} source, and this query applies "
                       + $"{call.Method.Name}() first. Apply OrderBy(), Take(), Skip(), Select(), Distinct() and the "
-                      + "like after the join instead, where they apply to the joined rows"
-                    : $"the inner source may only be session.Query<T>() filtered by Where(), and it applies "
-                      + $"{call.Method.Name}(). Move that operator after the join");
+                      + "like after the join instead, where they apply to the joined rows");
             }
 
             current = call.Arguments[0];
         }
     }
 
-    private static void AssertIsDocumentQuery(Expression inner)
+    public static void AssertIsDocumentQuery(Expression source, string side, string operatorName)
     {
-        AssertOnlyFiltered(inner, "inner");
+        AssertOnlyFiltered(source, side, operatorName, isDocumentQuery: true);
 
-        var root = inner;
+        var root = source;
         while (root is MethodCallExpression call) root = call.Arguments[0];
 
         // The root has to be the Query<T>() itself. An in-memory collection would be read as the whole
@@ -92,8 +110,8 @@ internal static class GroupJoinSources
             return;
         }
 
-        throw Refusal(
-            "the inner source must be a Polecat session.Query<T>(), optionally filtered by Where(). Joining to an "
+        throw Refusal(operatorName,
+            $"the {side} source must be a Polecat session.Query<T>(), optionally filtered by Where(). Joining to an "
             + "in-memory collection, or to a queryable passed through AsEnumerable(), is not translated: Polecat "
             + "would join the database table of its element type instead");
     }
@@ -102,7 +120,7 @@ internal static class GroupJoinSources
     ///     A plain <c>Where(x =&gt; ...)</c>, or one of Polecat's own operators that only decide which rows
     ///     of the source are visible (tenancy, soft deletes, metadata timestamps, non-stale data).
     /// </summary>
-    private static bool IsFilter(MethodCallExpression call)
+    public static bool IsFilter(MethodCallExpression call)
     {
         var declaring = call.Method.DeclaringType;
 
@@ -128,10 +146,10 @@ internal static class GroupJoinSources
                || declaring == typeof(NonStaleDataExtensions);
     }
 
-    private static LambdaExpression? QuotedLambda(Expression expression)
+    public static LambdaExpression? QuotedLambda(Expression expression)
         => (expression is UnaryExpression { NodeType: ExpressionType.Quote } quote ? quote.Operand : expression)
             as LambdaExpression;
 
-    private static BadLinqExpressionException Refusal(string reason)
-        => new($"Polecat cannot translate this GroupJoin(...).SelectMany(...): {reason}.");
+    public static BadLinqExpressionException Refusal(string operatorName, string reason)
+        => new($"Polecat cannot translate this {operatorName}: {reason}.");
 }
