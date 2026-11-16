@@ -273,6 +273,41 @@ public interface IQuerySession : IAsyncDisposable, IDocumentReadOperations
     string ToSql<T>(IQueryable<T> queryable) where T : class;
 
     /// <summary>
+    ///     Preview the SQL that executing <paramref name="queryable" /> the way <paramref name="fetchType" />
+    ///     names would run, without executing it: <see cref="FetchType.Count" /> is what <c>CountAsync()</c>
+    ///     sends, <see cref="FetchType.Any" /> <c>AnyAsync()</c>, <see cref="FetchType.FetchOne" />
+    ///     <c>FirstAsync()</c> and <see cref="FetchType.FetchMany" /> <c>ToListAsync()</c>, which is also what
+    ///     <see cref="ToSql{T}(IQueryable{T})" /> previews.
+    /// </summary>
+    /// <remarks>
+    ///     gh-1018 (marten#5916): the statement is built by the same preparation execution uses, so a
+    ///     <c>Take(3)</c> in front of a count previews the count of the derived page that runs.
+    /// </remarks>
+    /// <exception cref="JasperFx.BadLinqExpressionException">
+    ///     The query is a <c>GroupJoin</c>, which has no single statement to render.
+    /// </exception>
+    string ToSql<T>(IQueryable<T> queryable, FetchType fetchType);
+
+    /// <summary>
+    ///     Preview the SQL that executing <paramref name="terminal" /> over <paramref name="queryable" /> would
+    ///     run, without executing it. Use it for a terminal operator <see cref="FetchType" /> does not name,
+    ///     e.g. <c>session.ToSql(query, q =&gt; q.Sum(x =&gt; x.Amount))</c>, <c>q =&gt; q.LongCount()</c>,
+    ///     <c>q =&gt; q.Single()</c> or <c>q =&gt; q.Last()</c>: the SQL <c>SumAsync()</c>,
+    ///     <c>LongCountAsync()</c>, <c>SingleAsync()</c> or <c>LastAsync()</c> sends.
+    /// </summary>
+    /// <remarks>
+    ///     gh-1018: <paramref name="terminal" /> is never compiled or run. It has to be a
+    ///     <see cref="Queryable" /> operator applied to its parameter -- the synchronous <c>q.Count()</c>,
+    ///     not the <c>q.CountAsync()</c> that executes it.
+    /// </remarks>
+    /// <exception cref="JasperFx.BadLinqExpressionException">
+    ///     <paramref name="terminal" /> is not a <see cref="Queryable" /> operator over its parameter, or the
+    ///     query is a <c>GroupJoin</c>, which has no single statement to render.
+    /// </exception>
+    string ToSql<T, TResult>(IQueryable<T> queryable,
+        System.Linq.Expressions.Expression<Func<IQueryable<T>, TResult>> terminal);
+
+    /// <summary>
     ///     Execute a query plan (specification pattern) against this session.
     /// </summary>
     Task<T> QueryByPlanAsync<T>(IQueryPlan<T> plan, CancellationToken token = default);
