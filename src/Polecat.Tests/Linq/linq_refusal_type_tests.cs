@@ -96,7 +96,9 @@ public class linq_refusal_type_tests : OneOffConfigurationsContext
     [InlineData("Union")]
     [InlineData("Except")]
     [InlineData("DefaultIfEmpty")]
-    [InlineData("Join")]
+    // gh-1015: "Join" used to be here; Join/LeftJoin/RightJoin now translate (see join_operator_tests), so the
+    // two-source operator this pins is Zip instead.
+    [InlineData("Zip")]
     public async Task an_untranslatable_operator_is_refused_rather_than_ignored(string op)
     {
         await using var query = await aSeededSessionAsync();
@@ -114,7 +116,7 @@ public class linq_refusal_type_tests : OneOffConfigurationsContext
             "Union" => source.Union(query.Query<LinqTarget>()),
             "Except" => source.Except(query.Query<LinqTarget>()),
             "DefaultIfEmpty" => source.DefaultIfEmpty()!,
-            "Join" => source.Join(query.Query<LinqTarget>(), x => x.Id, y => y.Id, (x, y) => x),
+            "Zip" => source.Zip(query.Query<LinqTarget>(), (x, y) => x),
             _ => throw new ArgumentOutOfRangeException(nameof(op))
         };
 

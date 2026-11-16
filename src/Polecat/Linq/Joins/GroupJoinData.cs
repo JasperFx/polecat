@@ -14,6 +14,16 @@ internal class GroupJoinData
     public Type OuterElementType { get; set; } = null!;
     public Type InnerElementType { get; set; } = null!;
     public bool IsLeftJoin { get; set; }
+
+    /// <summary>
+    ///     gh-1015: the operator the query was written with, for the refusals: <c>Join()</c>, <c>LeftJoin()</c> or
+    ///     <c>RightJoin()</c> when <see cref="JoinOperatorRewriter" /> wrote this GroupJoin, otherwise the
+    ///     hand-written <c>GroupJoin(...).SelectMany(...)</c>.
+    /// </summary>
+    public string Operator { get; set; } = GroupJoinSources.GroupJoinOperator;
+
+    /// <summary>A refusal that names <see cref="Operator" />.</summary>
+    public JasperFx.BadLinqExpressionException Refusal(string reason) => GroupJoinSources.Refusal(Operator, reason);
     public LambdaExpression? SelectManyResultSelector { get; set; }
     public LambdaExpression? SelectManyCollectionSelector { get; set; }
 

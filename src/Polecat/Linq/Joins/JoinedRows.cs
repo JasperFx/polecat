@@ -1,4 +1,5 @@
 using System.Linq.Expressions;
+using System.Reflection;
 using JasperFx;
 
 namespace Polecat.Linq.Joins;
@@ -65,7 +66,7 @@ internal static class JoinedRows
     }
 
     public static BadLinqExpressionException Refusal(string reason)
-        => new($"Polecat cannot translate this GroupJoin(...).SelectMany(...): {reason}.");
+        => GroupJoinSources.Refusal(GroupJoinSources.GroupJoinOperator, reason);
 
     private sealed class ParameterReplacer(ParameterExpression from, Expression to) : ExpressionVisitor
     {
@@ -85,6 +86,30 @@ internal static class JoinedRows
                     for (var i = 0; i < created.Members.Count; i++)
                     {
                         if (created.Members[i].Name == node.Member.Name) return created.Arguments[i];
+                    }
+
+                    break;
+
+                // gh-1015 (marten#5910): a tuple -- (c, o) => (c.Name, o.Amount), or the (outer, inner) of a .NET 11
+                // join without a result selector -- is built by its constructor, with no members named, and read
+                // through its Item1, Item2, ... fields.
+                case NewExpression { Members: null, Type.IsValueType: true } tuple
+                    when typeof(System.Runtime.CompilerServices.ITuple).IsAssignableFrom(tuple.Type)
+                         && node.Member is FieldInfo { Name: ['I', 't', 'e', 'm', .. var digits] }
+                         && int.TryParse(digits, out var position)
+                         && position >= 1 && position <= Math.Min(7, tuple.Arguments.Count):
+                    return tuple.Arguments[position - 1];
+
+                // gh-1015 (marten#5910): a positional record -- (c, o) => new Row(c.Name, o.Amount) -- is built by its
+                // constructor too, and its property is the constructor parameter of the same name and type.
+                case NewExpression { Members: null, Constructor: not null } constructed:
+                    var parameters = constructed.Constructor.GetParameters();
+                    for (var i = 0; i < parameters.Length; i++)
+                    {
+                        if (parameters[i].Name == node.Member.Name && parameters[i].ParameterType == node.Type)
+                        {
+                            return constructed.Arguments[i];
+                        }
                     }
 
                     break;

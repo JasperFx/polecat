@@ -67,7 +67,7 @@ await foreach (var user in session.Query<User>()
 - The session's connection stays busy until the enumeration ends or is disposed. Finish the `await
   foreach` (or break out of it) before using the session for anything else.
 - Whole documents, scalar and projected `Select()`s, `Distinct()` and `GroupBy()` stream row by row. A
-  `GroupJoin`, and the event-store queryables (`QueryAllRawEvents()`, `QueryRawEventDataOnly<T>()`), read
+  join (`GroupJoin`, `Join`, `LeftJoin`, `RightJoin`), and the event-store queryables (`QueryAllRawEvents()`, `QueryRawEventDataOnly<T>()`), read
   their whole result first and then hand it out.
 - Opening the query goes through the store's resilience pipeline. A failure part-way through is not
   retried, because rows have already been handed out.
@@ -113,13 +113,38 @@ and the ways through are:
 - materialize the query and finish the work in memory with LINQ-to-Objects.
 
 An **operator** Polecat cannot translate is refused the same way. `Order()`, `OrderDescending()`,
-`Reverse()`, `TakeWhile()`, `SkipWhile()`, `Union()`, `Concat()`, `Except()`, `Join()` and
+`Reverse()`, `TakeWhile()`, `SkipWhile()`, `Union()`, `Concat()`, `Except()`, `FullJoin()` and
 `DefaultIfEmpty()` are not translated, and a query carrying one is rejected rather than run without
 it — ignoring an ordering gives you rows in an arbitrary order that look sorted, and ignoring a
 filter gives you *more* rows than you asked for. Both read as answers. `Cast<T>()`, `OfType<T>()`
 (when `T` is the element type) and `AsQueryable()` are genuine no-ops and are allowed through; a
 *narrowing* `OfType<TSubClass>()` is refused, because document subclasses are queried with
 `Query<TSubClass>()`.
+
+### Joins
+
+`Join()`, and .NET 10's `LeftJoin()` and `RightJoin()`, translate to one SQL `JOIN` of two document
+tables. Each is the `GroupJoin(...).SelectMany(...)` (+ `DefaultIfEmpty()`) form written for you, so the two
+spellings answer the same; `RightJoin()` is the left join with its two sources swapped.
+
+```cs
+var rows = await session.Query<Customer>()
+    .Where(c => c.City == "Seattle")
+    .LeftJoin(session.Query<Order>(), c => c.Id, o => o.CustomerId,
+        (c, o) => new { c.Name, Amount = o == null ? (decimal?)null : o.Amount })
+    .OrderBy(x => x.Name)
+    .ToListAsync();
+```
+
+`Where()`, `OrderBy()`, `Skip()`/`Take()`, `First()`, `Single()`, `Count()`, `Any()`, `Distinct()` and
+`Select()` can follow the join. The result selector runs in memory, so on a left or right join test the
+side that may be missing for `null`, as above. A join is refused, naming the operator, when the GroupJoin
+path cannot answer it exactly: an operator other than `Where()` before the join on either source, an inner
+source that is not a filtered `session.Query<T>()`, a composite or computed key, the `IEqualityComparer`
+overload, a join of a join, a `Where()` after a left join on the side that may have no match (it would
+filter before joining and keep the rows it should remove), and `AnyTenant()`/`TenantIsOneOf()` on the
+outer source of a `RightJoin()` (put it on the inner source, where it covers both sides). `FullJoin()` is
+not translated.
 
 A plain `NotSupportedException` means something else, and is deliberately kept distinct: an
 unsupported *API* rather than an untranslatable expression. Synchronous execution
