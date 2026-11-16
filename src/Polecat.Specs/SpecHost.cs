@@ -26,7 +26,11 @@ public class SpecHost : IAsyncLifetime
             opts.UseNativeJsonType = ConnectionSource.SupportsNativeJson;
             opts.AutoCreateSchemaObjects = AutoCreate.All;
             opts.Events.StreamIdentity = StreamIdentity.AsGuid;
-        });
+        })
+        // Build the schema before the first spec rather than on first use. A spec whose act is refused
+        // before anything is written (a_union_holding_no_case_is_refused) still reads pc_events in
+        // ThenNoEvents, and on a fresh catalog, run first, that table did not exist yet.
+        .ApplyAllDatabaseChangesOnStartup();
 
         Host = builder.Build();
         await Host.StartAsync(TestContext.Current.CancellationToken);
