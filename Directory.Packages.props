@@ -1501,9 +1501,16 @@
                * weasel#831: optional WriteEventBdata pools per-event bdata. NOT ADOPTED: it needs Polecat
                  to dispose operations after the unit of work (it does not today), and the SqlServer
                  dialect to bind a MemoryStream over the slice (SqlClient takes no ReadOnlyMemory). -->
-        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="10.0.0-alpha.3" />
-        <PackageVersion Include="Weasel.SqlServer" Version="10.0.0-alpha.3" />
-        <PackageVersion Include="Weasel.Storage" Version="10.0.0-alpha.3" />
+        <!-- Weasel 10.0.0-alpha.4 (from alpha.3). Taken for #989, which ADOPTS EventLoaderBase:
+               * weasel#845 (weasel#847): EventTypeAllowList reads everything for an interface, abstract
+                 or object type, where Polecat used to push the interface's own dotnet_type into the SQL
+                 and read nothing.
+               * weasel#846 (weasel#848): a paging dialect must render an allow list of any length.
+                 SqlServerEventPagingDialect binds one past JsonValueList.Threshold as one OPENJSON
+                 array, which retires the old >2,000-type client-side fallback. -->
+        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="10.0.0-alpha.4" />
+        <PackageVersion Include="Weasel.SqlServer" Version="10.0.0-alpha.4" />
+        <PackageVersion Include="Weasel.Storage" Version="10.0.0-alpha.4" />
 
         <!-- Strongly typed IDs. Both generators are test-only: they prove Polecat's value-type id
              support against the two libraries Marten's ValueTypeTests exercise. StronglyTypedId emits

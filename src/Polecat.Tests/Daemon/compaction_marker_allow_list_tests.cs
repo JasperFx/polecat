@@ -26,8 +26,8 @@ namespace Polecat.Tests.Daemon;
 ///     <para>
 ///         <see cref="a_filtered_and_an_unfiltered_load_agree_on_a_compacted_stream" /> is the
 ///         statement of the bug: two loads over one stream, folded by the same aggregator, disagreeing
-///         about what the stream means. The rest pin the two filtering paths (#550's SQL push-down and
-///         the retained client-side fallback) and the end-to-end daemon consequence.
+///         about what the stream means. The rest pin the two list renderings (#550's SQL push-down, and
+///         one JSON array past the parameter cap) and the end-to-end daemon consequence.
 ///     </para>
 /// </remarks>
 public class compaction_marker_allow_list_tests : OneOffConfigurationsContext
@@ -88,18 +88,19 @@ public class compaction_marker_allow_list_tests : OneOffConfigurationsContext
     }
 
     /// <summary>
-    ///     The other path, and the one that would otherwise rot unnoticed. Above SQL Server's
-    ///     2100-parameter ceiling the loader stops pushing the filter down and the client-side check
-    ///     carries it alone — so a fix applied only to the rendered <c>IN</c> clause would leave a store
-    ///     with very many event types still broken, and nothing else in the suite would say so.
+    ///     The other path, and the one that would otherwise rot unnoticed: an allow list past SQL Server's
+    ///     2,100-parameter ceiling. Before #989 the loader stopped pushing the filter down above 2,000 names
+    ///     and a client-side check carried it alone; now the dialect binds the whole list as one JSON array
+    ///     (weasel#846). Either way a fix applied only to a short list would leave a store with very many
+    ///     event types still broken, and nothing else in the suite would say so.
     /// </summary>
     /// <remarks>
-    ///     The fix is applied to the allow-list SET, from which the pushed-down parameter array is
-    ///     taken, which is what makes one addition cover both paths. This test is what stops that being
-    ///     refactored apart.
+    ///     The markers are added to the allow list itself (<c>EventTypeAllowList.For</c>), from which both
+    ///     renderings are taken, which is what makes one addition cover every list length. This test is what
+    ///     stops that being refactored apart.
     /// </remarks>
     [Fact]
-    public async Task the_marker_survives_the_client_side_fallback_filter()
+    public async Task the_marker_survives_an_allow_list_past_the_parameter_cap()
     {
         await SeedCompactedStreamAsync();
 
@@ -109,9 +110,12 @@ public class compaction_marker_allow_list_tests : OneOffConfigurationsContext
             projection.IncludeType(padding);
         }
 
-        // Well past the push-down cap, so the rendered SQL carries no type predicate at all and the
-        // hydration-side check is the only filter running.
+        // Well past the parameter cap, and still a FILTERED list: an abstract or interface type in the
+        // padding would turn it into "read everything" (weasel#845) and this test would prove nothing.
         projection.IncludedEventTypes.Count.ShouldBeGreaterThan(2_000);
+        var allowList = Weasel.Storage.EventTypeAllowList.For(theStore.Database.Events, projection);
+        allowList.IsEmpty.ShouldBeFalse();
+        allowList.DotNetTypeNames.Count.ShouldBeGreaterThan(2_100);
 
         var page = await LoadAsync(CreateLoader(projection));
 
@@ -312,7 +316,10 @@ public class compaction_marker_allow_list_tests : OneOffConfigurationsContext
                         && !t.IsGenericTypeDefinition
                         && !t.ContainsGenericParameters
                         && !t.IsByRefLike
-                        && t != typeof(void))
+                        && t != typeof(void)
+                        // weasel#845: object on an allow list means "every type", which would quietly
+                        // turn the large-list test into an unfiltered one.
+                        && t != typeof(object))
             .Where(t =>
             {
                 try

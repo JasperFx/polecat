@@ -275,6 +275,68 @@ public class event_loader_tests : IntegrationContext
             .LoadAsync(CreateRequest(0, highWater, batchSize: 100), TestContext.Current.CancellationToken));
     }
 
+    // ---- #989: the loader runs on Weasel.Storage's EventLoaderBase ----
+
+    /// <summary>
+    ///     weasel#845, the check #989 asked for. A subscription that names an interface (<c>IncludeType</c>
+    ///     of one, or a handler taking it) used to have that interface's own <c>dotnet_type</c> pushed into
+    ///     the SQL. No stored row carries an interface's name, so the filter excluded every event that
+    ///     implements it, and the shard read short pages, claimed the ceiling and reported itself caught up
+    ///     with nothing delivered. The shared allow list reads everything instead and leaves the type
+    ///     dispatch to the subscription, which is Marten's rule.
+    /// </summary>
+    [Fact]
+    public async Task a_filter_naming_an_interface_still_reads_the_events_that_implement_it()
+    {
+        await AppendAsync(new GuildFounded("Fellowship"), new QuestStarted("Unrelated"),
+            new GuildDisbanded("Fellowship"));
+
+        var highWater = await GetHighestSeqIdAsync();
+
+        var filtering = new EventFilterable();
+        filtering.IncludeType<IGuildEvent>();
+
+        var page = await new PolecatEventLoader(theStore.Database.Events, theStore.Options,
+                theStore.Options.ConnectionString, filtering)
+            .LoadAsync(CreateRequest(0, highWater, batchSize: 100), TestContext.Current.CancellationToken);
+
+        page.Select(x => x.Data).OfType<IGuildEvent>().Count().ShouldBe(2);
+        page.Ceiling.ShouldBe(highWater);
+    }
+
+    /// <summary>
+    ///     weasel#846. A short allow list keeps one <c>varchar</c> parameter per name, exactly the SQL an
+    ///     ordinary shard ran before #989, so the optimizer still sees real literals.
+    /// </summary>
+    [Fact]
+    public void a_short_type_list_renders_one_parameter_per_name()
+    {
+        var parameters = new List<Weasel.Storage.EventPageParameter>();
+        var sql = SqlServerEventPagingDialect.RenderList(["a", "b", "c"], "t", parameters);
+
+        sql.ShouldBe("@t0, @t1, @t2");
+        parameters.Select(x => x.Name).ShouldBe(["@t0", "@t1", "@t2"]);
+        parameters.ShouldAllBe(x => x.DbType == System.Data.DbType.AnsiString);
+    }
+
+    /// <summary>
+    ///     weasel#846. Past the threshold the whole list is one JSON parameter, so a shard reading more event
+    ///     types than SQL Server's 2,100-parameter cap still runs. This replaced the old fallback, which
+    ///     dropped the predicate above 2,000 names and filtered client-side.
+    /// </summary>
+    [Fact]
+    public void a_long_type_list_renders_as_one_json_array()
+    {
+        var names = Enumerable.Range(0, 2_500).Select(i => $"Type{i}, Assembly").ToArray();
+        var parameters = new List<Weasel.Storage.EventPageParameter>();
+        var sql = SqlServerEventPagingDialect.RenderList(names, "t", parameters);
+
+        sql.ShouldBe("SELECT value FROM OPENJSON(@t_json) WITH (value varchar(500) '$')");
+        var parameter = parameters.ShouldHaveSingleItem();
+        parameter.Name.ShouldBe("@t_json");
+        System.Text.Json.JsonSerializer.Deserialize<string[]>((string)parameter.Value!).ShouldBe(names);
+    }
+
     private PolecatEventLoader CreateFilteredLoader()
     {
         var filtering = new EventFilterable();
@@ -363,3 +425,9 @@ public class event_loader_tests : IntegrationContext
         return seqIds;
     }
 }
+
+public interface IGuildEvent;
+
+public record GuildFounded(string Name) : IGuildEvent;
+
+public record GuildDisbanded(string Name) : IGuildEvent;
