@@ -704,6 +704,19 @@ internal class LinqQueryParser : ExpressionVisitor
 
     private void HandleOrdering(MethodCallExpression node, bool descending, bool replace)
     {
+        // gh-1011: the IComparer<TKey> overloads used to be accepted with the comparer silently dropped, so
+        // OrderBy(x => x.Name, StringComparer.Ordinal) came back in the column's collation order instead.
+        // A comparer is .NET code SQL Server cannot run, so the overload is refused on every path -- this is
+        // the one place documents, GroupBy and GroupJoin orderings all come through.
+        if (node.Arguments.Count > 2)
+        {
+            throw new BadLinqExpressionException(
+                $"Polecat cannot translate {node.Method.Name}() with an IComparer: SQL Server orders by the "
+                + "column's collation, and a .NET comparer cannot run there. Drop the comparer to use the "
+                + "database's order, or sort in memory after the query (for example .ToListAsync() then "
+                + $"{node.Method.Name}(..., comparer)).");
+        }
+
         if (GroupJoinData != null)
         {
             HandleGroupJoinOrderBy(node, descending, replace);
