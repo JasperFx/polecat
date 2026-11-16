@@ -950,7 +950,14 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
             var ordering = JoinedRows.OnTheDocuments(joinData, orderByLambda);
             if (sides.TryResolve(LinqQueryParser.StripConvert(ordering.Body), ordering, out var member, out var alias))
             {
-                joinStatement.OrderBys.Add((JoinStatement.AliasLocator(member.TypedLocator, alias), descending));
+                var locator = JoinStatement.AliasLocator(member.TypedLocator, alias);
+
+                // gh-997: the keys arrive most significant first, and SQL Server refuses a column named
+                // twice in ORDER BY. A repeated key can never break a tie, so it is dropped.
+                if (!joinStatement.OrderBys.Exists(o => o.Locator == locator))
+                {
+                    joinStatement.OrderBys.Add((locator, descending));
+                }
             }
         }
 
