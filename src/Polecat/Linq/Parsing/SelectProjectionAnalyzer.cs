@@ -85,7 +85,7 @@ internal static class SelectProjectionAnalyzer
         return columns.Count > 0 ? columns : null;
     }
 
-    private static SimpleProjectionColumn? TryColumn(
+    internal static SimpleProjectionColumn? TryColumn(
         MemberInfo projectionMember, Expression valueExpression, MemberFactory memberFactory)
     {
         var value = StripSafeConvert(valueExpression);
