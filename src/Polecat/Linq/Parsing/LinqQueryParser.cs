@@ -615,8 +615,13 @@ internal class LinqQueryParser : ExpressionVisitor
         // After Select(x => x.Name), OrderBy(x => x) has a ParameterExpression body
         if (body is ParameterExpression)
         {
+            // gh-998: only a projected document member has a column to order by. Anything else is
+            // computed in memory after the rows are read, and what the statement selects is the
+            // document's JSON body, which native json refuses to sort and json text sorts as text.
+            if (ScalarSelectMember == null) throw RefuseOrderingTheProjection(lambda);
+
             // Order by the projected scalar, through an index where it has one like any other ordering
-            AddOrdering((ScalarSelectMember?.TypedLocator ?? Statement.SelectColumns, descending), null, replace);
+            AddOrdering((ScalarSelectMember.TypedLocator, descending), null, replace);
             return;
         }
 
@@ -627,6 +632,18 @@ internal class LinqQueryParser : ExpressionVisitor
 
         var member = _memberFactory.ResolveKey(memberExpr, "in an OrderBy");
         AddOrdering((member.TypedLocator, descending), member, replace);
+    }
+
+    private BadLinqExpressionException RefuseOrderingTheProjection(LambdaExpression key)
+    {
+        var what = SelectExpression == null
+            ? $"the queried {key.Parameters[0].Type.Name} itself"
+            : $"the value of Select({SelectExpression})";
+
+        return new BadLinqExpressionException(
+            $"Polecat cannot translate the OrderBy key '{key}' to SQL: it orders by {what}, which is not a "
+            + "member of the document, so SQL has no column to order it by. Order by a document member before "
+            + "the Select(...), or materialize the query with ToListAsync() and order it in memory.");
     }
 
     private void HandleTake(MethodCallExpression node)
