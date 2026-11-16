@@ -750,7 +750,10 @@ internal class LinqQueryParser : ExpressionVisitor
     private void HandleOrderBy(MethodCallExpression node, bool descending, bool replace)
     {
         var lambda = OnTheDocument(GetLambda(node.Arguments[1]));
-        var body = StripConvert(lambda.Body);
+
+        // gh-999: only a cast that cannot change the order is stepped over. (byte)x.Number orders 256
+        // before 255, so ordering by x.Number underneath it would be silently wrong.
+        var body = StripOrderPreservingConvert(lambda.Body);
 
         // After Select(x => x.Name), OrderBy(x => x) has a ParameterExpression body
         if (body is ParameterExpression)
@@ -758,21 +761,39 @@ internal class LinqQueryParser : ExpressionVisitor
             // gh-998: only a projected document member has a column to order by. Anything else is
             // computed in memory after the rows are read, and what the statement selects is the
             // document's JSON body, which native json refuses to sort and json text sorts as text.
-            if (ScalarSelectMember == null) throw RefuseOrderingTheProjection(lambda);
+            // gh-999: Select(x => (byte)x.Number) reads x.Number, and is narrowed in memory.
+            if (ScalarSelectMember == null || SelectNarrowsItsMember()) throw RefuseOrderingTheProjection(lambda);
 
             // Order by the projected scalar, through an index where it has one like any other ordering
             AddOrdering((ScalarSelectMember.TypedLocator, descending), null, replace);
             return;
         }
 
-        var memberExpr = body as MemberExpression
-            ?? throw new BadLinqExpressionException(
-                $"Polecat cannot translate the OrderBy key '{body}' to SQL. Order by a document member "
-                + "(x => x.Name) or by the scalar a preceding Select(...) projected.");
+        var memberExpr = body as MemberExpression ?? throw RefuseOrderingKey(body);
 
         var member = _memberFactory.ResolveKey(memberExpr, "in an OrderBy");
         AddOrdering((member.TypedLocator, descending), member, replace);
     }
+
+    /// <summary>
+    ///     The refusal for an ordering key with no exact translation, here and over a join.
+    /// </summary>
+    internal static BadLinqExpressionException RefuseOrderingKey(Expression key)
+    {
+        // gh-999: a cast is named, because it is the one key that used to be quietly stepped over
+        var why = key is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } cast
+            ? $" The cast to {cast.Type.Name} can change the order of the values it converts, and ordering by "
+              + "the value underneath it would not be the same ordering."
+            : "";
+
+        return new BadLinqExpressionException(
+            $"Polecat cannot translate the OrderBy key '{key}' to SQL.{why} Order by a document member "
+            + "(x => x.Name) or by the scalar a preceding Select(...) projected.");
+    }
+
+    private bool SelectNarrowsItsMember()
+        => SelectExpression?.Body is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } convert
+           && StripOrderPreservingConvert(convert) == convert;
 
     private BadLinqExpressionException RefuseOrderingTheProjection(LambdaExpression key)
     {
@@ -1151,6 +1172,75 @@ internal class LinqQueryParser : ExpressionVisitor
         // Compile for complex expressions
         return Expression.Lambda(expression).Compile().DynamicInvoke()!;
     }
+
+    /// <summary>
+    ///     gh-999 (marten#5957): <paramref name="expression" /> without the casts that cannot change how it
+    ///     orders, so that ordering by the expression underneath is EXACTLY ordering by the cast value.
+    /// </summary>
+    /// <remarks>
+    ///     <see cref="StripConvert" /> steps over every cast, which is right for reading a member and wrong
+    ///     for ordering by one: <c>OrderBy(x =&gt; (byte)x.Number)</c> wraps 256 to 0 and was ordered by
+    ///     <c>Number</c>. A cast stays where it narrows, loses precision (<c>(float)</c> of an int collapses
+    ///     neighbours into ties), or runs a conversion operator, and the key is then refused as computed.
+    ///     Boxing to <see cref="object" />, a nullable wrapper, an enum and its underlying type, an exact
+    ///     numeric widening, and a value wrapper read as the value it stores are stepped over.
+    /// </remarks>
+    internal static Expression StripOrderPreservingConvert(Expression expression)
+    {
+        while (expression is UnaryExpression
+               {
+                   NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked
+               } unary && PreservesOrder(unary))
+        {
+            expression = unary.Operand;
+        }
+
+        return expression;
+    }
+
+    private static bool PreservesOrder(UnaryExpression convert)
+    {
+        if (convert.Type == typeof(object)) return true;
+
+        var from = Nullable.GetUnderlyingType(convert.Operand.Type) ?? convert.Operand.Type;
+        var to = Nullable.GetUnderlyingType(convert.Type) ?? convert.Type;
+
+        if (from.IsEnum) from = Enum.GetUnderlyingType(from);
+        if (to.IsEnum) to = Enum.GetUnderlyingType(to);
+
+        // Checked before the conversion's method, because an integer to decimal carries decimal.op_Implicit
+        if (from == to || ExactWidenings.TryGetValue(from, out var wider) && wider.Contains(to)) return true;
+
+        // A value wrapper is stored, and so ordered, as the value it wraps. Any other conversion operator
+        // can map values any way it likes.
+        return convert.Method != null
+               && Polecat.Storage.ValueTypes.TryResolve(from, allowReferenceTypes: true)?.SimpleType == to;
+    }
+
+    // The implicit numeric conversions that represent every value of the source exactly. int, uint, long
+    // and ulong to float, and long and ulong to double, are implicit in C# but lose precision.
+    private static readonly Dictionary<Type, Type[]> ExactWidenings = new()
+    {
+        [typeof(sbyte)] = [typeof(short), typeof(int), typeof(long), typeof(float), typeof(double), typeof(decimal)],
+        [typeof(byte)] =
+        [
+            typeof(short), typeof(ushort), typeof(int), typeof(uint), typeof(long), typeof(ulong), typeof(float),
+            typeof(double), typeof(decimal)
+        ],
+        [typeof(short)] = [typeof(int), typeof(long), typeof(float), typeof(double), typeof(decimal)],
+        [typeof(ushort)] =
+            [typeof(int), typeof(uint), typeof(long), typeof(ulong), typeof(float), typeof(double), typeof(decimal)],
+        [typeof(char)] =
+        [
+            typeof(ushort), typeof(int), typeof(uint), typeof(long), typeof(ulong), typeof(float), typeof(double),
+            typeof(decimal)
+        ],
+        [typeof(int)] = [typeof(long), typeof(double), typeof(decimal)],
+        [typeof(uint)] = [typeof(long), typeof(ulong), typeof(double), typeof(decimal)],
+        [typeof(long)] = [typeof(decimal)],
+        [typeof(ulong)] = [typeof(decimal)],
+        [typeof(float)] = [typeof(double)]
+    };
 
     internal static Expression StripConvert(Expression expression)
     {

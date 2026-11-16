@@ -948,16 +948,23 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
         foreach (var (orderByLambda, descending) in joinData.OrderByExpressions)
         {
             var ordering = JoinedRows.OnTheDocuments(joinData, orderByLambda);
-            if (sides.TryResolve(LinqQueryParser.StripConvert(ordering.Body), ordering, out var member, out var alias))
-            {
-                var locator = JoinStatement.AliasLocator(member.TypedLocator, alias);
 
-                // gh-997: the keys arrive most significant first, and SQL Server refuses a column named
-                // twice in ORDER BY. A repeated key can never break a tie, so it is dropped.
-                if (!joinStatement.OrderBys.Exists(o => o.Locator == locator))
-                {
-                    joinStatement.OrderBys.Add((locator, descending));
-                }
+            // gh-999: a key that is not a member of one of the two documents has no exact translation. It used
+            // to be skipped without a word, so the rows came back in whatever order SQL Server chose; a cast
+            // was stepped over whether or not it changed the order.
+            var key = LinqQueryParser.StripOrderPreservingConvert(ordering.Body);
+            if (!sides.TryResolve(key, ordering, out var member, out var alias))
+            {
+                throw LinqQueryParser.RefuseOrderingKey(key);
+            }
+
+            var locator = JoinStatement.AliasLocator(member.TypedLocator, alias);
+
+            // gh-997: the keys arrive most significant first, and SQL Server refuses a column named
+            // twice in ORDER BY. A repeated key can never break a tie, so it is dropped.
+            if (!joinStatement.OrderBys.Exists(o => o.Locator == locator))
+            {
+                joinStatement.OrderBys.Add((locator, descending));
             }
         }
 
