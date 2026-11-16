@@ -176,8 +176,26 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
         return batch.BatchCommands[0].CommandText;
     }
 
+    /// <summary>
+    ///     The statement <see cref="ExecuteAsync{TResult}" /> would run for <paramref name="expression" />,
+    ///     for <c>ToSql()</c> and the query-plan tests.
+    /// </summary>
+    /// <remarks>
+    ///     gh-1002 (marten#5916): a document query is finished by <see cref="PrepareDocumentStatement" />,
+    ///     the same preparation execution uses, so the preview carries the select list execution reads
+    ///     with -- <c>data, guid_version</c> for an <c>IVersioned</c> document rather than <c>data</c>.
+    /// </remarks>
     internal Statement BuildStatement(Expression expression, string tenantId)
-        => BuildStatement(Parse(expression, tenantId));
+    {
+        var query = Parse(expression, tenantId);
+        if (query.Parser.GroupJoinData != null || query.Parser.GroupByKeySelector != null)
+        {
+            return BuildStatement(query);
+        }
+
+        PrepareDocumentStatement(query);
+        return query.Parser.Statement;
+    }
 
     /// <summary>
     ///     <see cref="BuildStatement(Expression, string)" /> for a query joining a batch, which runs
@@ -1109,15 +1127,17 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
 
         switch (parser.ValueMode)
         {
+            // gh-995: a Take() in front narrows these rather than being replaced by them, so Take(0).First()
+            // has no row and Take(1).Single() has exactly one.
             case SingleValueMode.First:
             case SingleValueMode.FirstOrDefault:
-                statement.Limit = 1;
+                statement.Limit = Math.Min(statement.Limit ?? 1, 1);
                 break;
 
             case SingleValueMode.Single:
             case SingleValueMode.SingleOrDefault:
                 // Fetch 2 rows to detect "more than one element"
-                statement.Limit = 2;
+                statement.Limit = Math.Min(statement.Limit ?? 2, 2);
                 break;
 
             case SingleValueMode.Last:
@@ -1130,44 +1150,39 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
                 statement.Limit = 1;
                 break;
 
+            // gh-995: over a page these aggregate a derived table of the page; see Statement.SelectAggregate.
             case SingleValueMode.Count:
-                statement.SelectColumns = "COUNT(*)";
+                statement.SelectAggregate(_ => "COUNT(*)", "1");
                 break;
 
             case SingleValueMode.LongCount:
-                statement.SelectColumns = "CAST(COUNT(*) AS bigint)";
+                statement.SelectAggregate(_ => "CAST(COUNT(*) AS bigint)", "1");
                 break;
 
             case SingleValueMode.Any:
-                // Wrap in EXISTS
-                var innerSelect = statement.SelectColumns;
                 statement.SelectColumns = "1";
-                statement.Limit = 1;
+                // gh-995: Take(0).Any() is false whatever the table holds, so its TOP(0) is kept rather than
+                // widened. A Skip is left alone: one row past it is exactly what Skip(k).Any() asks.
+                statement.Limit = statement.Limit == 0 ? 0 : 1;
                 statement.IsExistsWrapper = true;
                 break;
 
             case SingleValueMode.Sum:
-                statement.SelectColumns = parser.AggregationMember != null
-                    ? $"ISNULL(SUM({parser.AggregationMember.TypedLocator}), 0)"
-                    : "ISNULL(SUM(data), 0)";
+                statement.SelectAggregate(v => $"ISNULL(SUM({v}), 0)",
+                    parser.AggregationMember?.TypedLocator ?? "data");
                 break;
 
             case SingleValueMode.Min:
-                statement.SelectColumns = parser.AggregationMember != null
-                    ? $"MIN({parser.AggregationMember.ValueLocator()})"
-                    : "MIN(data)";
+                statement.SelectAggregate(v => $"MIN({v})", parser.AggregationMember?.ValueLocator() ?? "data");
                 break;
 
             case SingleValueMode.Max:
-                statement.SelectColumns = parser.AggregationMember != null
-                    ? $"MAX({parser.AggregationMember.ValueLocator()})"
-                    : "MAX(data)";
+                statement.SelectAggregate(v => $"MAX({v})", parser.AggregationMember?.ValueLocator() ?? "data");
                 break;
 
             case SingleValueMode.Average:
-                statement.SelectColumns = parser.AggregationMember != null
-                    ? $"AVG(CAST({parser.AggregationMember.TypedLocator} AS float))"
-                    : "AVG(CAST(data AS float))";
+                statement.SelectAggregate(v => $"AVG(CAST({v} AS float))",
+                    parser.AggregationMember?.TypedLocator ?? "data");
                 break;
         }
     }

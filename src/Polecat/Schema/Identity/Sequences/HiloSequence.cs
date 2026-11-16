@@ -89,6 +89,9 @@ internal class HiloSequence : HiloSequenceBase
 
             await EnsureHiloTableAsync(conn, insideTransaction: true, cancellation).ConfigureAwait(false);
 
+            // gh-1004: the MERGE secures a hi on its first attempt, so this loop no longer spins under
+            // contention; it stays only so a value that somehow reads as "not secured" is never installed.
+            // Transient failures are the resilience pipeline's to retry.
             for (var attempts = 0; attempts < Settings.MaxAdvanceToNextHiAttempts; attempts++)
             {
                 var result = await TryGetNextHiAsync(conn, cancellation).ConfigureAwait(false);
@@ -114,6 +117,7 @@ internal class HiloSequence : HiloSequenceBase
 
             EnsureHiloTableAsync(conn, insideTransaction: true, CancellationToken.None).GetAwaiter().GetResult();
 
+            // gh-1004: see AdvanceToNextHi -- one attempt now always secures a hi.
             for (var attempts = 0; attempts < Settings.MaxAdvanceToNextHiAttempts; attempts++)
             {
                 var result = TryGetNextHiSync(conn);
@@ -169,92 +173,51 @@ internal class HiloSequence : HiloSequenceBase
         _tableEnsured = true;
     }
 
+    /// <summary>
+    ///     gh-1004 (marten#5938): reserve the next hi with one statement that cannot lose. The old
+    ///     read-then-compare-and-set returned -1 to every caller whose read another caller's commit had
+    ///     overtaken, and under contention a caller could spend its whole
+    ///     <c>MaxAdvanceToNextHiAttempts</c> budget that way (347 of 400 advances failed at one attempt).
+    ///     Now concurrent callers queue on the row's lock and each one gets a hi of its own.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///     The first block for an entity is 0 and every later one is the stored value + 1, exactly as
+    ///     before, so the meaning of <c>pc_hilo.hi_value</c> and <see cref="SetFloor" /> are unchanged.
+    ///     </para>
+    ///     <para>
+    ///     <c>HOLDLOCK</c> is what makes the first use race-safe: without it two MERGEs that both find no
+    ///     row both take the insert branch and one of them fails on the primary key. With it the
+    ///     not-matched probe holds a key-range lock until the statement ends, so the second caller waits
+    ///     and then takes the matched branch.
+    ///     </para>
+    /// </remarks>
+    private string NextHiSql =>
+        $"""
+         MERGE {_hiloTable} WITH (HOLDLOCK) AS t
+         USING (SELECT @entity AS entity_name) AS s ON t.entity_name = s.entity_name
+         WHEN MATCHED THEN UPDATE SET hi_value = t.hi_value + 1
+         WHEN NOT MATCHED THEN INSERT (entity_name, hi_value) VALUES (s.entity_name, 0)
+         OUTPUT inserted.hi_value;
+         """;
+
     private async Task<long> TryGetNextHiAsync(SqlConnection conn, CancellationToken ct)
     {
-        // Read current hi_value
-        long? currentHi;
-        await using (var readCmd = conn.CreateCommand())
-        {
-            readCmd.CommandText =
-                $"SELECT hi_value FROM {_hiloTable} WHERE entity_name = @entity;";
-            readCmd.Parameters.AddVarChar("@entity", EntityName);
-            var raw = await readCmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
-            currentHi = raw == null || raw == DBNull.Value ? null : Convert.ToInt64(raw);
-        }
-
-        if (currentHi == null)
-        {
-            // Row doesn't exist — try to insert it
-            try
-            {
-                await using var insertCmd = conn.CreateCommand();
-                insertCmd.CommandText =
-                    $"INSERT INTO {_hiloTable} (entity_name, hi_value) VALUES (@entity, 0);";
-                insertCmd.Parameters.AddVarChar("@entity", EntityName);
-                await insertCmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
-                return 0;
-            }
-            catch (SqlException ex) when (ex.Number == 2627)
-            {
-                // Concurrent insert — retry
-                return -1;
-            }
-        }
-
-        // Attempt optimistic update
-        var nextHi = currentHi.Value + 1;
-        await using (var updateCmd = conn.CreateCommand())
-        {
-            updateCmd.CommandText =
-                $"UPDATE {_hiloTable} SET hi_value = @next WHERE entity_name = @entity AND hi_value = @current;";
-            updateCmd.Parameters.AddWithValue("@next", nextHi);
-            updateCmd.Parameters.AddVarChar("@entity", EntityName);
-            updateCmd.Parameters.AddWithValue("@current", currentHi.Value);
-            var rows = await updateCmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
-            return rows == 0 ? -1 : nextHi;
-        }
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = NextHiSql;
+        cmd.Parameters.AddVarChar("@entity", EntityName);
+        return ToHi(await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false));
     }
 
     private long TryGetNextHiSync(SqlConnection conn)
     {
-        // Read current hi_value
-        long? currentHi;
-        using (var readCmd = conn.CreateCommand())
-        {
-            readCmd.CommandText =
-                $"SELECT hi_value FROM {_hiloTable} WHERE entity_name = @entity;";
-            readCmd.Parameters.AddVarChar("@entity", EntityName);
-            var raw = readCmd.ExecuteScalar();
-            currentHi = raw == null || raw == DBNull.Value ? null : Convert.ToInt64(raw);
-        }
-
-        if (currentHi == null)
-        {
-            try
-            {
-                using var insertCmd = conn.CreateCommand();
-                insertCmd.CommandText =
-                    $"INSERT INTO {_hiloTable} (entity_name, hi_value) VALUES (@entity, 0);";
-                insertCmd.Parameters.AddVarChar("@entity", EntityName);
-                insertCmd.ExecuteNonQuery();
-                return 0;
-            }
-            catch (SqlException ex) when (ex.Number == 2627)
-            {
-                return -1;
-            }
-        }
-
-        var nextHi = currentHi.Value + 1;
-        using (var updateCmd = conn.CreateCommand())
-        {
-            updateCmd.CommandText =
-                $"UPDATE {_hiloTable} SET hi_value = @next WHERE entity_name = @entity AND hi_value = @current;";
-            updateCmd.Parameters.AddWithValue("@next", nextHi);
-            updateCmd.Parameters.AddVarChar("@entity", EntityName);
-            updateCmd.Parameters.AddWithValue("@current", currentHi.Value);
-            var rows = updateCmd.ExecuteNonQuery();
-            return rows == 0 ? -1 : nextHi;
-        }
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = NextHiSql;
+        cmd.Parameters.AddVarChar("@entity", EntityName);
+        return ToHi(cmd.ExecuteScalar());
     }
+
+    // The MERGE always outputs one row. A missing value must still read as "not secured" (-1) rather
+    // than 0, which Convert.ToInt64 would make of a null and TrySetCurrentHi would install as a block.
+    private static long ToHi(object? raw) => raw is null || raw == DBNull.Value ? -1 : Convert.ToInt64(raw);
 }

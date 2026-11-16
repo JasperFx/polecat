@@ -410,20 +410,31 @@ public partial class DocumentStore : IDocumentStore
         var lifetime = new TransactionalConnection(
             factory, timeout, options.IsolationLevel, Options.ResiliencePipeline);
 
-        if (lifetime.HoldsTransactionForSession)
+        // #1003 (marten#5881): the connection is opened and the transaction begun before the caller has a
+        // session to dispose, so a failure anywhere up to the return -- SQL Server refusing the isolation level,
+        // or the token cancelled after the open -- has to give the connection back here or nowhere.
+        try
         {
-            await lifetime.BeginTransactionAsync(token).ConfigureAwait(false);
-        }
+            if (lifetime.HoldsTransactionForSession)
+            {
+                await lifetime.BeginTransactionAsync(token).ConfigureAwait(false);
+            }
 
-        return options.Tracking switch
+            return options.Tracking switch
+            {
+                DocumentTracking.IdentityOnly => new IdentityMapDocumentSession(
+                    Options, lifetime, _providers, ensurer, Events, InlineProjections, options.TenantId,
+                    options.Listeners, options.CommitListeners),
+                _ => new LightweightSession(
+                    Options, lifetime, _providers, ensurer, Events, InlineProjections, options.TenantId,
+                    options.Listeners, options.CommitListeners)
+            };
+        }
+        catch (Exception)
         {
-            DocumentTracking.IdentityOnly => new IdentityMapDocumentSession(
-                Options, lifetime, _providers, ensurer, Events, InlineProjections, options.TenantId, options.Listeners,
-                options.CommitListeners),
-            _ => new LightweightSession(
-                Options, lifetime, _providers, ensurer, Events, InlineProjections, options.TenantId, options.Listeners,
-                options.CommitListeners)
-        };
+            await lifetime.DisposeAfterFailureAsync().ConfigureAwait(false);
+            throw;
+        }
     }
 
     public void Dispose()
