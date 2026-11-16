@@ -135,6 +135,9 @@ internal sealed class ScalarTranslation
                 when length.Expression?.Type == typeof(string):
                 return $"CAST(DATALENGTH(CAST({Translate(length.Expression)} AS nvarchar(max))) / 2 AS int)";
 
+            case ConditionalExpression conditional when TryReadThroughNullGuard(conditional, out var guarded):
+                return Translate(guarded);
+
             case UnaryExpression unary:
                 return TranslateUnary(unary);
 
@@ -183,6 +186,56 @@ internal sealed class ScalarTranslation
 
         return member.ValueLocator();
     }
+
+    /// <summary>
+    ///     gh-1015: <c>o == null ? null : o.Amount</c>, which is how a member of the side of a left or right join
+    ///     that may have no match is read. SQL reads that member as NULL exactly when there is no match, so the
+    ///     guard is already what the member means there. Any other conditional is refused.
+    /// </summary>
+    private static bool TryReadThroughNullGuard(ConditionalExpression conditional, out Expression guarded)
+    {
+        guarded = null!;
+
+        if (conditional.Test is not BinaryExpression { NodeType: ExpressionType.Equal or ExpressionType.NotEqual } test)
+        {
+            return false;
+        }
+
+        var tested = IsNull(test.Right) ? test.Left : IsNull(test.Left) ? test.Right : null;
+        if (tested == null || !ReadsTheRow.In(tested)) return false;
+
+        var (whenNull, otherwise) = test.NodeType == ExpressionType.Equal
+            ? (conditional.IfTrue, conditional.IfFalse)
+            : (conditional.IfFalse, conditional.IfTrue);
+
+        if (!IsNull(whenNull) || !IsReadOff(otherwise, tested)) return false;
+
+        guarded = otherwise;
+        return true;
+    }
+
+    private static bool IsNull(Expression expression)
+        => !ReadsTheRow.In(expression) && WhereClauseParser.ExtractValue(expression) == null;
+
+    /// <summary>Whether <paramref name="expression" /> is a member chain read off <paramref name="owner" />.</summary>
+    private static bool IsReadOff(Expression expression, Expression owner)
+    {
+        var current = LinqQueryParser.StripConvert(expression);
+        while (current is MemberExpression member)
+        {
+            if (LinqQueryParser.StripConvert(member.Expression!) is var next && ExpressionEquals(next, LinqQueryParser.StripConvert(owner)))
+            {
+                return true;
+            }
+
+            current = LinqQueryParser.StripConvert(member.Expression!);
+        }
+
+        return false;
+    }
+
+    private static bool ExpressionEquals(Expression a, Expression b)
+        => a == b || a.ToString() == b.ToString() && a.Type == b.Type;
 
     private static string Constant(Expression node)
     {

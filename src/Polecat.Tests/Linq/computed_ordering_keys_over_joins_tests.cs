@@ -218,6 +218,39 @@ public class computed_ordering_keys_over_joins_tests : OneOffConfigurationsConte
         _ => throw new ArgumentOutOfRangeException(nameof(shape))
     };
 
+    // gh-1015 x gh-1012: a member of the side of a left join that may have no match reaches the ordering as
+    // o == null ? null : o.Amount, which is what the member means in SQL, so it orders (nulls first, as in .NET)
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ordering_by_the_optional_side_of_a_left_join(bool descending)
+    {
+        await SeedAsync();
+        var extra = new OrderKeyKeyCustomer { Id = Guid.NewGuid(), Name = "zulu", Rank = 9 };
+        await using (var writer = theStore.LightweightSession())
+        {
+            writer.Store(extra);
+            await writer.SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        IQueryable<OrderKeyKeyCustomer> customers = Customers.Append(extra).AsQueryable();
+        IQueryable<OrderKeyKeyOrder> orders = Orders.AsQueryable();
+
+        static IQueryable<string> query(IQueryable<OrderKeyKeyCustomer> c, IQueryable<OrderKeyKeyOrder> o, bool descending)
+        {
+            var rows = c.LeftJoin(o, x => x.Id, y => y.CustomerId,
+                (x, y) => new { x.Name, Amount = y == null ? (int?)null : y.Amount });
+            var ordered = descending ? rows.OrderByDescending(r => r.Amount) : rows.OrderBy(r => r.Amount);
+            return ordered.ThenBy(r => r.Name).Select(r => r.Name + ":" + r.Amount);
+        }
+
+        await using var session = theStore.QuerySession();
+        var actual = await query(session.Query<OrderKeyKeyCustomer>(), session.Query<OrderKeyKeyOrder>(), descending)
+            .ToListAsync(TestContext.Current.CancellationToken);
+
+        actual.ShouldBe(query(customers, orders, descending).ToList());
+    }
+
     // marten#5968: a key over the child documents without an exact translation is refused
     [Theory]
     [InlineData("child_math_call")]
