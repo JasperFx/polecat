@@ -111,13 +111,29 @@ internal class TransactionalConnection : IAlwaysConnectedLifetime
         _transactionFailure ??= cause;
     }
 
+    /// <remarks>
+    ///     #1003 (marten#5881): the field is assigned only once the open has succeeded. It used to be
+    ///     assigned first, and this only opens while the field is null, so one cancelled or failed open
+    ///     left a closed connection behind that was never opened again: every later command and
+    ///     transaction on the session failed with "The connection is closed." A connection whose open
+    ///     failed is disposed here, because nothing else ever sees it.
+    /// </remarks>
     private async ValueTask EnsureConnectionOpenAsync(CancellationToken token)
     {
-        if (_connection == null)
+        if (_connection != null) return;
+
+        var connection = _connectionFactory.Create();
+        try
         {
-            _connection = _connectionFactory.Create();
-            await _connection.OpenAsync(token).ConfigureAwait(false);
+            await connection.OpenAsync(token).ConfigureAwait(false);
         }
+        catch (Exception)
+        {
+            await connection.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
+
+        _connection = connection;
     }
 
     private async ValueTask PrepareToExecuteAsync(CancellationToken token)
@@ -282,5 +298,22 @@ internal class TransactionalConnection : IAlwaysConnectedLifetime
         if (Transaction != null) await Transaction.DisposeAsync().ConfigureAwait(false);
         await ResetIsolationLevelAsync().ConfigureAwait(false);
         if (_connection != null) await _connection.DisposeAsync().ConfigureAwait(false);
+    }
+
+    /// <summary>
+    ///     #1003 (marten#5881). Disposes a lifetime that failed before any session took ownership of it,
+    ///     so its connection goes back to the pool. A failure here is swallowed: the caller is already
+    ///     rethrowing the exception that matters, and must not have it replaced by this one.
+    /// </summary>
+    internal async ValueTask DisposeAfterFailureAsync()
+    {
+        try
+        {
+            await DisposeAsync().ConfigureAwait(false);
+        }
+        catch (Exception)
+        {
+            // The original failure is the one the caller needs to see
+        }
     }
 }

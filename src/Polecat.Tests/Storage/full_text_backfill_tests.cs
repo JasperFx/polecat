@@ -1,5 +1,7 @@
+using Microsoft.Data.SqlClient;
 using Polecat.Linq;
 using Polecat.Storage;
+using Polecat.Storage.FullText;
 using Polecat.Tests.Harness;
 
 namespace Polecat.Tests.Storage;
@@ -196,5 +198,137 @@ public class full_text_backfill_tests: OneOffConfigurationsContext
             (await query.Query<BackfilledArticle>().CountAsync(x => x.Body!.PlainTextSearch(tenant), Ct))
                 .ShouldBe(Count);
         }
+    }
+
+    /// <summary>
+    ///     gh-1021: the backfill used to tokenize only documents last written before it began, and the
+    ///     server clock ticks every 4 ms or so on Linux. A document written before the index existed, in
+    ///     the tick the backfill began, was skipped by the backfill and had never met the trigger, so it
+    ///     was out of every search for good. CI saw it as "should be 250 but was 147".
+    /// </summary>
+    /// <remarks>
+    ///     Waiting for the clock to land that way is a flake, not a test, so this writes the timestamp
+    ///     instead: every document is stamped far past the backfill's start, which is the same tick and
+    ///     everything after it at once. Before the fix none of them could be found.
+    /// </remarks>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task a_document_stamped_at_or_after_the_start_is_still_covered(bool nativeJson)
+    {
+        configure(nativeJson);
+        await theStore.Advanced.CleanAsync<BackfilledArticle>(Ct);
+
+        await using (var session = theStore.LightweightSession())
+        {
+            for (var i = 0; i < Count; i++)
+            {
+                session.Store(new BackfilledArticle { Id = Guid.NewGuid(), Body = $"common unique{i}" });
+            }
+
+            await session.SaveChangesAsync(Ct);
+        }
+
+        // No index yet, so no trigger: nothing is tokenized by this.
+        await stampInTheFutureAsync(typeof(BackfilledArticle));
+
+        configure(nativeJson, opts => opts.Schema.For<BackfilledArticle>().FullTextIndex(x => x.Body));
+
+        await using var query = theStore.QuerySession();
+
+        (await query.Query<BackfilledArticle>().CountAsync(x => x.Body!.PlainTextSearch("common"), Ct)).ShouldBe(Count);
+
+        // Covered once, not twice: one "common" per document.
+        (await countTokensAsync(typeof(BackfilledArticle), "common")).ShouldBe(Count);
+    }
+
+    /// <summary>
+    ///     gh-1021, through the other way in: an index that already has tokens, under conjoined tenancy,
+    ///     repairing one tenant's documents while another tenant holds the same ids. That takes the
+    ///     established branch of the list, and the tenant has to be part of the question the batch asks
+    ///     of the token table, or Red's tokens would answer for Blue's documents.
+    /// </summary>
+    [Fact]
+    public async Task a_tenant_repaired_after_the_start_is_still_covered()
+    {
+        void Conjoined(StoreOptions opts)
+        {
+            opts.Policies.AllDocumentsAreMultiTenanted();
+            opts.Schema.For<BackfilledArticle>().FullTextIndex(x => x.Body);
+        }
+
+        configure(ConnectionSource.SupportsNativeJson, Conjoined);
+        await theStore.Advanced.CleanAsync<BackfilledArticle>(Ct);
+
+        var ids = Enumerable.Range(0, Count).Select(_ => Guid.NewGuid()).ToArray();
+
+        foreach (var tenant in new[] { "red", "blue" })
+        {
+            await using var session = theStore.LightweightSession(tenant);
+            foreach (var id in ids)
+            {
+                session.Store(new BackfilledArticle { Id = id, Body = $"common {tenant}" });
+            }
+
+            await session.SaveChangesAsync(Ct);
+        }
+
+        // Blue loses its tokens without a write, and its documents look written after the backfill
+        // begins. Raw SQL rather than a session, because a write through the trigger would repair it.
+        var mapping = theStore.Options.Providers.GetProvider(typeof(BackfilledArticle)).Mapping;
+        await executeAsync(
+            $"DELETE FROM [{mapping.DatabaseSchemaName}].[{FullTextIndex.TableNameFor(mapping)}] WHERE tenant_id = 'blue'");
+        await executeAsync(
+            $"DISABLE TRIGGER [{mapping.DatabaseSchemaName}].[{FullTextTrigger.NameFor(mapping)}] ON [{mapping.DatabaseSchemaName}].[{mapping.TableName}]");
+        await stampInTheFutureAsync(typeof(BackfilledArticle), "blue");
+        await executeAsync(
+            $"ENABLE TRIGGER [{mapping.DatabaseSchemaName}].[{FullTextTrigger.NameFor(mapping)}] ON [{mapping.DatabaseSchemaName}].[{mapping.TableName}]");
+
+        // A new store ensures the table again, which runs the backfill again.
+        configure(ConnectionSource.SupportsNativeJson, Conjoined);
+
+        foreach (var tenant in new[] { "red", "blue" })
+        {
+            await using var query = theStore.QuerySession(tenant);
+
+            (await query.Query<BackfilledArticle>().CountAsync(x => x.Body!.PlainTextSearch(tenant), Ct))
+                .ShouldBe(Count);
+        }
+
+        (await countTokensAsync(typeof(BackfilledArticle), "blue")).ShouldBe(Count);
+        (await countTokensAsync(typeof(BackfilledArticle), "red")).ShouldBe(Count);
+        (await countTokensAsync(typeof(BackfilledArticle), "common")).ShouldBe(Count * 2);
+    }
+
+    private async Task stampInTheFutureAsync(Type documentType, string? tenantId = null)
+    {
+        var mapping = theStore.Options.Providers.GetProvider(documentType).Mapping;
+        var where = tenantId == null ? "" : $" WHERE tenant_id = '{tenantId}'";
+
+        await executeAsync(
+            $"UPDATE [{mapping.DatabaseSchemaName}].[{mapping.TableName}] SET last_modified = '9999-12-31T00:00:00+00:00'{where}");
+    }
+
+    private async Task<int> countTokensAsync(Type documentType, string term)
+    {
+        var mapping = theStore.Options.Providers.GetProvider(documentType).Mapping;
+
+        await using var conn = new SqlConnection(ConnectionSource.ConnectionString);
+        await conn.OpenAsync(Ct);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText =
+            $"SELECT COUNT(*) FROM [{mapping.DatabaseSchemaName}].[{FullTextIndex.TableNameFor(mapping)}] WHERE term = @term";
+        cmd.Parameters.AddWithValue("@term", term);
+
+        return (int)(await cmd.ExecuteScalarAsync(Ct))!;
+    }
+
+    private static async Task executeAsync(string sql)
+    {
+        await using var conn = new SqlConnection(ConnectionSource.ConnectionString);
+        await conn.OpenAsync(Ct);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = sql;
+        await cmd.ExecuteNonQueryAsync(Ct);
     }
 }

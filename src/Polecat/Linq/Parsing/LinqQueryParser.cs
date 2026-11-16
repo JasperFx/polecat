@@ -220,13 +220,15 @@ internal class LinqQueryParser : ExpressionVisitor
             SoftDeleteOperator = node.Method.Name;
         }
 
+        // Everything after a GroupJoin reads the joined rows rather than the queried document.
+        // GroupJoinData is set by visiting Arguments[0] above (the GroupJoin node).
+        if (GroupJoinData != null && HandleAfterGroupJoin(node))
+        {
+            return node;
+        }
+
         switch (node.Method.Name)
         {
-            // SelectMany after GroupJoin: capture selectors for the join pattern.
-            // GroupJoinData is set by visiting Arguments[0] above (the GroupJoin node).
-            case "SelectMany" when GroupJoinData != null:
-                HandleSelectManyAfterGroupJoin(node);
-                return node;
             case "GroupBy":
                 HandleGroupBy(node);
                 break;
@@ -300,9 +302,11 @@ internal class LinqQueryParser : ExpressionVisitor
                 HandleSelect(node);
                 break;
             case "Distinct":
+                ApplyToThePage("Distinct");
                 IsDistinct = true;
                 break;
             case "DistinctBy":
+                ApplyToThePage("DistinctBy");
                 HandleDistinctBy(node);
                 break;
             case "AnyTenant" when node.Method.DeclaringType == typeof(LinqExtensions):
@@ -406,11 +410,22 @@ internal class LinqQueryParser : ExpressionVisitor
 
     private void HandleGroupJoin(MethodCallExpression node)
     {
-        // GroupJoin(outer, inner, outerKeySelector, innerKeySelector, resultSelector)
+        // GroupJoin(outer, inner, outerKeySelector, innerKeySelector, resultSelector[, comparer])
         // Arguments: [0]=outer source, [1]=inner source, [2]=outerKey, [3]=innerKey, [4]=resultSelector
+
+        // gh-1000: refused before anything is parsed, so nothing is half-applied to the statement.
+        GroupJoinSources.AssertTranslatable(node);
 
         // Visit the outer source first (for any Where clauses applied before GroupJoin)
         Visit(node.Arguments[0]);
+
+        // gh-996: the join reads the outer source's table and filters, not a page of it.
+        if (Statement.InnerPage != null)
+        {
+            throw new BadLinqExpressionException(
+                "Polecat cannot translate a GroupJoin over rows that a Take() or Skip() paged and then reordered "
+                + "or filtered. Materialize the outer side first, or move the paging after the GroupJoin.");
+        }
 
         var outerType = node.Method.GetGenericArguments()[0];
         var innerType = node.Method.GetGenericArguments()[1];
@@ -424,6 +439,101 @@ internal class LinqQueryParser : ExpressionVisitor
             OuterElementType = outerType,
             InnerElementType = innerType
         };
+    }
+
+    /// <summary>
+    ///     gh-1001: an operator after <c>GroupJoin(...)</c>. Returns false for the ones the ordinary handlers
+    ///     below take as they are -- Take, Skip, an ordering, and a terminal with no predicate.
+    /// </summary>
+    /// <remarks>
+    ///     A lambda here is written against the joined rows, so it is read through the row selector at once
+    ///     (<see cref="Joins.GroupJoinData.ReadThroughRow" />) rather than left for the queried document's
+    ///     members to resolve: that is what turned <c>Where(r =&gt; r.Index &gt; 0)</c> into a filter on a
+    ///     path the outer document does not have. Reading it now, rather than at execution, keeps it
+    ///     reading the projection it was written against when a later <c>Select()</c> composes another.
+    /// </remarks>
+    private bool HandleAfterGroupJoin(MethodCallExpression node)
+    {
+        var join = GroupJoinData!;
+        var name = node.Method.Name;
+
+        if (name == "SelectMany")
+        {
+            if (join.SelectManyCollectionSelector != null)
+            {
+                throw JoinedRows.Refusal(
+                    "a second SelectMany() flattens the joined rows again, and Polecat translates one join per "
+                    + "query. Materialize the join with ToListAsync() and flatten it in memory");
+            }
+
+            HandleSelectManyAfterGroupJoin(node);
+            return true;
+        }
+
+        if (join.SelectManyCollectionSelector == null)
+        {
+            throw JoinedRows.Refusal(
+                $"{name}() comes between GroupJoin() and SelectMany(). Apply it after the SelectMany(), to the "
+                + "joined rows");
+        }
+
+        switch (name)
+        {
+            case "Where":
+                AssertJoinIsNotPaged(name);
+                join.PostJoinPredicates.Add(join.ReadThroughRow(GetLambda(node.Arguments[1])));
+                return true;
+
+            case "First" or "FirstOrDefault" or "Single" or "SingleOrDefault" or "Count" or "LongCount" or "Any"
+                when node.Arguments.Count > 1:
+                AssertJoinIsNotPaged(name);
+                ValueMode = Enum.Parse<SingleValueMode>(name);
+                join.PostJoinPredicates.Add(join.ReadThroughRow(GetLambda(node.Arguments[1])));
+                return true;
+
+            case "OrderBy" or "OrderByDescending" or "ThenBy" or "ThenByDescending":
+                AssertJoinIsNotPaged(name);
+                return false;
+
+            case "Distinct":
+                AssertJoinIsNotPaged(name);
+                IsDistinct = true;
+                return true;
+
+            case "Select":
+                if (IsDistinct)
+                {
+                    throw JoinedRows.Refusal(
+                        "Select() after Distinct() projects the distinct rows, and Polecat compares the rows of "
+                        + "the last projection. Apply the Select() before the Distinct()");
+                }
+
+                join.ComposeSelect(GetLambda(node.Arguments[1]));
+                return true;
+
+            case "Last" or "LastOrDefault" or "Sum" or "Min" or "Max" or "Average" or "GroupBy" or "DistinctBy"
+                or "OrderedByVectorDistance" or "GroupJoin":
+                throw JoinedRows.Refusal(
+                    $"{name}() after the join has no translation. Materialize the joined rows with ToListAsync() "
+                    + "and finish the work in memory");
+
+            default:
+                return false;
+        }
+    }
+
+    /// <summary>
+    ///     The join pages last, so a filter, an ordering or a Distinct() written after Take()/Skip() would
+    ///     apply to every joined row instead of the page.
+    /// </summary>
+    private void AssertJoinIsNotPaged(string name)
+    {
+        if (Statement.Limit.HasValue || Statement.Offset.HasValue)
+        {
+            throw JoinedRows.Refusal(
+                $"{name}() comes after Take() or Skip(), and Polecat pages the joined rows last. Apply {name}() "
+                + "before the paging");
+        }
     }
 
     private void HandleSelectManyAfterGroupJoin(MethodCallExpression node)
@@ -463,10 +573,12 @@ internal class LinqQueryParser : ExpressionVisitor
 
     private void HandleGroupJoinOrderBy(MethodCallExpression node, bool descending, bool replace)
     {
+        // gh-1001: read through the projection now, so a later Select() cannot change what it orders by
+        var lambda = GroupJoinData!.ReadThroughRow(GetLambda(node.Arguments[1]));
+
         // gh-997: a second OrderBy() over the joined rows keeps the earlier keys as tie-breakers, as it
         // does over documents. A repeated key is dropped where the keys are resolved to columns.
-        var lambda = GetLambda(node.Arguments[1]);
-        PlaceOrdering(GroupJoinData!.OrderByExpressions, ref _joinOrderingChainEnd, (lambda, descending),
+        PlaceOrdering(GroupJoinData.OrderByExpressions, ref _joinOrderingChainEnd, (lambda, descending),
             key: null, _ => null, startsTheOrdering: replace);
     }
 
@@ -514,6 +626,15 @@ internal class LinqQueryParser : ExpressionVisitor
 
     private void AddOrdering(OrderByClause ordering, IQueryableMember? member, bool startsTheOrdering)
     {
+        // gh-997 over gh-996's page: OrderBy(a).Take(5).OrderBy(b) sorts the page, and the page's rows arrive
+        // in a's order, so LINQ's stable sort leaves a to break b's ties, exactly as if no Take() came between.
+        // The page is a derived table of every column, so its keys read the same out here. Not after a
+        // Distinct(), which can only order by what it selected.
+        if (startsTheOrdering && Statement.InnerPage != null && Statement.OrderBys.Count == 0 && !IsDistinct)
+        {
+            Statement.OrderBys.AddRange(Statement.InnerPage.OrderBys);
+        }
+
         PlaceOrdering(Statement.OrderBys, ref _orderingChainEnd, ordering, ordering.Literal, o => o.Literal,
             startsTheOrdering);
 
@@ -535,7 +656,7 @@ internal class LinqQueryParser : ExpressionVisitor
         // the GroupBy cannot mean what the LINQ says. A Take(5) would page the groups rather than
         // group five rows, and an OrderBy has no column left to order by once the rows are grouped.
         if (SelectExpression != null || Statement.OrderBys.Count > 0 || Statement.Limit.HasValue
-            || Statement.Offset.HasValue || IsDistinct)
+            || Statement.Offset.HasValue || IsDistinct || Statement.InnerPage != null)
         {
             throw new BadLinqExpressionException(
                 "Polecat cannot translate a Select, OrderBy, Take, Skip or Distinct in front of a GroupBy, "
@@ -549,7 +670,22 @@ internal class LinqQueryParser : ExpressionVisitor
     private void HandleGroupByWhere(MethodCallExpression node)
     {
         // Where() after GroupBy() becomes a HAVING clause, resolved once the Select() is known.
+        RefuseAfterAGroupedPage("Where");
         GroupByHavingPredicates.Add(GetLambda(node.Arguments[1]));
+    }
+
+    /// <summary>
+    ///     gh-996: the groups are one statement, so an ordering or a filter after their page would choose a
+    ///     different page rather than apply to this one.
+    /// </summary>
+    private void RefuseAfterAGroupedPage(string operatorName)
+    {
+        if (!Statement.IsPaged) return;
+
+        throw new BadLinqExpressionException(
+            $"Polecat cannot translate {operatorName}() after a Take() or Skip() over the groups of a GroupBy: it "
+            + "would apply to every group rather than to the page. Order and filter the groups before paging "
+            + "them, or materialize the page and continue in memory.");
     }
 
     private void HandleGroupBySelect(MethodCallExpression node)
@@ -577,20 +713,24 @@ internal class LinqQueryParser : ExpressionVisitor
             // The key is a grouping or a projected shape rather than a document member, so it means
             // nothing until the GroupBy builder has the projection. Resolving it here as a member
             // would quietly order by a JSON path that does not exist.
+            RefuseAfterAGroupedPage(node.Method.Name);
             if (replace) GroupByOrderings.Clear();
             GroupByOrderings.Add((GetLambda(node.Arguments[1]), descending));
         }
         else
         {
+            ApplyToThePage(node.Method.Name);
             HandleOrderBy(node, descending, replace);
         }
     }
 
     private void HandleWhere(MethodCallExpression node)
     {
+        ApplyToThePage("Where");
+
         var predicate = OnTheDocument(GetLambda(node.Arguments[1]));
         var fragment = _whereParser.Parse(predicate.Body);
-        Statement.Wheres.Add(fragment);
+        Statement.RowFilters.Add(fragment);
         RowPredicates.Add(predicate);
     }
 
@@ -667,14 +807,40 @@ internal class LinqQueryParser : ExpressionVisitor
             + "the Select(...), or materialize the query with ToListAsync() and order it in memory.");
     }
 
+    /// <summary>
+    ///     gh-996: a <c>Take</c> after a page narrows it rather than replacing it, so
+    ///     <c>Take(2).Take(5)</c> is two rows. A negative count is no rows, as it is in LINQ to Objects.
+    /// </summary>
     private void HandleTake(MethodCallExpression node)
     {
-        Statement.Limit = (int)ExtractConstant(node.Arguments[1]);
+        var count = Math.Max(0, (int)ExtractConstant(node.Arguments[1]));
+        Statement.Limit = Statement.Limit.HasValue ? Math.Min(Statement.Limit.Value, count) : count;
     }
 
+    /// <summary>
+    ///     gh-996: a <c>Skip</c> after a page skips into it rather than replacing the first one, so
+    ///     <c>Skip(2).Take(5).Skip(1)</c> is <c>OFFSET 3</c> with four rows left. A negative count skips nothing.
+    /// </summary>
     private void HandleSkip(MethodCallExpression node)
     {
-        Statement.Offset = (int)ExtractConstant(node.Arguments[1]);
+        var count = Math.Max(0, (int)ExtractConstant(node.Arguments[1]));
+        Statement.Offset = (Statement.Offset ?? 0) + count;
+        if (Statement.Limit.HasValue) Statement.Limit = Math.Max(0, Statement.Limit.Value - count);
+    }
+
+    /// <summary>
+    ///     gh-996: an ordering, a filter or a Distinct after a <c>Take</c>/<c>Skip</c> applies to the page, so the
+    ///     page becomes a derived table first. See <see cref="Statement.InnerPage" />. Only one level of it is
+    ///     translated, and a second is refused rather than applied to the whole query.
+    /// </summary>
+    private void ApplyToThePage(string operatorName)
+    {
+        if (!Statement.IsPaged || Statement.TryWrapPage()) return;
+
+        throw new BadLinqExpressionException(
+            $"Polecat cannot translate {operatorName}() here: it follows a Take() or Skip() over rows that an "
+            + "earlier Take() or Skip() had already paged and then reordered or filtered, and Polecat translates "
+            + "only one such page. Materialize the query with ToListAsync() and continue in memory.");
     }
 
     private void HandleSelect(MethodCallExpression node)
@@ -830,12 +996,15 @@ internal class LinqQueryParser : ExpressionVisitor
             // After a GroupBy it filters the groups, exactly as a Where there does.
             if (GroupByKeySelector != null)
             {
+                RefuseAfterAGroupedPage(mode.ToString());
                 GroupByHavingPredicates.Add(predicate);
                 return;
             }
 
+            ApplyToThePage(mode.ToString());
+
             var fragment = _whereParser.Parse(OnTheDocument(predicate).Body);
-            Statement.Wheres.Add(fragment);
+            Statement.RowFilters.Add(fragment);
             RowPredicates.Add(predicate);
         }
     }
@@ -912,6 +1081,7 @@ internal class LinqQueryParser : ExpressionVisitor
                 "OrderedByVectorDistance expects a prepared ordering; call OrderByVectorDistance(...).");
         }
 
+        ApplyToThePage("OrderedByVectorDistance");
         AddOrdering(ordering, null, startsTheOrdering: true);
     }
 

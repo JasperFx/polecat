@@ -165,8 +165,7 @@ public class untranslatable_ordering_key_tests : OneOffConfigurationsContext
     public static TheoryData<string> UntranslatableJoinKeys =>
     [
         "negation", "negation_descending", "modulo_then_member", "concatenation", "outer_arithmetic_then_inner",
-        "math_call", "conditional", "narrowing", "outer_negation_then_inner", "member_of_a_projected_document",
-        "then_by_negation"
+        "math_call", "conditional", "narrowing", "outer_negation_then_inner", "then_by_negation"
     ];
 
     [Theory]
@@ -193,15 +192,32 @@ public class untranslatable_ordering_key_tests : OneOffConfigurationsContext
             "narrowing" => () => rows.OrderBy(r => (short)r.Amount).ToListAsync(Ct),
             "outer_negation_then_inner" => () => rows.OrderBy(r => -r.Rank).ThenBy(r => r.Amount).ToListAsync(Ct),
             "then_by_negation" => () => rows.OrderBy(r => r.Name).ThenBy(r => -r.Amount).ToListAsync(Ct),
-            "member_of_a_projected_document" => () => session.Query<CastKeyCustomer>()
-                .GroupJoin(session.Query<CastKeyOrder>(), x => x.Id, y => y.CustomerId, (x, ys) => new { x, ys })
-                .SelectMany(z => z.ys, (z, y) => new { z.x.Name, Order = y })
-                .OrderBy(r => r.Order.Amount).ToListAsync(Ct),
             _ => throw new ArgumentOutOfRangeException(nameof(shape))
         };
 
         var ex = await Should.ThrowAsync<BadLinqExpressionException>(query);
         ex.Message.ShouldContain("OrderBy", Case.Sensitive, shape);
+    }
+
+    // gh-1001 reads a key through the projection, so a member of a projected document is translatable. It
+    // used to be skipped, like every key that was not a plain member of the joined row.
+    [Fact]
+    public async Task a_member_of_a_projected_document_over_a_join_orders()
+    {
+        await SeedJoinAsync();
+        await using var session = theStore.QuerySession();
+
+        var expected = Customers.AsQueryable()
+            .GroupJoin(Orders.AsQueryable(), x => x.Id, y => y.CustomerId, (x, ys) => new { x, ys })
+            .SelectMany(z => z.ys, (z, y) => new { z.x.Name, Order = y })
+            .OrderByDescending(r => r.Order.Amount).Select(r => r.Order.Amount).ToList();
+
+        var actual = await session.Query<CastKeyCustomer>()
+            .GroupJoin(session.Query<CastKeyOrder>(), x => x.Id, y => y.CustomerId, (x, ys) => new { x, ys })
+            .SelectMany(z => z.ys, (z, y) => new { z.x.Name, Order = y })
+            .OrderByDescending(r => r.Order.Amount).ToListAsync(Ct);
+
+        actual.Select(r => r.Order.Amount).ShouldBe(expected);
     }
 
     [Fact]
