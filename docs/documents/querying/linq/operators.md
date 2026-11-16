@@ -76,6 +76,32 @@ A member stored as a JSON object or array has no value to sort by, so `OrderBy`,
 refuse one with `BadLinqExpressionException`. Use one of its members. A class with a JSON converter that
 stores it as a number or a string is ordered by what it stores.
 
+### Computed keys
+
+A key computed from the document is translated, as long as SQL Server computes exactly the value .NET would:
+
+```cs
+.OrderBy(x => -x.Number)
+.OrderBy(x => x.Number % 3).ThenBy(x => x.Price - x.Number * 2m)
+.OrderBy(x => x.Code + x.Name).ThenBy(x => x.Name.ToUpper())
+.OrderBy(x => x.Name.Length).ThenByDescending(x => x.Level.ToString())
+.OrderBy(x => x.Values[1]).ThenBy(x => x.Children[0].Name)
+```
+
+That is negation, arithmetic (with integer division and `%` truncating as they do in .NET), widening casts,
+string concatenation, `ToUpper()`, `ToLower()`, `Length`, `ToString()` of an integer or a `Guid`, and indexes
+into the document's arrays and lists. A key without an exact translation is refused rather than ordered by
+something else: decimal division (SQL Server rounds the scale), `%` over a floating point or decimal value, a
+narrowing cast (`(byte)256` is `0`), a conditional, `??`, a `Math` call, `Substring`, and the text of a
+`double` or a date. Integer overflow is the one difference: SQL Server raises an error where unchecked .NET
+wraps. The same keys translate over the rows of a join and over the child documents a `SelectMany()`
+flattens.
+
+A key that reads nothing from the document, such as a literal, a static, a captured local or
+`Settings.SortKeys[1]`, is the same for every row, so it orders nothing, as in LINQ-to-Objects. It is dropped,
+along with any comparer it carries: `OrderBy(x => sortKey).ThenBy(x => x.Name)` orders by `Name`. A comparer
+on a key that does read the document is still refused, because SQL Server orders by its collation.
+
 ## Projection
 
 ```cs
@@ -93,9 +119,10 @@ stores it as a number or a string is ordered by what it stores.
 ```
 
 `Distinct()` runs in SQL, over the scalar a `Select` projected or over the members of an anonymous type or
-object initializer. Those members have to be scalar members of the document, because SQL can only compare
-columns: a member that is an object, a computed value or a constructor call is refused with
-`BadLinqExpressionException`. So is an ordering by something the `Select` did not project, and a `Sum`, `Min`,
+object initializer. A computed scalar, `Select(x => x.Number % 4).Distinct()`, is translated as an ordering
+key is, and compared in SQL. The members of an anonymous type have to be scalar members of the document,
+because SQL can only compare columns: a member that is an object, a computed value or a constructor call is
+refused with `BadLinqExpressionException`. So is an ordering by something the `Select` did not project, and a `Sum`, `Min`,
 `Max` or `Average` after it. Project in memory after `ToListAsync()` for any of those.
 
 ::: warning SQL decides what is equal

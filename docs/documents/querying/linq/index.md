@@ -161,10 +161,11 @@ aggregate over the group, so `GroupBy(x => x.Items.Count)` and `g.Sum(x => x.Ite
 **Any other member of those types is refused**, along with the members of `TimeSpan`, `Guid`, `decimal`
 and the numeric types. That covers `x.CreatedAt.Ticks`, `x.CreatedAt.Offset`, `x.Span.TotalHours`,
 `x.Items.Capacity`, `x.Map.Keys`, the `Length` of a `byte[]` (stored as a base64 string), and the `Count`
-of a collection class of your own, which can mean anything. A member reached any other way than from
-the document is refused too: `OrderBy(x => captured.Name)`, `OrderBy(x => x.Name.Trim().Length)`, or
-`.Select(x => x.Name).Where(n => n.Length > 3)`. Each of these used to read a JSON path that could never
-exist and quietly match nothing.
+of a collection class of your own, which can mean anything. A member of something that is not stored is
+refused too: `OrderBy(x => x.Name.Trim().Length)`. Each of these used to read a JSON path that could never
+exist and quietly match nothing. A value that reads nothing from the document, `OrderBy(x => captured.Name)`,
+is worked out before the query runs instead, and `.Select(x => x.Name).Where(n => n.Length > 3)` reads the
+`Length` of the stored name through the projection.
 
 A complex `Select` that materializes through `ToListAsync()` is not affected, because it runs in memory:
 `Select(x => new { x.CreatedAt.Ticks })` works, and only the JSON streaming calls refuse it.
@@ -190,8 +191,14 @@ var names = await session.Query<User>()
 That works for a member the projection assigned, in an anonymous type or an object initializer, and it
 means what writing the same expression against the document would mean. Where the tree does not say what a
 member holds, it is refused: a member a `new Dto { ... }` left unset, because no row holds its default, and
-any member of a constructor call like `new Dto(x.Name)`. The members of a projected scalar are refused
-too, as above.
+any member of a constructor call like `new Dto(x.Name)`.
+
+A projected scalar is read the same way, computed ones included: `Select(x => x.Number * 2).Where(n => n > 4)`
+filters on `x.Number * 2 > 4`, `Select(x => x.Name).OrderBy(n => n.Length)` orders by the name's length, and
+`Select(x => x.Number % 3).Distinct()`, `.Sum()`, `.Min()`, `.Max()` and `.Average()` compute the projected
+value in SQL. A computed value is translated by the same exact rules as a
+[computed ordering key](/documents/querying/linq/operators#computed-keys), and refused where it has none. A
+plain computed `Select` with nothing after it is still computed in memory, by .NET.
 
 A second `Select` reads the first in the same way.
 
