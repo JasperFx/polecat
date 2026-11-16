@@ -37,7 +37,8 @@ namespace Polecat.Storage.FullText;
 ///         missing per batch is an anti-join over a heap, and over 2,000 documents with no index on
 ///         <c>doc_id</c>, which a table from before #916 still has none of, that took 133 seconds where one
 ///         statement took 12. Asked once it costs what the one statement always did, and a document that
-///         yields no tokens simply comes off the list.
+///         yields no tokens simply comes off the list. A batch still asks about its own hundred keys before
+///         it writes them (#1021), because the list can be out of date by then; see <c>BatchSql</c>.
 ///     </para>
 ///     <para>
 ///         ⚠️ <b>Repairing an existing index is not this job, and it is held back from doing so</b> (#835,
@@ -91,14 +92,12 @@ internal static class FullTextBackfill
                 $"SELECT CASE WHEN EXISTS (SELECT 1 FROM {ftTable} WHERE member = {key}) THEN 1 ELSE 0 END;",
                 commandTimeout).ConfigureAwait(false) == 1;
 
-            // Taken before the list is, so that a document written after it can be told from one on it.
-            var started = await executeAsync<DateTimeOffset>(conn, "SELECT SYSDATETIMEOFFSET();", commandTimeout).ConfigureAwait(false);
-
             var pending = await executeAsync(conn, ListSql(mapping, index, established, ftTable), commandTimeout).ConfigureAwait(false);
 
+            var batch = BatchSql(mapping, index, ftTable);
             while (pending > 0)
             {
-                pending = await executeAsync(conn, BatchSql(mapping, index, ftTable), commandTimeout, started).ConfigureAwait(false);
+                pending = await executeBatchAsync(conn, batch, commandTimeout).ConfigureAwait(false);
             }
         }
 
@@ -106,23 +105,32 @@ internal static class FullTextBackfill
     }
 
     private static async Task<int> executeAsync(SqlConnection conn, string sql, int commandTimeout,
-        DateTimeOffset? started = null)
-        => await executeAsync<int>(conn, sql, commandTimeout, started).ConfigureAwait(false);
-
-    private static async Task<T> executeAsync<T>(SqlConnection conn, string sql, int commandTimeout,
-        DateTimeOffset? started = null) where T : struct
+        SqlTransaction? tx = null)
     {
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = sql;
         cmd.CommandTimeout = commandTimeout;
+        cmd.Transaction = tx;
 
-        if (started != null)
+        if (tx != null)
         {
-            cmd.Parameters.Add(new SqlParameter("@started", SqlDbType.DateTimeOffset) { Value = started.Value });
             cmd.Parameters.Add(new SqlParameter("@batch", SqlDbType.Int) { Value = BatchSize });
         }
 
-        return await cmd.ExecuteScalarAsync(CancellationToken.None).ConfigureAwait(false) is T value ? value : default;
+        return await cmd.ExecuteScalarAsync(CancellationToken.None).ConfigureAwait(false) is int value ? value : 0;
+    }
+
+    /// <summary>
+    ///     One batch, in a transaction of its own: the documents it holds stay held until their tokens are
+    ///     written, and a batch that fails puts its keys back on the list.
+    /// </summary>
+    private static async Task<int> executeBatchAsync(SqlConnection conn, string sql, int commandTimeout)
+    {
+        await using var tx = (SqlTransaction)await conn.BeginTransactionAsync(CancellationToken.None).ConfigureAwait(false);
+        var taken = await executeAsync(conn, sql, commandTimeout, tx).ConfigureAwait(false);
+        await tx.CommitAsync(CancellationToken.None).ConfigureAwait(false);
+
+        return taken;
     }
 
     /// <summary>
@@ -157,8 +165,34 @@ internal static class FullTextBackfill
     ///     Tokenizes the next batch off the list, answering how many that took.
     /// </summary>
     /// <remarks>
-    ///     A document written since the list was taken is left alone, because the trigger has already
-    ///     tokenized it and doing so again would double its terms.
+    ///     <para>
+    ///         A document written since the list was taken is left alone, because the trigger has already
+    ///         tokenized it and doing so again would double its terms. ⚠️ <b>What says so is the token
+    ///         table, not the clock</b> (#1021). This used to tokenize only <c>last_modified &lt; @started</c>,
+    ///         and <c>SYSDATETIMEOFFSET()</c> ticks about every 4 ms on Linux: a document written before the
+    ///         index existed, in the same tick the backfill began, carried <c>last_modified = @started</c>,
+    ///         was skipped here, and had never been near the trigger either. It stayed out of every search
+    ///         for good, with no error, until it was next written.
+    ///     </para>
+    ///     <para>
+    ///         The clock is not kept even as a shortcut for documents written well before the start. Not
+    ///         every write that fires the trigger moves <c>last_modified</c>: a soft delete sets only
+    ///         <c>is_deleted</c> and <c>deleted_at</c>, and a hand-written <c>UPDATE</c> sets what it likes. One
+    ///         of those landing between the list and the batch has been tokenized by the trigger and still
+    ///         looks old, so the shortcut would tokenize it a second time. The cost of asking is a seek on
+    ///         <c>doc_id</c> per document. On a token table from before #916 that index is missing and each
+    ///         batch scans the table instead, until the schema is applied, which is the same thing the
+    ///         trigger already does on such a table for every write.
+    ///     </para>
+    ///     <para>
+    ///         ⚠️ <b>The asking is only an answer while the documents are held still</b>, which is what the
+    ///         <c>UPDLOCK</c> is for, taken in a statement of its own so that it comes first. A write to one
+    ///         of them either committed before it, with its tokens there to be seen, or waits until this
+    ///         batch commits, and then the trigger deletes what this wrote before writing its own. Without it
+    ///         a write could land between the look and the insert, and both would tokenize the document.
+    ///         The rows are read through <c>version</c> because a count alone can be answered from another
+    ///         index, which would lock nothing a writer takes.
+    ///     </para>
     /// </remarks>
     private static string BatchSql(DocumentMapping mapping, FullTextIndex index, string ftTable)
     {
@@ -174,13 +208,18 @@ internal static class FullTextBackfill
 
         return $"""
                 DECLARE @keys TABLE ({columns});
+                DECLARE @held bigint;
                 DELETE TOP (@batch) FROM {Pending} OUTPUT {deleted} INTO @keys;
+                SELECT @held = MAX(i.version) FROM {docTable} i WITH (UPDLOCK, ROWLOCK)
+                INNER JOIN @keys k ON {join};
                 INSERT INTO {ftTable} (doc_id, tenant_id, member, term, pos)
                 SELECT i.id, {FullTextIndex.TenantColumn(mapping)}, {key}, {index.TermExpression(mapping)}, {FullTextIndex.PositionExpression(mapping)}
                 FROM {docTable} i
                 INNER JOIN @keys k ON {join}
                 {index.TokenizeClause("i", DocumentIndex.UsesNativeJson(mapping))}
-                AND i.last_modified < @started;
+                AND NOT EXISTS (SELECT 1 FROM {ftTable} ft
+                                WHERE ft.doc_id = i.id AND ft.tenant_id = {FullTextIndex.TenantColumn(mapping)}
+                                  AND ft.member = {key});
                 SELECT COUNT(*) FROM @keys;
                 """;
     }
