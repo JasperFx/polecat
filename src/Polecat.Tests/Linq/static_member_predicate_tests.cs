@@ -159,7 +159,21 @@ public class static_member_predicate_tests : OneOffConfigurationsContext
         }
     }
 
-    // marten#5943: ordering by a document dictionary entry is a feature, so a clear refusal is allowed
+    // gh-1014: a dictionary entry read as a JSON path in a Select
+    [Fact]
+    public async Task select_a_document_dictionary_entry()
+    {
+        await SeedAsync();
+        await using var session = theStore.QuerySession();
+        var key = "a";
+
+        var actual = await session.Query<CalcStaticProbeDoc>().OrderBy(x => x.Number).Select(x => x.Scores[key])
+            .ToListAsync(Ct);
+
+        actual.ShouldBe(Docs.OrderBy(x => x.Number).Select(x => x.Scores[key]).ToList());
+    }
+
+    // marten#5943: ordering by a document dictionary entry (gh-1014 reads it as a JSON path)
     [Fact]
     public async Task order_by_document_dictionary_by_static_key()
     {
