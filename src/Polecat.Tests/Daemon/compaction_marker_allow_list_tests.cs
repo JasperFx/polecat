@@ -124,6 +124,48 @@ public class compaction_marker_allow_list_tests : OneOffConfigurationsContext
     }
 
     /// <summary>
+    ///     weasel#846, the half <see cref="the_marker_survives_an_allow_list_past_the_parameter_cap" /> cannot
+    ///     see: that a list past SQL Server's 2,100-parameter cap is still filtered <b>in SQL</b>. That test's
+    ///     stream holds only events the list admits, so it passes with no filter at all. Here ten rows the
+    ///     shard does not read come before the one it does, and the batch is three. Filtered in SQL, the
+    ///     first page skips straight to the match. Filtered after hydration, as Polecat did above 2,000 names
+    ///     before #989, it reads three rows it then throws away and returns an empty page.
+    /// </summary>
+    [Fact]
+    public async Task an_allow_list_past_the_parameter_cap_is_filtered_in_sql_not_after_hydration()
+    {
+        var streamId = Guid.NewGuid();
+        theSession.Events.StartStream<QuestParty>(streamId,
+            Enumerable.Range(1, 10).Select(day => (object)new MembersJoined(day, "Bree", ["Strider"])).ToArray());
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        theSession.Events.Append(streamId, new QuestStarted("Wanted"));
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        var highWater = await HighWaterAsync();
+
+        var filtering = new EventFilterable();
+        filtering.IncludeType<QuestStarted>();
+        foreach (var padding in PaddingEventTypes(2_200))
+        {
+            filtering.IncludeType(padding);
+        }
+
+        // Past the cap, and still a filtered list (weasel#845 turns an abstract or interface type into
+        // "read everything", which would make this test prove nothing).
+        var allowList = Weasel.Storage.EventTypeAllowList.For(theStore.Database.Events, filtering);
+        allowList.IsEmpty.ShouldBeFalse();
+        allowList.DotNetTypeNames.Count.ShouldBeGreaterThan(2_100);
+        allowList.DotNetTypeNames.ShouldNotContain(typeof(MembersJoined).AssemblyQualifiedName!);
+
+        var page = await CreateLoader(filtering)
+            .LoadAsync(CreateRequest(0, highWater, batchSize: 3), TestContext.Current.CancellationToken);
+
+        page.Select(x => x.Data).ShouldHaveSingleItem().ShouldBeOfType<QuestStarted>().Name.ShouldBe("Wanted");
+        page.Ceiling.ShouldBe(highWater);
+    }
+
+    /// <summary>
     ///     The daemon consequence, end to end: an async single-stream projection catching up over a
     ///     stream that was compacted before the shard ever reached it. Live aggregation is the
     ///     unfiltered control — it reads the same rows through <c>PcEventsRowReader</c>, which has no
@@ -361,12 +403,12 @@ public class compaction_marker_allow_list_tests : OneOffConfigurationsContext
     private Task<long> HighWaterAsync() =>
         theStore.Database.FetchHighestEventSequenceNumber(TestContext.Current.CancellationToken);
 
-    private static EventRequest CreateRequest(long floor, long highWater) =>
+    private static EventRequest CreateRequest(long floor, long highWater, int batchSize = 100) =>
         new()
         {
             Floor = floor,
             HighWater = highWater,
-            BatchSize = 100,
+            BatchSize = batchSize,
             Name = new ShardName("TestLoader"),
             ErrorOptions = new ErrorHandlingOptions(),
             Runtime = null!,
