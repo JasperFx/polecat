@@ -406,8 +406,11 @@ internal class LinqQueryParser : ExpressionVisitor
 
     private void HandleGroupJoin(MethodCallExpression node)
     {
-        // GroupJoin(outer, inner, outerKeySelector, innerKeySelector, resultSelector)
+        // GroupJoin(outer, inner, outerKeySelector, innerKeySelector, resultSelector[, comparer])
         // Arguments: [0]=outer source, [1]=inner source, [2]=outerKey, [3]=innerKey, [4]=resultSelector
+
+        // gh-1000: refused before anything is parsed, so nothing is half-applied to the statement.
+        GroupJoinSources.AssertTranslatable(node);
 
         // Visit the outer source first (for any Where clauses applied before GroupJoin)
         Visit(node.Arguments[0]);
