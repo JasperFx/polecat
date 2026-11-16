@@ -176,8 +176,26 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
         return batch.BatchCommands[0].CommandText;
     }
 
+    /// <summary>
+    ///     The statement <see cref="ExecuteAsync{TResult}" /> would run for <paramref name="expression" />,
+    ///     for <c>ToSql()</c> and the query-plan tests.
+    /// </summary>
+    /// <remarks>
+    ///     gh-1002 (marten#5916): a document query is finished by <see cref="PrepareDocumentStatement" />,
+    ///     the same preparation execution uses, so the preview carries the select list execution reads
+    ///     with -- <c>data, guid_version</c> for an <c>IVersioned</c> document rather than <c>data</c>.
+    /// </remarks>
     internal Statement BuildStatement(Expression expression, string tenantId)
-        => BuildStatement(Parse(expression, tenantId));
+    {
+        var query = Parse(expression, tenantId);
+        if (query.Parser.GroupJoinData != null || query.Parser.GroupByKeySelector != null)
+        {
+            return BuildStatement(query);
+        }
+
+        PrepareDocumentStatement(query);
+        return query.Parser.Statement;
+    }
 
     /// <summary>
     ///     <see cref="BuildStatement(Expression, string)" /> for a query joining a batch, which runs
