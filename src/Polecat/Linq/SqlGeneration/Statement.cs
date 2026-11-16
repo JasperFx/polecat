@@ -46,6 +46,71 @@ internal class Statement
     /// </summary>
     public string? OuterAggregate { get; set; }
 
+    /// <summary>
+    ///     When set, the page an earlier <c>Take()</c>/<c>Skip()</c> chose, which everything else on this
+    ///     statement applies to: <see cref="PageFilters" />, <see cref="OrderBys" />, <see cref="Limit" />,
+    ///     <see cref="Offset" />, the select list and any aggregate. <see cref="Wheres" /> still decide which
+    ///     rows the page is chosen from, so the scoping an execution path adds after parsing (tenant, soft
+    ///     deletes, <c>doc_type</c>) is applied before the page, as it has to be.
+    /// </summary>
+    /// <remarks>
+    ///     gh-996: one flat statement could only rewrite its own clauses, so an operator after a page applied to
+    ///     the whole query. <c>OrderBy(x =&gt; x.Number).Take(4).OrderByDescending(x =&gt; x.Number)</c> cleared the
+    ///     first ordering and took the TOP(4) of the second, a different page.
+    /// </remarks>
+    public PageDefinition? InnerPage { get; private set; }
+
+    /// <summary>Filters on the rows of <see cref="InnerPage" />, from a <c>Where</c> written after the page.</summary>
+    public List<ISqlFragment> PageFilters { get; } = [];
+
+    /// <summary>
+    ///     Moves the current ordering and page into <see cref="InnerPage" />, so what comes next applies to the
+    ///     page. Answers false when there is already one, which would need a second level of derived table.
+    /// </summary>
+    public bool TryWrapPage()
+    {
+        if (InnerPage != null) return false;
+
+        InnerPage = new PageDefinition([..OrderBys], Limit, Offset);
+        OrderBys.Clear();
+        Limit = null;
+        Offset = null;
+        return true;
+    }
+
+    /// <summary>
+    ///     Makes the statement read the last row of its ordering, as the first row of the reversed one.
+    /// </summary>
+    /// <remarks>
+    ///     gh-996: after a page, the last row is the page's, so the page is wrapped and its ordering reversed
+    ///     outside it. Reversing the statement's own ordering took the last row of the whole query.
+    /// </remarks>
+    public void ReadLastRow()
+    {
+        if (IsPaged)
+        {
+            if (!TryWrapPage())
+            {
+                throw new BadLinqExpressionException(
+                    "Polecat cannot translate Last() after a Take() or Skip() over rows that an earlier Take() "
+                    + "or Skip() had already paged and then reordered or filtered. Materialize the query with "
+                    + "ToListAsync() and take the last row in memory.");
+            }
+
+            OrderBys.AddRange(InnerPage!.OrderBys);
+        }
+
+        for (var i = 0; i < OrderBys.Count; i++)
+        {
+            OrderBys[i] = OrderBys[i].Reversed();
+        }
+
+        Limit = 1;
+    }
+
+    /// <summary>The filters the next row-level <c>Where</c> belongs with.</summary>
+    public List<ISqlFragment> RowFilters => InnerPage == null ? Wheres : PageFilters;
+
     /// <summary>Whether a <c>Take()</c> or a <c>Skip()</c> decides which rows this statement holds.</summary>
     public bool IsPaged => Limit.HasValue || Offset.HasValue;
 
@@ -136,9 +201,7 @@ internal class Statement
 
         AppendSelectList(builder);
         builder.Append(" FROM ");
-        builder.Append(FromTable);
-
-        AppendWheres(builder);
+        AppendSource(builder);
 
         if (GroupByColumns.Count > 0)
         {
@@ -216,9 +279,7 @@ internal class Statement
         builder.Append(" ORDER BY ");
         builder.Append(WindowOrderBy());
         builder.Append(") AS __pc_distinct_rn FROM ");
-        builder.Append(FromTable);
-
-        AppendWheres(builder);
+        AppendSource(builder);
 
         builder.Append(") AS __pc_distinct WHERE __pc_distinct_rn = 1");
 
@@ -243,9 +304,7 @@ internal class Statement
         builder.Append(" FROM (SELECT DISTINCT ");
         builder.Append(DistinctColumns!);
         builder.Append(" FROM ");
-        builder.Append(FromTable);
-
-        AppendWheres(builder);
+        AppendSource(builder);
 
         builder.Append(") AS __pc_distinct");
 
@@ -308,15 +367,63 @@ internal class Statement
         }
     }
 
-    private void AppendWheres(ICommandBuilder builder)
+    /// <summary>
+    ///     The rows this statement reads: its table and <see cref="Wheres" />, or, with an
+    ///     <see cref="InnerPage" />, that page of them as a derived table and <see cref="PageFilters" />.
+    /// </summary>
+    private void AppendSource(ICommandBuilder builder)
     {
-        if (Wheres.Count == 0) return;
+        if (InnerPage == null)
+        {
+            builder.Append(FromTable);
+            AppendWheres(builder, Wheres);
+            return;
+        }
+
+        // Every column of the table, so the select list, the orderings and the filters out here read the
+        // same columns they would off the table itself.
+        builder.Append("(SELECT ");
+        var (orderBys, limit, offset) = InnerPage;
+        if (limit.HasValue && (!offset.HasValue || limit.Value == 0))
+        {
+            builder.Append($"TOP({limit.Value}) ");
+        }
+
+        builder.Append("* FROM ");
+        builder.Append(FromTable);
+        AppendWheres(builder, Wheres);
+
+        if (orderBys.Count > 0)
+        {
+            builder.Append(" ORDER BY ");
+            for (var i = 0; i < orderBys.Count; i++)
+            {
+                if (i > 0) builder.Append(", ");
+                orderBys[i].Apply(builder);
+            }
+        }
+
+        if (offset.HasValue && limit != 0)
+        {
+            if (orderBys.Count == 0) builder.Append(" ORDER BY (SELECT NULL)");
+
+            builder.Append($" OFFSET {offset.Value} ROWS");
+            if (limit.HasValue) builder.Append($" FETCH NEXT {limit.Value} ROWS ONLY");
+        }
+
+        builder.Append(") AS __pc_page");
+        AppendWheres(builder, PageFilters);
+    }
+
+    private static void AppendWheres(ICommandBuilder builder, List<ISqlFragment> wheres)
+    {
+        if (wheres.Count == 0) return;
 
         builder.Append(" WHERE ");
-        for (var i = 0; i < Wheres.Count; i++)
+        for (var i = 0; i < wheres.Count; i++)
         {
             if (i > 0) builder.Append(" AND ");
-            Wheres[i].Apply(builder);
+            wheres[i].Apply(builder);
         }
     }
 
@@ -347,3 +454,6 @@ internal class Statement
                || SelectColumns.StartsWith("AVG(", StringComparison.OrdinalIgnoreCase);
     }
 }
+
+/// <summary>The ordering and the page of <see cref="Statement.InnerPage" />.</summary>
+internal sealed record PageDefinition(List<OrderByClause> OrderBys, int? Limit, int? Offset);

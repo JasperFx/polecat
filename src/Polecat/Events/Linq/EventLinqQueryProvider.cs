@@ -417,11 +417,7 @@ internal class EventLinqQueryProvider : IPolecatAsyncQueryProvider,
 
             case SingleValueMode.Last:
             case SingleValueMode.LastOrDefault:
-                for (var i = 0; i < statement.OrderBys.Count; i++)
-                {
-                    statement.OrderBys[i] = statement.OrderBys[i].Reversed();
-                }
-                statement.Limit = 1;
+                statement.ReadLastRow();
                 break;
 
             // gh-995: over a page these aggregate a derived table of the page; see Statement.SelectAggregate.
