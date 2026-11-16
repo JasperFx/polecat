@@ -220,13 +220,15 @@ internal class LinqQueryParser : ExpressionVisitor
             SoftDeleteOperator = node.Method.Name;
         }
 
+        // Everything after a GroupJoin reads the joined rows rather than the queried document.
+        // GroupJoinData is set by visiting Arguments[0] above (the GroupJoin node).
+        if (GroupJoinData != null && HandleAfterGroupJoin(node))
+        {
+            return node;
+        }
+
         switch (node.Method.Name)
         {
-            // SelectMany after GroupJoin: capture selectors for the join pattern.
-            // GroupJoinData is set by visiting Arguments[0] above (the GroupJoin node).
-            case "SelectMany" when GroupJoinData != null:
-                HandleSelectManyAfterGroupJoin(node);
-                return node;
             case "GroupBy":
                 HandleGroupBy(node);
                 break;
@@ -429,6 +431,101 @@ internal class LinqQueryParser : ExpressionVisitor
         };
     }
 
+    /// <summary>
+    ///     gh-1001: an operator after <c>GroupJoin(...)</c>. Returns false for the ones the ordinary handlers
+    ///     below take as they are -- Take, Skip, an ordering, and a terminal with no predicate.
+    /// </summary>
+    /// <remarks>
+    ///     A lambda here is written against the joined rows, so it is read through the row selector at once
+    ///     (<see cref="Joins.GroupJoinData.ReadThroughRow" />) rather than left for the queried document's
+    ///     members to resolve: that is what turned <c>Where(r =&gt; r.Index &gt; 0)</c> into a filter on a
+    ///     path the outer document does not have. Reading it now, rather than at execution, keeps it
+    ///     reading the projection it was written against when a later <c>Select()</c> composes another.
+    /// </remarks>
+    private bool HandleAfterGroupJoin(MethodCallExpression node)
+    {
+        var join = GroupJoinData!;
+        var name = node.Method.Name;
+
+        if (name == "SelectMany")
+        {
+            if (join.SelectManyCollectionSelector != null)
+            {
+                throw JoinedRows.Refusal(
+                    "a second SelectMany() flattens the joined rows again, and Polecat translates one join per "
+                    + "query. Materialize the join with ToListAsync() and flatten it in memory");
+            }
+
+            HandleSelectManyAfterGroupJoin(node);
+            return true;
+        }
+
+        if (join.SelectManyCollectionSelector == null)
+        {
+            throw JoinedRows.Refusal(
+                $"{name}() comes between GroupJoin() and SelectMany(). Apply it after the SelectMany(), to the "
+                + "joined rows");
+        }
+
+        switch (name)
+        {
+            case "Where":
+                AssertJoinIsNotPaged(name);
+                join.PostJoinPredicates.Add(join.ReadThroughRow(GetLambda(node.Arguments[1])));
+                return true;
+
+            case "First" or "FirstOrDefault" or "Single" or "SingleOrDefault" or "Count" or "LongCount" or "Any"
+                when node.Arguments.Count > 1:
+                AssertJoinIsNotPaged(name);
+                ValueMode = Enum.Parse<SingleValueMode>(name);
+                join.PostJoinPredicates.Add(join.ReadThroughRow(GetLambda(node.Arguments[1])));
+                return true;
+
+            case "OrderBy" or "OrderByDescending" or "ThenBy" or "ThenByDescending":
+                AssertJoinIsNotPaged(name);
+                return false;
+
+            case "Distinct":
+                AssertJoinIsNotPaged(name);
+                IsDistinct = true;
+                return true;
+
+            case "Select":
+                if (IsDistinct)
+                {
+                    throw JoinedRows.Refusal(
+                        "Select() after Distinct() projects the distinct rows, and Polecat compares the rows of "
+                        + "the last projection. Apply the Select() before the Distinct()");
+                }
+
+                join.ComposeSelect(GetLambda(node.Arguments[1]));
+                return true;
+
+            case "Last" or "LastOrDefault" or "Sum" or "Min" or "Max" or "Average" or "GroupBy" or "DistinctBy"
+                or "OrderedByVectorDistance" or "GroupJoin":
+                throw JoinedRows.Refusal(
+                    $"{name}() after the join has no translation. Materialize the joined rows with ToListAsync() "
+                    + "and finish the work in memory");
+
+            default:
+                return false;
+        }
+    }
+
+    /// <summary>
+    ///     The join pages last, so a filter, an ordering or a Distinct() written after Take()/Skip() would
+    ///     apply to every joined row instead of the page.
+    /// </summary>
+    private void AssertJoinIsNotPaged(string name)
+    {
+        if (Statement.Limit.HasValue || Statement.Offset.HasValue)
+        {
+            throw JoinedRows.Refusal(
+                $"{name}() comes after Take() or Skip(), and Polecat pages the joined rows last. Apply {name}() "
+                + "before the paging");
+        }
+    }
+
     private void HandleSelectManyAfterGroupJoin(MethodCallExpression node)
     {
         // SelectMany(source, collectionSelector, resultSelector)
@@ -471,8 +568,9 @@ internal class LinqQueryParser : ExpressionVisitor
             GroupJoinData!.OrderByExpressions.Clear();
         }
 
-        var lambda = GetLambda(node.Arguments[1]);
-        GroupJoinData!.OrderByExpressions.Add((lambda, descending));
+        // gh-1001: read through the projection now, so a later Select() cannot change what it orders by
+        var lambda = GroupJoinData!.ReadThroughRow(GetLambda(node.Arguments[1]));
+        GroupJoinData.OrderByExpressions.Add((lambda, descending));
     }
 
     private void HandleGroupBy(MethodCallExpression node)
