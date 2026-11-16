@@ -943,31 +943,32 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
         var memberOriginMap = BuildMemberOriginMap(joinData);
         foreach (var (orderByLambda, descending) in joinData.OrderByExpressions)
         {
-            var body = LinqQueryParser.StripConvert(orderByLambda.Body);
-            if (body is MemberExpression memberExpr)
+            // gh-999: a key that is not a member of the joined row, or a member that cannot be traced to a
+            // document, has no exact translation. It used to be skipped without a word, so the rows came back
+            // in whatever order SQL Server chose; a cast was stepped over whether or not it changed the order.
+            var body = LinqQueryParser.StripOrderPreservingConvert(orderByLambda.Body);
+            if (body is not MemberExpression memberExpr || memberExpr.Expression != orderByLambda.Parameters[0])
             {
-                var memberName = memberExpr.Member.Name;
-                var (factory, alias) = memberOriginMap.TryGetValue(memberName, out var origin) && origin == "inner"
-                    ? (innerMemberFactory, "inner_t")
-                    : (outerMemberFactory, "outer_t");
+                throw LinqQueryParser.RefuseOrderingKey(body);
+            }
 
-                // Resolve via the correct member factory using the original property on the document type
-                var docProperty = origin == "inner"
-                    ? FindOriginalProperty(joinData, memberName, isOuter: false)
-                    : FindOriginalProperty(joinData, memberName, isOuter: true);
+            var memberName = memberExpr.Member.Name;
+            var (factory, alias) = memberOriginMap.TryGetValue(memberName, out var origin) && origin == "inner"
+                ? (innerMemberFactory, "inner_t")
+                : (outerMemberFactory, "outer_t");
 
-                if (docProperty != null)
-                {
-                    var docMember = factory.ResolveMember(docProperty);
-                    var locator = JoinStatement.AliasLocator(docMember.TypedLocator, alias);
+            // Resolve via the correct member factory using the original property on the document type
+            var docProperty = FindOriginalProperty(joinData, memberName, isOuter: origin != "inner")
+                ?? throw LinqQueryParser.RefuseOrderingKey(orderByLambda.Body);
 
-                    // gh-997: the keys arrive most significant first, and SQL Server refuses a column named
-                    // twice in ORDER BY. A repeated key can never break a tie, so it is dropped.
-                    if (!joinStatement.OrderBys.Exists(o => o.Locator == locator))
-                    {
-                        joinStatement.OrderBys.Add((locator, descending));
-                    }
-                }
+            var docMember = factory.ResolveKey(docProperty, "in an OrderBy");
+            var locator = JoinStatement.AliasLocator(docMember.TypedLocator, alias);
+
+            // gh-997: the keys arrive most significant first, and SQL Server refuses a column named
+            // twice in ORDER BY. A repeated key can never break a tie, so it is dropped.
+            if (!joinStatement.OrderBys.Exists(o => o.Locator == locator))
+            {
+                joinStatement.OrderBys.Add((locator, descending));
             }
         }
 
@@ -1146,7 +1147,8 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
 
             // Trace the argument back to the document property
             var documentType = isOuter ? joinData.OuterElementType : joinData.InnerElementType;
-            return RerootOnTheDocument(resultNew.Arguments[i], documentType);
+            return RerootOnTheDocument(LinqQueryParser.StripOrderPreservingConvert(resultNew.Arguments[i]),
+                documentType);
         }
 
         return null;
