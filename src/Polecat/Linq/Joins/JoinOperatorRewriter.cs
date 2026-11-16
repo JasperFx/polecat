@@ -39,6 +39,8 @@ namespace Polecat.Linq.Joins;
 /// </remarks>
 [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
     Justification = "MakeGenericMethod / MakeGenericType / Expression.Lambda close Queryable.GroupJoin, Queryable.SelectMany, Enumerable.DefaultIfEmpty and JoinGroup<,> over the join's own document types. They are only named in an expression tree that Polecat translates to SQL; nothing here is ever invoked.")]
+[UnconditionalSuppressMessage("Trimming", "IL2026",
+    Justification = "Expression.New names JoinGroup<,>'s own properties, which the record keeps and nameof() references statically.")]
 [UnconditionalSuppressMessage("Trimming", "IL2060",
     Justification = "MakeGenericMethod over Queryable/Enumerable operators that the expression tree only names.")]
 [UnconditionalSuppressMessage("Trimming", "IL2070",

@@ -307,16 +307,18 @@ public class join_operator_tests : OneOffConfigurationsContext
         await using var session = await SeedAsync();
 
         // Ordered by the outer side only: a key over the optional side is a conditional (o == null ? ...), which
-        // the ordering path refuses as untranslatable. Alice's two rows tie, so they are compared sorted.
+        // the ordering path refuses as untranslatable. Alice's two rows tie, so the page takes both of them (a page
+        // ending inside the tie would hold either one) and they are compared sorted.
         var rows = await LeftJoined(session)
             .Where(x => x.Customer != "Bob")
             .OrderByDescending(x => x.Customer)
-            .Take(2)
+            .Take(3)
             .ToListAsync(Ct);
 
         Sorted(rows).ShouldBe(Sorted(LeftJoinedInMemory().Where(x => x.Customer != "Bob")
-            .OrderByDescending(x => x.Customer).Take(2)));
+            .OrderByDescending(x => x.Customer).Take(3)));
         rows[0].ShouldBe(new JoinOpRow("Charlie", null, null));
+        rows.Count.ShouldBe(3);
     }
 
     [Fact]
