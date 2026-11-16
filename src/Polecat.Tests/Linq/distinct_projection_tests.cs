@@ -289,6 +289,21 @@ public class distinct_projection_tests: OneOffConfigurationsContext
         ex.Message.ShouldContain("Distinct");
     }
 
+    // gh-1017 (marten#5942): a computed scalar is translated, so SQL compares the computed values
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task a_computed_scalar_is_compared_in_sql(bool nativeJson)
+    {
+        await using var query = await seededAsync(nativeJson);
+
+        (await query.Query<DistinctDoc>().Select(x => x.Age + 1).Distinct().ToListAsync(Ct)).OrderBy(x => x)
+            .ShouldBe([2, 3, 4]);
+        (await query.Query<DistinctDoc>().Select(x => x.Age % 2).Distinct().OrderBy(x => x).ToListAsync(Ct))
+            .ShouldBe([0, 1]);
+        (await query.Query<DistinctDoc>().Select(x => x.Name.ToUpper()).Distinct().CountAsync(Ct)).ShouldBe(3);
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
@@ -300,8 +315,6 @@ public class distinct_projection_tests: OneOffConfigurationsContext
             query.Query<DistinctDoc>().Select(x => new { x.Name, x.Address }).Distinct().ToListAsync(Ct));
         await Should.ThrowAsync<BadLinqExpressionException>(() =>
             query.Query<DistinctDoc>().Select(x => x.Address).Distinct().ToListAsync(Ct));
-        await Should.ThrowAsync<BadLinqExpressionException>(() =>
-            query.Query<DistinctDoc>().Select(x => x.Age + 1).Distinct().ToListAsync(Ct));
         await Should.ThrowAsync<BadLinqExpressionException>(() =>
             query.Query<DistinctDoc>().Select(x => new { Upper = x.Name.ToUpper() }).Distinct().ToListAsync(Ct));
         await Should.ThrowAsync<BadLinqExpressionException>(() =>

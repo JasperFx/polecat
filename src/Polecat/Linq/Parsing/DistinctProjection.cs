@@ -76,7 +76,9 @@ internal static class DistinctProjection
         // A derived table may only carry an ORDER BY that decides which rows it holds.
         if (counts && !statement.Limit.HasValue && !statement.Offset.HasValue) statement.OrderBys.Clear();
 
-        if (parser.IsScalarSelect)
+        // gh-1017: Select(x => x.Number % 4).Distinct() compares the computed values, in SQL
+        if (parser.IsScalarSelect || SelectProjectionAnalyzer.IsScalar(parser.SelectExpression.Body.Type)
+            && parser.TrySelectInSql())
         {
             ApplyToScalar(statement, parser.ScalarSelectMember!, counts);
         }

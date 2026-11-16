@@ -27,6 +27,11 @@ internal static class TextLocator
                 is SqlFunctionLocator transform:
                 return transform.FullLocator;
 
+            // gh-1014 / gh-1017: x.Names[1].StartsWith(...), and a string the row computes, as
+            // Select(x => x.Number.ToString()).Where(s => s.StartsWith("1")) reads after the projection
+            case var other when ScalarTranslation.TryTranslate(other, memberFactory, out var computed, out _):
+                return computed.Sql;
+
             default:
                 throw new BadLinqExpressionException(
                     $"Polecat cannot translate '{call.Object}' to SQL as the text of '{call.Method.Name}'. A "

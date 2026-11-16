@@ -658,16 +658,17 @@ public class clr_only_member_tests : OneOffConfigurationsContext
         list.Message.ShouldContain("List.Capacity");
     }
 
+    // $.length used to match nothing, and this was then refused. gh-1017 (marten#5955) reads the predicate
+    // through the projection, so it is the Length of the stored Name.
     [Fact]
-    public async Task a_member_of_a_scalar_an_earlier_select_projected_is_refused()
+    public async Task a_member_of_a_scalar_an_earlier_select_projected_is_read_through_it()
     {
         await using var query = await SeededAsync();
 
-        // There is no stored member left to read it off, and $.length matched nothing.
-        var ex = await Should.ThrowAsync<BadLinqExpressionException>(() =>
-            query.Query<ClrOnlyDoc>().Select(x => x.Name).Where(x => x.Length > 3).ToListAsync(Token));
+        var names = await query.Query<ClrOnlyDoc>().Select(x => x.Name).Where(x => x.Length > 3).ToListAsync(Token);
 
-        ex.Message.ShouldContain("exists only in .NET");
+        names.ShouldAllBe(x => x.Length > 3);
+        names.ShouldNotBeEmpty();
     }
 
     [Fact]
@@ -677,13 +678,20 @@ public class clr_only_member_tests : OneOffConfigurationsContext
 
         var captured = new ClrOnlyStats();
 
-        // Each of these silently became a top-level path: $.count, $.name and $.now.
-        await Should.ThrowAsync<BadLinqExpressionException>(() =>
-            query.Query<ClrOnlyDoc>().OrderBy(x => captured.Count).ToListAsync(Token));
+        // Each of these silently became a top-level path: $.count, $.name and $.now. The one that reads the
+        // document has no translation and is refused.
         await Should.ThrowAsync<BadLinqExpressionException>(() =>
             query.Query<ClrOnlyDoc>().OrderBy(x => x.Name.Trim().Length).ToListAsync(Token));
-        await Should.ThrowAsync<BadLinqExpressionException>(() =>
-            query.Query<ClrOnlyDoc>().OrderBy(x => DateTime.UtcNow).ToListAsync(Token));
+
+        // gh-1013 (marten#5950): the two that read nothing from the document are the same for every row, so,
+        // as in LINQ to Objects, they order nothing. They are never read as a path.
+        (await query.Query<ClrOnlyDoc>().OrderBy(x => captured.Count).ThenBy(x => x.Name).ToListAsync(Token))
+            .Select(x => x.Name).ShouldBe((await query.Query<ClrOnlyDoc>().OrderBy(x => x.Name).ToListAsync(Token))
+                .Select(x => x.Name));
+        (await query.Query<ClrOnlyDoc>().OrderBy(x => DateTime.UtcNow).ThenByDescending(x => x.Name)
+                .ToListAsync(Token)).Select(x => x.Name)
+            .ShouldBe((await query.Query<ClrOnlyDoc>().OrderByDescending(x => x.Name).ToListAsync(Token))
+                .Select(x => x.Name));
     }
 }
 

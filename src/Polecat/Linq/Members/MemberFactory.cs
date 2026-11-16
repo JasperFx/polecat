@@ -28,6 +28,22 @@ internal class MemberFactory : IMemberResolver
     private readonly bool _useReturning;
     private readonly ISerializer _serializer;
     private readonly JsonSerializerOptions _jsonOptions;
+    private readonly StoreOptions _options;
+
+    /// <summary>
+    ///     The column the JSON paths are read from: the document's <c>data</c>, or (gh-1016) the element of a
+    ///     collection a <c>SelectMany()</c> flattened.
+    /// </summary>
+    private readonly string _jsonColumn = "data";
+
+    /// <summary>gh-1016: whether this resolves the members of a flattened collection's elements.</summary>
+    private readonly bool _isElement;
+
+    /// <summary>
+    ///     gh-1016: the column of the flattened elements, from <c>CROSS APPLY OPENJSON(...) AS __pc_elem</c>.
+    ///     A scalar element is its <c>value</c> as it stands; an object element is JSON read from it.
+    /// </summary>
+    internal const string ElementValue = "__pc_elem.[value]";
 
     /// <summary>
     ///     The mapping these members belong to. Exposed because a method-call parser sometimes needs
@@ -37,8 +53,23 @@ internal class MemberFactory : IMemberResolver
     /// </summary>
     internal DocumentMapping Mapping => _mapping;
 
+    /// <summary>
+    ///     gh-1016: the members of the elements of a collection a <c>SelectMany()</c> flattened. They are read
+    ///     from <see cref="ElementValue" />, which is text whatever the document's storage, and no index of the
+    ///     document covers them and no member of them is the document's id.
+    /// </summary>
+    private MemberFactory(StoreOptions options, DocumentMapping mapping, bool isElement) : this(options, mapping)
+    {
+        _isElement = isElement;
+        _jsonColumn = ElementValue;
+        _useReturning = false;
+    }
+
+    public IMemberResolver? ForElements() => _isElement ? null : new MemberFactory(_options, _mapping, true);
+
     public MemberFactory(StoreOptions options, DocumentMapping mapping)
     {
+        _options = options;
         _enumStorage = options.Serializer.EnumStorage;
         _serializer = options.Serializer;
         _idType = mapping.IdType;
@@ -67,8 +98,14 @@ internal class MemberFactory : IMemberResolver
 
     public IQueryableMember ResolveMember(MemberExpression expression)
     {
+        // gh-1016: x => x.Values flattens scalars, and each is read as the member Value of a stand-in
+        if (_isElement && FlattenedValue.IsValueOf(expression))
+        {
+            return ElementValueMember(expression.Type);
+        }
+
         // Check if it's the Id property on the root document
-        if (expression.Member.Name == "Id" && expression.Expression is ParameterExpression)
+        if (!_isElement && expression.Member.Name == "Id" && expression.Expression is ParameterExpression)
         {
             return new IdMember(_idType, _valueTypeId,
                 Storage.DocumentTable.SqlTypeForIdentity(_mapping.InnerIdType));
@@ -76,12 +113,19 @@ internal class MemberFactory : IMemberResolver
 
         // #840: a member that exists only in .NET has no JSON key, so it is translated or refused here,
         // where every execution path comes through, rather than becoming a path that is always missing.
-        var clrOnly = ClrOnlyMembers.TryTranslate(expression, ResolveMember);
+        var clrOnly = ClrOnlyMembers.TryTranslate(expression, ResolveMember, ResolvePath);
         if (clrOnly is ComputedMember computed) return WithStoredEnumForm(computed);
 
         // #808: a union, or its Value, is the active case in whatever shape that takes. It can be tested
         // against null and nothing else, so it is read as something that may be an object.
         var unionType = UnionTypeAt(expression);
+        if (unionType != null && _isElement)
+        {
+            throw new BadLinqExpressionException(
+                $"Polecat cannot translate '{expression}' to SQL: a union-typed member of a flattened element is not "
+                + "translated. Materialize the query and finish the work in memory.");
+        }
+
         if (unionType != null)
         {
             return new UnionValueMember(CreateMember(BuildJsonPath(expression), typeof(object)), expression,
@@ -93,6 +137,24 @@ internal class MemberFactory : IMemberResolver
         // #808: ((Card)x.Payment.Value).Last4 reads $.payment.last4 only while the union holds a Card.
         var casts = UnionMembers.CaseCasts(expression);
         return casts.Count == 0 ? member : new UnionCaseMember(member, CaseGuard(casts, expression));
+    }
+
+    /// <summary>
+    ///     gh-1014: a member, or an index into a collection the document holds, such as <c>x.Values[1]</c>.
+    /// </summary>
+    public IQueryableMember ResolvePath(Expression expression)
+    {
+        expression = LinqQueryParser.StripConvert(expression);
+        if (expression is MemberExpression member) return ResolveMember(member);
+
+        if (!DocumentPaths.IsIndexPath(expression))
+        {
+            throw new BadLinqExpressionException(
+                $"Polecat cannot translate '{expression}' to SQL: it is not a member of the document or an index "
+                + "into one of its collections.");
+        }
+
+        return CreateMember(BuildJsonPath(expression), expression.Type);
     }
 
     public IQueryableMember ResolveKey(MemberExpression expression, string position)
@@ -191,9 +253,31 @@ internal class MemberFactory : IMemberResolver
     /// </summary>
     public string FormatProjectedKey(string name) => _namingPolicy?.ConvertName(name) ?? name;
 
+    /// <summary>
+    ///     gh-1016: one element of a flattened collection of scalars, which <c>OPENJSON</c> hands out as text:
+    ///     a string already unescaped, a number, <c>true</c>/<c>false</c>, an enum's name or number.
+    /// </summary>
+    private IQueryableMember ElementValueMember(Type type)
+    {
+        var underlying = Nullable.GetUnderlyingType(type) ?? type;
+
+        if (underlying.IsEnum) return new EnumMember(ElementValue, underlying, _enumStorage, _namingPolicy);
+        if (underlying == typeof(bool)) return new QueryableMember(ElementValue, ElementValue, type, isBoolean: true);
+
+        var valueType = ValueTypes.TryResolve(underlying, allowReferenceTypes: true);
+        var storedType = valueType?.SimpleType ?? underlying;
+        var sqlType = GetSqlType(storedType);
+        var typed = sqlType == null ? ElementValue : $"CAST({ElementValue} AS {sqlType})";
+
+        return valueType != null
+            ? new ValueTypeMember(ElementValue, typed, type, valueType, sqlType, null, null)
+            : new QueryableMember(ElementValue, typed, type, locatorSqlType: sqlType,
+                mayBeObject: !SelectProjectionAnalyzer.IsScalar(underlying));
+    }
+
     private IQueryableMember CreateMember(string jsonPath, Type memberType)
     {
-        var bareLocator = $"JSON_VALUE(data, '{jsonPath}')";
+        var bareLocator = $"JSON_VALUE({_jsonColumn}, '{jsonPath}')";
         var rawLocator = bareLocator;
         var underlying = Nullable.GetUnderlyingType(memberType) ?? memberType;
 
@@ -229,7 +313,7 @@ internal class MemberFactory : IMemberResolver
         // side of the comparison to match, and nothing but this knows what it matches.
         var locatorSqlType = sqlType;
 
-        if (TryGetIndexedLocator(jsonPath, storedType, out var indexedLocator, out var indexedSqlType))
+        if (!_isElement && TryGetIndexedLocator(jsonPath, storedType, out var indexedLocator, out var indexedSqlType))
         {
             typedLocator = indexedLocator;
             locatorSqlType = indexedSqlType;
@@ -243,7 +327,7 @@ internal class MemberFactory : IMemberResolver
         int? textCapacity = null;
         if (storedType == typeof(string))
         {
-            rawLocator = SqlText.UnlimitedJsonString("data", jsonPath, _useReturning);
+            rawLocator = SqlText.UnlimitedJsonString(_jsonColumn, jsonPath, _useReturning);
             textCapacity = locatorSqlType == null
                 ? SqlText.JsonValueCapacity
                 : SqlTypeMap.TextCapacity(locatorSqlType);
@@ -305,8 +389,12 @@ internal class MemberFactory : IMemberResolver
     /// </summary>
     internal static bool SupportsReturning(string sqlType) => sqlType != "uniqueidentifier";
 
-    private string BuildJsonPath(MemberExpression expression)
-        => SerializedNames.PathFor(ClrOnlyMembers.JsonKeys(expression).Select(GetJsonPropertyName), _serializer);
+    private string BuildJsonPath(Expression expression)
+        => SerializedNames.PathFor(
+            ClrOnlyMembers.JsonPath(expression)
+                .Select(x => (x.Member != null ? GetJsonPropertyName(x.Member)
+                    : x.Key != null ? Polecat.Patching.JsonPathHelper.KeyText(x.Key, _serializer)
+                    : null, x.Index)), _serializer);
 
     /// <summary>
     ///     #270: resolves the JSON key for a member exactly as System.Text.Json serializes it — an

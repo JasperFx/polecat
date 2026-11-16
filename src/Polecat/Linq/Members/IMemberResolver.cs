@@ -21,6 +21,24 @@ internal interface IMemberResolver
     IQueryableMember ResolveKey(MemberExpression expression, string position) => ResolveMember(expression);
 
     /// <summary>
+    ///     gh-1016: the resolver for the elements of a collection a <c>SelectMany()</c> flattens, or null where
+    ///     this resolver has no JSON body to flatten, which refuses the <c>SelectMany()</c>.
+    /// </summary>
+    IMemberResolver? ForElements() => null;
+
+    /// <summary>
+    ///     gh-1014: a member, or a chain of members and indexes into the document's collections such as
+    ///     <c>x.Grid[1][0]</c> or <c>x.Items[0].Name</c>. A resolver that has no JSON body to index into
+    ///     resolves members only.
+    /// </summary>
+    IQueryableMember ResolvePath(Expression expression)
+        => LinqQueryParser.StripConvert(expression) is MemberExpression member
+            ? ResolveMember(member)
+            : throw new BadLinqExpressionException(
+                $"Polecat cannot translate '{expression}' to SQL here: an index into a collection is only "
+                + "translated in document queries. Materialize the query and finish the work in memory.");
+
+    /// <summary>
     ///     #808: <c>x.Payment.Value is Card</c>, a type test over a union-typed member.
     /// </summary>
     /// <param name="unionValue">The union's <c>Value</c>.</param>

@@ -75,6 +75,28 @@ internal static class SerializedNames
         => "$." + string.Join(".", keys.Select(x => Segment(x, serializer)));
 
     /// <summary>
+    ///     gh-1014: <see cref="PathFor(IEnumerable{string}, ISerializer?)" /> with positions in arrays among the
+    ///     keys, where a null key is the index beside it: <c>$.grid[1][0]</c>, <c>$.items[0].name</c>.
+    /// </summary>
+    public static string PathFor(IEnumerable<(string? Key, int Index)> segments, ISerializer? serializer)
+    {
+        var path = new StringBuilder("$");
+        foreach (var (key, index) in segments)
+        {
+            if (key == null)
+            {
+                path.Append('[').Append(index.ToString(System.Globalization.CultureInfo.InvariantCulture)).Append(']');
+            }
+            else
+            {
+                path.Append('.').Append(Segment(key, serializer));
+            }
+        }
+
+        return path.ToString();
+    }
+
+    /// <summary>
     ///     One member's segment of a path, as <see cref="PathFor(IEnumerable{string}, ISerializer?)" /> wrote it.
     /// </summary>
     public static string SegmentFor(MemberInfo member, StoreOptions options)

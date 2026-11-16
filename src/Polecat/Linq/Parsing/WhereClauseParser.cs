@@ -57,6 +57,9 @@ internal class WhereClauseParser
 
         return expression switch
         {
+            // gh-1014: x.Flags[1], a bool read through an index (an ArrayIndex is a BinaryExpression too)
+            _ when expression.Type == typeof(bool) && DocumentPaths.IsIndexPath(expression)
+                => ParseBooleanPath(expression, true),
             BinaryExpression binary => ParseBinary(binary),
             UnaryExpression { NodeType: ExpressionType.Not } unary => ParseNot(unary),
             UnaryExpression { NodeType: ExpressionType.Convert } unary => ParsePredicate(unary.Operand),
@@ -190,10 +193,16 @@ internal class WhereClauseParser
             return BuildComparisonFilter(member!, value, op);
         }
 
+        if (TryParseComputedComparison(binary, op, out var computedFragment, out var reason))
+        {
+            return computedFragment!;
+        }
+
         throw new BadLinqExpressionException(
-            $"Polecat cannot translate the comparison '{binary}' to SQL: neither side resolves to a "
-            + "document member compared against a constant. Compare a member to a value "
-            + "(x.Age > 30), or run the query as raw SQL through "
+            $"Polecat cannot translate the comparison '{binary}' to SQL"
+            + (string.IsNullOrEmpty(reason) ? "" : $": {reason}")
+            + ". Compare a member, or a value computed from members with arithmetic, concatenation, ToUpper(), "
+            + "ToLower() or Length, to a value (x.Age > 30), or run the query as raw SQL through "
             + "session.AdvancedSql.QueryAsync<T>(...).");
     }
 
@@ -221,8 +230,12 @@ internal class WhereClauseParser
         var unwrapped = StripConvert(methodSide);
         if (unwrapped is not MethodCallExpression methodCall) return false;
 
-        // x.Name == input.ToLower() is the value side: there is no document in it to transform.
-        if (!ParameterFinder.ReferencesParameter(methodCall)) return false;
+        // x.Name == input.ToLower() is the value side: there is no document in it to transform. And a value
+        // side that reads the document is two values of the row compared, for TryParseComputedComparison.
+        if (!ParameterFinder.ReferencesParameter(methodCall) || ParameterFinder.ReferencesParameter(valueSide))
+        {
+            return false;
+        }
 
         var parser = MethodCallParserRegistry.FindParser(methodCall);
         if (parser == null) return false;
@@ -262,6 +275,7 @@ internal class WhereClauseParser
         fragment = null;
 
         if (StripConvert(arithmeticSide) is not BinaryExpression arithmetic) return false;
+        if (ParameterFinder.ReferencesParameter(valueSide)) return false;
 
         var sqlOperator = arithmetic.NodeType switch
         {
@@ -289,8 +303,15 @@ internal class WhereClauseParser
     {
         fragment = null;
 
+        // Two values of the row compared, or a computed divisor: TryParseComputedComparison
+        if (ParameterFinder.ReferencesParameter(binary.Left) && ParameterFinder.ReferencesParameter(binary.Right))
+        {
+            return false;
+        }
+
         // Pattern: (x.Number % divisor) op value
-        if (binary.Left is BinaryExpression { NodeType: ExpressionType.Modulo } modulo)
+        if (binary.Left is BinaryExpression { NodeType: ExpressionType.Modulo } modulo
+            && !ParameterFinder.ReferencesParameter(modulo.Right))
         {
             var unwrapped = StripConvert(modulo.Left);
             if (unwrapped is MemberExpression me && IsDocumentMember(me))
@@ -308,7 +329,8 @@ internal class WhereClauseParser
         }
 
         // Reversed pattern: value op (x.Number % divisor)
-        if (binary.Right is BinaryExpression { NodeType: ExpressionType.Modulo } moduloR)
+        if (binary.Right is BinaryExpression { NodeType: ExpressionType.Modulo } moduloR
+            && !ParameterFinder.ReferencesParameter(moduloR.Right))
         {
             var unwrapped = StripConvert(moduloR.Left);
             if (unwrapped is MemberExpression me && IsDocumentMember(me))
@@ -368,6 +390,11 @@ internal class WhereClauseParser
             return ParseBooleanMember(member, false);
         }
 
+        if (operand.Type == typeof(bool) && DocumentPaths.IsIndexPath(operand))
+        {
+            return ParseBooleanPath(operand, false);
+        }
+
         // !(expression) — negate the inner expression
         _negations++;
         try
@@ -394,6 +421,12 @@ internal class WhereClauseParser
         return new ComparisonFilter(resolvedMember.TypedLocator, "=", value!);
     }
 
+    private ISqlFragment ParseBooleanPath(Expression path, bool expectedValue)
+    {
+        var resolved = _memberFactory.ResolvePath(path);
+        return new ComparisonFilter(resolved.TypedLocator, "=", resolved.ConvertValue(expectedValue)!);
+    }
+
     private bool TryResolveMemberAndValue(Expression memberExpr, Expression valueExpr,
         out IQueryableMember? member, out object? value)
     {
@@ -414,12 +447,79 @@ internal class WhereClauseParser
 
         if (unwrappedMember is MemberExpression me && IsDocumentMember(me))
         {
+            if (ParameterFinder.ReferencesParameter(valueExpr)) return false;
+
             member = _memberFactory.ResolveMember(me);
             value = ExtractValue(valueExpr);
             return true;
         }
 
+        // gh-1014: x.Values[1] == 3, x.Grid[1][0] > 6
+        if (DocumentPaths.IsIndexPath(unwrappedMember) && !ParameterFinder.ReferencesParameter(valueExpr))
+        {
+            member = _memberFactory.ResolvePath(unwrappedMember);
+            value = ExtractValue(valueExpr);
+            return true;
+        }
+
         return false;
+    }
+
+    /// <summary>
+    ///     gh-1012 / gh-1017 (marten#5942): a comparison the patterns above do not cover, such as a computed
+    ///     value against a constant (<c>x.Number * 2 &gt; 4</c>, which is what <c>Select(x =&gt; x.Number * 2)
+    ///     .Where(n =&gt; n &gt; 4)</c> reads as) or two values of the row against each other
+    ///     (<c>x.Grid[0][0] &lt; x.Values[1]</c>). Each side reading the row is translated by
+    ///     <see cref="ScalarTranslation" /> or the comparison is refused; the other side is bound.
+    /// </summary>
+    private bool TryParseComputedComparison(BinaryExpression binary, string op, out ISqlFragment? fragment,
+        out string? reason)
+    {
+        fragment = null;
+        reason = null;
+
+        var leftReads = ParameterFinder.ReferencesParameter(binary.Left);
+        var rightReads = ParameterFinder.ReferencesParameter(binary.Right);
+        if (!leftReads && !rightReads) return false;
+
+        if (leftReads && rightReads)
+        {
+            if (!ScalarTranslation.TryTranslate(binary.Left, _memberFactory, out var left, out reason)
+                || !ScalarTranslation.TryTranslate(binary.Right, _memberFactory, out var right, out reason))
+            {
+                return false;
+            }
+
+            // = pads the shorter text with spaces; the byte counts keep 'a' and 'a ' apart, as .NET does
+            var leftBytes = $"DATALENGTH({TextEqualityFilter.Measured(left.Sql)})";
+            var rightBytes = $"DATALENGTH({TextEqualityFilter.Measured(right.Sql)})";
+            fragment = op is "=" or "!=" && left.Type == typeof(string)
+                ? new WhereFragment(op == "="
+                    ? $"({left.Sql} = {right.Sql} AND {leftBytes} = {rightBytes})"
+                    : $"({left.Sql} != {right.Sql} OR {leftBytes} != {rightBytes})")
+                : new WhereFragment($"{left.Sql} {op} {right.Sql}");
+            return true;
+        }
+
+        var computed = leftReads ? binary.Left : binary.Right;
+        var valueSide = leftReads ? binary.Right : binary.Left;
+        if (!leftReads) op = ReverseOperator(op);
+
+        if (!ScalarTranslation.TryTranslate(computed, _memberFactory, out var sql, out reason)) return false;
+
+        var value = ExtractValue(valueSide);
+        if (value == null)
+        {
+            if (op is not ("=" or "!=")) return false;
+            fragment = new WhereFragment(op == "=" ? $"{sql.Sql} IS NULL" : $"{sql.Sql} IS NOT NULL");
+            return true;
+        }
+
+        // = and != over text pad trailing spaces; measuring the text keeps 'a' and 'a ' apart, as .NET does
+        fragment = op is "=" or "!=" && value is string
+            ? new TextEqualityFilter(sql.Sql, TextEqualityFilter.Measured(sql.Sql), op == "=", value)
+            : new ComparisonFilter(sql.Sql, op, value);
+        return true;
     }
 
     internal static object? ExtractValue(Expression expression)
@@ -536,21 +636,9 @@ internal class WhereClauseParser
         }
     }
 
-    private static bool IsDocumentMember(MemberExpression expression)
-    {
-        // Walk up the chain to find if it originates from a ParameterExpression
-        var current = expression;
-        while (current != null)
-        {
-            if (current.Expression is ParameterExpression)
-                return true;
-
-            // #808: ((Card)x.Payment.Value).Last4 is read off the document through a union's case.
-            current = UnionMembers.Owner(current);
-        }
-
-        return false;
-    }
+    // #808: ((Card)x.Payment.Value).Last4 is read off the document through a union's case, and gh-1014:
+    // x.Items[0].Name through an index.
+    private static bool IsDocumentMember(MemberExpression expression) => DocumentPaths.IsRooted(expression);
 
     private static bool IsBooleanMember(MemberExpression expression)
     {

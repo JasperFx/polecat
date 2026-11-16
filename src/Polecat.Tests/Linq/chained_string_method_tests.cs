@@ -99,16 +99,25 @@ public class chained_string_method_tests: OneOffConfigurationsContext
         ex.Message.ShouldContain("Substring");
     }
 
+    // These reached the expression compiler, which said a variable was not defined in its scope, and were then
+    // refused. gh-1012/gh-1014 (marten#5949) compare two values of the row, length and all, like .NET does.
     [Fact]
-    public async Task comparing_two_members_is_refused()
+    public async Task comparing_two_members()
     {
         await using var query = await seededAsync(ConnectionSource.SupportsNativeJson);
 
-        // These reached the expression compiler, which said a variable was not defined in its scope.
-        await Should.ThrowAsync<BadLinqExpressionException>(() =>
-            query.Query<ChainedDoc>().Where(x => x.Text == x.Other).ToListAsync(Ct));
+        (await namesAsync(query.Query<ChainedDoc>().Where(x => x.Text == x.Other))).ShouldBe(["plain"]);
+        (await namesAsync(query.Query<ChainedDoc>().Where(x => x.Text != x.Other))).ShouldBe(["other", "padded"]);
+        (await namesAsync(query.Query<ChainedDoc>().Where(x => x.Text!.ToUpper() == x.Other.ToUpper())))
+            .ShouldBe(["plain"]);
+    }
+
+    [Fact]
+    public async Task comparing_two_members_through_an_untranslatable_method_is_refused()
+    {
+        await using var query = await seededAsync(ConnectionSource.SupportsNativeJson);
 
         await Should.ThrowAsync<BadLinqExpressionException>(() =>
-            query.Query<ChainedDoc>().Where(x => x.Text!.ToLower() == x.Other).ToListAsync(Ct));
+            query.Query<ChainedDoc>().Where(x => x.Text!.Trim() == x.Other).ToListAsync(Ct));
     }
 }
