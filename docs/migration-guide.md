@@ -334,15 +334,29 @@ The shared bases bring behaviour that Marten and Fisher already had:
   sources both select it.
 - **A cached miss in the `dotnet_type` cache** now expires when a new event type is registered.
 
-Two pieces of the lift are deliberately **not** adopted:
+One piece of the lift is deliberately **not** adopted:
 
 - **The client-side append planner** (`ClientSideAppendPlanner`) is for stores that read the stream row
   before deciding. Polecat decides collision, version and archived status on the server, in the one
   `UPDATE … OUTPUT` round trip it has always made (QuickAppend only). Adopting the planner would add a
   stream-row read to every save and move the version check to the client, so Polecat keeps its own
   path, as Marten does.
-- **A shared event-loader base** doesn't exist in JasperFx yet. `PolecatEventLoader` stays Polecat's
-  own until one is lifted.
+
+The async daemon's event loader moved too, onto Weasel's shared `EventLoaderBase`
+([#989](https://github.com/JasperFx/polecat/issues/989)). It lives in `Weasel.Storage` rather than
+JasperFx because it pages a `DbConnection`, and Fisher's loader already derives from it. Polecat keeps
+only the SQL Server SQL and the row hydration. Two things a shard does differently:
+
+- **A subscription or projection that names an interface or abstract event type reads every event.**
+  Before, the interface's own `dotnet_type` went into the SQL filter, and no stored row carries it, so
+  the shard silently read nothing and reported itself caught up (weasel#845). The subscription or
+  projection does its own type dispatch after hydration, as in Marten.
+- **An allow list past SQL Server's 2,100-parameter limit stays in the SQL**, bound as one JSON array
+  and expanded with `OPENJSON` (weasel#846). Polecat used to drop the type filter above 2,000 names and
+  filter after reading. Lists of up to 100 names keep one parameter per name, as before.
+
+An upcast source is now admitted only when its transformation targets one of the shard's declared types,
+rather than every registered source.
 
 ## Upgrading to 6.0: `MasterTableTenancy` runs on Weasel's shared base
 

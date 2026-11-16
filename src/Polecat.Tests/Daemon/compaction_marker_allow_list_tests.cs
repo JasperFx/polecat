@@ -26,8 +26,8 @@ namespace Polecat.Tests.Daemon;
 ///     <para>
 ///         <see cref="a_filtered_and_an_unfiltered_load_agree_on_a_compacted_stream" /> is the
 ///         statement of the bug: two loads over one stream, folded by the same aggregator, disagreeing
-///         about what the stream means. The rest pin the two filtering paths (#550's SQL push-down and
-///         the retained client-side fallback) and the end-to-end daemon consequence.
+///         about what the stream means. The rest pin the two list renderings (#550's SQL push-down, and
+///         one JSON array past the parameter cap) and the end-to-end daemon consequence.
 ///     </para>
 /// </remarks>
 public class compaction_marker_allow_list_tests : OneOffConfigurationsContext
@@ -88,18 +88,19 @@ public class compaction_marker_allow_list_tests : OneOffConfigurationsContext
     }
 
     /// <summary>
-    ///     The other path, and the one that would otherwise rot unnoticed. Above SQL Server's
-    ///     2100-parameter ceiling the loader stops pushing the filter down and the client-side check
-    ///     carries it alone — so a fix applied only to the rendered <c>IN</c> clause would leave a store
-    ///     with very many event types still broken, and nothing else in the suite would say so.
+    ///     The other path, and the one that would otherwise rot unnoticed: an allow list past SQL Server's
+    ///     2,100-parameter ceiling. Before #989 the loader stopped pushing the filter down above 2,000 names
+    ///     and a client-side check carried it alone; now the dialect binds the whole list as one JSON array
+    ///     (weasel#846). Either way a fix applied only to a short list would leave a store with very many
+    ///     event types still broken, and nothing else in the suite would say so.
     /// </summary>
     /// <remarks>
-    ///     The fix is applied to the allow-list SET, from which the pushed-down parameter array is
-    ///     taken, which is what makes one addition cover both paths. This test is what stops that being
-    ///     refactored apart.
+    ///     The markers are added to the allow list itself (<c>EventTypeAllowList.For</c>), from which both
+    ///     renderings are taken, which is what makes one addition cover every list length. This test is what
+    ///     stops that being refactored apart.
     /// </remarks>
     [Fact]
-    public async Task the_marker_survives_the_client_side_fallback_filter()
+    public async Task the_marker_survives_an_allow_list_past_the_parameter_cap()
     {
         await SeedCompactedStreamAsync();
 
@@ -109,14 +110,59 @@ public class compaction_marker_allow_list_tests : OneOffConfigurationsContext
             projection.IncludeType(padding);
         }
 
-        // Well past the push-down cap, so the rendered SQL carries no type predicate at all and the
-        // hydration-side check is the only filter running.
+        // Well past the parameter cap, and still a FILTERED list: an abstract or interface type in the
+        // padding would turn it into "read everything" (weasel#845) and this test would prove nothing.
         projection.IncludedEventTypes.Count.ShouldBeGreaterThan(2_000);
+        var allowList = Weasel.Storage.EventTypeAllowList.For(theStore.Database.Events, projection);
+        allowList.IsEmpty.ShouldBeFalse();
+        allowList.DotNetTypeNames.Count.ShouldBeGreaterThan(2_100);
 
         var page = await LoadAsync(CreateLoader(projection));
 
         page.Select(x => x.Data.GetType())
             .ShouldBe([typeof(Compacted<QuestParty>), typeof(MembersJoined)]);
+    }
+
+    /// <summary>
+    ///     weasel#846, the half <see cref="the_marker_survives_an_allow_list_past_the_parameter_cap" /> cannot
+    ///     see: that a list past SQL Server's 2,100-parameter cap is still filtered <b>in SQL</b>. That test's
+    ///     stream holds only events the list admits, so it passes with no filter at all. Here ten rows the
+    ///     shard does not read come before the one it does, and the batch is three. Filtered in SQL, the
+    ///     first page skips straight to the match. Filtered after hydration, as Polecat did above 2,000 names
+    ///     before #989, it reads three rows it then throws away and returns an empty page.
+    /// </summary>
+    [Fact]
+    public async Task an_allow_list_past_the_parameter_cap_is_filtered_in_sql_not_after_hydration()
+    {
+        var streamId = Guid.NewGuid();
+        theSession.Events.StartStream<QuestParty>(streamId,
+            Enumerable.Range(1, 10).Select(day => (object)new MembersJoined(day, "Bree", ["Strider"])).ToArray());
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        theSession.Events.Append(streamId, new QuestStarted("Wanted"));
+        await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        var highWater = await HighWaterAsync();
+
+        var filtering = new EventFilterable();
+        filtering.IncludeType<QuestStarted>();
+        foreach (var padding in PaddingEventTypes(2_200))
+        {
+            filtering.IncludeType(padding);
+        }
+
+        // Past the cap, and still a filtered list (weasel#845 turns an abstract or interface type into
+        // "read everything", which would make this test prove nothing).
+        var allowList = Weasel.Storage.EventTypeAllowList.For(theStore.Database.Events, filtering);
+        allowList.IsEmpty.ShouldBeFalse();
+        allowList.DotNetTypeNames.Count.ShouldBeGreaterThan(2_100);
+        allowList.DotNetTypeNames.ShouldNotContain(typeof(MembersJoined).AssemblyQualifiedName!);
+
+        var page = await CreateLoader(filtering)
+            .LoadAsync(CreateRequest(0, highWater, batchSize: 3), TestContext.Current.CancellationToken);
+
+        page.Select(x => x.Data).ShouldHaveSingleItem().ShouldBeOfType<QuestStarted>().Name.ShouldBe("Wanted");
+        page.Ceiling.ShouldBe(highWater);
     }
 
     /// <summary>
@@ -312,7 +358,10 @@ public class compaction_marker_allow_list_tests : OneOffConfigurationsContext
                         && !t.IsGenericTypeDefinition
                         && !t.ContainsGenericParameters
                         && !t.IsByRefLike
-                        && t != typeof(void))
+                        && t != typeof(void)
+                        // weasel#845: object on an allow list means "every type", which would quietly
+                        // turn the large-list test into an unfiltered one.
+                        && t != typeof(object))
             .Where(t =>
             {
                 try
@@ -354,12 +403,12 @@ public class compaction_marker_allow_list_tests : OneOffConfigurationsContext
     private Task<long> HighWaterAsync() =>
         theStore.Database.FetchHighestEventSequenceNumber(TestContext.Current.CancellationToken);
 
-    private static EventRequest CreateRequest(long floor, long highWater) =>
+    private static EventRequest CreateRequest(long floor, long highWater, int batchSize = 100) =>
         new()
         {
             Floor = floor,
             HighWater = highWater,
-            BatchSize = 100,
+            BatchSize = batchSize,
             Name = new ShardName("TestLoader"),
             ErrorOptions = new ErrorHandlingOptions(),
             Runtime = null!,
