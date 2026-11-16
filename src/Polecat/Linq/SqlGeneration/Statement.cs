@@ -46,6 +46,47 @@ internal class Statement
     /// </summary>
     public string? OuterAggregate { get; set; }
 
+    /// <summary>Whether a <c>Take()</c> or a <c>Skip()</c> decides which rows this statement holds.</summary>
+    public bool IsPaged => Limit.HasValue || Offset.HasValue;
+
+    /// <summary>
+    ///     The name of the one column of the derived table a paged aggregate reads. See
+    ///     <see cref="SelectAggregate" />.
+    /// </summary>
+    internal const string PagedValueColumn = "__pc_paged";
+
+    /// <summary>
+    ///     Makes this statement answer <paramref name="aggregateOf" /> over <paramref name="value" />, e.g.
+    ///     <c>v =&gt; $"MAX({v})"</c>. Unpaged, the aggregate is the select list, as it always was.
+    /// </summary>
+    /// <remarks>
+    ///     gh-995 (marten#5920): paged, the aggregate cannot be the select list. <c>TOP(3) COUNT(*)</c> is the
+    ///     count of the table with three rows allowed, and <c>OFFSET 4 ROWS</c> skips the one row an aggregate
+    ///     returns, so <c>Take(3).Count()</c> came back as the whole count and <c>Skip(4).Count()</c> read no
+    ///     row at all. The paged statement becomes a derived table selecting the value, and keeps its
+    ///     ordering because that decides which rows are on the page; the aggregate runs over it.
+    /// </remarks>
+    public void SelectAggregate(Func<string, string> aggregateOf, string value)
+    {
+        if (!IsPaged)
+        {
+            SelectColumns = aggregateOf(value);
+            return;
+        }
+
+        SelectFragment = null;
+        SelectColumns = $"{value} AS {PagedValueColumn}";
+        OuterAggregate = aggregateOf(PagedValueColumn);
+    }
+
+    /// <summary>
+    ///     Whether the page is rendered with <c>TOP</c>. <c>Take(0)</c> is, even after a <c>Skip</c>: nothing
+    ///     follows an empty page, and SQL Server refuses <c>FETCH NEXT 0 ROWS</c>.
+    /// </summary>
+    private bool PagesWithTop => Limit.HasValue && (!Offset.HasValue || Limit.Value == 0);
+
+    private bool PagesWithOffset => Offset.HasValue && Limit != 0;
+
     public void Apply(ICommandBuilder builder)
     {
         if (OuterAggregate != null)
@@ -88,7 +129,7 @@ internal class Statement
         if (IsDistinct) builder.Append("DISTINCT ");
 
         // Use TOP when there's a limit but no offset
-        if (Limit.HasValue && !Offset.HasValue)
+        if (PagesWithTop)
         {
             builder.Append($"TOP({Limit.Value}) ");
         }
@@ -127,18 +168,25 @@ internal class Statement
         }
 
         // OFFSET/FETCH pagination (requires ORDER BY)
-        if (Offset.HasValue)
+        if (PagesWithOffset)
         {
             if (OrderBys.Count == 0 || IsAggregateSelect())
             {
-                builder.Append(" ORDER BY (SELECT NULL)");
+                // gh-995: SELECT DISTINCT only orders by what it selects, and (SELECT NULL) is not that.
+                // The first column is, by position, and the order is arbitrary anyway.
+                builder.Append(IsDistinct ? " ORDER BY 1" : " ORDER BY (SELECT NULL)");
             }
 
-            builder.Append($" OFFSET {Offset.Value} ROWS");
-            if (Limit.HasValue)
-            {
-                builder.Append($" FETCH NEXT {Limit.Value} ROWS ONLY");
-            }
+            AppendOffsetFetch(builder);
+        }
+    }
+
+    private void AppendOffsetFetch(ICommandBuilder builder)
+    {
+        builder.Append($" OFFSET {Offset!.Value} ROWS");
+        if (Limit.HasValue)
+        {
+            builder.Append($" FETCH NEXT {Limit.Value} ROWS ONLY");
         }
     }
 
@@ -154,7 +202,7 @@ internal class Statement
         builder.Append("SELECT ");
 
         // TOP applies to the de-duplicated outer result when there's no offset.
-        if (Limit.HasValue && !Offset.HasValue)
+        if (PagesWithTop)
         {
             builder.Append($"TOP({Limit.Value}) ");
         }
@@ -185,7 +233,7 @@ internal class Statement
     {
         builder.Append("SELECT ");
 
-        if (Limit.HasValue && !Offset.HasValue)
+        if (PagesWithTop)
         {
             builder.Append($"TOP({Limit.Value}) ");
         }
@@ -214,18 +262,14 @@ internal class Statement
             AppendOrderByList(builder);
         }
 
-        if (Offset.HasValue)
+        if (PagesWithOffset)
         {
             if (OrderBys.Count == 0 || skipOrderBy)
             {
                 builder.Append(" ORDER BY (SELECT NULL)");
             }
 
-            builder.Append($" OFFSET {Offset.Value} ROWS");
-            if (Limit.HasValue)
-            {
-                builder.Append($" FETCH NEXT {Limit.Value} ROWS ONLY");
-            }
+            AppendOffsetFetch(builder);
         }
     }
 
