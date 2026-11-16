@@ -154,11 +154,21 @@ public class MasterTableTenancy : MasterTableTenancyBase<PolecatDatabase, DbData
     // It is deliberately important *not* to silently swallow the lookup here — an unknown or disabled
     // tenant must refuse the session, same as SeparateDatabaseTenancy. #655: the two are told apart,
     // because they call for different actions.
+    //
+    // #991: the synchronous ITenancy members (GetDatabase, GetConnectionFactory, and through them the
+    // synchronous session factories) used to block a pool thread on ResolveTenantAsync for every uncached
+    // tenant. That thread then waited on async I/O that needed another pool thread to finish, so a burst
+    // of cold tenants could starve the pool (marten#5985). TryResolveTenant (weasel#838) answers from the
+    // cache or with one synchronous read of pc_tenants, with no Task in the chain. It declines, touching
+    // nothing, only before any async entry point has provisioned the control table, which is the cold
+    // start of a process; that one case still takes the blocking fallback.
     private PolecatDatabase Resolve(string tenantId)
     {
-        if (FindCachedDatabase(tenantId) is { } cached) return cached;
+        if (!TryResolveTenant(tenantId, out var resolution))
+        {
+            resolution = ResolveTenantAsync(tenantId).AsTask().GetAwaiter().GetResult();
+        }
 
-        var resolution = ResolveTenantAsync(tenantId).AsTask().GetAwaiter().GetResult();
         return resolution.Database ?? throw CreateTenantRefusal(tenantId, resolution.Status);
     }
 
@@ -195,6 +205,20 @@ public class MasterTableTenancy : MasterTableTenancyBase<PolecatDatabase, DbData
     {
         return await _resilience.ExecuteAsync(static async (op, ct) => await op(ct).ConfigureAwait(false),
             operation, token).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    ///     #991: the synchronous control-table read behind <c>TryResolveTenant</c> runs through the same
+    ///     <see cref="StoreOptions.ResiliencePipeline" />, with Polly's synchronous <c>Execute</c>.
+    /// </summary>
+    /// <remarks>
+    ///     Not <c>ExecuteAsync(...).GetAwaiter().GetResult()</c>: that is the sync-over-async this path
+    ///     exists to remove. A retry's back-off on this path does block the calling thread for the delay,
+    ///     which is the cost of a synchronous caller and is bounded by the pipeline's own settings.
+    /// </remarks>
+    protected override T ExecuteSynchronously<T>(Func<T> operation)
+    {
+        return _resilience.Execute(static op => op(), operation);
     }
 
     /// <summary>
