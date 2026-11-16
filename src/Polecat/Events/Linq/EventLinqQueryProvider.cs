@@ -403,61 +403,56 @@ internal class EventLinqQueryProvider : IPolecatAsyncQueryProvider,
 
         switch (parser.ValueMode)
         {
+            // gh-995: a Take() in front narrows these rather than being replaced by them, so Take(0).First()
+            // has no row and Take(1).Single() has exactly one.
             case SingleValueMode.First:
             case SingleValueMode.FirstOrDefault:
-                statement.Limit = 1;
+                statement.Limit = Math.Min(statement.Limit ?? 1, 1);
                 break;
 
             case SingleValueMode.Single:
             case SingleValueMode.SingleOrDefault:
-                statement.Limit = 2;
+                statement.Limit = Math.Min(statement.Limit ?? 2, 2);
                 break;
 
             case SingleValueMode.Last:
             case SingleValueMode.LastOrDefault:
-                for (var i = 0; i < statement.OrderBys.Count; i++)
-                {
-                    statement.OrderBys[i] = statement.OrderBys[i].Reversed();
-                }
-                statement.Limit = 1;
+                statement.ReadLastRow();
                 break;
 
+            // gh-995: over a page these aggregate a derived table of the page; see Statement.SelectAggregate.
             case SingleValueMode.Count:
-                statement.SelectColumns = "COUNT(*)";
+                statement.SelectAggregate(_ => "COUNT(*)", "1");
                 break;
 
             case SingleValueMode.LongCount:
-                statement.SelectColumns = "CAST(COUNT(*) AS bigint)";
+                statement.SelectAggregate(_ => "CAST(COUNT(*) AS bigint)", "1");
                 break;
 
             case SingleValueMode.Any:
                 statement.SelectColumns = "1";
-                statement.Limit = 1;
+                // gh-995: Take(0).Any() is false whatever the table holds, so its TOP(0) is kept rather than
+                // widened. A Skip is left alone: one row past it is exactly what Skip(k).Any() asks.
+                statement.Limit = statement.Limit == 0 ? 0 : 1;
                 statement.IsExistsWrapper = true;
                 break;
 
             case SingleValueMode.Sum:
-                statement.SelectColumns = parser.AggregationMember != null
-                    ? $"ISNULL(SUM({parser.AggregationMember.TypedLocator}), 0)"
-                    : "ISNULL(SUM(data), 0)";
+                statement.SelectAggregate(v => $"ISNULL(SUM({v}), 0)",
+                    parser.AggregationMember?.TypedLocator ?? "data");
                 break;
 
             case SingleValueMode.Min:
-                statement.SelectColumns = parser.AggregationMember != null
-                    ? $"MIN({parser.AggregationMember.TypedLocator})"
-                    : "MIN(data)";
+                statement.SelectAggregate(v => $"MIN({v})", parser.AggregationMember?.TypedLocator ?? "data");
                 break;
 
             case SingleValueMode.Max:
-                statement.SelectColumns = parser.AggregationMember != null
-                    ? $"MAX({parser.AggregationMember.TypedLocator})"
-                    : "MAX(data)";
+                statement.SelectAggregate(v => $"MAX({v})", parser.AggregationMember?.TypedLocator ?? "data");
                 break;
 
             case SingleValueMode.Average:
-                statement.SelectColumns = parser.AggregationMember != null
-                    ? $"AVG(CAST({parser.AggregationMember.TypedLocator} AS float))"
-                    : "AVG(CAST(data AS float))";
+                statement.SelectAggregate(v => $"AVG(CAST({v} AS float))",
+                    parser.AggregationMember?.TypedLocator ?? "data");
                 break;
         }
     }
