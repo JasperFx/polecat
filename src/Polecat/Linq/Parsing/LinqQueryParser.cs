@@ -302,9 +302,11 @@ internal class LinqQueryParser : ExpressionVisitor
                 HandleSelect(node);
                 break;
             case "Distinct":
+                ApplyToThePage("Distinct");
                 IsDistinct = true;
                 break;
             case "DistinctBy":
+                ApplyToThePage("DistinctBy");
                 HandleDistinctBy(node);
                 break;
             case "AnyTenant" when node.Method.DeclaringType == typeof(LinqExtensions):
@@ -416,6 +418,14 @@ internal class LinqQueryParser : ExpressionVisitor
 
         // Visit the outer source first (for any Where clauses applied before GroupJoin)
         Visit(node.Arguments[0]);
+
+        // gh-996: the join reads the outer source's table and filters, not a page of it.
+        if (Statement.InnerPage != null)
+        {
+            throw new BadLinqExpressionException(
+                "Polecat cannot translate a GroupJoin over rows that a Take() or Skip() paged and then reordered "
+                + "or filtered. Materialize the outer side first, or move the paging after the GroupJoin.");
+        }
 
         var outerType = node.Method.GetGenericArguments()[0];
         var innerType = node.Method.GetGenericArguments()[1];
@@ -579,7 +589,7 @@ internal class LinqQueryParser : ExpressionVisitor
         // the GroupBy cannot mean what the LINQ says. A Take(5) would page the groups rather than
         // group five rows, and an OrderBy has no column left to order by once the rows are grouped.
         if (SelectExpression != null || Statement.OrderBys.Count > 0 || Statement.Limit.HasValue
-            || Statement.Offset.HasValue || IsDistinct)
+            || Statement.Offset.HasValue || IsDistinct || Statement.InnerPage != null)
         {
             throw new BadLinqExpressionException(
                 "Polecat cannot translate a Select, OrderBy, Take, Skip or Distinct in front of a GroupBy, "
@@ -593,7 +603,22 @@ internal class LinqQueryParser : ExpressionVisitor
     private void HandleGroupByWhere(MethodCallExpression node)
     {
         // Where() after GroupBy() becomes a HAVING clause, resolved once the Select() is known.
+        RefuseAfterAGroupedPage("Where");
         GroupByHavingPredicates.Add(GetLambda(node.Arguments[1]));
+    }
+
+    /// <summary>
+    ///     gh-996: the groups are one statement, so an ordering or a filter after their page would choose a
+    ///     different page rather than apply to this one.
+    /// </summary>
+    private void RefuseAfterAGroupedPage(string operatorName)
+    {
+        if (!Statement.IsPaged) return;
+
+        throw new BadLinqExpressionException(
+            $"Polecat cannot translate {operatorName}() after a Take() or Skip() over the groups of a GroupBy: it "
+            + "would apply to every group rather than to the page. Order and filter the groups before paging "
+            + "them, or materialize the page and continue in memory.");
     }
 
     private void HandleGroupBySelect(MethodCallExpression node)
@@ -621,20 +646,24 @@ internal class LinqQueryParser : ExpressionVisitor
             // The key is a grouping or a projected shape rather than a document member, so it means
             // nothing until the GroupBy builder has the projection. Resolving it here as a member
             // would quietly order by a JSON path that does not exist.
+            RefuseAfterAGroupedPage(node.Method.Name);
             if (replace) GroupByOrderings.Clear();
             GroupByOrderings.Add((GetLambda(node.Arguments[1]), descending));
         }
         else
         {
+            ApplyToThePage(node.Method.Name);
             HandleOrderBy(node, descending, replace);
         }
     }
 
     private void HandleWhere(MethodCallExpression node)
     {
+        ApplyToThePage("Where");
+
         var predicate = OnTheDocument(GetLambda(node.Arguments[1]));
         var fragment = _whereParser.Parse(predicate.Body);
-        Statement.Wheres.Add(fragment);
+        Statement.RowFilters.Add(fragment);
         RowPredicates.Add(predicate);
     }
 
@@ -680,14 +709,40 @@ internal class LinqQueryParser : ExpressionVisitor
         OrderByMembers.Add((member, descending));
     }
 
+    /// <summary>
+    ///     gh-996: a <c>Take</c> after a page narrows it rather than replacing it, so
+    ///     <c>Take(2).Take(5)</c> is two rows. A negative count is no rows, as it is in LINQ to Objects.
+    /// </summary>
     private void HandleTake(MethodCallExpression node)
     {
-        Statement.Limit = (int)ExtractConstant(node.Arguments[1]);
+        var count = Math.Max(0, (int)ExtractConstant(node.Arguments[1]));
+        Statement.Limit = Statement.Limit.HasValue ? Math.Min(Statement.Limit.Value, count) : count;
     }
 
+    /// <summary>
+    ///     gh-996: a <c>Skip</c> after a page skips into it rather than replacing the first one, so
+    ///     <c>Skip(2).Take(5).Skip(1)</c> is <c>OFFSET 3</c> with four rows left. A negative count skips nothing.
+    /// </summary>
     private void HandleSkip(MethodCallExpression node)
     {
-        Statement.Offset = (int)ExtractConstant(node.Arguments[1]);
+        var count = Math.Max(0, (int)ExtractConstant(node.Arguments[1]));
+        Statement.Offset = (Statement.Offset ?? 0) + count;
+        if (Statement.Limit.HasValue) Statement.Limit = Math.Max(0, Statement.Limit.Value - count);
+    }
+
+    /// <summary>
+    ///     gh-996: an ordering, a filter or a Distinct after a <c>Take</c>/<c>Skip</c> applies to the page, so the
+    ///     page becomes a derived table first. See <see cref="Statement.InnerPage" />. Only one level of it is
+    ///     translated, and a second is refused rather than applied to the whole query.
+    /// </summary>
+    private void ApplyToThePage(string operatorName)
+    {
+        if (!Statement.IsPaged || Statement.TryWrapPage()) return;
+
+        throw new BadLinqExpressionException(
+            $"Polecat cannot translate {operatorName}() here: it follows a Take() or Skip() over rows that an "
+            + "earlier Take() or Skip() had already paged and then reordered or filtered, and Polecat translates "
+            + "only one such page. Materialize the query with ToListAsync() and continue in memory.");
     }
 
     private void HandleSelect(MethodCallExpression node)
@@ -843,12 +898,15 @@ internal class LinqQueryParser : ExpressionVisitor
             // After a GroupBy it filters the groups, exactly as a Where there does.
             if (GroupByKeySelector != null)
             {
+                RefuseAfterAGroupedPage(mode.ToString());
                 GroupByHavingPredicates.Add(predicate);
                 return;
             }
 
+            ApplyToThePage(mode.ToString());
+
             var fragment = _whereParser.Parse(OnTheDocument(predicate).Body);
-            Statement.Wheres.Add(fragment);
+            Statement.RowFilters.Add(fragment);
             RowPredicates.Add(predicate);
         }
     }
@@ -926,6 +984,7 @@ internal class LinqQueryParser : ExpressionVisitor
                 "OrderedByVectorDistance expects a prepared ordering; call OrderByVectorDistance(...).");
         }
 
+        ApplyToThePage("OrderedByVectorDistance");
         Statement.OrderBys.Clear();
         Statement.OrderBys.Add(ordering);
     }

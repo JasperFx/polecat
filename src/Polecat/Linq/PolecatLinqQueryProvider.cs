@@ -465,6 +465,15 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
                 + "Distinct(), because a cursor names one document. Page it with Skip and Take instead.");
         }
 
+        // gh-996: the seek predicate and the cursor's keys are the query's own, not a page's.
+        if (parser.Statement.InnerPage != null)
+        {
+            throw new BadLinqExpressionException(
+                $"{nameof(CursorPagingQueryableExtensions.ToJsonPageByCursorAsync)} has no translation for a "
+                + "query that reorders or filters the rows of a Take() or Skip(). Page it with Skip and Take "
+                + "instead.");
+        }
+
         var orderBy = parser.OrderByMembers;
         CursorPagination.ValidateOrdering(orderBy);
 
@@ -1032,7 +1041,8 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
             SoftDeleteTarget.For(innerMapping));
         inner.Parse(joinData.InnerSourceExpression);
 
-        if (inner.Statement.Limit.HasValue || inner.Statement.Offset.HasValue || inner.ValueMode.HasValue
+        if (inner.Statement.Limit.HasValue || inner.Statement.Offset.HasValue
+            || inner.Statement.InnerPage != null || inner.ValueMode.HasValue
             || inner.SelectExpression != null || inner.GroupByKeySelector != null || inner.GroupJoinData != null)
         {
             throw new BadLinqExpressionException(
@@ -1142,12 +1152,7 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
 
             case SingleValueMode.Last:
             case SingleValueMode.LastOrDefault:
-                // Reverse the ordering and take 1
-                for (var i = 0; i < statement.OrderBys.Count; i++)
-                {
-                    statement.OrderBys[i] = statement.OrderBys[i].Reversed();
-                }
-                statement.Limit = 1;
+                statement.ReadLastRow();
                 break;
 
             // gh-995: over a page these aggregate a derived table of the page; see Statement.SelectAggregate.

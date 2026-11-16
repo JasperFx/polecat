@@ -564,7 +564,11 @@ public class first_use_schema_lock_tests
         await session.SaveChangesAsync(token);
         stopwatch.Stop();
 
-        stopwatch.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(5),
+        // gh-1024: the bound is the 10s migration lock timeout this store was built with, less headroom --
+        // NOT 5s. This save is in a real deadlock cycle with the ALTER (see below), and SQL Server's deadlock
+        // monitor only wakes every 5 seconds by default, so a save that loses or wins that cycle routinely
+        // takes just over 5s (5.0177s on CI). Waiting on the migration lock would take the full 10s.
+        stopwatch.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(8),
             "a session holding a transaction must never wait on the migration lock");
 
         // The session's own statements meet the pending schema lock head on, on connections SQL Server
