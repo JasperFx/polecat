@@ -959,7 +959,14 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
                 if (docProperty != null)
                 {
                     var docMember = factory.ResolveMember(docProperty);
-                    joinStatement.OrderBys.Add((JoinStatement.AliasLocator(docMember.TypedLocator, alias), descending));
+                    var locator = JoinStatement.AliasLocator(docMember.TypedLocator, alias);
+
+                    // gh-997: the keys arrive most significant first, and SQL Server refuses a column named
+                    // twice in ORDER BY. A repeated key can never break a tie, so it is dropped.
+                    if (!joinStatement.OrderBys.Exists(o => o.Locator == locator))
+                    {
+                        joinStatement.OrderBys.Add((locator, descending));
+                    }
                 }
             }
         }
@@ -1128,7 +1135,6 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
     ///     Finds the original MemberExpression on the document type for an anonymous type member.
     ///     Traces through the SelectMany result selector to find the source expression.
     /// </summary>
-    [RequiresUnreferencedCode("Routes through FindDeepestMemberExpression which reflects over the document type's members.")]
     private static MemberExpression? FindOriginalProperty(GroupJoinData joinData, string memberName, bool isOuter)
     {
         if (joinData.SelectManyResultSelector?.Body is not NewExpression resultNew || resultNew.Members == null)
@@ -1139,78 +1145,53 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
             if (resultNew.Members[i].Name != memberName) continue;
 
             // Trace the argument back to the document property
-            var arg = resultNew.Arguments[i];
-            return FindDeepestMemberExpression(arg);
+            var documentType = isOuter ? joinData.OuterElementType : joinData.InnerElementType;
+            return RerootOnTheDocument(resultNew.Arguments[i], documentType);
         }
 
         return null;
     }
 
-    [RequiresUnreferencedCode("Reflects over the document type's properties/fields via Type.GetProperty/GetField when rebuilding member access for join order-by translation.")]
-    private static MemberExpression? FindDeepestMemberExpression(Expression expr)
+    /// <summary>
+    ///     <c>z.x.Rank</c> re-rooted at the document it reads, as <c>x.Rank</c> on a parameter of
+    ///     <paramref name="documentType" />, or null where the expression is not a member of that document.
+    /// </summary>
+    /// <remarks>
+    ///     gh-997. The chain is anchored at the node nearest its root whose type IS the document type. It
+    ///     used to be anchored at the root's own type, which for an outer member is the GroupJoin's anonymous
+    ///     type, so <c>z.x.Rank</c> kept the anonymous member and read <c>$.x.rank</c>: a path no document
+    ///     has, so every ordering by an outer member silently ordered by NULL.
+    /// </remarks>
+    private static MemberExpression? RerootOnTheDocument(Expression expr, Type documentType)
     {
-        // Walk through member chains to find the deepest member on a document type
-        // e.g., temp.c.Name → we want the MemberExpression for .Name on the document type
-        if (expr is MemberExpression member)
-        {
-            // Create a synthetic member expression on a parameter of the document type
-            // We need to resolve through the document's type, not through anonymous types
-            var rootType = GetUltimateDeclaringType(member);
-            if (rootType != null)
-            {
-                var syntheticParam = Expression.Parameter(rootType, "x");
-                return RebuildMemberAccess(member, syntheticParam);
-            }
-        }
-
-        return null;
-    }
-
-    private static Type? GetUltimateDeclaringType(MemberExpression expr)
-    {
-        Expression? current = expr;
-        Type? lastType = null;
+        var chain = new List<MemberExpression>();
+        var current = expr;
         while (current is MemberExpression m)
         {
-            lastType = m.Expression?.Type;
-            current = m.Expression;
-        }
-        return lastType;
-    }
-
-    [RequiresUnreferencedCode("Reflects over param.Type's public properties/fields via Type.GetProperty/GetField when rebuilding join order-by member access.")]
-    private static MemberExpression? RebuildMemberAccess(MemberExpression original, ParameterExpression param)
-    {
-        // Collect the member chain from innermost to outermost
-        var chain = new List<System.Reflection.MemberInfo>();
-        Expression? current = original;
-        while (current is MemberExpression m)
-        {
-            chain.Insert(0, m.Member);
+            chain.Insert(0, m);
             current = m.Expression;
         }
 
-        // Skip anonymous type members — start from the first member that exists on the document type
-        Expression result = param;
-        var started = false;
-        foreach (var memberInfo in chain)
+        // chain[0] is the member nearest the root. Rebuild from the first member read off the document:
+        // y.Amount starts at the root, z.x.Rank one past the member that IS the document.
+        int anchor;
+        if (current?.Type == documentType)
         {
-            if (!started)
-            {
-                // Check if this member exists on the param type (the document type)
-                var prop = param.Type.GetProperty(memberInfo.Name);
-                var field = param.Type.GetField(memberInfo.Name);
-                if (prop != null || field != null)
-                {
-                    started = true;
-                    result = Expression.MakeMemberAccess(result, (System.Reflection.MemberInfo?)prop ?? field!);
-                    continue;
-                }
-                // Skip anonymous type members
-                continue;
-            }
+            anchor = 0;
+        }
+        else
+        {
+            var document = chain.FindIndex(m => m.Type == documentType);
+            if (document < 0) return null;
+            anchor = document + 1;
+        }
 
-            result = Expression.MakeMemberAccess(result, memberInfo);
+        if (anchor >= chain.Count) return null;
+
+        Expression result = Expression.Parameter(documentType, "x");
+        for (var i = anchor; i < chain.Count; i++)
+        {
+            result = Expression.MakeMemberAccess(result, chain[i].Member);
         }
 
         return result as MemberExpression;

@@ -463,13 +463,70 @@ internal class LinqQueryParser : ExpressionVisitor
 
     private void HandleGroupJoinOrderBy(MethodCallExpression node, bool descending, bool replace)
     {
-        if (replace)
+        // gh-997: a second OrderBy() over the joined rows keeps the earlier keys as tie-breakers, as it
+        // does over documents. A repeated key is dropped where the keys are resolved to columns.
+        var lambda = GetLambda(node.Arguments[1]);
+        PlaceOrdering(GroupJoinData!.OrderByExpressions, ref _joinOrderingChainEnd, (lambda, descending),
+            key: null, _ => null, startsTheOrdering: replace);
+    }
+
+    // gh-997: where the next key of the current OrderBy() chain goes in each ordering list. See PlaceOrdering.
+    private int _orderingChainEnd;
+    private int _memberOrderingChainEnd;
+    private int _joinOrderingChainEnd;
+
+    /// <summary>
+    ///     gh-997 (marten#5959): add one ordering key where LINQ to Objects would put it.
+    /// </summary>
+    /// <remarks>
+    ///     LINQ's sort is stable, so <c>OrderBy(a).OrderBy(b)</c> orders by <c>b</c> and leaves <c>a</c> to
+    ///     break the ties <c>b</c> leaves. Operators are visited innermost first, so a key arrives in the
+    ///     order it was written: an <c>OrderBy()</c> key starts a chain at the FRONT of the list, the
+    ///     <c>ThenBy()</c> keys after it follow it there, and the keys of every earlier chain end up behind
+    ///     them as tie-breakers. A key already in the list is never repeated, because SQL Server refuses a
+    ///     column named twice in ORDER BY and a repeated key can never break a tie: a key already ahead of
+    ///     this one makes it redundant, and one behind it is made redundant by it.
+    /// </remarks>
+    /// <param name="key">What makes two keys the same column, or null where it cannot be told</param>
+    /// <param name="startsTheOrdering">True for OrderBy() and its kin, false for ThenBy() and its kin</param>
+    private static void PlaceOrdering<T>(List<T> orderings, ref int chainEnd, T ordering, string? key,
+        Func<T, string?> keyOf, bool startsTheOrdering)
+    {
+        // Something else may have emptied the list since (an aggregate over a derived table does)
+        chainEnd = startsTheOrdering ? 0 : Math.Min(chainEnd, orderings.Count);
+
+        if (key != null)
         {
-            GroupJoinData!.OrderByExpressions.Clear();
+            for (var i = 0; i < chainEnd; i++)
+            {
+                if (keyOf(orderings[i]) == key) return;
+            }
+
+            for (var i = orderings.Count - 1; i >= chainEnd; i--)
+            {
+                if (keyOf(orderings[i]) == key) orderings.RemoveAt(i);
+            }
         }
 
-        var lambda = GetLambda(node.Arguments[1]);
-        GroupJoinData!.OrderByExpressions.Add((lambda, descending));
+        orderings.Insert(chainEnd, ordering);
+        chainEnd++;
+    }
+
+    private void AddOrdering(OrderByClause ordering, IQueryableMember? member, bool startsTheOrdering)
+    {
+        PlaceOrdering(Statement.OrderBys, ref _orderingChainEnd, ordering, ordering.Literal, o => o.Literal,
+            startsTheOrdering);
+
+        if (member != null)
+        {
+            PlaceOrdering(OrderByMembers, ref _memberOrderingChainEnd, (Member: member, ordering.Descending),
+                member.TypedLocator, o => o.Member.TypedLocator, startsTheOrdering);
+        }
+        else if (startsTheOrdering)
+        {
+            // Keyset pagination reads these; a chain led by a non-member key leaves its members behind it
+            _memberOrderingChainEnd = 0;
+        }
     }
 
     private void HandleGroupBy(MethodCallExpression node)
@@ -552,12 +609,6 @@ internal class LinqQueryParser : ExpressionVisitor
 
     private void HandleOrderBy(MethodCallExpression node, bool descending, bool replace)
     {
-        if (replace)
-        {
-            Statement.OrderBys.Clear();
-            OrderByMembers.Clear();
-        }
-
         var lambda = OnTheDocument(GetLambda(node.Arguments[1]));
         var body = StripConvert(lambda.Body);
 
@@ -565,7 +616,7 @@ internal class LinqQueryParser : ExpressionVisitor
         if (body is ParameterExpression)
         {
             // Order by the projected scalar, through an index where it has one like any other ordering
-            Statement.OrderBys.Add((ScalarSelectMember?.TypedLocator ?? Statement.SelectColumns, descending));
+            AddOrdering((ScalarSelectMember?.TypedLocator ?? Statement.SelectColumns, descending), null, replace);
             return;
         }
 
@@ -575,8 +626,7 @@ internal class LinqQueryParser : ExpressionVisitor
                 + "(x => x.Name) or by the scalar a preceding Select(...) projected.");
 
         var member = _memberFactory.ResolveKey(memberExpr, "in an OrderBy");
-        Statement.OrderBys.Add((member.TypedLocator, descending));
-        OrderByMembers.Add((member, descending));
+        AddOrdering((member.TypedLocator, descending), member, replace);
     }
 
     private void HandleTake(MethodCallExpression node)
@@ -813,9 +863,8 @@ internal class LinqQueryParser : ExpressionVisitor
     ///     why the tree carries the clause rather than the arguments that made it.
     /// </summary>
     /// <remarks>
-    ///     It REPLACES any earlier ordering rather than appending, which is what
-    ///     <c>OrderBy</c>-then-<c>OrderBy</c> means in LINQ: a second ordering key is a
-    ///     <c>ThenBy</c>, and this operator has no ThenBy form.
+    ///     It STARTS an ordering, as <c>OrderBy</c> does: it leads, and any earlier ordering stays behind it
+    ///     to break its ties (gh-997). This operator has no ThenBy form.
     /// </remarks>
     private void HandleOrderByVectorDistance(MethodCallExpression node)
     {
@@ -825,8 +874,7 @@ internal class LinqQueryParser : ExpressionVisitor
                 "OrderedByVectorDistance expects a prepared ordering; call OrderByVectorDistance(...).");
         }
 
-        Statement.OrderBys.Clear();
-        Statement.OrderBys.Add(ordering);
+        AddOrdering(ordering, null, startsTheOrdering: true);
     }
 
     private void HandleTenantIsOneOf(MethodCallExpression node)
