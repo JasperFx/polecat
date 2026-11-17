@@ -175,7 +175,7 @@ partial class Build
 
     /// <summary>
     ///     One supervised test project: where it is, its committed worker count, and the prefix of its
-    ///     lane catalogs (<c>polecat_{Lanes}_w{lane}</c>). The prefix is what lets the three suites run
+    ///     lane catalogs (<c>{LanePrefix}_{Lanes}_w{lane}</c>, <c>polecat_core_w0</c> by default). The prefix is what lets the three suites run
     ///     at the same time on one SQL Server: each one drops and recreates only its own catalogs.
     /// </summary>
     sealed record SupervisedSuite(string Lanes, string ProjectPath, int Workers)
@@ -571,7 +571,15 @@ partial class Build
     string laneConnectionString(SupervisedSuite suite, int lane) =>
         new SqlConnectionStringBuilder(serverConnectionString()) { InitialCatalog = laneDatabase(suite, lane) }.ConnectionString;
 
-    static string laneDatabase(SupervisedSuite suite, int lane) => $"polecat_{suite.Lanes}_w{lane}";
+    string laneDatabase(SupervisedSuite suite, int lane) => $"{LanePrefix}_{suite.Lanes}_w{lane}";
+
+    /// <summary>
+    ///     The start of every lane catalog's name, <c>polecat</c> unless a run asks for another. Two gates
+    ///     on one SQL Server at once (two worktrees) would otherwise drop each other's catalogs: give one
+    ///     of them its own prefix.
+    /// </summary>
+    [Parameter("The start of every lane catalog's name (default polecat), so two gates can share one SQL Server")]
+    readonly string LanePrefix = "polecat";
 
     /// <summary>
     ///     One catalog per lane, created before any worker launches — a worker must not race another to

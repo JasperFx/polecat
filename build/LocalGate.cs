@@ -100,7 +100,7 @@ partial class Build
 
             foreach (var suite in Suites)
             {
-                var track = $"polecat_{suite.Lanes}_w*";
+                var track = $"{LanePrefix}_{suite.Lanes}_w*";
                 gate.Tracks.Add(new Track(track)
                     .Check($"SQL Server ({Storage}) answers at {server}", pingServer));
 
