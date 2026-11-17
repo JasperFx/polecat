@@ -329,6 +329,33 @@ internal class DocumentMapping
     public List<DocumentIndex> Indexes { get; } = new();
 
     /// <summary>
+    ///     #1056 (marten#6019): add a declared index, refusing one whose name another index on this
+    ///     document already has.
+    /// </summary>
+    /// <remarks>
+    ///     Weasel creates each index only if one by that name is missing and compares indexes by name, so a
+    ///     second index with the same name was never created, and nothing said so: the table, the migration
+    ///     and the assert all looked fine. That was harmless for the same member declared twice and lost the
+    ///     index outright when two different indexes shared a name.
+    /// </remarks>
+    internal void AddIndex(DocumentIndex index)
+    {
+        var name = index.GetIndexName(TableName);
+        if (Indexes.Any(x => x.GetIndexName(TableName).Equals(name, StringComparison.OrdinalIgnoreCase)))
+        {
+            var members = index.MemberChains is { Length: > 0 }
+                ? string.Join(", ", index.MemberChains.Select(chain => string.Join(".", chain.Select(m => m.Name))))
+                : string.Join(", ", index.JsonPaths);
+
+            throw new InvalidOperationException(
+                $"Document type {DocumentType.FullNameInCode()} already has an index named '{name}', so Index() over {members} cannot add another one with the same name. " +
+                "Declare the index once, or give a genuinely second index its own name with x => x.IndexName = \"...\"");
+        }
+
+        Indexes.Add(index);
+    }
+
+    /// <summary>
     ///     Native SQL Server 2025 JSON indexes (<c>CREATE JSON INDEX</c>) configured for this document
     ///     type. The SQL Server analog of Marten's whole-body <c>GinIndexJsonData</c>.
     /// </summary>
@@ -856,7 +883,7 @@ internal class DocumentMapping
                 MemberChains = [[prop]]
             };
             if (indexAttr.SqlType != null) index.SqlType = indexAttr.SqlType;
-            Indexes.Add(index);
+            AddIndex(index);
         }
 
         // Discover [UniqueIndex] attributes — group by IndexName for composite unique indexes
@@ -883,7 +910,7 @@ internal class DocumentMapping
                 Casing = firstAttr.Casing
             };
             if (firstAttr.SqlType != null) index.SqlType = firstAttr.SqlType;
-            Indexes.Add(index);
+            AddIndex(index);
         }
     }
 
