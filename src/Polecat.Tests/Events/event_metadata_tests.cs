@@ -209,6 +209,48 @@ public class event_metadata_tests : OneOffConfigurationsContext
     }
 
     [Fact]
+    public async Task enable_all_also_enables_the_user_name()
+    {
+        await ConfigureAndApply(opts =>
+        {
+            #region sample_polecat_enable_all_event_metadata
+            // Correlation id, causation id, headers and the user name
+            opts.Events.EnableAllEventMetadata();
+            #endregion
+        });
+
+        theStore.Options.Events.EnableCorrelationId.ShouldBeTrue();
+        theStore.Options.Events.EnableCausationId.ShouldBeTrue();
+        theStore.Options.Events.EnableHeaders.ShouldBeTrue();
+        theStore.Options.Events.EnableUserName.ShouldBeTrue();
+
+        var streamId = Guid.NewGuid();
+
+        await using var session = theStore.LightweightSession();
+        session.LastModifiedBy = "Last Person";
+        session.CorrelationId = "corr-all";
+        session.CausationId = "cause-all";
+        session.SetHeader("source", "enable-all");
+        session.Events.StartStream(streamId,
+            new QuestStarted("Everything"),
+            new MembersJoined(1, "Town", ["A"]));
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        await using var query = theStore.QuerySession();
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
+
+        events.Count.ShouldBe(2);
+        foreach (var @event in events)
+        {
+            @event.UserName.ShouldBe("Last Person");
+            @event.CorrelationId.ShouldBe("corr-all");
+            @event.CausationId.ShouldBe("cause-all");
+            @event.Headers.ShouldNotBeNull();
+            @event.Headers!["source"].ToString().ShouldBe("enable-all");
+        }
+    }
+
+    [Fact]
     public async Task event_level_user_name_takes_precedence_over_session()
     {
         await ConfigureAndApply(opts =>
