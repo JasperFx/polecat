@@ -267,6 +267,36 @@ var orders = await session.Query<OrderSummary>()
 
 With per-tenant partitioned events this waits for the session's tenant only.
 
+### Reading Your Own Writes
+
+The waits above are for the highest sequence in the store, and on a busy system that includes everybody else's
+events. If you just want to read back what you wrote, wait for your own events instead.
+`session.LastAppendedSequence` tells you where the last commit's events are, and `WaitForProjectionsAsync` waits
+for the named asynchronous projections to get that far:
+
+```cs
+await using var session = store.LightweightSession();
+session.Events.StartStream(Guid.NewGuid(), new QuestStarted("Destroy the Ring"));
+await session.SaveChangesAsync();
+
+var result = await store.WaitForProjectionsAsync(
+    session.LastAppendedSequence!, [typeof(QuestParty)], TimeSpan.FromSeconds(5));
+
+if (result.Reached)
+{
+    // read the projected documents
+}
+```
+
+The result is a value, not an exception. `TimedOut` means the projection is still behind your events, and
+`Shards` says how far each shard got. A paused or rebuilding projection returns right away with `Paused` or
+`Rebuilding`. The wait polls `pc_event_progression`, so it works on any node. You can pass projection names
+instead of types, and an `ArgumentException` tells you when what you passed isn't an asynchronous projection.
+
+The position is the database, the tenant and the sequence, and with per-tenant partitioned events the wait reads
+that tenant's own row. It serializes as JSON, and `ToString()` / `EventStorePosition.Parse()` give you a compact
+text form to pass along in a header.
+
 ## Event Progression
 
 Track daemon progress:

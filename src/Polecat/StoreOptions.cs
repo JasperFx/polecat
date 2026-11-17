@@ -544,6 +544,7 @@ public class StoreOptions
     ///       <item><see cref="StorePolicies.StartIndexesByTenantId" /> &rarr; <c>false</c></item>
     ///       <item><see cref="EventStoreOptions.EnableSideEffectsOnInlineProjections" /> &rarr; <c>false</c></item>
     ///       <item><see cref="EventStoreOptions.DcbConflictScope" /> &rarr; <c>DcbConflictScope.TagValue</c></item>
+    ///       <item><see cref="Polecat.Events.EventGraph.UseArchivedStreamPartitioning" /> &rarr; <c>false</c></item>
     ///       <item>
     ///         <c>GateSideEffectsBehindPriorVersion</c> &rarr; <c>false</c> on every registered projection
     ///         (JasperFx 3.0 turned it on, jasperfx#1075). JasperFx has no store-wide switch, so this is
@@ -567,6 +568,8 @@ public class StoreOptions
         OpenTelemetry.EventCountersEnabled = false;
 
         Events.DcbConflictScope = Polecat.Events.DcbConflictScope.TagValue;
+
+        EventGraph.UseArchivedStreamPartitioning = false;
 
         _restoreV5Defaults = true;
     }

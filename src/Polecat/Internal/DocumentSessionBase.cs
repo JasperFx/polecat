@@ -1118,6 +1118,10 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             // beside the other post-commit work.
             StoreAggregateWriteCacheEntries();
 
+            // marten#6004: where this commit's events are, before the tracker is reset and before any
+            // listener, so an AfterCommitAsync listener can carry the position on
+            recordAppendedPosition();
+
             // Runtime append observation (polecat#213 / CritterWatch#500) — capture the committed
             // events before the work tracker is reset, then notify best-effort.
             NotifyAppendObserver();
@@ -1618,6 +1622,62 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         {
             await tx.DisposeAsync().ConfigureAwait(false);
         }
+    }
+
+    /// <summary>
+    ///     marten#6004: where the events this session committed are, for
+    ///     <see cref="IDocumentStore.WaitForProjectionsAsync(EventStorePosition, IReadOnlyList{Type}, TimeSpan, CancellationToken)" />.
+    ///     The highest event sequence any <c>SaveChangesAsync</c> on this session appended, with the session's
+    ///     database and tenant. Null until a commit appends events.
+    /// </summary>
+    /// <remarks>
+    ///     Under <c>UseTenantPartitionedEvents</c> every tenant numbers its own events, so the position is the
+    ///     one of the session's own tenant, or of the one tenant the commit appended for when that is another.
+    ///     A commit that appends for several tenants other than the session's records the first of them.
+    /// </remarks>
+    public EventStorePosition? LastAppendedSequence { get; private set; }
+
+    private void recordAppendedPosition()
+    {
+        var streams = _workTracker.Streams;
+        if (streams.Count == 0) return;
+
+        string? tenantId = TenantId;
+        long highest = 0;
+
+        if (_eventGraph.UseTenantPartitionedEvents)
+        {
+            var appended = streams.Where(x => x.Events.Count > 0).ToList();
+            if (appended.Count == 0) return;
+
+            if (appended.All(x => x.TenantId != TenantId)) tenantId = appended[0].TenantId;
+
+            foreach (var stream in appended.Where(x => x.TenantId == tenantId))
+            {
+                highest = Math.Max(highest, stream.Events.Max(x => x.Sequence));
+            }
+        }
+        else
+        {
+            foreach (var stream in streams)
+            {
+                foreach (var @event in stream.Events)
+                {
+                    highest = Math.Max(highest, @event.Sequence);
+                }
+            }
+        }
+
+        if (highest <= 0) return;
+
+        // Only ever forward: a later commit on the same session cannot move the position back
+        if (LastAppendedSequence != null && LastAppendedSequence.TenantId == tenantId &&
+            LastAppendedSequence.Sequence >= highest)
+        {
+            return;
+        }
+
+        LastAppendedSequence = new EventStorePosition(Options.StorageDatabase?.Identifier, tenantId, highest);
     }
 
     /// <summary>
