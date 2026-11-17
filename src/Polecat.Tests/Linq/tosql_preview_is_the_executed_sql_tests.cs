@@ -1,6 +1,5 @@
 using System.Text.Json.Serialization;
 using JasperFx;
-using Microsoft.Data.SqlClient;
 using Polecat.Linq;
 using Polecat.Tests.Harness;
 
@@ -28,21 +27,13 @@ public class PreviewVersionedDoc : IVersioned
 ///     gh-1002 (ported from marten#5916): <c>ToSql()</c> rendered the statement before the preparation
 ///     execution runs, so for a document with metadata read columns it previewed <c>SELECT data ...</c>
 ///     while <c>SELECT data, guid_version ...</c> executed. Each fact compares the preview with the text
-///     SQL Server actually ran, read back through <see cref="ExecutedStatements" />.
+///     sent to SQL Server, captured on the client through <see cref="ExecutedStatements" />.
 /// </summary>
 public class tosql_preview_is_the_executed_sql_tests : OneOffConfigurationsContext
 {
     private const string Schema = "tosql_preview_is_the_executed_sql_tests";
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
-
-    public tosql_preview_is_the_executed_sql_tests()
-    {
-        // ExecutedStatements needs it: a pooled connection's re-run of a cached statement can stay out of the
-        // query stats
-        ConfigureStore(opts => opts.ConnectionString =
-            new SqlConnectionStringBuilder(ConnectionSource.ConnectionString) { Pooling = false }.ConnectionString);
-    }
 
     private async Task SeedAsync()
     {
@@ -67,23 +58,20 @@ public class tosql_preview_is_the_executed_sql_tests : OneOffConfigurationsConte
             previewed = ExecutedStatements.Normalize(session.ToSql(query(session)));
         }
 
-        await using var conn = new SqlConnection(ConnectionSource.ConnectionString);
-        await conn.OpenAsync(Ct);
-
-        // #1046's fix for the sibling class, which this one missed: the old clock comparison could miss the
-        // query and read back the seeding MERGE instead
-        var snapshot = await ExecutedStatements.SnapshotAsync(conn, $"%{Schema}%pc_doc_{tableTypeName}%");
-
-        await using (var session = theStore.QuerySession())
+        List<string> executed;
+        using (var capture = ExecutedStatements.Start($"%{Schema}%pc_doc_{tableTypeName}%"))
         {
-            await query(session).ToListAsync(Ct);
-        }
+            await using (var session = theStore.QuerySession())
+            {
+                await query(session).ToListAsync(Ct);
+            }
 
-        var executed = await snapshot.ExecutedSinceAsync(x => x.Contains(previewed));
+            executed = capture.Statements;
+        }
 
         executed.ShouldContain(previewed,
             $"ToSql() previewed:{Environment.NewLine}  {previewed}{Environment.NewLine}"
-            + $"statements executed against the table since the query started:{Environment.NewLine}  "
+            + $"statements executed against the table by the query:{Environment.NewLine}  "
             + string.Join(Environment.NewLine + "  ", executed));
     }
 

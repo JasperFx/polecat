@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using JasperFx.Core;
 using JasperFx.Core.Reflection;
 using Weasel.Core.Identity;
 using Weasel.Storage;
@@ -46,7 +47,7 @@ internal static class ValueTypeIdRegistry
             new Func<DocumentMapping, ValueTypeInfo, DocumentProvider<TDoc>>((mapping, vt) =>
                 PolecatClosedShapeRegistration.BuildTypedProvider<TDoc, TWrapper>(mapping,
                     new ValueTypeIdentification<TDoc, TWrapper, TInner>(mapping.IdMember, vt,
-                        mapping.DocumentType)));
+                        mapping.DocumentType, SequentialGuid.SqlServerOrder)));
     }
 
     /// <summary>Whether a registration rooted <paramref name="document" /> over <paramref name="wrapper" />.</summary>

@@ -1,5 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
+using JasperFx.Core;
 using JasperFx.Core.Reflection;
 using Weasel.Core.Identity;
 using Weasel.Storage;
@@ -71,7 +72,7 @@ internal static class PolecatClosedShapeRegistration
         if (mapping.IdType == typeof(Guid))
         {
             return BuildTypedProvider<TDoc, Guid>(mapping,
-                new SequentialGuidIdentification<TDoc>(mapping.IdMember));
+                new SequentialGuidIdentification<TDoc>(mapping.IdMember, SequentialGuid.SqlServerOrder));
         }
 
         if (mapping.IdType == typeof(string))
@@ -115,10 +116,11 @@ internal static class PolecatClosedShapeRegistration
             return registered;
         }
 
+        // The overload that takes the Guid generator, so a Guid-wrapping id is in SQL Server order
         var identification = typeof(ValueTypeIdentification<,,>)
             .MakeGenericType(typeof(TDoc), vt.OuterType, vt.SimpleType)
-            .GetConstructors()[0]
-            .Invoke(new object[] { mapping.IdMember, vt, mapping.DocumentType });
+            .GetConstructor([typeof(MemberInfo), typeof(ValueTypeInfo), typeof(Type), typeof(IGuidGenerator)])!
+            .Invoke([mapping.IdMember, vt, mapping.DocumentType, SequentialGuid.SqlServerOrder]);
 
         return typeof(PolecatClosedShapeRegistration)
             .GetMethod(nameof(BuildTypedProvider), BindingFlags.NonPublic | BindingFlags.Static)!

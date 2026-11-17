@@ -126,6 +126,15 @@ public class porter_stemmer_tests
         stems[atLimit].ShouldBe(PorterStemmer.Stem(atLimit));
     }
 
+    // #1061: a sort inside the function asks for a memory grant on every call. Stemming the oracle took
+    // ~70,000 of them, and on a server short of memory the statement failed waiting for one
+    [Fact]
+    public void the_tsql_stemmer_does_not_sort()
+    {
+        PorterStemFunction.StemSql(Schema).ShouldNotContain("ORDER BY", Case.Insensitive);
+        PorterStemFunction.PatternSql(Schema).ShouldNotContain("ORDER BY", Case.Insensitive);
+    }
+
     private static async Task EnsureFunctionsAsync(SqlConnection conn)
     {
         await using (var cmd = conn.CreateCommand())

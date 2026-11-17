@@ -2,6 +2,7 @@ using System.Data.Common;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using System.Reflection;
+using JasperFx.Core;
 using JasperFx.Core.Reflection;
 using JasperFx.Events;
 using JasperFx.Events.Aggregation;
@@ -150,6 +151,8 @@ internal class EventOperations : QueryEventStore, IEventOperations, IEventOperat
     private sealed class SharedWrites(EventOperations operations) : EventOperationsBase
     {
         protected override StreamIdentity StreamIdentity => operations._events.StreamIdentity;
+
+        protected override IGuidGenerator StreamIdGenerator => operations._events.StreamIdGenerator;
 
         protected override StreamAction StartStreamCore(Type? aggregateType, Guid id, object[] events)
             => operations.startStreamCore(aggregateType, id, events);

@@ -30,11 +30,19 @@ namespace Polecat.Storage.FullText;
 ///         depends only on itself and the one before it, so the pattern of any prefix of a word is the
 ///         same prefix of the word's pattern — which turns Porter's measure <c>m</c> into "count the
 ///         <c>vc</c> pairs in <c>LEFT(@p, j)</c>" and <c>*v*</c> into a <c>CHARINDEX</c>. Each step's
-///         suffix list is an ordered <c>VALUES</c> table taken <c>TOP 1</c>: the reference switches on the
+///         suffix list is an ordered <c>VALUES</c> table, and the matching suffix with the lowest
+///         <c>ord</c> wins: the reference switches on the
 ///         word's last or second-to-last letter first, but a suffix that matches already fixes that letter,
 ///         so the switch is implied by the match and the global order reproduces each case's order.
 ///         <c>Ends</c> is STRICT — the suffix must be shorter than the word — exactly as in
 ///         <see cref="PorterStemmer" />.
+///     </para>
+///     <para>
+///         The lowest <c>ord</c> is picked with <c>MIN(ord)</c>, not <c>TOP 1 ... ORDER BY ord</c>. A
+///         <c>TOP 1 ... ORDER BY</c> is a TopN sort, and every sort asks SQL Server for a memory grant (1 MB),
+///         so the old shape took three grants per stemmed token. Under memory pressure each one can wait, and
+///         a statement stemming many tokens failed with "A timeout occurred while waiting for memory
+///         resources" (#1061). <c>MIN</c> is a stream aggregate and needs no grant.
 ///     </para>
 /// </remarks>
 internal static class PorterStemFunction
@@ -146,19 +154,20 @@ internal static class PorterStemFunction
                     -- Step 2: double suffixes, replaced when m(stem) > 0
                     SET @p = {cv}(@w);
                     SET @suffix = NULL;
-                    SELECT TOP 1 @suffix = s.suffix, @replacement = s.replacement
-                    FROM (VALUES
-                        (1, 'ational', 'ate'), (2, 'tional', 'tion'),
-                        (3, 'enci', 'ence'), (4, 'anci', 'ance'),
-                        (5, 'izer', 'ize'),
-                        (6, 'bli', 'ble'), (7, 'alli', 'al'), (8, 'entli', 'ent'), (9, 'eli', 'e'), (10, 'ousli', 'ous'),
-                        (11, 'ization', 'ize'), (12, 'ation', 'ate'), (13, 'ator', 'ate'),
-                        (14, 'alism', 'al'), (15, 'iveness', 'ive'), (16, 'fulness', 'ful'), (17, 'ousness', 'ous'),
-                        (18, 'aliti', 'al'), (19, 'iviti', 'ive'), (20, 'biliti', 'ble'),
-                        (21, 'logi', 'log')
-                    ) s(ord, suffix, replacement)
-                    WHERE LEN(s.suffix) < LEN(@w) AND RIGHT(@w, LEN(s.suffix)) = s.suffix
-                    ORDER BY s.ord;
+                    WITH s(ord, suffix, replacement) AS (
+                        SELECT v.ord, v.suffix, v.replacement
+                        FROM (VALUES
+                            (1, 'ational', 'ate'), (2, 'tional', 'tion'),
+                            (3, 'enci', 'ence'), (4, 'anci', 'ance'),
+                            (5, 'izer', 'ize'),
+                            (6, 'bli', 'ble'), (7, 'alli', 'al'), (8, 'entli', 'ent'), (9, 'eli', 'e'), (10, 'ousli', 'ous'),
+                            (11, 'ization', 'ize'), (12, 'ation', 'ate'), (13, 'ator', 'ate'),
+                            (14, 'alism', 'al'), (15, 'iveness', 'ive'), (16, 'fulness', 'ful'), (17, 'ousness', 'ous'),
+                            (18, 'aliti', 'al'), (19, 'iviti', 'ive'), (20, 'biliti', 'ble'),
+                            (21, 'logi', 'log')
+                        ) v(ord, suffix, replacement)
+                        WHERE LEN(v.suffix) < LEN(@w) AND RIGHT(@w, LEN(v.suffix)) = v.suffix)
+                    SELECT @suffix = s.suffix, @replacement = s.replacement FROM s WHERE s.ord = (SELECT MIN(ord) FROM s);
                     IF @suffix IS NOT NULL
                     BEGIN
                         SET @j = LEN(@w) - LEN(@suffix);
@@ -169,15 +178,16 @@ internal static class PorterStemFunction
                     -- Step 3: -ic-, -full, -ness etc., replaced when m(stem) > 0
                     SET @p = {cv}(@w);
                     SET @suffix = NULL;
-                    SELECT TOP 1 @suffix = s.suffix, @replacement = s.replacement
-                    FROM (VALUES
-                        (1, 'icate', 'ic'), (2, 'ative', ''), (3, 'alize', 'al'),
-                        (4, 'iciti', 'ic'),
-                        (5, 'ical', 'ic'), (6, 'ful', ''),
-                        (7, 'ness', '')
-                    ) s(ord, suffix, replacement)
-                    WHERE LEN(s.suffix) < LEN(@w) AND RIGHT(@w, LEN(s.suffix)) = s.suffix
-                    ORDER BY s.ord;
+                    WITH s(ord, suffix, replacement) AS (
+                        SELECT v.ord, v.suffix, v.replacement
+                        FROM (VALUES
+                            (1, 'icate', 'ic'), (2, 'ative', ''), (3, 'alize', 'al'),
+                            (4, 'iciti', 'ic'),
+                            (5, 'ical', 'ic'), (6, 'ful', ''),
+                            (7, 'ness', '')
+                        ) v(ord, suffix, replacement)
+                        WHERE LEN(v.suffix) < LEN(@w) AND RIGHT(@w, LEN(v.suffix)) = v.suffix)
+                    SELECT @suffix = s.suffix, @replacement = s.replacement FROM s WHERE s.ord = (SELECT MIN(ord) FROM s);
                     IF @suffix IS NOT NULL
                     BEGIN
                         SET @j = LEN(@w) - LEN(@suffix);
@@ -188,14 +198,15 @@ internal static class PorterStemFunction
                     -- Step 4: single suffixes, removed when m(stem) > 1
                     SET @p = {cv}(@w);
                     SET @suffix = NULL;
-                    SELECT TOP 1 @suffix = s.suffix
-                    FROM (VALUES
-                        (1, 'al'), (2, 'ance'), (3, 'ence'), (4, 'er'), (5, 'ic'), (6, 'able'), (7, 'ible'),
-                        (8, 'ant'), (9, 'ement'), (10, 'ment'), (11, 'ent'), (12, 'ion'), (13, 'ou'),
-                        (14, 'ism'), (15, 'ate'), (16, 'iti'), (17, 'ous'), (18, 'ive'), (19, 'ize')
-                    ) s(ord, suffix)
-                    WHERE LEN(s.suffix) < LEN(@w) AND RIGHT(@w, LEN(s.suffix)) = s.suffix
-                    ORDER BY s.ord;
+                    WITH s(ord, suffix) AS (
+                        SELECT v.ord, v.suffix
+                        FROM (VALUES
+                            (1, 'al'), (2, 'ance'), (3, 'ence'), (4, 'er'), (5, 'ic'), (6, 'able'), (7, 'ible'),
+                            (8, 'ant'), (9, 'ement'), (10, 'ment'), (11, 'ent'), (12, 'ion'), (13, 'ou'),
+                            (14, 'ism'), (15, 'ate'), (16, 'iti'), (17, 'ous'), (18, 'ive'), (19, 'ize')
+                        ) v(ord, suffix)
+                        WHERE LEN(v.suffix) < LEN(@w) AND RIGHT(@w, LEN(v.suffix)) = v.suffix)
+                    SELECT @suffix = s.suffix FROM s WHERE s.ord = (SELECT MIN(ord) FROM s);
                     IF @suffix IS NOT NULL
                     BEGIN
                         SET @j = LEN(@w) - LEN(@suffix);

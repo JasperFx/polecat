@@ -1,5 +1,4 @@
 using JasperFx;
-using Microsoft.Data.SqlClient;
 using Polecat.Linq;
 using Polecat.Tests.Harness;
 
@@ -10,31 +9,20 @@ namespace Polecat.Tests.Linq;
 ///     the many-rows statement, so there was no way to see what <c>CountAsync()</c>, <c>AnyAsync()</c>,
 ///     <c>FirstAsync()</c> or an aggregate runs -- the shapes gh-995 changed. Every fact previews a query shape
 ///     for each terminal operator, executes the query with that operator, and compares the preview with the
-///     text SQL Server ran, read back from <c>sys.dm_exec_query_stats</c> as gh-1002's tests do.
+///     text sent to SQL Server, captured on the client through <see cref="ExecutedStatements" /> as gh-1002's
+///     tests do.
 /// </summary>
 /// <remarks>
-///     The executed text is every statement against the table whose query stats row appeared or changed while
-///     the operator ran, and a comparison passes only when that is exactly one statement equal to the preview,
-///     so one terminal's statement can't stand in for another's. The rows are compared before and after rather
-///     than against a clock: comparing <c>last_execution_time</c> with a <c>SYSDATETIME()</c> read just before
-///     the operator ran both missed statements that had run and picked up ones from before, often enough to
-///     fail CI on most days.
+///     The executed text is every statement against the table that the operator sent, and a comparison passes
+///     only when that is exactly one statement equal to the preview, so one terminal's statement can't stand in
+///     for another's. These tests used to read the statements back from <c>sys.dm_exec_query_stats</c>, which
+///     failed whenever SQL Server was short of memory (#1061).
 /// </remarks>
 public class tosql_preview_by_fetch_type_tests : OneOffConfigurationsContext
 {
     private const string Schema = "tosql_preview_by_fetch_type_tests";
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
-
-    public tosql_preview_by_fetch_type_tests()
-    {
-        // Without pooling, disposing the executing session closes its connection, which is what finishes the
-        // request on the server. A pooled connection that goes back idle leaves a cached statement's re-run
-        // out of sys.dm_exec_query_stats -- its last_execution_time does not move -- so a statement an
-        // earlier fact had already run would not be read back as executed.
-        ConfigureStore(opts => opts.ConnectionString =
-            new SqlConnectionStringBuilder(ConnectionSource.ConnectionString) { Pooling = false }.ConnectionString);
-    }
 
     /// <summary>One way of executing a query, and the preview that is supposed to show its SQL.</summary>
     private sealed record Terminal<T>(
@@ -120,14 +108,11 @@ public class tosql_preview_by_fetch_type_tests : OneOffConfigurationsContext
     {
         await SeedAsync();
 
-        await using var conn = new SqlConnection(ConnectionSource.ConnectionString);
-        await conn.OpenAsync(Ct);
-
         var pattern = $"%{Schema}%pc_doc_{tableTypeName}%";
         var mismatches = new List<string>();
         foreach (var terminal in terminals)
         {
-            var mismatch = await compareAsync(conn, pattern, query, terminal);
+            var mismatch = await compareAsync(pattern, query, terminal);
             if (mismatch != null) mismatches.Add(mismatch);
         }
 
@@ -137,7 +122,7 @@ public class tosql_preview_by_fetch_type_tests : OneOffConfigurationsContext
         }
     }
 
-    private async Task<string?> compareAsync<T>(SqlConnection conn, string pattern,
+    private async Task<string?> compareAsync<T>(string pattern,
         Func<IQuerySession, IQueryable<T>> query, Terminal<T> terminal)
     {
         string? previewed = null;
@@ -154,28 +139,28 @@ public class tosql_preview_by_fetch_type_tests : OneOffConfigurationsContext
             }
         }
 
-        var snapshot = await ExecutedStatements.SnapshotAsync(conn, pattern);
-
         BadLinqExpressionException? executionRefusal = null;
-        await using (var session = theStore.QuerySession())
+        List<string> executed;
+        using (var capture = ExecutedStatements.Start(pattern))
         {
-            try
+            await using (var session = theStore.QuerySession())
             {
-                await terminal.Execute(query(session));
+                try
+                {
+                    await terminal.Execute(query(session));
+                }
+                catch (BadLinqExpressionException e)
+                {
+                    executionRefusal = e;
+                }
+                catch (InvalidOperationException)
+                {
+                    // No element, or more than one for Single(): the statement ran, and that is what is compared
+                }
             }
-            catch (BadLinqExpressionException e)
-            {
-                executionRefusal = e;
-            }
-            catch (InvalidOperationException)
-            {
-                // No element, or more than one for Single(): the statement ran, and that is what is compared
-            }
-        }
 
-        // Waiting for the run to appear also keeps it out of the next comparison's "before", where a late update
-        // would read as that terminal's statement.
-        var executed = await snapshot.ExecutedSinceAsync(x => executionRefusal != null || x.Count != 0);
+            executed = capture.Statements;
+        }
 
         if (executionRefusal != null || previewRefusal != null)
         {

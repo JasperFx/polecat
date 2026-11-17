@@ -14,7 +14,7 @@ using Polecat.TestUtils;
 namespace Polecat.Tests.Daemon;
 
 /// <summary>
-///     marten#6004: read-your-writes. <c>session.LastAppendedSequence</c> says where a commit's events are, and
+///     marten#6004: read-your-writes. <c>session.LastAppendedPosition</c> says where a commit's events are, and
 ///     <c>store.WaitForProjectionsAsync</c> waits for the named projections to process that position, and nothing
 ///     past it, by polling <c>pc_event_progression</c>.
 /// </summary>
@@ -57,7 +57,7 @@ public class read_your_writes_tests : OneOffConfigurationsContext
 
         await session.SaveChangesAsync(Ct);
 
-        return session.LastAppendedSequence.ShouldNotBeNull();
+        return session.LastAppendedPosition.ShouldNotBeNull();
     }
 
     private static async Task<long> scalarAsync(string sql)
@@ -92,13 +92,13 @@ public class read_your_writes_tests : OneOffConfigurationsContext
         var store = await createStoreAsync();
 
         await using var session = store.LightweightSession();
-        session.LastAppendedSequence.ShouldBeNull();
+        session.LastAppendedPosition.ShouldBeNull();
 
         session.Events.StartStream(Guid.NewGuid(), new QuestStarted("one"), new QuestEnded("one"));
         session.Events.StartStream(Guid.NewGuid(), new QuestStarted("two"));
         await session.SaveChangesAsync(Ct);
 
-        var first = session.LastAppendedSequence.ShouldNotBeNull();
+        var first = session.LastAppendedPosition.ShouldNotBeNull();
         first.Sequence.ShouldBe(await scalarAsync($"select max(seq_id) from [{Schema}].[pc_events]"));
         first.DatabaseIdentifier.ShouldBe(store.Database.Identifier);
         first.TenantId.ShouldBe(session.TenantId);
@@ -106,7 +106,22 @@ public class read_your_writes_tests : OneOffConfigurationsContext
         session.Events.StartStream(Guid.NewGuid(), new QuestStarted("three"));
         await session.SaveChangesAsync(Ct);
 
-        session.LastAppendedSequence!.Sequence.ShouldBeGreaterThan(first.Sequence);
+        session.LastAppendedPosition!.Sequence.ShouldBeGreaterThan(first.Sequence);
+    }
+
+    [Fact]
+    public async Task the_old_name_still_answers_the_same_position()
+    {
+        var store = await createStoreAsync();
+
+        await using var session = store.LightweightSession();
+        session.Events.StartStream(Guid.NewGuid(), new QuestStarted("one"));
+        await session.SaveChangesAsync(Ct);
+
+        // LastAppendedSequence was the JasperFx 3.5.0 name, and now forwards to LastAppendedPosition
+#pragma warning disable CS0618
+        session.LastAppendedSequence.ShouldBe(session.LastAppendedPosition.ShouldNotBeNull());
+#pragma warning restore CS0618
     }
 
     [Fact]
@@ -214,7 +229,7 @@ public class read_your_writes_per_tenant_tests : IAsyncLifetime
         }
 
         await session.SaveChangesAsync(Ct);
-        return session.LastAppendedSequence.ShouldNotBeNull();
+        return session.LastAppendedPosition.ShouldNotBeNull();
     }
 
     [Fact]

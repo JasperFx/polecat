@@ -10,7 +10,7 @@ The foundation pins move in lockstep, so a consuming project has to move with th
 
 | Package | 5.50.0 | 6.0 |
 |---|---|---|
-| `JasperFx`, `JasperFx.Events` | 2.102 | 3.2.0 |
+| `JasperFx`, `JasperFx.Events` | 2.102 | 3.6.0 |
 | `Weasel.SqlServer`, `Weasel.Storage` | 9.50.0 | 10.0 |
 | `Microsoft.Data.SqlClient` | 7.0.0 | 7.1.1 |
 | `Microsoft.EntityFrameworkCore.SqlServer` (`Polecat.EntityFrameworkCore`) | 9.x | 10.0 |
@@ -400,7 +400,7 @@ The shared bases bring behaviour that Marten and Fisher already had:
 - **Calling the wrong identity overload throws.** A `Guid` overload on a string-identity store, or a
   string overload on a `Guid` store, throws `InvalidOperationException`.
 - **`StartStream` with no events throws `EmptyEventStreamException`.** An id-less `StartStream` gets a
-  CombGuid on a `Guid` store and a new string key on a string store.
+  sequential Guid in SQL Server order on a `Guid` store (see below) and a new string key on a string store.
 - **Masking** refuses an empty `ForTenant` and unsequenced events, and masks an event once when two
   sources both select it.
 - **A cached miss in the `dotnet_type` cache** now expires when a new event type is registered.
@@ -428,6 +428,21 @@ only the SQL Server SQL and the row hydration. Two things a shard does different
 
 An upcast source is now admitted only when its transformation targets one of the shard's declared types,
 rather than every registered source.
+
+## Upgrading to 6.0: new Guid ids are in SQL Server order
+
+Document tables and `pc_streams` are keyed by a clustered `uniqueidentifier`. The Guid ids Polecat makes up
+now come from JasperFx's `SequentialGuid.SqlServerOrder`, so each new id sorts after the last one the way SQL
+Server compares them, and new rows go in at the end of the clustered index instead of all over it:
+
+- **Documents** with a `Guid` id, or a strong-typed id wrapping a `Guid`, that you store without setting the id.
+  These were version 7 Guids (`Guid.CreateVersion7()`), which SQL Server does not sort in time order.
+- **Streams** you start without an id, including the new streams a DCB `EventBoundary` starts. These were
+  COMB Guids, laid out for PostgreSQL. `opts.EventGraph.StreamIdGenerator` is the generator, and you can set
+  your own `IGuidGenerator` there.
+
+Nothing to migrate. Existing ids stay as they are, and ids you assign yourself are never replaced. Don't read
+a timestamp out of these ids: they are not version 7 Guids.
 
 ## Upgrading to 6.0: `MasterTableTenancy` runs on Weasel's shared base
 

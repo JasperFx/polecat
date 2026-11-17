@@ -110,7 +110,7 @@ public interface IDocumentStore : IDisposable, IAsyncDisposable, IDocumentStoreU
     /// <summary>
     ///     marten#6004: wait until the asynchronous projections in <paramref name="projections" /> have processed
     ///     <paramref name="position" />, so you can read your own writes. Take the position from the session's
-    ///     <c>LastAppendedSequence</c> after <c>SaveChangesAsync</c>, and pass the projection classes or the
+    ///     <c>LastAppendedPosition</c> after <c>SaveChangesAsync</c>, and pass the projection classes or the
     ///     documents they write.
     /// </summary>
     /// <remarks>
