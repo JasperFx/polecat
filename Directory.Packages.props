@@ -1511,8 +1511,7 @@
         <!-- Weasel 10.0.0-alpha.7 (from alpha.4). Needed for #1041: weasel#868 moves an existing
              pc_events onto the archived partition scheme in place (clustered key rebuilt ON the scheme)
              instead of refusing under CreateOrUpdate and dropping the table under All. alpha.5 builds
-             with no Polecat change. Also needed for #935 (UseUnicodeKeys): weasel#872 changes a key
-             column's type across the foreign keys that reference it. -->
+             with no Polecat change. -->
         <PackageVersion Include="Weasel.EntityFrameworkCore" Version="10.0.0-alpha.7" />
         <PackageVersion Include="Weasel.SqlServer" Version="10.0.0-alpha.7" />
         <PackageVersion Include="Weasel.Storage" Version="10.0.0-alpha.7" />
