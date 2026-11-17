@@ -5,7 +5,7 @@ By default, side effects only fire during _continuous_ asynchronous projection e
 They do not run during projection rebuilds, and they do not run during the _warm-up phase_
 of a new projection version that opts into the
 [blue/green side-effect gate](async-daemon.md#blue-green-deployments-with-projection-versioning).
-Inline projections can opt in via
+Inline projections run them too, since Polecat 6. See
 [`EnableSideEffectsOnInlineProjections`](#side-effects-in-inline-projections).
 :::
 
@@ -79,7 +79,7 @@ A few important facts about this functionality:
 
 - The `RaiseSideEffects()` method is only called during _continuous_ asynchronous projection
   execution. It is **not** called during projection rebuilds. For `Inline` projections,
-  it is opt-in via [`EnableSideEffectsOnInlineProjections`](#side-effects-in-inline-projections).
+  it is on by default since Polecat 6, see [`EnableSideEffectsOnInlineProjections`](#side-effects-in-inline-projections).
 - Events emitted during the side effect method are _not_ immediately applied to the current
   projected document value by Polecat
 - You _can_ alter the aggregate value or replace it yourself in this side effect method to
@@ -135,17 +135,17 @@ for the versioning mechanics.
 
 ## Side Effects in Inline Projections
 
-By default, Polecat only processes projection side effects during continuous asynchronous
-processing. To process them when running projections under the `Inline` lifecycle as well,
-flip the opt-in setting on the event store options:
+Since Polecat 6, as in Marten 10, Polecat runs `RaiseSideEffects()` for projections under the
+`Inline` lifecycle as well as during continuous asynchronous processing. In Polecat 5 this was
+opt-in. To turn it off:
 
 ```cs
 builder.Services.AddPolecat(opts =>
 {
     opts.Connection(builder.Configuration.GetConnectionString("polecat"));
 
-    // Run RaiseSideEffects() for inline projections too
-    opts.EventGraph.EnableSideEffectsOnInlineProjections = true;
+    // Don't run RaiseSideEffects() for inline projections, as in Polecat 5
+    opts.Events.EnableSideEffectsOnInlineProjections = false;
 });
 ```
 

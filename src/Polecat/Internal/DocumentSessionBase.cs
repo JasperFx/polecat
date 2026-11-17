@@ -1700,7 +1700,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     }
 
     /// <summary>
-    ///     #238: increment the opt-in <c>polecat.event.append</c> counter once per event committed in
+    ///     #238: increment the <c>polecat.event.append</c> counter once per event committed in
     ///     this unit of work, tagged with the event type and tenant. Mirrors Marten's event-append
     ///     counter. Must be called after commit but before the work tracker is reset. No-op unless
     ///     <see cref="Polecat.Internal.OpenTelemetry.OpenTelemetryOptions.EventCountersEnabled" /> is on.
@@ -1717,7 +1717,10 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
 
         if (!Options.OpenTelemetry.EventCountersEnabled) return;
 
+        // On by default since Polecat 6, so with no listener on the meter this has to cost nothing
         var counter = Options.OpenTelemetry.EventAppendCounter;
+        if (!counter.Enabled) return;
+
         foreach (var stream in _workTracker.Streams)
         {
             foreach (var @event in stream.Events)

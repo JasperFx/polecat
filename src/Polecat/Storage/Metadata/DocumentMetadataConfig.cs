@@ -8,16 +8,16 @@ namespace Polecat.Storage.Metadata;
 /// </summary>
 public class DocumentMetadataConfig
 {
-    /// <summary>Stored correlation id (opt-in column, #241).</summary>
+    /// <summary>Stored correlation id (#241). On by default since Polecat 6, see <see cref="StorePolicies.EnableDocumentMetadataByDefault" />.</summary>
     public MetadataColumn CorrelationId { get; } = new("correlation_id");
 
-    /// <summary>Stored causation id (opt-in column, #241).</summary>
+    /// <summary>Stored causation id (#241). On by default since Polecat 6, see <see cref="StorePolicies.EnableDocumentMetadataByDefault" />.</summary>
     public MetadataColumn CausationId { get; } = new("causation_id");
 
-    /// <summary>Stored user / last-modified-by (opt-in column, #241).</summary>
+    /// <summary>Stored user / last-modified-by (#241). On by default since Polecat 6, see <see cref="StorePolicies.EnableDocumentMetadataByDefault" />.</summary>
     public MetadataColumn LastModifiedBy { get; } = new("last_modified_by");
 
-    /// <summary>Stored custom headers (opt-in column, #241).</summary>
+    /// <summary>Stored custom headers (#241). On by default since Polecat 6, see <see cref="StorePolicies.EnableDocumentMetadataByDefault" />.</summary>
     public MetadataColumn Headers { get; } = new("headers");
 
     /// <summary>The always-present <c>created_at</c> column; <see cref="MetadataColumn.Member" /> maps it onto a document member.</summary>
@@ -65,7 +65,8 @@ public class DocumentMetadataConfig
     }
 
     /// <summary>
-    ///     The opt-in columns Polecat actually adds to document tables (#241). The remaining columns
+    ///     The optional columns Polecat adds to document tables (#241), on by default since Polecat 6
+    ///     (<see cref="StorePolicies.EnableDocumentMetadataByDefault" />). The remaining columns
     ///     are either always present (<c>created_at</c>/<c>last_modified</c>/<c>version</c>/
     ///     <c>tenant_id</c>/<c>dotnet_type</c>) or governed by their own feature (<c>is_deleted</c>).
     /// </summary>
@@ -79,7 +80,8 @@ public class DocumentMetadataConfig
 
     /// <summary>
     ///     Merge another config into this one (the DSL config layered over attribute-derived config):
-    ///     enables any column the other enabled and copies any member mapping it set.
+    ///     takes the enabled state of any column the other one set, either way, and copies any member
+    ///     mapping it set.
     /// </summary>
     internal void MergeFrom(DocumentMetadataConfig other)
     {
@@ -87,7 +89,7 @@ public class DocumentMetadataConfig
         using var theirs = other.AllColumns().GetEnumerator();
         while (mine.MoveNext() && theirs.MoveNext())
         {
-            if (theirs.Current.Enabled) mine.Current.Enabled = true;
+            if (theirs.Current.EnabledWasSet) mine.Current.Enabled = theirs.Current.Enabled;
             if (theirs.Current.Member != null) mine.Current.Member = theirs.Current.Member;
         }
     }

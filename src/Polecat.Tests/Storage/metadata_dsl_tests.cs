@@ -87,9 +87,27 @@ public class metadata_dsl_tests
     }
 
     [Fact]
-    public void default_optin_columns_disabled()
+    public void optional_columns_are_enabled_by_default()
     {
+        // Since Polecat 6 (#1032)
         var mapping = new DocumentMapping(typeof(PlainDoc), new StoreOptions());
+
+        mapping.Metadata.CorrelationId.Enabled.ShouldBeTrue();
+        mapping.Metadata.CausationId.Enabled.ShouldBeTrue();
+        mapping.Metadata.LastModifiedBy.Enabled.ShouldBeTrue();
+        mapping.Metadata.Headers.Enabled.ShouldBeTrue();
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void optional_columns_disabled_when_the_store_says_so(bool restoreV5Defaults)
+    {
+        var options = new StoreOptions();
+        if (restoreV5Defaults) options.RestoreV5Defaults();
+        else options.Policies.EnableDocumentMetadataByDefault = false;
+
+        var mapping = new DocumentMapping(typeof(PlainDoc), options);
 
         mapping.Metadata.CorrelationId.Enabled.ShouldBeFalse();
         mapping.Metadata.CausationId.Enabled.ShouldBeFalse();

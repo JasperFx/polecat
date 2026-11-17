@@ -79,6 +79,24 @@ public class StorePolicies
     }
 
     /// <summary>
+    ///     Store correlation id, causation id, last modified by and headers for every document type.
+    ///     True by default since Polecat 6, as in Marten 10, and each one adds a nullable column to every
+    ///     document table. Set it to false, or call <see cref="StoreOptions.RestoreV5Defaults" />, to go
+    ///     back to Polecat 5's opt-in columns. Either way a document type can still turn one on or off
+    ///     with a metadata attribute or <c>Schema.For&lt;T&gt;().Metadata(m =&gt; m.Headers.Enabled = false)</c>.
+    /// </summary>
+    public bool EnableDocumentMetadataByDefault { get; set; } = true;
+
+    /// <summary>
+    ///     Start every non-unique <c>Index(...)</c> on a conjoined-tenancy document with <c>tenant_id</c>, so a
+    ///     query in one tenant seeks the index on both. True by default since Polecat 6, as in Marten 10.
+    ///     A unique index is left as it is, because putting <c>tenant_id</c> in front of it would change
+    ///     what it enforces; use <see cref="Storage.DocumentIndex.TenancyScope" /> for that. Set it to false,
+    ///     or call <see cref="StoreOptions.RestoreV5Defaults" />, to go back to Polecat 5's indexes.
+    /// </summary>
+    public bool StartIndexesByTenantId { get; set; } = true;
+
+    /// <summary>
     ///     Enable soft deletes for a specific document type.
     /// </summary>
     public void ForDocument<T>(Action<DocumentPolicy> configure)

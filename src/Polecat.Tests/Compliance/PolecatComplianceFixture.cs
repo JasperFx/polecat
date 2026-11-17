@@ -134,22 +134,15 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
             options.Events.StreamIdentity = config.StreamIdentity.Value;
         }
 
-        if (config.EnableCorrelationTracking)
-        {
-            options.Events.EnableCorrelationId = true;
-            options.Events.EnableCausationId = true;
-        }
+        // Set either way: the suites declare which metadata a store tracks, and since Polecat 6 (#1032)
+        // all four are on by default, so a flag the config leaves false has to be turned off.
+        options.Events.EnableCorrelationId = config.EnableCorrelationTracking;
+        options.Events.EnableCausationId = config.EnableCorrelationTracking;
 
         // jasperfx#737: opt-in like correlation — the event query suite filters on user_name.
-        if (config.EnableUserNameTracking)
-        {
-            options.Events.EnableUserName = true;
-        }
+        options.Events.EnableUserName = config.EnableUserNameTracking;
 
-        if (config.EnableHeaders)
-        {
-            options.Events.EnableHeaders = true;
-        }
+        options.Events.EnableHeaders = config.EnableHeaders;
 
         // Wave 8: conjoined event tenancy. TenancyStyle is already the shared
         // JasperFx.MultiTenancy.TenancyStyle (see GlobalUsings), so this is the whole mapping --

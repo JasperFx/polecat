@@ -19,6 +19,11 @@ var store = DocumentStore.For(opts =>
 });
 ```
 
+Since Polecat 6, as in Marten 10, the default serializer also sets
+`AllowOutOfOrderMetadataProperties = true`, so a `[JsonDerivedType]` hierarchy round-trips even when
+`$type` is not the first property of the stored JSON. `opts.RestoreV5Defaults()` turns it back off.
+Options you pass to `ConfigureSerialization(JsonSerializerOptions, ...)` are used as you set them.
+
 ## Serializer Options
 
 Configure serialization behavior through `StoreOptions`:

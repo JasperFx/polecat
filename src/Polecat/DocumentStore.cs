@@ -34,6 +34,7 @@ public partial class DocumentStore : IDocumentStore
     {
         Options = options ?? throw new ArgumentNullException(nameof(options));
         options.BindSerializerToStorage();
+        options.ApplyRestoredV5Defaults();
 
         // jasperfx#1016 / wolverine#4986: SqlClient never reports DbException.IsTransient, so tell
         // JasperFx which SQL Server errors are transient for ShardFailure.IsTransient. Once per process.
