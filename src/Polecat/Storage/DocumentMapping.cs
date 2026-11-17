@@ -2,6 +2,7 @@ using System.Runtime.CompilerServices;
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using JasperFx;
+using JasperFx.Core;
 using JasperFx.Core.Reflection;
 using Polecat.Attributes;
 using Polecat.Internal;
@@ -612,7 +613,7 @@ internal class DocumentMapping
 
     /// <summary>
     ///     Picks and constructs the Weasel.Core.Identity strategy matching this document's id shape:
-    ///     strong-typed wrapper → ValueTypeIdentification; Guid → SequentialGuidIdentification (UUIDv7);
+    ///     strong-typed wrapper → ValueTypeIdentification; Guid → SequentialGuidIdentification in SQL Server order;
     ///     int / long → Hi-Lo; string (externally assigned) → none.
     /// </summary>
     [RequiresUnreferencedCode("Closes the generic Weasel.Core.Identity strategy over the document + id types.")]
@@ -649,13 +650,14 @@ internal class DocumentMapping
         if (ValueTypeId != null)
         {
             return CreateAssigner(_documentType, ValueTypeId.OuterType,
-                Identifications.ForValueType(_documentType, _idProperty, ValueTypeId, _documentType));
+                Identifications.ForValueType(_documentType, _idProperty, ValueTypeId, _documentType,
+                    SequentialGuid.SqlServerOrder));
         }
 
         if (IdType == typeof(Guid))
         {
             return CreateAssigner(_documentType, typeof(Guid),
-                Identifications.ForSequentialGuid(_documentType, _idProperty));
+                Identifications.ForSequentialGuid(_documentType, _idProperty, SequentialGuid.SqlServerOrder));
         }
 
         if (IdType == typeof(int))

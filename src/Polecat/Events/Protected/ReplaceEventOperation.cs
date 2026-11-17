@@ -1,4 +1,5 @@
 using System.Data.Common;
+using JasperFx.Core;
 using JasperFx.Events;
 using Polecat.Internal;
 using Weasel.Core;
@@ -26,7 +27,7 @@ internal class ReplaceEventOperation : Polecat.Internal.IStorageOperation, Wease
         _serializedBdata = serializedBdata;
         _eventTypeName = eventTypeName;
         _dotNetTypeName = dotNetTypeName;
-        _newId = Guid.NewGuid();
+        _newId = SequentialGuid.NextSqlServerOrder();
         _tenantId = tenantId;
     }
 

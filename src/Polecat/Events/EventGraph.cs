@@ -5,6 +5,7 @@ using System.Data;
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using System.Text;
+using JasperFx.Core;
 using JasperFx.Core.Reflection;
 using JasperFx.Events;
 using JasperFx.Events.Aggregation;
@@ -49,6 +50,10 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
     {
         _options = options;
         AppendMode = EventAppendMode.Quick;
+
+        // pc_streams is keyed by a clustered uniqueidentifier, so the Guid stream ids JasperFx makes up
+        // (StartStream without an id, and EventBoundary's new streams) are in SQL Server order
+        StreamIdGenerator = SequentialGuid.SqlServerOrder;
     }
 
     /// <summary>

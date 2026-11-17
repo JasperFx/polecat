@@ -14,7 +14,8 @@ public class User
 }
 ```
 
-When `Id` is `Guid.Empty`, Polecat will automatically assign a new `Guid` on `Store()`.
+When `Id` is `Guid.Empty`, Polecat will automatically assign a new `Guid` on `Store()`. New ids are sequential in
+SQL Server's `uniqueidentifier` order, so new rows go in at the end of the clustered primary key.
 
 ### String
 
