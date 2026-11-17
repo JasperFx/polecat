@@ -143,7 +143,14 @@ public class SchemaCreationTests : IAsyncLifetime
     [Fact]
     public async Task events_table_omits_metadata_columns_when_disabled()
     {
-        var database = CreateDatabase();
+        // On by default since Polecat 6 (#1032)
+        var database = CreateDatabase(o =>
+        {
+            o.Events.EnableCorrelationId = false;
+            o.Events.EnableCausationId = false;
+            o.Events.EnableHeaders = false;
+            o.Events.EnableUserName = false;
+        });
         await database.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
 
         var columns = await SchemaInspector.GetColumnInfoAsync("pc_events");
@@ -152,6 +159,21 @@ public class SchemaCreationTests : IAsyncLifetime
         names.ShouldNotContain("correlation_id");
         names.ShouldNotContain("causation_id");
         names.ShouldNotContain("headers");
+        names.ShouldNotContain("user_name");
+    }
+
+    [Fact]
+    public async Task events_table_has_the_metadata_columns_by_default()
+    {
+        var database = CreateDatabase();
+        await database.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
+
+        var names = (await SchemaInspector.GetColumnInfoAsync("pc_events")).Select(c => c.Name).ToList();
+
+        names.ShouldContain("correlation_id");
+        names.ShouldContain("causation_id");
+        names.ShouldContain("headers");
+        names.ShouldContain("user_name");
     }
 
     [Fact]

@@ -2,6 +2,24 @@
 
 Polecat can automatically track metadata on your documents through several built-in interfaces.
 
+## Metadata Columns
+
+Since Polecat 6, every document table has `correlation_id`, `causation_id`, `last_modified_by` and
+`headers` columns, filled from the session, and `session.MetadataForAsync(doc)` reads them back. In
+Polecat 5 they were opt-in. To turn them off for one document type:
+
+```cs
+opts.Schema.For<Order>().Metadata(m =>
+{
+    m.Headers.Enabled = false;
+    m.CausationId.Enabled = false;
+});
+```
+
+Or for every document type, as in Polecat 5, with `opts.Policies.EnableDocumentMetadataByDefault = false`
+(or `opts.RestoreV5Defaults()`). A document type can still turn a column on with a metadata attribute or
+`m.CorrelationId.Enabled = true`.
+
 ## ITracked
 
 Implement `ITracked` to have correlation, causation, and user tracking automatically synced:

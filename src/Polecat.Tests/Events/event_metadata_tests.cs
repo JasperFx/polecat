@@ -254,7 +254,8 @@ public class event_metadata_tests : OneOffConfigurationsContext
     [Fact]
     public async Task user_name_column_not_created_when_disabled()
     {
-        await ConfigureAndApply(_ => { });
+        // On by default since Polecat 6 (#1032)
+        await ConfigureAndApply(opts => opts.Events.EnableUserName = false);
 
         await using var conn = await OpenConnectionAsync();
         await using var cmd = conn.CreateCommand();

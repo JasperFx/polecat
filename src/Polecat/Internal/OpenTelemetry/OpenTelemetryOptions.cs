@@ -20,15 +20,16 @@ public sealed class OpenTelemetryOptions : JasperFx.OpenTelemetry.OpenTelemetryO
     /// <summary>
     ///     #238: when true, Polecat emits the <c>polecat.event.append</c> counter (unit
     ///     <c>events</c>, tags <c>event_type</c> + <c>tenant_id</c>), incremented once per appended
-    ///     event on a successful commit. Off by default. Mirrors Marten's opt-in event-append
-    ///     counter so OpenTelemetry dashboards line up across the two engines. Toggle via
-    ///     <see cref="TrackEventCounters" />.
+    ///     event on a successful commit. On by default since Polecat 6: without a listener on the
+    ///     meter it costs nothing. Set it to false, or call <see cref="StoreOptions.RestoreV5Defaults" />,
+    ///     to turn it off. Mirrors Marten's event-append counter so OpenTelemetry dashboards line up
+    ///     across the two engines.
     /// </summary>
-    public bool EventCountersEnabled { get; private set; }
+    public bool EventCountersEnabled { get; set; } = true;
 
     /// <summary>
-    ///     Opt into the <c>polecat.event.append</c> counter. Mirrors Marten's
-    ///     <c>OpenTelemetryOptions.TrackEventCounters()</c>.
+    ///     Turn on the <c>polecat.event.append</c> counter, which is already on unless something turned
+    ///     it off. Mirrors Marten's <c>OpenTelemetryOptions.TrackEventCounters()</c>.
     /// </summary>
     public void TrackEventCounters()
     {

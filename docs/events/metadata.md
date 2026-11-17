@@ -15,6 +15,13 @@ Every event automatically includes:
 | `EventTypeName` | Snake_case type name |
 | `DotNetType` | Full .NET type name |
 
+## Optional Metadata Columns
+
+Correlation id, causation id, headers and the user name each have a column on `pc_events`. Since
+Polecat 6 all four are on by default. Turn one off with `opts.Events.EnableCorrelationId`,
+`EnableCausationId`, `EnableHeaders` or `EnableUserName` set to `false`, or all of them with
+`opts.RestoreV5Defaults()`.
+
 ## Correlation and Causation
 
 Track request flow and event chains:

@@ -225,7 +225,9 @@ var store = DocumentStore.For(opts =>
 ```
 
 Every document table then carries a `tenant_ordinal int` primary-key column and is `RANGE RIGHT`
-partitioned on it, driven by the **one `pc_tenant_partitions` registry per database** — the same
+partitioned on it. The primary key is `(tenant_id, id, tenant_ordinal)` whether a document got there through
+the store-wide policy or through `Schema.For<T>().MultiTenanted()` plus
+`PartitionMultiTenantedDocumentsUsingPolecatManagement()`, so the two key a document the same way. The table is driven by the **one `pc_tenant_partitions` registry per database** — the same
 registry, ordinals, and physical layout as
 [per-tenant event partitioning](/events/multitenancy#per-tenant-event-partitioning), so a store using
 both keeps a single coherent tenant → ordinal map across `pc_events`, `pc_streams`, and every

@@ -485,6 +485,75 @@ public class StoreOptions
         }
     }
 
+    private bool _restoreV5Defaults;
+
+    /// <summary>
+    ///     The part of <see cref="RestoreV5Defaults" /> that has to wait for the store, so it doesn't
+    ///     matter whether that was called before or after <c>ConfigureSerialization()</c> replaced the
+    ///     serializer or a projection was registered.
+    /// </summary>
+    internal void ApplyRestoredV5Defaults()
+    {
+        if (!_restoreV5Defaults) return;
+
+        if (Serializer is Polecat.Serialization.Serializer { OutOfOrderMetadataByDefault: true } serializer
+            && !serializer.Options.IsReadOnly)
+        {
+            serializer.Options.AllowOutOfOrderMetadataProperties = false;
+        }
+
+        foreach (var projection in Projections.All.OfType<JasperFx.Events.Projections.ProjectionBase>())
+        {
+            projection.GateSideEffectsBehindPriorVersion = false;
+        }
+    }
+
+    /// <summary>
+    ///     Put back the defaults that Polecat 6 changed, for an application that wants to upgrade with no
+    ///     change in behavior or schema and take the new defaults one at a time later. Call it first in
+    ///     your configuration, and turn any one of them back on after it.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///     Each one is a row in the Polecat 6 migration guide. Restored settings:
+    ///     <list type="bullet">
+    ///       <item><see cref="EventStoreOptions.EnableCorrelationId" />, <see cref="EventStoreOptions.EnableCausationId" />,
+    ///       <see cref="EventStoreOptions.EnableHeaders" /> and <see cref="EventStoreOptions.EnableUserName" /> &rarr; <c>false</c></item>
+    ///       <item><see cref="StorePolicies.EnableDocumentMetadataByDefault" /> &rarr; <c>false</c></item>
+    ///       <item><see cref="OpenTelemetryOptions.EventCountersEnabled" /> &rarr; <c>false</c></item>
+    ///       <item><c>AllowOutOfOrderMetadataProperties</c> &rarr; <c>false</c> on Polecat's default serializer.
+    ///       Options you passed to <see cref="ConfigureSerialization(JsonSerializerOptions, EnumStorage, Casing, CollectionStorage, NonPublicMembersStorage, Action{JsonSerializerOptions})" />
+    ///       are left as you set them.</item>
+    ///       <item><see cref="StorePolicies.StartIndexesByTenantId" /> &rarr; <c>false</c></item>
+    ///       <item><see cref="EventStoreOptions.EnableSideEffectsOnInlineProjections" /> &rarr; <c>false</c></item>
+    ///       <item><see cref="EventStoreOptions.DcbConflictScope" /> &rarr; <c>DcbConflictScope.TagValue</c></item>
+    ///       <item>
+    ///         <c>GateSideEffectsBehindPriorVersion</c> &rarr; <c>false</c> on every registered projection
+    ///         (JasperFx 3.0 turned it on, jasperfx#1075). JasperFx has no store-wide switch, so this is
+    ///         applied when the store is built and overrides a projection's own value; to keep the gate on
+    ///         for one projection, do not call this method.
+    ///       </item>
+    ///     </list>
+    ///     </para>
+    /// </remarks>
+    public void RestoreV5Defaults()
+    {
+        Events.EnableCorrelationId = false;
+        Events.EnableCausationId = false;
+        Events.EnableHeaders = false;
+        Events.EnableUserName = false;
+        Events.EnableSideEffectsOnInlineProjections = false;
+
+        Policies.EnableDocumentMetadataByDefault = false;
+        Policies.StartIndexesByTenantId = false;
+
+        OpenTelemetry.EventCountersEnabled = false;
+
+        Events.DcbConflictScope = Polecat.Events.DcbConflictScope.TagValue;
+
+        _restoreV5Defaults = true;
+    }
+
     /// <summary>
     ///     Set by ApplyAllDatabaseChangesOnStartup(). Used by the hosted service.
     /// </summary>
@@ -892,35 +961,40 @@ public class EventStoreOptions : IEventStoreInstrumentation
     public string? DatabaseSchemaName { get; set; }
 
     /// <summary>
-    ///     Enable tracking of correlation id metadata on events.
+    ///     Enable tracking of correlation id metadata on events. On by default since Polecat 6;
+    ///     <see cref="StoreOptions.RestoreV5Defaults" /> turns it back off.
     /// </summary>
-    public bool EnableCorrelationId { get; set; }
+    public bool EnableCorrelationId { get; set; } = true;
 
     /// <summary>
-    ///     Enable tracking of causation id metadata on events.
+    ///     Enable tracking of causation id metadata on events. On by default since Polecat 6;
+    ///     <see cref="StoreOptions.RestoreV5Defaults" /> turns it back off.
     /// </summary>
-    public bool EnableCausationId { get; set; }
+    public bool EnableCausationId { get; set; } = true;
 
     /// <summary>
-    ///     Enable tracking of custom headers metadata on events.
+    ///     Enable tracking of custom headers metadata on events. On by default since Polecat 6;
+    ///     <see cref="StoreOptions.RestoreV5Defaults" /> turns it back off.
     /// </summary>
-    public bool EnableHeaders { get; set; }
+    public bool EnableHeaders { get; set; } = true;
 
     /// <summary>
     ///     #237: enable tracking of the user / last-modified-by metadata on events, persisted to the
     ///     opt-in <c>user_name</c> column (maps <see cref="JasperFx.Events.IEvent.UserName" />).
     ///     Mirrors Marten's opt-in <c>user_name</c> event-metadata column. Populated from the
-    ///     session's <c>LastModifiedBy</c> when the event doesn't already carry one.
+    ///     session's <c>LastModifiedBy</c> when the event doesn't already carry one. On by default since
+    ///     Polecat 6; <see cref="StoreOptions.RestoreV5Defaults" /> turns it back off.
     /// </summary>
-    public bool EnableUserName { get; set; }
+    public bool EnableUserName { get; set; } = true;
 
     /// <summary>
     ///     Run inline projections' RaiseSideEffects (and other projection side effects) when an inline
-    ///     projection is applied during SaveChangesAsync. Off by default; mirrors Marten's
+    ///     projection is applied during SaveChangesAsync. On by default since Polecat 6, as in Marten 10;
+    ///     <see cref="StoreOptions.RestoreV5Defaults" /> turns it back off. Mirrors Marten's
     ///     <c>StoreOptions.Events.EnableSideEffectsOnInlineProjections</c>. CritterWatch relies on this so
     ///     its inline ServiceSummary projection can publish SignalR notifications via the Wolverine outbox.
     /// </summary>
-    public bool EnableSideEffectsOnInlineProjections { get; set; }
+    public bool EnableSideEffectsOnInlineProjections { get; set; } = true;
 
     /// <summary>
     ///     Opt into extended columns on the event progression table for CritterWatch alerting.

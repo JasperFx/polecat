@@ -53,6 +53,20 @@ public class PolecatDocumentComplianceFixture : DocumentStorageComplianceFixture
         // #858: no two writes in a fact share a timestamp
         options.Listeners.Add(ServerClockTickListener.Instance);
 
+        // #1032: Polecat 6 stores correlation id, causation id and last modified by for every document
+        // type by default. The diagnostics suite's refusal facts (jasperfx#1077) filter the widget on
+        // them and need a type that does not capture them, which in 5.x was every type. The suite has no
+        // config member to name one, and no suite reads the widget's metadata, so the widget is that type.
+        if (config.DocumentTypes.Contains(typeof(ComplianceWidget)))
+        {
+            options.Schema.For<ComplianceWidget>().Metadata(m =>
+            {
+                m.CorrelationId.Enabled = false;
+                m.CausationId.Enabled = false;
+                m.LastModifiedBy.Enabled = false;
+            });
+        }
+
         // jasperfx#665 / #472: the strong-typed identity facts key a document by a wrapper, and the
         // suite declares those wrappers separately from the document types because the identity type
         // is the one thing a document type alone does not tell a store.

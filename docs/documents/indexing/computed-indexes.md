@@ -317,6 +317,14 @@ opts.Schema.For<User>().UniqueIndex(x => x.Email, idx =>
 
 This includes `tenant_id` in the index columns, allowing the same email across different tenants while enforcing uniqueness within each tenant.
 
+Since Polecat 6, as in Marten 10, every **non-unique** index on a conjoined document starts with
+`tenant_id`, because every query against one is scoped to a tenant. A unique index is left alone,
+because a leading `tenant_id` would change what it enforces. To go back to Polecat 5's indexes:
+
+```cs
+opts.Policies.StartIndexesByTenantId = false;
+```
+
 ## Serialized Names and `[JsonPropertyName]`
 
 The computed column reads the JSON path the **serializer** writes, not the CLR property name. A
