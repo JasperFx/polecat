@@ -136,13 +136,26 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
     /// </summary>
     public bool UseIdentityMapForAggregates { get; set; }
 
+    private bool? _useArchivedStreamPartitioning;
+
     /// <summary>
     ///     Enable SQL Server table partitioning on the pc_events table by the
     ///     is_archived column. This separates archived events into a different
     ///     partition for improved query performance when aggressively archiving
     ///     event streams.
     /// </summary>
-    public bool UseArchivedStreamPartitioning { get; set; }
+    /// <remarks>
+    ///     On by default since Polecat 6, as in Marten 10 (#1041); <see cref="StoreOptions.RestoreV5Defaults" />
+    ///     turns it back off. The first schema migration after it comes on moves an existing pc_events onto the
+    ///     partition scheme in place, which rewrites the table. Left off when
+    ///     <see cref="UseTenantPartitionedEvents" /> is on and this was never set, because a SQL Server table
+    ///     has only one partition scheme and per-tenant partitioning uses it; setting both is refused.
+    /// </remarks>
+    public bool UseArchivedStreamPartitioning
+    {
+        get => _useArchivedStreamPartitioning ?? !UseTenantPartitionedEvents;
+        set => _useArchivedStreamPartitioning = value;
+    }
 
     /// <summary>
     ///     Master switch for per-tenant event partitioning (Polecat #163 / CritterWatch #209).
