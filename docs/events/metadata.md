@@ -22,6 +22,24 @@ Polecat 6 all four are on by default. Turn one off with `opts.Events.EnableCorre
 `EnableCausationId`, `EnableHeaders` or `EnableUserName` set to `false`, or all of them with
 `opts.RestoreV5Defaults()`.
 
+## Turning on Optional Metadata
+
+Correlation id, causation id, headers and the user name are optional and each has its own column on
+`pc_events`. Turn them on one at a time with `opts.Events.EnableCorrelationId`, `EnableCausationId`,
+`EnableHeaders` and `EnableUserName`, or all four at once:
+
+<!-- snippet: sample_polecat_enable_all_event_metadata -->
+<a id='snippet-sample_polecat_enable_all_event_metadata'></a>
+```cs
+// Correlation id, causation id, headers and the user name
+opts.Events.EnableAllEventMetadata();
+```
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.Tests/Events/event_metadata_tests.cs#L216-L219' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_enable_all_event_metadata' title='Start of snippet'>anchor</a></sup>
+<!-- endSnippet -->
+
+`EnableAllEventMetadata()` includes the user name, so the session's `LastModifiedBy` is stored on every
+appended event. It's the same as Marten's `Events.MetadataConfig.EnableAll()`.
+
 ## Correlation and Causation
 
 Track request flow and event chains:

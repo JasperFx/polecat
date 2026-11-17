@@ -361,6 +361,55 @@ internal class MemberFactory : IMemberResolver
     }
 
     /// <summary>
+    ///     #1030: the case-folded member over a <c>Casing = Lower</c> or <c>Upper</c> index's computed column.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         The cased form of what #223 does for a Default index. <see cref="IQueryableMember.TypedLocator" />
+    ///         is the exact expression the column is defined with, <c>LOWER(JSON_VALUE(... RETURNING
+    ///         varchar(250)))</c> for instance, so SQL Server matches a predicate to the column and seeks
+    ///         the index. Before this a cased index could enforce case-insensitive uniqueness and nothing
+    ///         else, because <c>x.Email.ToLower() == value</c> folded the full read of the document and
+    ///         scanned.
+    ///     </para>
+    ///     <para>
+    ///         The raw and bare locators are the same case fold over the document, so the comparison
+    ///         rules of a Default index carry over unchanged: a value wider than the column, or outside
+    ///         a <c>varchar</c> column's code page, is compared with the document, and an equality is
+    ///         checked against the document's length (see
+    ///         <see cref="QueryableMemberExtensions.ComparisonLocator" />).
+    ///     </para>
+    /// </remarks>
+    public IQueryableMember? ResolveCasedMember(MemberExpression expression, IndexCasing casing)
+    {
+        if (_isElement || casing == IndexCasing.Default) return null;
+
+        // Only a plain string member of the document, read from its own JSON path. A union case, a
+        // member that exists only in .NET, and the id are something else, and keep their translation.
+        if (ResolveMember(expression) is not QueryableMember { MemberType: var type } plain
+            || plain.GetType() != typeof(QueryableMember) || type != typeof(string))
+        {
+            return null;
+        }
+
+        var jsonPath = BuildJsonPath(expression);
+        var index = _mapping.Indexes.FirstOrDefault(i =>
+            i.Casing == casing && Array.IndexOf(i.JsonPaths, jsonPath) >= 0);
+        if (index == null) return null;
+
+        var sqlType = index.ResolveSqlType(jsonPath, typeof(string));
+        var function = casing == IndexCasing.Lower ? "LOWER" : "UPPER";
+
+        return new QueryableMember(
+            $"{function}({SqlText.UnlimitedJsonString(_jsonColumn, jsonPath, _useReturning)})",
+            DocumentIndex.ComputedColumnExpression(jsonPath, sqlType, casing, _useReturning),
+            typeof(string),
+            locatorSqlType: sqlType,
+            textCapacity: SqlTypeMap.TextCapacity(sqlType),
+            bareTextLocator: $"{function}(JSON_VALUE({_jsonColumn}, '{jsonPath}'))");
+    }
+
+    /// <summary>
     ///     #217: builds the typed locator, preferring JSON_VALUE(... RETURNING type) on native json
     ///     storage (SQL Server 2025+) over CAST(JSON_VALUE(...) AS type). RETURNING does not support
     ///     uniqueidentifier, so Guid members keep CAST. A null sqlType (string/bool) needs no typing.

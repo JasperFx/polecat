@@ -111,9 +111,15 @@ shows archived events, as it does on Marten and Fisher.
 
 ## Tombstoning (Deleting a Stream)
 
-`ArchiveStream` hides a stream but keeps every row. When the data has to actually go, for a GDPR
-erasure request, test or demo data, or a purge job, `TombstoneStream` is the hard delete: it removes
+`ArchiveStream` hides a stream but keeps every row. When the rows have to actually go, for test or
+demo data, a stream started in error, or a purge job, `TombstoneStream` is the hard delete: it removes
 the stream and every event in it from the database.
+
+::: tip
+A tombstone deletes the stream's rows from the live database and nothing else. Projected documents,
+backups and the transaction log keep what they had. For a GDPR erasure request, see
+[Personal Data and GDPR Erasure](/events/personal-data).
+:::
 
 <!-- snippet: sample_polecat_tombstone_stream -->
 <a id='snippet-sample_polecat_tombstone_stream'></a>
@@ -174,7 +180,14 @@ JasperFx 2.90.0, the same surface Marten implements, so store-agnostic code can 
 | Operation | Reversible | Data Preserved | Use Case |
 | :--- | :--- | :--- | :--- |
 | Archive | Yes | Yes | Soft removal, compliance holds |
-| Tombstone (`TombstoneStream`) | No | No | GDPR right to erasure, cleanup |
+| Tombstone (`TombstoneStream`) | No | No | Purges, test data, cleanup |
+
+::: tip Archiving is not erasure
+Neither archiving, tombstoning nor compacting erases personal data. Each one leaves a copy somewhere:
+in projections, in backups, or in the transaction log. The Critter Stack's answer to a GDPR erasure
+request is crypto-shredding with [Tayra](https://tayra.dev). See
+[Personal Data and GDPR Erasure](/events/personal-data).
+:::
 
 ## Compacting a Stream
 

@@ -94,8 +94,8 @@ opts.Schema.For<User>().Index(x => x.UserName, x => x.SqlType = "nvarchar(250)")
 
 The index serves equality and range comparisons on the member itself. An `IsOneOf` of 100 values or fewer
 binds `nvarchar` whatever it holds, so over a `varchar` column it scans the index rather than seeking it.
-`Contains`, `StartsWith`, `EndsWith`, `ToLower()` and the other string methods read the document, so an
-index does not help them.
+`Contains`, `StartsWith`, `EndsWith` and the other string methods read the document, so an index does not
+help them. The exception is `ToLower()` and `ToUpper()` over a member with a cased index, below.
 
 ## Composite (Multi-Column) Indexes
 
@@ -209,6 +209,20 @@ ALTER TABLE [myschema].[pc_doc_user]
 CREATE NONCLUSTERED INDEX [ix_pc_doc_user_email_lower]
     ON [myschema].[pc_doc_user] ([cc_email_lower]);
 ```
+
+A query that folds the member the same way compares with that column and seeks the index:
+
+```cs
+// LOWER(...) of the cc_email_lower column, so this is an Index Seek
+var customer = await session.Query<User>()
+    .Where(x => x.Email.ToLower() == "john.doe@example.com")
+    .SingleOrDefaultAsync();
+```
+
+`ToLower()` and `ToLowerInvariant()` use a `Lower` index, `ToUpper()` and `ToUpperInvariant()` an `Upper` one.
+The same rules as a default index apply: a value wider than the column, or one a `varchar` column cannot hold,
+is compared with the document instead. A `ToLower()` over a member with only a `Default` or `Upper` index
+reads the document.
 
 ::: tip
 Case transformations only apply to string-typed columns. Non-string columns (int, Guid, etc.) ignore the `Casing` setting.
