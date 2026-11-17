@@ -915,6 +915,20 @@ public class EventStoreOptions : IEventStoreInstrumentation
     public bool EnableUserName { get; set; }
 
     /// <summary>
+    ///     Method to enable all optional metadata fields on events: correlation id, causation id,
+    ///     headers and the user name. This includes <see cref="EnableUserName" />, so the session's
+    ///     <c>LastModifiedBy</c> is stored on every appended event. The same as Marten's
+    ///     <c>Events.MetadataConfig.EnableAll()</c>. The four flags can still be set one at a time.
+    /// </summary>
+    public void EnableAllEventMetadata()
+    {
+        EnableCorrelationId = true;
+        EnableCausationId = true;
+        EnableHeaders = true;
+        EnableUserName = true;
+    }
+
+    /// <summary>
     ///     Run inline projections' RaiseSideEffects (and other projection side effects) when an inline
     ///     projection is applied during SaveChangesAsync. Off by default; mirrors Marten's
     ///     <c>StoreOptions.Events.EnableSideEffectsOnInlineProjections</c>. CritterWatch relies on this so
