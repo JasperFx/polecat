@@ -35,6 +35,18 @@ public class polecat_6_default_tests
         options.Policies.StartIndexesByTenantId.ShouldBeTrue();
         options.OpenTelemetry.EventCountersEnabled.ShouldBeTrue();
         ((Serializer)options.Serializer).Options.AllowOutOfOrderMetadataProperties.ShouldBeTrue();
+        options.EventGraph.UseArchivedStreamPartitioning.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void per_tenant_event_partitioning_keeps_archived_partitioning_off_unless_asked()
+    {
+        // A table has one partition scheme, and per-tenant partitioning takes it
+        var options = new StoreOptions();
+        options.Events.TenancyStyle = TenancyStyle.Conjoined;
+        options.EventGraph.UseTenantPartitionedEvents = true;
+
+        options.EventGraph.UseArchivedStreamPartitioning.ShouldBeFalse();
     }
 
     [Fact]
@@ -56,6 +68,7 @@ public class polecat_6_default_tests
         options.Policies.StartIndexesByTenantId.ShouldBeFalse();
         options.OpenTelemetry.EventCountersEnabled.ShouldBeFalse();
         options.Events.DcbConflictScope.ShouldBe(Polecat.Events.DcbConflictScope.TagValue);
+        options.EventGraph.UseArchivedStreamPartitioning.ShouldBeFalse();
 
         // Registered after the call, and still restored when the store is built
         var projection = new Polecat.Tests.Projections.PublishingTallyProjection();

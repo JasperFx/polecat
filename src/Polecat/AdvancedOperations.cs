@@ -599,7 +599,18 @@ public class AdvancedOperations
         {
             foreach (var table in feature.Objects.OfType<Weasel.SqlServer.Tables.Table>())
             {
-                table.SqlServerPartitioning?.WriteDropDdl(writer, table);
+                if (table.SqlServerPartitioning is not { } partitioning) continue;
+
+                // #1041: a partition scheme is database-wide and named after the table, so another store's
+                // pc_events in another schema of this database can still be on it — and with archived
+                // partitioning the 6.0 default, usually is. Leave it for the last one out.
+                var scheme = partitioning.PartitionSchemeName(table);
+                writer.WriteLine("IF NOT EXISTS (SELECT 1 FROM sys.partition_schemes ps " +
+                                 "JOIN sys.indexes i ON i.data_space_id = ps.data_space_id " +
+                                 $"WHERE ps.name = N'{Weasel.SqlServer.SchemaUtils.EscapeLiteral(scheme)}')");
+                writer.WriteLine("BEGIN");
+                partitioning.WriteDropDdl(writer, table);
+                writer.WriteLine("END");
             }
 
             // #890: a sequence isn't a table either, and left behind it would stop a DROP SCHEMA.

@@ -140,6 +140,7 @@ effects before upgrading, or set `opts.Events.EnableSideEffectsOnInlineProjectio
 | `AllowOutOfOrderMetadataProperties` on the default serializer | off | on | None | `opts.RestoreV5Defaults()`, or your own options through `ConfigureSerialization(JsonSerializerOptions, ...)` |
 | `Policies.StartIndexesByTenantId`: non-unique indexes on conjoined documents start with `tenant_id` | off | on | Each such index is dropped and recreated with `tenant_id` first. Unique indexes are unchanged | `opts.Policies.StartIndexesByTenantId = false` |
 | `Events.EnableSideEffectsOnInlineProjections` | off | on | None. **See the callout above** | `opts.Events.EnableSideEffectsOnInlineProjections = false` |
+| `EventGraph.UseArchivedStreamPartitioning`: `pc_events` partitioned on `is_archived` | off | on (off when `UseTenantPartitionedEvents` is on) | **The first migration rewrites `pc_events`.** See below | `opts.EventGraph.UseArchivedStreamPartitioning = false` |
 
 The new columns are nullable and are added in place by the next schema migration. Rows written before it have
 `NULL` in them. Apply that migration (`db-apply`, `db-patch` or `ApplyAllDatabaseChangesOnStartup()`) before
@@ -159,9 +160,27 @@ Marten 10 changes that Polecat has nothing to change for:
   (or `tenant_id, id`) and an archived stream's id can't be reused.
 - **A sticky connection lifetime option.** Polecat never had one.
 
-Archived-stream partitioning (`UseArchivedStreamPartitioning`) stays **off** in 6.0. Turning it on for an existing
-store would have to rebuild `pc_events` as a partitioned table, and Weasel.SqlServer can't migrate an
-unpartitioned table to a partitioned one, so every upgrading store would fail its schema migration.
+### Archived-stream partitioning is on by default
+
+`pc_events` is partitioned on `is_archived`, so archived events sit in their own partition
+([#1041](https://github.com/JasperFx/polecat/issues/1041)). On an existing store the first schema migration after
+the upgrade moves `pc_events` onto the partition scheme in place: it rebuilds the table's clustered primary key as
+`(seq_id, is_archived)` on the scheme, which moves every row, and archived streams' events land in the archived
+partition. Nothing is dropped or copied into another table, under `AutoCreate.CreateOrUpdate` or `AutoCreate.All`,
+and `db-patch` writes the same script. Each tag table gets an `is_archived` column in its primary key and loses its
+foreign key to `pc_events`.
+
+**That migration rewrites the whole of `pc_events`, twice over** (dropping the old clustered key makes it a heap, and
+the new key rebuilds it), so it takes time and transaction log space in proportion to the table. On a large store:
+
+- run it through `db-patch` in a maintenance window rather than on the first node to start, and size the log for it;
+- or raise `Command Timeout` in the connection string first, because a rebuild that outlasts it fails the startup
+  migration. A migration cut off part way through finishes on the next run.
+
+To keep `pc_events` as it is, set `opts.EventGraph.UseArchivedStreamPartitioning = false` (or call
+`RestoreV5Defaults()`). Turning it off on a store that is already partitioned moves the table back off the scheme,
+which is the same rewrite. `UseTenantPartitionedEvents` takes the table's one partition scheme for itself, so
+archived partitioning stays off there unless you set both, which is refused.
 
 ## Upgrading to 6.0: `GateSideEffectsBehindPriorVersion` is on by default
 
