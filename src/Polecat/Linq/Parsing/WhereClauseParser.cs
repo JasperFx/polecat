@@ -7,6 +7,7 @@ using System.Reflection;
 using Polecat.Linq.Members;
 using Polecat.Linq.Parsing.Methods;
 using Polecat.Linq.SqlGeneration;
+using Polecat.Storage;
 
 namespace Polecat.Linq.Parsing;
 
@@ -237,6 +238,14 @@ internal class WhereClauseParser
             return false;
         }
 
+        // #1030: x.Email.ToLower() == value over a Casing = Lower index is a comparison with that index's
+        // column, which seeks, rather than with LOWER() over the document, which scans.
+        if (TryResolveCasedMember(methodCall) is { } cased)
+        {
+            fragment = BuildMemberComparison(cased, ExtractValue(valueSide), op);
+            return true;
+        }
+
         var parser = MethodCallParserRegistry.FindParser(methodCall);
         if (parser == null) return false;
 
@@ -261,6 +270,31 @@ internal class WhereClauseParser
         }
 
         return true;
+    }
+
+    /// <summary>
+    ///     #1030: the member a <c>ToLower()</c> or <c>ToUpper()</c> folds, read through an index of the same
+    ///     casing, or null when the call is anything else or no such index covers the member.
+    /// </summary>
+    private IQueryableMember? TryResolveCasedMember(MethodCallExpression call)
+    {
+        if (call.Method.DeclaringType != typeof(string) || call.Arguments.Count != 0) return null;
+
+        var casing = call.Method.Name switch
+        {
+            nameof(string.ToLower) or nameof(string.ToLowerInvariant) => IndexCasing.Lower,
+            nameof(string.ToUpper) or nameof(string.ToUpperInvariant) => IndexCasing.Upper,
+            _ => IndexCasing.Default
+        };
+
+        if (casing == IndexCasing.Default) return null;
+        if (call.Object == null || StripConvert(call.Object) is not MemberExpression member
+                                || !IsDocumentMember(member))
+        {
+            return null;
+        }
+
+        return _memberFactory.ResolveCasedMember(member, casing);
     }
 
     /// <summary>

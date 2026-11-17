@@ -13,6 +13,16 @@ internal interface IMemberResolver
     IQueryableMember ResolveMember(MemberExpression expression);
 
     /// <summary>
+    ///     #1030: <c>x.Member.ToLower()</c> or <c>x.Member.ToUpper()</c> as a member of its own, read through
+    ///     the computed column of an <c>Index(...)</c> with the same <paramref name="casing" />, so a
+    ///     comparison over it can seek that index. Null when no such index covers the member, and the
+    ///     caller translates the call as it always has.
+    /// </summary>
+    /// <param name="expression">The member the case is folded on.</param>
+    /// <param name="casing"><see cref="Storage.IndexCasing.Lower" /> or <see cref="Storage.IndexCasing.Upper" />.</param>
+    IQueryableMember? ResolveCasedMember(MemberExpression expression, Storage.IndexCasing casing) => null;
+
+    /// <summary>
     ///     <see cref="ResolveMember" /> for a member SQL has to sort or group by, which refuses one known
     ///     to have no value for it to do that with. See <see cref="StoredShape" />.
     /// </summary>
