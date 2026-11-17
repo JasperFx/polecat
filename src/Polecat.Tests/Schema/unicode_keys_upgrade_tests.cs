@@ -119,7 +119,7 @@ public class unicode_keys_upgrade_tests : IAsyncLifetime
         opts.Schema.For<UnicodeOrder>().MultiTenanted().ForeignKey<UnicodeCustomer>(x => x.CustomerId);
     }
 
-    private DocumentStore storeFor(bool unicode, AutoCreate autoCreate = AutoCreate.All)
+    private DocumentStore storeFor(bool unicode, AutoCreate autoCreate = AutoCreate.All, bool? partitioned = null)
     {
         var options = new StoreOptions
         {
@@ -128,6 +128,7 @@ public class unicode_keys_upgrade_tests : IAsyncLifetime
         };
         Configure(options);
         options.Advanced.UseUnicodeKeys = unicode;
+        if (partitioned is { } on) options.EventGraph.UseArchivedStreamPartitioning = on;
 
         var store = new DocumentStore(options);
         _stores.Add(store);
@@ -269,5 +270,139 @@ public class unicode_keys_upgrade_tests : IAsyncLifetime
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = "SELECT COUNT(*) FROM sys.foreign_keys WHERE name = 'fk_pc_doc_unicodeorder_cc_customerid'";
         ((int)(await cmd.ExecuteScalarAsync(Ct))!).ShouldBe(1);
+    }
+    private static async Task archiveAsync(DocumentStore store, string tenant, string key)
+    {
+        await using var session = store.LightweightSession(new SessionOptions { TenantId = tenant });
+        session.Events.ArchiveStream($"ticket {key}");
+        await session.SaveChangesAsync(Ct);
+    }
+
+    private static async Task<long> scalarAsync(string sql)
+    {
+        await using var conn = new SqlConnection(ConnectionSource.ConnectionStringFor(Database));
+        await conn.OpenAsync(Ct);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = sql;
+        return Convert.ToInt64(await cmd.ExecuteScalarAsync(Ct));
+    }
+
+    private static Task<long> eventPartitionsAsync() => scalarAsync($"""
+        select count(*) from sys.partitions p
+        where p.object_id = object_id('[{Schema}].[pc_events]') and p.index_id <= 1
+        """);
+
+    private static Task<long> eventsInPartitionAsync(int partitionNumber) => scalarAsync($"""
+        select coalesce(sum(p.rows), 0) from sys.partitions p
+        where p.object_id = object_id('[{Schema}].[pc_events]') and p.index_id <= 1
+          and p.partition_number = {partitionNumber}
+        """);
+
+    /// <summary>
+    ///     A store the way Polecat 5 left it, <c>varchar</c> keys and <c>pc_events</c> off the partition scheme,
+    ///     upgraded to 6.0 with <see cref="AdvancedOptions.UseUnicodeKeys" /> on: archived-stream partitioning is
+    ///     on by default there, so one migration both widens the keys and moves <c>pc_events</c> onto the scheme.
+    /// </summary>
+    private async Task<long> v5StoreWithArchivedStreamsAsync()
+    {
+        var before = storeFor(unicode: false, partitioned: false);
+        await before.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: Ct);
+
+        foreach (var tenant in Tenants)
+        {
+            await writeAsync(before, tenant, "one");
+            await writeAsync(before, tenant, "archived");
+            await archiveAsync(before, tenant, "archived");
+        }
+
+        (await keyColumnTypesAsync()).Values.ShouldAllBe(x => x == "varchar");
+        (await eventPartitionsAsync()).ShouldBe(1);
+
+        return await scalarAsync($"select count_big(*) from [{Schema}].[pc_events]");
+    }
+
+    private async Task assertOnTheSchemeWithUnicodeKeysAsync(DocumentStore after, long eventsBefore)
+    {
+        // Reads and writes first: on first use they are what migrates each table
+        foreach (var tenant in Tenants)
+        {
+            await readBackAsync(after, tenant, "one");
+
+            await using var query = after.QuerySession(new SessionOptions { TenantId = tenant });
+            (await query.Events.FetchStreamAsync("ticket archived", token: Ct)).Count.ShouldBe(0);
+        }
+
+        var types = await keyColumnTypesAsync();
+        types["pc_streams.id"].ShouldBe("nvarchar");
+        types["pc_events.stream_id"].ShouldBe("nvarchar");
+        types["pc_events.tenant_id"].ShouldBe("nvarchar");
+        types["pc_event_tag_unicode_tag.value"].ShouldBe("nvarchar");
+
+        // Every event kept (plus the retitle readBackAsync appended per tenant), and the archived streams'
+        // events in the archived partition
+        (await scalarAsync($"select count_big(*) from [{Schema}].[pc_events]")).ShouldBe(eventsBefore + Tenants.Length);
+        (await eventPartitionsAsync()).ShouldBe(2);
+        var archived = await scalarAsync($"select count_big(*) from [{Schema}].[pc_events] where is_archived = 1");
+        archived.ShouldBe(Tenants.Length);
+        (await eventsInPartitionAsync(2)).ShouldBe(archived);
+
+        // A unicode stream archived after the move lands in the archived partition too
+        await writeAsync(after, "東京", "Москва 😀");
+        await readBackAsync(after, "東京", "Москва 😀");
+        await archiveAsync(after, "東京", "Москва 😀");
+
+        var archivedNow = await scalarAsync($"select count_big(*) from [{Schema}].[pc_events] where is_archived = 1");
+        archivedNow.ShouldBe(archived + 2); // the stream's opening event and the retitle readBackAsync appended
+        (await eventsInPartitionAsync(2)).ShouldBe(archivedNow);
+        (await scalarAsync($"""
+            select count_big(*) from [{Schema}].[pc_events]
+            where stream_id = N'ticket Москва 😀' and tenant_id = N'東京' and is_archived = 1
+            """)).ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task a_v5_store_takes_unicode_keys_and_the_archived_partitions_in_one_migration()
+    {
+        var eventsBefore = await v5StoreWithArchivedStreamsAsync();
+
+        var after = storeFor(unicode: true);
+        after.Options.EventGraph.UseArchivedStreamPartitioning.ShouldBeTrue(); // the 6.0 default
+        await after.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: Ct);
+
+        // Nothing left to do: the migration it ran is the one it wanted
+        (await after.Database.CreateMigrationAsync(Ct)).Difference.ShouldBe(SchemaPatchDifference.None);
+
+        await assertOnTheSchemeWithUnicodeKeysAsync(after, eventsBefore);
+    }
+
+    [Fact]
+    public async Task a_v5_store_takes_unicode_keys_and_the_archived_partitions_on_first_use()
+    {
+        var eventsBefore = await v5StoreWithArchivedStreamsAsync();
+
+        var after = storeFor(unicode: true, AutoCreate.CreateOrUpdate);
+
+        await assertOnTheSchemeWithUnicodeKeysAsync(after, eventsBefore);
+    }
+    [Fact]
+    public async Task a_new_store_with_unicode_keys_is_on_the_archived_partitions()
+    {
+        var store = storeFor(unicode: true);
+        store.Options.EventGraph.UseArchivedStreamPartitioning.ShouldBeTrue();
+        await store.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: Ct);
+
+        (await eventPartitionsAsync()).ShouldBe(2);
+        (await keyColumnTypesAsync())["pc_events.stream_id"].ShouldBe("nvarchar");
+
+        await writeAsync(store, "東京", "Москва 😀");
+        await writeAsync(store, "東京", "Санкт-Петербург");
+        await archiveAsync(store, "東京", "Москва 😀");
+
+        (await eventsInPartitionAsync(2)).ShouldBe(1);
+        (await eventsInPartitionAsync(1)).ShouldBe(1);
+
+        await readBackAsync(store, "東京", "Санкт-Петербург");
+        await using var query = store.QuerySession(new SessionOptions { TenantId = "東京" });
+        (await query.Events.FetchStreamAsync("ticket Москва 😀", token: Ct)).Count.ShouldBe(0);
     }
 }

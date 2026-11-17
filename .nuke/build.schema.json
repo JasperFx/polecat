@@ -158,6 +158,10 @@
         "Framework": {
           "type": "string"
         },
+        "LanePrefix": {
+          "type": "string",
+          "description": "The start of every lane catalog's name (default polecat), so two gates can share one SQL Server"
+        },
         "PackVersion": {
           "type": "string",
           "description": "Pack: the package version, e.g. 5.44.0-local.1 (default: <Version> in Directory.Build.props)"

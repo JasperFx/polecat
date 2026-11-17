@@ -454,6 +454,8 @@ Turning it on for an existing store is a normal schema migration: each column is
 `nvarchar`, with its primary key, indexes and foreign keys dropped and put back around it, including the
 foreign keys between `pc_events`, the natural key tables and `pc_streams`, and between documents. Both sides
 of a foreign key change in the same migration ([weasel#870](https://github.com/JasperFx/weasel/issues/870)).
+Coming from 5.x, that same migration also moves `pc_events` onto the archived-stream partitions, which are
+on by default in 6.0 (see above).
 
 **It rewrites every row of every table it touches**, and rebuilds the clustered key of each. On a small store
 `ApplyAllDatabaseChangesOnStartup()` or first use will do. On a large one, export the migration and run it in
