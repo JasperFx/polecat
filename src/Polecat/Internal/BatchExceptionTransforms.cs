@@ -36,7 +36,16 @@ internal static class BatchExceptionTransforms
             return true;
         }
 
-        return PolecatOperationBatchListener.TryApplication(ex, application, out transformed);
+        if (PolecatOperationBatchListener.TryApplication(ex, application, out transformed)) return true;
+
+        // #935
+        if (ex.Number == Exceptions.KeyTooLongException.ErrorNumber)
+        {
+            transformed = PolecatOperationBatchListener.KeyTooLong(ex, operations, batch);
+            return true;
+        }
+
+        return false;
     }
 
     private static bool TryOperations(SqlException ex, SqlBatch batch, IReadOnlyList<Weasel.Storage.IStorageOperation> operations,

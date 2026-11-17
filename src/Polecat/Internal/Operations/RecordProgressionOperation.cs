@@ -18,15 +18,18 @@ internal class RecordProgressionOperation : IStorageOperation, Weasel.Storage.No
     private readonly long _ceiling;
     private readonly bool _extendedTracking;
     private readonly bool _upsert;
+    private readonly bool _unicode; // #935
 
     public RecordProgressionOperation(
-        string progressionTableName, string name, long ceiling, bool extendedTracking, bool upsert)
+        string progressionTableName, string name, long ceiling, bool extendedTracking, bool upsert,
+        bool unicode = false)
     {
         _progressionTableName = progressionTableName;
         _name = name;
         _ceiling = ceiling;
         _extendedTracking = extendedTracking;
         _upsert = upsert;
+        _unicode = unicode;
     }
 
     public Type DocumentType => typeof(object);
@@ -53,7 +56,7 @@ internal class RecordProgressionOperation : IStorageOperation, Weasel.Storage.No
             // HOLDLOCK: this is the Floor == 0 path, where the row does not exist yet and two
             // agents starting together both take the INSERT branch without it. See #500.
             builder.Append($"MERGE {_progressionTableName} WITH (UPDLOCK, HOLDLOCK) AS target USING (SELECT ");
-            builder.AppendParameter(_name, SqlDbType.VarChar);
+            builder.AppendParameter(_name, Storage.KeyColumns.DbType(_unicode));
             builder.Append($"""
                  AS name) AS source ON target.name = source.name
                 WHEN MATCHED THEN UPDATE SET {set}
@@ -64,7 +67,7 @@ internal class RecordProgressionOperation : IStorageOperation, Weasel.Storage.No
         else
         {
             builder.Append($"UPDATE {_progressionTableName} SET {set} WHERE name = ");
-            builder.AppendParameter(_name, SqlDbType.VarChar);
+            builder.AppendParameter(_name, Storage.KeyColumns.DbType(_unicode));
             builder.Append(";");
         }
 

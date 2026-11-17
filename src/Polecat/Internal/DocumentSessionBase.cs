@@ -728,7 +728,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         // deleted so the operation cannot re-stamp their deleted_at.
         _workTracker.Add(new DeleteWhereOperation(
             storage.DeleteFragment, storage.IsConjoined, TenantId, fragment, typeof(T),
-            excludeAlreadyDeleted: storage.IsSoftDeleted));
+            excludeAlreadyDeleted: storage.IsSoftDeleted, unicode: Options.Advanced.UseUnicodeKeys));
     }
 
     public void HardDeleteWhere<T>(Expression<Func<T, bool>> predicate) where T : notnull
@@ -738,7 +738,8 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         // #419: deliberately no is_deleted guard -- a hard delete of an already-soft-deleted row
         // is a real delete and must proceed.
         _workTracker.Add(new DeleteWhereOperation(
-            storage.HardDeleteFragment, storage.IsConjoined, TenantId, fragment, typeof(T)));
+            storage.HardDeleteFragment, storage.IsConjoined, TenantId, fragment, typeof(T),
+            unicode: Options.Advanced.UseUnicodeKeys));
     }
 
     public void UndoDeleteWhere<T>(Expression<Func<T, bool>> predicate) where T : notnull
@@ -760,7 +761,8 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
 
         // #959: Polecat's rules always supply the fragment; it is nullable only on Weasel's interface.
         _workTracker.Add(new UndoDeleteWhereOperation(
-            storage.UndeleteFragment!, storage.IsConjoined, TenantId, fragment, typeof(T)));
+            storage.UndeleteFragment!, storage.IsConjoined, TenantId, fragment, typeof(T),
+            unicode: Options.Advanced.UseUnicodeKeys));
     }
 
     /// <summary>
@@ -1443,6 +1445,9 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     /// </remarks>
     internal async Task AssertStringKeysFitAsync(CancellationToken token)
     {
+        // #935: the columns are nvarchar, and hold whatever they're given.
+        if (Options.Advanced.UseUnicodeKeys) return;
+
         foreach (var operation in _workTracker.Operations)
         {
             if (operation is Operations.IStreamKeyedOperation { StreamId: string streamKey })
@@ -1928,8 +1933,8 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             await using var cmd = new SqlCommand();
             cmd.CommandText = _eventGraph.LockedStreamReadSql("version, is_archived",
                 "id = @id AND tenant_id = @tenant_id", TenantId, cmd);
-            cmd.Parameters.AddIdParameter("@id", streamId);
-            cmd.Parameters.AddVarChar("@tenant_id", tenantId);
+            cmd.Parameters.AddIdParameter("@id", streamId, Options.Advanced.UseUnicodeKeys);
+            cmd.Parameters.AddKey("@tenant_id", tenantId, Options.Advanced.UseUnicodeKeys);
 
             // Through the db-neutral seam so the session logger sees the stream-state read
             await using var reader = (await ExecuteReaderAsync((System.Data.Common.DbCommand)cmd, token).ConfigureAwait(false));
@@ -1954,7 +1959,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
 
         var idsSelect = isGuid
             ? "SELECT CAST(value AS uniqueidentifier) AS id FROM OPENJSON(@ids)"
-            : "SELECT CAST(value AS varchar(250)) AS id FROM OPENJSON(@ids)";
+            : $"SELECT CAST(value AS {_eventGraph.KeyText()}) AS id FROM OPENJSON(@ids)";
 
         await using var batchCmd = new SqlCommand();
         batchCmd.CommandText = _eventGraph.LockedStreamReadSql("s.id, s.version, s.is_archived",
@@ -1964,7 +1969,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             {
                 SqlDbType = System.Data.SqlDbType.NVarChar
             });
-        batchCmd.Parameters.AddVarChar("@tenant_id", tenantId);
+        batchCmd.Parameters.AddKey("@tenant_id", tenantId, Options.Advanced.UseUnicodeKeys);
 
         // Through the db-neutral seam so the session logger sees the stream-state read
         await using var batchReader = (await ExecuteReaderAsync((System.Data.Common.DbCommand)batchCmd, token).ConfigureAwait(false));
@@ -2036,8 +2041,8 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         await using var cmd = new SqlCommand();
         cmd.CommandText =
             $"SELECT version FROM {_eventGraph.StreamsTableName} WHERE id = @id AND tenant_id = @tenant_id;";
-        cmd.Parameters.AddIdParameter("@id", streamId);
-        cmd.Parameters.AddVarChar("@tenant_id", TenantOf(stream));
+        cmd.Parameters.AddIdParameter("@id", streamId, Options.Advanced.UseUnicodeKeys);
+        cmd.Parameters.AddKey("@tenant_id", TenantOf(stream), Options.Advanced.UseUnicodeKeys);
 
         await using var reader = (await ExecuteReaderAsync(cmd, token).ConfigureAwait(false));
         if (!await reader.ReadAsync(token).ConfigureAwait(false))

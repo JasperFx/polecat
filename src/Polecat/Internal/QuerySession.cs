@@ -317,8 +317,8 @@ internal partial class QuerySession : IQuerySession, JasperFx.Events.IEventTenan
         // #234: tenant_id predicate is conjoined-only.
         var tenantFilter = provider.Mapping.TenancyStyle == TenancyStyle.Conjoined ? " AND tenant_id = @tenant_id" : "";
         cmd.CommandText = $"SELECT CAST(CASE WHEN EXISTS(SELECT 1 FROM {provider.Mapping.QualifiedTableName} WHERE id = @id{tenantFilter}{softDeleteFilter}) THEN 1 ELSE 0 END AS BIT);";
-        cmd.Parameters.AddIdParameter("@id", id);
-        if (provider.Mapping.TenancyStyle == TenancyStyle.Conjoined) cmd.Parameters.AddVarChar("@tenant_id", tenantId);
+        cmd.Parameters.AddIdParameter("@id", id, Options.Advanced.UseUnicodeKeys);
+        if (provider.Mapping.TenancyStyle == TenancyStyle.Conjoined) cmd.Parameters.AddKey("@tenant_id", tenantId, Options.Advanced.UseUnicodeKeys);
 
         Logger.OnBeforeExecute(cmd.CommandText);
         try
@@ -550,8 +550,8 @@ internal partial class QuerySession : IQuerySession, JasperFx.Events.IEventTenan
         // #234: tenant_id predicate is conjoined-only.
         var tenantFilter = provider.Mapping.TenancyStyle == TenancyStyle.Conjoined ? " AND tenant_id = @tenant_id" : "";
         cmd.CommandText = $"SELECT data FROM {provider.Mapping.QualifiedTableName} WHERE id = @id{tenantFilter}{softDeleteFilter};";
-        cmd.Parameters.AddIdParameter("@id", id);
-        if (provider.Mapping.TenancyStyle == TenancyStyle.Conjoined) cmd.Parameters.AddVarChar("@tenant_id", tenantId);
+        cmd.Parameters.AddIdParameter("@id", id, Options.Advanced.UseUnicodeKeys);
+        if (provider.Mapping.TenancyStyle == TenancyStyle.Conjoined) cmd.Parameters.AddKey("@tenant_id", tenantId, Options.Advanced.UseUnicodeKeys);
 
         Logger.OnBeforeExecute(cmd.CommandText);
         try

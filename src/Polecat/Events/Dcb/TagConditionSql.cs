@@ -123,18 +123,18 @@ internal static class TagConditionSql
             var values = branches[i].Select(c => registration.ExtractValue(c.TagValue)).ToArray();
             if (asJsonArrays)
             {
-                JsonValueList.AppendInClause(builder, $"{alias}.value", values, ColumnTypeFor(registration),
+                JsonValueList.AppendInClause(builder, $"{alias}.value", values, ColumnTypeFor(registration, events.UnicodeKeys),
                     value => value);
             }
             else
             {
-                appendValues(builder, alias, values);
+                appendValues(builder, alias, values, events.UnicodeKeys);
             }
 
             if (filtersTenant)
             {
                 builder.Append($" AND {alias}.tenant_id = ");
-                AppendVarChar(builder, tenantId!);
+                AppendKey(builder, tenantId!, events.UnicodeKeys);
             }
 
             if (eventType != null)
@@ -149,7 +149,7 @@ internal static class TagConditionSql
         }
     }
 
-    private static void appendValues(ICommandBuilder builder, string alias, object[] values)
+    private static void appendValues(ICommandBuilder builder, string alias, object[] values, bool unicode)
     {
         builder.Append("(");
 
@@ -160,7 +160,7 @@ internal static class TagConditionSql
             builder.Append($"{alias}.value = ");
             if (values[i] is string text)
             {
-                AppendVarChar(builder, text);
+                AppendKey(builder, text, unicode);
             }
             else
             {
@@ -180,8 +180,25 @@ internal static class TagConditionSql
     public static void AppendVarChar(ICommandBuilder builder, string value)
         => builder.AppendParameter(value, SqlDbType.VarChar).Size = VarCharSize;
 
-    private static string ColumnTypeFor(ITagTypeRegistration registration)
+    /// <summary>
+    ///     #935: a string bound against a key column, a tag value or a tenant id, which is
+    ///     <c>nvarchar</c> under <see cref="AdvancedOptions.UseUnicodeKeys" />.
+    /// </summary>
+    public static void AppendKey(ICommandBuilder builder, string value, bool unicode)
+    {
+        if (!unicode)
+        {
+            AppendVarChar(builder, value);
+            return;
+        }
+
+        builder.AppendParameter(value, SqlDbType.NVarChar).Size = NVarCharSize;
+    }
+
+    private const int NVarCharSize = 4000;
+
+    private static string ColumnTypeFor(ITagTypeRegistration registration, bool unicode)
         => registration.SimpleType == typeof(string)
-            ? $"varchar({VarCharSize})"
-            : EventTagTable.SqlServerTypeFor(registration.SimpleType);
+            ? unicode ? $"nvarchar({NVarCharSize})" : $"varchar({VarCharSize})"
+            : EventTagTable.SqlServerTypeFor(registration.SimpleType, unicode);
 }

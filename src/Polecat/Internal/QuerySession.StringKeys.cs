@@ -48,7 +48,8 @@ internal partial class QuerySession
     /// </summary>
     internal async ValueTask<int?> CodePageLosingAsync(string table, string key, CancellationToken token)
     {
-        if (Ascii.IsValid(key)) return null;
+        // #935: an nvarchar column holds every character.
+        if (Options.Advanced.UseUnicodeKeys || Ascii.IsValid(key)) return null;
 
         var column = _tableEnsurer.KeyColumnFor(table);
         if (column == null)
@@ -76,7 +77,7 @@ internal partial class QuerySession
     /// </summary>
     internal void AssertTenantFits(string tenantId)
     {
-        if (Ascii.IsValid(tenantId)) return;
+        if (Options.Advanced.UseUnicodeKeys || Ascii.IsValid(tenantId)) return;
 
         var table = _eventGraph.StreamsTableName;
         var column = _tableEnsurer.KeyColumnFor(table)

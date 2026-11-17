@@ -34,8 +34,12 @@ namespace Polecat.Events.Projections;
 ///     </para>
 /// </remarks>
 internal class NaturalKeyUpsertOperation : Polecat.Internal.IStorageOperation, IExceptionTransform,
-    Weasel.Storage.NoDataReturnedCall
+    Weasel.Storage.NoDataReturnedCall, Polecat.Internal.Operations.IKeyedWrite
 {
+    // #935
+    string? Polecat.Internal.Operations.IKeyedWrite.TenantId => _tenantId;
+    object? Polecat.Internal.Operations.IKeyedWrite.Key => _naturalKeyValue;
+
     /// <summary>
     ///     User-defined SQL error number the guard raises. Above the 50000 floor <c>THROW</c>
     ///     requires, and carries the issue number so a stray occurrence in a log is traceable.
@@ -49,9 +53,10 @@ internal class NaturalKeyUpsertOperation : Polecat.Internal.IStorageOperation, I
     private readonly bool _isConjoined;
     private readonly string? _tenantId;
     private readonly Type _aggregateType;
+    private readonly bool _unicode; // #935
 
     public NaturalKeyUpsertOperation(string tableName, object naturalKeyValue, object streamId, bool isGuidStream,
-        Type aggregateType, bool isConjoined = false, string? tenantId = null)
+        Type aggregateType, bool isConjoined = false, string? tenantId = null, bool unicode = false)
     {
         _tableName = tableName;
         _naturalKeyValue = naturalKeyValue;
@@ -60,6 +65,7 @@ internal class NaturalKeyUpsertOperation : Polecat.Internal.IStorageOperation, I
         _aggregateType = aggregateType;
         _isConjoined = isConjoined;
         _tenantId = tenantId;
+        _unicode = unicode;
     }
 
     public Type DocumentType => typeof(object);
@@ -98,9 +104,9 @@ internal class NaturalKeyUpsertOperation : Polecat.Internal.IStorageOperation, I
                 """);
             builder.AppendParameter(_naturalKeyValue);
             builder.Append(", ");
-            builder.AppendParameter(_tenantId!, System.Data.SqlDbType.VarChar);
+            builder.AppendParameter(_tenantId!, Polecat.Storage.KeyColumns.DbType(_unicode));
             builder.Append(", ");
-            builder.AppendParameter(_streamId, _streamId is string ? System.Data.SqlDbType.VarChar : null);
+            builder.AppendParameter(_streamId, _streamId is string ? Polecat.Storage.KeyColumns.DbType(_unicode) : null);
             builder.Append($"""
                 , 0)) AS source (natural_key_value, tenant_id, {streamColumn}, is_archived)
                 ON target.natural_key_value = source.natural_key_value AND target.tenant_id = source.tenant_id
@@ -117,7 +123,7 @@ internal class NaturalKeyUpsertOperation : Polecat.Internal.IStorageOperation, I
                 """);
             builder.AppendParameter(_naturalKeyValue);
             builder.Append(", ");
-            builder.AppendParameter(_streamId, _streamId is string ? System.Data.SqlDbType.VarChar : null);
+            builder.AppendParameter(_streamId, _streamId is string ? Polecat.Storage.KeyColumns.DbType(_unicode) : null);
             builder.Append($"""
                 , 0)) AS source (natural_key_value, {streamColumn}, is_archived)
                 ON target.natural_key_value = source.natural_key_value

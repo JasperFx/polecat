@@ -39,10 +39,12 @@ internal sealed class TenantDataCleaner
     private readonly string _schemaName;
     private readonly string _progressionTable;
     private readonly ResiliencePipeline _resilience;
+    private readonly bool _unicode; // #935
 
     public TenantDataCleaner(string tenantId, string connectionString, string schemaName,
-        string progressionTable, ResiliencePipeline resilience)
+        string progressionTable, ResiliencePipeline resilience, bool unicode)
     {
+        _unicode = unicode;
         _tenantId = tenantId;
         _connectionString = connectionString;
         _schemaName = schemaName;
@@ -54,7 +56,7 @@ internal sealed class TenantDataCleaner
     {
         return await _resilience.ExecuteAsync(static async (state, ct) =>
         {
-            var (tenantId, connectionString, schemaName, progressionTable) = state;
+            var (tenantId, connectionString, schemaName, progressionTable, unicode) = state;
 
             await using var conn = new SqlConnection(connectionString);
             await conn.OpenAsync(ct).ConfigureAwait(false);
@@ -82,7 +84,7 @@ internal sealed class TenantDataCleaner
                     INNER JOIN {SqlEscaping.QualifiedName(schemaName, Events.Schema.EventsTable.TableName)} e ON e.seq_id = t.seq_id
                     WHERE e.tenant_id = @tenant;
                     """;
-                cmd.Parameters.Add("@tenant", SqlDbType.VarChar, 250).Value = tenantId;
+                cmd.Parameters.Add("@tenant", Storage.KeyColumns.DbType(unicode), 250).Value = tenantId;
                 var rows = await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
                 if (rows > 0) deleted[table] = rows;
             }
@@ -95,7 +97,7 @@ internal sealed class TenantDataCleaner
                     $"DELETE FROM {SqlEscaping.QualifiedName(schemaName, table)} WHERE tenant_id = @tenant;";
                 // VarChar, not nvarchar: tenant_id is varchar(250), and an nvarchar parameter makes
                 // SQL Server wrap the column in CONVERT_IMPLICIT and scan (#363).
-                cmd.Parameters.Add("@tenant", SqlDbType.VarChar, 250).Value = tenantId;
+                cmd.Parameters.Add("@tenant", Storage.KeyColumns.DbType(unicode), 250).Value = tenantId;
                 var rows = await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
                 if (rows > 0) deleted[table] = rows;
             }
@@ -104,7 +106,7 @@ internal sealed class TenantDataCleaner
             {
                 progression.Transaction = tx;
                 progression.CommandText = ProgressionDeleteSql(progressionTable);
-                progression.Parameters.Add("@suffix", SqlDbType.VarChar, 500).Value =
+                progression.Parameters.Add("@suffix", Storage.KeyColumns.DbType(unicode), 500).Value =
                     ProgressionNameSuffix(tenantId);
                 var rows = await progression.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
                 if (rows > 0) deleted[progressionTable] = rows;
@@ -113,7 +115,7 @@ internal sealed class TenantDataCleaner
             await SqlTransactionRequests.CommitAsync(tx, ct).ConfigureAwait(false);
 
             return (IReadOnlyDictionary<string, int>)deleted;
-        }, (_tenantId, _connectionString, _schemaName, _progressionTable), token).ConfigureAwait(false);
+        }, (_tenantId, _connectionString, _schemaName, _progressionTable, _unicode), token).ConfigureAwait(false);
     }
 
     /// <summary>

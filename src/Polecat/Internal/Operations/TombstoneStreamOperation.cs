@@ -37,10 +37,10 @@ internal class TombstoneStreamOperation : IStorageOperation, IStreamKeyedOperati
         // AddParameters, whose dictionary binds a string as nvarchar, which against a varchar stream key
         // or tenant_id puts CONVERT_IMPLICIT on the column and scans it (#363). Measured at 230 logical
         // reads against 2 on 50,000 rows.
-        builder.Append($"DECLARE @id {(_streamId is string ? "varchar(250)" : "uniqueidentifier")} = ");
-        builder.AppendParameter(_streamId, _streamId is string ? SqlDbType.VarChar : null);
-        builder.Append("; DECLARE @tenant_id varchar(250) = ");
-        builder.AppendParameter(_tenantId, SqlDbType.VarChar);
+        builder.Append($"DECLARE @id {(_streamId is string ? _events.KeyText() : "uniqueidentifier")} = ");
+        builder.AppendParameter(_streamId, _streamId is string ? _events.KeyDbType : null);
+        builder.Append($"; DECLARE @tenant_id {_events.KeyText()} = ");
+        builder.AppendParameter(_tenantId, _events.KeyDbType);
         builder.Append(";\n");
 
         // Tombstones in one event store take turns. Deleting a stream deletes through two cascading

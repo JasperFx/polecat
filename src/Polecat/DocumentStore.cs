@@ -95,6 +95,13 @@ public partial class DocumentStore : IDocumentStore
         // Fail fast on a masking rule that could only ever appear to work (#860)
         options.EventGraph.AssertMaskingRulesCanRun();
 
+        // #935: what UseUnicodeKeys doesn't cover, and the keys it declares past SQL Server's index limit
+        Storage.UnicodeKeys.AssertSupported(options);
+        if (options.Advanced.UseUnicodeKeys)
+        {
+            Storage.UnicodeKeys.WarnAboutWideKeys(options, _providers.ConfiguredMappings());
+        }
+
         // Initialize projection graph - builds async shard registry
         options.Projections.AssertValidity(options);
 

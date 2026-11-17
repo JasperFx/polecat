@@ -87,7 +87,7 @@ public partial class DocumentStore
             {tenantFilter}ORDER BY timestamp DESC;
             """;
         cmd.Parameters.AddWithValue("@count", count);
-        if (tenantId != null) cmd.Parameters.AddVarChar("@tenant_id", tenantId);
+        if (tenantId != null) cmd.Parameters.AddKey("@tenant_id", tenantId, Options.Advanced.UseUnicodeKeys);
 
         await using var reader = (await session.ExecuteReaderAsync(cmd, ct).ConfigureAwait(false));
         while (await reader.ReadAsync(ct).ConfigureAwait(false))
@@ -165,8 +165,8 @@ public partial class DocumentStore
             WHERE stream_id = @stream_id
             {tenantFilter}ORDER BY version;
             """;
-        cmd.Parameters.AddUncheckedKey("@stream_id", resolvedStreamId);
-        if (tenantId != null) cmd.Parameters.AddVarChar("@tenant_id", tenantId);
+        cmd.Parameters.AddUncheckedKey("@stream_id", resolvedStreamId, Options.Advanced.UseUnicodeKeys);
+        if (tenantId != null) cmd.Parameters.AddKey("@tenant_id", tenantId, Options.Advanced.UseUnicodeKeys);
 
         var ctx = new EventHydrationContext(
             Events,
@@ -256,8 +256,8 @@ public partial class DocumentStore
             WHERE s.id = @id{tenantFilter}
             GROUP BY s.id, s.type, s.version, s.created, s.timestamp, s.tenant_id, s.is_archived, s.compacted_version;
             """;
-        cmd.Parameters.AddUncheckedKey("@id", resolvedStreamId);
-        if (tenantId != null) cmd.Parameters.AddVarChar("@tenant_id", tenantId);
+        cmd.Parameters.AddUncheckedKey("@id", resolvedStreamId, Options.Advanced.UseUnicodeKeys);
+        if (tenantId != null) cmd.Parameters.AddKey("@tenant_id", tenantId, Options.Advanced.UseUnicodeKeys);
 
         await using var reader = (await session.ExecuteReaderAsync(cmd, ct).ConfigureAwait(false));
         if (!await reader.ReadAsync(ct).ConfigureAwait(false))
@@ -380,7 +380,7 @@ public partial class DocumentStore
         }
 
         sb.Append(" AND e.tenant_id = @tenant_id ORDER BY e.seq_id");
-        cmd.Parameters.AddVarChar("@tenant_id", tenantId);
+        cmd.Parameters.AddKey("@tenant_id", tenantId, Options.Advanced.UseUnicodeKeys);
         cmd.CommandText = sb.ToString();
 
         var ctx = new EventHydrationContext(

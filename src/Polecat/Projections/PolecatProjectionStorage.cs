@@ -172,7 +172,8 @@ internal class PolecatProjectionStorage<TDoc, TId> : IProjectionStorage<TDoc, TI
             var deletion = (Storage.ClosedShape.IPolecatDeletionStorage)Storage;
             var id = _provider.Mapping.GetId(snapshot);
             _session.WorkTracker.Add(new UnDeleteByIdOperation(
-                deletion.UndeleteFragment!, deletion.IsConjoined, id, tenantId, typeof(TDoc)));
+                deletion.UndeleteFragment!, deletion.IsConjoined, id, tenantId, typeof(TDoc),
+                _provider.Mapping.UnicodeKeys));
         }
     }
 

@@ -33,9 +33,9 @@ internal class FetchStreamStateBatchItem : IBatchQueryItem
     public void WriteSql(ICommandBuilder builder)
     {
         builder.Append($"SELECT {PcStreamsRowReader.SelectColumns} FROM {_events.StreamsTableName} WHERE id = ");
-        builder.AppendParameter(_streamId, SqlParameterCollectionExtensions.BindingForKey(_streamId));
+        builder.AppendParameter(_streamId, SqlParameterCollectionExtensions.BindingForKey(_streamId, _events.UnicodeKeys));
         builder.Append(" AND tenant_id = ");
-        builder.AppendParameter(_tenantId, SqlDbType.VarChar);
+        builder.AppendParameter(_tenantId, _events.KeyDbType);
         builder.Append(";\n");
     }
 

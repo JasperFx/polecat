@@ -18,15 +18,17 @@ internal class UnDeleteByIdOperation : IStorageOperation, Weasel.Storage.NoDataR
     private readonly object _id;
     private readonly string _tenantId;
     private readonly Type _documentType;
+    private readonly bool _unicode; // #935
 
     public UnDeleteByIdOperation(IOperationFragment undeleteFragment, bool conjoined, object id, string tenantId,
-        Type documentType)
+        Type documentType, bool unicode = false)
     {
         _undeleteFragment = undeleteFragment;
         _conjoined = conjoined;
         _id = id;
         _tenantId = tenantId;
         _documentType = documentType;
+        _unicode = unicode;
     }
 
     public Type DocumentType => _documentType;
@@ -37,12 +39,12 @@ internal class UnDeleteByIdOperation : IStorageOperation, Weasel.Storage.NoDataR
     {
         _undeleteFragment.Apply(builder);
         builder.Append(" WHERE id = ");
-        builder.AppendParameter(_id, _id is string ? System.Data.SqlDbType.VarChar : null);
+        builder.AppendParameter(_id, _id is string ? Storage.KeyColumns.DbType(_unicode) : null);
         // #234: single-tenant tables have no tenant_id column.
         if (_conjoined)
         {
             builder.Append(" AND tenant_id = ");
-            builder.AppendParameter(_tenantId, System.Data.SqlDbType.VarChar);
+            builder.AppendParameter(_tenantId, Storage.KeyColumns.DbType(_unicode));
         }
 
         // #419 (symmetry): UndoDeleteWhereOperation scopes to currently-deleted rows and this did

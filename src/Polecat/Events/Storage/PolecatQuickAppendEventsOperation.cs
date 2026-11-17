@@ -48,8 +48,12 @@ internal enum StreamWriteMode
 ///     </para>
 /// </remarks>
 internal sealed class PolecatQuickAppendEventsOperation
-    : Weasel.Storage.IStorageOperation, IExceptionTransform
+    : Weasel.Storage.IStorageOperation, IExceptionTransform, Polecat.Internal.Operations.IKeyedWrite
 {
+    // #935: a stream's key, or a tag value it carries, can be refused as too long for an index
+    string? Polecat.Internal.Operations.IKeyedWrite.TenantId => Stream.TenantId;
+    object? Polecat.Internal.Operations.IKeyedWrite.Key => (object?)Stream.Key ?? Stream.Id;
+
     internal const string SeqTableVarName = "@pc_appended_seqs";
     private const string SeqTableVar = SeqTableVarName;
     private const string SeqIdVar = "@pc_event_seq";

@@ -60,7 +60,7 @@ internal static class NaturalKeyFetchPlanner
             """;
 
         cmd.Parameters.AddWithValue("@naturalKey", unwrapped); // natural_key_value is nvarchar(200)
-        cmd.Parameters.AddVarChar("@tenantId", tenantId);
+        cmd.Parameters.AddKey("@tenantId", tenantId, events.UnicodeKeys);
 
         long version = 0;
         object? streamId = null;

@@ -9,15 +9,18 @@ internal class TenantInFilter : ISqlFragment
 {
     private readonly string[] _tenantIds;
     private readonly string _columnName;
+    private readonly bool _unicode;
 
-    public TenantInFilter(string[] tenantIds) : this(tenantIds, "tenant_id")
+    public TenantInFilter(string[] tenantIds, bool unicode) : this(tenantIds, "tenant_id", unicode)
     {
     }
 
-    public TenantInFilter(string[] tenantIds, string columnName)
+    /// <param name="unicode">#935: whether tenant_id is nvarchar, under UseUnicodeKeys.</param>
+    public TenantInFilter(string[] tenantIds, string columnName, bool unicode)
     {
         _tenantIds = tenantIds;
         _columnName = columnName;
+        _unicode = unicode;
     }
 
     public void Apply(ICommandBuilder builder)
@@ -34,7 +37,7 @@ internal class TenantInFilter : ISqlFragment
         // against this varchar column is the #363 implicit-conversion scan.
         if (JsonValueList.ShouldBindAsJsonArray(builder, _tenantIds.Length))
         {
-            JsonValueList.AppendInClause(builder, _columnName, _tenantIds, "varchar(250)", x => x);
+            JsonValueList.AppendInClause(builder, _columnName, _tenantIds, Storage.KeyColumns.Text(_unicode), x => x);
             return;
         }
 
@@ -43,7 +46,7 @@ internal class TenantInFilter : ISqlFragment
         for (var i = 0; i < _tenantIds.Length; i++)
         {
             if (i > 0) builder.Append(", ");
-            builder.AppendParameter(_tenantIds[i], System.Data.SqlDbType.VarChar);
+            builder.AppendParameter(_tenantIds[i], Storage.KeyColumns.DbType(_unicode));
         }
 
         builder.Append(")");

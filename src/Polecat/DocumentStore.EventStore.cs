@@ -855,7 +855,7 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
 
         await Options.ResiliencePipeline.ExecuteAsync(static async (state, ct) =>
         {
-            var (connString, progressionTable, names, seqFloor, where, filterParameters) = state;
+            var (connString, progressionTable, names, seqFloor, where, filterParameters, unicode) = state;
             await using var conn = new SqlConnection(connString);
             await conn.OpenAsync(ct).ConfigureAwait(false);
 
@@ -865,7 +865,7 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
                 cmd.CommandText = $"DELETE FROM {progressionTable} WHERE {where};";
                 foreach (var parameter in filterParameters)
                 {
-                    cmd.Parameters.AddVarChar(parameter.Key, parameter.Value);
+                    cmd.Parameters.AddKey(parameter.Key, parameter.Value, unicode);
                 }
 
                 await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
@@ -884,13 +884,13 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
                         WHEN NOT MATCHED THEN INSERT (name, last_seq_id, last_updated)
                             VALUES (@name, @seq, SYSDATETIMEOFFSET());
                         """;
-                    cmd.Parameters.AddVarChar("@name", name);
+                    cmd.Parameters.AddKey("@name", name, unicode);
                     cmd.Parameters.AddWithValue("@seq", seqFloor.Value);
                     await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
                 }
             }
         }, (connStr, Events.ProgressionTableName, identities, sequenceFloor, filter.Where,
-            filter.Parameters), token).ConfigureAwait(false);
+            filter.Parameters, Options.Advanced.UseUnicodeKeys), token).ConfigureAwait(false);
 
         await deleteDeadLettersBeingReplayedAsync((PolecatDatabase)database, subscriptionName, sequenceFloor ?? 0,
             token).ConfigureAwait(false);
@@ -987,7 +987,7 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
         var connStr = ResolveConnectionString(database, Options);
         await Options.ResiliencePipeline.ExecuteAsync(static async (state, ct) =>
         {
-            var (connString, progressionTable, name, seqFloor) = state;
+            var (connString, progressionTable, name, seqFloor, unicode) = state;
             await using var conn = new SqlConnection(connString);
             await conn.OpenAsync(ct).ConfigureAwait(false);
 
@@ -1000,10 +1000,10 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
                 WHEN NOT MATCHED THEN INSERT (name, last_seq_id, last_updated)
                     VALUES (@name, @seq, SYSDATETIMEOFFSET());
                 """;
-            cmd.Parameters.AddVarChar("@name", name);
+            cmd.Parameters.AddKey("@name", name, unicode);
             cmd.Parameters.AddWithValue("@seq", seqFloor);
             await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
-        }, (connStr, Events.ProgressionTableName, shardName, sequenceFloor), token).ConfigureAwait(false);
+        }, (connStr, Events.ProgressionTableName, shardName, sequenceFloor, Options.Advanced.UseUnicodeKeys), token).ConfigureAwait(false);
     }
 
     // TeardownExistingProjectionProgressAsync was removed from
@@ -1023,7 +1023,7 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
         var filter = ProgressionFilterFor(subscriptionName);
         await Options.ResiliencePipeline.ExecuteAsync(static async (state, ct) =>
         {
-            var (connString, progressionTable, where, filterParameters) = state;
+            var (connString, progressionTable, where, filterParameters, unicode) = state;
             await using var conn = new SqlConnection(connString);
             await conn.OpenAsync(ct).ConfigureAwait(false);
 
@@ -1031,11 +1031,11 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
             cmd.CommandText = $"DELETE FROM {progressionTable} WHERE {where};";
             foreach (var parameter in filterParameters)
             {
-                cmd.Parameters.AddVarChar(parameter.Key, parameter.Value);
+                cmd.Parameters.AddKey(parameter.Key, parameter.Value, unicode);
             }
 
             await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
-        }, (connStr, Events.ProgressionTableName, filter.Where, filter.Parameters), token)
+        }, (connStr, Events.ProgressionTableName, filter.Where, filter.Parameters, Options.Advanced.UseUnicodeKeys), token)
             .AsTask().TranslatingCancellation("Deleting projection progress", token).ConfigureAwait(false);
     }
 
@@ -1074,7 +1074,7 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
         {
             await Options.ResiliencePipeline.ExecuteAsync(static async (state, ct) =>
             {
-                var (connString, progressionTable, identities, tableNames, tenant, isConjoined) = state;
+                var (connString, progressionTable, identities, tableNames, tenant, isConjoined, unicode) = state;
                 await using var conn = new SqlConnection(connString);
                 await conn.OpenAsync(ct).ConfigureAwait(false);
 
@@ -1088,7 +1088,7 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
                     await using var delProg = conn.CreateCommand();
                     delProg.Transaction = tx;
                     delProg.CommandText = $"DELETE FROM {progressionTable} WHERE name = @id;";
-                    delProg.Parameters.AddVarChar("@id", identity);
+                    delProg.Parameters.AddKey("@id", identity, unicode);
                     await delProg.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
                 }
 
@@ -1106,13 +1106,13 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
                     delDocs.CommandText = isConjoined
                         ? $"{exists} DELETE FROM {tableName} WHERE tenant_id = @tenant;"
                         : $"{exists} DELETE FROM {tableName};";
-                    if (isConjoined) delDocs.Parameters.AddVarChar("@tenant", tenant);
+                    if (isConjoined) delDocs.Parameters.AddKey("@tenant", tenant, unicode);
                     await delDocs.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
                 }
 
                 await SqlTransactionRequests.CommitAsync(tx, ct).ConfigureAwait(false);
             }, (connStr, Events.ProgressionTableName, shardIdentities, publishedTableNames, tenantId,
-                Options.Events.TenancyStyle == TenancyStyle.Conjoined), token).ConfigureAwait(false);
+                Options.Events.TenancyStyle == TenancyStyle.Conjoined, Options.Advanced.UseUnicodeKeys), token).ConfigureAwait(false);
         }
         catch (Exception ex) when (token.IsCancellationRequested && ex is not OperationCanceledException)
         {
@@ -1264,7 +1264,7 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
 
         await Options.ResiliencePipeline.ExecuteAsync(static async (state, ct) =>
         {
-            var (connString, progressionTable, where, filterParameters, tableNames) = state;
+            var (connString, progressionTable, where, filterParameters, tableNames, unicode) = state;
             await using var conn = new SqlConnection(connString);
             await conn.OpenAsync(ct).ConfigureAwait(false);
 
@@ -1272,7 +1272,7 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
             cmd.CommandText = $"DELETE FROM {progressionTable} WHERE {where};";
             foreach (var parameter in filterParameters)
             {
-                cmd.Parameters.AddVarChar(parameter.Key, parameter.Value);
+                cmd.Parameters.AddKey(parameter.Key, parameter.Value, unicode);
             }
 
             await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
@@ -1291,7 +1291,8 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
                     $"IF OBJECT_ID({SqlEscaping.Literal(tableName)}, 'U') IS NOT NULL DELETE FROM {tableName};";
                 await truncCmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
             }
-        }, (connStr, Events.ProgressionTableName, filter.Where, filter.Parameters, publishedTableNames),
+        }, (connStr, Events.ProgressionTableName, filter.Where, filter.Parameters, publishedTableNames,
+            Options.Advanced.UseUnicodeKeys),
             token).AsTask().TranslatingCancellation("Projection teardown", token).ConfigureAwait(false);
 
         // #871 item 1: a rebuild replays everything, so a dead letter is rewritten if its event still fails

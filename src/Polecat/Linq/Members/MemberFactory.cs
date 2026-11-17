@@ -108,7 +108,7 @@ internal class MemberFactory : IMemberResolver
         if (!_isElement && expression.Member.Name == "Id" && expression.Expression is ParameterExpression)
         {
             return new IdMember(_idType, _valueTypeId,
-                Storage.DocumentTable.SqlTypeForIdentity(_mapping.InnerIdType));
+                _mapping.IdSqlType);
         }
 
         // #840: a member that exists only in .NET has no JSON key, so it is translated or refused here,

@@ -17,8 +17,13 @@ namespace Polecat.Events.Operations;
 /// For conjoined tenancy, includes tenant_id in INSERT and NOT EXISTS check, and tags only the session
 /// tenant's events: under per-tenant sequences the same seq_id exists in every tenant (#842).
 /// </summary>
-internal class AssignTagWhereOperation : Polecat.Internal.IStorageOperation, Weasel.Storage.NoDataReturnedCall
+internal class AssignTagWhereOperation : Polecat.Internal.IStorageOperation, Weasel.Storage.NoDataReturnedCall,
+    Polecat.Internal.Operations.IKeyedWrite
 {
+    // #935
+    string? Polecat.Internal.Operations.IKeyedWrite.TenantId => _tenantId;
+    object? Polecat.Internal.Operations.IKeyedWrite.Key => _value;
+
     private readonly string _schemaName;
     private readonly ITagTypeRegistration _registration;
     private readonly object _value;
@@ -27,6 +32,7 @@ internal class AssignTagWhereOperation : Polecat.Internal.IStorageOperation, Wea
     private readonly bool _useArchivedPartitioning;
     private readonly string? _tenantOrdinalColumn;
     private readonly string? _tenantId;
+    private readonly bool _unicode; // #935
 
     /// <param name="tenantOrdinalColumn">
     ///     The partition column under per-tenant partitioning, which a tag row needs for its foreign key
@@ -34,7 +40,7 @@ internal class AssignTagWhereOperation : Polecat.Internal.IStorageOperation, Wea
     /// </param>
     public AssignTagWhereOperation(string schemaName, ITagTypeRegistration registration, object value,
         ISqlFragment whereFragment, bool isConjoined = false, string? tenantId = null,
-        bool useArchivedPartitioning = false, string? tenantOrdinalColumn = null)
+        bool useArchivedPartitioning = false, string? tenantOrdinalColumn = null, bool unicode = false)
     {
         _schemaName = schemaName;
         _registration = registration;
@@ -44,6 +50,7 @@ internal class AssignTagWhereOperation : Polecat.Internal.IStorageOperation, Wea
         _tenantId = tenantId;
         _useArchivedPartitioning = useArchivedPartitioning;
         _tenantOrdinalColumn = tenantOrdinalColumn;
+        _unicode = unicode;
     }
 
     public Type DocumentType => typeof(IEvent);
@@ -83,7 +90,7 @@ internal class AssignTagWhereOperation : Polecat.Internal.IStorageOperation, Wea
         if (_isConjoined)
         {
             builder.Append(" AND e.tenant_id = ");
-            builder.AppendParameter(_tenantId!, System.Data.SqlDbType.VarChar);
+            builder.AppendParameter(_tenantId!, Polecat.Storage.KeyColumns.DbType(_unicode));
         }
 
         // is_archived is deliberately left out of this check even though it is in the tag table's key.

@@ -18,7 +18,17 @@ namespace Polecat.Storage;
 /// </summary>
 internal sealed class SqlServerStorageDialect<TId> : IStorageDialect
 {
-    public static readonly IStorageDialect Instance = new SqlServerStorageDialect<TId>();
+    public static readonly IStorageDialect Instance = new SqlServerStorageDialect<TId>(false);
+
+    /// <summary>#935: the dialect of a store under <see cref="AdvancedOptions.UseUnicodeKeys" />.</summary>
+    public static readonly IStorageDialect Unicode = new SqlServerStorageDialect<TId>(true);
+
+    public static IStorageDialect For(bool unicode) => unicode ? Unicode : Instance;
+
+    // #935: string ids, tenant ids and the other string columns are nvarchar under UseUnicodeKeys, and a
+    // varchar parameter would lose what the code page can't hold before it ever reached them.
+    private readonly bool _unicode;
+    private readonly SqlDbType _text;
 
     // NOTE: not derived from typeof(TId) — for strongly-typed ids TId is the wrapper type
     // while raw sql values are the unwrapped inner (Guid/string/int/long). Type from the
@@ -26,17 +36,19 @@ internal sealed class SqlServerStorageDialect<TId> : IStorageDialect
     // #363: string ids MUST bind as varchar — the id columns are varchar(250), and an nvarchar
     // parameter forces CONVERT_IMPLICIT on the column side, turning every id seek into a scan
     // under SQL collations.
-    private static SqlDbType TypeForRawId(object rawId) => rawId switch
+    private SqlDbType TypeForRawId(object rawId) => rawId switch
     {
         Guid => SqlDbType.UniqueIdentifier,
-        string => SqlDbType.VarChar,
+        string => _text,
         int => SqlDbType.Int,
         long => SqlDbType.BigInt,
         _ => SqlServerProvider.Instance.ToParameterType(rawId.GetType())
     };
 
-    private SqlServerStorageDialect()
+    private SqlServerStorageDialect(bool unicode)
     {
+        _unicode = unicode;
+        _text = KeyColumns.DbType(unicode);
     }
 
     public System.Data.Common.DbCommand BuildLoadCommand(string loaderSql, object rawId, string? tenant)
@@ -45,7 +57,7 @@ internal sealed class SqlServerStorageDialect<TId> : IStorageDialect
         command.Parameters.Add(new SqlParameter("id", rawId) { SqlDbType = TypeForRawId(rawId) });
         if (tenant is not null)
         {
-            command.Parameters.Add(new SqlParameter("tenant_id", tenant) { SqlDbType = SqlDbType.VarChar });
+            command.Parameters.Add(new SqlParameter("tenant_id", tenant) { SqlDbType = _text });
         }
 
         return command;
@@ -68,7 +80,7 @@ internal sealed class SqlServerStorageDialect<TId> : IStorageDialect
         command.Parameters.Add((SqlParameter)idArrayParameter);
         if (tenant is not null)
         {
-            command.Parameters.Add(new SqlParameter("tenant_id", tenant) { SqlDbType = SqlDbType.VarChar });
+            command.Parameters.Add(new SqlParameter("tenant_id", tenant) { SqlDbType = _text });
         }
 
         return command;
@@ -89,7 +101,7 @@ internal sealed class SqlServerStorageDialect<TId> : IStorageDialect
     public void SetParameterType(System.Data.Common.DbParameter parameter, StorageColumnType type)
         => ((SqlParameter)parameter).SqlDbType = type switch
         {
-            StorageColumnType.String => SqlDbType.VarChar,
+            StorageColumnType.String => _text,
             StorageColumnType.Guid => SqlDbType.UniqueIdentifier,
             StorageColumnType.Long => SqlDbType.BigInt,
             StorageColumnType.Int => SqlDbType.Int,
@@ -104,7 +116,9 @@ internal sealed class SqlServerStorageDialect<TId> : IStorageDialect
         };
 
     public void SetIdParameterType(System.Data.Common.DbParameter parameter, Type rawSqlType)
-        => ((SqlParameter)parameter).SqlDbType = SqlServerProvider.Instance.ToParameterType(rawSqlType);
+        => ((SqlParameter)parameter).SqlDbType = _unicode && rawSqlType == typeof(string)
+            ? SqlDbType.NVarChar
+            : SqlServerProvider.Instance.ToParameterType(rawSqlType);
 
     private static string WriteIdsAsJsonArray(Array rawIds)
     {

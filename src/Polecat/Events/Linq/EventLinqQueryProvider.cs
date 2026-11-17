@@ -142,7 +142,7 @@ internal class EventLinqQueryProvider : IPolecatAsyncQueryProvider,
         {
             if (parser.TenantIds != null)
             {
-                parser.Statement.Wheres.Add(new TenantInFilter(parser.TenantIds));
+                parser.Statement.Wheres.Add(new TenantInFilter(parser.TenantIds, _events.UnicodeKeys));
             }
             else
             {

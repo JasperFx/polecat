@@ -70,8 +70,8 @@ internal partial class QuerySession
         cmd.CommandText =
             $"SELECT {string.Join(", ", columns)} FROM {mapping.QualifiedTableName} " +
             (isConjoined ? "WHERE id = @id AND tenant_id = @tenant_id" : "WHERE id = @id");
-        cmd.Parameters.AddIdParameter("@id", id);
-        if (isConjoined) cmd.Parameters.AddVarChar("@tenant_id", tenantId);
+        cmd.Parameters.AddIdParameter("@id", id, Options.Advanced.UseUnicodeKeys);
+        if (isConjoined) cmd.Parameters.AddKey("@tenant_id", tenantId, Options.Advanced.UseUnicodeKeys);
 
         Logger.OnBeforeExecute(cmd.CommandText);
         try

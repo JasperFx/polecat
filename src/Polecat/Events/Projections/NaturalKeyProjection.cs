@@ -94,7 +94,7 @@ internal class NaturalKeyProjection : IInlineProjection<IDocumentSession>
         {
             sessionBase.WorkTracker.Add(
                 new NaturalKeyArchiveOperation(_qualifiedTableName, streamId, _isGuidStream,
-                    _isConjoined, tenantId));
+                    _isConjoined, tenantId, unicode: _events.UnicodeKeys));
             return;
         }
 
@@ -112,11 +112,11 @@ internal class NaturalKeyProjection : IInlineProjection<IDocumentSession>
         // create-then-rename inside one SaveChangesAsync still lands on the newest value.
         sessionBase.WorkTracker.Add(
             new NaturalKeyRetireOperation(_qualifiedTableName, unwrapped, streamId, _isGuidStream,
-                _isConjoined, tenantId));
+                _isConjoined, tenantId, unicode: _events.UnicodeKeys));
 
         sessionBase.WorkTracker.Add(
             new NaturalKeyUpsertOperation(_qualifiedTableName, unwrapped, streamId, _isGuidStream,
-                _definition.AggregateType, _isConjoined, tenantId));
+                _definition.AggregateType, _isConjoined, tenantId, unicode: _events.UnicodeKeys));
     }
 
     private object? NaturalKeyCarriedBy(IEvent e)

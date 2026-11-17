@@ -1608,7 +1608,7 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
                             WHERE tenant_id = @tenant_id AND {eventGraph.TenantPartitionManager.Column} =
                                 (SELECT ordinal FROM {eventGraph.TenantPartitionsTableName} WHERE tenant_id = @tenant_id);
                             """;
-                        cmd.Parameters.AddVarChar("@tenant_id", tenantId);
+                        cmd.Parameters.AddKey("@tenant_id", tenantId, eventGraph.UnicodeKeys);
                     }
 
                     var result = await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);

@@ -41,7 +41,7 @@ internal class SetCompactedVersionOperation : Polecat.Internal.IStorageOperation
         builder.Append(" WHERE id = ");
         builder.AppendParameter(_streamId);
         builder.Append(" AND tenant_id = ");
-        builder.AppendParameter(_tenantId, System.Data.SqlDbType.VarChar);
+        builder.AppendParameter(_tenantId, _events.KeyDbType);
         builder.Append(";");
     }
 

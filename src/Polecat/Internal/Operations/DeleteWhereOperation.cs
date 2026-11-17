@@ -22,9 +22,10 @@ internal class DeleteWhereOperation : IStorageOperation, Weasel.Storage.NoDataRe
     private readonly string _tenantId;
     private readonly ISqlFragment _whereFragment;
     private readonly Type _documentType;
+    private readonly bool _unicode; // #935
 
     public DeleteWhereOperation(IOperationFragment fragment, bool conjoined, string tenantId,
-        ISqlFragment whereFragment, Type documentType, bool excludeAlreadyDeleted = false)
+        ISqlFragment whereFragment, Type documentType, bool excludeAlreadyDeleted = false, bool unicode = false)
     {
         _fragment = fragment;
         _conjoined = conjoined;
@@ -32,6 +33,7 @@ internal class DeleteWhereOperation : IStorageOperation, Weasel.Storage.NoDataRe
         _whereFragment = whereFragment;
         _documentType = documentType;
         _excludeAlreadyDeleted = excludeAlreadyDeleted;
+        _unicode = unicode;
     }
 
     public Type DocumentType => _documentType;
@@ -45,7 +47,7 @@ internal class DeleteWhereOperation : IStorageOperation, Weasel.Storage.NoDataRe
         if (_conjoined)
         {
             builder.Append("tenant_id = ");
-            builder.AppendParameter(_tenantId, System.Data.SqlDbType.VarChar);
+            builder.AppendParameter(_tenantId, Storage.KeyColumns.DbType(_unicode));
             builder.Append(" AND ");
         }
 

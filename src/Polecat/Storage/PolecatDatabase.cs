@@ -177,7 +177,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
             // session), so it wraps the work in the pipeline directly.
             return await _resilience.ExecuteAsync(static async (state, ct) =>
             {
-                var (connectionString, progressionTable, identity) = state;
+                var (connectionString, progressionTable, identity, unicode) = state;
                 await using var conn = new SqlConnection(connectionString);
                 await conn.OpenAsync(ct).ConfigureAwait(false);
 
@@ -186,11 +186,11 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
                     SELECT last_seq_id FROM {progressionTable}
                     WHERE name = @name;
                     """;
-                cmd.Parameters.AddVarChar("@name", identity);
+                cmd.Parameters.AddKey("@name", identity, unicode);
 
                 var result = await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
                 return result is long seq ? seq : 0;
-            }, (_connectionString, _events.ProgressionTableName, name.Identity), token).ConfigureAwait(false);
+            }, (_connectionString, _events.ProgressionTableName, name.Identity, _events.UnicodeKeys), token).ConfigureAwait(false);
         }
         catch (Exception e) when (MissingStorageDetection.IsMissingStorage(e))
         {
@@ -218,15 +218,15 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
         {
             await _resilience.ExecuteAsync(static async (state, ct) =>
             {
-                var (connectionString, progressionTable, identity) = state;
+                var (connectionString, progressionTable, identity, unicode) = state;
                 await using var conn = new SqlConnection(connectionString);
                 await conn.OpenAsync(ct).ConfigureAwait(false);
 
                 await using var cmd = conn.CreateCommand();
                 cmd.CommandText = $"DELETE FROM {progressionTable} WHERE name = @identity;";
-                cmd.Parameters.AddVarChar("@identity", identity);
+                cmd.Parameters.AddKey("@identity", identity, unicode);
                 await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
-            }, (_connectionString, _events.ProgressionTableName, shardIdentity), token).ConfigureAwait(false);
+            }, (_connectionString, _events.ProgressionTableName, shardIdentity, _events.UnicodeKeys), token).ConfigureAwait(false);
         }
         catch (Exception e) when (MissingStorageDetection.IsMissingStorage(e))
         {
@@ -295,7 +295,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
 
         await _resilience.ExecuteAsync(static async (s, ct) =>
         {
-            var (connectionString, progressionTable, shardStates) = s;
+            var (connectionString, progressionTable, shardStates, unicode) = s;
             await using var conn = new SqlConnection(connectionString);
             await conn.OpenAsync(ct).ConfigureAwait(false);
 
@@ -323,7 +323,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
                   );
                 """;
 
-            var name = cmd.Parameters.AddVarChar("@name", null);
+            var name = cmd.Parameters.AddKey("@name", null, unicode);
             var heartbeat = cmd.Parameters.AddWithValue("@heartbeat", DBNull.Value);
             var status = cmd.Parameters.AddWithValue("@status", DBNull.Value);
             var reason = cmd.Parameters.AddWithValue("@reason", DBNull.Value);
@@ -332,7 +332,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
             var failureCategory = cmd.Parameters.AddVarChar("@failureCategory", null);
             var failureSequence = cmd.Parameters.AddWithValue("@failureSequence", DBNull.Value);
             var failureEventType = cmd.Parameters.AddVarChar("@failureEventType", null);
-            var failureTenantId = cmd.Parameters.AddVarChar("@failureTenantId", null);
+            var failureTenantId = cmd.Parameters.AddKey("@failureTenantId", null, unicode);
 
             foreach (var shardState in shardStates)
             {
@@ -361,7 +361,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
                 // transaction, so this loop never holds more than a single row lock at a time.
                 await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
             }
-        }, (_connectionString, _events.ProgressionTableName, ordered), token).ConfigureAwait(false);
+        }, (_connectionString, _events.ProgressionTableName, ordered, _events.UnicodeKeys), token).ConfigureAwait(false);
     }
 
     public Task<IReadOnlyList<ShardState>> AllProjectionProgress(CancellationToken token = default)
@@ -422,8 +422,8 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
                 {
                     cmd.CommandText =
                         $"SELECT {columns} FROM {events.ProgressionTableName} WHERE name LIKE @tenantSuffix ESCAPE '{ProgressionNameFilter.LikeEscapeCharacter}';";
-                    cmd.Parameters.AddVarChar("@tenantSuffix",
-                        "%:" + ProgressionNameFilter.EscapeLikePattern(tenant));
+                    cmd.Parameters.AddKey("@tenantSuffix",
+                        "%:" + ProgressionNameFilter.EscapeLikePattern(tenant), events.UnicodeKeys);
                 }
 
                 await using var reader = (await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false));
@@ -569,7 +569,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
                 cmd.CommandText = events.EnableExtendedProgressionTracking
                     ? $"SELECT last_seq_id, heartbeat, agent_status, last_updated FROM {events.ProgressionTableName} WHERE name = @name;"
                     : $"SELECT last_seq_id, last_updated FROM {events.ProgressionTableName} WHERE name = @name;";
-                cmd.Parameters.AddVarChar("@name", lookupName);
+                cmd.Parameters.AddKey("@name", lookupName, events.UnicodeKeys);
 
                 await using var reader = (await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false));
                 if (!await reader.ReadAsync(ct).ConfigureAwait(false))
@@ -629,7 +629,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
                 cmd.CommandText = events.EnableExtendedProgressionTracking
                     ? $"SELECT last_seq_id, heartbeat, agent_status, last_updated FROM {events.ProgressionTableName} WHERE name = @name;"
                     : $"SELECT last_seq_id, last_updated FROM {events.ProgressionTableName} WHERE name = @name;";
-                cmd.Parameters.AddVarChar("@name", shard.Identity);
+                cmd.Parameters.AddKey("@name", shard.Identity, events.UnicodeKeys);
 
                 await using var reader = (await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false));
                 if (!await reader.ReadAsync(ct).ConfigureAwait(false))
@@ -748,7 +748,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
         {
             return await _resilience.ExecuteAsync(static async (state, ct) =>
             {
-                var (connectionString, eventsTable, ts, tenant) = state;
+                var (connectionString, eventsTable, ts, tenant, unicode) = state;
                 await using var conn = new SqlConnection(connectionString);
                 await conn.OpenAsync(ct).ConfigureAwait(false);
 
@@ -759,11 +759,11 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
                     """;
                 cmd.Parameters.AddWithValue("@ts", ts.ToUniversalTime());
                 // #363: tenant_id is varchar, so bind varchar or the predicate scans.
-                cmd.Parameters.AddVarChar("@tenant_id", tenant);
+                cmd.Parameters.AddKey("@tenant_id", tenant, unicode);
 
                 var result = await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
                 return result is long seq ? (long?)seq : null;
-            }, (_connectionString, _events.EventsTableName, timestamp, tenantId), token).ConfigureAwait(false);
+            }, (_connectionString, _events.EventsTableName, timestamp, tenantId, _events.UnicodeKeys), token).ConfigureAwait(false);
         }
         catch (Exception e) when (MissingStorageDetection.IsMissingStorage(e))
         {
@@ -894,8 +894,8 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
     /// </remarks>
     internal static string FirstEventTimestampsAfterSql(EventGraph events)
     {
-        const string positions = """
-            OPENJSON(@positions) WITH (i int '$.i', s bigint '$.s', t varchar(250) '$.t') p
+        var positions = $"""
+            OPENJSON(@positions) WITH (i int '$.i', s bigint '$.s', t {events.KeyText()} '$.t') p
             """;
 
         if (events.UseTenantPartitionedEvents)
@@ -1223,18 +1223,18 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
         {
             return await _resilience.ExecuteAsync(static async (state, ct) =>
             {
-                var (connectionString, table, name, tenant) = state;
+                var (connectionString, table, name, tenant, unicode) = state;
                 await using var conn = new SqlConnection(connectionString);
                 await conn.OpenAsync(ct).ConfigureAwait(false);
 
                 await using var cmd = conn.CreateCommand();
                 cmd.CommandText = $"SELECT floor_seq_id FROM {table} WHERE name = @name AND tenant_id = @tenant;";
-                cmd.Parameters.AddVarChar("@name", name);
-                cmd.Parameters.AddVarChar("@tenant", tenant);
+                cmd.Parameters.AddKey("@name", name, unicode);
+                cmd.Parameters.AddKey("@tenant", tenant, unicode);
 
                 var result = await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
                 return result is long floor ? floor : (long?)null;
-            }, (_connectionString, _events.ProjectionFloorsTableName, projectionName, FloorTenant(tenantId)), token).ConfigureAwait(false);
+            }, (_connectionString, _events.ProjectionFloorsTableName, projectionName, FloorTenant(tenantId), _events.UnicodeKeys), token).ConfigureAwait(false);
         }
         catch (Exception e) when (MissingStorageDetection.IsMissingStorage(e))
         {
@@ -1261,7 +1261,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
 
         return await _resilience.ExecuteAsync(static async (state, ct) =>
         {
-            var (connectionString, table, name, tenant, value) = state;
+            var (connectionString, table, name, tenant, value, unicode) = state;
             await using var conn = new SqlConnection(connectionString);
             await conn.OpenAsync(ct).ConfigureAwait(false);
 
@@ -1275,13 +1275,13 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
                 END CATCH;
                 SELECT floor_seq_id FROM {table} WHERE name = @name AND tenant_id = @tenant;
                 """;
-            cmd.Parameters.AddVarChar("@name", name);
-            cmd.Parameters.AddVarChar("@tenant", tenant);
+            cmd.Parameters.AddKey("@name", name, unicode);
+            cmd.Parameters.AddKey("@tenant", tenant, unicode);
             cmd.Parameters.Add("@floor", System.Data.SqlDbType.BigInt).Value = value;
 
             var result = await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
             return Convert.ToInt64(result);
-        }, (_connectionString, _events.ProjectionFloorsTableName, projectionName, FloorTenant(tenantId), floor), token).ConfigureAwait(false);
+        }, (_connectionString, _events.ProjectionFloorsTableName, projectionName, FloorTenant(tenantId), floor, _events.UnicodeKeys), token).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -1293,7 +1293,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
 
         await _resilience.ExecuteAsync(static async (state, ct) =>
         {
-            var (connectionString, table, name, tenant, value) = state;
+            var (connectionString, table, name, tenant, value, unicode) = state;
             await using var conn = new SqlConnection(connectionString);
             await conn.OpenAsync(ct).ConfigureAwait(false);
 
@@ -1315,15 +1315,15 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
                        END CATCH
                    END;
                    """;
-            cmd.Parameters.AddVarChar("@name", name);
-            cmd.Parameters.AddVarChar("@tenant", tenant);
+            cmd.Parameters.AddKey("@name", name, unicode);
+            cmd.Parameters.AddKey("@tenant", tenant, unicode);
             if (value is not null)
             {
                 cmd.Parameters.Add("@floor", System.Data.SqlDbType.BigInt).Value = value.Value;
             }
 
             await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
-        }, (_connectionString, _events.ProjectionFloorsTableName, projectionName, FloorTenant(tenantId), floor), token).ConfigureAwait(false);
+        }, (_connectionString, _events.ProjectionFloorsTableName, projectionName, FloorTenant(tenantId), floor, _events.UnicodeKeys), token).ConfigureAwait(false);
     }
 
     /// <summary>

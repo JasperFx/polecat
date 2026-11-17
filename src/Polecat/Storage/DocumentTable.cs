@@ -23,7 +23,7 @@ internal partial class DocumentTable : AdditiveTable
     {
         if (mapping.TenancyStyle == TenancyStyle.Conjoined)
         {
-            AddColumn(JasperFx.StorageConstants.TenantIdColumn, "varchar(250)").AsPrimaryKey().NotNull();
+            AddColumn(JasperFx.StorageConstants.TenantIdColumn, mapping.StoreOptions.KeyText()).AsPrimaryKey().NotNull();
         }
 
         // #296: strongly-typed ids persist their INNER primitive value (ValueTypeIdentification
@@ -31,12 +31,8 @@ internal partial class DocumentTable : AdditiveTable
         // must be the inner type — uniqueidentifier/int/bigint — NOT varchar(250) derived from the
         // wrapper type. A varchar id column trips InvalidCastException in the shared writeable
         // selectors on any Lightweight/IdentityMap database read of a wrapper-id document.
-        var idColumnType = mapping.InnerIdType == typeof(Guid) ? "uniqueidentifier"
-            : mapping.InnerIdType == typeof(int) ? "int"
-            : mapping.InnerIdType == typeof(long) ? "bigint"
-            : "varchar(250)";
-
-        AddColumn("id", idColumnType).AsPrimaryKey().NotNull();
+        // #935: nvarchar(250) for a string id under UseUnicodeKeys.
+        AddColumn("id", mapping.IdSqlType).AsPrimaryKey().NotNull();
 
         AddColumn("data", mapping.JsonColumnType).NotNull();
 
@@ -55,20 +51,20 @@ internal partial class DocumentTable : AdditiveTable
             .NotNull()
             .DefaultValueByExpression("SYSDATETIMEOFFSET()");
 
-        AddColumn("dotnet_type", "varchar(500)").AllowNulls();
+        AddColumn("dotnet_type", mapping.StoreOptions.KeyText(500)).AllowNulls();
 
         // #241: opt-in document metadata columns (correlation_id / causation_id / last_modified_by /
         // headers), enabled via the .Metadata(...) DSL or metadata attributes (#243).
         foreach (var column in mapping.EnabledMetadataColumns)
         {
-            var columnType = column.Name == "headers" ? mapping.JsonColumnType : "varchar(250)";
+            var columnType = column.Name == "headers" ? mapping.JsonColumnType : mapping.StoreOptions.KeyText();
             AddColumn(column.Name, columnType).AllowNulls();
         }
 
         // Sub-class hierarchy discriminator
         if (mapping.IsHierarchy())
         {
-            AddColumn("doc_type", "varchar(250)").NotNull().DefaultValueByString("base");
+            AddColumn("doc_type", mapping.StoreOptions.KeyText()).NotNull().DefaultValueByString("base");
         }
 
         // Soft delete columns

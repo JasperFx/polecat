@@ -40,7 +40,7 @@ namespace Polecat.Events.Schema;
 ///         and a conflict would be lost. See <c>StreamTagVersionBump</c>.
 ///     </para>
 /// </remarks>
-internal class DcbTagVersionTable : Table
+internal class DcbTagVersionTable : Polecat.Storage.KeyedTable
 {
     public const string TableName = "pc_dcb_tag_version";
     public const string SequenceName = "pc_dcb_tag_version_sequence";
@@ -58,10 +58,11 @@ internal class DcbTagVersionTable : Table
         : base(new SqlServerObjectName(events.DatabaseSchemaName, TableName))
     {
         // varchar(250) matches the width EventTagTable gives a string tag value, so a stringified
-        // value that fits its own tag table fits here too.
+        // value that fits its own tag table fits here too. #935: tag_value and tenant_id are nvarchar under
+        // UseUnicodeKeys, like the tag tables. tag_table is a name Polecat makes and stays varchar.
         AddColumn("tag_table", "varchar(250)").NotNull().AsPrimaryKey();
-        AddColumn("tag_value", "varchar(250)").NotNull().AsPrimaryKey();
-        AddColumn(JasperFx.StorageConstants.TenantIdColumn, "varchar(250)").NotNull().AsPrimaryKey();
+        AddColumn("tag_value", events.KeyText()).NotNull().AsPrimaryKey();
+        AddColumn(JasperFx.StorageConstants.TenantIdColumn, events.KeyText()).NotNull().AsPrimaryKey();
         AddColumn("version", "bigint").NotNull();
 
         PrimaryKeyName = "pk_pc_dcb_tag_version";

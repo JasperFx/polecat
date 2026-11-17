@@ -26,12 +26,12 @@ namespace Polecat.Events.Schema;
 ///         cost every tag type another partition function and another SPLIT per tenant.
 ///     </para>
 /// </remarks>
-internal class EventTagTable : Table
+internal class EventTagTable : Polecat.Storage.KeyedTable
 {
     public EventTagTable(EventGraph events, ITagTypeRegistration registration)
         : base(new SqlServerObjectName(events.DatabaseSchemaName, EventGraph.TagTableNameFor(registration)))
     {
-        var sqlType = SqlServerTypeFor(registration.SimpleType);
+        var sqlType = SqlServerTypeFor(registration.SimpleType, events.UnicodeKeys);
         var isConjoined = events.TenancyStyle == TenancyStyle.Conjoined;
 
         AddColumn("value", sqlType).NotNull().AsPrimaryKey();
@@ -39,7 +39,7 @@ internal class EventTagTable : Table
         // Add tenant_id to PK for conjoined tenancy to enable tenant-scoped tag queries
         if (isConjoined)
         {
-            AddColumn(JasperFx.StorageConstants.TenantIdColumn, "varchar(250)").NotNull().AsPrimaryKey();
+            AddColumn(JasperFx.StorageConstants.TenantIdColumn, events.KeyText()).NotNull().AsPrimaryKey();
         }
 
         AddColumn("seq_id", "bigint").NotNull().AsPrimaryKey();
@@ -106,10 +106,10 @@ internal class EventTagTable : Table
         });
     }
 
-    internal static string SqlServerTypeFor(Type type)
+    internal static string SqlServerTypeFor(Type type, bool unicode)
     {
         if (type == typeof(Guid)) return "uniqueidentifier";
-        if (type == typeof(string)) return "varchar(250)";
+        if (type == typeof(string)) return Polecat.Storage.KeyColumns.Text(unicode);
         if (type == typeof(int)) return "int";
         if (type == typeof(long)) return "bigint";
         if (type == typeof(short)) return "smallint";

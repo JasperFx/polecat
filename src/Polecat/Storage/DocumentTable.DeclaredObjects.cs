@@ -124,6 +124,27 @@ internal partial class DocumentTable
         }
     }
 
+    // #935: the constraints left out of DocumentTableEnsurer's first pass
+    private readonly List<ForeignKey> _heldBackForeignKeys = new();
+
+    /// <summary>
+    ///     #935: a constraint the first pass leaves out but the table already has is part of that pass after
+    ///     all. Changing the type of a column it sits on (UseUnicodeKeys widening an existing store) has to
+    ///     take it down and put it back, which Weasel only does for a key the model declares, and an
+    ///     existing key's referenced table is there by definition.
+    /// </summary>
+    protected override void includeExisting(Table actual)
+    {
+        foreach (var foreignKey in _heldBackForeignKeys)
+        {
+            if (actual.ForeignKeys.Any(x => x.Name.EqualsIgnoreCase(foreignKey.Name))
+                && ForeignKeys.All(x => !x.Name.EqualsIgnoreCase(foreignKey.Name)))
+            {
+                ForeignKeys.Add(foreignKey);
+            }
+        }
+    }
+
     /// <summary>
     ///     Each declared foreign key: its persisted computed column, then the constraint.
     /// </summary>
@@ -152,14 +173,12 @@ internal partial class DocumentTable
             var reference = new DocumentMapping(fk.ReferenceDocumentType, mapping.StoreOptions);
 
             var columnName = DocumentIndex.ColumnNameForPath(fk.JsonPath);
-            var sqlType = SqlTypeForIdentity(reference.InnerIdType);
+            var sqlType = reference.IdSqlType;
 
             // The column is declared either way. Only the CONSTRAINT is conditional, so the table's
             // column set is identical across both of DocumentTableEnsurer's passes and the second pass
             // has nothing to add but the constraint itself.
             AddComputedColumn(mapping, fk.JsonPath, IndexCasing.Default, sqlType);
-
-            if (!includeConstraints) continue;
 
             // Conjoined on BOTH sides, because the reference is (tenant_id, id) only when the
             // referenced table actually has a tenant_id in its key.
@@ -182,9 +201,10 @@ internal partial class DocumentTable
                 DeleteAction = fk.OnDelete
             };
 
-            if (ForeignKeys.All(x => !x.Name.EqualsIgnoreCase(foreignKey.Name)))
+            var declared = includeConstraints ? ForeignKeys : _heldBackForeignKeys;
+            if (declared.All(x => !x.Name.EqualsIgnoreCase(foreignKey.Name)))
             {
-                ForeignKeys.Add(foreignKey);
+                declared.Add(foreignKey);
             }
         }
     }
@@ -331,9 +351,9 @@ internal partial class DocumentTable
         AddColumn(name, sqlType).ComputedAs(expression, persisted: true);
     }
 
-    internal static string SqlTypeForIdentity(Type innerIdType)
+    internal static string SqlTypeForIdentity(Type innerIdType, bool unicode)
         => innerIdType == typeof(Guid) ? "uniqueidentifier"
             : innerIdType == typeof(int) ? "int"
                 : innerIdType == typeof(long) ? "bigint"
-                    : "varchar(250)";
+                    : KeyColumns.Text(unicode);
 }

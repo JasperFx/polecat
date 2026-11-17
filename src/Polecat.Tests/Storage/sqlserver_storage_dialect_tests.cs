@@ -190,8 +190,8 @@ public class sqlserver_storage_dialect_tests : OneOffConfigurationsContext
         nullText.Value.ShouldBe(DBNull.Value);
         nullText.SqlDbType.ShouldBe(SqlDbType.VarChar);
 
-        command.Parameters.AddIdParameter("@c", "stream-key").SqlDbType.ShouldBe(SqlDbType.VarChar);
-        command.Parameters.AddIdParameter("@d", Guid.NewGuid()).SqlDbType.ShouldBe(SqlDbType.UniqueIdentifier);
-        command.Parameters.AddIdParameter("@e", 42L).SqlDbType.ShouldBe(SqlDbType.BigInt);
+        command.Parameters.AddIdParameter("@c", "stream-key", false).SqlDbType.ShouldBe(SqlDbType.VarChar);
+        command.Parameters.AddIdParameter("@d", Guid.NewGuid(), false).SqlDbType.ShouldBe(SqlDbType.UniqueIdentifier);
+        command.Parameters.AddIdParameter("@e", 42L, false).SqlDbType.ShouldBe(SqlDbType.BigInt);
     }
 }

@@ -232,7 +232,7 @@ public partial class DocumentStore : IDocumentStoreDiagnostics
         {
             var effective = tenantId ?? DefaultTenantId();
             conditions.Add("tenant_id = @tenant");
-            parameters.Add(p => p.AddVarChar("@tenant", effective));
+            parameters.Add(p => p.AddKey("@tenant", effective, mapping.UnicodeKeys));
         }
 
         // Hierarchies: naming a sub-class returns only its rows; naming the root returns every row in
@@ -242,7 +242,7 @@ public partial class DocumentStore : IDocumentStoreDiagnostics
         {
             var alias = mapping.AliasFor(requestedType);
             conditions.Add("doc_type = @doc_type");
-            parameters.Add(p => p.AddVarChar("@doc_type", alias));
+            parameters.Add(p => p.AddKey("@doc_type", alias, mapping.UnicodeKeys));
         }
 
         if (mapping.DeleteStyle == DeleteStyle.SoftDelete && !options.IncludeSoftDeleted)
@@ -254,19 +254,19 @@ public partial class DocumentStore : IDocumentStoreDiagnostics
         if (options.CorrelationId != null)
         {
             conditions.Add("correlation_id = @correlation");
-            parameters.Add(p => p.AddVarChar("@correlation", options.CorrelationId!));
+            parameters.Add(p => p.AddKey("@correlation", options.CorrelationId!, mapping.UnicodeKeys));
         }
 
         if (options.CausationId != null)
         {
             conditions.Add("causation_id = @causation");
-            parameters.Add(p => p.AddVarChar("@causation", options.CausationId!));
+            parameters.Add(p => p.AddKey("@causation", options.CausationId!, mapping.UnicodeKeys));
         }
 
         if (options.LastModifiedBy != null)
         {
             conditions.Add("last_modified_by = @last_modified_by");
-            parameters.Add(p => p.AddVarChar("@last_modified_by", options.LastModifiedBy!));
+            parameters.Add(p => p.AddKey("@last_modified_by", options.LastModifiedBy!, mapping.UnicodeKeys));
         }
 
         var where = conditions.Count > 0 ? " where " + string.Join(" and ", conditions) : "";
@@ -514,8 +514,8 @@ public partial class DocumentStore : IDocumentStoreDiagnostics
             $"where {string.Join(" and ", conditions)}";
 
         bind!(cmd.Parameters);
-        if (conjoined) cmd.Parameters.AddVarChar("@tenant", normalized ?? DefaultTenantId());
-        if (filterByDocType) cmd.Parameters.AddVarChar("@doc_type", mapping.AliasFor(requestedType));
+        if (conjoined) cmd.Parameters.AddKey("@tenant", normalized ?? DefaultTenantId(), mapping.UnicodeKeys);
+        if (filterByDocType) cmd.Parameters.AddKey("@doc_type", mapping.AliasFor(requestedType), mapping.UnicodeKeys);
 
         await using var reader = (await cmd.ExecuteReaderAsync(token).ConfigureAwait(false));
         return await reader.ReadAsync(token).ConfigureAwait(false)
@@ -627,7 +627,7 @@ public partial class DocumentStore : IDocumentStoreDiagnostics
 
         // varchar id: VarChar rather than NVarChar so the comparison does not wrap the column in
         // CONVERT_IMPLICIT and scan (#363), unless that would change the id (#919).
-        bind = p => p.AddUncheckedKey("@id", id);
+        bind = p => p.AddUncheckedKey("@id", id, mapping.UnicodeKeys);
         return true;
     }
 

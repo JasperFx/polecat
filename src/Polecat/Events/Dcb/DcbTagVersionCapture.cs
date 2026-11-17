@@ -92,7 +92,7 @@ internal static class DcbTagVersionCapture
         builder.Append("select tag_table, tag_value, version from ");
         builder.Append(events.DcbTagVersionTableName);
         builder.Append(" where tenant_id = ");
-        TagConditionSql.AppendVarChar(builder, tenantId);
+        TagConditionSql.AppendKey(builder, tenantId, events.UnicodeKeys);
         builder.Append(" and (");
 
         if (JsonValueList.ShouldBindAsJsonArray(builder, targets.Count * 2))
@@ -107,7 +107,7 @@ internal static class DcbTagVersionCapture
                 TagConditionSql.AppendVarChar(builder, table.Key);
                 builder.Append(" and ");
                 JsonValueList.AppendInClause(builder, "tag_value", table.Select(x => x.TagValue).ToArray(),
-                    "varchar(8000)", value => value);
+                    events.UnicodeKeys ? "nvarchar(4000)" : "varchar(8000)", value => value);
                 builder.Append(")");
             }
         }
@@ -119,7 +119,7 @@ internal static class DcbTagVersionCapture
                 builder.Append("(tag_table = ");
                 TagConditionSql.AppendVarChar(builder, targets[i].TagTable);
                 builder.Append(" and tag_value = ");
-                TagConditionSql.AppendVarChar(builder, targets[i].TagValue);
+                TagConditionSql.AppendKey(builder, targets[i].TagValue, events.UnicodeKeys);
                 builder.Append(")");
             }
         }

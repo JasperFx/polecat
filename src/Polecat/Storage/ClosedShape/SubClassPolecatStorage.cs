@@ -19,6 +19,7 @@ internal sealed class SubClassPolecatStorage<T, TRoot, TId>
     where TId : notnull
 {
     private readonly string _alias;
+    private readonly System.Data.SqlDbType _aliasType;
 
     public SubClassPolecatStorage(IDocumentStorage<TRoot, TId> parent, DocumentMapping mapping)
         : this(parent, new PolecatSubClassRules<T, TRoot, TId>(mapping))
@@ -29,6 +30,7 @@ internal sealed class SubClassPolecatStorage<T, TRoot, TId>
         : base(parent, rules)
     {
         _alias = rules.Alias;
+        _aliasType = rules.DocTypeDbType;
     }
 
     private IPolecatObjectStorage<TRoot> ParentBridge => (IPolecatObjectStorage<TRoot>)Root;
@@ -62,7 +64,7 @@ internal sealed class SubClassPolecatStorage<T, TRoot, TId>
     private void AppendDocTypeFilter(Weasel.SqlServer.ICommandBuilder builder)
     {
         builder.Append(" AND doc_type = ");
-        builder.AppendParameter(_alias, System.Data.SqlDbType.VarChar);
+        builder.AppendParameter(_alias, _aliasType);
     }
 
     public ISelector<T> BuildLoadSelector(IStorageSession session) => (ISelector<T>)BuildSelector(session);
@@ -149,11 +151,15 @@ internal sealed class PolecatSubClassRules<T, TRoot, TId> : IClosedShapeSubClass
     public PolecatSubClassRules(DocumentMapping rootMapping)
     {
         Alias = rootMapping.AliasFor(typeof(T));
+        DocTypeDbType = rootMapping.StoreOptions.KeyDbType;
         _qualifiedTableName = rootMapping.QualifiedTableName;
         DocumentTypeFilter = new HardCodedFilter($"d.doc_type = {SqlEscaping.Literal(Alias)}");
     }
 
     public string Alias { get; }
+
+    /// <summary>#935: doc_type is nvarchar under UseUnicodeKeys.</summary>
+    public System.Data.SqlDbType DocTypeDbType { get; }
 
     public ISqlFragment DocumentTypeFilter { get; }
 

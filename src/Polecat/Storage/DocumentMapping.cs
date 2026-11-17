@@ -264,6 +264,15 @@ internal class DocumentMapping
 
     // #273 phase E1: surfaced for the closed-shape registration layer.
     internal StoreOptions StoreOptions { get; }
+
+    /// <summary>#935: whether this store's key and metadata columns are <c>nvarchar</c>.</summary>
+    internal bool UnicodeKeys => StoreOptions.Advanced.UseUnicodeKeys;
+
+    /// <summary>
+    ///     The SQL type of the id column: the inner type of a strongly-typed id (#296), and a string id's
+    ///     <c>varchar(250)</c>, or <c>nvarchar(250)</c> under <see cref="AdvancedOptions.UseUnicodeKeys" />.
+    /// </summary>
+    internal string IdSqlType => DocumentTable.SqlTypeForIdentity(InnerIdType, UnicodeKeys);
     internal PropertyInfo IdMember => _idProperty;
 
     /// <summary>

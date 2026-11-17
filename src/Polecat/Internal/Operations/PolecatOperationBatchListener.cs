@@ -52,8 +52,46 @@ internal sealed class PolecatOperationBatchListener : IOperationBatchListener
             return true;
         }
 
+        if (exception is SqlException { Number: Exceptions.KeyTooLongException.ErrorNumber } tooLong)
+        {
+            transformed = KeyTooLong(tooLong, command.Operations, command.Batch);
+            return true;
+        }
+
         transformed = null;
         return false;
+    }
+
+    /// <summary>
+    ///     #935: Msg 1946, a row whose key passed the 900 or 1,700 bytes an index holds, which only
+    ///     <see cref="AdvancedOptions.UseUnicodeKeys" /> makes possible. Named by the write it came from, when
+    ///     SQL Server says which batch command failed and that command is one operation's.
+    /// </summary>
+    internal static Exceptions.KeyTooLongException KeyTooLong(SqlException exception,
+        IReadOnlyList<Weasel.Storage.IStorageOperation> operations, System.Data.Common.DbBatch? batch)
+    {
+        Weasel.Storage.IStorageOperation? failed = operations.Count == 1 ? operations[0] : null;
+        if (failed == null && exception.BatchCommand is { } command && batch != null
+            && batch.BatchCommands.Count == operations.Count)
+        {
+            for (var i = 0; i < batch.BatchCommands.Count; i++)
+            {
+                if (ReferenceEquals(batch.BatchCommands[i], command)) failed = operations[i];
+            }
+        }
+
+        // An adapter carries the key itself, and otherwise the operation it wraps may
+        for (var depth = 0; failed != null && depth < 8; depth++)
+        {
+            if (failed is IKeyedWrite keyed)
+            {
+                return new Exceptions.KeyTooLongException(keyed.TenantId, keyed.Key, exception);
+            }
+
+            failed = (failed as IStorageOperationWrapper)?.Inner;
+        }
+
+        return new Exceptions.KeyTooLongException(null, null, exception);
     }
 
     internal static bool TryApplication(SqlException exception, ExceptionTransforms application,

@@ -55,7 +55,7 @@ namespace Polecat.Storage.FullText;
 ///         until the schema is applied.
 ///     </para>
 /// </remarks>
-internal class FullTextTokenTable: Table
+internal class FullTextTokenTable: Polecat.Storage.KeyedTable
 {
     public FullTextTokenTable(DocumentMapping mapping)
         : base(new SqlServerObjectName(mapping.DatabaseSchemaName, FullTextIndex.TableNameFor(mapping)))
@@ -63,12 +63,12 @@ internal class FullTextTokenTable: Table
         // doc_id carries the INNER type of a strongly-typed id, because it has to match the document
         // table's own id column exactly -- the same rule #296/#302 settled for DocumentTable, and the
         // same varchar landmine if it is got wrong.
-        AddColumn("doc_id", DocumentTable.SqlTypeForIdentity(mapping.InnerIdType)).NotNull();
+        AddColumn("doc_id", mapping.IdSqlType).NotNull();
 
         // Always present, even on a single-tenant table whose DOCUMENT table has no tenant_id (#234):
         // the token rows store the '*DEFAULT*' literal there so one search shape serves both tenancy
         // styles. See FullTextIndex.TenantColumn.
-        AddColumn(JasperFx.StorageConstants.TenantIdColumn, "varchar(250)").NotNull();
+        AddColumn(JasperFx.StorageConstants.TenantIdColumn, mapping.StoreOptions.KeyText()).NotNull();
         AddColumn("member", "varchar(200)").NotNull();
         AddColumn("term", $"nvarchar({FullTextIndex.MaxTermLength})").NotNull();
         AddColumn("pos", "int").NotNull();

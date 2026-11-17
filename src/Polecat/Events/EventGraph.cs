@@ -78,6 +78,15 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
 
     internal ISerializer Serializer => _options.Serializer;
 
+    /// <summary>#935: whether the key and metadata columns are <c>nvarchar</c>.</summary>
+    internal bool UnicodeKeys => _options.Advanced.UseUnicodeKeys;
+
+    /// <summary>#935: the SQL type of a key or metadata column, at <paramref name="length" /> characters.</summary>
+    internal string KeyText(int length = Polecat.Storage.KeyColumns.Width) => _options.KeyText(length);
+
+    /// <summary>#935: how to bind a value compared against a key or metadata column.</summary>
+    internal System.Data.SqlDbType KeyDbType => _options.KeyDbType;
+
     /// <inheritdoc cref="StoreOptions.ToStorageJson" />
     internal string ToStorageJson(object value) => _options.ToStorageJson(value);
 

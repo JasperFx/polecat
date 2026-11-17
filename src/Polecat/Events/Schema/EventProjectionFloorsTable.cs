@@ -26,7 +26,7 @@ namespace Polecat.Events.Schema;
 ///         derived from the events.
 ///     </para>
 /// </remarks>
-internal class EventProjectionFloorsTable : Table
+internal class EventProjectionFloorsTable : Polecat.Storage.KeyedTable
 {
     public const string TableName = "pc_event_projection_floors";
 
@@ -36,8 +36,8 @@ internal class EventProjectionFloorsTable : Table
     public EventProjectionFloorsTable(EventGraph eventGraph)
         : base(new SqlServerObjectName(eventGraph.DatabaseSchemaName, TableName))
     {
-        AddColumn("name", "varchar(200)").AsPrimaryKey().NotNull();
-        AddColumn("tenant_id", "varchar(250)").AsPrimaryKey().NotNull();
+        AddColumn("name", eventGraph.KeyText(200)).AsPrimaryKey().NotNull();
+        AddColumn("tenant_id", eventGraph.KeyText()).AsPrimaryKey().NotNull();
         AddColumn("floor_seq_id", "bigint").NotNull();
         AddColumn("last_updated", "datetimeoffset")
             .NotNull()

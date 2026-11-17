@@ -55,7 +55,7 @@ internal static class StreamTagVersionBump
 
                     UNION
                     SELECT DISTINCT {EventTypeKeySql(registration, "e")} AS tag_table,
-                        {tagValue} AS tag_value, CONVERT(varchar(250), @tenant_id) AS tenant_id
+                        {tagValue} AS tag_value, CONVERT({events.KeyText()}, @tenant_id) AS tenant_id
                     FROM {events.TagTableName(registration)} t
                     INNER JOIN {events.EventsTableName} e ON {events.TagToEventJoin("t", "e")}
                     WHERE e.stream_id = @id AND e.tenant_id = @tenant_id AND {FitsKeySql(registration, "e")}
@@ -67,7 +67,7 @@ internal static class StreamTagVersionBump
                 MERGE {events.DcbTagVersionTableName} WITH (HOLDLOCK) AS target
                 USING (
                     SELECT DISTINCT '{SqlEscaping.LiteralBody(registration.TableSuffix)}' AS tag_table,
-                        {tagValue} AS tag_value, CONVERT(varchar(250), @tenant_id) AS tenant_id
+                        {tagValue} AS tag_value, CONVERT({events.KeyText()}, @tenant_id) AS tenant_id
                     FROM {events.TagTableName(registration)} t
                     INNER JOIN {events.EventsTableName} e ON {events.TagToEventJoin("t", "e")}
                     WHERE e.stream_id = @id AND e.tenant_id = @tenant_id{byEventType}
@@ -133,16 +133,16 @@ internal static class StreamTagVersionBump
 
             DECLARE @erase_rows TABLE (
                 tag_table varchar(250) COLLATE Latin1_General_BIN2 NOT NULL,
-                tag_value varchar(250) COLLATE Latin1_General_BIN2 NOT NULL,
+                tag_value {events.KeyText()} COLLATE Latin1_General_BIN2 NOT NULL,
                 PRIMARY KEY (tag_table, tag_value));
-            DECLARE @erase_table varchar(250); DECLARE @erase_value varchar(250);
-            DECLARE @erase_prev_table varchar(250); DECLARE @erase_prev_value varchar(250);
+            DECLARE @erase_table varchar(250); DECLARE @erase_value {events.KeyText()};
+            DECLARE @erase_prev_table varchar(250); DECLARE @erase_prev_value {events.KeyText()};
 
             """);
 
         foreach (var registration in events.TagTypes)
         {
-            var tagValue = $"CONVERT(varchar(250), {TagValueSql.ToSql(registration.SimpleType, "t.value")})";
+            var tagValue = $"CONVERT({events.KeyText()}, {TagValueSql.ToSql(registration.SimpleType, "t.value")})";
 
             builder.Append($"""
 

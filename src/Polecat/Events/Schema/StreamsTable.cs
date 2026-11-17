@@ -7,7 +7,7 @@ namespace Polecat.Events.Schema;
 /// <summary>
 ///     Weasel table definition for pc_streams — stores stream metadata.
 /// </summary>
-internal class StreamsTable : Table
+internal class StreamsTable : Polecat.Storage.KeyedTable
 {
     public const string TableName = "pc_streams";
 
@@ -16,12 +16,12 @@ internal class StreamsTable : Table
     {
         if (events.TenancyStyle == TenancyStyle.Conjoined)
         {
-            AddColumn(JasperFx.StorageConstants.TenantIdColumn, "varchar(250)").AsPrimaryKey().NotNull();
+            AddColumn(JasperFx.StorageConstants.TenantIdColumn, events.KeyText()).AsPrimaryKey().NotNull();
         }
 
         var idType = events.StreamIdentity == JasperFx.Events.StreamIdentity.AsGuid
             ? "uniqueidentifier"
-            : "varchar(250)";
+            : events.KeyText();
 
         AddColumn("id", idType).AsPrimaryKey().NotNull();
 
@@ -49,7 +49,7 @@ internal class StreamsTable : Table
 
         if (events.TenancyStyle != TenancyStyle.Conjoined)
         {
-            AddColumn(JasperFx.StorageConstants.TenantIdColumn, "varchar(250)")
+            AddColumn(JasperFx.StorageConstants.TenantIdColumn, events.KeyText())
                 .NotNull()
                 .DefaultValueByString(JasperFx.StorageConstants.DefaultTenantId);
         }

@@ -86,7 +86,7 @@ internal class PatchOperation : Polecat.Internal.IStorageOperation, Weasel.Stora
     {
         var table = _mapping.QualifiedTableName;
 
-        builder.Append($"DECLARE @pc_patched TABLE (id {DocumentTable.SqlTypeForIdentity(_mapping.InnerIdType)} NOT NULL);\n");
+        builder.Append($"DECLARE @pc_patched TABLE (id {_mapping.IdSqlType} NOT NULL);\n");
         builder.Append($"INSERT INTO @pc_patched (id) SELECT id FROM {table} WITH (UPDLOCK) WHERE ");
         _whereClauseWriter(builder);
         builder.Append(";\n");
