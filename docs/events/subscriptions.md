@@ -78,7 +78,7 @@ progression is not recorded, and the whole batch is delivered again** on the nex
 whichever node picks the shard up.
 
 So a subscription whose batch is slower than `StopAndDrainTimeout` will re-deliver that batch on every shutdown
-and on every HotCold rebalance. Two ways out, and they are not exclusive:
+and every time the shard moves to another node. Two ways out, and they are not exclusive:
 
 ```cs
 // 1. Give the drain long enough to finish your slowest batch
