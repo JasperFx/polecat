@@ -13,9 +13,12 @@ namespace Polecat.Tests.Linq;
 ///     text SQL Server ran, read back from <c>sys.dm_exec_query_stats</c> as gh-1002's tests do.
 /// </summary>
 /// <remarks>
-///     The executed text is every statement against the table that started after the operator's execution
-///     did, and a comparison passes only when that is exactly one statement equal to the preview, so one
-///     terminal's statement can't stand in for another's.
+///     The executed text is every statement against the table whose query stats row appeared or changed while
+///     the operator ran, and a comparison passes only when that is exactly one statement equal to the preview,
+///     so one terminal's statement can't stand in for another's. The rows are compared before and after rather
+///     than against a clock: comparing <c>last_execution_time</c> with a <c>SYSDATETIME()</c> read just before
+///     the operator ran both missed statements that had run and picked up ones from before, often enough to
+///     fail CI on most days.
 /// </remarks>
 public class tosql_preview_by_fetch_type_tests : OneOffConfigurationsContext
 {
@@ -151,7 +154,8 @@ public class tosql_preview_by_fetch_type_tests : OneOffConfigurationsContext
             }
         }
 
-        var start = await serverNowAsync(conn);
+        var since = await serverNowAsync(conn);
+        var before = await queryStatsAsync(conn, pattern, since);
 
         BadLinqExpressionException? executionRefusal = null;
         await using (var session = theStore.QuerySession())
@@ -170,7 +174,15 @@ public class tosql_preview_by_fetch_type_tests : OneOffConfigurationsContext
             }
         }
 
-        var executed = await executedSinceAsync(conn, pattern, start);
+        // A run can reach the query stats a moment after the session that ran it is gone, so give it a few
+        // seconds to appear. Waiting for it here also keeps it out of the next comparison's "before", where a
+        // late update would read as that terminal's statement.
+        var executed = await executedSinceAsync(conn, pattern, since, before);
+        for (var attempt = 0; executionRefusal == null && executed.Count == 0 && attempt < 100; attempt++)
+        {
+            await Task.Delay(50, Ct);
+            executed = await executedSinceAsync(conn, pattern, since, before);
+        }
 
         if (executionRefusal != null || previewRefusal != null)
         {
@@ -188,41 +200,64 @@ public class tosql_preview_by_fetch_type_tests : OneOffConfigurationsContext
                + $"  executed: {string.Join(Environment.NewLine + "            ", executed)}";
     }
 
-    // The server's clock, to read back what ran after it. The pause puts the previous comparison's statements
-    // (last_execution_time is a datetime, rounded to ~3ms) strictly before it.
+    // A lower bound on last_execution_time that only keeps the scan of the plan cache short. Nothing is decided
+    // by it: a minute either side of the server's clock is far wider than any difference between the clock
+    // SYSDATETIME() reads and the one the query stats are stamped with.
     private static async Task<DateTime> serverNowAsync(SqlConnection conn)
     {
-        await Task.Delay(20, Ct);
-
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT SYSDATETIME()";
+        cmd.CommandText = "SELECT DATEADD(minute, -1, SYSDATETIME())";
         return (DateTime)(await cmd.ExecuteScalarAsync(Ct))!;
     }
 
-    // The statements against the table that started at or after start. The recent entries are narrowed by time
-    // BEFORE their text is looked up: sys.dm_exec_sql_text over the whole server's plan cache takes tens of
-    // seconds on a busy test server, which a CROSS APPLY with both filters in one WHERE does not avoid.
-    private static async Task<List<string>> executedSinceAsync(SqlConnection conn, string pattern, DateTime start)
+    // The statements with a query stats row that is new since before was read, or that has changed
+    private static async Task<List<string>> executedSinceAsync(SqlConnection conn, string pattern, DateTime since,
+        Dictionary<string, (string Text, string State)> before)
+    {
+        var after = await queryStatsAsync(conn, pattern, since);
+        return after
+            .Where(x => !before.TryGetValue(x.Key, out var earlier) || earlier.State != x.Value.State)
+            .Select(x => x.Value.Text)
+            .Distinct()
+            .ToList();
+    }
+
+    // The query stats rows of the statements against the table, each with the text it ran and a fingerprint of
+    // its state. A row is one statement of one cached plan. Running the statement moves its execution count and
+    // last execution time, and a recompile (the facts drop and recreate the table) starts the count again on a
+    // new creation time, so any run shows up as a changed fingerprint without comparing clocks. The recent
+    // entries are narrowed by time BEFORE their text is looked up: sys.dm_exec_sql_text over the whole
+    // server's plan cache takes tens of seconds on a busy test server, which a CROSS APPLY with both filters
+    // in one WHERE does not avoid.
+    private static async Task<Dictionary<string, (string Text, string State)>> queryStatsAsync(SqlConnection conn,
+        string pattern, DateTime since)
     {
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = """
-            SELECT qs.sql_handle INTO #recent FROM sys.dm_exec_query_stats qs WHERE qs.last_execution_time >= @start;
-            SELECT DISTINCT st.text FROM #recent r CROSS APPLY sys.dm_exec_sql_text(r.sql_handle) st
+            SELECT qs.sql_handle, qs.plan_handle, qs.statement_start_offset, qs.creation_time,
+                   qs.plan_generation_num, qs.execution_count, qs.last_execution_time
+            INTO #recent FROM sys.dm_exec_query_stats qs WHERE qs.last_execution_time >= @since;
+            SELECT CONVERT(varchar(max), r.sql_handle, 1) + CONVERT(varchar(max), r.plan_handle, 1)
+                       + ':' + CAST(r.statement_start_offset AS varchar(20)),
+                   CONVERT(varchar(30), r.creation_time, 126) + '/' + CAST(r.plan_generation_num AS varchar(20))
+                       + '/' + CAST(r.execution_count AS varchar(20)) + '/'
+                       + CONVERT(varchar(30), r.last_execution_time, 126),
+                   st.text
+            FROM #recent r CROSS APPLY sys.dm_exec_sql_text(r.sql_handle) st
             WHERE st.text LIKE @pattern;
             DROP TABLE #recent;
             """;
-        cmd.Parameters.Add("@start", System.Data.SqlDbType.DateTime2).Value = start;
+        cmd.Parameters.Add("@since", System.Data.SqlDbType.DateTime2).Value = since;
         cmd.Parameters.AddWithValue("@pattern", pattern);
 
-        var executed = new List<string>();
+        var rows = new Dictionary<string, (string Text, string State)>();
         await using var reader = await cmd.ExecuteReaderAsync(Ct);
         while (await reader.ReadAsync(Ct))
         {
-            var text = normalize(reader.GetString(0));
-            if (!executed.Contains(text)) executed.Add(text);
+            rows[reader.GetString(0)] = (normalize(reader.GetString(2)), reader.GetString(1));
         }
 
-        return executed;
+        return rows;
     }
 
     // sp_executesql text starts with the parameter declarations, "(@p0 int,@p1 nvarchar(4000))SELECT ..."
