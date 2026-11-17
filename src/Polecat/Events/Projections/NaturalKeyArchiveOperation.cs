@@ -19,6 +19,7 @@ internal class NaturalKeyArchiveOperation : Polecat.Internal.IStorageOperation,
     private readonly bool _isConjoined;
     private readonly string? _tenantId;
     private readonly bool _archived;
+    private readonly bool _unicode; // #935
 
     /// <param name="archived">
     ///     #556: false un-archives. The explicit UnArchiveStream API has to be able to put a key back
@@ -27,7 +28,7 @@ internal class NaturalKeyArchiveOperation : Polecat.Internal.IStorageOperation,
     ///     from the other side. The Archived-event path only ever passes true.
     /// </param>
     public NaturalKeyArchiveOperation(string tableName, object streamId, bool isGuidStream,
-        bool isConjoined = false, string? tenantId = null, bool archived = true)
+        bool isConjoined = false, string? tenantId = null, bool archived = true, bool unicode = false)
     {
         _tableName = tableName;
         _streamId = streamId;
@@ -35,6 +36,7 @@ internal class NaturalKeyArchiveOperation : Polecat.Internal.IStorageOperation,
         _isConjoined = isConjoined;
         _tenantId = tenantId;
         _archived = archived;
+        _unicode = unicode;
     }
 
     public object StreamId => _streamId;
@@ -47,12 +49,12 @@ internal class NaturalKeyArchiveOperation : Polecat.Internal.IStorageOperation,
 
         builder.Append($"UPDATE {_tableName} SET is_archived = {(_archived ? 1 : 0)} WHERE {streamColumn} = ");
         // #363: string stream keys must bind varchar to seek the varchar(250) stream_key column.
-        builder.AppendParameter(_streamId, _streamId is string ? System.Data.SqlDbType.VarChar : null);
+        builder.AppendParameter(_streamId, _streamId is string ? Polecat.Storage.KeyColumns.DbType(_unicode) : null);
 
         if (_isConjoined)
         {
             builder.Append(" AND tenant_id = ");
-            builder.AppendParameter(_tenantId!, System.Data.SqlDbType.VarChar);
+            builder.AppendParameter(_tenantId!, Polecat.Storage.KeyColumns.DbType(_unicode));
         }
 
         builder.Append(";");

@@ -417,8 +417,8 @@ internal class EventOperations : QueryEventStore, IEventOperations, IEventOperat
         cmd.CommandText = forUpdate
             ? _events.LockedStreamReadSql("version", "id = @id AND tenant_id = @tenant_id", _tenantId, cmd)
             : $"SELECT version FROM {_events.StreamsTableName} WHERE id = @id AND tenant_id = @tenant_id;";
-        cmd.Parameters.AddIdParameter("@id", streamId);
-        cmd.Parameters.AddVarChar("@tenant_id", _tenantId);
+        cmd.Parameters.AddIdParameter("@id", streamId, _events.UnicodeKeys);
+        cmd.Parameters.AddKey("@tenant_id", _tenantId, _events.UnicodeKeys);
 
         long version = 0;
         try
@@ -606,8 +606,8 @@ internal class EventOperations : QueryEventStore, IEventOperations, IEventOperat
             cmd.CommandText = forExclusive
                 ? _events.LockedStreamReadSql("version", "id = @id AND tenant_id = @tenant_id", _tenantId, cmd)
                 : $"SELECT version FROM {_events.StreamsTableName} WHERE id = @id AND tenant_id = @tenant_id;";
-            cmd.Parameters.AddIdParameter("@id", streamId);
-            cmd.Parameters.AddVarChar("@tenant_id", _tenantId);
+            cmd.Parameters.AddIdParameter("@id", streamId, _events.UnicodeKeys);
+            cmd.Parameters.AddKey("@tenant_id", _tenantId, _events.UnicodeKeys);
 
             object? result;
             try
@@ -969,7 +969,7 @@ internal class EventOperations : QueryEventStore, IEventOperations, IEventOperat
         cmd.Parameters.AddWithValue("@naturalKey", unwrapped); // natural_key_value is nvarchar(200)
         if (_events.TenancyStyle == TenancyStyle.Conjoined)
         {
-            cmd.Parameters.AddVarChar("@tenantId", _tenantId);
+            cmd.Parameters.AddKey("@tenantId", _tenantId, _events.UnicodeKeys);
         }
 
         var result = await _sessionBase.ExecuteScalarAsync(cmd, cancellation).ConfigureAwait(false);
@@ -1226,7 +1226,8 @@ internal class EventOperations : QueryEventStore, IEventOperations, IEventOperat
             useArchivedPartitioning: _events.UseArchivedStreamPartitioning,
             tenantOrdinalColumn: _events.UseTenantPartitionedEvents
                 ? _events.TenantPartitionManager.Column
-                : null);
+                : null,
+            unicode: _events.UnicodeKeys);
         _workTracker.Add(op);
     }
 

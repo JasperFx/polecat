@@ -197,12 +197,12 @@ internal static class FullTextBackfill
     private static string BatchSql(DocumentMapping mapping, FullTextIndex index, string ftTable)
     {
         var docTable = SqlEscaping.QualifiedName(mapping.DatabaseSchemaName, mapping.TableName);
-        var idType = DocumentTable.SqlTypeForIdentity(mapping.InnerIdType);
+        var idType = mapping.IdSqlType;
         var key = SqlEscaping.Literal(index.TokenKey);
         var conjoined = mapping.TenancyStyle == TenancyStyle.Conjoined;
 
         var (columns, deleted, join) = conjoined
-            ? ($"tenant_id varchar(250) NOT NULL, id {idType} NOT NULL", "deleted.tenant_id, deleted.id",
+            ? ($"tenant_id {mapping.StoreOptions.KeyText()} NOT NULL, id {idType} NOT NULL", "deleted.tenant_id, deleted.id",
                 "k.tenant_id = i.tenant_id AND k.id = i.id")
             : ($"id {idType} NOT NULL", "deleted.id", "k.id = i.id");
 

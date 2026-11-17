@@ -43,7 +43,7 @@ internal sealed class SqlServerEventStoreDialect : IEventStoreSqlDialect
         var graph = (EventGraph)registry;
         var isGuid = graph.StreamIdentity == StreamIdentity.AsGuid;
         var isConjoined = graph.TenancyStyle == TenancyStyle.Conjoined;
-        var dialect = ResolveStorageDialect(isGuid);
+        var dialect = ResolveStorageDialect(isGuid, graph.UnicodeKeys);
         var options = graph.EventOptions;
 
         return new QuickEventStorageDescriptor(
@@ -97,7 +97,7 @@ internal sealed class SqlServerEventStoreDialect : IEventStoreSqlDialect
             UpdateProgress: (shardIdentity, sequence, upsert) =>
                 new RecordProgressionOperation(
                     graph.ProgressionTableName, shardIdentity, sequence,
-                    graph.EnableExtendedProgressionTracking, upsert));
+                    graph.EnableExtendedProgressionTracking, upsert, graph.UnicodeKeys));
     }
 
     /// <summary>
@@ -105,8 +105,8 @@ internal sealed class SqlServerEventStoreDialect : IEventStoreSqlDialect
     ///     provider parameter typing. Reuses the doc-side dialect (#273 phase D); the stream-identity
     ///     generic only affects id typing, which the ops set explicitly anyway.
     /// </summary>
-    private static IStorageDialect ResolveStorageDialect(bool isGuid)
-        => isGuid ? SqlServerStorageDialect<Guid>.Instance : SqlServerStorageDialect<string>.Instance;
+    private static IStorageDialect ResolveStorageDialect(bool isGuid, bool unicode)
+        => isGuid ? SqlServerStorageDialect<Guid>.For(unicode) : SqlServerStorageDialect<string>.For(unicode);
 
     /// <summary>
     ///     Closure for <c>insert into {schema}.pc_streams (id, type, version, timestamp, created,

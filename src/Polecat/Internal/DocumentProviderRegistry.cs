@@ -204,6 +204,21 @@ internal class DocumentProviderRegistry
     public IEnumerable<DocumentProvider> AllProviders => _providers.Values;
 
     /// <summary>
+    ///     #935: the mapping of every document type the store knows about when it starts, those configured
+    ///     with <c>Schema.For&lt;T&gt;()</c> as well as those already used.
+    /// </summary>
+    public IEnumerable<Storage.DocumentMapping> ConfiguredMappings()
+    {
+        foreach (var expr in _options.Schema.Expressions)
+        {
+            var exprType = expr.GetType();
+            if (exprType.IsGenericType) GetProvider(exprType.GetGenericArguments()[0]);
+        }
+
+        return _providers.Values.Select(x => x.Mapping).ToArray();
+    }
+
+    /// <summary>
     ///     Validates and eagerly registers explicitly RANGE-partitioned document types so their
     ///     partition function/scheme and table are created (and rolled forward via SPLIT RANGE) by
     ///     schema migration at activation time, rather than lazily on the first write. Fails fast when

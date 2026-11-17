@@ -124,7 +124,7 @@ internal sealed class PolecatStorageRules<TDoc, TId> : IClosedShapeStorageRules<
         // forces CONVERT_IMPLICIT on the column side and a full scan, so string ids cast the
         // extracted values back to varchar before the IN comparison.
         var idsSelect = _mapping.InnerIdType == typeof(string)
-            ? "SELECT CAST(value AS varchar(250)) FROM OPENJSON(@ids)"
+            ? $"SELECT CAST(value AS {_mapping.IdSqlType}) FROM OPENJSON(@ids)"
             : "SELECT value FROM OPENJSON(@ids)";
         var loadMany = $"{select} WHERE id IN ({idsSelect}){tenantFilter}{SoftDeleteFilterSql}";
 
@@ -180,7 +180,7 @@ internal sealed class PolecatStorageRules<TDoc, TId> : IClosedShapeStorageRules<
         // #234: single-tenant tables have no tenant_id column to filter on.
         if (IsConjoined)
         {
-            filters.Add(new TenantFilter(session.TenantId));
+            filters.Add(new TenantFilter(session.TenantId, _mapping.UnicodeKeys));
         }
 
         if (IsSoftDeleted)
@@ -297,7 +297,7 @@ internal sealed class PolecatStorageRules<TDoc, TId> : IClosedShapeStorageRules<
     {
         builder.Append(selectClause);
         builder.Append(" WHERE id = ");
-        builder.AppendParameter(id, Polecat.Internal.SqlParameterCollectionExtensions.BindingForKey(id));
+        builder.AppendParameter(id, Polecat.Internal.SqlParameterCollectionExtensions.BindingForKey(id, _mapping.UnicodeKeys));
         AppendBatchLoadFilters(builder, tenantId);
     }
 
@@ -322,9 +322,10 @@ internal sealed class PolecatStorageRules<TDoc, TId> : IClosedShapeStorageRules<
             // #919: typed as the column, the list would turn 東京 into ?? on the server. Left as what
             // OPENJSON gives it, the comparison is exact, for the price SqlParameterCollectionExtensions
             // .BindingForKey describes.
-            var exact = ids.Any(x => x is string text && !System.Text.Ascii.IsValid(text));
+            // #935: an nvarchar column is exact either way.
+            var exact = !_mapping.UnicodeKeys && ids.Any(x => x is string text && !System.Text.Ascii.IsValid(text));
             Polecat.Linq.SqlGeneration.JsonValueList.AppendInClause(builder, "id", ids.ToArray(),
-                exact ? null : DocumentTable.SqlTypeForIdentity(_mapping.InnerIdType), value => value);
+                exact ? null : _mapping.IdSqlType, value => value);
         }
         else
         {
@@ -332,7 +333,7 @@ internal sealed class PolecatStorageRules<TDoc, TId> : IClosedShapeStorageRules<
             for (var i = 0; i < ids.Count; i++)
             {
                 if (i > 0) builder.Append(", ");
-                builder.AppendParameter(ids[i], Polecat.Internal.SqlParameterCollectionExtensions.BindingForKey(ids[i]));
+                builder.AppendParameter(ids[i], Polecat.Internal.SqlParameterCollectionExtensions.BindingForKey(ids[i], _mapping.UnicodeKeys));
             }
 
             builder.Append(")");
@@ -346,7 +347,7 @@ internal sealed class PolecatStorageRules<TDoc, TId> : IClosedShapeStorageRules<
         if (IsConjoined)
         {
             builder.Append(" AND tenant_id = ");
-            builder.AppendParameter(tenantId, System.Data.SqlDbType.VarChar);
+            builder.AppendParameter(tenantId, _mapping.StoreOptions.KeyDbType);
         }
 
         builder.Append(SoftDeleteFilterSql);
@@ -358,11 +359,7 @@ internal sealed class PolecatStorageRules<TDoc, TId> : IClosedShapeStorageRules<
     ///     The table-variable column type for the bulk OUTPUT stream — the INNER type of a
     ///     strongly-typed id, matching the document table's own id column (#296/#302).
     /// </summary>
-    private string BulkOutputIdType()
-        => _mapping.InnerIdType == typeof(Guid) ? "uniqueidentifier"
-            : _mapping.InnerIdType == typeof(int) ? "int"
-            : _mapping.InnerIdType == typeof(long) ? "bigint"
-            : "varchar(250)";
+    private string BulkOutputIdType() => _mapping.IdSqlType;
 
     private IEnumerable<IDocumentMetadataBinder<TDoc>> BulkClientBinders
         => _descriptor.ClientSideWriteBinders.Where(b => b.ColumnName != "version");

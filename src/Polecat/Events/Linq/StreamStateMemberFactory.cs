@@ -32,7 +32,7 @@ internal class StreamStateMemberFactory : IMemberResolver
         return expression.Member.Name switch
         {
             nameof(StreamState.Id) => new QueryableMember("id", "id", typeof(Guid), locatorSqlType: "uniqueidentifier"),
-            nameof(StreamState.Key) => new QueryableMember("id", "id", typeof(string), locatorSqlType: "varchar(250)"),
+            nameof(StreamState.Key) => new QueryableMember("id", "id", typeof(string), locatorSqlType: _events.KeyText()),
             nameof(StreamState.Version) => new QueryableMember("version", "version", typeof(long), locatorSqlType: "bigint"),
             nameof(StreamState.AggregateType) => new AggregateTypeQueryableMember(_events),
             nameof(StreamState.LastTimestamp) =>
@@ -48,7 +48,7 @@ internal class StreamStateMemberFactory : IMemberResolver
             // read can be narrowed (or ordered) by it.
             nameof(StreamState.TenantId) =>
                 new QueryableMember(JasperFx.StorageConstants.TenantIdColumn, JasperFx.StorageConstants.TenantIdColumn,
-                    typeof(string), locatorSqlType: "varchar(250)"),
+                    typeof(string), locatorSqlType: _events.KeyText()),
             _ => throw new JasperFx.BadLinqExpressionException(
                 $"Polecat cannot translate the member '{expression.Member.DeclaringType?.Name}.{expression.Member.Name}' " +
                 $"in a stream state query. Translatable members are the public properties of {nameof(StreamState)}: " +

@@ -1307,7 +1307,8 @@ public class AdvancedOperations
             connectionString,
             _store.Options.DatabaseSchemaName,
             _store.Events.ProgressionTableName,
-            _store.Options.ResiliencePipeline);
+            _store.Options.ResiliencePipeline,
+            _store.Options.Advanced.UseUnicodeKeys);
 
         var deleted = await cleaner.ExecuteAsync(token).ConfigureAwait(false);
 
@@ -1491,7 +1492,7 @@ public class AdvancedOperations
     {
         await _resilience.ExecuteAsync(static async (state, ct) =>
         {
-            var (connectionString, schema, progressionTable, tenants, deleteData) = state;
+            var (connectionString, schema, progressionTable, tenants, deleteData, unicode) = state;
 
             await using var conn = new SqlConnection(connectionString);
             await conn.OpenAsync(ct).ConfigureAwait(false);
@@ -1529,21 +1530,21 @@ public class AdvancedOperations
                     delete.Transaction = tx;
                     delete.CommandText =
                         $"DELETE FROM {Internal.SqlEscaping.QualifiedName(schema, table)} WHERE tenant_id = @tenant;";
-                    delete.Parameters.Add("@tenant", SqlDbType.VarChar, 250).Value = tenantId;
+                    delete.Parameters.Add("@tenant", Storage.KeyColumns.DbType(unicode), 250).Value = tenantId;
                     await delete.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
                 }
 
                 await using var progression = conn.CreateCommand();
                 progression.Transaction = tx;
                 progression.CommandText = Internal.TenantDataCleaner.ProgressionDeleteSql(progressionTable);
-                progression.Parameters.Add("@suffix", SqlDbType.VarChar, 500).Value =
+                progression.Parameters.Add("@suffix", Storage.KeyColumns.DbType(unicode), 500).Value =
                     Internal.TenantDataCleaner.ProgressionNameSuffix(tenantId);
                 await progression.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
             }
 
             await Internal.Sessions.SqlTransactionRequests.CommitAsync(tx, ct).ConfigureAwait(false);
         }, (_store.Options.ConnectionString, events.DatabaseSchemaName, events.ProgressionTableName, tenantIds,
-            behavior == TenantDropBehavior.DeleteData), token).ConfigureAwait(false);
+            behavior == TenantDropBehavior.DeleteData, _store.Options.Advanced.UseUnicodeKeys), token).ConfigureAwait(false);
     }
 
     /// <summary>

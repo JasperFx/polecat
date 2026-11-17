@@ -680,7 +680,7 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
                     VALUES (@name, @mark, @stamp);
                 """;
 
-            cmd.Parameters.AddVarChar("@name", name);
+            cmd.Parameters.AddKey("@name", name, events.UnicodeKeys);
             cmd.Parameters.AddWithValue("@mark", markValue);
             cmd.Parameters.AddWithValue("@stamp", stamp);
             await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
@@ -746,7 +746,7 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
 
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = $"""
-                WITH inputs AS (SELECT CAST(value AS varchar(250)) AS tenant_id FROM OPENJSON(@tenants))
+                WITH inputs AS (SELECT CAST(value AS {events.KeyText()}) AS tenant_id FROM OPENJSON(@tenants))
                 SELECT
                     i.tenant_id,
                     ISNULL(prog.last_seq_id, 0) AS last_seq_id,
@@ -771,7 +771,7 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
                 ) run;
                 """;
             cmd.Parameters.AddWithValue("@tenants", tenantsJson);
-            cmd.Parameters.AddVarChar("@prefix", PerTenantHighWaterPrefix);
+            cmd.Parameters.AddKey("@prefix", PerTenantHighWaterPrefix, events.UnicodeKeys);
 
             var readings = new List<(HighWaterStatistics Stats, ContiguousRun Run, int? Partition)>();
             await using (var reader = (await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false)))
@@ -1034,8 +1034,8 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
                     THEN (@ceiling - @current) - (SELECT COUNT_BIG(*) {scope} WHERE e.seq_id > @current AND e.seq_id <= @ceiling)
                     ELSE 0 END;
             """;
-        cmd.Parameters.AddVarChar("@name", markName(tenantId));
-        if (tenantId != null) cmd.Parameters.AddVarChar("@tenant", tenantId);
+        cmd.Parameters.AddKey("@name", markName(tenantId), events.UnicodeKeys);
+        if (tenantId != null) cmd.Parameters.AddKey("@tenant", tenantId, events.UnicodeKeys);
 
         await using var reader = (await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false));
         await reader.ReadAsync(ct).ConfigureAwait(false);
@@ -1084,8 +1084,8 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
 
             SELECT @outcome, @current, @new, @skipped;
             """;
-        cmd.Parameters.AddVarChar("@name", markName(tenantId));
-        if (tenantId != null) cmd.Parameters.AddVarChar("@tenant", tenantId);
+        cmd.Parameters.AddKey("@name", markName(tenantId), events.UnicodeKeys);
+        if (tenantId != null) cmd.Parameters.AddKey("@tenant", tenantId, events.UnicodeKeys);
         cmd.Parameters.Add(new SqlParameter("@expected", System.Data.SqlDbType.BigInt)
         {
             Value = (object?)expectedCurrentMark ?? DBNull.Value

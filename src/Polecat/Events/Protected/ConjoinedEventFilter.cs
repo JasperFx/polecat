@@ -40,6 +40,6 @@ internal static class ConjoinedEventFilter
         // VarChar-typed like SetCompactedVersionOperation: tenant_id is varchar(250), and an
         // nvarchar-typed parameter would force an implicit conversion over the column.
         builder.Append(" AND tenant_id = ");
-        builder.AppendParameter(tenantId, System.Data.SqlDbType.VarChar);
+        builder.AppendParameter(tenantId, events.KeyDbType);
     }
 }

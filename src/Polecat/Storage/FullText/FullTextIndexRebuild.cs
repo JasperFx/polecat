@@ -91,10 +91,10 @@ internal static class FullTextIndexRebuild
 
         if (last is { } key)
         {
-            cmd.Parameters.Add(IdParameter(key.Id));
+            cmd.Parameters.Add(IdParameter(key.Id, mapping.UnicodeKeys));
             if (conjoined)
             {
-                cmd.Parameters.Add(new SqlParameter("@lastTenant", SqlDbType.VarChar, 250) { Value = key.Tenant });
+                cmd.Parameters.Add(new SqlParameter("@lastTenant", mapping.StoreOptions.KeyDbType, 250) { Value = key.Tenant });
             }
         }
 
@@ -105,19 +105,19 @@ internal static class FullTextIndexRebuild
     }
 
     // A varchar id bound as nvarchar would put CONVERT_IMPLICIT on the key column and scan (#363).
-    private static SqlParameter IdParameter(object id) =>
+    private static SqlParameter IdParameter(object id, bool unicode) =>
         id is string
-            ? new SqlParameter("@lastId", SqlDbType.VarChar, 250) { Value = id }
+            ? new SqlParameter("@lastId", KeyColumns.DbType(unicode), 250) { Value = id }
             : new SqlParameter("@lastId", id);
 
     private static string BatchSql(DocumentMapping mapping, bool conjoined, bool first)
     {
         var table = SqlEscaping.QualifiedName(mapping.DatabaseSchemaName, mapping.TableName);
-        var idType = DocumentTable.SqlTypeForIdentity(mapping.InnerIdType);
+        var idType = mapping.IdSqlType;
 
         return conjoined
             ? $"""
-               DECLARE @keys TABLE (tenant_id varchar(250) NOT NULL, id {idType} NOT NULL);
+               DECLARE @keys TABLE (tenant_id {mapping.StoreOptions.KeyText()} NOT NULL, id {idType} NOT NULL);
                INSERT INTO @keys (tenant_id, id)
                SELECT TOP (@batch) tenant_id, id FROM {table}
                {(first ? "" : "WHERE tenant_id > @lastTenant OR (tenant_id = @lastTenant AND id > @lastId)")}

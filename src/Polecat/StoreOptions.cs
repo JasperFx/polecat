@@ -301,6 +301,23 @@ public class StoreOptions
     public StorePolicies Policies { get; }
 
     /// <summary>
+    ///     Store settings most applications never touch, such as
+    ///     <see cref="AdvancedOptions.UseUnicodeKeys" /> (#935).
+    /// </summary>
+    public AdvancedOptions Advanced { get; } = new();
+
+    /// <summary>
+    ///     #935: the SQL type of a key or metadata column that holds text the application supplies, at
+    ///     <paramref name="length" /> characters.
+    /// </summary>
+    internal string KeyText(int length = KeyColumns.Width) => KeyColumns.Text(Advanced.UseUnicodeKeys, length);
+
+    /// <summary>
+    ///     #935: how to bind a value compared against one of those columns.
+    /// </summary>
+    internal System.Data.SqlDbType KeyDbType => KeyColumns.DbType(Advanced.UseUnicodeKeys);
+
+    /// <summary>
     ///     True when anything in this store stores documents conjoined — a conjoined event store, the
     ///     store-wide document policy, or any single type's opt-in (#682).
     /// </summary>

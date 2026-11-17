@@ -25,30 +25,56 @@ internal static class SqlParameterCollectionExtensions
     }
 
     /// <summary>
+    ///     #935: bind a string compared against a key or metadata column (a tenant id, string id or stream
+    ///     key, tag value), which is <c>nvarchar</c> under <see cref="AdvancedOptions.UseUnicodeKeys" />.
+    /// </summary>
+    public static SqlParameter AddKey(this SqlParameterCollection parameters, string name, string? value,
+        bool unicode)
+    {
+        if (!unicode) return parameters.AddVarChar(name, value);
+
+        var parameter = new SqlParameter(name, SqlDbType.NVarChar, 4000)
+        {
+            Value = (object?)value ?? DBNull.Value
+        };
+        parameters.Add(parameter);
+        return parameter;
+    }
+
+    /// <summary>
     ///     How to bind an id or stream key that nothing has checked against the column: a batched read, which
     ///     is written synchronously, or a diagnostic read, which has no session to ask with. Outside ASCII it
     ///     stays <c>nvarchar</c> and the comparison is exact (#919). A <c>varchar</c> parameter would turn
     ///     <c>東京</c> into <c>??</c> and find whatever else did. It costs such an id the index seek under a
     ///     SQL collation, the trade #877 made on the LINQ path for the same reason.
     /// </summary>
-    public static SqlDbType? BindingForKey(object? id)
-        => id is string text && Ascii.IsValid(text) ? SqlDbType.VarChar : null;
+    /// <remarks>
+    ///     #935: under <see cref="AdvancedOptions.UseUnicodeKeys" /> the column is <c>nvarchar</c> and so is
+    ///     every string, which seeks and is exact.
+    /// </remarks>
+    public static SqlDbType? BindingForKey(object? id, bool unicode)
+        => id is string text
+            ? unicode ? SqlDbType.NVarChar : Ascii.IsValid(text) ? SqlDbType.VarChar : null
+            : null;
 
     /// <inheritdoc cref="BindingForKey" />
-    public static SqlParameter AddUncheckedKey(this SqlParameterCollection parameters, string name, object id)
-        => id is string text && !Ascii.IsValid(text)
+    public static SqlParameter AddUncheckedKey(this SqlParameterCollection parameters, string name, object id,
+        bool unicode)
+        => id is string text && !unicode && !Ascii.IsValid(text)
             ? parameters.AddWithValue(name, text)
-            : parameters.AddIdParameter(name, id);
+            : parameters.AddIdParameter(name, id, unicode);
 
     /// <summary>
     ///     Bind a stream/document identity whose runtime type is Guid or string (the two stream
-    ///     identity modes). Strings bind as varchar to match the varchar(250) id columns.
+    ///     identity modes). Strings bind as varchar to match the varchar(250) id columns, or nvarchar to
+    ///     match the nvarchar(250) ones under <see cref="AdvancedOptions.UseUnicodeKeys" /> (#935).
     /// </summary>
-    public static SqlParameter AddIdParameter(this SqlParameterCollection parameters, string name, object id)
+    public static SqlParameter AddIdParameter(this SqlParameterCollection parameters, string name, object id,
+        bool unicode)
     {
         return id switch
         {
-            string text => parameters.AddVarChar(name, text),
+            string text => parameters.AddKey(name, text, unicode),
             _ => parameters.AddWithValue(name, id)
         };
     }

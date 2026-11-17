@@ -8,7 +8,7 @@ namespace Polecat.Events.Schema;
 ///     Weasel table definition for pc_natural_key_{aggregatetype} — stores natural key
 ///     to stream id mappings for domain-meaningful lookups.
 /// </summary>
-internal class NaturalKeyTable : Table
+internal class NaturalKeyTable : Polecat.Storage.KeyedTable
 {
     public NaturalKeyTable(EventGraph events, NaturalKeyDefinition naturalKey)
         : base(new SqlServerObjectName(events.DatabaseSchemaName,
@@ -23,14 +23,14 @@ internal class NaturalKeyTable : Table
         var isConjoined = events.TenancyStyle == TenancyStyle.Conjoined;
 
         var streamCol = events.StreamIdentity == StreamIdentity.AsGuid ? "stream_id" : "stream_key";
-        var streamColType = events.StreamIdentity == StreamIdentity.AsGuid ? "uniqueidentifier" : "varchar(250)";
+        var streamColType = events.StreamIdentity == StreamIdentity.AsGuid ? "uniqueidentifier" : events.KeyText();
 
         AddColumn(streamCol, streamColType).NotNull();
 
         // Tenancy support - tenant_id is part of PK so same natural key can exist in different tenants
         if (isConjoined)
         {
-            AddColumn(JasperFx.StorageConstants.TenantIdColumn, "varchar(250)").NotNull().AsPrimaryKey();
+            AddColumn(JasperFx.StorageConstants.TenantIdColumn, events.KeyText()).NotNull().AsPrimaryKey();
         }
 
         AddColumn("is_archived", "bit").NotNull().DefaultValue(0);

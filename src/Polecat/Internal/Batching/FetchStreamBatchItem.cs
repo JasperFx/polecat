@@ -57,10 +57,10 @@ internal class FetchStreamBatchItem : IBatchQueryItem
         // The guard names each of these more than once, and a builder's parameter can only be appended
         // where it is used. This is the batched form of EventGraph.StreamEventsSql.
         var isString = _streamId is string;
-        builder.Append($"DECLARE @pc_stream_id {(isString ? "varchar(250)" : "uniqueidentifier")} = ");
-        builder.AppendParameter(_streamId, isString ? SqlDbType.VarChar : null);
-        builder.Append(", @pc_tenant_id varchar(250) = ");
-        builder.AppendParameter(_tenantId, SqlDbType.VarChar);
+        builder.Append($"DECLARE @pc_stream_id {(isString ? _events.KeyText() : "uniqueidentifier")} = ");
+        builder.AppendParameter(_streamId, isString ? _events.KeyDbType : null);
+        builder.Append($", @pc_tenant_id {_events.KeyText()} = ");
+        builder.AppendParameter(_tenantId, _events.KeyDbType);
         builder.Append(";\n");
 
         builder.Append(_events.StreamOrdinalGuardSql("@pc_stream_id", "@pc_tenant_id"));
@@ -74,9 +74,9 @@ internal class FetchStreamBatchItem : IBatchQueryItem
     {
         builder.Append(
             $"SELECT {PcEventsRowReader.ComposeSelectColumns(_events.EventOptions)} FROM {_events.EventsTableName} WHERE stream_id = ");
-        builder.AppendParameter(_streamId, SqlParameterCollectionExtensions.BindingForKey(_streamId));
+        builder.AppendParameter(_streamId, SqlParameterCollectionExtensions.BindingForKey(_streamId, _events.UnicodeKeys));
         builder.Append(" AND tenant_id = ");
-        builder.AppendParameter(_tenantId, SqlDbType.VarChar);
+        builder.AppendParameter(_tenantId, _events.KeyDbType);
         if (ordinalPredicate != null) builder.Append(ordinalPredicate);
         builder.Append(" AND is_archived = 0");
 

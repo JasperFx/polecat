@@ -412,13 +412,19 @@ internal sealed class HardCodedFilter : ISqlFragment
 internal sealed class TenantFilter : ISqlFragment
 {
     private readonly string _tenantId;
+    private readonly bool _unicode;
 
-    public TenantFilter(string tenantId) => _tenantId = tenantId;
+    /// <param name="unicode">#935: nvarchar under UseUnicodeKeys, where tenant_id is nvarchar.</param>
+    public TenantFilter(string tenantId, bool unicode)
+    {
+        _tenantId = tenantId;
+        _unicode = unicode;
+    }
 
     public void Apply(Weasel.Core.ICommandBuilder builder)
     {
         builder.Append("d.tenant_id = ");
-        builder.AppendParameter(_tenantId).DbType = DbType.AnsiString;
+        builder.AppendParameter(_tenantId).DbType = _unicode ? DbType.String : DbType.AnsiString;
     }
 }
 

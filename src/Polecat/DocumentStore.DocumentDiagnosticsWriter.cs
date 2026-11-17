@@ -188,7 +188,7 @@ public sealed class PolecatDocumentDiagnosticsWriter : IDocumentStoreDiagnostics
             return new DocumentWriteResult(DocumentWriteStatus.ConcurrencyConflict, current);
         }
 
-        var (typedId, idType) = TypedId(mapping.InnerIdType, request.Id);
+        var (typedId, idType) = TypedId(mapping.InnerIdType, request.Id, mapping.UnicodeKeys);
 
         await using (var session = OpenSession(request.TenantId))
         {
@@ -206,7 +206,7 @@ public sealed class PolecatDocumentDiagnosticsWriter : IDocumentStoreDiagnostics
         return new DocumentWriteResult(DocumentWriteStatus.Undeleted, restored);
     }
 
-    private static (object Id, SqlDbType Type) TypedId(Type innerIdType, string id)
+    private static (object Id, SqlDbType Type) TypedId(Type innerIdType, string id, bool unicode)
     {
         var type = Nullable.GetUnderlyingType(innerIdType) ?? innerIdType;
 
@@ -215,7 +215,8 @@ public sealed class PolecatDocumentDiagnosticsWriter : IDocumentStoreDiagnostics
         if (type == typeof(long)) return (long.Parse(id), SqlDbType.BigInt);
 
         // VarChar rather than NVarChar, so the comparison does not CONVERT_IMPLICIT the column (#363).
-        return (id, SqlDbType.VarChar);
+        // #935: NVarChar under UseUnicodeKeys, where the column is nvarchar.
+        return (id, Storage.KeyColumns.DbType(unicode));
     }
 
     private IDocumentSession OpenSession(string? tenantId)

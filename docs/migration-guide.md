@@ -443,6 +443,36 @@ unchanged. Three things a caller can see do change:
 | `IDynamicTenantSource<string>.AllActive()` returned database identifiers (`Polecat_tenant-a`) | It returns the tenant ids (`tenant-a`), as Marten's does. `AllActiveByTenant()` is unchanged. |
 | — | New members from the base: `ClearAllDatabaseRecordsAsync`, `LookupTenantAsync` (unknown, disabled or enabled, with no exception), `ResolveTenantAsync`, `FindCachedDatabase` and `AllTenantIds`. It also implements `IMasterTableMultiTenancy`, `IDisposable` and `IAsyncDisposable`. |
 
+## Upgrading to 6.0: opt-in `nvarchar` keys
+
+[polecat#935](https://github.com/JasperFx/polecat/issues/935). `opts.Advanced.UseUnicodeKeys = true` stores
+tenant ids, string ids, stream keys, tag values and the metadata columns as `nvarchar`, so they hold any
+character. It's off by default and nothing changes unless you turn it on. The columns and the 450 character
+limit on a key are in [Configuring Document Storage](/configuration/storeoptions#unicode-keys).
+
+Turning it on for an existing store is a normal schema migration: each column is altered from `varchar` to
+`nvarchar`, with its primary key, indexes and foreign keys dropped and put back around it, including the
+foreign keys between `pc_events`, the natural key tables and `pc_streams`, and between documents. Both sides
+of a foreign key change in the same migration ([weasel#870](https://github.com/JasperFx/weasel/issues/870)).
+
+**It rewrites every row of every table it touches**, and rebuilds the clustered key of each. On a small store
+`ApplyAllDatabaseChangesOnStartup()` or first use will do. On a large one, export the migration and run it in
+a maintenance window:
+
+```bash
+dotnet run -- db-patch unicode-keys.sql
+```
+
+Two things to know:
+
+- **Turning it off again is refused.** Narrowing `nvarchar` back to `varchar` would turn every character the
+  code page doesn't have into `?`, with no error, so a migration that would do that throws instead, from
+  first use, `ApplyAllDatabaseChangesOnStartup()` and `db-patch` alike.
+- **Full-text token tables are left as they are.** Polecat never alters an existing token table (#877), so
+  its `doc_id` and `tenant_id` stay `varchar`. If you use `FullTextIndex` with string ids or tenant ids outside
+  the code page, drop the `pc_ft_*` token table after migrating, and Polecat creates and fills it again the
+next time the document type is used.
+
 ## Upgrading to 6.0: an identity-map session refuses a second instance of a mapped document
 
 Polecat's document storage now runs on Weasel's shared closed-shape storage, the same storage Marten
@@ -735,8 +765,8 @@ WHERE CONVERT(varbinary(1000), CONVERT(nvarchar(250), id))
   database, or at least new tables: `ALTER DATABASE ... COLLATE` changes the default and leaves every existing
   column as it was, so those go on being refused. The limit of 250 is in bytes, so `東京` takes 6 of them.
 
-Widening the keys to `nvarchar` is the lasting fix. It's a size-of-data change to the primary key of every
-string-keyed table, and it's planned for a major version.
+Widening the keys to `nvarchar` is the lasting fix, and Polecat 6.0 does it when you ask: see
+[opt-in `nvarchar` keys](#upgrading-to-6-0-opt-in-nvarchar-keys).
 
 ## Key Changes in 5.30.0
 

@@ -44,6 +44,7 @@ internal sealed class SqlServerEventPagingDialect : IEventPagingDialect
 {
     private readonly string _selectColumns;
     private readonly string _eventsTable;
+    private readonly DbType _tenantType; // #935: nvarchar under UseUnicodeKeys
 
     // The allow list is fixed for a loader's lifetime and the base hands the same instance back on every
     // page, so its rendering is computed once rather than re-serialized per page.
@@ -53,6 +54,7 @@ internal sealed class SqlServerEventPagingDialect : IEventPagingDialect
     {
         _selectColumns = Internal.PcEventsRowReader.ComposeSelectColumns(options.Events);
         _eventsTable = events.EventsTableName;
+        _tenantType = events.UnicodeKeys ? DbType.String : DbType.AnsiString;
     }
 
     public EventPageCommand BuildPageCommand(EventPageQuery query)
@@ -100,7 +102,7 @@ internal sealed class SqlServerEventPagingDialect : IEventPagingDialect
         if (query.TenantId is not null)
         {
             sql.Append(" AND tenant_id = @tenant");
-            parameters.Add(new EventPageParameter("@tenant", query.TenantId, DbType.AnsiString));
+            parameters.Add(new EventPageParameter("@tenant", query.TenantId, _tenantType));
         }
 
         if (query.EventTypes.IsEmpty)

@@ -85,7 +85,7 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
         where TDoc : notnull
         where TId : notnull
     {
-        var dialect = SqlServerStorageDialect<TId>.Instance;
+        var dialect = SqlServerStorageDialect<TId>.For(mapping.UnicodeKeys);
 
         // #807: weasel#745's DocumentBinderPlan holds the binder arrays, the version and doc-type read
         // indexes and the QueryOnly read set this method used to assemble by hand. It records the order
@@ -246,7 +246,7 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
         return new DocumentStorageDescriptor<TDoc, TId>(
             identification,
             serializer: options.StorageSerializer,
-            dialect: SqlServerStorageDialect<TId>.Instance,
+            dialect: SqlServerStorageDialect<TId>.For(mapping.UnicodeKeys),
             clientSideWriteBinders: clientSide,
             writeBinders: writeArray,
             readBinders: readArray,
@@ -656,10 +656,7 @@ internal static class SqlServerDocumentStorageDescriptorBuilder
         {
             ConcurrencyMode.Optimistic => "uniqueidentifier",
             ConcurrencyMode.Numeric => "bigint",
-            _ => mapping.InnerIdType == typeof(Guid) ? "uniqueidentifier"
-                : mapping.InnerIdType == typeof(int) ? "int"
-                : mapping.InnerIdType == typeof(long) ? "bigint"
-                : "varchar(250)"
+            _ => mapping.IdSqlType
         };
 
     private static string OutputColumn(ConcurrencyMode mode)

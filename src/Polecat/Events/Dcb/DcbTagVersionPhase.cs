@@ -213,9 +213,9 @@ internal sealed class DcbTagVersionPhase
             // type keeps one plan per statement shape rather than one per value length, and varchar compares
             // to the key columns without converting them. 8000 rather than the columns' 250 so a value too
             // long for the column fails the INSERT, as it always has, instead of being truncated into a match.
-            DeclareKey(builder, "@k_table", row.TagTable);
-            DeclareKey(builder, "@k_value", row.TagValue);
-            DeclareKey(builder, "@k_tenant", row.TenantId);
+            DeclareKey(builder, "@k_table", row.TagTable, false);
+            DeclareKey(builder, "@k_value", row.TagValue, _events.UnicodeKeys);
+            DeclareKey(builder, "@k_tenant", row.TenantId, _events.UnicodeKeys);
 
             if (row.Bump)
             {
@@ -242,10 +242,11 @@ internal sealed class DcbTagVersionPhase
 
     private const string KeyValues = "@k_table, @k_value, @k_tenant";
 
-    private static void DeclareKey(BatchBuilder builder, string name, string value)
+    // #935: nvarchar(4000) for a column that is nvarchar under UseUnicodeKeys.
+    private static void DeclareKey(BatchBuilder builder, string name, string value, bool unicode)
     {
-        builder.Append($"declare {name} varchar(8000) = ");
-        builder.AppendParameter(value, SqlDbType.VarChar).Size = 8000;
+        builder.Append(unicode ? $"declare {name} nvarchar(4000) = " : $"declare {name} varchar(8000) = ");
+        builder.AppendParameter(value, unicode ? SqlDbType.NVarChar : SqlDbType.VarChar).Size = unicode ? 4000 : 8000;
         builder.Append("; ");
     }
 

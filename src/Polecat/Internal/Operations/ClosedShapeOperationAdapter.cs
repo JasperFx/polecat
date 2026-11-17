@@ -14,7 +14,7 @@ namespace Polecat.Internal.Operations;
 ///     Retires with the bespoke currency in E2e.
 /// </summary>
 internal sealed class ClosedShapeOperationAdapter : IStorageOperation, IDocumentStorageOperation,
-    IStorageOperationWrapper
+    IStorageOperationWrapper, IKeyedWrite
 {
     private readonly Weasel.Storage.IStorageOperation _inner;
     private readonly IStorageSession _session;
@@ -40,6 +40,9 @@ internal sealed class ClosedShapeOperationAdapter : IStorageOperation, IDocument
     ///     provision tenant partition ordinals before operations execute (#335).
     /// </summary>
     internal string SessionTenantId => _session.TenantId;
+
+    string? IKeyedWrite.TenantId => _session.TenantId;
+    object? IKeyedWrite.Key => DocumentId;
 
     public OperationRole Role() => _inner.Role();
 

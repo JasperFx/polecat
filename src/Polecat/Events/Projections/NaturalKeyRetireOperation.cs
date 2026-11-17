@@ -42,9 +42,10 @@ internal class NaturalKeyRetireOperation : Polecat.Internal.IStorageOperation, W
     private readonly bool _isGuidStream;
     private readonly bool _isConjoined;
     private readonly string? _tenantId;
+    private readonly bool _unicode; // #935
 
     public NaturalKeyRetireOperation(string tableName, object currentNaturalKeyValue, object streamId,
-        bool isGuidStream, bool isConjoined = false, string? tenantId = null)
+        bool isGuidStream, bool isConjoined = false, string? tenantId = null, bool unicode = false)
     {
         _tableName = tableName;
         _currentNaturalKeyValue = currentNaturalKeyValue;
@@ -52,6 +53,7 @@ internal class NaturalKeyRetireOperation : Polecat.Internal.IStorageOperation, W
         _isGuidStream = isGuidStream;
         _isConjoined = isConjoined;
         _tenantId = tenantId;
+        _unicode = unicode;
     }
 
     public Type DocumentType => typeof(object);
@@ -63,12 +65,12 @@ internal class NaturalKeyRetireOperation : Polecat.Internal.IStorageOperation, W
 
         builder.Append($"DELETE FROM {_tableName} WHERE {streamColumn} = ");
         // #363: a string stream key must bind varchar to seek the varchar(250) stream_key column.
-        builder.AppendParameter(_streamId, _streamId is string ? System.Data.SqlDbType.VarChar : null);
+        builder.AppendParameter(_streamId, _streamId is string ? Polecat.Storage.KeyColumns.DbType(_unicode) : null);
 
         if (_isConjoined)
         {
             builder.Append(" AND tenant_id = ");
-            builder.AppendParameter(_tenantId!, System.Data.SqlDbType.VarChar);
+            builder.AppendParameter(_tenantId!, Polecat.Storage.KeyColumns.DbType(_unicode));
         }
 
         builder.Append(" AND natural_key_value <> ");

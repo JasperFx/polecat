@@ -8,7 +8,7 @@ namespace Polecat.Events.Schema;
 /// <summary>
 ///     Weasel table definition for pc_events — stores individual events.
 /// </summary>
-internal class EventsTable : Table
+internal class EventsTable : Polecat.Storage.KeyedTable
 {
     public const string TableName = "pc_events";
 
@@ -35,7 +35,7 @@ internal class EventsTable : Table
         // Stream reference
         var streamIdType = events.StreamIdentity == StreamIdentity.AsGuid
             ? "uniqueidentifier"
-            : "varchar(250)";
+            : events.KeyText();
         AddColumn("stream_id", streamIdType).NotNull();
 
         // Version within the stream
@@ -64,7 +64,7 @@ internal class EventsTable : Table
             .DefaultValueByExpression("SYSDATETIMEOFFSET()");
 
         // Tenant id
-        var tenantColumn = AddColumn(JasperFx.StorageConstants.TenantIdColumn, "varchar(250)")
+        var tenantColumn = AddColumn(JasperFx.StorageConstants.TenantIdColumn, events.KeyText())
             .NotNull()
             .DefaultValueByString(JasperFx.StorageConstants.DefaultTenantId);
 
@@ -81,17 +81,17 @@ internal class EventsTable : Table
         }
 
         // .NET type for deserialization
-        AddColumn("dotnet_type", "varchar(500)").AllowNulls();
+        AddColumn("dotnet_type", events.KeyText(500)).AllowNulls();
 
         // Optional metadata columns
         if (events.EventOptions.EnableCorrelationId)
         {
-            AddColumn("correlation_id", "varchar(250)").AllowNulls();
+            AddColumn("correlation_id", events.KeyText()).AllowNulls();
         }
 
         if (events.EventOptions.EnableCausationId)
         {
-            AddColumn("causation_id", "varchar(250)").AllowNulls();
+            AddColumn("causation_id", events.KeyText()).AllowNulls();
         }
 
         if (events.EventOptions.EnableHeaders)
@@ -102,7 +102,7 @@ internal class EventsTable : Table
         // #237: opt-in user / last-modified-by column, mirroring Marten's user_name.
         if (events.EventOptions.EnableUserName)
         {
-            AddColumn("user_name", "varchar(250)").AllowNulls();
+            AddColumn("user_name", events.KeyText()).AllowNulls();
         }
 
         // Archive flag

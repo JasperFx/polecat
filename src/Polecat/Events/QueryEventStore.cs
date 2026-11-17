@@ -497,8 +497,8 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
             sql += " AND is_archived = 0";
         }
 
-        cmd.Parameters.AddIdParameter("@stream_id", streamId);
-        cmd.Parameters.AddVarChar("@tenant_id", TenantId);
+        cmd.Parameters.AddIdParameter("@stream_id", streamId, _events.UnicodeKeys);
+        cmd.Parameters.AddKey("@tenant_id", TenantId, _events.UnicodeKeys);
 
         if (version > 0)
         {
@@ -583,7 +583,7 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
             WHERE id = @id AND tenant_id = @tenant_id AND is_archived = 0;
             """;
         cmd.Parameters.AddWithValue("@id", id); // event id — uniqueidentifier
-        cmd.Parameters.AddVarChar("@tenant_id", TenantId);
+        cmd.Parameters.AddKey("@tenant_id", TenantId, _events.UnicodeKeys);
 
         await using var reader = (await _session.ExecuteReaderAsync(cmd, token).ConfigureAwait(false));
         if (!await reader.ReadAsync(token).ConfigureAwait(false)) return null;
@@ -635,8 +635,8 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
             FROM {_events.StreamsTableName}
             WHERE id = @id AND tenant_id = @tenant_id;
             """;
-        cmd.Parameters.AddIdParameter("@id", streamId);
-        cmd.Parameters.AddVarChar("@tenant_id", TenantId);
+        cmd.Parameters.AddIdParameter("@id", streamId, _events.UnicodeKeys);
+        cmd.Parameters.AddKey("@tenant_id", TenantId, _events.UnicodeKeys);
 
         await using var reader = (await _session.ExecuteReaderAsync(cmd, token).ConfigureAwait(false));
         if (await reader.ReadAsync(token).ConfigureAwait(false))

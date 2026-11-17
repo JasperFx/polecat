@@ -8,9 +8,17 @@ namespace Polecat.Storage;
 ///     A table Polecat declares but does not own outright: a migration creates what is missing from the
 ///     declaration, and never drops or churns anything the declaration does not mention.
 /// </summary>
-internal class AdditiveTable : Table
+internal class AdditiveTable : KeyedTable
 {
     public AdditiveTable(DbObjectName name) : base(name)
+    {
+    }
+
+    /// <summary>
+    ///     Called with the table as the database has it, before anything is stripped from it, so a subclass
+    ///     can declare something it left out but finds already there.
+    /// </summary>
+    protected virtual void includeExisting(Table actual)
     {
     }
 
@@ -50,6 +58,8 @@ internal class AdditiveTable : Table
         {
             return delta;
         }
+
+        includeExisting(actual);
 
         var modeledColumns = Columns.Select(x => x.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
         foreach (var extra in actual.Columns.Where(c => !modeledColumns.Contains(c.Name)).ToList())

@@ -68,7 +68,7 @@ internal static class ImplicitFilters
         if (mapping.TenancyStyle == TenancyStyle.Conjoined && tenancy is not { IsAnyTenant: true })
         {
             yield return tenancy?.TenantIds is { } tenantIds
-                ? new TenantInFilter(tenantIds, Column("tenant_id"))
+                ? new TenantInFilter(tenantIds, Column("tenant_id"), mapping.UnicodeKeys)
                 : new ComparisonFilter(Column("tenant_id"), "=", tenantId);
         }
 

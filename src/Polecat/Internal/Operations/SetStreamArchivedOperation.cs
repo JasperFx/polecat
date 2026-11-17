@@ -47,10 +47,10 @@ internal class SetStreamArchivedOperation : IStorageOperation, IStreamKeyedOpera
         // against a varchar stream key or tenant_id puts CONVERT_IMPLICIT on the column and scans it (#363).
         // Measured on 50,000 string streams: 456 logical reads against 3 on pc_streams, and 309 against 6
         // on pc_events. The tombstone does the same.
-        builder.Append($"DECLARE @id {(_streamId is string ? "varchar(250)" : "uniqueidentifier")} = ");
-        builder.AppendParameter(_streamId, _streamId is string ? SqlDbType.VarChar : null);
-        builder.Append("; DECLARE @tenant_id varchar(250) = ");
-        builder.AppendParameter(_tenantId, SqlDbType.VarChar);
+        builder.Append($"DECLARE @id {(_streamId is string ? _events.KeyText() : "uniqueidentifier")} = ");
+        builder.AppendParameter(_streamId, _streamId is string ? _events.KeyDbType : null);
+        builder.Append($"; DECLARE @tenant_id {_events.KeyText()} = ");
+        builder.AppendParameter(_tenantId, _events.KeyDbType);
         builder.Append(";\n");
 
         builder.Append($"""

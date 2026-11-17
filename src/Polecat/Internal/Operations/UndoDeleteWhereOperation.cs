@@ -20,6 +20,7 @@ internal class UndoDeleteWhereOperation : IStorageOperation, Weasel.Storage.NoDa
     private readonly ISqlFragment _whereFragment;
     private readonly Type _documentType;
     private readonly bool _movesVersion;
+    private readonly bool _unicode; // #935
 
     /// <param name="movesVersion">
     ///     #813: also move <c>version</c> and <c>last_modified</c> on, as every other write does. Only
@@ -30,7 +31,7 @@ internal class UndoDeleteWhereOperation : IStorageOperation, Weasel.Storage.NoDa
     ///     document's revision under an application that never asked.
     /// </param>
     public UndoDeleteWhereOperation(IOperationFragment undeleteFragment, bool conjoined, string tenantId,
-        ISqlFragment whereFragment, Type documentType, bool movesVersion = false)
+        ISqlFragment whereFragment, Type documentType, bool movesVersion = false, bool unicode = false)
     {
         _undeleteFragment = undeleteFragment;
         _conjoined = conjoined;
@@ -38,6 +39,7 @@ internal class UndoDeleteWhereOperation : IStorageOperation, Weasel.Storage.NoDa
         _whereFragment = whereFragment;
         _documentType = documentType;
         _movesVersion = movesVersion;
+        _unicode = unicode;
     }
 
     public Type DocumentType => _documentType;
@@ -55,7 +57,7 @@ internal class UndoDeleteWhereOperation : IStorageOperation, Weasel.Storage.NoDa
         if (_conjoined) // #234
         {
             builder.Append("tenant_id = ");
-            builder.AppendParameter(_tenantId, System.Data.SqlDbType.VarChar);
+            builder.AppendParameter(_tenantId, Storage.KeyColumns.DbType(_unicode));
             builder.Append(" AND ");
         }
 

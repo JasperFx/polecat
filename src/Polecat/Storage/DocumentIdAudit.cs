@@ -118,12 +118,12 @@ internal static class DocumentIdAudit
         {
             // A varchar id bound as nvarchar would put CONVERT_IMPLICIT on the key column and scan (#363).
             cmd.Parameters.Add(key.Id is string
-                ? new SqlParameter("@lastId", SqlDbType.VarChar, 250) { Value = key.Id }
+                ? new SqlParameter("@lastId", mapping.StoreOptions.KeyDbType, 250) { Value = key.Id }
                 : new SqlParameter("@lastId", key.Id));
 
             if (conjoined)
             {
-                cmd.Parameters.Add(new SqlParameter("@lastTenant", SqlDbType.VarChar, 250) { Value = key.Tenant });
+                cmd.Parameters.Add(new SqlParameter("@lastTenant", mapping.StoreOptions.KeyDbType, 250) { Value = key.Tenant });
             }
         }
 
@@ -159,7 +159,7 @@ internal static class DocumentIdAudit
     {
         var conjoined = mapping.TenancyStyle == TenancyStyle.Conjoined;
         var table = SqlEscaping.QualifiedName(mapping.DatabaseSchemaName, mapping.TableName);
-        var idType = DocumentTable.SqlTypeForIdentity(mapping.InnerIdType);
+        var idType = mapping.IdSqlType;
 
         var idPath = PathLiteral(SerializedNames.For(mapping.IdMember, mapping.StoreOptions));
         var idMember = $"JSON_VALUE(d.data, {idPath})";
@@ -174,7 +174,7 @@ internal static class DocumentIdAudit
 
         string Page(string? after) => conjoined
             ? $"""
-               DECLARE @keys TABLE (ord int IDENTITY(1,1) NOT NULL, tenant_id varchar(250) NOT NULL, id {idType} NOT NULL);
+               DECLARE @keys TABLE (ord int IDENTITY(1,1) NOT NULL, tenant_id {mapping.StoreOptions.KeyText()} NOT NULL, id {idType} NOT NULL);
                INSERT INTO @keys (tenant_id, id)
                SELECT DISTINCT TOP (@batch) tenant_id, id FROM {table} {after} ORDER BY tenant_id, id;
                SELECT TOP (1) id, tenant_id FROM @keys ORDER BY ord DESC;
