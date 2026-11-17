@@ -127,6 +127,7 @@ const config: UserConfig<DefaultTheme.Config> = {
             { text: 'Snapshots', link: '/events/snapshots' },
             { text: 'Natural Keys', link: '/events/natural-keys' },
             { text: 'Dynamic Consistency Boundary', link: '/events/dcb' },
+            { text: 'Personal Data and GDPR Erasure', link: '/events/personal-data' },
             {
               text: 'Projections Overview', link: '/events/projections/', collapsed: true, items: [
                 { text: 'Single Stream Projections', link: '/events/projections/single-stream-projections' },

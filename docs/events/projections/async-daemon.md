@@ -40,9 +40,8 @@ builder.Services.AddPolecat(opts =>
 
 ::: tip
 Async projections do **not** run unless the host starts a daemon. Use
-`AddAsyncDaemon(DaemonMode.Solo)` for single-node deployments and
-`AddAsyncDaemon(DaemonMode.HotCold)` for multi-node deployments where only one
-host should own each projection shard.
+`AddAsyncDaemon(DaemonMode.Solo)` for a single node. For more than one node, see
+[Running on More Than One Node](#running-on-more-than-one-node).
 :::
 
 `AddAsyncDaemon` registers the projection coordinator as a hosted service, the same as Marten's does. On every
@@ -81,6 +80,48 @@ builder.Services.AddPolecatStore<IInvoicingStore>(opts =>
 })
 .AddAsyncDaemon(DaemonMode.HotCold);
 ```
+
+## Running on More Than One Node
+
+There are three ways to run the daemon:
+
+| Option | What it does |
+| ------ | ------------ |
+| `DaemonMode.Solo` | One node runs every shard. Use it when the application runs on one node. |
+| `DaemonMode.HotCold` | One active node, for failover only. The first node to start takes every shard, and a second node only takes over a shard when the first one dies. It does not spread work across nodes. |
+| Wolverine-managed distribution | The recommended choice for more than one node. |
+
+Polecat will not add a distribution of its own. If you want async projections and subscriptions spread
+across a cluster, use Wolverine's:
+
+```cs
+builder.Services.AddPolecat(opts =>
+{
+    opts.Connection("...");
+    opts.Projections.Add<TripProjection>(ProjectionLifecycle.Async);
+})
+.IntegrateWithWolverine(m =>
+{
+    // Wolverine runs every async projection and subscription on exactly one node,
+    // and spreads them across the cluster. Don't also call AddAsyncDaemon()
+    m.UseWolverineManagedEventSubscriptionDistribution = true;
+});
+```
+
+Wolverine-managed distribution gives you:
+
+- an even spread of projection and subscription agents across the running nodes
+- capacity-aware placement, so a node that is already busy is not given more
+- blue/green-aware placement, so a new projection version only runs on the nodes that know it
+- group affinity, so every shard for one tenant database stays on one node
+- operator pause, restart and pin of a single agent
+- a reason for any agent it cannot place
+
+See [Projection/Subscription Distribution](https://wolverinefx.net/guide/durability/polecat/distribution) in
+Wolverine's docs for the details.
+
+[CritterWatch](https://critterwatch.jasperfx.net) is the tool for monitoring and managing projections
+and subscriptions across the whole fleet. Wolverine-managed distribution works without it too.
 
 ## Daemon Settings
 
