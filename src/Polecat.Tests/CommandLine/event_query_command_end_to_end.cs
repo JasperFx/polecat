@@ -36,8 +36,9 @@ public class event_query_command_end_to_end
         opts.DatabaseSchemaName = Schema;
         opts.AutoCreateSchemaObjects = AutoCreate.All;
         opts.UseNativeJsonType = ConnectionSource.SupportsNativeJson;
-        // Deliberately NOT enabling the metadata columns (EnableUserName etc.) — the refusal fact
-        // depends on the store genuinely not capturing user_name.
+        // Deliberately turning user_name off, which is on by default since Polecat 6 (#1032) — the
+        // refusal fact depends on the store genuinely not capturing user_name.
+        opts.Events.EnableUserName = false;
         return opts;
     }
 

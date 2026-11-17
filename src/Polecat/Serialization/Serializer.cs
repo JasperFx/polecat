@@ -26,7 +26,19 @@ public class Serializer : SystemTextJsonSerializer, ISerializer, Weasel.Storage.
 {
     public Serializer()
     {
+        // Polecat 6, as Marten 10: a [JsonDerivedType] round-trips even when $type is not the first
+        // property, which nothing guarantees once JSON has been through the database.
+        // StoreOptions.RestoreV5Defaults() turns it back off.
+        Options.AllowOutOfOrderMetadataProperties = true;
+        OutOfOrderMetadataByDefault = true;
     }
+
+    /// <summary>
+    ///     Whether this serializer turned <see cref="JsonSerializerOptions.AllowOutOfOrderMetadataProperties" />
+    ///     on itself, as the default, rather than being handed options that say so. Only that default
+    ///     is what <see cref="StoreOptions.RestoreV5Defaults" /> turns back off.
+    /// </summary>
+    internal bool OutOfOrderMetadataByDefault { get; }
 
     public Serializer(JsonSerializerOptions options) : base(options)
     {
