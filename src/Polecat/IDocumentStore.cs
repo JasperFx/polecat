@@ -106,4 +106,30 @@ public interface IDocumentStore : IDisposable, IAsyncDisposable, IDocumentStoreU
     ///     and begins a transaction with the specified isolation level.
     /// </summary>
     Task<IDocumentSession> OpenSessionAsync(SessionOptions options, CancellationToken token = default);
+
+    /// <summary>
+    ///     marten#6004: wait until the asynchronous projections in <paramref name="projections" /> have processed
+    ///     <paramref name="position" />, so you can read your own writes. Take the position from the session's
+    ///     <c>LastAppendedSequence</c> after <c>SaveChangesAsync</c>, and pass the projection classes or the
+    ///     documents they write.
+    /// </summary>
+    /// <remarks>
+    ///     Polls <c>pc_event_progression</c>, so it works on any node. Waits for your events only, not for other
+    ///     writers' events after them. Never throws on timeout: check <see cref="JasperFx.Events.Daemon.ProjectionWaitResult.Reached" />,
+    ///     and when it is false, <see cref="JasperFx.Events.Daemon.ProjectionWaitResult.Shards" /> says how far each shard
+    ///     got. A paused or rebuilding projection returns at once with that status.
+    /// </remarks>
+    Task<JasperFx.Events.Daemon.ProjectionWaitResult> WaitForProjectionsAsync(EventStorePosition position,
+        IReadOnlyList<Type> projections, TimeSpan timeout, CancellationToken token = default)
+        => throw new NotSupportedException(
+            $"{GetType().FullName} does not implement {nameof(IDocumentStore)}.{nameof(WaitForProjectionsAsync)}.");
+
+    /// <summary>
+    ///     marten#6004: <see cref="WaitForProjectionsAsync(EventStorePosition, IReadOnlyList{Type}, TimeSpan, CancellationToken)" />
+    ///     by projection or subscription name.
+    /// </summary>
+    Task<JasperFx.Events.Daemon.ProjectionWaitResult> WaitForProjectionsAsync(EventStorePosition position,
+        IReadOnlyList<string> projectionNames, TimeSpan timeout, CancellationToken token = default)
+        => throw new NotSupportedException(
+            $"{GetType().FullName} does not implement {nameof(IDocumentStore)}.{nameof(WaitForProjectionsAsync)}.");
 }
