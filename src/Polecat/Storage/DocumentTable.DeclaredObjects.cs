@@ -218,8 +218,12 @@ internal partial class DocumentTable
         {
             var keyColumns = new List<string>();
 
-            // A per-tenant index leads with tenant_id so a tenant-scoped query can seek it.
-            if (index.TenancyScope == TenancyScope.PerTenant)
+            // A per-tenant index leads with tenant_id so a tenant-scoped query can seek it. So does every
+            // non-unique index on a conjoined document unless the store turned that off (Polecat 6), since
+            // every query against one is scoped to a tenant. A unique index keeps what it enforces.
+            if (index.TenancyScope == TenancyScope.PerTenant
+                || (!index.IsUnique && mapping.TenancyStyle == TenancyStyle.Conjoined
+                                    && mapping.StoreOptions.Policies.StartIndexesByTenantId))
             {
                 keyColumns.Add(JasperFx.StorageConstants.TenantIdColumn);
             }

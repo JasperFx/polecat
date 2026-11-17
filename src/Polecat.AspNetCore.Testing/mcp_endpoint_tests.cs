@@ -100,7 +100,8 @@ public class mcp_endpoint_tests : IAsyncLifetime
         root.GetProperty("databaseSchemaName").GetString().ShouldNotBeNullOrEmpty();
         root.GetProperty("enableCorrelationId").GetBoolean().ShouldBeTrue();
         root.GetProperty("enableCausationId").GetBoolean().ShouldBeTrue();
-        root.GetProperty("enableHeaders").GetBoolean().ShouldBeFalse();
+        // On by default since Polecat 6 (#1032)
+        root.GetProperty("enableHeaders").GetBoolean().ShouldBeTrue();
     }
 
     [Fact]

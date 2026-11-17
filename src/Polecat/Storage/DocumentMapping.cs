@@ -109,6 +109,17 @@ internal class DocumentMapping
         // Discover and register attribute-based indexes
         DiscoverIndexAttributes(documentType);
 
+        // Polecat 6, as Marten 10: correlation id, causation id, last modified by and headers are stored
+        // for every document unless the store says otherwise. A document's own attributes and its
+        // Schema.For<T>().Metadata(...) config still win either way.
+        if (options.Policies.EnableDocumentMetadataByDefault)
+        {
+            foreach (var column in Metadata.OptInColumns())
+            {
+                column.Enabled = true;
+            }
+        }
+
         // #243: discover attribute-based document metadata mappings ([CorrelationIdMetadata], etc.)
         DiscoverMetadataAttributes(documentType);
 

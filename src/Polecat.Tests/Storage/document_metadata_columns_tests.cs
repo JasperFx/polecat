@@ -127,9 +127,10 @@ public class document_metadata_columns_tests : OneOffConfigurationsContext
     }
 
     [Fact]
-    public async Task columns_not_created_when_not_configured()
+    public async Task columns_not_created_when_turned_off_for_the_store()
     {
-        ConfigureStore(_ => { }); // no metadata config
+        // Polecat 5's behavior; since Polecat 6 (#1032) they are created by default
+        ConfigureStore(opts => opts.Policies.EnableDocumentMetadataByDefault = false);
 
         await using (var session = theStore.LightweightSession())
         {
@@ -142,5 +143,26 @@ public class document_metadata_columns_tests : OneOffConfigurationsContext
         cmd.CommandText = $"SELECT COL_LENGTH('[{Schema}].[pc_doc_plaindoc]', 'correlation_id')";
         var result = await cmd.ExecuteScalarAsync(TestContext.Current.CancellationToken);
         (result == null || result == DBNull.Value).ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task columns_created_by_default()
+    {
+        ConfigureStore(_ => { }); // no metadata config
+
+        await using (var session = theStore.LightweightSession())
+        {
+            session.Store(new PlainDoc { Id = Guid.NewGuid(), Name = "A" });
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        await using var conn = await OpenConnectionAsync();
+        foreach (var column in new[] { "correlation_id", "causation_id", "last_modified_by", "headers" })
+        {
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = $"SELECT COL_LENGTH('[{Schema}].[pc_doc_plaindoc]', '{column}')";
+            var result = await cmd.ExecuteScalarAsync(TestContext.Current.CancellationToken);
+            (result is null or DBNull).ShouldBeFalse(column);
+        }
     }
 }

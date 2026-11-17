@@ -111,6 +111,58 @@ On `net11.0`, with C# 15 unions, Polecat supports union-typed document members a
 
 On `net10.0` no type is a union, so none of this applies and nothing changes for existing code.
 
+## Upgrading to 6.0: defaults that changed with Marten 10
+
+Polecat 6 takes the default changes Marten 10 made ([polecat#1032](https://github.com/JasperFx/polecat/issues/1032),
+[marten#5812](https://github.com/JasperFx/marten/issues/5812)). Each one can be turned back off on its own, or
+all of them at once, to upgrade with no change in behavior and take the new defaults later:
+
+<!-- snippet: sample_polecat_restore_v5_defaults -->
+<a id='snippet-sample_polecat_restore_v5_defaults'></a>
+```cs
+// Upgrade with the Polecat 5 defaults, then take the new ones one at a time
+options.RestoreV5Defaults();
+```
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.Tests/Configuration/polecat_6_default_tests.cs#L45-L48' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_restore_v5_defaults' title='Start of snippet'>anchor</a></sup>
+<!-- endSnippet -->
+
+**Inline projections now run their side effects.** `EnableSideEffectsOnInlineProjections` is on by default, so
+an application with `RaiseSideEffects()` on an inline projection starts running it on every `SaveChangesAsync()`:
+messages it publishes go to the configured `MessageOutbox`, and a `slice.AppendEvent(...)` from an inline
+projection, which is not supported, now throws where it was ignored. Check every inline projection with side
+effects before upgrading, or set `opts.Events.EnableSideEffectsOnInlineProjections = false`.
+
+| Setting | 5.x | 6.0 | Schema effect | To keep 5.x's behavior |
+| :--- | :--- | :--- | :--- | :--- |
+| Event metadata: `Events.EnableCorrelationId`, `EnableCausationId`, `EnableHeaders`, `EnableUserName` | off | on | Adds the nullable `correlation_id`, `causation_id`, `headers` and `user_name` columns to `pc_events` | Set each to `false` |
+| Document metadata: correlation id, causation id, last modified by, headers | off | on | Adds the nullable `correlation_id`, `causation_id`, `last_modified_by` and `headers` columns to every document table | `opts.Policies.EnableDocumentMetadataByDefault = false`, or per type with `Schema.For<T>().Metadata(m => m.Headers.Enabled = false)` |
+| `OpenTelemetry.EventCountersEnabled` (the `polecat.event.append` counter) | off | on | None. Without a listener on the meter it costs nothing | `opts.OpenTelemetry.EventCountersEnabled = false` |
+| `AllowOutOfOrderMetadataProperties` on the default serializer | off | on | None | `opts.RestoreV5Defaults()`, or your own options through `ConfigureSerialization(JsonSerializerOptions, ...)` |
+| `Policies.StartIndexesByTenantId`: non-unique indexes on conjoined documents start with `tenant_id` | off | on | Each such index is dropped and recreated with `tenant_id` first. Unique indexes are unchanged | `opts.Policies.StartIndexesByTenantId = false` |
+| `Events.EnableSideEffectsOnInlineProjections` | off | on | None. **See the callout above** | `opts.Events.EnableSideEffectsOnInlineProjections = false` |
+
+The new columns are nullable and are added in place by the next schema migration. Rows written before it have
+`NULL` in them. Apply that migration (`db-apply`, `db-patch` or `ApplyAllDatabaseChangesOnStartup()`) before
+6.0 nodes take traffic: a document type that an inline `EventProjection` stores without declaring it is only
+migrated on demand after the first save that writes it, and that first save fails with "Invalid column name
+'correlation_id'". The index change rebuilds each index it touches, which takes as long as building it did; run it
+through `db-patch` in a maintenance window on a large table.
+
+`RestoreV5Defaults()` also puts back the two 6.0 changes that came from JasperFx 3.0 and are described below:
+`GateSideEffectsBehindPriorVersion` (off on every projection) and `DcbConflictScope.TagValue`.
+
+Marten 10 changes that Polecat has nothing to change for:
+
+- **Event skipping in projections and subscriptions.** Polecat has no event skipping.
+- **FetchForWriting metrics.** Polecat has no FetchForWriting metrics, only the append counter above.
+- **Strict stream identity enforcement.** Polecat's `pc_streams` is never partitioned, so its key stays `id`
+  (or `tenant_id, id`) and an archived stream's id can't be reused.
+- **A sticky connection lifetime option.** Polecat never had one.
+
+Archived-stream partitioning (`UseArchivedStreamPartitioning`) stays **off** in 6.0. Turning it on for an existing
+store would have to rebuild `pc_events` as a partitioned table, and Weasel.SqlServer can't migrate an
+unpartitioned table to a partitioned one, so every upgrading store would fail its schema migration.
+
 ## Upgrading to 6.0: `GateSideEffectsBehindPriorVersion` is on by default
 
 As of JasperFx 3.0 ([jasperfx#1075](https://github.com/JasperFx/jasperfx/issues/1075)),
