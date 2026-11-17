@@ -63,9 +63,10 @@ builder.Services.AddPolecat(options =>
 .AddAsyncDaemon(DaemonMode.Solo);
 ```
 
-`DaemonMode.Solo` is for one node. If several nodes run this application, use `DaemonMode.HotCold` and each shard
-runs on one of them at a time. Either way a shard that pauses after a failure is restarted for you. See
-[the async daemon](/events/projections/async-daemon) for the details.
+`DaemonMode.Solo` is for one node. `DaemonMode.HotCold` runs every shard on one active node, and another node
+only takes over when that one dies. To spread the work across several nodes, use Wolverine-managed
+distribution. Either way a shard that pauses after a failure is restarted for you. See
+[the async daemon](/events/projections/async-daemon#running-on-more-than-one-node) for the details.
 
 See [Bootstrapping Polecat](/configuration/hostbuilder) for more options, and [Schema Migrations](/schema/migrations#choosing-an-approach) for
 the production alternatives to migrating at startup: `db-apply` or `resources setup` as a deployment step, or `db-patch` scripts for a DBA.
