@@ -68,7 +68,8 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
 
     /// <summary>
     ///     This database again, for handing to something that makes its own commands and takes no timeout,
-    ///     as Weasel's partition management does: the connection string is the only place left to say it.
+    ///     as Weasel's partition management does for everything but a SPLIT: the connection string is the
+    ///     only place left to say it.
     ///     Never raises a limit the connection string already sets lower.
     /// </summary>
     internal PolecatDatabase WithCommandTimeout(int seconds)
@@ -80,6 +81,17 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
         }
 
         return new PolecatDatabase(_options, builder.ConnectionString, Identifier);
+    }
+
+    /// <summary>
+    ///     <paramref name="seconds" />, or the connection string's own command timeout when that is shorter,
+    ///     for a limit handed to Weasel per command (the SPLIT in #1058). Like
+    ///     <see cref="WithCommandTimeout" />, never raises a limit the connection string already sets lower.
+    /// </summary>
+    internal TimeSpan CommandTimeoutNoLongerThan(int seconds)
+    {
+        var configured = new SqlConnectionStringBuilder(_connectionString).CommandTimeout;
+        return TimeSpan.FromSeconds(configured == 0 || configured > seconds ? seconds : configured);
     }
 
     internal EventGraph Events => _events;

@@ -225,6 +225,52 @@ public class tenant_partition_failed_split_tests : IAsyncLifetime
     }
 
     /// <summary>
+    ///     #1058: the case above with a registry that is slower than the first SPLIT's limit, which is what
+    ///     a loaded server does. Only the SPLIT has the short limit, so the slow registry costs its own time
+    ///     and the SPLIT still gives up after a second. It used to time the registry out, run everything again
+    ///     on the connection's limit and leave the SPLIT waiting 30 seconds.
+    /// </summary>
+    [Fact]
+    public async Task a_first_split_gives_up_at_its_own_limit_when_the_registration_is_slow()
+    {
+        using var setup = await CreateProvisionedStoreAsync();
+
+        using var store = CreateStore(AutoCreate.None, StoreOptions.DefaultTimeout, null);
+        store.Events.TenantOrdinals.FirstSplitTimeoutSeconds = 1;
+        store.Events.TenantOrdinals.SplitRetryInterval = TimeSpan.Zero;
+
+        // Loads the map, so that what is left for the new tenant is the MERGE this holds up
+        await AppendAsync(store, "incumbent");
+
+        await using (await LockAsync("pc_streams"))
+        {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+            Task appending;
+            await using (await TableExclusiveLock.TakeAsync("pc_tenant_partitions"))
+            {
+                appending = AppendAsync(store, "newcomer");
+
+                // Past the first SPLIT's limit, so the registry step alone would have timed out on it
+                await Task.Delay(TimeSpan.FromSeconds(2.5), Ct);
+                appending.IsCompleted.ShouldBeFalse();
+            }
+
+            await appending;
+            stopwatch.Stop();
+
+            stopwatch.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(15));
+        }
+
+        await ShouldBeUnsplitAsync("pc_streams", "newcomer", 1);
+        _logger.Warnings.ShouldContain(x => x.Contains("newcomer"));
+
+        await AppendAsync(store, "newcomer");
+
+        await ShouldBeInItsOwnPartitionsAsync("pc_streams", "newcomer", 2);
+    }
+
+    /// <summary>
     ///     Weasel writes the registry on the same connection as the SPLIT, and a write can't go ahead
     ///     without that row, so the shorter limit must not be what fails it.
     /// </summary>
@@ -239,20 +285,12 @@ public class tenant_partition_failed_split_tests : IAsyncLifetime
         // Loads the map, so that what is left for the new tenant is the MERGE this holds up
         await AppendAsync(store, "incumbent");
 
-        await using var blocker = new SqlConnection(ConnectionSource.ConnectionString);
-        await blocker.OpenAsync(Ct);
-        await using var transaction = blocker.BeginTransaction();
-        await using (var command = blocker.CreateCommand())
+        Task appending;
+        await using (await TableExclusiveLock.TakeAsync("pc_tenant_partitions"))
         {
-            command.Transaction = transaction;
-            command.CommandText = $"SELECT COUNT(*) FROM [{Schema}].[pc_tenant_partitions] WITH (TABLOCKX, HOLDLOCK)";
-            await command.ExecuteScalarAsync(Ct);
+            appending = AppendAsync(store, "newcomer");
+            await Task.Delay(TimeSpan.FromSeconds(2.5), Ct);
         }
-
-        var appending = AppendAsync(store, "newcomer");
-
-        await Task.Delay(TimeSpan.FromSeconds(2.5), Ct);
-        await transaction.RollbackAsync(Ct);
 
         await appending;
 
@@ -637,6 +675,42 @@ public class tenant_partition_failed_split_tests : IAsyncLifetime
             await command.ExecuteScalarAsync(Ct);
 
             return new TableLock(connection, transaction);
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            await _transaction.RollbackAsync();
+            await _transaction.DisposeAsync();
+            await _connection.DisposeAsync();
+        }
+    }
+
+    /// <summary>
+    ///     An exclusive lock on the whole table, held until disposed: everything that touches it waits.
+    /// </summary>
+    private sealed class TableExclusiveLock : IAsyncDisposable
+    {
+        private readonly SqlConnection _connection;
+        private readonly SqlTransaction _transaction;
+
+        private TableExclusiveLock(SqlConnection connection, SqlTransaction transaction)
+        {
+            _connection = connection;
+            _transaction = transaction;
+        }
+
+        public static async Task<TableExclusiveLock> TakeAsync(string table)
+        {
+            var connection = new SqlConnection(ConnectionSource.ConnectionString);
+            await connection.OpenAsync(Ct);
+            var transaction = connection.BeginTransaction();
+
+            await using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = $"SELECT COUNT(*) FROM [{Schema}].[{table}] WITH (TABLOCKX, HOLDLOCK)";
+            await command.ExecuteScalarAsync(Ct);
+
+            return new TableExclusiveLock(connection, transaction);
         }
 
         public async ValueTask DisposeAsync()

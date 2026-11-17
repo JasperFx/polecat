@@ -124,7 +124,7 @@ internal class DocumentProviderRegistry
                     // index is used for DDL or matched by the LINQ translator. A no-op under the
                     // default policy.
                     index.ApplyNamingPolicy(mapping.StoreOptions);
-                    mapping.Indexes.Add(index);
+                    mapping.AddIndex(index);
                 }
             }
 

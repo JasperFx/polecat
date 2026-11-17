@@ -499,6 +499,32 @@ apart from a lost update. That is why Marten refuses it (weasel#740). Any of the
 
 Lightweight sessions (`LightweightSession()`) keep no identity map and are unaffected.
 
+## Upgrading to 6.0: two indexes with one name throw at configuration time
+
+Two indexes on one document type that end up with the same index name, whether that's the same member
+declared twice, an `[Index]` attribute plus `Index()` over the same member, or two `IndexName`s that are the
+same, now throw an `InvalidOperationException` when the document is first used. The message names the
+document type, the member and the index ([#1056](https://github.com/JasperFx/polecat/issues/1056), the port
+of marten#6019).
+
+In 5.x Polecat created only the first index by that name and said nothing. The table, the migration and
+`AssertDatabaseMatchesConfigurationAsync()` all looked fine. For the same member twice that cost nothing,
+but when two different indexes shared a name, the second one was never created.
+
+Declare each index once. If you really want a second index over the same member, give it its own name:
+
+```csharp
+opts.Schema.For<Order>().Index(x => x.CustomerEmail);
+opts.Schema.For<Order>().Index(x => x.CustomerEmail, x =>
+{
+    x.SortOrder = SortOrder.Descending;
+    x.IndexName = "ix_order_customer_email_desc";
+});
+```
+
+A `Casing = IndexCasing.Lower` (or `Upper`) index already gets a name of its own (`..._lower`), so it can
+sit beside the plain index over the same member.
+
 ## Deprecation: `MapPolecatMcp`
 
 `Polecat.AspNetCore`'s built-in `MapPolecatMcp()` is now `[Obsolete]` and will be **removed in the

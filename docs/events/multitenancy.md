@@ -195,7 +195,8 @@ for different new tenants, the second one reloads the map and takes the next ord
 
 Splitting a partition needs a schema-modification lock, so another session's long transaction on
 `pc_streams` or `pc_events` can make a new tenant's split time out, and a tenant's first split gives up
-on each table after five seconds rather than the command timeout. That does not fail the save. The
+on each table after five seconds rather than the command timeout. Only the split has the shorter limit:
+recording the tenant in `pc_tenant_partitions` keeps the command timeout. A failed split does not fail the save. The
 write goes ahead, and until the split succeeds the tenant's rows on that table sit in a neighbouring
 tenant's partition:
 

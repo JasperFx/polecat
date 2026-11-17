@@ -1512,9 +1512,15 @@
              pc_events onto the archived partition scheme in place (clustered key rebuilt ON the scheme)
              instead of refusing under CreateOrUpdate and dropping the table under All. alpha.5 builds
              with no Polecat change. -->
-        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="10.0.0-alpha.7" />
-        <PackageVersion Include="Weasel.SqlServer" Version="10.0.0-alpha.7" />
-        <PackageVersion Include="Weasel.Storage" Version="10.0.0-alpha.7" />
+        <!-- Weasel 10.0.0-alpha.8 (from alpha.7). Taken for #1058:
+               * weasel#877: ManagedTenantPartitions takes a SPLIT-only command timeout, per call or as
+                 SplitCommandTimeout. ADOPTED: a tenant's first SPLIT gives up at FirstSplitTimeoutSeconds
+                 while its registry write keeps the connection's limit.
+               * weasel#875: Migrator.ProvisioningCommandTimeout for CREATE DATABASE (EnsureDatabaseExistsAsync).
+                 INERT: Polecat never creates or drops a database (#1052). -->
+        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="10.0.0-alpha.8" />
+        <PackageVersion Include="Weasel.SqlServer" Version="10.0.0-alpha.8" />
+        <PackageVersion Include="Weasel.Storage" Version="10.0.0-alpha.8" />
 
         <!-- Strongly typed IDs. Both generators are test-only: they prove Polecat's value-type id
              support against the two libraries Marten's ValueTypeTests exercise. StronglyTypedId emits
