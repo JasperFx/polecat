@@ -1508,9 +1508,13 @@
                * weasel#846 (weasel#848): a paging dialect must render an allow list of any length.
                  SqlServerEventPagingDialect binds one past JsonValueList.Threshold as one OPENJSON
                  array, which retires the old >2,000-type client-side fallback. -->
-        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="10.0.0-alpha.4" />
-        <PackageVersion Include="Weasel.SqlServer" Version="10.0.0-alpha.4" />
-        <PackageVersion Include="Weasel.Storage" Version="10.0.0-alpha.4" />
+        <!-- Weasel 10.0.0-alpha.7 (from alpha.4). Needed for #1041: weasel#868 moves an existing
+             pc_events onto the archived partition scheme in place (clustered key rebuilt ON the scheme)
+             instead of refusing under CreateOrUpdate and dropping the table under All. alpha.5 builds
+             with no Polecat change. -->
+        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="10.0.0-alpha.7" />
+        <PackageVersion Include="Weasel.SqlServer" Version="10.0.0-alpha.7" />
+        <PackageVersion Include="Weasel.Storage" Version="10.0.0-alpha.7" />
 
         <!-- Strongly typed IDs. Both generators are test-only: they prove Polecat's value-type id
              support against the two libraries Marten's ValueTypeTests exercise. StronglyTypedId emits

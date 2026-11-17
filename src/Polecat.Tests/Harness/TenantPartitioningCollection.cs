@@ -65,9 +65,12 @@ public static class PartitionTestCleanup
     }
 
     /// <summary>
-    ///     The same for <c>UseArchivedStreamPartitioning</c>: <c>ps_pc_events_is_archived</c> is one
-    ///     database-global object, so another test's <c>pc_events</c> left sitting on it blocks Weasel
-    ///     from recreating it for the next test.
+    ///     The same for <c>UseArchivedStreamPartitioning</c>, except that it never drops a table:
+    ///     <c>ps_pc_events_is_archived</c> is one database-global object, and since it became the 6.0
+    ///     default (#1041) every test schema's <c>pc_events</c> sits on it, so dropping the tables on it
+    ///     would pull the event store out from under whatever else is running. Weasel's partition DDL has
+    ///     reused a scheme that is in use since weasel#765, so a leftover table no longer blocks anything;
+    ///     this only removes the scheme and function when nothing is on them.
     /// </summary>
     public static async Task DropArchivedPartitionObjectsAsync()
     {
@@ -75,28 +78,15 @@ public static class PartitionTestCleanup
         await conn.OpenAsync();
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = """
-            DECLARE @sql nvarchar(max) = N'';
-            SELECT @sql = @sql + 'ALTER TABLE ' + QUOTENAME(SCHEMA_NAME(t.schema_id)) + '.' + QUOTENAME(t.name)
-                               + ' DROP CONSTRAINT ' + QUOTENAME(fk.name) + ';'
-            FROM sys.foreign_keys fk
-            JOIN sys.tables t ON fk.parent_object_id = t.object_id
-            JOIN sys.indexes i ON i.object_id = t.object_id AND i.index_id <= 1
-            JOIN sys.partition_schemes ps ON i.data_space_id = ps.data_space_id
-            WHERE ps.name = 'ps_pc_events_is_archived';
-            IF @sql <> N'' EXEC sp_executesql @sql;
-
-            SET @sql = N'';
-            SELECT @sql = @sql + 'DROP TABLE IF EXISTS ' + QUOTENAME(SCHEMA_NAME(t.schema_id)) + '.' + QUOTENAME(t.name) + ';'
-            FROM sys.tables t
-            JOIN sys.indexes i ON i.object_id = t.object_id AND i.index_id <= 1
-            JOIN sys.partition_schemes ps ON i.data_space_id = ps.data_space_id
-            WHERE ps.name = 'ps_pc_events_is_archived';
-            IF @sql <> N'' EXEC sp_executesql @sql;
-
-            IF EXISTS (SELECT 1 FROM sys.partition_schemes WHERE name = 'ps_pc_events_is_archived')
-                DROP PARTITION SCHEME [ps_pc_events_is_archived];
-            IF EXISTS (SELECT 1 FROM sys.partition_functions WHERE name = 'pf_pc_events_is_archived')
-                DROP PARTITION FUNCTION [pf_pc_events_is_archived];
+            IF NOT EXISTS (SELECT 1 FROM sys.partition_schemes ps
+                           JOIN sys.indexes i ON i.data_space_id = ps.data_space_id
+                           WHERE ps.name = 'ps_pc_events_is_archived')
+            BEGIN
+                IF EXISTS (SELECT 1 FROM sys.partition_schemes WHERE name = 'ps_pc_events_is_archived')
+                    DROP PARTITION SCHEME [ps_pc_events_is_archived];
+                IF EXISTS (SELECT 1 FROM sys.partition_functions WHERE name = 'pf_pc_events_is_archived')
+                    DROP PARTITION FUNCTION [pf_pc_events_is_archived];
+            END
             """;
         await cmd.ExecuteNonQueryAsync();
     }

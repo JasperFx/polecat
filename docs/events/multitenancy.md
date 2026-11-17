@@ -256,8 +256,10 @@ multi-tenanted stores.
 ::: warning
 `UseTenantPartitionedEvents` defaults to `false`; existing stores keep the global `IDENTITY` append
 path byte-for-byte. The flag **requires** `TenancyStyle.Conjoined` (there is nothing to partition by
-otherwise) and is currently incompatible with `UseArchivedStreamPartitioning` — a SQL Server table
-supports only one partition scheme; both raise an error at store construction.
+otherwise) and is incompatible with `UseArchivedStreamPartitioning` — a SQL Server table supports
+only one partition scheme. Archived partitioning is on by default, but it stays off when this flag is on and
+you have not set it yourself; setting both raises an error at store construction, as does this flag without
+`TenancyStyle.Conjoined`.
 
 Physical partitioning applies to `pc_events` and (since #335) `pc_streams`. The partition
 function/scheme are database-global objects, so a single database should host one tenant-partitioned
