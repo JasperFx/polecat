@@ -28,13 +28,21 @@ public class PreviewVersionedDoc : IVersioned
 ///     gh-1002 (ported from marten#5916): <c>ToSql()</c> rendered the statement before the preparation
 ///     execution runs, so for a document with metadata read columns it previewed <c>SELECT data ...</c>
 ///     while <c>SELECT data, guid_version ...</c> executed. Each fact compares the preview with the text
-///     SQL Server actually ran, read back from <c>sys.dm_exec_query_stats</c>.
+///     SQL Server actually ran, read back through <see cref="ExecutedStatements" />.
 /// </summary>
 public class tosql_preview_is_the_executed_sql_tests : OneOffConfigurationsContext
 {
     private const string Schema = "tosql_preview_is_the_executed_sql_tests";
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
+
+    public tosql_preview_is_the_executed_sql_tests()
+    {
+        // ExecutedStatements needs it: a pooled connection's re-run of a cached statement can stay out of the
+        // query stats
+        ConfigureStore(opts => opts.ConnectionString =
+            new SqlConnectionStringBuilder(ConnectionSource.ConnectionString) { Pooling = false }.ConnectionString);
+    }
 
     private async Task SeedAsync()
     {
@@ -56,70 +64,27 @@ public class tosql_preview_is_the_executed_sql_tests : OneOffConfigurationsConte
         string previewed;
         await using (var session = theStore.QuerySession())
         {
-            previewed = normalize(session.ToSql(query(session)));
+            previewed = ExecutedStatements.Normalize(session.ToSql(query(session)));
         }
 
         await using var conn = new SqlConnection(ConnectionSource.ConnectionString);
         await conn.OpenAsync(Ct);
 
-        DateTime start;
-        await using (var cmd = conn.CreateCommand())
-        {
-            cmd.CommandText = "SELECT DATEADD(millisecond, -50, GETDATE())";
-            start = (DateTime)(await cmd.ExecuteScalarAsync(Ct))!;
-        }
+        // #1046's fix for the sibling class, which this one missed: the old clock comparison could miss the
+        // query and read back the seeding MERGE instead
+        var snapshot = await ExecutedStatements.SnapshotAsync(conn, $"%{Schema}%pc_doc_{tableTypeName}%");
 
         await using (var session = theStore.QuerySession())
         {
             await query(session).ToListAsync(Ct);
         }
 
-        var executed = new List<string>();
-        await using (var cmd = conn.CreateCommand())
-        {
-            cmd.CommandText = """
-                SELECT st.text
-                FROM sys.dm_exec_query_stats qs
-                CROSS APPLY sys.dm_exec_sql_text(qs.sql_handle) st
-                WHERE qs.last_execution_time >= @start AND st.text LIKE @pattern
-                """;
-            cmd.Parameters.AddWithValue("@start", start);
-            cmd.Parameters.AddWithValue("@pattern", $"%{Schema}%pc_doc_{tableTypeName}%");
-
-            await using var reader = await cmd.ExecuteReaderAsync(Ct);
-            while (await reader.ReadAsync(Ct))
-            {
-                executed.Add(normalize(reader.GetString(0)));
-            }
-        }
+        var executed = await snapshot.ExecutedSinceAsync(x => x.Contains(previewed));
 
         executed.ShouldContain(previewed,
             $"ToSql() previewed:{Environment.NewLine}  {previewed}{Environment.NewLine}"
             + $"statements executed against the table since the query started:{Environment.NewLine}  "
             + string.Join(Environment.NewLine + "  ", executed));
-    }
-
-    // sp_executesql text starts with the parameter declarations, "(@p0 int,@p1 nvarchar(4000))SELECT ..."
-    private static string normalize(string sql)
-    {
-        var text = sql.Trim();
-        if (text.StartsWith("(@", StringComparison.Ordinal))
-        {
-            var depth = 0;
-            for (var i = 0; i < text.Length; i++)
-            {
-                if (text[i] == '(') depth++;
-                else if (text[i] == ')') depth--;
-
-                if (depth == 0)
-                {
-                    text = text[(i + 1)..].Trim();
-                    break;
-                }
-            }
-        }
-
-        return text.TrimEnd(';').Trim();
     }
 
     [Fact]

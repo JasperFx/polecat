@@ -146,7 +146,7 @@ public class tosql_preview_by_fetch_type_tests : OneOffConfigurationsContext
         {
             try
             {
-                previewed = normalize(terminal.Preview(session, query(session)));
+                previewed = ExecutedStatements.Normalize(terminal.Preview(session, query(session)));
             }
             catch (BadLinqExpressionException e)
             {
@@ -154,8 +154,7 @@ public class tosql_preview_by_fetch_type_tests : OneOffConfigurationsContext
             }
         }
 
-        var since = await serverNowAsync(conn);
-        var before = await queryStatsAsync(conn, pattern, since);
+        var snapshot = await ExecutedStatements.SnapshotAsync(conn, pattern);
 
         BadLinqExpressionException? executionRefusal = null;
         await using (var session = theStore.QuerySession())
@@ -174,15 +173,9 @@ public class tosql_preview_by_fetch_type_tests : OneOffConfigurationsContext
             }
         }
 
-        // A run can reach the query stats a moment after the session that ran it is gone, so give it a few
-        // seconds to appear. Waiting for it here also keeps it out of the next comparison's "before", where a
-        // late update would read as that terminal's statement.
-        var executed = await executedSinceAsync(conn, pattern, since, before);
-        for (var attempt = 0; executionRefusal == null && executed.Count == 0 && attempt < 100; attempt++)
-        {
-            await Task.Delay(50, Ct);
-            executed = await executedSinceAsync(conn, pattern, since, before);
-        }
+        // Waiting for the run to appear also keeps it out of the next comparison's "before", where a late update
+        // would read as that terminal's statement.
+        var executed = await snapshot.ExecutedSinceAsync(x => executionRefusal != null || x.Count != 0);
 
         if (executionRefusal != null || previewRefusal != null)
         {
@@ -198,89 +191,6 @@ public class tosql_preview_by_fetch_type_tests : OneOffConfigurationsContext
 
         return $"{terminal.Name}:{Environment.NewLine}  previewed: {previewed}{Environment.NewLine}"
                + $"  executed: {string.Join(Environment.NewLine + "            ", executed)}";
-    }
-
-    // A lower bound on last_execution_time that only keeps the scan of the plan cache short. Nothing is decided
-    // by it: a minute either side of the server's clock is far wider than any difference between the clock
-    // SYSDATETIME() reads and the one the query stats are stamped with.
-    private static async Task<DateTime> serverNowAsync(SqlConnection conn)
-    {
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT DATEADD(minute, -1, SYSDATETIME())";
-        return (DateTime)(await cmd.ExecuteScalarAsync(Ct))!;
-    }
-
-    // The statements with a query stats row that is new since before was read, or that has changed
-    private static async Task<List<string>> executedSinceAsync(SqlConnection conn, string pattern, DateTime since,
-        Dictionary<string, (string Text, string State)> before)
-    {
-        var after = await queryStatsAsync(conn, pattern, since);
-        return after
-            .Where(x => !before.TryGetValue(x.Key, out var earlier) || earlier.State != x.Value.State)
-            .Select(x => x.Value.Text)
-            .Distinct()
-            .ToList();
-    }
-
-    // The query stats rows of the statements against the table, each with the text it ran and a fingerprint of
-    // its state. A row is one statement of one cached plan. Running the statement moves its execution count and
-    // last execution time, and a recompile (the facts drop and recreate the table) starts the count again on a
-    // new creation time, so any run shows up as a changed fingerprint without comparing clocks. The recent
-    // entries are narrowed by time BEFORE their text is looked up: sys.dm_exec_sql_text over the whole
-    // server's plan cache takes tens of seconds on a busy test server, which a CROSS APPLY with both filters
-    // in one WHERE does not avoid.
-    private static async Task<Dictionary<string, (string Text, string State)>> queryStatsAsync(SqlConnection conn,
-        string pattern, DateTime since)
-    {
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            SELECT qs.sql_handle, qs.plan_handle, qs.statement_start_offset, qs.creation_time,
-                   qs.plan_generation_num, qs.execution_count, qs.last_execution_time
-            INTO #recent FROM sys.dm_exec_query_stats qs WHERE qs.last_execution_time >= @since;
-            SELECT CONVERT(varchar(max), r.sql_handle, 1) + CONVERT(varchar(max), r.plan_handle, 1)
-                       + ':' + CAST(r.statement_start_offset AS varchar(20)),
-                   CONVERT(varchar(30), r.creation_time, 126) + '/' + CAST(r.plan_generation_num AS varchar(20))
-                       + '/' + CAST(r.execution_count AS varchar(20)) + '/'
-                       + CONVERT(varchar(30), r.last_execution_time, 126),
-                   st.text
-            FROM #recent r CROSS APPLY sys.dm_exec_sql_text(r.sql_handle) st
-            WHERE st.text LIKE @pattern;
-            DROP TABLE #recent;
-            """;
-        cmd.Parameters.Add("@since", System.Data.SqlDbType.DateTime2).Value = since;
-        cmd.Parameters.AddWithValue("@pattern", pattern);
-
-        var rows = new Dictionary<string, (string Text, string State)>();
-        await using var reader = await cmd.ExecuteReaderAsync(Ct);
-        while (await reader.ReadAsync(Ct))
-        {
-            rows[reader.GetString(0)] = (normalize(reader.GetString(2)), reader.GetString(1));
-        }
-
-        return rows;
-    }
-
-    // sp_executesql text starts with the parameter declarations, "(@p0 int,@p1 nvarchar(4000))SELECT ..."
-    private static string normalize(string sql)
-    {
-        var text = sql.Trim();
-        if (text.StartsWith("(@", StringComparison.Ordinal))
-        {
-            var depth = 0;
-            for (var i = 0; i < text.Length; i++)
-            {
-                if (text[i] == '(') depth++;
-                else if (text[i] == ')') depth--;
-
-                if (depth == 0)
-                {
-                    text = text[(i + 1)..].Trim();
-                    break;
-                }
-            }
-        }
-
-        return text.TrimEnd(';').Trim();
     }
 
     [Fact]
