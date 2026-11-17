@@ -114,36 +114,40 @@ public class per_tenant_subscription_rewind_tests : IAsyncLifetime
         await daemon.StopAllAsync();
     }
 
-    // Returns a server-clock instant that falls between Red's first three events and the rest.
+    // Returns an instant that falls between Red's first three events and the rest.
     private static async Task<DateTimeOffset> AppendAroundACutAsync(DocumentStore store, CancellationToken token)
     {
-        await AppendAsync(store, "Red", 3, token);
-
-        // pc_events.timestamp is stamped by SQL Server, so the cut must come from the same clock.
-        await Task.Delay(50, token);
-        DateTimeOffset cut;
-        await using (var conn = new SqlConnection(ConnectionSource.ConnectionString))
-        {
-            await conn.OpenAsync(token);
-            await using var cmd = conn.CreateCommand();
-            cmd.CommandText = "SELECT SYSDATETIMEOFFSET();";
-            cut = (DateTimeOffset)(await cmd.ExecuteScalarAsync(token))!;
-        }
-
-        await Task.Delay(50, token);
-
+        var before = await AppendAsync(store, "Red", 3, token);
         await AppendAsync(store, "Blue", 2, token);
         await AppendAsync(store, "Red", 2, token);
+
+        // The timestamps are set rather than read off SQL Server's clock between the appends. That clock is
+        // the Docker VM's, which steps back when it resyncs after the VM has been starved, so a cut taken
+        // 50ms after Red's first events could land before them and make every Red event "after the cut".
+        var cut = new DateTimeOffset(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
+        await using var conn = new SqlConnection(ConnectionSource.ConnectionString);
+        await conn.OpenAsync(token);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"""
+            UPDATE [{Schema}].[pc_events]
+            SET timestamp = CASE WHEN stream_id = @before THEN @earlier ELSE @later END;
+            """;
+        cmd.Parameters.AddWithValue("@before", before);
+        cmd.Parameters.AddWithValue("@earlier", cut.AddMinutes(-1));
+        cmd.Parameters.AddWithValue("@later", cut.AddMinutes(1));
+        await cmd.ExecuteNonQueryAsync(token);
 
         return cut;
     }
 
-    private static async Task AppendAsync(DocumentStore store, string tenant, int count, CancellationToken token)
+    private static async Task<Guid> AppendAsync(DocumentStore store, string tenant, int count, CancellationToken token)
     {
+        var streamId = Guid.NewGuid();
         await using var session = store.LightweightSession(new SessionOptions { TenantId = tenant });
-        session.Events.StartStream(Guid.NewGuid(),
+        session.Events.StartStream(streamId,
             Enumerable.Range(1, count).Select(i => (object)new MembersJoined(i, tenant, [$"{tenant}{i}"])).ToArray());
         await session.SaveChangesAsync(token);
+        return streamId;
     }
 
     private static async Task WaitForAsync(Func<bool> condition, string description)
