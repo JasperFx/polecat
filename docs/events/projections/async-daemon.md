@@ -271,7 +271,7 @@ With per-tenant partitioned events this waits for the session's tenant only.
 
 The waits above are for the highest sequence in the store, and on a busy system that includes everybody else's
 events. If you just want to read back what you wrote, wait for your own events instead.
-`session.LastAppendedSequence` tells you where the last commit's events are, and `WaitForProjectionsAsync` waits
+`session.LastAppendedPosition` tells you where the last commit's events are, and `WaitForProjectionsAsync` waits
 for the named asynchronous projections to get that far:
 
 ```cs
@@ -280,7 +280,7 @@ session.Events.StartStream(Guid.NewGuid(), new QuestStarted("Destroy the Ring"))
 await session.SaveChangesAsync();
 
 var result = await store.WaitForProjectionsAsync(
-    session.LastAppendedSequence!, [typeof(QuestParty)], TimeSpan.FromSeconds(5));
+    session.LastAppendedPosition!, [typeof(QuestParty)], TimeSpan.FromSeconds(5));
 
 if (result.Reached)
 {

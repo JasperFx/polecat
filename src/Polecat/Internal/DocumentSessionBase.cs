@@ -3,6 +3,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using System.Text;
 using JasperFx;
+using JasperFx.Core;
 using JasperFx.Core.Reflection;
 using JasperFx.Events;
 using JasperFx.Events.Daemon;
@@ -1635,7 +1636,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     ///     one of the session's own tenant, or of the one tenant the commit appended for when that is another.
     ///     A commit that appends for several tenants other than the session's records the first of them.
     /// </remarks>
-    public EventStorePosition? LastAppendedSequence { get; private set; }
+    public EventStorePosition? LastAppendedPosition { get; private set; }
 
     private void recordAppendedPosition()
     {
@@ -1671,13 +1672,13 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         if (highest <= 0) return;
 
         // Only ever forward: a later commit on the same session cannot move the position back
-        if (LastAppendedSequence != null && LastAppendedSequence.TenantId == tenantId &&
-            LastAppendedSequence.Sequence >= highest)
+        if (LastAppendedPosition != null && LastAppendedPosition.TenantId == tenantId &&
+            LastAppendedPosition.Sequence >= highest)
         {
             return;
         }
 
-        LastAppendedSequence = new EventStorePosition(Options.StorageDatabase?.Identifier, tenantId, highest);
+        LastAppendedPosition = new EventStorePosition(Options.StorageDatabase?.Identifier, tenantId, highest);
     }
 
     /// <summary>
@@ -1927,7 +1928,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         {
             var e = events[i];
             e.Version = baseVersion + i + 1;
-            if (e.Id == Guid.Empty) e.Id = Guid.NewGuid();
+            if (e.Id == Guid.Empty) e.Id = SequentialGuid.NextSqlServerOrder();
             e.Timestamp = DateTimeOffset.UtcNow;
             e.TenantId = stream.TenantId;
             e.StreamId = stream.Id;
