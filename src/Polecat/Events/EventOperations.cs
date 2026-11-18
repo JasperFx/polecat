@@ -251,6 +251,15 @@ internal class EventOperations : QueryEventStore, IEventOperations, IEventOperat
         // ---- round trip 1: every stream's version ----
         var states = await fetchManyStreamStatesAsync(streamIds, cancellation).ConfigureAwait(false);
 
+        // ---- only for an Async aggregate with a stream that does not exist (polecat#1049) ----
+        for (var attempt = 1;
+             attempt < MaxFetchAttempts
+             && await anyStreamStartedSinceAsync<T>(streamIds, states, cancellation).ConfigureAwait(false);
+             attempt++)
+        {
+            states = await fetchManyStreamStatesAsync(streamIds, cancellation).ConfigureAwait(false);
+        }
+
         // ---- in memory: take each stream's write-cache baseline, so the read below can start from it ----
         var baselines = new AggregateBaseline<T>[streamIds.Length];
         for (var i = 0; i < streamIds.Length; i++)
@@ -292,7 +301,8 @@ internal class EventOperations : QueryEventStore, IEventOperations, IEventOperat
             T? aggregate = null;
             if (streamExists && version > 0)
             {
-                aggregate = await foldForWritingAsync(streamIds[i], version, events[i], baselines[i], cancellation).ConfigureAwait(false);
+                // polecat#1049: at the version the events read actually reached
+                (aggregate, version) = await foldForWritingAsync(streamIds[i], version, events[i], baselines[i], cancellation).ConfigureAwait(false);
                 cacheAggregateInIdentityMap<T>(streamIds[i], aggregate);
             }
 
@@ -300,6 +310,39 @@ internal class EventOperations : QueryEventStore, IEventOperations, IEventOperat
         }
 
         return streams;
+    }
+
+    /// <summary>
+    ///     polecat#1049 (marten#5799): for an Async aggregate, refuse a snapshot whose stream does not exist,
+    ///     and say whether any stream read as missing has been started since, so the versions are read again.
+    ///     No round trip at all for any other aggregate, or when every stream exists.
+    /// </summary>
+    private async Task<bool> anyStreamStartedSinceAsync<T>(object[] streamIds, StreamState?[] states,
+        CancellationToken cancellation) where T : class
+    {
+        List<object>? missing = null;
+        for (var i = 0; i < streamIds.Length; i++)
+        {
+            if (states[i] is null) (missing ??= []).Add(streamIds[i]);
+        }
+
+        if (missing is null) return false;
+
+        var snapshots = _sessionBase.AsyncSnapshotProviderFor<T>(missing[0].GetType());
+        if (snapshots is null) return false;
+
+        var checks = await _sessionBase.CheckMissingStreamsAsync(snapshots, missing, _tenantId, cancellation)
+            .ConfigureAwait(false);
+
+        for (var i = 0; i < checks.Length; i++)
+        {
+            if (checks[i] == MissingStreamCheck.SnapshotWithoutStream)
+            {
+                throw new Exceptions.SnapshotWithoutStreamException(typeof(T), missing[i]);
+            }
+        }
+
+        return checks.Contains(MissingStreamCheck.StartedSince);
     }
 
     /// <summary>
@@ -592,64 +635,103 @@ internal class EventOperations : QueryEventStore, IEventOperations, IEventOperat
     {
         await _sessionBase.ProvisionEventTenantBeforeHoldingLocksAsync(_tenantId, forExclusive, cancellation).ConfigureAwait(false);
 
+        // polecat#1049: an Async aggregate's snapshot is checked for a stream that does not exist
+        var snapshots = _sessionBase.AsyncSnapshotProviderFor<T>(streamId.GetType());
+
         if (forExclusive)
         {
             await _sessionBase.BeginTransactionAsync(cancellation).ConfigureAwait(false);
         }
 
-        // Query stream version
-        long version = 0;
-        bool streamExists = false;
-
-        // #919: a key the column can't hold is a new stream, not the one it collapses onto, and an
-        // exclusive fetch has no business locking that one.
-        if (await _sessionBase.CouldHaveStreamAsync(streamId, cancellation).ConfigureAwait(false))
+        for (var attempt = 1; ; attempt++)
         {
-            await using var cmd = new SqlCommand();
-            cmd.CommandText = forExclusive
-                ? _events.LockedStreamReadSql("version", "id = @id AND tenant_id = @tenant_id", _tenantId, cmd)
-                : $"SELECT version FROM {_events.StreamsTableName} WHERE id = @id AND tenant_id = @tenant_id;";
-            cmd.Parameters.AddIdParameter("@id", streamId, _events.UnicodeKeys);
-            cmd.Parameters.AddKey("@tenant_id", _tenantId, _events.UnicodeKeys);
+            var (version, streamExists) = await readVersionForWritingAsync(streamId, forExclusive, cancellation).ConfigureAwait(false);
 
-            object? result;
-            try
+            // polecat#1049 (marten#5799): a snapshot without its stream is refused, and a stream started since
+            // the version read is read again. The exclusive read holds a range lock on a missing stream, so
+            // nothing can start it underneath this fetch.
+            if (!streamExists && snapshots != null)
             {
-                result = await _sessionBase.ExecuteScalarAsync(cmd, cancellation).ConfigureAwait(false);
-            }
-            // #652: the UPDLOCK/HOLDLOCK read is the one statement here that can lose a deadlock or
-            // time out waiting on a lock, and this path had no guard at all — so
-            // FetchForExclusiveWriting raised a bare SqlException where AppendExclusive raised
-            // StreamLockedException, for the identical cause. Only the exclusive read is
-            // reinterpreted; an unlocked read cannot be a lock failure.
-            catch (Exception e) when (forExclusive && IsLockFailure(e))
-            {
-                throw new JasperFx.Events.StreamLockedException(streamId, FindLockFailure(e));
+                var check = (await _sessionBase.CheckMissingStreamsAsync(snapshots, [streamId], _tenantId,
+                    cancellation).ConfigureAwait(false))[0];
+
+                if (check == MissingStreamCheck.SnapshotWithoutStream)
+                {
+                    throw new Exceptions.SnapshotWithoutStreamException(typeof(T), streamId);
+                }
+
+                if (check == MissingStreamCheck.StartedSince && attempt < MaxFetchAttempts) continue;
             }
 
-            if (result != null && result != DBNull.Value)
+            // Checked before the events are read, so a stale expectation costs no event read
+            assertExpectedVersion<T>(streamId, expectedVersion, version);
+
+            T? aggregate = null;
+            if (streamExists && version > 0)
             {
-                version = (long)result;
-                streamExists = true;
+                // polecat#1049: the events read is a separate statement, so an append committed after the
+                // version read is in it. The fetch answers at the version it actually reached, aggregate
+                // and version together, which is also the version the write cache is given.
+                (aggregate, version) = await buildForWritingAsync<T>(streamId, version, cancellation).ConfigureAwait(false);
+                assertExpectedVersion<T>(streamId, expectedVersion, version);
+                cacheAggregateInIdentityMap<T>(streamId, aggregate);
             }
+
+            return trackForWriting<T>(streamId, version, streamExists, aggregate, cancellation);
         }
+    }
 
-        // Check expected version
+    /// <summary>
+    ///     How many times a fetch reads a stream it found missing and then found started (polecat#1049).
+    ///     A stream that keeps appearing and disappearing past this is answered as a new stream, and the
+    ///     append then fails on its own at <c>SaveChangesAsync</c>.
+    /// </summary>
+    private const int MaxFetchAttempts = 3;
+
+    private static void assertExpectedVersion<T>(object streamId, long? expectedVersion, long version)
+    {
         if (expectedVersion.HasValue && version != expectedVersion.Value)
         {
-            throw new EventStreamUnexpectedMaxEventIdException(streamId, typeof(T),
-                expectedVersion.Value, version);
+            throw new EventStreamUnexpectedMaxEventIdException(streamId, typeof(T), expectedVersion.Value, version);
         }
+    }
 
-        // Build aggregate if stream exists
-        T? aggregate = null;
-        if (streamExists && version > 0)
+    /// <summary>
+    ///     The stream's version for a fetch for writing, under <c>UPDLOCK, HOLDLOCK</c> for an exclusive one.
+    /// </summary>
+    private async Task<(long Version, bool StreamExists)> readVersionForWritingAsync(object streamId,
+        bool forExclusive, CancellationToken cancellation)
+    {
+        // #919: a key the column can't hold is a new stream, not the one it collapses onto, and an
+        // exclusive fetch has no business locking that one.
+        if (!await _sessionBase.CouldHaveStreamAsync(streamId, cancellation).ConfigureAwait(false))
         {
-            aggregate = await buildForWritingAsync<T>(streamId, version, cancellation).ConfigureAwait(false);
-            cacheAggregateInIdentityMap<T>(streamId, aggregate);
+            return (0, false);
         }
 
-        return trackForWriting<T>(streamId, version, streamExists, aggregate, cancellation);
+        await using var cmd = new SqlCommand();
+        cmd.CommandText = forExclusive
+            ? _events.LockedStreamReadSql("version", "id = @id AND tenant_id = @tenant_id", _tenantId, cmd)
+            : $"SELECT version FROM {_events.StreamsTableName} WHERE id = @id AND tenant_id = @tenant_id;";
+        cmd.Parameters.AddIdParameter("@id", streamId, _events.UnicodeKeys);
+        cmd.Parameters.AddKey("@tenant_id", _tenantId, _events.UnicodeKeys);
+
+        object? result;
+        try
+        {
+            result = await _sessionBase.ExecuteScalarAsync(cmd, cancellation).ConfigureAwait(false);
+        }
+        // #652: the UPDLOCK/HOLDLOCK read is the one statement here that can lose a deadlock or
+        // time out waiting on a lock, and this path had no guard at all — so
+        // FetchForExclusiveWriting raised a bare SqlException where AppendExclusive raised
+        // StreamLockedException, for the identical cause. Only the exclusive read is
+        // reinterpreted; an unlocked read cannot be a lock failure.
+        catch (Exception e) when (forExclusive && IsLockFailure(e))
+        {
+            throw new JasperFx.Events.StreamLockedException(streamId, FindLockFailure(e));
+        }
+
+        return result != null && result != DBNull.Value ? ((long)result, true) : (0, false);
     }
 
     /// <summary>
@@ -724,7 +806,8 @@ internal class EventOperations : QueryEventStore, IEventOperations, IEventOperat
     ///         <see cref="IAggregateWriteCache.TryTake" /> has already removed the entry.
     ///     </para>
     /// </remarks>
-    private async Task<T?> buildForWritingAsync<T>(object streamId, long version, CancellationToken cancellation)
+    private async Task<(T? Aggregate, long Version)> buildForWritingAsync<T>(object streamId, long version,
+        CancellationToken cancellation)
         where T : class
     {
         var baseline = takeWriteBaseline<T>(streamId, version);
@@ -779,9 +862,18 @@ internal class EventOperations : QueryEventStore, IEventOperations, IEventOperat
     ///     entry. No I/O beyond the aggregator itself, so both the one-stream and many-stream forms
     ///     finish a stream the same way.
     /// </summary>
-    private async Task<T?> foldForWritingAsync<T>(object streamId, long version, IReadOnlyList<IEvent> events,
-        AggregateBaseline<T> baseline, CancellationToken cancellation) where T : class
+    private async Task<(T? Aggregate, long Version)> foldForWritingAsync<T>(object streamId, long version,
+        IReadOnlyList<IEvent> events, AggregateBaseline<T> baseline, CancellationToken cancellation) where T : class
     {
+        // polecat#1049 (marten#5799): the version read and the events read are separate statements, so an
+        // append committed between them is in the events. The aggregate reflects it, so the version this
+        // fetch answers with, and the write cache stores, is the newest the two reads saw. Claiming the
+        // version read first would have the next cache hit apply those events again.
+        foreach (var @event in events)
+        {
+            if (@event.Version > version) version = @event.Version;
+        }
+
         T? aggregate;
         if (events.Count > 0)
         {
@@ -810,7 +902,7 @@ internal class EventOperations : QueryEventStore, IEventOperations, IEventOperat
         if (baseline.Cacheable && aggregate != null)
         {
             // Deferred to the commit, and stored at the version the instance actually reflects --
-            // `version`, the stream version read at the top of this fetch, NOT the version the
+            // `version`, the newest version this fetch's reads saw (see above), NOT the version the
             // commit lands on. Polecat does not apply appended events to the instance it handed out
             // (an inline projection writes its own document rather than mutating this one), so
             // claiming the committed version would silently skip every event this session appended
@@ -823,7 +915,7 @@ internal class EventOperations : QueryEventStore, IEventOperations, IEventOperat
             _sessionBase.RegisterAggregateWriteCacheEntry(baseline.Cache, baseline.Key, aggregate, version);
         }
 
-        return aggregate;
+        return (aggregate, version);
     }
 
     /// <summary>

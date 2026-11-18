@@ -14,6 +14,9 @@ internal class BatchedQueryable<T> : IBatchedQueryable<T> where T : class
     private readonly DocumentProvider _provider;
     private readonly StoreOptions _options;
     private readonly string _tenantId;
+
+    /// <summary>polecat#1048: the batch's session's tenant scope.</summary>
+    internal SessionTenantScope? TenantScope { get; init; }
     private readonly ISerializer _serializer;
     private readonly List<Expression<Func<T, bool>>> _predicates = [];
 
@@ -83,7 +86,7 @@ internal class BatchedQueryable<T> : IBatchedQueryable<T> where T : class
             statement.Wheres.Add(fragment);
         }
 
-        statement.Wheres.AddRange(ImplicitFilters.For(_provider.Mapping, typeof(T), _tenantId));
+        statement.Wheres.AddRange(ImplicitFilters.For(_provider.Mapping, typeof(T), _tenantId, scope: TenantScope));
 
         return statement;
     }

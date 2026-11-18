@@ -452,6 +452,25 @@ running the same shard, or a rewind), the batch fails with `ProgressionProgressO
 nothing, where it used to write its own sequence over the row ([#1060](https://github.com/JasperFx/polecat/issues/1060)).
 Nothing to change in your code. The per-identity rebuild depends on it.
 
+## Upgrading to 6.0: a snapshot without its stream throws `SnapshotWithoutStreamException`
+
+For an aggregate projected with `ProjectionLifecycle.Async`, `FetchForWriting()`, `FetchForExclusiveWriting()`,
+`FetchManyForWriting()` and `FetchLatest()` now throw `SnapshotWithoutStreamException` when the aggregate's
+snapshot document exists but its stream does not. That happens after `DeleteAllEventDataAsync()` or
+`CleanAllEventDataAsync()`, which leave documents in place. In 5.x `FetchForWriting()` answered as if the stream
+were new, and the async daemon then folded the new stream's events onto the old snapshot. Delete the snapshot
+documents along with the events, for example with `CleanAsync<T>()` ([cleaning](/schema/cleaning),
+[#1049](https://github.com/JasperFx/polecat/issues/1049), marten#5799).
+
+The check costs one more round trip, and only for a fetch of an `Async` aggregate whose stream does not exist.
+
+A fetch for writing reads the stream version and then the events, as two statements. An event appended between
+the two is now part of the answer: the aggregate and `CurrentVersion` both reflect it, the handle appends at
+that version, and the write cache stores the aggregate at it. In 5.x the version was the one read first, so
+the aggregate and its version could disagree. `FetchForWriting(id, expectedVersion)` throws
+`EventStreamUnexpectedMaxEventIdException` straight away when the events read reaches past the expected
+version.
+
 ## Upgrading to 6.0: `MasterTableTenancy` runs on Weasel's shared base
 
 `MasterTableTenancy` now derives from Weasel's `MasterTableTenancyBase<PolecatDatabase, DbDataSource>`,
