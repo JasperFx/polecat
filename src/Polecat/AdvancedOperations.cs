@@ -1371,6 +1371,13 @@ public class AdvancedOperations
             .Where(t => !string.IsNullOrEmpty(t) && manager.Ordinals.ContainsKey(t))
             .ToDictionary(t => t, t => manager.Ordinals[t], StringComparer.Ordinal);
 
+        if (behavior == TenantDropBehavior.DeleteData)
+        {
+            var kept = manager.Ordinals.Where(x => !captured.ContainsKey(x.Key)).Select(x => x.Value).ToHashSet();
+            var releasing = captured.Values.Distinct().Where(o => !kept.Contains(o)).ToArray();
+            await DeleteReferencingDocumentsFirstAsync(conn, releasing, token).ConfigureAwait(false);
+        }
+
         await manager.DropPartitionFromAllTables(logger, _store.Database, tenantIds, behavior, token)
             .ConfigureAwait(false);
 
@@ -1902,5 +1909,54 @@ public class AdvancedOperations
                     .ConfigureAwait(false);
             }
         }, (connStr, schema, ordinals), token).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    ///     #1075: delete a released ordinal's rows from every tenant-partitioned document table that has a
+    ///     foreign key to another one, children first, before Weasel's <c>DeleteData</c> purge runs.
+    /// </summary>
+    /// <remarks>
+    ///     Weasel purges the managed tables in the order the document schema yields them, which puts a referenced
+    ///     table ahead of the tables pointing at it. Its <c>DELETE</c> then fails on the foreign key, and it
+    ///     logs that and leaves the table's boundary in place. With the referencing rows already gone,
+    ///     every table it purges afterwards has nothing pointing into it.
+    /// </remarks>
+    private async Task DeleteReferencingDocumentsFirstAsync(SqlConnection conn, int[] ordinals, CancellationToken token)
+    {
+        if (ordinals.Length == 0) return;
+
+        var partitioned = _store.Options.Providers.AllProviders
+            .Select(x => x.Mapping)
+            .Where(x => x.TenantPartitioned)
+            .ToArray();
+
+        string tableFor(DocumentMapping mapping) => SqlEscaping.QualifiedName(mapping.DatabaseSchemaName, mapping.TableName);
+
+        var edges = new List<(string Child, string Parent)>();
+        foreach (var mapping in partitioned)
+        {
+            foreach (var fk in mapping.ForeignKeys)
+            {
+                var reference = new DocumentMapping(fk.ReferenceDocumentType, _store.Options);
+                if (reference.TenantPartitioned)
+                {
+                    edges.Add((tableFor(mapping), tableFor(reference)));
+                }
+            }
+        }
+
+        if (edges.Count == 0) return;
+
+        var children = edges.Select(x => x.Child).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        foreach (var table in TenantDataCleaner.OrderChildrenFirst(children, edges))
+        {
+            foreach (var ordinal in ordinals)
+            {
+                await using var cmd = conn.CreateCommand();
+                cmd.CommandText = $"DELETE FROM {table} WHERE {DocumentMapping.TenantOrdinalColumn} = @ordinal;";
+                cmd.Parameters.Add("@ordinal", SqlDbType.Int).Value = ordinal;
+                await cmd.ExecuteNonQueryAsync(token).ConfigureAwait(false);
+            }
+        }
     }
 }

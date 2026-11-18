@@ -264,3 +264,7 @@ Notes:
   (`opts.Schema.For<T>()` or prior use); a table created later bakes the full boundary set at
   creation.
 - The daemon's dead-letter document (`pc_doc_deadletterevent`) is always excluded, mirroring Marten.
+- A `ForeignKey<T>()` between two tenant-partitioned documents references
+  `(tenant_id, id, tenant_ordinal)`, because that is the referenced table's primary key. A document that
+  is not partitioned (opted out, or not multi-tenanted) can't have a foreign key to one that is, and Polecat
+  refuses that at start-up. The other way around is fine.

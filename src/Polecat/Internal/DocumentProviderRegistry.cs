@@ -236,7 +236,8 @@ internal class DocumentProviderRegistry
             // schema migration, SPLIT by AddPolecatManagedTenantsAsync) at activation time.
             if (_options.Policies.DocumentTenantPartitioningEnabled)
             {
-                GetProvider(exprType.GetGenericArguments()[0]);
+                // #1075: an unpartitioned document can't reference a partitioned one, so say so now
+                GetProvider(exprType.GetGenericArguments()[0]).Mapping.AssertForeignKeysFitTenantPartitioning();
             }
 
             var partitioningField = exprType.GetField("Partitioning", BindingFlags.NonPublic | BindingFlags.Instance);

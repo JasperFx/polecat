@@ -165,9 +165,18 @@ internal partial class DocumentTable
     ///         <c>(tenant_id, col) → (tenant_id, id)</c> shape below. That is fixed in the Weasel this
     ///         pins, and it is the reason a conjoined foreign key can be modeled at all.
     ///     </para>
+    ///     <para>
+    ///         #1075: between two tenant-partitioned tables the key is
+    ///         <c>(tenant_id, col, tenant_ordinal) → (tenant_id, id, tenant_ordinal)</c>, because SQL Server
+    ///         puts the partition column in the referenced table's primary key. Marten partitions on
+    ///         <c>tenant_id</c> itself, so its key never grows and this shape has no Marten twin.
+    ///     </para>
     /// </remarks>
     private void AddDeclaredForeignKeys(DocumentMapping mapping, bool includeConstraints)
     {
+        // #1075: refused at store construction, and here again for a mapping that never went through it
+        mapping.AssertForeignKeysFitTenantPartitioning();
+
         foreach (var fk in mapping.ForeignKeys)
         {
             var reference = new DocumentMapping(fk.ReferenceDocumentType, mapping.StoreOptions);
@@ -185,14 +194,22 @@ internal partial class DocumentTable
             var conjoined = mapping.TenancyStyle == TenancyStyle.Conjoined
                             && reference.TenancyStyle == TenancyStyle.Conjoined;
 
+            // #1075: a tenant-partitioned table's key is (tenant_id, id, tenant_ordinal), so a reference
+            // to one carries tenant_ordinal too. Both rows of one tenant resolve the same ordinal from the
+            // one pc_tenant_partitions registry, so a valid same-tenant reference always matches.
+            var partitioned = conjoined && reference.TenantPartitioned;
+
+            string[] columnNames = [JasperFx.StorageConstants.TenantIdColumn, columnName, DocumentMapping.TenantOrdinalColumn];
+            string[] linkedNames = [JasperFx.StorageConstants.TenantIdColumn, "id", DocumentMapping.TenantOrdinalColumn];
+
             var foreignKey = new ForeignKey(fk.ConstraintName ?? $"fk_{mapping.TableName}_{columnName}")
             {
                 LinkedTable = new SqlServerObjectName(reference.DatabaseSchemaName, reference.TableName),
-                ColumnNames = conjoined
-                    ? [JasperFx.StorageConstants.TenantIdColumn, columnName]
+                ColumnNames = partitioned ? columnNames
+                    : conjoined ? columnNames[..2]
                     : [columnName],
-                LinkedNames = conjoined
-                    ? [JasperFx.StorageConstants.TenantIdColumn, "id"]
+                LinkedNames = partitioned ? linkedNames
+                    : conjoined ? linkedNames[..2]
                     : ["id"],
                 // DocumentForeignKey carries the DIALECT-NEUTRAL Weasel.Core.CascadeAction, which is
                 // what the public DSL takes; Weasel's SQL Server ForeignKey.OnDelete is the SQL
