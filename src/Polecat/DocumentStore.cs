@@ -93,6 +93,9 @@ public partial class DocumentStore : IDocumentStore
         // Fail fast on an incoherent per-tenant partitioning configuration (#163 Phase 1).
         options.EventGraph.AssertTenantPartitioningValidity();
 
+        // #1057: your own tables partitioned per tenant, on the store's tenant partition scheme
+        options.Storage.ApplyTenantPartitioning();
+
         // Fail fast on a masking rule that could only ever appear to work (#860)
         options.EventGraph.AssertMaskingRulesCanRun();
 

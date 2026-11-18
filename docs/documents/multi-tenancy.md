@@ -99,6 +99,62 @@ The async daemon starts one daemon per tenant database with the default tenant d
 [No default tenant is required](/configuration/multitenancy#no-default-tenant-is-required).
 :::
 
+## Partitioning your own tables by tenant <Badge type="tip" text="6.0" />
+
+If you add your own tables to the store through `opts.Storage.ExtendedSchemaObjects` and want them partitioned per
+tenant the same way as the document and event tables, use `opts.Storage.PartitionPerTenant(table)`:
+
+<!-- snippet: sample_partition_extended_table_per_tenant -->
+<a id='snippet-sample_partition_extended_table_per_tenant'></a>
+```cs
+var table = new Table(new DbObjectName(Schema, "ledger_entries"));
+table.AddColumn<Guid>("id").AsPrimaryKey();
+table.AddColumn("tenant_id", "varchar(250)").NotNull();
+table.AddColumn<int>("amount");
+
+// One partition per tenant on the store's tenant partition scheme, by the tenant_ordinal
+// column Polecat adds, and left alone by later schema migrations
+opts.Storage.PartitionPerTenant(table);
+```
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.Tests/MultiTenancy/partition_extended_table_per_tenant.cs#L92-L103' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_partition_extended_table_per_tenant' title='Start of snippet'>anchor</a></sup>
+<!-- endSnippet -->
+
+The store has to use Polecat-managed tenant partitioning (`Policies.PartitionMultiTenantedDocumentsUsingPolecatManagement()`
+or `Events.UseTenantPartitionedEvents`). If it doesn't, building the store throws.
+
+SQL Server partitions by a number, not by the tenant id, so the table is partitioned on the store's tenant partition
+scheme by a `tenant_ordinal int NOT NULL` column. Polecat adds the column if the table doesn't have one, adds it to the
+table's primary key, because SQL Server requires the partition column in the clustered index, and adds the table to
+`ExtendedSchemaObjects` if you haven't already. `AddPolecatManagedTenantsAsync()`, or a tenant's first write, then adds
+each tenant's partition to your table along with Polecat's own tables. A later schema migration leaves those
+partitions alone, so re-applying the schema to a database that already has tenants doesn't rebuild the table.
+
+Your inserts have to write the tenant's ordinal into `tenant_ordinal`. In SQL, the store's `pc_tenant_ordinal()`
+function answers it for a registered tenant, and `NULL` for one that isn't, so the insert fails on the `NOT NULL`
+column:
+
+<!-- snippet: sample_insert_into_a_table_partitioned_per_tenant -->
+<a id='snippet-sample_insert_into_a_table_partitioned_per_tenant'></a>
+```cs
+// tenant_ordinal comes from the store's pc_tenant_ordinal() function
+var sql = $"""
+    INSERT INTO {Schema}.ledger_entries (id, tenant_id, tenant_ordinal, amount)
+    VALUES (NEWID(), @tenant_id, {Schema}.pc_tenant_ordinal(@tenant_id), @amount);
+    """;
+```
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.Tests/MultiTenancy/partition_extended_table_per_tenant.cs#L109-L117' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_insert_into_a_table_partitioned_per_tenant' title='Start of snippet'>anchor</a></sup>
+<!-- endSnippet -->
+
+From .NET, `store.Advanced.TenantOrdinalAsync()` answers it, and registers the tenant first if it's new:
+
+<!-- snippet: sample_tenant_ordinal_from_the_store -->
+<a id='snippet-sample_tenant_ordinal_from_the_store'></a>
+```cs
+var ordinal = await store.Advanced.TenantOrdinalAsync("acme", Ct);
+```
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.Tests/MultiTenancy/partition_extended_table_per_tenant.cs#L245-L247' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_tenant_ordinal_from_the_store' title='Start of snippet'>anchor</a></sup>
+<!-- endSnippet -->
+
 ## ITenanted Interface
 
 Documents implementing `ITenanted` have their `TenantId` property automatically synced:

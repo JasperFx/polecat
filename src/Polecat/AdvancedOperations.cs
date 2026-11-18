@@ -1232,6 +1232,28 @@ public class AdvancedOperations
     // ---- runtime tenant onboarding under managed per-tenant partitioning (#335) ----
 
     /// <summary>
+    ///     #1057: the tenant's partition ordinal under Polecat-managed tenant partitioning, the value to write
+    ///     into <c>tenant_ordinal</c> in a table of your own partitioned with
+    ///     <see cref="StorageFeatures.PartitionPerTenant" />. A tenant that isn't registered yet is registered,
+    ///     and its partitions are added, as its first write would. In SQL, <c>{schema}.pc_tenant_ordinal(@tenant_id)</c>
+    ///     answers the same for a tenant that is already registered, and <c>NULL</c> otherwise.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">The store doesn't use Polecat-managed tenant partitioning.</exception>
+    public async Task<int> TenantOrdinalAsync(string tenantId, CancellationToken token = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(tenantId);
+
+        var events = AssertManagedTenantPartitioning();
+        var ordinal = await events.TenantOrdinals.ResolveAsync(tenantId, insideTransaction: false, token)
+            .ConfigureAwait(false);
+
+        await EnsureTenantSequencesAsync(events, new Dictionary<string, int> { [tenantId] = ordinal }, token)
+            .ConfigureAwait(false);
+
+        return ordinal;
+    }
+
+    /// <summary>
     ///     Explicitly onboard tenants under the store's managed per-tenant partitioning — the SQL
     ///     Server counterpart of Marten's <c>AddMartenManagedTenantsAsync</c>. Each tenant is
     ///     registered in the <c>pc_tenant_partitions</c> registry, allocated a compact partition

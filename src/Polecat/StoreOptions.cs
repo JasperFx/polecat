@@ -38,6 +38,7 @@ public class StoreOptions
     public StoreOptions()
     {
         Policies = new StorePolicies(this);
+        Storage = new StorageFeatures(this);
         EventGraph = new EventGraph(this);
         Events.EventGraph = EventGraph;
         Projections = new PolecatProjectionOptions(EventGraph);
@@ -335,7 +336,7 @@ public class StoreOptions
 
             foreach (var expression in Schema.Expressions)
             {
-                if (expression is Storage.IDocumentTenancyDeclaration { IsMultiTenanted: true }) return true;
+                if (expression is Polecat.Storage.IDocumentTenancyDeclaration { IsMultiTenanted: true }) return true;
             }
 
             return false;
@@ -370,7 +371,7 @@ public class StoreOptions
 
         foreach (var expression in Schema.Expressions)
         {
-            if (expression is Storage.IDocumentTenancyDeclaration { IsMultiTenanted: true } declaration
+            if (expression is Polecat.Storage.IDocumentTenancyDeclaration { IsMultiTenanted: true } declaration
                 && declaration.MappedType == documentType)
             {
                 return TenancyStyle.Conjoined;
@@ -640,10 +641,10 @@ public class StoreOptions
     // #273: back-reference to the store's PolecatDatabase (set by DocumentStore construction,
     // same pattern as Providers above) so sessions can expose it through the shared
     // Weasel.Storage.IStorageSession.Database seam.
-    internal Storage.PolecatDatabase? StorageDatabase { get; set; }
+    internal Polecat.Storage.PolecatDatabase? StorageDatabase { get; set; }
 
     /// <summary>
-    ///     The store built from these options. Here rather than on each <see cref="Storage.PolecatDatabase" />
+    ///     The store built from these options. Here rather than on each <see cref="Polecat.Storage.PolecatDatabase" />
     ///     because a tenancy builds its databases itself, some of them long after the store, from nothing
     ///     but these options.
     /// </summary>
@@ -747,6 +748,12 @@ public class StoreOptions
     ///     to register entity tables for Weasel schema migration.
     /// </summary>
     public List<Weasel.Core.ISchemaObject> ExtendedSchemaObjects { get; } = new();
+
+    /// <summary>
+    ///     Schema objects of your own that this store manages, including tables partitioned per tenant
+    ///     (<see cref="StorageFeatures.PartitionPerTenant" />).
+    /// </summary>
+    public StorageFeatures Storage { get; }
 
     /// <summary>
     ///     Replace the default Polly resilience pipeline with a custom one.
