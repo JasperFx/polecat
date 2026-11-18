@@ -905,6 +905,9 @@
              fails CatchUpAsync with "The channel has been closed", jasperfx#1233 a rebuild no longer misses a start
              that was still registering (the loser throws ShardStartException with reason Rebuilding), and
              jasperfx#1232 IdentityRebuildCompliance counts a document that loads as null as not live. -->
+        <!-- JasperFx 3.8.0 (from 3.7.1, 6.0.0-alpha.7): jasperfx#1242 (#1241) the source-generated Evolve dispatcher
+             applies conventional Apply methods inherited from a base class. Polecat bundles the generator from the
+             pinned JasperFx.Events.SourceGenerator package, so the packed Polecat carries the 3.8.0 generator. -->
         <PackageVersion Include="JasperFx" Version="3.8.0" />
         <PackageVersion Include="JasperFx.Events" Version="3.8.0" />
         <!--
@@ -1533,6 +1536,8 @@
         <!-- Weasel 10.0.0-alpha.9 (from alpha.8). weasel#880: Identifications.ForSequentialGuid / ForValueType and
              the identification constructors take an IGuidGenerator. ADOPTED: Polecat passes
              SequentialGuid.SqlServerOrder, so new document ids go in at the end of the clustered key. -->
+        <!-- Weasel 10.0.0-alpha.11 (from alpha.9, through alpha.10). Builds with no Polecat change. weasel#890 makes
+             AdvancedOperations.DeleteReferencingDocumentsFirstAsync (#1085) redundant; it stays, since it is harmless. -->
         <PackageVersion Include="Weasel.EntityFrameworkCore" Version="10.0.0-alpha.11" />
         <PackageVersion Include="Weasel.SqlServer" Version="10.0.0-alpha.11" />
         <PackageVersion Include="Weasel.Storage" Version="10.0.0-alpha.11" />
