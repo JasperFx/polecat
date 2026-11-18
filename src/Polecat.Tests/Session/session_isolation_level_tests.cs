@@ -42,14 +42,26 @@ public class session_isolation_level_tests : OneOffConfigurationsContext
     /// <summary>
     ///     On by default in <c>master</c>, where CI runs, and off in a catalog made for a parallel worker.
     /// </summary>
-    internal static async Task AllowSnapshotIsolationAsync(CancellationToken token)
+    internal static Task AllowSnapshotIsolationAsync(CancellationToken token) =>
+        AllowSnapshotIsolationAsync(ConnectionSource.ConnectionString, token);
+
+    /// <remarks>
+    ///     #1039: the ALTER goes through dynamic SQL, by the catalog's name. SQL Server refuses
+    ///     <c>ALTER DATABASE CURRENT</c> on a system database when it compiles the batch, before the IF
+    ///     is evaluated, so a plain run against <c>master</c> failed here although master already allows
+    ///     snapshot isolation and the ALTER would never have run.
+    /// </remarks>
+    internal static async Task AllowSnapshotIsolationAsync(string connectionString, CancellationToken token)
     {
-        await using var conn = new SqlConnection(ConnectionSource.ConnectionString);
+        await using var conn = new SqlConnection(connectionString);
         await conn.OpenAsync(token);
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = """
             IF (SELECT snapshot_isolation_state FROM sys.databases WHERE name = DB_NAME()) = 0
-                ALTER DATABASE CURRENT SET ALLOW_SNAPSHOT_ISOLATION ON;
+            BEGIN
+                DECLARE @sql nvarchar(400) = N'ALTER DATABASE ' + QUOTENAME(DB_NAME()) + N' SET ALLOW_SNAPSHOT_ISOLATION ON;';
+                EXEC sp_executesql @sql;
+            END
             """;
         await cmd.ExecuteNonQueryAsync(token);
     }
@@ -307,5 +319,66 @@ public class session_isolation_level_tests : OneOffConfigurationsContext
         described.Level.ShouldBe(ReadCommittedLevel);
 
         SqlConnection.ClearPool(new SqlConnection(connectionString));
+    }
+}
+
+/// <summary>
+///     #1039: the snapshot-isolation helper every snapshot test calls has to work against the server's
+///     <c>master</c> catalog, where a plain run of the suite points by default.
+/// </summary>
+public class allow_snapshot_isolation_helper_tests
+{
+    [Fact]
+    public async Task works_against_a_system_database()
+    {
+        await session_isolation_level_tests.AllowSnapshotIsolationAsync(
+            ConnectionSource.MasterConnectionString, TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
+    public async Task turns_snapshot_isolation_on_in_a_catalog_where_it_is_off()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var catalog = ConnectionSource.Scoped("snapshot_helper");
+
+        await using (var conn = new SqlConnection(ConnectionSource.MasterConnectionString))
+        {
+            await conn.OpenAsync(ct);
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = $"""
+                IF DB_ID('{catalog}') IS NOT NULL
+                BEGIN
+                    ALTER DATABASE [{catalog}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
+                    DROP DATABASE [{catalog}];
+                END
+                CREATE DATABASE [{catalog}];
+                ALTER DATABASE [{catalog}] SET ALLOW_SNAPSHOT_ISOLATION OFF;
+                """;
+            await cmd.ExecuteNonQueryAsync(ct);
+        }
+
+        try
+        {
+            await session_isolation_level_tests.AllowSnapshotIsolationAsync(
+                ConnectionSource.ConnectionStringFor(catalog), ct);
+
+            await using var conn = new SqlConnection(ConnectionSource.MasterConnectionString);
+            await conn.OpenAsync(ct);
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = $"SELECT snapshot_isolation_state FROM sys.databases WHERE name = '{catalog}'";
+            Convert.ToInt32(await cmd.ExecuteScalarAsync(ct)).ShouldBe(1);
+        }
+        finally
+        {
+            SqlConnection.ClearAllPools();
+            await using var conn = new SqlConnection(ConnectionSource.MasterConnectionString);
+            await conn.OpenAsync(ct);
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = $"""
+                ALTER DATABASE [{catalog}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
+                DROP DATABASE [{catalog}];
+                """;
+            await cmd.ExecuteNonQueryAsync(ct);
+        }
     }
 }
