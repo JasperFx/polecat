@@ -168,7 +168,7 @@ public partial class OrderShippingNotificationProjection : MultiStreamProjection
     }
 }
 ```
-<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.Tests/Projections/composite_try_find_upstream_cache_tests.cs#L66-L120' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_try_find_upstream_cache' title='Start of snippet'>anchor</a></sup>
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.EventSourcingTests/Projections/composite_try_find_upstream_cache_tests.cs#L66-L120' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_try_find_upstream_cache' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 `TryFindUpstreamCache` returns `false` when no upstream stage of this composite is

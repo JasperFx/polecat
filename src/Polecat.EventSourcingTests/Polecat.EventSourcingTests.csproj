@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <!-- #1063: events, DCB, projections and subscriptions. -->
+    <Import Project="..\Polecat.Tests.Common.props" />
+
+    <!-- #808: the union tests compile on net11.0 only. -->
+    <ItemGroup Condition="'$(TargetFramework)' != 'net11.0'">
+        <Compile Remove="Unions/**/*.cs" />
+    </ItemGroup>
+
+</Project>

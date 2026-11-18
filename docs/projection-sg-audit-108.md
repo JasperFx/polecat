@@ -180,7 +180,7 @@ this audit.
 ## CI regression guard
 
 A focused dispatcher-resolution harness lives at
-`src/Polecat.Tests/Projections/projection_sg_dispatch_audit_tests.cs`.
+`src/Polecat.EventSourcingTests/Projections/projection_sg_dispatch_audit_tests.cs`.
 It registers every emit-expected test-library projection through a
 fresh `DocumentStore` and asserts construction completes without
 `InvalidProjectionException`. Future `JasperFx.Events.SourceGenerator`

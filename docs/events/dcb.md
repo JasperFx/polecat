@@ -32,7 +32,7 @@ public override async ValueTask InitializeAsync()
     });
 }
 ```
-<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.Tests/Events/dcb_documentation_samples.cs#L77-L89' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_dcb_registering_tag_types' title='Start of snippet'>anchor</a></sup>
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.EventSourcingTests/Events/dcb_documentation_samples.cs#L30-L42' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_dcb_registering_tag_types' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 Each tag type gets its own table (`pc_event_tag_student`, `pc_event_tag_course`, etc.) with a composite primary key of `(value, seq_id)`.
@@ -48,7 +48,7 @@ Tag types should be simple wrapper records around a primitive value:
 public record StudentId(Guid Value);
 public record CourseId(Guid Value);
 ```
-<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.Tests/Events/dcb_documentation_samples.cs#L9-L13' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_dcb_tag_type_definitions' title='Start of snippet'>anchor</a></sup>
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.Tests.Shared/Events/DcbDocumentationTypes.cs#L9-L13' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_dcb_tag_type_definitions' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 Supported inner value types: `Guid`, `string`, `int`, `long`, `short`.
@@ -79,7 +79,7 @@ enrolled.WithTag(studentId, courseId);
 theSession.Events.Append(streamId, enrolled);
 await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 ```
-<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.Tests/Events/dcb_documentation_samples.cs#L98-L103' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_dcb_tagging_events' title='Start of snippet'>anchor</a></sup>
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.EventSourcingTests/Events/dcb_documentation_samples.cs#L51-L56' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_dcb_tagging_events' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 Events can have multiple tags of different types. Tags are persisted to their respective tag tables in the same transaction as the event.
@@ -94,7 +94,7 @@ Use `EventTagQuery` to build a query, then execute it with `QueryByTagsAsync`:
 var query = new EventTagQuery().Or<StudentId>(studentId);
 var events = await session2.Events.QueryByTagsAsync(query, TestContext.Current.CancellationToken);
 ```
-<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.Tests/Events/dcb_documentation_samples.cs#L106-L109' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_dcb_query_by_single_tag' title='Start of snippet'>anchor</a></sup>
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.EventSourcingTests/Events/dcb_documentation_samples.cs#L59-L62' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_dcb_query_by_single_tag' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 ### Multiple Tags (OR)
@@ -108,7 +108,7 @@ var query = new EventTagQuery()
 
 var events = await session2.Events.QueryByTagsAsync(query, TestContext.Current.CancellationToken);
 ```
-<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.Tests/Events/dcb_documentation_samples.cs#L135-L141' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_dcb_query_multiple_tags_or' title='Start of snippet'>anchor</a></sup>
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.EventSourcingTests/Events/dcb_documentation_samples.cs#L88-L94' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_dcb_query_multiple_tags_or' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 ### Filtering by Event Type
@@ -121,7 +121,7 @@ var query = new EventTagQuery()
 
 var events = await session2.Events.QueryByTagsAsync(query, TestContext.Current.CancellationToken);
 ```
-<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.Tests/Events/dcb_documentation_samples.cs#L162-L167' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_dcb_query_by_event_type' title='Start of snippet'>anchor</a></sup>
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.EventSourcingTests/Events/dcb_documentation_samples.cs#L115-L120' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_dcb_query_by_event_type' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 Events are always returned ordered by sequence number (global append order).
@@ -137,7 +137,7 @@ var events = await session.Events.QueryAllRawEvents()
     .Where(e => e.HasTag<StudentId>(alice))
     .ToListAsync(TestContext.Current.CancellationToken);
 ```
-<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.Tests/Events/dcb_tag_linq_where_tests.cs#L50-L56' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_dcb_has_tag_linq' title='Start of snippet'>anchor</a></sup>
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.EventSourcingTests/Events/dcb_tag_linq_where_tests.cs#L50-L56' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_dcb_has_tag_linq' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 `HasTag` compiles to the same tag-table subquery that `QueryByTagsAsync` emits (a correlated `seq_id IN (SELECT seq_id FROM pc_event_tag_{suffix} WHERE value = @p)` predicate), and under conjoined tenancy it is automatically tenant-scoped. AND-ing several `HasTag` calls with normal predicates is supported:
@@ -185,7 +185,7 @@ public partial class StudentCourseEnrollment
     }
 }
 ```
-<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.Tests/Events/dcb_documentation_samples.cs#L28-L54' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_dcb_aggregate' title='Start of snippet'>anchor</a></sup>
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.Tests.Shared/Events/DcbDocumentationTypes.cs#L28-L54' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_dcb_aggregate' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 Then aggregate across streams by tag query:
@@ -199,7 +199,7 @@ var query = new EventTagQuery()
 
 var aggregate = await session2.Events.AggregateByTagsAsync<StudentCourseEnrollment>(query, TestContext.Current.CancellationToken);
 ```
-<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.Tests/Events/dcb_documentation_samples.cs#L189-L195' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_dcb_aggregate_by_tags' title='Start of snippet'>anchor</a></sup>
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.EventSourcingTests/Events/dcb_documentation_samples.cs#L142-L148' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_dcb_aggregate_by_tags' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 Returns `null` if no matching events are found.
@@ -280,7 +280,7 @@ boundary.AppendOne(assignment);
 // appended matching events after our read
 await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 ```
-<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.Tests/Events/dcb_documentation_samples.cs#L214-L231' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_dcb_fetch_for_writing_by_tags' title='Start of snippet'>anchor</a></sup>
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.EventSourcingTests/Events/dcb_documentation_samples.cs#L167-L184' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_dcb_fetch_for_writing_by_tags' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 ### Handling Concurrency Violations
@@ -303,7 +303,7 @@ public static async Task handling_a_concurrency_violation(IDocumentSession sessi
     }
 }
 ```
-<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.Tests/Events/dcb_documentation_samples.cs#L274-L289' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_dcb_handling_concurrency' title='Start of snippet'>anchor</a></sup>
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.EventSourcingTests/Events/dcb_documentation_samples.cs#L227-L242' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_dcb_handling_concurrency' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 ::: tip
@@ -344,7 +344,7 @@ public async Task events_exist_returns_true_when_matching_events_found()
     exists.ShouldBeTrue();
 }
 ```
-<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.Tests/Events/dcb_documentation_samples.cs#L291-L310' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_dcb_events_exist_async' title='Start of snippet'>anchor</a></sup>
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.EventSourcingTests/Events/dcb_documentation_samples.cs#L244-L263' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_dcb_events_exist_async' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 This is useful for guard clauses and validation logic in DCB workflows where you need to check preconditions before appending new events.

@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <!-- #1063: the JasperFx cross-store compliance suites, enrolled in Compliance/. The suites themselves
+         and Polecat's fixtures for them compile into Polecat.Tests.Shared. -->
+    <Import Project="..\Polecat.Tests.Common.props" />
+
+</Project>

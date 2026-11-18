@@ -109,12 +109,16 @@ partial class Build : NukeBuild
         .ProceedAfterFailure()
         .Executes(() =>
         {
-            DotNetTest(c => c
-                .SetProjectFile("src/Polecat.Tests")
-                .SetConfiguration(Configuration)
-                .EnableNoBuild()
-                .EnableNoRestore()
-                .SetFramework(Framework));
+            // #1063: the six projects Polecat.Tests was split into
+            foreach (var suite in CoreSuites)
+            {
+                DotNetTest(c => c
+                    .SetProjectFile(suite.ProjectPath)
+                    .SetConfiguration(Configuration)
+                    .EnableNoBuild()
+                    .EnableNoRestore()
+                    .SetFramework(Framework));
+            }
         });
 
     Target TestAspnetcore => _ => _

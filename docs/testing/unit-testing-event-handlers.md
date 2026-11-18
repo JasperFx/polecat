@@ -38,7 +38,7 @@ public static class WithdrawFundsHandler
     }
 }
 ```
-<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.Tests/Testing/unit_testing_event_handlers_samples.cs#L29-L50' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_stub_stream_handler' title='Start of snippet'>anchor</a></sup>
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.DocumentDbTests/Testing/unit_testing_event_handlers_samples.cs#L29-L50' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_stub_stream_handler' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 Working against this aggregate:
@@ -68,7 +68,7 @@ public class Account
     public void Apply(Withdrawn e) => Balance -= e.Amount;
 }
 ```
-<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.Tests/Testing/unit_testing_event_handlers_samples.cs#L5-L27' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_stub_stream_domain' title='Start of snippet'>anchor</a></sup>
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.DocumentDbTests/Testing/unit_testing_event_handlers_samples.cs#L5-L27' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_stub_stream_domain' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 ## Asserting on what was appended
@@ -89,7 +89,7 @@ public void a_withdrawal_within_the_balance_appends_withdrawn()
         .Amount.ShouldBe(100m);
 }
 ```
-<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.Tests/Testing/unit_testing_event_handlers_samples.cs#L54-L67' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_stub_stream_happy_path' title='Start of snippet'>anchor</a></sup>
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.DocumentDbTests/Testing/unit_testing_event_handlers_samples.cs#L54-L67' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_stub_stream_happy_path' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 `EventsAppended` is the raw event bodies, in order, which is what most assertions want.
@@ -111,7 +111,7 @@ public void a_withdrawal_over_the_balance_appends_overdrawn_instead()
     overdrawn.Balance.ShouldBe(20m);
 }
 ```
-<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.Tests/Testing/unit_testing_event_handlers_samples.cs#L69-L81' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_stub_stream_refusal' title='Start of snippet'>anchor</a></sup>
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.DocumentDbTests/Testing/unit_testing_event_handlers_samples.cs#L69-L81' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_stub_stream_refusal' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 ## A stream that does not exist yet
@@ -134,7 +134,7 @@ public void a_null_aggregate_is_a_stream_that_does_not_exist_yet()
     stream.EventsAppended.ShouldBeEmpty();
 }
 ```
-<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.Tests/Testing/unit_testing_event_handlers_samples.cs#L83-L95' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_stub_stream_missing_aggregate' title='Start of snippet'>anchor</a></sup>
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.DocumentDbTests/Testing/unit_testing_event_handlers_samples.cs#L83-L95' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_stub_stream_missing_aggregate' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 ## Identities and versions
@@ -171,7 +171,7 @@ public void identities_and_versions_are_settable_for_a_handler_that_reads_them()
     stream.Events.ShouldHaveSingleItem().Data.ShouldBeOfType<Withdrawn>();
 }
 ```
-<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.Tests/Testing/unit_testing_event_handlers_samples.cs#L97-L121' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_stub_stream_identity_and_version' title='Start of snippet'>anchor</a></sup>
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.DocumentDbTests/Testing/unit_testing_event_handlers_samples.cs#L97-L121' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_stub_stream_identity_and_version' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 ## Prefer this over a mocking library

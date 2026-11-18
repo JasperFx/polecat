@@ -86,7 +86,7 @@ var live = await session.Events.QueryAllRawEvents()
     .Where(x => !x.IsArchived && x.StreamId == streamId)
     .ToListAsync();
 ```
-<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.Tests/Events/archived_events_are_opt_in_tests.cs#L114-L129' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_reading_archived_events' title='Start of snippet'>anchor</a></sup>
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.EventSourcingTests/Events/archived_events_are_opt_in_tests.cs#L114-L129' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_reading_archived_events' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 Naming `IsArchived` replaces the implicit `is_archived = 0` rather than sitting beside it, so a predicate
@@ -131,7 +131,7 @@ await using var session2 = theStore.LightweightSession();
 session2.Events.TombstoneStream(streamId);
 await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 ```
-<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.Tests/Events/tombstone_stream_tests.cs#L23-L30' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_tombstone_stream' title='Start of snippet'>anchor</a></sup>
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.EventSourcingTests/Events/tombstone_stream_tests.cs#L23-L30' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_tombstone_stream' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 There is an overload for each stream identity, `TombstoneStream(Guid)` and `TombstoneStream(string)`;
