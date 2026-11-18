@@ -87,6 +87,14 @@ internal class EventStoreFeatureSchema : FeatureSchemaBase
             {
                 yield return schemaObject;
             }
+
+            // #1057: what an insert into a table of your own partitioned per tenant
+            // (Storage.PartitionPerTenant) calls for the tenant's ordinal. Only with such a table, so
+            // every other tenant-partitioned store sees no schema delta.
+            if (_events.HasTablesPartitionedPerTenant)
+            {
+                yield return _events.BuildTenantOrdinalFunction();
+            }
         }
 
         // Tag tables for DCB support
