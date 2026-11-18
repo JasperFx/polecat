@@ -29,6 +29,12 @@ public class event_store_explorer_tests : IntegrationContext
             opts.Listeners.Add(Polecat.Tests.Compliance.ServerClockTickListener.Instance);
 
             opts.Projections.Add<SingleStreamProjection<QuestParty, Guid>>(ProjectionLifecycle.Inline);
+
+            // The replay facts name events by alias ("quest_started"). Registered, the alias is the
+            // harness's QuestStarted; left to the assembly walk, it was whichever QuestStarted came first,
+            // and since #1063 put the harness in an assembly of its own that has been Diagnostics' own one.
+            opts.Events.AddEventType<QuestStarted>();
+            opts.Events.AddEventType<MembersJoined>();
         });
         return theStore;
     }

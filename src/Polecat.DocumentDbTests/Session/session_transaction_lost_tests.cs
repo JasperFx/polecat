@@ -274,15 +274,29 @@ public class session_transaction_lost_tests : OneOffConfigurationsContext
     {
         await CreateScratchTablesAsync();
 
-        const string delay = "WAITFOR DELAY '00:00:00.300'";
+        // Each save holds its first row until the other has taken its own, so the two deadlock however the
+        // saves are scheduled. A fixed 300ms delay used to stand in for that, and stopped being enough when the
+        // first save in a fresh test process took longer than the delay to reach the server (#1063): the saves
+        // ran one after the other and neither failed. The marker rows are read through NOLOCK because each
+        // one is uncommitted until its save ends.
+        string Leg(string who, int first, int second) => $"""
+            UPDATE {RowsTable} SET n = n + 1 WHERE id = {first};
+            INSERT INTO {ProbeTable} (who) VALUES ('{who}');
+            DECLARE @waits int = 0;
+            WHILE (SELECT COUNT(DISTINCT who) FROM {ProbeTable} WITH (NOLOCK) WHERE who IN ('one', 'two')) < 2
+                  AND @waits < 1000
+            BEGIN
+                WAITFOR DELAY '00:00:00.010';
+                SET @waits += 1;
+            END;
+            UPDATE {RowsTable} SET n = n + 1 WHERE id = {second};
+            """;
 
         await using var one = theStore.LightweightSession();
         await using var two = theStore.LightweightSession();
 
-        one.QueueSqlCommand(
-            $"UPDATE {RowsTable} SET n = n + 1 WHERE id = 1; {delay}; UPDATE {RowsTable} SET n = n + 1 WHERE id = 2");
-        two.QueueSqlCommand(
-            $"UPDATE {RowsTable} SET n = n + 1 WHERE id = 2; {delay}; UPDATE {RowsTable} SET n = n + 1 WHERE id = 1");
+        one.QueueSqlCommand(Leg("one", 1, 2));
+        two.QueueSqlCommand(Leg("two", 2, 1));
 
         async Task<(IDocumentSession Session, Exception? Failure)> Save(IDocumentSession session)
         {
