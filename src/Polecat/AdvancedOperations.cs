@@ -1172,6 +1172,21 @@ public class AdvancedOperations
             (session, ct) => session.Events.AggregateStreamAsync<T>(streamKey, token: ct),
             session => session.Delete<T>(streamKey), token);
 
+    /// <summary>
+    ///     Rewrite stored events the way an append would store them today: under their current type name, binary or
+    ///     JSON as now configured, through the configured serializer, and optionally transformed. Runs page by page
+    ///     in short statements, skips rows that would not change, and can be resumed (#1034, marten#5643).
+    /// </summary>
+    public Task<Events.Rewriting.StoredEventRewriteResult> RewriteStoredEventsAsync(
+        Action<Events.Rewriting.StoredEventRewrite> configure, CancellationToken token = default)
+    {
+        ArgumentNullException.ThrowIfNull(configure);
+
+        var rewrite = new Events.Rewriting.StoredEventRewrite();
+        configure(rewrite);
+        return new Events.Rewriting.StoredEventRewriter(_store, rewrite).ExecuteAsync(token);
+    }
+
     private async Task rebuildSingleStreamAsync<T>(object streamId, Func<IDocumentSession> openSession,
         Func<IDocumentSession, CancellationToken, Task<T?>> aggregate, Action<IDocumentSession> delete,
         CancellationToken token) where T : class

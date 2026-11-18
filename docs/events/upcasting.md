@@ -91,6 +91,10 @@ except the batched DCB tag query, which materializes synchronously and throws `U
 | **Does not apply to** | `QueryRawEventDataOnly<T>()` — it never builds an `IEvent`, and by naming `T` the caller has already made the decision an upcaster would make |
 | **Never touches** | the **write** path. Upcasting is a read-time transformation; nothing rewrites `pc_events` on its behalf. [Masking](#masking-an-upcast-event) rewrites a row, and stores what it read. |
 
+Because the stored rows never change, the upcaster runs on every read for as long as they exist.
+[Rewriting the stored events](/events/rewriting) stores them in the new shape, after which the upcaster can be
+removed.
+
 An upcast event keeps reporting the **stored** name in `IEvent.EventTypeName` while
 `IEvent.EventType` and `IEvent.Data` are the new type. That is deliberate: the alias is a fact about
 the database, and rewriting it on read would make an upcast indistinguishable from a native append

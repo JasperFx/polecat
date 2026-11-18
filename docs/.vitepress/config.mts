@@ -120,6 +120,7 @@ const config: UserConfig<DefaultTheme.Config> = {
             { text: 'Storage', link: '/events/storage' },
             { text: 'Binary Event Serialization', link: '/events/binary-serialization' },
             { text: 'Event Upcasting', link: '/events/upcasting' },
+            { text: 'Rewriting Stored Events', link: '/events/rewriting' },
             { text: 'Appending Events', link: '/events/appending' },
             { text: 'Querying Events', link: '/events/querying' },
             { text: 'Metadata', link: '/events/metadata' },
