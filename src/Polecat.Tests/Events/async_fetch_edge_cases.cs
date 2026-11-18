@@ -12,6 +12,7 @@ namespace Polecat.Tests.Events;
 ///     polecat#1049 (port of marten#5799 and marten#6073): the Async fetch scenarios that
 ///     <see cref="async_fetch_reads_in_a_safe_order" /> does not run per store setup.
 /// </summary>
+[Collection("async-fetch")]
 public class async_fetch_edge_cases : OneOffConfigurationsContext
 {
     public async_fetch_edge_cases()
@@ -259,6 +260,7 @@ public class async_fetch_edge_cases : OneOffConfigurationsContext
 ///     append through <c>session.Events.Append</c> rather than through the handle. The new stream must be
 ///     started once, with its events, and not twice.
 /// </summary>
+[Collection("async-fetch")]
 public class fetch_many_for_writing_then_append_to_a_new_stream : OneOffConfigurationsContext
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;

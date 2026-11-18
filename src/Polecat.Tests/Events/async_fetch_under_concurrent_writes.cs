@@ -414,13 +414,16 @@ public sealed class TallySubject<T>(
     }
 }
 
+[Collection("async-fetch")]
 public class async_fetch_under_concurrent_writes_on_guid_streams() : async_fetch_under_concurrent_writes(
     new TallySubject<TickTally>(_ => { }, () => Guid.NewGuid(), x => x.Seen));
 
+[Collection("async-fetch")]
 public class async_fetch_under_concurrent_writes_on_string_streams() : async_fetch_under_concurrent_writes(
     new TallySubject<TickTallyAsString>(opts => opts.Events.StreamIdentity = StreamIdentity.AsString,
         () => Guid.NewGuid().ToString(), x => x.Seen));
 
+[Collection("async-fetch")]
 public class async_fetch_under_concurrent_writes_with_a_strong_typed_id() : async_fetch_under_concurrent_writes(
     new TallySubject<TickTallyWithAStrongTypedId>(opts => opts.RegisterValueType<TickTallyId>(),
         () => Guid.NewGuid(), x => x.Seen));

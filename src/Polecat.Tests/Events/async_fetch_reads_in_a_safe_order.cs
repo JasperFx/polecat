@@ -487,10 +487,12 @@ internal static class FetchSubjects
         () => Guid.NewGuid(), x => new(x.ACount, x.BCount, x.CCount, x.DCount, null));
 }
 
+[Collection("async-fetch")]
 public class async_fetch_reads_in_a_safe_order_on_guid_streams() : async_fetch_reads_in_a_safe_order(new StoreShape(
     opts => opts.Projections.Snapshot<FetchedAggregate>(SnapshotLifecycle.Async),
     FetchSubjects.Guids));
 
+[Collection("async-fetch")]
 public class async_fetch_reads_in_a_safe_order_on_string_streams() : async_fetch_reads_in_a_safe_order(new StoreShape(
     opts =>
     {
@@ -499,6 +501,7 @@ public class async_fetch_reads_in_a_safe_order_on_string_streams() : async_fetch
     },
     FetchSubjects.Strings));
 
+[Collection("async-fetch")]
 public class async_fetch_reads_in_a_safe_order_with_conjoined_tenancy() : async_fetch_reads_in_a_safe_order(new StoreShape(
     opts =>
     {
@@ -508,6 +511,7 @@ public class async_fetch_reads_in_a_safe_order_with_conjoined_tenancy() : async_
     },
     FetchSubjects.Guids, Tenant: "tenant-a", OtherTenant: "tenant-b"));
 
+[Collection("async-fetch")]
 public class async_fetch_reads_in_a_safe_order_with_the_identity_map() : async_fetch_reads_in_a_safe_order(new StoreShape(
     opts =>
     {
@@ -516,6 +520,7 @@ public class async_fetch_reads_in_a_safe_order_with_the_identity_map() : async_f
     },
     FetchSubjects.Guids));
 
+[Collection("async-fetch")]
 public class async_fetch_reads_in_a_safe_order_with_the_write_cache() : async_fetch_reads_in_a_safe_order(new StoreShape(
     opts =>
     {
@@ -524,6 +529,7 @@ public class async_fetch_reads_in_a_safe_order_with_the_write_cache() : async_fe
     },
     FetchSubjects.Guids));
 
+[Collection("async-fetch")]
 public class async_fetch_reads_in_a_safe_order_with_a_strong_typed_id() : async_fetch_reads_in_a_safe_order(new StoreShape(
     opts =>
     {
