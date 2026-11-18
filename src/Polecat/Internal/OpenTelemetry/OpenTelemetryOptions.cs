@@ -41,6 +41,30 @@ public sealed class OpenTelemetryOptions : JasperFx.OpenTelemetry.OpenTelemetryO
     ///     <see cref="PolecatTracing.Meter" />. Created the first time
     ///     it is touched (i.e. when <see cref="EventCountersEnabled" /> is on and events commit).
     /// </summary>
+    // #1054: created on the first late event, which a healthy store never has
+    private Counter<long>? _lateEvents;
+
+    internal const string LateEventsMetricName = "polecat.daemon.late_events";
+    internal const string SkipReasonTag = "skip_reason";
+
+    /// <summary>
+    ///     #1054 (marten#6007): one event that committed inside a sequence range the high water mark had already
+    ///     skipped. Tagged like <c>polecat.event.append</c>, plus the reason for the skip.
+    /// </summary>
+    internal void RecordLateEvent(string eventType, string tenantId, string skipReason)
+    {
+        var counter = LazyInitializer.EnsureInitialized(ref _lateEvents,
+            () => PolecatTracing.Meter.CreateCounter<long>(LateEventsMetricName, "events",
+                "Events that committed inside a sequence range the high water mark had already skipped"));
+
+        if (!counter.Enabled) return;
+
+        counter.Add(1,
+            new KeyValuePair<string, object?>("event_type", eventType),
+            new KeyValuePair<string, object?>("tenant_id", tenantId),
+            new KeyValuePair<string, object?>(SkipReasonTag, skipReason));
+    }
+
     internal Counter<long> EventAppendCounter =>
         _eventAppendCounter ??= PolecatTracing.Meter.CreateCounter<long>(
             "polecat.event.append",

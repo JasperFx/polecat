@@ -33,7 +33,9 @@ using static Nuke.Common.Tools.DotNet.DotNetTasks;
 // creates at server scope goes through ConnectionSource.Scoped(), which carries the lane's catalog.
 // So the tracks declared below are per SUITE: a track is the suite's lane catalogs, which is the
 // resource a unit really holds. The three suites overlap; two frameworks of ONE suite (with
-// --framework all) share its catalogs and so run one after the other. Each track's preflight is that
+// --framework all) share its catalogs and so run one after the other. A track is also an application lock
+// on the server (GateTrackLocks, marten#6069), so a gate from another worktree with the same --lane-prefix
+// waits for the catalogs instead of dropping them; give it its own prefix to run beside this one. Each track's preflight is that
 // the SQL Server answers a query, not just that a port is open — under x64 emulation the port opens
 // well before the server accepts logins.
 partial class Build
@@ -98,6 +100,17 @@ partial class Build
 
             if (WorkerBudget is { } budget) gate.WorkerBudget = budget;
 
+            // marten#6069: each track is also an application lock on the server, so a gate from another
+            // checkout with the same --lane-prefix waits for the catalogs instead of dropping them
+            using var trackLocks = new GateTrackLocks(serverConnectionString());
+            gate.Log = message =>
+            {
+                Console.WriteLine(message);
+
+                // A finished unit hands its track to the next gate waiting on it
+                trackLocks.ReleaseIfFinished(message);
+            };
+
             foreach (var suite in Suites)
             {
                 var track = $"{LanePrefix}_{suite.Lanes}_w*";
@@ -110,6 +123,9 @@ partial class Build
                     .Supervise((_, supervisor) => configureSupervisor(supervisor, ledgers[suite.Name]))
                     .LaunchingWith(unit =>
                     {
+                        // Across processes too, before the unit drops and recreates the catalogs (marten#6069)
+                        trackLocks.Acquire(unit.Name, [track]);
+
                         // Provisioned when the unit starts, not before the gate: the catalogs are
                         // this unit's alone, and dropping them is only safe once the previous unit on
                         // this track (the suite's other framework) has finished with them.
@@ -181,7 +197,7 @@ partial class Build
     /// <summary>
     ///     Native publish of Polecat.AotRuntimeSmoke for <c>--aot-runtime</c> (the host's RID by
     ///     default; the aot-runtime-smoke workflow passes linux-x64), then runs the binary against SQL
-    ///     Server in a catalog of its own, <c>polecat_aot</c>. Red when any shape disagrees with its
+    ///     Server in a catalog of its own, <c>{lane prefix}_aot</c> (<c>polecat_aot</c> by default). Red when any shape disagrees with its
     ///     declared expectation (src/Polecat.AotRuntimeSmoke/Program.cs).
     /// </summary>
     Target AotRuntimeSmoke => _ => _
@@ -211,7 +227,8 @@ partial class Build
 
         // A catalog of its own, recreated, so it neither sees a previous run's tables nor touches
         // anything a test suite running beside it owns.
-        const string catalog = "polecat_aot";
+        // Under the lane prefix, so two gates with --aot and their own prefixes don't drop each other's (marten#6069)
+        var catalog = $"{LanePrefix}_aot";
         lock (LaneProvisioning)
         {
             using var connection = new SqlConnection(serverConnectionString());

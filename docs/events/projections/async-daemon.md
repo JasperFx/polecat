@@ -320,7 +320,7 @@ An append that is still in flight holds the mark as well, and `StaleSequenceThre
 
 The detector behaves the same on every database setting, including `READ_COMMITTED_SNAPSHOT`, which is on by default in Azure SQL Database, and optimized locking. It says how to read `pc_events` in its own queries rather than taking that from the database, and it never waits for an open transaction, so detection keeps running while the mark is held.
 
-To release a mark held by a transaction you do not expect to finish, use `AdvanceHighWaterMarkToLatestAsync` below. Any event still in flight below the new mark will not be read by the daemon if its transaction commits later.
+To release a mark held by a transaction you do not expect to finish, use `AdvanceHighWaterMarkToLatestAsync` below. Async projections and subscriptions will not see an event still in flight below the new mark if its transaction commits later (see [Events that commit late](#events-that-commit-late) for what Polecat does about that).
 
 ### Capping How Long an Open Transaction Can Hold the Mark
 
@@ -333,7 +333,7 @@ opts.Projections.SkipStaleGapsDespiteLiveTransactionsAfter = TimeSpan.FromMinute
 Once the mark has been held at one position for that long, the daemon moves it past the append that is holding it, up to the highest event committed when the mark was first held there, and logs a warning naming the sequence range. An append that opened after that is not stepped over, and has a cap of its own to wait out. Under per-tenant event partitioning each tenant's mark has its own clock.
 
 ::: warning
-This is off by default, because it trades a stall you can recover from for a loss you can't. If the skipped append goes on to commit, its events sit below the mark, and no async projection or subscription will read them short of a rebuild. Nothing reports that afterwards, so the warning is the only record of the skip. Set the cap well above the longest transaction you expect to run.
+This is off by default, because it trades a stall for a missed event. If the skipped append goes on to commit, its events sit below the mark, and async projections and subscriptions that are already past them will not see them. Polecat records those events and rebuilds their streams in async single-stream projections ([Events that commit late](#events-that-commit-late)), but other projections and subscriptions are not repaired. Set the cap well above the longest transaction you expect to run.
 :::
 
 The clock is kept in memory by the running detector, so a daemon restart starts it again, which errs towards holding. The cap is only considered once the mark has been held for `StaleSequenceThreshold`, so it can't take effect sooner than that.
@@ -351,7 +351,7 @@ await store.Advanced.AdvanceHighWaterMarkToLatestAsync("tenant-a", ct);
 ```
 
 ::: warning
-Every event below the new mark that has not committed yet is skipped **permanently** by every async projection and subscription. That includes an append that is still in flight.
+Async projections and subscriptions will not see an event below the new mark that has not committed yet, including an append that is still in flight, when it commits. Polecat records it as a [late event](#events-that-commit-late), but reach for this when you have established that a gap is genuinely dead, not as routine maintenance.
 :::
 
 The mark only ever moves forward, and it never moves past the highest committed `seq_id`. With per-tenant partitioned events (`UseTenantPartitionedEvents`), the daemon tracks one mark per tenant:
@@ -377,6 +377,35 @@ var results = await eventStore.AdvanceHighWaterMarkToLatestAsync(
 These are stricter about the tenant than the `Advanced` convenience methods are:
 - Without per-tenant partitioning, a database keeps one mark that every tenant shares, so a named tenant is refused rather than advancing every tenant's events.
 - With partitioning, a null tenant selects every tenant's mark, and `expectedCurrentMark` then needs a named tenant.
+
+### Events that commit late {#events-that-commit-late}
+
+Every skip is recorded in `pc_high_water_skips`, with the reason for it and the sequence numbers inside the skipped
+range that had no committed event yet. For an hour after a skip, the daemon checks those sequence numbers every 10
+seconds. An event that turns up there is one that async projections and subscriptions already past it did not see. For
+each one the daemon:
+
+* records it in `pc_high_water_late_events` with its sequence, tenant, stream and event type,
+* logs a warning and counts it in the `polecat.daemon.late_events` metric, tagged by event type, tenant and skip
+  reason,
+* rebuilds the event's stream in every async single-stream projection that handles that event type, through the shard
+  that runs the projection, the same way as `RebuildSingleStreamAsync()`. Side effects do not run in that rebuild.
+
+Other projections and subscriptions are not repaired, because they cannot safely take an event out of order. Use the
+ledger to decide whether to rebuild them.
+
+A range skipped because no append that could fill it was in flight should never fill. If one does, the daemon logs it
+as an error, because that is a bug in Polecat's high water detection. Please report it.
+
+The window and the interval are configurable:
+
+```cs
+opts.Projections.LateEventDetectionWindow = TimeSpan.FromHours(1);
+opts.Projections.LateEventProbeInterval = TimeSpan.FromSeconds(10);
+```
+
+`opts.Events.EnableLateEventDetection = false` (or `RestoreV5Defaults()`) turns all of this off and leaves the two
+tables out of the schema.
 
 ### Health Check
 

@@ -182,6 +182,30 @@ To keep `pc_events` as it is, set `opts.EventGraph.UseArchivedStreamPartitioning
 which is the same rewrite. `UseTenantPartitionedEvents` takes the table's one partition scheme for itself, so
 archived partitioning stays off there unless you set both, which is refused.
 
+## Upgrading to 6.0: skipped high water ranges are recorded, and late events are recovered
+
+The async daemon now records every sequence range its high water mark skips in a new table, `pc_high_water_skips`
+(keyed by the ending sequence and the tenant, with the reason, the sequence numbers that were missing, and when it
+stopped checking them), and checks those numbers for events that commit late. One that turns up is recorded in
+another new table, `pc_high_water_late_events`, logged, counted in the `polecat.daemon.late_events` metric, and its
+stream is rebuilt in async single-stream projections ([details](/events/projections/async-daemon#events-that-commit-late),
+[#1054](https://github.com/JasperFx/polecat/issues/1054), ported from
+[marten#6007](https://github.com/JasperFx/marten/issues/6007)).
+
+- **Schema effect.** The two tables are added by the next schema migration. Nothing existing changes.
+- **Opting out.** `opts.Events.EnableLateEventDetection = false`, or `RestoreV5Defaults()`, turns it off and leaves the
+  tables out.
+- An operator's `AdvanceHighWaterMarkToLatestAsync()` records its skip too, with the reason `Manual`.
+
+## Upgrading to 6.0: a projection's `IncludeArchivedEvents` reaches the async daemon
+
+A projection or subscription that sets `IncludeArchivedEvents = true` now reads archived events in its running shard
+and in a full rebuild, as it does in Marten ([#1065](https://github.com/JasperFx/polecat/issues/1065)). Before 6.0 the
+daemon left archived events out of every shard whatever the flag said, and only `RebuildSingleStreamAsync()` honoured
+it, so the two could fold one stream differently. If you set the flag, expect archived streams' events to show up in
+that projection's documents after its next rebuild, and whenever its running shard reaches events that were already
+archived. Without the flag nothing changes. There is no schema effect.
+
 ## Upgrading to 6.0: `GateSideEffectsBehindPriorVersion` is on by default
 
 As of JasperFx 3.0 ([jasperfx#1075](https://github.com/JasperFx/jasperfx/issues/1075)),
