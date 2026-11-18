@@ -40,6 +40,44 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
     {
     }
 
+    /// <summary>
+    ///     Runs a command through the store's resilience pipeline, and reports it being cancelled as an
+    ///     <see cref="OperationCanceledException" /> (#896).
+    /// </summary>
+    /// <remarks>
+    ///     SqlClient reports a command cancelled while it runs as a <c>SqlException</c> ("Operation cancelled by
+    ///     user", "A severe error occurred on the current command"). The async daemon only treats an
+    ///     <see cref="OperationCanceledException" /> as the stop it asked for, so a shard stopped while one of these
+    ///     reads was in flight, as <c>CatchUpAsync</c> stops the running shards, recorded the stop as a failure and
+    ///     failed the catch-up. See <see cref="Internal.SqlCancellation" />.
+    /// </remarks>
+    private async ValueTask<TResult> executeAsync<TResult, TState>(
+        Func<TState, CancellationToken, ValueTask<TResult>> callback, TState state, CancellationToken token)
+    {
+        try
+        {
+            return await _resilience.ExecuteAsync(callback, state, token).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (token.IsCancellationRequested && ex is not OperationCanceledException)
+        {
+            throw new OperationCanceledException($"A command against database '{Identifier}' was cancelled.", ex, token);
+        }
+    }
+
+    /// <inheritdoc cref="executeAsync{TResult, TState}" />
+    private async ValueTask executeAsync<TState>(Func<TState, CancellationToken, ValueTask> callback, TState state,
+        CancellationToken token)
+    {
+        try
+        {
+            await _resilience.ExecuteAsync(callback, state, token).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (token.IsCancellationRequested && ex is not OperationCanceledException)
+        {
+            throw new OperationCanceledException($"A command against database '{Identifier}' was cancelled.", ex, token);
+        }
+    }
+
     internal PolecatDatabase(StoreOptions options, string connectionString, string identifier)
         : base(
             new DefaultMigrationLogger(),
@@ -193,7 +231,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
             // #148: route through Options.ResiliencePipeline like the rest of the
             // database access. PolecatDatabase owns its own connection (it has no
             // session), so it wraps the work in the pipeline directly.
-            return await _resilience.ExecuteAsync(static async (state, ct) =>
+            return await executeAsync(static async (state, ct) =>
             {
                 var (connectionString, progressionTable, identity, unicode) = state;
                 await using var conn = new SqlConnection(connectionString);
@@ -234,7 +272,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
         // Marten drew the line in exactly this place (marten#5512).
         try
         {
-            await _resilience.ExecuteAsync(static async (state, ct) =>
+            await executeAsync(static async (state, ct) =>
             {
                 var (connectionString, progressionTable, identity, unicode) = state;
                 await using var conn = new SqlConnection(connectionString);
@@ -311,7 +349,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
         // is what keeps two racing writers from deadlocking against each other.
         var ordered = states.OrderBy(x => x.ShardName, StringComparer.Ordinal).ToArray();
 
-        await _resilience.ExecuteAsync(static async (s, ct) =>
+        await executeAsync(static async (s, ct) =>
         {
             var (connectionString, progressionTable, shardStates, unicode) = s;
             await using var conn = new SqlConnection(connectionString);
@@ -417,7 +455,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
     {
         try
         {
-            return await _resilience.ExecuteAsync(static async (state, ct) =>
+            return await executeAsync(static async (state, ct) =>
             {
                 var (connectionString, events, tenant) = state;
                 var list = new List<ShardState>();
@@ -575,7 +613,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
         {
             var name = string.IsNullOrEmpty(tenantId) ? projectionName : $"{projectionName}:{tenantId}";
 
-            return await _resilience.ExecuteAsync(static async (state, ct) =>
+            return await executeAsync(static async (state, ct) =>
             {
                 var (connectionString, events, projName, tenant, lookupName) = state;
 
@@ -635,7 +673,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
     {
         try
         {
-            return await _resilience.ExecuteAsync(static async (state, ct) =>
+            return await executeAsync(static async (state, ct) =>
             {
                 var (connectionString, events, shard) = state;
 
@@ -688,7 +726,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
     {
         try
         {
-            return await _resilience.ExecuteAsync(static async (state, ct) =>
+            return await executeAsync(static async (state, ct) =>
             {
                 var (connectionString, eventsTable) = state;
                 await using var conn = new SqlConnection(connectionString);
@@ -712,7 +750,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
     {
         try
         {
-            return await _resilience.ExecuteAsync(static async (state, ct) =>
+            return await executeAsync(static async (state, ct) =>
             {
                 var (connectionString, eventsTable, ts) = state;
                 await using var conn = new SqlConnection(connectionString);
@@ -764,7 +802,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
 
         try
         {
-            return await _resilience.ExecuteAsync(static async (state, ct) =>
+            return await executeAsync(static async (state, ct) =>
             {
                 var (connectionString, eventsTable, ts, tenant, unicode) = state;
                 await using var conn = new SqlConnection(connectionString);
@@ -856,7 +894,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
 
         try
         {
-            await _resilience.ExecuteAsync(static async (state, ct) =>
+            await executeAsync(static async (state, ct) =>
             {
                 var (connectionString, events, lookups, timestamps) = state;
 
@@ -1018,7 +1056,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
     {
         if (!_events.UseTenantPartitionedEvents) return [];
 
-        return await _resilience.ExecuteAsync(static async (state, ct) =>
+        return await executeAsync(static async (state, ct) =>
         {
             var (connectionString, tenantPartitionsTable) = state;
             var tenants = new List<string>();
@@ -1239,7 +1277,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
 
         try
         {
-            return await _resilience.ExecuteAsync(static async (state, ct) =>
+            return await executeAsync(static async (state, ct) =>
             {
                 var (connectionString, table, name, tenant, unicode) = state;
                 await using var conn = new SqlConnection(connectionString);
@@ -1277,7 +1315,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
         ArgumentException.ThrowIfNullOrEmpty(projectionName);
         AssertProjectionFloorsEnabled(nameof(TrySetProjectionFloorAsync));
 
-        return await _resilience.ExecuteAsync(static async (state, ct) =>
+        return await executeAsync(static async (state, ct) =>
         {
             var (connectionString, table, name, tenant, value, unicode) = state;
             await using var conn = new SqlConnection(connectionString);
@@ -1309,7 +1347,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
         ArgumentException.ThrowIfNullOrEmpty(projectionName);
         AssertProjectionFloorsEnabled(nameof(SetProjectionFloorAsync));
 
-        await _resilience.ExecuteAsync(static async (state, ct) =>
+        await executeAsync(static async (state, ct) =>
         {
             var (connectionString, table, name, tenant, value, unicode) = state;
             await using var conn = new SqlConnection(connectionString);
@@ -1373,7 +1411,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
         Polecat.Events.Schema.EventRangeMarksTable.AssertKey(key);
         await EnsureEventRangeMarksAsync(nameof(FetchEventRangeMarkAsync), token).ConfigureAwait(false);
 
-        return await _resilience.ExecuteAsync(static async (state, ct) =>
+        return await executeAsync(static async (state, ct) =>
         {
             var (connectionString, table, key, tenant, unicode) = state;
             await using var conn = new SqlConnection(connectionString);
@@ -1402,7 +1440,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
         Polecat.Events.Schema.EventRangeMarksTable.AssertKey(key);
         await EnsureEventRangeMarksAsync(nameof(TrySetEventRangeMarkAsync), token).ConfigureAwait(false);
 
-        return await _resilience.ExecuteAsync(static async (state, ct) =>
+        return await executeAsync(static async (state, ct) =>
         {
             var (connectionString, table, key, tenant, value, unicode) = state;
             await using var conn = new SqlConnection(connectionString);
@@ -1434,7 +1472,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
         Polecat.Events.Schema.EventRangeMarksTable.AssertKey(key);
         await EnsureEventRangeMarksAsync(nameof(SetEventRangeMarkAsync), token).ConfigureAwait(false);
 
-        await _resilience.ExecuteAsync(static async (state, ct) =>
+        await executeAsync(static async (state, ct) =>
         {
             var (connectionString, table, key, tenant, value, unicode) = state;
             await using var conn = new SqlConnection(connectionString);
@@ -1704,7 +1742,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
     {
         try
         {
-            return await _resilience.ExecuteAsync(static async (state, ct) =>
+            return await executeAsync(static async (state, ct) =>
             {
                 var (connectionString, events) = state;
                 var heights = new Dictionary<string, long>(StringComparer.Ordinal);
@@ -1855,7 +1893,7 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
     {
         // Like the rest of PolecatDatabase's direct access, this owns its own connection and
         // wraps the work in Options.ResiliencePipeline directly.
-        return _resilience.ExecuteAsync(static async (state, token) =>
+        return executeAsync(static async (state, token) =>
         {
             var (connectionString, sqlText) = state;
             await using var conn = new SqlConnection(connectionString);
