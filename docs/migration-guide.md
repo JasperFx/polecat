@@ -208,6 +208,16 @@ No cleaning or rebuild touches it.
 - **Opting out.** `opts.Events.EnableEventRangeMarks = false`, or `RestoreV5Defaults()`, leaves the table out. The
   store then refuses rewrite jobs; `Advanced.RewriteStoredEventsAsync()` works either way.
 
+## Upgrading to 6.0: projection start floors are on by default
+
+The `pc_event_projection_floors` table that `SubscribeFromFirstRun()` and `SetProjectionFloorAsync()` need is now
+part of every store, as it is in Marten 10, so `opts.Events.EnableProjectionFloors` defaults to `true`
+([details](/events/projections/async-daemon#start-floors), [#1032](https://github.com/JasperFx/polecat/issues/1032)).
+
+- **Schema effect.** The table is added by the next schema migration. Nothing existing changes.
+- **Opting out.** `opts.Events.EnableProjectionFloors = false`, or `RestoreV5Defaults()`, leaves the table out. The
+  floor writes then throw `NotSupportedException`, and every projection starts with no floor.
+
 ## Upgrading to 6.0: a projection's `IncludeArchivedEvents` reaches the async daemon
 
 A projection or subscription that sets `IncludeArchivedEvents = true` now reads archived events in its running shard

@@ -49,7 +49,7 @@ Async daemon progress tracking:
 
 ## pc_event_projection_floors
 
-Created only when `StoreOptions.Events.EnableProjectionFloors` is `true` (opt-in in Polecat 5).
+Created unless `StoreOptions.Events.EnableProjectionFloors` is `false` (on by default since Polecat 6, off under `RestoreV5Defaults()`).
 
 Persisted projection start floors: the sequence below which a projection has no meaningful
 history. Written by `AsyncOptions.SubscribeFromFirstRun()` on a projection's first start, or by an

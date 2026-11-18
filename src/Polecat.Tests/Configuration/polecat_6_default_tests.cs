@@ -37,6 +37,8 @@ public class polecat_6_default_tests
         ((Serializer)options.Serializer).Options.AllowOutOfOrderMetadataProperties.ShouldBeTrue();
         options.EventGraph.UseArchivedStreamPartitioning.ShouldBeTrue();
         options.Events.EnableLateEventDetection.ShouldBeTrue();
+        options.Events.EnableEventRangeMarks.ShouldBeTrue();
+        options.Events.EnableProjectionFloors.ShouldBeTrue();
     }
 
     [Fact]
@@ -71,6 +73,8 @@ public class polecat_6_default_tests
         options.Events.DcbConflictScope.ShouldBe(Polecat.Events.DcbConflictScope.TagValue);
         options.EventGraph.UseArchivedStreamPartitioning.ShouldBeFalse();
         options.Events.EnableLateEventDetection.ShouldBeFalse();
+        options.Events.EnableEventRangeMarks.ShouldBeFalse();
+        options.Events.EnableProjectionFloors.ShouldBeFalse();
 
         // Registered after the call, and still restored when the store is built
         var projection = new Polecat.Tests.Projections.PublishingTallyProjection();
