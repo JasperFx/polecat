@@ -905,7 +905,7 @@
         <PackageVersion Include="JasperFx.Events" Version="3.7.0" />
         <!--
              The shared cross-store event sourcing compliance suites. Source-only package: the
-             suites compile inside Polecat.Tests so JasperFx's aggregate source generator binds
+             suites compile inside Polecat.Tests.Shared (#1063) so JasperFx's aggregate source generator binds
              Polecat's own session types.
         -->
         <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="3.7.0" />

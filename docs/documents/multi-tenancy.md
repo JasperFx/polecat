@@ -116,7 +116,7 @@ table.AddColumn<int>("amount");
 // column Polecat adds, and left alone by later schema migrations
 opts.Storage.PartitionPerTenant(table);
 ```
-<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.Tests/MultiTenancy/partition_extended_table_per_tenant.cs#L92-L103' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_partition_extended_table_per_tenant' title='Start of snippet'>anchor</a></sup>
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.MultiTenancyTests/MultiTenancy/partition_extended_table_per_tenant.cs#L92-L103' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_partition_extended_table_per_tenant' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 The store has to use Polecat-managed tenant partitioning (`Policies.PartitionMultiTenantedDocumentsUsingPolecatManagement()`
@@ -142,7 +142,7 @@ var sql = $"""
     VALUES (NEWID(), @tenant_id, {Schema}.pc_tenant_ordinal(@tenant_id), @amount);
     """;
 ```
-<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.Tests/MultiTenancy/partition_extended_table_per_tenant.cs#L109-L117' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_insert_into_a_table_partitioned_per_tenant' title='Start of snippet'>anchor</a></sup>
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.MultiTenancyTests/MultiTenancy/partition_extended_table_per_tenant.cs#L109-L117' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_insert_into_a_table_partitioned_per_tenant' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 From .NET, `store.Advanced.TenantOrdinalAsync()` answers it, and registers the tenant first if it's new:
@@ -152,7 +152,7 @@ From .NET, `store.Advanced.TenantOrdinalAsync()` answers it, and registers the t
 ```cs
 var ordinal = await store.Advanced.TenantOrdinalAsync("acme", Ct);
 ```
-<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.Tests/MultiTenancy/partition_extended_table_per_tenant.cs#L245-L247' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_tenant_ordinal_from_the_store' title='Start of snippet'>anchor</a></sup>
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.MultiTenancyTests/MultiTenancy/partition_extended_table_per_tenant.cs#L245-L247' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_tenant_ordinal_from_the_store' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 ## ITenanted Interface

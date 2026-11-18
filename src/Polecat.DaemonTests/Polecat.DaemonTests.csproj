@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <!-- #1063: the async daemon. -->
+    <Import Project="..\Polecat.Tests.Common.props" />
+
+</Project>

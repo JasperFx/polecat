@@ -13,7 +13,13 @@
     </PropertyGroup>
 
     <ItemGroup>
-        <InternalsVisibleTo Include="Polecat.Tests" />
+        <InternalsVisibleTo Include="Polecat.Tests.Shared" />
+        <InternalsVisibleTo Include="Polecat.DocumentDbTests" />
+        <InternalsVisibleTo Include="Polecat.LinqTests" />
+        <InternalsVisibleTo Include="Polecat.EventSourcingTests" />
+        <InternalsVisibleTo Include="Polecat.DaemonTests" />
+        <InternalsVisibleTo Include="Polecat.MultiTenancyTests" />
+        <InternalsVisibleTo Include="Polecat.ComplianceTests" />
         <InternalsVisibleTo Include="Polecat.AspNetCore" />
         <InternalsVisibleTo Include="Polecat.AspNetCore.Testing" />
         <InternalsVisibleTo Include="Polecat.EntityFrameworkCore" />

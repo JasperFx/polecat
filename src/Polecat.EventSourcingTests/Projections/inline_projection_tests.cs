@@ -1,0 +1,261 @@
+using JasperFx.Events;
+using JasperFx.Events.Projections;
+using Polecat.Projections;
+using Polecat.Tests.Harness;
+
+namespace Polecat.Tests.Projections;
+
+[Collection("integration")]
+public class inline_projection_tests : IntegrationContext
+{
+    public inline_projection_tests(DefaultStoreFixture fixture) : base(fixture)
+    {
+    }
+
+    private async Task<DocumentStore> CreateStoreWithProjections()
+    {
+        await StoreOptions(opts =>
+        {
+            opts.DatabaseSchemaName = "inline_proj";
+            opts.Projections.Add<SingleStreamProjection<QuestParty, Guid>>(ProjectionLifecycle.Inline);
+        });
+        return theStore;
+    }
+
+    [Fact]
+    public async Task projection_is_created_on_start_stream()
+    {
+        var store = await CreateStoreWithProjections();
+
+        var streamId = Guid.NewGuid();
+        await using var session = store.LightweightSession();
+        session.Events.StartStream(streamId,
+            new QuestStarted("Destroy the Ring"));
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        await using var query = store.QuerySession();
+        var party = await query.LoadAsync<QuestParty>(streamId, TestContext.Current.CancellationToken);
+
+        party.ShouldNotBeNull();
+        party.Id.ShouldBe(streamId);
+        party.Name.ShouldBe("Destroy the Ring");
+    }
+
+    [Fact]
+    public async Task projection_applies_multiple_events_in_start()
+    {
+        var store = await CreateStoreWithProjections();
+
+        var streamId = Guid.NewGuid();
+        await using var session = store.LightweightSession();
+        session.Events.StartStream(streamId,
+            new QuestStarted("Fellowship"),
+            new MembersJoined(1, "Rivendell", ["Aragorn", "Legolas", "Gimli"]));
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        await using var query = store.QuerySession();
+        var party = await query.LoadAsync<QuestParty>(streamId, TestContext.Current.CancellationToken);
+
+        party.ShouldNotBeNull();
+        party.Name.ShouldBe("Fellowship");
+        party.Members.ShouldBe(["Aragorn", "Legolas", "Gimli"]);
+        party.Location.ShouldBe("Rivendell");
+    }
+
+    [Fact]
+    public async Task projection_updates_on_append()
+    {
+        var store = await CreateStoreWithProjections();
+
+        var streamId = Guid.NewGuid();
+        await using var session = store.LightweightSession();
+        session.Events.StartStream(streamId,
+            new QuestStarted("Adventure"),
+            new MembersJoined(1, "Start", ["Hero"]));
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        await using var session2 = store.LightweightSession();
+        session2.Events.Append(streamId,
+            new ArrivedAtLocation("Dungeon", 2),
+            new MonsterSlain("Goblin", 50));
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        await using var query = store.QuerySession();
+        var party = await query.LoadAsync<QuestParty>(streamId, TestContext.Current.CancellationToken);
+
+        party.ShouldNotBeNull();
+        party.Location.ShouldBe("Dungeon");
+        party.MonstersSlain.ShouldContain("Goblin");
+    }
+
+    [Fact]
+    public async Task projection_handles_members_departed()
+    {
+        var store = await CreateStoreWithProjections();
+
+        var streamId = Guid.NewGuid();
+        await using var session = store.LightweightSession();
+        session.Events.StartStream(streamId,
+            new QuestStarted("Departure Test"),
+            new MembersJoined(1, "Town", ["A", "B", "C"]));
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        await using var session2 = store.LightweightSession();
+        session2.Events.Append(streamId,
+            new MembersDeparted(2, "Town", ["B"]));
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        await using var query = store.QuerySession();
+        var party = await query.LoadAsync<QuestParty>(streamId, TestContext.Current.CancellationToken);
+
+        party.ShouldNotBeNull();
+        party.Members.ShouldBe(["A", "C"]);
+    }
+
+    [Fact]
+    public async Task should_delete_removes_projection()
+    {
+        var store = await CreateStoreWithProjections();
+
+        var streamId = Guid.NewGuid();
+        await using var session = store.LightweightSession();
+        session.Events.StartStream(streamId,
+            new QuestStarted("Doomed Quest"),
+            new MembersJoined(1, "Start", ["Hero"]));
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        await using var session2 = store.LightweightSession();
+        session2.Events.Append(streamId,
+            new QuestEnded("Doomed Quest"));
+        await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        await using var query = store.QuerySession();
+        var party = await query.LoadAsync<QuestParty>(streamId, TestContext.Current.CancellationToken);
+        party.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task multiple_streams_projected_independently()
+    {
+        var store = await CreateStoreWithProjections();
+
+        var stream1 = Guid.NewGuid();
+        var stream2 = Guid.NewGuid();
+
+        await using var session = store.LightweightSession();
+        session.Events.StartStream(stream1,
+            new QuestStarted("Quest 1"),
+            new MembersJoined(1, "Town A", ["Alpha"]));
+        session.Events.StartStream(stream2,
+            new QuestStarted("Quest 2"),
+            new MembersJoined(1, "Town B", ["Beta", "Gamma"]));
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        await using var query = store.QuerySession();
+        var party1 = await query.LoadAsync<QuestParty>(stream1, TestContext.Current.CancellationToken);
+        var party2 = await query.LoadAsync<QuestParty>(stream2, TestContext.Current.CancellationToken);
+
+        party1.ShouldNotBeNull();
+        party1.Name.ShouldBe("Quest 1");
+        party1.Members.ShouldBe(["Alpha"]);
+
+        party2.ShouldNotBeNull();
+        party2.Name.ShouldBe("Quest 2");
+        party2.Members.ShouldBe(["Beta", "Gamma"]);
+    }
+
+    [Fact]
+    public async Task events_and_projection_in_same_transaction()
+    {
+        var store = await CreateStoreWithProjections();
+
+        var streamId = Guid.NewGuid();
+        await using var session = store.LightweightSession();
+        session.Events.StartStream(streamId,
+            new QuestStarted("Atomic Quest"));
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        // Verify both events and projected document exist
+        await using var query = store.QuerySession();
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
+        events.Count.ShouldBe(1);
+
+        var party = await query.LoadAsync<QuestParty>(streamId, TestContext.Current.CancellationToken);
+        party.ShouldNotBeNull();
+        party.Name.ShouldBe("Atomic Quest");
+    }
+
+    [Fact]
+    public async Task projection_with_version_tracking()
+    {
+        var store = await CreateStoreWithProjections();
+
+        var streamId = Guid.NewGuid();
+        await using var session = store.LightweightSession();
+        session.Events.StartStream(streamId,
+            new QuestStarted("Version Quest"),
+            new MembersJoined(1, "Start", ["A"]),
+            new ArrivedAtLocation("Mid", 2));
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        await using var query = store.QuerySession();
+        var party = await query.LoadAsync<QuestParty>(streamId, TestContext.Current.CancellationToken);
+
+        party.ShouldNotBeNull();
+        // Version should be set to the last event's version (3)
+        party.Version.ShouldBe(3);
+    }
+
+    [Fact]
+    public async Task projection_with_mixed_document_operations()
+    {
+        var store = await CreateStoreWithProjections();
+
+        var streamId = Guid.NewGuid();
+        var user = new User { Id = Guid.NewGuid(), FirstName = "Test", LastName = "User" };
+
+        await using var session = store.LightweightSession();
+        session.Events.StartStream(streamId,
+            new QuestStarted("Mixed Quest"));
+        session.Store(user);
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        await using var query = store.QuerySession();
+        var party = await query.LoadAsync<QuestParty>(streamId, TestContext.Current.CancellationToken);
+        var loaded = await query.LoadAsync<User>(user.Id, TestContext.Current.CancellationToken);
+
+        party.ShouldNotBeNull();
+        party.Name.ShouldBe("Mixed Quest");
+        loaded.ShouldNotBeNull();
+        loaded.FirstName.ShouldBe("Test");
+    }
+
+    /// <summary>
+    ///     #548 — the inline-projected provider set SaveChangesAsync pre-creates tables from is derived
+    ///     entirely from configuration, so it is computed once per store instead of being rebuilt from
+    ///     <c>Projections.All</c> on every save. Two facts: it still resolves the projections registered
+    ///     before the store was built (the reason it has to be lazy rather than eager), and repeated
+    ///     saves keep handing back the very same cached array.
+    /// </summary>
+    [Fact]
+    public async Task the_inline_projected_provider_set_is_computed_once_per_store()
+    {
+        var store = await CreateStoreWithProjections();
+
+        var providers = store.Options.Projections.InlineProjectedProviders;
+
+        // The projection was registered while the store options were still open, and it is in the set.
+        providers.Select(x => x.Mapping.DocumentType).ShouldContain(typeof(QuestParty));
+
+        await using var session = store.LightweightSession();
+        session.Events.StartStream(Guid.NewGuid(), new QuestStarted("First"));
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        await using var second = store.LightweightSession();
+        second.Events.StartStream(Guid.NewGuid(), new QuestStarted("Second"));
+        await second.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        // Same array instance, so neither save rebuilt it.
+        store.Options.Projections.InlineProjectedProviders.ShouldBeSameAs(providers);
+    }
+}

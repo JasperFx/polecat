@@ -73,8 +73,19 @@ depends on their keys, so a passing test on a small document proves nothing. Go 
 
 ```
 src/Polecat/                    — main library
-src/Polecat.Tests/              — xUnit integration/unit tests
+src/Polecat.DocumentDbTests/    — documents, sessions, storage, schema, metadata, patching
+src/Polecat.LinqTests/          — LINQ and querying
+src/Polecat.EventSourcingTests/ — events, DCB, projections, subscriptions
+src/Polecat.DaemonTests/        — the async daemon
+src/Polecat.MultiTenancyTests/  — multi-tenancy and tenant partitioning
+src/Polecat.ComplianceTests/    — the JasperFx compliance suite enrollments
+src/Polecat.Tests.Shared/       — the harness, shared test types, the compliance suites and fixtures
 ```
+
+These six test projects were one, `Polecat.Tests`, until #1063. Their namespaces kept the old
+`Polecat.Tests.*` names. A type more than one of them uses goes in `Polecat.Tests.Shared`, and every
+project imports `src/Polecat.Tests.Common.props` (packages, global usings, the collection definitions,
+which xUnit only finds in the test assembly itself).
 
 ## Development Environment
 
@@ -121,11 +132,12 @@ Critical path for MVP: Stages 1–5, 7–8, 10–11
   concurrent runs — a second `dotnet test`, a run started before an earlier one finished, or a run
   left alive after you killed its parent shell — step on each other's schemas and produce large,
   scattered, misleading failure sets across unrelated areas (query plans, flat tables, partitioning,
-  subscriptions). Let a run finish, and confirm with `pgrep -f Polecat.Tests` before starting another.
+  subscriptions). Let a run finish, and confirm with `pgrep -f 'Polecat\.[A-Za-z]*Tests'` before starting another.
   A killed run in particular can leave its test host alive and its schemas half-torn-down; drop the
-  leftovers before re-running. The exception is the three supervised suites (`CIPolecat`,
-  `CIAspNetCore`, `CIEfCore`, and `LocalGate`, which runs them together): each suite's lanes have
-  catalogs of their own, `polecat_core_w*`, `polecat_aspnet_w*` and `polecat_efcore_w*`, so one
+  leftovers before re-running. The exception is the supervised suites (`CIPolecat`, which runs the six
+  core suites in turn, `CIAspNetCore`, `CIEfCore`, and `LocalGate`, which runs them all together): each
+  suite's lanes have catalogs of their own (`polecat_docs_w*`, `polecat_linq_w*`, `polecat_events_w*`,
+  `polecat_daemon_w*`, `polecat_mt_w*`, `polecat_compliance_w*`, `polecat_aspnet_w*`, `polecat_efcore_w*`), so one
   suite may run beside another — but never two runs of the SAME suite, which drop each other's
   catalogs, and never a plain `dotnet test` beside a `dotnet test`.
 - **Test naming**: snake_case file names (e.g., `start_stream_tests.cs`)
@@ -153,14 +165,15 @@ Given/When/Then specifications on Bobcat's store-only `CritterStackSpec`, today 
 (#808). **net11.0 only**, so the net10.0 CI workflows never run them; `./build.sh LocalGate` does, as its
 fourth suite, on every `--framework`. The project takes `WolverineFx.Bobcat` (where `CritterStackSpec`
 ships from Bobcat 1.0.0-rc.2), and with it WolverineFx, which is why the specs are a project of their
-own rather than a folder in `Polecat.Tests`. Specs run one at a time (store-only acts attribute events
+own rather than a folder in a core test project. Specs run one at a time (store-only acts attribute events
 by stream), and `ThenMatches` compares types, so an expected list must be the type the query returns.
 
 ### Cross-store compliance suites
 
 Event sourcing behavior that Polecat and Marten both have belongs in
-`JasperFx.Events.ComplianceTests` (source-only package; the suites compile into `Polecat.Tests` so
-JasperFx's aggregate source generator binds Polecat's session types). Enroll a suite with an empty
+`JasperFx.Events.ComplianceTests` (source-only package; the suites compile into `Polecat.Tests.Shared`,
+beside `PolecatComplianceFixture`, so JasperFx's aggregate source generator binds Polecat's session types).
+The enrollments are in `src/Polecat.ComplianceTests/Compliance/`. Enroll a suite with an empty
 subclass in `Compliance/polecat_event_store_compliance.cs`, implement whatever seam it needs on
 `PolecatComplianceFixture`, and delete the Polecat-local copy. **65 suites are enrolled across
 twenty-four waves** — the enrollment files are `Compliance/polecat_event_store_compliance*.cs`, mostly
@@ -170,7 +183,7 @@ That count goes stale every time a wave lands, so recompute it rather than trust
 above:
 
 ```
-grep -cE '^\s*: [A-Za-z]+Compliance<' src/Polecat.Tests/Compliance/polecat_event_store_compliance*.cs
+grep -cE '^\s*: [A-Za-z]+Compliance<' src/Polecat.ComplianceTests/Compliance/polecat_event_store_compliance*.cs
 ```
 
 Note the "one file per wave" rule has an exception: a **document** suite is sometimes enrolled in the
@@ -235,7 +248,7 @@ To iterate on a suite before the JasperFx release, build against a working copy 
 package:
 
 ```
-dotnet build src/Polecat.Tests/Polecat.Tests.csproj \
+dotnet build src/Polecat.ComplianceTests/Polecat.ComplianceTests.csproj \
   -p:ComplianceSourceDir=$HOME/code/jasperfx/src/JasperFx.Events.ComplianceTests
 ```
 
@@ -316,7 +329,7 @@ every worker on the box, and they will race to create and drop it:
 // WRONG — every worker fights over the same database
 private const string DbA = "polecat_tenant_a";
 
-// RIGHT — "master_tenant_a" locally, "polecat_core_w3_tenant_a" under the supervised runner
+// RIGHT — "master_tenant_a" locally, "polecat_docs_w1_tenant_a" under the supervised runner
 private static readonly string DbA = ConnectionSource.Scoped("tenant_a");
 ```
 
@@ -338,7 +351,7 @@ Every test job runs a Nuke target — `CIPolecat`, `CIAspNetCore`, `CIEfCore` (`
 ```
 
 - **Lanes are whole test classes** and each lane gets its own catalog, named for its suite —
-  `polecat_core_w{lane}` (Polecat.Tests), `polecat_aspnet_w{lane}`, `polecat_efcore_w{lane}` — dropped
+  `polecat_docs_w{lane}` (Polecat.DocumentDbTests), `polecat_aspnet_w{lane}`, `polecat_efcore_w{lane}` — dropped
   and recreated (with its `Scoped()` siblings) at the start of every run. A suite drops only its own
   prefix, which is what lets `LocalGate` run the three at once on one SQL Server (they all used
   `polecat_w{lane}` until #797, so a second suite would have dropped the first's lane 0 mid-run).
@@ -370,8 +383,9 @@ Every test job runs a Nuke target — `CIPolecat`, `CIAspNetCore`, `CIEfCore` (`
 
 Run this before a push. It is Bobcat's `Gate` (Bobcat.Supervisor 1.0.0-rc.3,
 [local-gates.md](https://github.com/JasperFx/bobcat/blob/main/docs/local-gates.md), #797), declared in
-`build/LocalGate.cs`: it builds once, checks the SQL Server answers, then runs **Polecat.Tests (4
-workers), Polecat.AspNetCore.Testing and Polecat.EntityFrameworkCore.Tests at the same time**, longest
+`build/LocalGate.cs`: it builds once, checks the SQL Server answers, then runs **the six core suites
+(the projects Polecat.Tests was split into, #1063), Polecat.AspNetCore.Testing,
+Polecat.EntityFrameworkCore.Tests and Polecat.Specs at the same time**, longest
 first, inside one worker budget, and prints one report naming every unit. Each unit's supervisor is
 configured by the same code as its CI target (`configureSupervisor`: the opt-in retry policy, stall
 reporting, the ledger), and leaves the same ledger, TRX and JSON report behind.
@@ -392,7 +406,7 @@ docker compose up -d                          # the gate never starts a containe
 - **No shared `sqlserver` track, on purpose.** A Bobcat track is exclusive, so one track held by
   all three suites would run them one after the other, which is what `./build.sh CI` already does.
   What made them collide was names, and the per-suite lane prefixes removed that. The gate declares
-  one track per suite instead, named for its catalogs (`polecat_core_w*`, ...): the three suites
+  one track per suite instead, named for its catalogs (`polecat_docs_w*`, ...): the suites
   overlap, and the two frameworks of one suite (`--framework all`) share its catalogs, so they run one
   after the other. Each track's preflight runs `SELECT 1`, not a port probe: under x64 emulation the
   port opens well before the server accepts a login.
@@ -404,7 +418,7 @@ docker compose up -d                          # the gate never starts a containe
 - **The exit code** is the worst unit's: 2 (indeterminate, aborted, never ran) over 1 (failed) over 0.
   A pass on retry is `~` and exit 0, reported as flaky, never clean. Every unit runs even after one
   is red.
-- **What it costs on the 18-core development box** (Apple silicon, SQL Server 2025 under x64
+- **What it cost on the 18-core development box before #1063 split Polecat.Tests** (Apple silicon, SQL Server 2025 under x64
   emulation, Debug, net10.0), measured for #797: **about 15 minutes**, and Polecat.Tests is
   all of it. A warm run was 14m33s for the three units against 15m52s one after the other
   (Polecat.Tests 14m24s at 4 workers, Polecat.AspNetCore.Testing 39s, Polecat.EntityFrameworkCore.Tests

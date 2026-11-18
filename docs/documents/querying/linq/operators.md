@@ -175,7 +175,7 @@ public async Task group_by_simple_key_with_count()
     results.Single(x => x.Color == TargetColor.Red).Count.ShouldBe(1);
 }
 ```
-<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.Tests/Linq/group_by_operator.cs#L22-L41' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_group_by_simple_key_with_count' title='Start of snippet'>anchor</a></sup>
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.LinqTests/Linq/group_by_operator.cs#L22-L41' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_group_by_simple_key_with_count' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 A string key is compared by the database's collation, so on the default case-insensitive one `abc` and `ABC`

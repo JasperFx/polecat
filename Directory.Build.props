@@ -74,7 +74,7 @@
       feature unless a build passes -p:PolecatRuntimeAsync=false. net11.0 only: on net10.0 the compiler
       refuses it (SYSLIB5007) and the runtime will not load it. Needs Roslyn 5.x (the .NET 11 SDK's).
       Changing it does not trigger a recompile, so clean bin/ and obj/ between a build with it and a build
-      without. src/Polecat.Tests/Compilation/runtime_async_defaults_970.cs pins the default.
+      without. src/Polecat.DocumentDbTests/Compilation/runtime_async_defaults_970.cs pins the default.
     -->
     <PropertyGroup Condition="'$(PolecatRuntimeAsync)' != 'false' And '$(TargetFramework)' == 'net11.0'">
         <Features>$(Features);runtime-async=on</Features>

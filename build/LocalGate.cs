@@ -28,7 +28,7 @@ using static Nuke.Common.Tools.DotNet.DotNetTasks;
 // Why there is no shared `sqlserver` track: a track is exclusive, so one held by all three suites
 // would run them one after the other — exactly what `./build.sh CI` already does. What made them
 // collide was NAMES, not the server: all three used to drop and recreate `polecat_w{lane}`. Each
-// suite's catalogs now carry its own prefix (`polecat_core_w*`, `polecat_aspnet_w*`,
+// suite's catalogs now carry its own prefix (`polecat_docs_w*`, `polecat_aspnet_w*`,
 // `polecat_efcore_w*`, SupervisedTests.cs) and each suite drops only its own, and everything a test
 // creates at server scope goes through ConnectionSource.Scoped(), which carries the lane's catalog.
 // So the tracks declared below are per SUITE: a track is the suite's lane catalogs, which is the
@@ -63,7 +63,7 @@ partial class Build
     readonly string AotRuntime;
 
     /// <summary>
-    ///     Build once, then run Polecat.Tests (4 workers), Polecat.AspNetCore.Testing and
+    ///     Build once, then run the six core suites that used to be Polecat.Tests (#1063), Polecat.AspNetCore.Testing and
     ///     Polecat.EntityFrameworkCore.Tests as units of one Bobcat gate — longest first, concurrently,
     ///     on the newest framework unless <c>--framework all</c> (or a pinned one) — and report every
     ///     unit. Each unit is configured exactly as its CI target is (the opt-in retry policy, stall
