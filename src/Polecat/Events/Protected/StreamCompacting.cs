@@ -29,7 +29,40 @@ internal sealed class PolecatStreamCompacting : StreamCompactingExecution<EventO
         IReadOnlyList<IEvent> events, CancellationToken token) where T : class
     {
         var aggregator = session.Session.Options.Projections.AggregatorFor<T>();
-        return await aggregator.BuildAsync(events, session.Session, default, token).ConfigureAwait(false);
+        var aggregate = await aggregator.BuildAsync(events, session.Session, default, token).ConfigureAwait(false);
+
+        // Called ahead of anything being queued, and only with the events about to be folded: the last one becomes
+        // the Compacted<T>, and the rest are deleted. A stream that folds to nothing is left alone anyway.
+        if (aggregate != null && events.Count > 0)
+        {
+            await ensureNoAsyncShardIsBehindAsync<T>(session, events[^1], token).ConfigureAwait(false);
+        }
+
+        return aggregate;
+    }
+
+    /// <summary>
+    ///     #1086 (marten#6050): refuses to compact while an async projection or subscription has not processed the
+    ///     events being compacted. Compaction deletes them and rewrites the last one into a
+    ///     <see cref="Compacted{T}" />, so a multi-stream projection, a composite, another view of the stream or a
+    ///     subscription (Wolverine's event forwarding included) that had not reached them yet would never see them.
+    ///     A single-stream projection of <typeparamref name="T" /> itself is exempt: it fast-forwards over the
+    ///     snapshot. See <see cref="AsyncShardProgressGuard" /> for when a shard counts as behind.
+    /// </summary>
+    private static async Task ensureNoAsyncShardIsBehindAsync<T>(EventOperations session, IEvent last,
+        CancellationToken token) where T : class
+    {
+        var behind = await AsyncShardProgressGuard.FindShardsBehindAsync(session, last.Sequence, typeof(T), token)
+            .ConfigureAwait(false);
+
+        if (behind.Count > 0)
+        {
+            throw new InvalidOperationException(
+                $"Cannot compact stream '{(object?)last.StreamKey ?? last.StreamId}' through version {last.Version} " +
+                $"(sequence {last.Sequence}) yet: these async projections or subscriptions have not processed its " +
+                $"events: {string.Join(", ", behind.Select(x => $"{x.Name} (at {x.Sequence})"))}. Compacting " +
+                "deletes them, so those would never see them. Nothing was compacted; try again once they caught up.");
+        }
     }
 
     /// <remarks>

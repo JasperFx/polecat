@@ -211,6 +211,14 @@ aggregate that cannot be rebuilt from that snapshot alone cannot be rebuilt at a
 `StreamCompactingRequest<T>.Archiver` to copy the events somewhere first if you need them.
 :::
 
+Compacting deletes events, so Polecat refuses to compact a stream while any asynchronous projection or subscription
+has not processed its events yet. `CompactStreamAsync()` throws an `InvalidOperationException` naming the projections
+and subscriptions that are behind, and nothing is compacted; compact again once they caught up. A projection or
+subscription that has never run counts as behind. The one exception is a single stream projection of the type you are
+compacting to, which reads the `Compacted<T>` snapshot instead of the deleted events. Before this check, a multi-stream
+projection or a subscription (Wolverine's event forwarding included) that was behind never saw the compacted events
+at all ([#1086](https://github.com/JasperFx/polecat/issues/1086)).
+
 An archiver can be closed over either `IDocumentOperations` or `IDocumentSession`. If you set one that
 Polecat cannot call, `CompactStreamAsync` throws an `InvalidOperationException` and nothing is
 compacted, because the alternative is deleting the events without archiving them.

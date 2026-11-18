@@ -497,6 +497,15 @@ running the same shard, or a rewind), the batch fails with `ProgressionProgressO
 nothing, where it used to write its own sequence over the row ([#1060](https://github.com/JasperFx/polecat/issues/1060)).
 Nothing to change in your code. The per-identity rebuild depends on it.
 
+## Upgrading to 6.0: stream compaction waits for async projections and subscriptions
+
+`CompactStreamAsync()` now throws an `InvalidOperationException` while an asynchronous projection or subscription has
+not processed the events it would delete, including one that has never run. Nothing is compacted; compact again once
+they caught up. A single stream projection of the compacted type is not checked, since it reads the `Compacted<T>`
+snapshot. In 5.x those events were deleted anyway, and a multi-stream projection or a subscription that was behind
+never saw them ([#1086](https://github.com/JasperFx/polecat/issues/1086), marten#6050,
+[compacting](/events/archiving#compacting-a-stream)).
+
 ## Upgrading to 6.0: a snapshot without its stream throws `SnapshotWithoutStreamException`
 
 For an aggregate projected with `ProjectionLifecycle.Async`, `FetchForWriting()`, `FetchForExclusiveWriting()`,

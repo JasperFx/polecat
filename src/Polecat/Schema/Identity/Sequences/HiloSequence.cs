@@ -26,6 +26,9 @@ internal class HiloSequence : HiloSequenceBase
     private readonly ResiliencePipeline _resilience;
     private volatile bool _tableEnsured;
 
+    // #1088: serializes the synchronous ensure of pc_hilo, so a burst of cold callers runs it once
+    private readonly Lock _synchronousEnsure = new();
+
     public HiloSequence(ConnectionFactory connectionFactory, StoreOptions options, string entityName,
         HiloSettings settings)
         : base(entityName, settings)
@@ -45,17 +48,99 @@ internal class HiloSequence : HiloSequenceBase
     {
         if (_tableEnsured) return;
 
-        _resilience.Execute(() =>
-        {
-            using var conn = _connectionFactory.Create();
-            conn.Open();
+        _resilience.Execute(static state => state.Item1.ensureHiloTable(null, state.insideTransaction),
+            (this, insideTransaction));
+    }
 
-            EnsureHiloTableAsync(conn, insideTransaction, CancellationToken.None).GetAwaiter().GetResult();
-        });
+    /// <summary>
+    ///     The synchronous ensure of <c>pc_hilo</c>, for <see cref="EnsureStorage" /> and
+    ///     <see cref="AdvanceToNextHiSync" />. The same rules as <see cref="EnsureHiloTableAsync" />, with blocking
+    ///     I/O from start to finish.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///     #1088 (marten#5969): these used to run <see cref="EnsureHiloTableAsync" /> and block on it. The first burst
+    ///     of synchronous <c>Store()</c> calls on a fresh schema then had every writer holding a pool thread while it
+    ///     waited on asynchronous work that needed a free pool thread to finish, and a 10 ms heartbeat on the pool
+    ///     came back up to two seconds late.
+    ///     </para>
+    ///     <para>
+    ///     Creates the table if it is missing, with the guarded DDL Weasel writes for it, and leaves an existing one
+    ///     alone; the asynchronous ensure and the store's migrations are what update one. One caller per sequence
+    ///     runs it, and the others wait on that caller's I/O, except a caller inside a transaction, which never
+    ///     waits (see <see cref="SchemaMigrationLock.HoldForFirstUseAsync" />) and skips the ensure instead.
+    ///     Waiting comes before opening a connection, so a burst of cold callers opens one, not one each.
+    ///     </para>
+    /// </remarks>
+    /// <param name="openConnection">A connection the caller already has open, or null to open one if needed.</param>
+    /// <param name="insideTransaction"></param>
+    private void ensureHiloTable(SqlConnection? openConnection, bool insideTransaction)
+    {
+        if (_tableEnsured) return;
+
+        // #267, as in EnsureHiloTableAsync
+        if (_options.AutoCreateSchemaObjects == AutoCreate.None)
+        {
+            _tableEnsured = true;
+            return;
+        }
+
+        if (insideTransaction)
+        {
+            if (!_synchronousEnsure.TryEnter()) return;
+        }
+        else
+        {
+            _synchronousEnsure.Enter();
+        }
+
+        try
+        {
+            if (_tableEnsured) return;
+
+            if (openConnection != null)
+            {
+                ensureHiloTableOn(openConnection, insideTransaction);
+            }
+            else
+            {
+                using var conn = _connectionFactory.Create();
+                conn.Open();
+                ensureHiloTableOn(conn, insideTransaction);
+            }
+        }
+        finally
+        {
+            _synchronousEnsure.Exit();
+        }
+    }
+
+    private void ensureHiloTableOn(SqlConnection conn, bool insideTransaction)
+    {
+        if (SchemaMigrationLock.TryRunForFirstUse(_options, conn, insideTransaction, hiloTableDdl()))
+        {
+            _tableEnsured = true;
+        }
+    }
+
+    private string hiloTableDdl()
+    {
+        var writer = new StringWriter();
+        writer.WriteLine(SqlServerMigrator.CreateSchemaStatementFor(_schemaName));
+        new HiloTable(_schemaName).WriteCreateStatement(new SqlServerMigrator(), writer);
+        return writer.ToString();
     }
 
     internal void ForgetEnsuredTable() => _tableEnsured = false;
 
+    /// <remarks>
+    ///     #1087 (marten#6058, weasel#849): the block reserved above the floor follows the overlap rule an
+    ///     advance does. An advance that reserves after the row moved, and installs first, holds a higher block
+    ///     that is above the floor too. Installing the floor's lower block on top of it would hand out ids behind
+    ///     ones already issued: above the floor and unique, but out of order. So <see cref="HiloSequenceBase.InstallCount" />
+    ///     is taken once the row has moved, and the floor's block is dropped as a gap when another one was
+    ///     installed since and is above it.
+    /// </remarks>
     public override async Task SetFloor(long floor)
     {
         var numberOfPages = (long)Math.Ceiling((double)floor / MaxLo);
@@ -76,13 +161,26 @@ internal class HiloSequence : HiloSequenceBase
             await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
         }, numberOfPages).ConfigureAwait(false);
 
-        // Advance again to pick up the new floor
-        await AdvanceToNextHi().ConfigureAwait(false);
+        // Counted once the row has moved: any block installed from here on was reserved above the floor too
+        var installsBefore = InstallCount;
+
+        // Reserve the block above the new floor, and install it unless a higher one got there first
+        TrySetCurrentHi(await FetchNextHiAsync(CancellationToken.None).ConfigureAwait(false), installsBefore);
     }
 
     public override async Task AdvanceToNextHi(CancellationToken ct = default)
     {
-        await _resilience.ExecuteAsync(async (_, cancellation) =>
+        TrySetCurrentHi(await FetchNextHiAsync(ct).ConfigureAwait(false));
+    }
+
+    /// <summary>
+    ///     Reserve the next hi from <c>pc_hilo</c> without installing it. Every asynchronous reservation goes
+    ///     through here: <see cref="AdvanceToNextHi" />, and the block <see cref="SetFloor" /> reserves above the
+    ///     floor.
+    /// </summary>
+    internal virtual async Task<long> FetchNextHiAsync(CancellationToken ct)
+    {
+        return await _resilience.ExecuteAsync(async (_, cancellation) =>
         {
             await using var conn = _connectionFactory.Create();
             await conn.OpenAsync(cancellation).ConfigureAwait(false);
@@ -95,9 +193,9 @@ internal class HiloSequence : HiloSequenceBase
             for (var attempts = 0; attempts < Settings.MaxAdvanceToNextHiAttempts; attempts++)
             {
                 var result = await TryGetNextHiAsync(conn, cancellation).ConfigureAwait(false);
-                if (TrySetCurrentHi(result))
+                if (result >= 0)
                 {
-                    return;
+                    return result;
                 }
             }
 
@@ -115,7 +213,8 @@ internal class HiloSequence : HiloSequenceBase
             using var conn = _connectionFactory.Create();
             conn.Open();
 
-            EnsureHiloTableAsync(conn, insideTransaction: true, CancellationToken.None).GetAwaiter().GetResult();
+            // #1088: synchronous from start to finish, never blocking on the asynchronous ensure
+            ensureHiloTable(conn, insideTransaction: true);
 
             // gh-1004: see AdvanceToNextHi -- one attempt now always secures a hi.
             for (var attempts = 0; attempts < Settings.MaxAdvanceToNextHiAttempts; attempts++)

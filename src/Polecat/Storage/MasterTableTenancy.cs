@@ -151,6 +151,62 @@ public class MasterTableTenancy : MasterTableTenancyBase<PolecatDatabase, DbData
         };
     }
 
+    /// <summary>
+    ///     #1087 (marten#6058, weasel#850), the cold-process half of #991: lets a synchronous lookup in a process
+    ///     where nothing asynchronous has run yet resolve the tenant synchronously, instead of blocking a thread on
+    ///     <c>ResolveTenantAsync</c>. Creates the control table with blocking I/O, with the dialect's guarded DDL,
+    ///     which makes the same table <see cref="TenantsTable" /> describes.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         Under the same <c>sp_getapplock</c> resource as <see cref="ProvisionControlTableAsync" /> (#883), taken
+    ///         for the transaction the DDL runs in, so two replicas starting cold together don't both run the
+    ///         CREATE. Waiting on it is waiting on another session's DDL, which needs no pool thread to finish.
+    ///     </para>
+    ///     <para>
+    ///         Does nothing under <see cref="AutoCreate.None" />, where the operator owns the schema, as the
+    ///         asynchronous path does. Declines rather than wait while an asynchronous provisioning in this process
+    ///         holds the semaphore across an await.
+    ///     </para>
+    /// </remarks>
+    protected override bool TryProvisionControlTableSynchronously()
+    {
+        if (_masterTableEnsured) return true;
+
+        if (EffectiveAutoCreate == AutoCreate.None)
+        {
+            _masterTableEnsured = true;
+            return true;
+        }
+
+        // Never block on the semaphore: the asynchronous provisioning holds it across an await
+        if (!_provisioning.Wait(0)) return false;
+
+        try
+        {
+            if (_masterTableEnsured) return true;
+
+            var sql = Dialect.CreateControlTable(Options.SchemaName, TableName, QualifiedTableName);
+            _resilience.Execute(static state =>
+            {
+                var (connectionString, options, schema, ddl) = state;
+                using var conn = new SqlConnection(connectionString);
+                conn.Open();
+
+                // Nothing has to worry about a transaction here, as for the asynchronous path: this runs as a
+                // session is being opened
+                SchemaMigrationLock.TryRunForFirstUse(options, conn, insideTransaction: false, ddl, schema);
+            }, (Options.ConnectionString!, _options, Options.SchemaName, sql));
+
+            _masterTableEnsured = true;
+            return true;
+        }
+        finally
+        {
+            _provisioning.Release();
+        }
+    }
+
     // It is deliberately important *not* to silently swallow the lookup here — an unknown or disabled
     // tenant must refuse the session, same as SeparateDatabaseTenancy. #655: the two are told apart,
     // because they call for different actions.
@@ -159,9 +215,10 @@ public class MasterTableTenancy : MasterTableTenancyBase<PolecatDatabase, DbData
     // synchronous session factories) used to block a pool thread on ResolveTenantAsync for every uncached
     // tenant. That thread then waited on async I/O that needed another pool thread to finish, so a burst
     // of cold tenants could starve the pool (marten#5985). TryResolveTenant (weasel#838) answers from the
-    // cache or with one synchronous read of pc_tenants, with no Task in the chain. It declines, touching
-    // nothing, only before any async entry point has provisioned the control table, which is the cold
-    // start of a process; that one case still takes the blocking fallback.
+    // cache or with one synchronous read of pc_tenants, with no Task in the chain. #1087: on the cold start
+    // of a process it provisions the control table synchronously first (TryProvisionControlTableSynchronously).
+    // It still declines while an asynchronous provisioning in this process is part way through, or when the
+    // driver refuses synchronous I/O, and only then does this take the blocking fallback.
     private PolecatDatabase Resolve(string tenantId)
     {
         if (!TryResolveTenant(tenantId, out var resolution))
