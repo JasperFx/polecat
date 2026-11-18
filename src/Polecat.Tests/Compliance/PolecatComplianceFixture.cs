@@ -33,6 +33,12 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
 
         var options = OptionsFor(config);
 
+        if (config.TenantDatabases.Count == 0)
+        {
+            await dropSchemaBuiltUnderTheOtherEventTenancyAsync(options.ConnectionString,
+                options.DatabaseSchemaName, config.ConjoinedEventTenancy).ConfigureAwait(false);
+        }
+
         _store = new DocumentStore(options);
         _disposables.Add(_store);
 
@@ -196,6 +202,65 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
         config.ApplyTo(new PolecatComplianceRegistrar(options));
 
         return options;
+    }
+
+    /// <summary>
+    ///     #1060, Marten's workaround for jasperfx#1227. <c>IdentityRebuildCompliance</c> (JasperFx 3.6.0) runs its
+    ///     conjoined fact in the same schema as its single-tenancy ones, where every other suite gives a conjoined
+    ///     configuration a schema of its own. Migrating an event store from single to conjoined tenancy fails:
+    ///     the new <c>pc_streams</c> primary key re-adds the <c>pc_events</c> foreign key that conjoined tenancy
+    ///     does not have, against a key that no longer matches it (weasel#886). Until both are fixed upstream, a
+    ///     schema built under the other event tenancy is dropped before the store is built, which is what a
+    ///     separate schema would have given the suite.
+    /// </summary>
+    private static async Task dropSchemaBuiltUnderTheOtherEventTenancyAsync(string connectionString, string schema,
+        bool conjoined)
+    {
+        await using var conn = new SqlConnection(connectionString);
+        await conn.OpenAsync().ConfigureAwait(false);
+
+        await using var probe = conn.CreateCommand();
+        probe.CommandText = """
+            SELECT COUNT(*) FROM sys.indexes i
+            JOIN sys.index_columns ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id
+            JOIN sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id
+            WHERE i.object_id = OBJECT_ID(@streams) AND i.is_primary_key = 1 AND c.name = 'tenant_id';
+            SELECT CASE WHEN OBJECT_ID(@streams) IS NULL THEN 0 ELSE 1 END;
+            """;
+        probe.Parameters.AddWithValue("@streams", $"[{schema}].[pc_streams]");
+
+        await using (var reader = await probe.ExecuteReaderAsync().ConfigureAwait(false))
+        {
+            await reader.ReadAsync().ConfigureAwait(false);
+            var keyedByTenant = reader.GetInt32(0) > 0;
+            await reader.NextResultAsync().ConfigureAwait(false);
+            await reader.ReadAsync().ConfigureAwait(false);
+            var exists = reader.GetInt32(0) == 1;
+
+            // No event store in the schema yet, or one built under this tenancy
+            if (!exists || keyedByTenant == conjoined) return;
+        }
+
+        await using var drop = conn.CreateCommand();
+        drop.CommandText = """
+            DECLARE @sql nvarchar(max) = N'';
+            SELECT @sql = @sql + 'ALTER TABLE ' + QUOTENAME(s.name) + '.' + QUOTENAME(t.name) + ' DROP CONSTRAINT ' + QUOTENAME(fk.name) + ';'
+            FROM sys.foreign_keys fk
+            JOIN sys.tables t ON fk.parent_object_id = t.object_id
+            JOIN sys.schemas s ON t.schema_id = s.schema_id
+            WHERE s.name = @schema;
+            SELECT @sql = @sql + 'DROP TABLE ' + QUOTENAME(s.name) + '.' + QUOTENAME(t.name) + ';'
+            FROM sys.tables t
+            JOIN sys.schemas s ON t.schema_id = s.schema_id
+            WHERE s.name = @schema;
+            SELECT @sql = @sql + 'DROP SEQUENCE ' + QUOTENAME(s.name) + '.' + QUOTENAME(sq.name) + ';'
+            FROM sys.sequences sq
+            JOIN sys.schemas s ON sq.schema_id = s.schema_id
+            WHERE s.name = @schema;
+            EXEC sp_executesql @sql;
+            """;
+        drop.Parameters.AddWithValue("@schema", schema);
+        await drop.ExecuteNonQueryAsync().ConfigureAwait(false);
     }
 
     private static string connectionStringFor(ComplianceStoreConfig config)
@@ -547,6 +612,18 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
     // the suite drives it through session.Events directly.
     public override bool SupportsTombstoneStream => true;
 
+    /// <summary>
+    ///     #1060 (jasperfx#1201): the store reads one stream's events for a per-identity re-fold
+    ///     (<c>LoadEventsForIdentityRebuildAsync</c>), its projection storage hard deletes by id, and an empty
+    ///     range <c>(C, C]</c> records progression through the same floor-checked update as any other batch.
+    /// </summary>
+    public override bool SupportsIdentityRebuild => true;
+
+    /// <summary>
+    ///     #1060: the registrar's <c>SoftDeleted&lt;TDoc&gt;()</c> is the per-type soft delete policy.
+    /// </summary>
+    public override bool SupportsSoftDeletedProjectionDocuments => true;
+
     // jasperfx#763 / #420. Polecat has a real message outbox (StoreOptions.MessageOutbox, defaulting
     // to NulloMessageOutbox) that the projection batch vends from, so the outbox facts run rather
     // than skip.
@@ -823,6 +900,12 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
         public void LiveAggregation<TDoc>() where TDoc : notnull
         {
         }
+
+        /// <summary>
+        ///     jasperfx#1201 (#1060).
+        /// </summary>
+        public void SoftDeleted<TDoc>() where TDoc : notnull
+            => _options.Policies.ForDocument<TDoc>(x => x.SoftDeleted = true);
 
         // Polecat derives everything it needs about a value type from ValueTypeInfo when it builds
         // the DocumentMapping, so there is no registration call to make here. Marten needs the type

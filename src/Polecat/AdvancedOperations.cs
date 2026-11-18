@@ -1097,6 +1097,111 @@ public class AdvancedOperations
         return scenario.ExecuteAsync(ct);
     }
 
+    /// <summary>
+    ///     Rebuild the projected document of type <typeparamref name="T" /> for the single stream identified by
+    ///     <paramref name="id" />, and commit it. The repair for one stream whose read model is wrong, where a full
+    ///     <c>RebuildProjectionAsync</c> would replay every stream the projection owns. Marten's method of the same
+    ///     name (#1060, marten#6071).
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         <b>Three paths, in this order.</b> When <typeparamref name="T" /> is written by an asynchronous
+    ///         single-stream projection:
+    ///     </para>
+    ///     <list type="number">
+    ///         <item>
+    ///             A daemon of this store in this process is running the projection's shard: the rebuild goes
+    ///             through it (<c>IProjectionDaemon.RebuildIdentityAsync</c>) and is bound to the shard's next
+    ///             batch, which re-folds the stream and commits it with the shard's progression, so it cannot race
+    ///             the shard. This returns when that batch commits.
+    ///         </item>
+    ///         <item>
+    ///             Otherwise, when the shard's progression row was written within the last 30 seconds by a running
+    ///             agent, the rebuild is refused with <see cref="JasperFx.Events.Daemon.IdentityRebuildRefusedException" />
+    ///             (<see cref="JasperFx.Events.Daemon.IdentityRebuildRefusal.ShardLiveOnAnotherNode" />). Another node
+    ///             is advancing the shard; rebuild through the daemon there.
+    ///         </item>
+    ///         <item>
+    ///             Otherwise the stream is live-aggregated and stored here, outside any daemon. <b>That is only safe
+    ///             when no daemon is running the projection.</b> Without extended progression tracking an idle shard
+    ///             stops rewriting its row, so a daemon on another node that has had nothing to do for 30 seconds
+    ///             looks stopped and the write is not refused.
+    ///         </item>
+    ///     </list>
+    ///     <para>
+    ///         An inline or live projection, or a type no projection writes, always takes the third path. A stream
+    ///         that folds to nothing deletes the document, which is what a full rebuild leaves for that stream.
+    ///     </para>
+    /// </remarks>
+    /// <exception cref="JasperFx.Events.Daemon.IdentityRebuildRefusedException">
+    ///     The projection's shard is running on another node, or the daemon running it here refused (it has never
+    ///     committed, or it is being rebuilt).
+    /// </exception>
+    public Task RebuildSingleStreamAsync<T>(Guid id, CancellationToken token = default) where T : class
+        => rebuildSingleStreamAsync<T>(id, () => _store.LightweightSession(),
+            (session, ct) => session.Events.AggregateStreamAsync<T>(id, token: ct),
+            session => session.Delete<T>(id), token);
+
+    /// <inheritdoc cref="RebuildSingleStreamAsync{T}(Guid, CancellationToken)" />
+    public Task RebuildSingleStreamAsync<T>(string id, CancellationToken token = default) where T : class
+        => rebuildSingleStreamAsync<T>(id, () => _store.LightweightSession(),
+            (session, ct) => session.Events.AggregateStreamAsync<T>(id, token: ct),
+            session => session.Delete<T>(id), token);
+
+    /// <summary>
+    ///     Tenant-scoped overload of <see cref="RebuildSingleStreamAsync{T}(Guid, CancellationToken)" />, for the
+    ///     stream identified by <paramref name="streamId" /> under <paramref name="tenantId" />. Needed under
+    ///     conjoined tenancy or a database per tenant, where the event load and the document write both have to be
+    ///     scoped to the tenant.
+    /// </summary>
+    /// <remarks>See <see cref="RebuildSingleStreamAsync{T}(Guid, CancellationToken)" /> for the three paths.</remarks>
+    public Task RebuildSingleStreamAsync<T>(Guid streamId, string tenantId, CancellationToken token = default)
+        where T : class
+        => rebuildSingleStreamAsync<T>(streamId, () => _store.LightweightSession(tenantId),
+            (session, ct) => session.Events.AggregateStreamAsync<T>(streamId, token: ct),
+            session => session.Delete<T>(streamId), token);
+
+    /// <summary>
+    ///     Tenant-scoped overload of <see cref="RebuildSingleStreamAsync{T}(string, CancellationToken)" />, for the
+    ///     stream identified by <paramref name="streamKey" /> under <paramref name="tenantId" />.
+    /// </summary>
+    /// <remarks>See <see cref="RebuildSingleStreamAsync{T}(Guid, CancellationToken)" /> for the three paths.</remarks>
+    public Task RebuildSingleStreamAsync<T>(string streamKey, string tenantId, CancellationToken token = default)
+        where T : class
+        => rebuildSingleStreamAsync<T>(streamKey, () => _store.LightweightSession(tenantId),
+            (session, ct) => session.Events.AggregateStreamAsync<T>(streamKey, token: ct),
+            session => session.Delete<T>(streamKey), token);
+
+    private async Task rebuildSingleStreamAsync<T>(object streamId, Func<IDocumentSession> openSession,
+        Func<IDocumentSession, CancellationToken, Task<T?>> aggregate, Action<IDocumentSession> delete,
+        CancellationToken token) where T : class
+    {
+        await using var session = openSession();
+
+        if (_store.AsyncSingleStreamProjectionFor(typeof(T)) is { } projection
+            && await _store.TryRebuildIdentityThroughDaemonAsync(projection,
+                _store.DatabaseForTenant(session.TenantId) ?? _store.Database, session.TenantId, streamId, token).ConfigureAwait(false))
+        {
+            return;
+        }
+
+        var document = await aggregate(session, token).ConfigureAwait(false);
+
+        if (document is null)
+        {
+            // Deleted rather than skipped: a full rebuild clears the rows and replays, so a stream that folds to
+            // nothing leaves no document. Skipping would keep whatever the earlier, wrong run wrote, which is what
+            // this is being called to repair. Deleted by the stream's identity, which is the aggregate's.
+            delete(session);
+        }
+        else
+        {
+            session.Store(document);
+        }
+
+        await session.SaveChangesAsync(token).ConfigureAwait(false);
+    }
+
     // ---- runtime tenant onboarding under managed per-tenant partitioning (#335) ----
 
     /// <summary>

@@ -162,6 +162,18 @@ internal class PolecatProjectionStorage<TDoc, TId> : IProjectionStorage<TDoc, TI
             Storage.HardDeletionForObjectId(id, tenantId), SessionFor(tenantId), snapshot, id));
     }
 
+    /// <summary>
+    ///     Remove the document with this identity outright, soft-deleted or not, as part of the batch (#1060,
+    ///     jasperfx#1201). A per-identity rebuild clears the identity this way before it writes the re-fold, so a
+    ///     stream that folds to nothing leaves no document and a soft-deleted row does not survive a fold that
+    ///     recreates it.
+    /// </summary>
+    public void HardDeleteById(TId identity)
+    {
+        _session.WorkTracker.Add(new ClosedShapeOperationAdapter(
+            Storage.HardDeletionForObjectId(identity!, TenantId), SessionFor(TenantId), identity!, identity));
+    }
+
     public void UnDelete(TDoc snapshot) => UnDelete(snapshot, TenantId);
 
     public void UnDelete(TDoc snapshot, string tenantId)

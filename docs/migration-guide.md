@@ -444,6 +444,14 @@ Server compares them, and new rows go in at the end of the clustered index inste
 Nothing to migrate. Existing ids stay as they are, and ids you assign yourself are never replaced. Don't read
 a timestamp out of these ids: they are not version 7 Guids.
 
+## Upgrading to 6.0: a daemon batch only moves the progression it started from
+
+An async daemon batch now updates its shard's row in `pc_event_progression` only while the row still holds the
+sequence the batch started from, as Marten's does. If something moved the row in the meantime (a second daemon
+running the same shard, or a rewind), the batch fails with `ProgressionProgressOutOfOrderException` and commits
+nothing, where it used to write its own sequence over the row ([#1060](https://github.com/JasperFx/polecat/issues/1060)).
+Nothing to change in your code. The per-identity rebuild depends on it.
+
 ## Upgrading to 6.0: `MasterTableTenancy` runs on Weasel's shared base
 
 `MasterTableTenancy` now derives from Weasel's `MasterTableTenancyBase<PolecatDatabase, DbDataSource>`,

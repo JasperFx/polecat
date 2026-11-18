@@ -15,13 +15,7 @@ public class polecat_compliance_suite_inventory
     public void every_event_compliance_suite_is_enrolled_or_excused()
     {
         ComplianceSuiteInventory.AssertEnrolled(typeof(polecat_compliance_suite_inventory).Assembly,
-            new PolecatComplianceFixture(), new Dictionary<Type, string>
-            {
-                // JasperFx 3.6.0 added the suite (jasperfx#1201). Polecat adopts the per-identity rebuild in
-                // #1060, after the Marten adoption (marten#6071), and enrolls the suite then
-                [typeof(IdentityRebuildCompliance<,,>)] =
-                    "per-identity rebuild is not adopted yet (polecat#1060, after marten#6071)"
-            });
+            new PolecatComplianceFixture(), new Dictionary<Type, string>());
     }
 
     [Fact]
