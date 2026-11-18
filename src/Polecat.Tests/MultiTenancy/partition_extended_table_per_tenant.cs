@@ -219,6 +219,49 @@ public class partition_extended_table_per_tenant : IAsyncLifetime
     }
 
     [Fact]
+    public void the_same_table_can_be_handed_to_a_second_store()
+    {
+        var table = ledgerTable();
+
+        DocumentStore build() => track(DocumentStore.For(opts =>
+        {
+            opts.ConnectionString = ConnectionSource.ConnectionStringFor(Database);
+            opts.DatabaseSchemaName = Schema;
+            opts.Events.TenancyStyle = TenancyStyle.Conjoined;
+            opts.Policies.PartitionMultiTenantedDocumentsUsingPolecatManagement();
+            opts.Storage.PartitionPerTenant(table);
+        }));
+
+        build();
+        var second = build();
+
+        table.SqlServerPartitioning.ShouldBeSameAs(second.Options.EventGraph.TenantPartitionManager);
+        table.Columns.Count(x => x.Name == "tenant_ordinal").ShouldBe(1);
+    }
+
+    [Fact]
+    public void a_table_partitioned_another_way_is_refused()
+    {
+        var table = ledgerTable();
+        table.AddColumn<DateTimeOffset>("posted").AsPrimaryKey();
+        table.PartitionByRange("posted", "datetimeoffset");
+
+        var ex = Should.Throw<InvalidOperationException>(() =>
+        {
+            track(DocumentStore.For(opts =>
+            {
+                opts.ConnectionString = ConnectionSource.ConnectionStringFor(Database);
+                opts.DatabaseSchemaName = Schema;
+                opts.Events.TenancyStyle = TenancyStyle.Conjoined;
+                opts.Policies.PartitionMultiTenantedDocumentsUsingPolecatManagement();
+                opts.Storage.PartitionPerTenant(table);
+            }));
+        });
+
+        ex.Message.ShouldContain("only one partition scheme");
+    }
+
+    [Fact]
     public void a_store_without_polecat_managed_tenant_partitioning_refuses()
     {
         var ex = Should.Throw<InvalidOperationException>(() =>

@@ -93,7 +93,9 @@ public class StorageFeatures
         {
             if (ReferenceEquals(table.SqlServerPartitioning, manager)) continue;
 
-            if (table.SqlServerPartitioning != null)
+            // Another store's tenant partitioning (the same Table handed to a store built earlier) is
+            // replaced, as Marten does; any other partitioning is a second scheme the table can't have
+            if (table.SqlServerPartitioning is not null and not Weasel.SqlServer.Tables.Partitioning.ManagedTenantPartitions)
             {
                 throw new InvalidOperationException(
                     $"Storage.PartitionPerTenant() was called for {table.Identifier.QualifiedName}, which is already "
