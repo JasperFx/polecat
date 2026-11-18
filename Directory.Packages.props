@@ -905,14 +905,14 @@
              fails CatchUpAsync with "The channel has been closed", jasperfx#1233 a rebuild no longer misses a start
              that was still registering (the loser throws ShardStartException with reason Rebuilding), and
              jasperfx#1232 IdentityRebuildCompliance counts a document that loads as null as not live. -->
-        <PackageVersion Include="JasperFx" Version="3.7.1" />
-        <PackageVersion Include="JasperFx.Events" Version="3.7.1" />
+        <PackageVersion Include="JasperFx" Version="3.8.0" />
+        <PackageVersion Include="JasperFx.Events" Version="3.8.0" />
         <!--
              The shared cross-store event sourcing compliance suites. Source-only package: the
              suites compile inside Polecat.Tests.Shared (#1063) so JasperFx's aggregate source generator binds
              Polecat's own session types.
         -->
-        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="3.7.1" />
+        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="3.8.0" />
         <!-- Pin the sibling JasperFx packages for parity with Marten 9's matrix
              even though Polecat doesn't currently reference them directly —
              keeps the lockstep matrix coherent when transitive resolution
@@ -920,7 +920,7 @@
              JasperFx.RuntimeCompiler is deliberately NOT pinned: nothing in Polecat references it,
              directly or transitively (projection dispatch is source-generated, and Polecat.AotSmoke
              proves a consumer builds without it), so a pin only invited needless bumps. -->
-        <PackageVersion Include="JasperFx.SourceGenerator" Version="3.7.1" />
+        <PackageVersion Include="JasperFx.SourceGenerator" Version="3.8.0" />
         <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.1.1" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
@@ -1533,9 +1533,9 @@
         <!-- Weasel 10.0.0-alpha.9 (from alpha.8). weasel#880: Identifications.ForSequentialGuid / ForValueType and
              the identification constructors take an IGuidGenerator. ADOPTED: Polecat passes
              SequentialGuid.SqlServerOrder, so new document ids go in at the end of the clustered key. -->
-        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="10.0.0-alpha.9" />
-        <PackageVersion Include="Weasel.SqlServer" Version="10.0.0-alpha.9" />
-        <PackageVersion Include="Weasel.Storage" Version="10.0.0-alpha.9" />
+        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="10.0.0-alpha.11" />
+        <PackageVersion Include="Weasel.SqlServer" Version="10.0.0-alpha.11" />
+        <PackageVersion Include="Weasel.Storage" Version="10.0.0-alpha.11" />
 
         <!-- Strongly typed IDs. Both generators are test-only: they prove Polecat's value-type id
              support against the two libraries Marten's ValueTypeTests exercise. StronglyTypedId emits
@@ -1545,7 +1545,7 @@
         <PackageVersion Include="Vogen" Version="7.0.0" />
 
         <!-- Source generators (matched to JasperFx.Events above) -->
-        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="3.7.1" />
+        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="3.8.0" />
 
         <!-- Build automation -->
         <PackageVersion Include="Nuke.Common" Version="9.0.4" />
