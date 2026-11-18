@@ -123,7 +123,7 @@ all of them at once, to upgrade with no change in behavior and take the new defa
 // Upgrade with the Polecat 5 defaults, then take the new ones one at a time
 options.RestoreV5Defaults();
 ```
-<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.Tests/Configuration/polecat_6_default_tests.cs#L45-L48' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_restore_v5_defaults' title='Start of snippet'>anchor</a></sup>
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.Tests/Configuration/polecat_6_default_tests.cs#L60-L63' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_restore_v5_defaults' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 **Inline projections now run their side effects.** `EnableSideEffectsOnInlineProjections` is on by default, so

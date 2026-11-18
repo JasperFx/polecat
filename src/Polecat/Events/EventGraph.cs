@@ -409,6 +409,36 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
     private object? _tenantPartitionLock;
 
     /// <summary>
+    ///     #1057: the name of the function that answers a tenant's partition ordinal.
+    /// </summary>
+    internal const string TenantOrdinalFunctionName = "pc_tenant_ordinal";
+
+    /// <summary>
+    ///     #1057: whether any table of the application's own is partitioned per tenant
+    ///     (<see cref="Polecat.Storage.StorageFeatures.PartitionPerTenant" />).
+    /// </summary>
+    internal bool HasTablesPartitionedPerTenant => _options.Storage.TablesPartitionedPerTenant.Count > 0;
+
+    /// <summary>
+    ///     #1057: <c>{schema}.pc_tenant_ordinal(@tenant_id)</c>, the tenant's partition ordinal from the
+    ///     <c>pc_tenant_partitions</c> registry, or <c>NULL</c> for a tenant that has none yet.
+    /// </summary>
+    internal Weasel.SqlServer.Functions.Function BuildTenantOrdinalFunction()
+    {
+        var name = Polecat.Internal.SqlEscaping.QualifiedName(DatabaseSchemaName, TenantOrdinalFunctionName);
+        return new Weasel.SqlServer.Functions.Function(
+            new Weasel.SqlServer.SqlServerObjectName(DatabaseSchemaName, TenantOrdinalFunctionName),
+            $"""
+             CREATE FUNCTION {name}(@tenant_id {KeyText()})
+             RETURNS int
+             AS
+             BEGIN
+                 RETURN (SELECT ordinal FROM {TenantPartitionsTableName} WHERE tenant_id = @tenant_id);
+             END
+             """);
+    }
+
+    /// <summary>
     ///     True when anything in the store partitions by tenant — the event store tables
     ///     (<see cref="UseTenantPartitionedEvents" />) or the document tables
     ///     (<see cref="StorePolicies.PartitionMultiTenantedDocumentsUsingPolecatManagement" />, #335).
