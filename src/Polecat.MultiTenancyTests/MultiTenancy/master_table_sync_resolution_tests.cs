@@ -1,8 +1,10 @@
 using JasperFx;
 using JasperFx.MultiTenancy;
+using Microsoft.Data.SqlClient;
 using Polecat.Storage;
 using Polecat.TestUtils;
 using Polly;
+using Weasel.Core;
 
 namespace Polecat.Tests.MultiTenancy;
 
@@ -105,19 +107,69 @@ public class master_table_sync_resolution_tests
     }
 
     /// <summary>
-    ///     The one case that still blocks: nothing has provisioned the control table yet, which the synchronous
-    ///     path never does itself. It falls back to <c>ResolveTenantAsync</c> rather than failing.
+    ///     #1087 (marten#6058, weasel#850): a process whose first touch is synchronous used to decline every
+    ///     uncached tenant until something asynchronous had provisioned the control table, and blocked a thread on
+    ///     <c>ResolveTenantAsync</c> for each of them. The control table is now provisioned synchronously, so even
+    ///     the first lookup makes no asynchronous call.
     /// </summary>
     [Fact]
-    public async Task a_cold_process_falls_back_to_the_async_path_and_still_resolves()
+    public async Task a_cold_process_resolves_its_first_tenant_synchronously()
     {
-        var schema = await SeedAsync(("tenant_a", false));
+        var schema = await SeedAsync(("tenant_a", false), ("tenant_b", false));
         var tenancy = new CountingTenancy(Options(), schema);
 
         ((ITenancy)tenancy).GetDatabase("tenant_a").ShouldNotBeNull();
+        ((ITenancy)tenancy).GetConnectionFactory("tenant_b").ShouldNotBeNull();
+        Should.Throw<UnknownTenantIdException>(() => ((ITenancy)tenancy).GetDatabase("nobody"));
 
-        tenancy.SynchronousCalls.ShouldBe(0);
-        tenancy.AsynchronousCalls.ShouldBeGreaterThan(0);
+        tenancy.SynchronousCalls.ShouldBe(3);
+        tenancy.AsynchronousCalls.ShouldBe(0);
+        tenancy.FindCachedDatabase("tenant_b").ShouldNotBeNull();
+    }
+
+    [Fact]
+    public async Task a_cold_process_creates_a_missing_control_table_synchronously()
+    {
+        var schema = NewSchema();
+        var tenancy = new CountingTenancy(Options(), schema);
+
+        // No control table, nor even its schema, yet: the synchronous lookup creates it, then reads it
+        tenancy.TryResolveTenant("nobody", out var nobody).ShouldBeTrue();
+        nobody.Database.ShouldBeNull();
+        tenancy.AsynchronousCalls.ShouldBe(0);
+
+        // The same table the asynchronous migration builds: nothing is left for it to do
+        await using (var conn = new SqlConnection(ConnectionSource.ConnectionString))
+        {
+            await conn.OpenAsync(Ct);
+            var migration = await SchemaMigration.DetermineAsync(conn, Ct, new TenantsTable(schema));
+            migration.Difference.ShouldBe(SchemaPatchDifference.None);
+        }
+
+        var seeder = new MasterTableTenancy(Options(), ConnectionSource.ConnectionString, schema);
+        await seeder.AddDatabaseRecordAsync("created1", ConnectionSource.ConnectionString, Ct);
+
+        ((ITenancy)tenancy).GetDatabase("created1").ShouldNotBeNull();
+        tenancy.AsynchronousCalls.ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task a_cold_process_does_not_create_the_control_table_when_auto_create_is_off()
+    {
+        var schema = NewSchema();
+        var options = Options();
+        options.AutoCreateSchemaObjects = AutoCreate.None;
+        var tenancy = new CountingTenancy(options, schema);
+
+        // The operator owns the schema, so nothing is created, and the read fails as the asynchronous one does
+        Should.Throw<SqlException>(() => tenancy.TryResolveTenant("nobody", out _)).Number.ShouldBe(208);
+
+        await using var conn = new SqlConnection(ConnectionSource.ConnectionString);
+        await conn.OpenAsync(Ct);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT OBJECT_ID(@name, 'U');";
+        cmd.Parameters.AddWithValue("@name", $"[{schema}].[pc_tenants]");
+        (await cmd.ExecuteScalarAsync(Ct)).ShouldBe(DBNull.Value);
     }
 
     /// <summary>

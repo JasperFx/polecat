@@ -47,10 +47,15 @@ internal sealed class SchemaMigrationLock : IGlobalLock<SqlConnection>
 
     internal SchemaMigrationLock(string schemaName, TimeSpan timeout)
     {
-        _resource = $"polecat:migrate:{schemaName}";
+        _resource = ResourceFor(schemaName);
         _timeout = timeout;
         _lock = new SqlServerGlobalLock(_resource, (int)Math.Clamp(timeout.TotalMilliseconds, 0, int.MaxValue));
     }
+
+    /// <summary>
+    ///     The <c>sp_getapplock</c> resource every path provisioning <paramref name="schemaName" /> serializes on.
+    /// </summary>
+    internal static string ResourceFor(string schemaName) => $"polecat:migrate:{schemaName}";
 
     /// <summary>
     ///     Whether the last attempt actually got the lock. <c>ApplyAllConfiguredChangesToDatabaseAsync</c>
@@ -120,15 +125,88 @@ internal sealed class SchemaMigrationLock : IGlobalLock<SqlConnection>
 
         if (!insideTransaction)
         {
-            throw new InvalidOperationException(
-                $"Timed out waiting for the schema migration lock '{migrationLock._resource}', because something "
-                + "else is applying schema changes to this database. Nothing was changed here, and the next use "
-                + "will try again. If migrations legitimately take this long, raise "
-                + $"{nameof(StoreOptions)}.{nameof(StoreOptions.StartupMigrationLockTimeout)}, currently "
-                + $"{migrationLock._timeout}.");
+            throw timedOut(migrationLock._resource, migrationLock._timeout);
         }
 
         return null;
+    }
+
+    /// <summary>
+    ///     The synchronous counterpart of <see cref="HoldForFirstUseAsync" />, for a first-use ensure whose caller is
+    ///     synchronous: runs <paramref name="ddl" /> on <paramref name="conn" /> under the same lock, with blocking
+    ///     I/O from start to finish. False means the lock was busy for a caller inside a transaction, and nothing
+    ///     ran: the caller skips its ensure and must not remember it as done.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///     #1088 (marten#5969): a synchronous <c>Store()</c> used to block a pool thread on
+    ///     <see cref="HoldForFirstUseAsync" /> and an asynchronous migration, which needed another pool thread to
+    ///     finish, so the first burst of them starved the thread pool. Waiting here is waiting on another session's
+    ///     DDL, which needs no thread of this process.
+    ///     </para>
+    ///     <para>
+    ///     The lock is owned by a transaction on <paramref name="conn" /> that the DDL runs in, so committing or
+    ///     failing gives it up, and nothing has to release it. <paramref name="ddl" /> must be idempotent: the
+    ///     table may already exist, created by another path or another process. Waiting follows
+    ///     <see cref="HoldForFirstUseAsync" />: a caller inside a transaction doesn't, and one that is not throws
+    ///     when the lock times out.
+    ///     </para>
+    /// </remarks>
+    internal static bool TryRunForFirstUse(StoreOptions options, SqlConnection conn, bool insideTransaction,
+        string ddl, string? schemaName = null)
+    {
+        var resource = ResourceFor(schemaName ?? options.DatabaseSchemaName);
+        var timeout = insideTransaction ? TimeSpan.Zero : options.StartupMigrationLockTimeout;
+
+        using var tx = conn.BeginTransaction();
+
+        using (var lockCmd = conn.CreateCommand())
+        {
+            lockCmd.Transaction = tx;
+            lockCmd.CommandText =
+                "DECLARE @result int; " +
+                "EXEC @result = sp_getapplock @Resource = @resource, @LockMode = 'Exclusive', " +
+                "@LockOwner = 'Transaction', @LockTimeout = @timeout; " +
+                "SELECT @result;";
+            lockCmd.Parameters.AddWithValue("@resource", resource);
+            lockCmd.Parameters.AddWithValue("@timeout", (int)Math.Clamp(timeout.TotalMilliseconds, 0, int.MaxValue));
+
+            // The server waits up to the lock timeout, so the client must wait at least that long
+            lockCmd.CommandTimeout = (int)Math.Min(int.MaxValue, Math.Ceiling(timeout.TotalSeconds) + 30);
+
+            var result = Convert.ToInt32(lockCmd.ExecuteScalar());
+            if (result < 0)
+            {
+                tx.Rollback();
+
+                if (!insideTransaction)
+                {
+                    throw timedOut(resource, timeout);
+                }
+
+                return false;
+            }
+        }
+
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.Transaction = tx;
+            cmd.CommandText = ddl;
+            cmd.ExecuteNonQuery();
+        }
+
+        tx.Commit();
+        return true;
+    }
+
+    private static InvalidOperationException timedOut(string resource, TimeSpan timeout)
+    {
+        return new InvalidOperationException(
+            $"Timed out waiting for the schema migration lock '{resource}', because something "
+            + "else is applying schema changes to this database. Nothing was changed here, and the next use "
+            + "will try again. If migrations legitimately take this long, raise "
+            + $"{nameof(StoreOptions)}.{nameof(StoreOptions.StartupMigrationLockTimeout)}, currently "
+            + $"{timeout}.");
     }
 
     /// <summary>
