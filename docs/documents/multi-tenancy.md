@@ -152,7 +152,7 @@ From .NET, `store.Advanced.TenantOrdinalAsync()` answers it, and registers the t
 ```cs
 var ordinal = await store.Advanced.TenantOrdinalAsync("acme", Ct);
 ```
-<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.MultiTenancyTests/MultiTenancy/partition_extended_table_per_tenant.cs#L245-L247' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_tenant_ordinal_from_the_store' title='Start of snippet'>anchor</a></sup>
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.MultiTenancyTests/MultiTenancy/partition_extended_table_per_tenant.cs#L288-L290' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_tenant_ordinal_from_the_store' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 ## ITenanted Interface
