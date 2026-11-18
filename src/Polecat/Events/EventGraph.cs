@@ -533,7 +533,10 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
     ///         <c>(tenant_id, id)</c> is a range, walked once per partition. The locked read names the
     ///         ordinal. Several streams at once read as <c>id IN (...)</c> left the plan to the optimizer,
     ///         and on any conjoined store it walked the tenant, so the loop join is what guarantees one
-    ///         singleton per id. It also takes them in the order the ids were sorted into.
+    ///         singleton per id. It also takes them in the order the ids were sorted into. The missing ids are
+    ///         found the same way, by locking the rows that are there and taking the rest away from the ids,
+    ///         not with a join to the rows that aren't: SQL Server turned that into an anti semi join that
+    ///         sought the tenant alone, and waited on an open append's row in it.
     ///     </para>
     ///     <para>
     ///         <b>The second branch is not there for the lock.</b> A stream row keeps the ordinal it was
@@ -610,11 +613,15 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
             DECLARE @pc_stream_lock int, @pc_stream_lock_name nvarchar(255);
             IF @@TRANCOUNT > 0
             BEGIN
+                DECLARE @pc_streams_found TABLE (name nvarchar(255) NOT NULL PRIMARY KEY);
+                INSERT INTO @pc_streams_found (name)
+                SELECT DISTINCT {streamLockName("s.id")} FROM {from("UPDLOCK")} WHERE {match}{ordinalPredicate};
+
                 DECLARE @pc_stream_locks TABLE (name nvarchar(255) NOT NULL PRIMARY KEY);
                 INSERT INTO @pc_stream_locks (name)
-                SELECT DISTINCT {streamLockName("ids.id")} FROM ({ids}) ids
-                WHERE NOT EXISTS (SELECT 1 FROM {StreamsTableName} s WITH (UPDLOCK)
-                                  WHERE s.id = ids.id AND {match}{ordinalPredicate});
+                SELECT DISTINCT missing.name
+                FROM (SELECT {streamLockName("ids.id")} AS name FROM ({ids}) ids) missing
+                WHERE missing.name NOT IN (SELECT name FROM @pc_streams_found);
 
                 SET @pc_stream_lock_name = (SELECT MIN(name) FROM @pc_stream_locks);
                 WHILE @pc_stream_lock_name IS NOT NULL
