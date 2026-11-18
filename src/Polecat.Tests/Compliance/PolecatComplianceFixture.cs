@@ -33,12 +33,6 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
 
         var options = OptionsFor(config);
 
-        if (config.TenantDatabases.Count == 0)
-        {
-            await dropSchemaBuiltUnderTheOtherEventTenancyAsync(options.ConnectionString,
-                options.DatabaseSchemaName, config.ConjoinedEventTenancy).ConfigureAwait(false);
-        }
-
         _store = new DocumentStore(options);
         _disposables.Add(_store);
 
@@ -199,68 +193,13 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
             options.CommitListeners.Add(listener);
         }
 
+        // jasperfx#1222: what Wolverine sets when it manages the store. Nothing in Polecat reads it until
+        // projection backfills land (#1055), so this only keeps the configuration replayed faithfully.
+        options.EventGraph.HasJobHost = config.HasJobHost;
+
         config.ApplyTo(new PolecatComplianceRegistrar(options));
 
         return options;
-    }
-
-    /// <summary>
-    ///     #1060, Marten's workaround for jasperfx#1227. <c>IdentityRebuildCompliance</c> (JasperFx 3.6.0) runs its
-    ///     conjoined fact in the same schema as its single-tenancy ones, where every other suite gives a conjoined
-    ///     configuration a schema of its own. Migrating an event store from single to conjoined tenancy fails:
-    ///     the new <c>pc_streams</c> primary key re-adds the <c>pc_events</c> foreign key that conjoined tenancy
-    ///     does not have, against a key that no longer matches it (weasel#886). Until both are fixed upstream, a
-    ///     schema built under the other event tenancy is dropped before the store is built, which is what a
-    ///     separate schema would have given the suite.
-    /// </summary>
-    private static async Task dropSchemaBuiltUnderTheOtherEventTenancyAsync(string connectionString, string schema,
-        bool conjoined)
-    {
-        await using var conn = new SqlConnection(connectionString);
-        await conn.OpenAsync().ConfigureAwait(false);
-
-        await using var probe = conn.CreateCommand();
-        probe.CommandText = """
-            SELECT COUNT(*) FROM sys.indexes i
-            JOIN sys.index_columns ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id
-            JOIN sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id
-            WHERE i.object_id = OBJECT_ID(@streams) AND i.is_primary_key = 1 AND c.name = 'tenant_id';
-            SELECT CASE WHEN OBJECT_ID(@streams) IS NULL THEN 0 ELSE 1 END;
-            """;
-        probe.Parameters.AddWithValue("@streams", $"[{schema}].[pc_streams]");
-
-        await using (var reader = await probe.ExecuteReaderAsync().ConfigureAwait(false))
-        {
-            await reader.ReadAsync().ConfigureAwait(false);
-            var keyedByTenant = reader.GetInt32(0) > 0;
-            await reader.NextResultAsync().ConfigureAwait(false);
-            await reader.ReadAsync().ConfigureAwait(false);
-            var exists = reader.GetInt32(0) == 1;
-
-            // No event store in the schema yet, or one built under this tenancy
-            if (!exists || keyedByTenant == conjoined) return;
-        }
-
-        await using var drop = conn.CreateCommand();
-        drop.CommandText = """
-            DECLARE @sql nvarchar(max) = N'';
-            SELECT @sql = @sql + 'ALTER TABLE ' + QUOTENAME(s.name) + '.' + QUOTENAME(t.name) + ' DROP CONSTRAINT ' + QUOTENAME(fk.name) + ';'
-            FROM sys.foreign_keys fk
-            JOIN sys.tables t ON fk.parent_object_id = t.object_id
-            JOIN sys.schemas s ON t.schema_id = s.schema_id
-            WHERE s.name = @schema;
-            SELECT @sql = @sql + 'DROP TABLE ' + QUOTENAME(s.name) + '.' + QUOTENAME(t.name) + ';'
-            FROM sys.tables t
-            JOIN sys.schemas s ON t.schema_id = s.schema_id
-            WHERE s.name = @schema;
-            SELECT @sql = @sql + 'DROP SEQUENCE ' + QUOTENAME(s.name) + '.' + QUOTENAME(sq.name) + ';'
-            FROM sys.sequences sq
-            JOIN sys.schemas s ON sq.schema_id = s.schema_id
-            WHERE s.name = @schema;
-            EXEC sp_executesql @sql;
-            """;
-        drop.Parameters.AddWithValue("@schema", schema);
-        await drop.ExecuteNonQueryAsync().ConfigureAwait(false);
     }
 
     private static string connectionStringFor(ComplianceStoreConfig config)
@@ -624,6 +563,24 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
     /// </summary>
     public override bool SupportsSoftDeletedProjectionDocuments => true;
 
+    /// <summary>
+    ///     jasperfx#1227: Polecat's load by id applies the soft-delete filter, as a query does, so a soft-deleted
+    ///     document loads as null and <c>IsSoftDeletedAsync</c> is never asked.
+    /// </summary>
+    public override bool LoadExcludesSoftDeletedDocuments => true;
+
+    /// <summary>
+    ///     jasperfx#1215 / #1222: the event-range marks, over pc_event_range_marks, a table no rebuild teardown or
+    ///     <c>Advanced.Clean</c> path touches. See <c>PolecatDatabase.FetchEventRangeMarkAsync</c>.
+    /// </summary>
+    public override bool SupportsEventRangeMarks => true;
+
+    /// <summary>
+    ///     jasperfx#1215: <c>IEventStore.RewriteStoredEventsAsync</c> over <c>Advanced.RewriteStoredEventsAsync</c>
+    ///     (#1034), each page written in one transaction with its cursor.
+    /// </summary>
+    public override bool SupportsEventRewrites => true;
+
     // jasperfx#763 / #420. Polecat has a real message outbox (StoreOptions.MessageOutbox, defaulting
     // to NulloMessageOutbox) that the projection batch vends from, so the outbox facts run rather
     // than skip.
@@ -969,6 +926,10 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
         // from "silently dropped on the floor" (#420).
         public void UseMessageOutbox(RecordingMessageOutbox outbox)
             => _options.Events.MessageOutbox = outbox;
+
+        // jasperfx#1215: a named transform an EventRewriteDefinition refers to, on the store's own event registry
+        public void AddRewriteTransform<TEvent>(string name, Func<TEvent, TEvent> transform) where TEvent : class
+            => _options.EventGraph.AddRewriteTransform(name, transform);
 
         // Wave 13 / jasperfx#725: composites. The seam member carries a throwing default because a
         // composite cannot be constructed by a suite -- PolecatCompositeProjection's constructor is

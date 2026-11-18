@@ -116,6 +116,12 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
     /// </summary>
     public bool EnableLateEventDetection => _options.Events.EnableLateEventDetection;
 
+    /// <summary>
+    ///     jasperfx#1215 / #1222: whether pc_event_range_marks is part of the schema. See
+    ///     <see cref="EventStoreOptions.EnableEventRangeMarks" />.
+    /// </summary>
+    public bool EnableEventRangeMarks => _options.Events.EnableEventRangeMarks;
+
     internal TimeSpan LateEventDetectionWindow => _options.Projections.LateEventDetectionWindow;
 
     internal TimeSpan LateEventProbeInterval => _options.Projections.LateEventProbeInterval;
@@ -247,6 +253,10 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
     // #813 (jasperfx#809): the persisted projection start floors. See EventProjectionFloorsTable.
     internal string ProjectionFloorsTableName =>
         Polecat.Internal.SqlEscaping.QualifiedName(DatabaseSchemaName, Schema.EventProjectionFloorsTable.TableName);
+
+    // jasperfx#1215 / #1222: the ceilings and cursors of rewrites and backfills. See EventRangeMarksTable.
+    internal string EventRangeMarksTableName =>
+        Polecat.Internal.SqlEscaping.QualifiedName(DatabaseSchemaName, Schema.EventRangeMarksTable.TableName);
 
     // #1054: the skipped high water ranges and the events that committed inside them late
     internal string HighWaterSkipsTableName =>

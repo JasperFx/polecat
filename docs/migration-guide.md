@@ -10,7 +10,7 @@ The foundation pins move in lockstep, so a consuming project has to move with th
 
 | Package | 5.50.0 | 6.0 |
 |---|---|---|
-| `JasperFx`, `JasperFx.Events` | 2.102 | 3.6.0 |
+| `JasperFx`, `JasperFx.Events` | 2.102 | 3.7.0 |
 | `Weasel.SqlServer`, `Weasel.Storage` | 9.50.0 | 10.0 |
 | `Microsoft.Data.SqlClient` | 7.0.0 | 7.1.1 |
 | `Microsoft.EntityFrameworkCore.SqlServer` (`Polecat.EntityFrameworkCore`) | 9.x | 10.0 |
@@ -196,6 +196,17 @@ stream is rebuilt in async single-stream projections ([details](/events/projecti
 - **Opting out.** `opts.Events.EnableLateEventDetection = false`, or `RestoreV5Defaults()`, turns it off and leaves the
   tables out.
 - An operator's `AdvanceHighWaterMarkToLatestAsync()` records its skip too, with the reason `Manual`.
+
+## Upgrading to 6.0: a table for the event-range marks
+
+Polecat 6 adds `pc_event_range_marks`, where a stored-event rewrite run as a Wolverine job keeps its ceiling and its
+cursor ([jasperfx#1215](https://github.com/JasperFx/jasperfx/issues/1215),
+[details](/events/rewriting#running-a-rewrite-as-a-wolverine-job)). Projection backfills will keep theirs there too.
+No cleaning or rebuild touches it.
+
+- **Schema effect.** The table is added by the next schema migration. Nothing existing changes.
+- **Opting out.** `opts.Events.EnableEventRangeMarks = false`, or `RestoreV5Defaults()`, leaves the table out. The
+  store then refuses rewrite jobs; `Advanced.RewriteStoredEventsAsync()` works either way.
 
 ## Upgrading to 6.0: a projection's `IncludeArchivedEvents` reaches the async daemon
 

@@ -15,7 +15,11 @@ public class polecat_compliance_suite_inventory
     public void every_event_compliance_suite_is_enrolled_or_excused()
     {
         ComplianceSuiteInventory.AssertEnrolled(typeof(polecat_compliance_suite_inventory).Assembly,
-            new PolecatComplianceFixture(), new Dictionary<Type, string>());
+            new PolecatComplianceFixture(), new Dictionary<Type, string>
+            {
+                [typeof(BackfillCompliance<,,>)] =
+                    "Projection backfills wait on the table naming for version-bumped projections (polecat#1055, marten#5632)"
+            });
     }
 
     [Fact]

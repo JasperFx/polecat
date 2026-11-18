@@ -546,6 +546,7 @@ public class StoreOptions
     ///       <item><see cref="EventStoreOptions.DcbConflictScope" /> &rarr; <c>DcbConflictScope.TagValue</c></item>
     ///       <item><see cref="Polecat.Events.EventGraph.UseArchivedStreamPartitioning" /> &rarr; <c>false</c></item>
     ///       <item><see cref="EventStoreOptions.EnableLateEventDetection" /> &rarr; <c>false</c></item>
+    ///       <item><see cref="EventStoreOptions.EnableEventRangeMarks" /> &rarr; <c>false</c></item>
     ///       <item>
     ///         <c>GateSideEffectsBehindPriorVersion</c> &rarr; <c>false</c> on every registered projection
     ///         (JasperFx 3.0 turned it on, jasperfx#1075). JasperFx has no store-wide switch, so this is
@@ -573,6 +574,8 @@ public class StoreOptions
         EventGraph.UseArchivedStreamPartitioning = false;
 
         Events.EnableLateEventDetection = false;
+
+        Events.EnableEventRangeMarks = false;
 
         _restoreV5Defaults = true;
     }
@@ -1075,6 +1078,15 @@ public class EventStoreOptions : IEventStoreInstrumentation
     ///     <see cref="Polecat.Projections.PolecatProjectionOptions.LateEventDetectionWindow" />.
     /// </summary>
     public bool EnableLateEventDetection { get; set; } = true;
+
+    /// <summary>
+    ///     jasperfx#1215 / #1222: keep the event-range marks in <c>pc_event_range_marks</c>, where a stored-event
+    ///     rewrite run as a Wolverine job, and later a projection backfill, keep their ceiling and their cursor.
+    ///     On by default since Polecat 6, which adds the table to the schema. <see cref="StoreOptions.RestoreV5Defaults" />
+    ///     turns it off and leaves the table out; the store then refuses those jobs with a
+    ///     <see cref="NotSupportedException" />. <c>Advanced.RewriteStoredEventsAsync()</c> works either way.
+    /// </summary>
+    public bool EnableEventRangeMarks { get; set; } = true;
 
     /// <summary>
     ///     <see cref="JasperFx.Events.IEventStoreInstrumentation" /> surface (jasperfx#424). The

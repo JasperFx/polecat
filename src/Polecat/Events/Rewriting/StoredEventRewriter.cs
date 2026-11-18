@@ -53,7 +53,7 @@ internal sealed class StoredEventRewriter
 
     public StoredEventRewriter(DocumentStore store, StoredEventRewrite rewrite)
     {
-        if (!rewrite.AllTypes && rewrite.Types.Count == 0)
+        if (!rewrite.AllTypes && rewrite.Types.Count == 0 && rewrite.StoredTypeNames.Count == 0)
         {
             throw new InvalidOperationException(
                 "Name the events to rewrite with IncludeType<T>(), Transform<T>() or IncludeAllTypes()");
@@ -62,6 +62,7 @@ internal sealed class StoredEventRewriter
         if (rewrite.BatchSize <= 0) throw new ArgumentOutOfRangeException(nameof(rewrite.BatchSize));
         if (rewrite.MaxParallelDatabases <= 0) throw new ArgumentOutOfRangeException(nameof(rewrite.MaxParallelDatabases));
         if (rewrite.PauseBetweenBatches < TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(rewrite.PauseBetweenBatches));
+        if (rewrite.StopAfter < 0) throw new ArgumentOutOfRangeException(nameof(rewrite.StopAfter));
 
         _store = store;
         _rewrite = rewrite;
@@ -70,8 +71,16 @@ internal sealed class StoredEventRewriter
         if (!rewrite.AllTypes)
         {
             // The type's own alias, plus every stored name an upcaster reads into it
-            var allowList = EventTypeAllowList.For(_events, rewrite.Types.Distinct().ToList());
-            _typeNames = allowList.AliasesIncludingUpcastSources;
+            var names = rewrite.Types.Count == 0
+                ? new List<string>()
+                : EventTypeAllowList.For(_events, rewrite.Types.Distinct().ToList()).AliasesIncludingUpcastSources.ToList();
+
+            foreach (var name in rewrite.StoredTypeNames)
+            {
+                if (!names.Contains(name, StringComparer.Ordinal)) names.Add(name);
+            }
+
+            _typeNames = names;
         }
     }
 
@@ -143,12 +152,13 @@ internal sealed class StoredEventRewriter
         {
             token.ThrowIfCancellationRequested();
 
-            var page = await readPageAsync(conn, hydrator, cursor, tenantId, token).ConfigureAwait(false);
+            var page = await readPageAsync(conn, hydrator, cursor, tenantId, _rewrite.StopAfter, false, token)
+                .ConfigureAwait(false);
             if (page.Rows > 0)
             {
                 if (page.Events.Count > 0)
                 {
-                    var written = await writePageAsync(conn, page.Events, token).ConfigureAwait(false);
+                    var written = await writePageAsync(conn, null, page.Events, token).ConfigureAwait(false);
                     rewritten += written.Rewritten;
                     skipped += written.Skipped;
                     before += written.BytesBefore;
@@ -177,6 +187,148 @@ internal sealed class StoredEventRewriter
         }
     }
 
+    /// <summary>
+    ///     jasperfx#1215: one <see cref="EventRewriteRun" /> against one database, for the Wolverine job that runs a
+    ///     rewrite. Each tenant goes from its cursor up to and including its ceiling, one page at a time, and each
+    ///     page is written in one transaction with the cursor stored under <see cref="EventRewriteRun.CursorKey" />,
+    ///     so a crash or a cancellation never sends an event through a transform twice. A dry run writes nothing,
+    ///     not even the cursor.
+    /// </summary>
+    public async Task<IReadOnlyList<EventRewriteProgress>> ExecuteRunAsync(PolecatDatabase database,
+        EventRewriteRun run, CancellationToken token)
+    {
+        await database.EnsureEventRangeMarksAsync(nameof(IEventStore.RewriteStoredEventsAsync), token)
+            .ConfigureAwait(false);
+
+        var hydrator = new PolecatEventLoader(_events, _store.Options, database.ConnectionString);
+
+        await using var conn = new SqlConnection(database.ConnectionString);
+        await conn.OpenAsync(token).ConfigureAwait(false);
+
+        var totals = new List<EventRewriteProgress>(run.Cursors.Count);
+        foreach (var cursor in run.Cursors)
+        {
+            // A tenant's own rows under conjoined tenancy. Otherwise the tenant's database is the selection.
+            var tenantFilter = _events.TenancyStyle == TenancyStyle.Conjoined ? cursor.TenantId : null;
+
+            var total = new EventRewriteProgress(cursor.TenantId, cursor.ResumeAfter, 0, 0, 0, 0, 0, 0,
+                cursor.IsComplete);
+            var position = cursor.ResumeAfter;
+
+            while (!total.Completed)
+            {
+                token.ThrowIfCancellationRequested();
+
+                var page = await readPageAsync(conn, hydrator,
+                    new StoredEventRewriteCursor(database.Identifier, position, ""), tenantFilter, cursor.StopAfter,
+                    true, token).ConfigureAwait(false);
+
+                var completed = page.Rows < _rewrite.BatchSize;
+
+                // The ceiling on a tenant's last page, so the stored cursor says the tenant is done
+                position = completed ? cursor.StopAfter : page.LastSequence;
+
+                (long Rewritten, long Skipped, long BytesBefore, long BytesAfter) written = (0, 0, 0, 0);
+                await using (var tx = (SqlTransaction)await conn.BeginTransactionAsync(token).ConfigureAwait(false))
+                {
+                    if (page.Events.Count > 0)
+                    {
+                        written = await writePageAsync(conn, tx, page.Events, token).ConfigureAwait(false);
+                    }
+
+                    if (!_rewrite.DryRun)
+                    {
+                        await using var mark = conn.CreateCommand();
+                        mark.Transaction = tx;
+                        database.ConfigureSetEventRangeMark(mark, run.CursorKey, cursor.TenantId, position);
+                        await mark.ExecuteNonQueryAsync(token).ConfigureAwait(false);
+                    }
+
+                    await tx.CommitAsync(token).ConfigureAwait(false);
+                }
+
+                var progress = new EventRewriteProgress(cursor.TenantId, position, page.Rows, written.Rewritten,
+                    written.Skipped, written.BytesBefore, written.BytesAfter, page.Rows - page.Events.Count,
+                    completed);
+
+                total = total with
+                {
+                    Sequence = position,
+                    Visited = total.Visited + progress.Visited,
+                    Rewritten = total.Rewritten + progress.Rewritten,
+                    Skipped = total.Skipped + progress.Skipped,
+                    BytesBefore = total.BytesBefore + progress.BytesBefore,
+                    BytesAfter = total.BytesAfter + progress.BytesAfter,
+                    UnknownTypes = total.UnknownTypes + progress.UnknownTypes,
+                    Completed = completed
+                };
+
+                if (run.OnPage != null)
+                {
+                    await run.OnPage(progress, token).ConfigureAwait(false);
+                }
+
+                if (!completed && _rewrite.PauseBetweenBatches > TimeSpan.Zero)
+                {
+                    await Task.Delay(_rewrite.PauseBetweenBatches, token).ConfigureAwait(false);
+                }
+            }
+
+            totals.Add(total);
+        }
+
+        return totals;
+    }
+
+    /// <summary>
+    ///     jasperfx#1215: the <see cref="StoredEventRewrite" /> an <see cref="EventRewriteDefinition" /> describes.
+    ///     The stored type names it lists are resolved to the event types stored under them, so the names an
+    ///     upcaster reads into those types are rewritten too. A transform selects every known event type it
+    ///     applies to.
+    /// </summary>
+    public static StoredEventRewrite RewriteFor(EventGraph events, EventRewriteDefinition definition,
+        IReadOnlyList<EventRewriteTransform> transforms)
+    {
+        var rewrite = new StoredEventRewrite
+        {
+            BatchSize = definition.BatchSize,
+            PauseBetweenBatches = definition.PauseBetweenBatches,
+            DryRun = definition.DryRun
+        };
+
+        if (definition.AllEventTypes) rewrite.IncludeAllTypes();
+        if (definition.OnlyEventsStoredAsJson) rewrite.OnlyEventsStoredAsJson();
+
+        var known = events.AllKnownEventTypes();
+        foreach (var name in definition.EventTypes.Distinct(StringComparer.Ordinal))
+        {
+            var mapping = known.FirstOrDefault(x => x.EventTypeName == name);
+            if (mapping == null)
+            {
+                rewrite.StoredTypeNames.Add(name);
+            }
+            else
+            {
+                rewrite.Types.Add(mapping.EventType);
+            }
+        }
+
+        foreach (var transform in transforms)
+        {
+            if (transform.EventType is { IsInterface: false, IsAbstract: false })
+            {
+                rewrite.Types.Add(transform.EventType);
+            }
+
+            rewrite.Types.AddRange(known.Select(x => x.EventType)
+                .Where(x => x != transform.EventType && transform.EventType.IsAssignableFrom(x)));
+
+            rewrite.Transforms.Add((transform.EventType, transform.Apply));
+        }
+
+        return rewrite;
+    }
+
     private sealed record ReadEvent(IEvent Event, string TenantId, byte[] Hash);
 
     private sealed record Page(List<ReadEvent> Events, int Rows, long LastSequence, string LastTenantId);
@@ -190,14 +342,20 @@ internal sealed class StoredEventRewriter
         $"ISNULL(CAST({alias}.dotnet_type AS nvarchar(500)), N''), NCHAR(1), " +
         $"CAST({alias}.data AS nvarchar(max)), NCHAR(1), ISNULL(CONVERT(nvarchar(max), {alias}.bdata, 2), N'')))";
 
+    /// <param name="wholeSequences">
+    ///     End the page on a sequence boundary, so the sequence alone can be the cursor: under per-tenant event
+    ///     partitions one sequence can belong to several tenants, and they all go in the same page.
+    /// </param>
     private async Task<Page> readPageAsync(SqlConnection conn, PolecatEventLoader hydrator,
-        StoredEventRewriteCursor cursor, string? tenantId, CancellationToken token)
+        StoredEventRewriteCursor cursor, string? tenantId, long? stopAfter, bool wholeSequences,
+        CancellationToken token)
     {
         var columns = Polecat.Events.Internal.PcEventsRowReader.ComposeSelectColumnsWithAlias(_store.Options.Events, "d");
         var hashOrdinal = columns.Split(',').Length;
 
         await using var cmd = conn.CreateCommand();
-        var sql = new StringBuilder("SELECT TOP(@limit) ").Append(columns).Append(", ").Append(storedHash("d"))
+        var sql = new StringBuilder(wholeSequences ? "SELECT TOP(@limit) WITH TIES " : "SELECT TOP(@limit) ")
+            .Append(columns).Append(", ").Append(storedHash("d"))
             .Append(" FROM ").Append(_events.EventsTableName).Append(" AS d WHERE ");
 
         var filters = new List<string>();
@@ -223,13 +381,29 @@ internal sealed class StoredEventRewriter
 
         if (_rewrite.JsonOnly) filters.Add("d.bdata IS NULL");
 
-        // Keyset on (seq_id, tenant_id): a sequence alone is not unique under per-tenant event partitions
-        filters.Add("(d.seq_id > @seq OR (d.seq_id = @seq AND d.tenant_id > @tenant))");
+        if (stopAfter.HasValue)
+        {
+            filters.Add("d.seq_id <= @stop_after");
+            cmd.Parameters.Add(new SqlParameter("@stop_after", SqlDbType.BigInt) { Value = stopAfter.Value });
+        }
+
         cmd.Parameters.Add(new SqlParameter("@seq", SqlDbType.BigInt) { Value = cursor.Sequence });
-        cmd.Parameters.AddKey("@tenant", cursor.TenantId, _events.UnicodeKeys);
         cmd.Parameters.Add(new SqlParameter("@limit", SqlDbType.Int) { Value = _rewrite.BatchSize });
 
-        sql.Append(filters.Join(" AND ")).Append(" ORDER BY d.seq_id, d.tenant_id;");
+        if (wholeSequences)
+        {
+            // Every row of a sequence is in the page that has any of them, so the next page starts after it
+            filters.Add("d.seq_id > @seq");
+            sql.Append(filters.Join(" AND ")).Append(" ORDER BY d.seq_id;");
+        }
+        else
+        {
+            // Keyset on (seq_id, tenant_id): a sequence alone is not unique under per-tenant event partitions
+            filters.Add("(d.seq_id > @seq OR (d.seq_id = @seq AND d.tenant_id > @tenant))");
+            cmd.Parameters.AddKey("@tenant", cursor.TenantId, _events.UnicodeKeys);
+            sql.Append(filters.Join(" AND ")).Append(" ORDER BY d.seq_id, d.tenant_id;");
+        }
+
         cmd.CommandText = sql.ToString();
 
         var events = new List<ReadEvent>(_rewrite.BatchSize);
@@ -259,7 +433,7 @@ internal sealed class StoredEventRewriter
     }
 
     private async Task<(long Rewritten, long Skipped, long BytesBefore, long BytesAfter)> writePageAsync(
-        SqlConnection conn, List<ReadEvent> page, CancellationToken token)
+        SqlConnection conn, SqlTransaction? tx, List<ReadEvent> page, CancellationToken token)
     {
         var json = new ArrayBufferWriter<byte>();
         using (var writer = new Utf8JsonWriter(json))
@@ -314,6 +488,7 @@ internal sealed class StoredEventRewriter
                """;
 
         await using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
         cmd.CommandText = $"""
             SET NOCOUNT ON;
             DECLARE @written bigint;

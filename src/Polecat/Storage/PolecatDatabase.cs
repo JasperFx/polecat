@@ -1356,6 +1356,138 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
     private static string FloorTenant(string? tenantId)
         => string.IsNullOrEmpty(tenantId) ? Polecat.Events.Schema.EventProjectionFloorsTable.StoreGlobalTenant : tenantId;
 
+    // ── jasperfx#1215 / #1222: event-range marks ────────────────────────────────────────────────────
+    //
+    // Over pc_event_range_marks (EventRangeMarksTable), which, like the projection floors, no teardown or
+    // data-cleaning path touches. Keyed by the mark's key plus the tenant (null stored as '').
+
+    /// <inheritdoc />
+    public async Task<long?> FetchEventRangeMarkAsync(string key, string? tenantId, CancellationToken token = default)
+    {
+        Polecat.Events.Schema.EventRangeMarksTable.AssertKey(key);
+        await EnsureEventRangeMarksAsync(nameof(FetchEventRangeMarkAsync), token).ConfigureAwait(false);
+
+        return await _resilience.ExecuteAsync(static async (state, ct) =>
+        {
+            var (connectionString, table, key, tenant, unicode) = state;
+            await using var conn = new SqlConnection(connectionString);
+            await conn.OpenAsync(ct).ConfigureAwait(false);
+
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = $"SELECT mark_seq_id FROM {table} WHERE mark_key = @key AND tenant_id = @tenant;";
+            cmd.Parameters.AddKey("@key", key, unicode);
+            cmd.Parameters.AddKey("@tenant", tenant, unicode);
+
+            var result = await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
+            return result is long mark ? mark : (long?)null;
+        }, (_connectionString, _events.EventRangeMarksTableName, key,
+            Polecat.Events.Schema.EventRangeMarksTable.StoredTenant(tenantId), _events.UnicodeKeys), token).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    ///     Insert-if-absent by letting the primary key arbitrate, as <see cref="TrySetProjectionFloorAsync" /> does:
+    ///     a racing second insert blocks on the first's key lock, fails with a duplicate-key error the batch
+    ///     swallows, and both read back the one stored row.
+    /// </remarks>
+    public async Task<long> TrySetEventRangeMarkAsync(string key, string? tenantId, long mark,
+        CancellationToken token = default)
+    {
+        Polecat.Events.Schema.EventRangeMarksTable.AssertKey(key);
+        await EnsureEventRangeMarksAsync(nameof(TrySetEventRangeMarkAsync), token).ConfigureAwait(false);
+
+        return await _resilience.ExecuteAsync(static async (state, ct) =>
+        {
+            var (connectionString, table, key, tenant, value, unicode) = state;
+            await using var conn = new SqlConnection(connectionString);
+            await conn.OpenAsync(ct).ConfigureAwait(false);
+
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = $"""
+                BEGIN TRY
+                    INSERT INTO {table} (mark_key, tenant_id, mark_seq_id) VALUES (@key, @tenant, @mark);
+                END TRY
+                BEGIN CATCH
+                    IF ERROR_NUMBER() NOT IN (2601, 2627) THROW;
+                END CATCH;
+                SELECT mark_seq_id FROM {table} WHERE mark_key = @key AND tenant_id = @tenant;
+                """;
+            cmd.Parameters.AddKey("@key", key, unicode);
+            cmd.Parameters.AddKey("@tenant", tenant, unicode);
+            cmd.Parameters.Add("@mark", System.Data.SqlDbType.BigInt).Value = value;
+
+            var result = await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
+            return Convert.ToInt64(result);
+        }, (_connectionString, _events.EventRangeMarksTableName, key,
+            Polecat.Events.Schema.EventRangeMarksTable.StoredTenant(tenantId), mark, _events.UnicodeKeys), token).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public async Task SetEventRangeMarkAsync(string key, string? tenantId, long? mark, CancellationToken token = default)
+    {
+        Polecat.Events.Schema.EventRangeMarksTable.AssertKey(key);
+        await EnsureEventRangeMarksAsync(nameof(SetEventRangeMarkAsync), token).ConfigureAwait(false);
+
+        await _resilience.ExecuteAsync(static async (state, ct) =>
+        {
+            var (connectionString, table, key, tenant, value, unicode) = state;
+            await using var conn = new SqlConnection(connectionString);
+            await conn.OpenAsync(ct).ConfigureAwait(false);
+
+            await using var cmd = conn.CreateCommand();
+            if (value is null)
+            {
+                cmd.CommandText = $"DELETE FROM {table} WHERE mark_key = @key AND tenant_id = @tenant;";
+                cmd.Parameters.AddKey("@key", key, unicode);
+                cmd.Parameters.AddKey("@tenant", tenant, unicode);
+            }
+            else
+            {
+                ConfigureSetEventRangeMark(cmd, table, key, tenant, value.Value, unicode);
+            }
+
+            await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+        }, (_connectionString, _events.EventRangeMarksTableName, key,
+            Polecat.Events.Schema.EventRangeMarksTable.StoredTenant(tenantId), mark, _events.UnicodeKeys), token).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    ///     Set a mark on a command of the caller's, so a stored-event rewrite can write its cursor inside the
+    ///     transaction of the page it covers.
+    /// </summary>
+    internal void ConfigureSetEventRangeMark(SqlCommand cmd, string key, string? tenantId, long mark)
+    {
+        Polecat.Events.Schema.EventRangeMarksTable.AssertKey(key);
+        ConfigureSetEventRangeMark(cmd, _events.EventRangeMarksTableName, key,
+            Polecat.Events.Schema.EventRangeMarksTable.StoredTenant(tenantId), mark, _events.UnicodeKeys);
+    }
+
+    private static void ConfigureSetEventRangeMark(SqlCommand cmd, string table, string key, string tenant, long mark,
+        bool unicode)
+    {
+        cmd.CommandText = Polecat.Events.Schema.EventRangeMarksTable.SetSql(table);
+        cmd.Parameters.AddKey("@key", key, unicode);
+        cmd.Parameters.AddKey("@tenant", tenant, unicode);
+        cmd.Parameters.Add("@mark", System.Data.SqlDbType.BigInt).Value = mark;
+    }
+
+    /// <summary>
+    ///     The marks need pc_event_range_marks, which <c>RestoreV5Defaults()</c> leaves out. NotSupportedException,
+    ///     the exception a store without the seam throws, naming the switch.
+    /// </summary>
+    internal async Task EnsureEventRangeMarksAsync(string member, CancellationToken token)
+    {
+        if (!_events.EnableEventRangeMarks)
+        {
+            throw new NotSupportedException(
+                $"{member} needs the event-range marks, which are turned off for this store. Set "
+                + "StoreOptions.Events.EnableEventRangeMarks = true (this adds the pc_event_range_marks table) to "
+                + "run a stored-event rewrite or a projection backfill as a job.");
+        }
+
+        await EnsureStorageExistsAsync(typeof(Polecat.Events.Schema.EventStoreFeatureSchema), token).ConfigureAwait(false);
+    }
+
     /// <summary>
     ///     Apply every configured change to this database, under the same migration lock a startup
     ///     migration, the daemon and a session's first use take (#868).

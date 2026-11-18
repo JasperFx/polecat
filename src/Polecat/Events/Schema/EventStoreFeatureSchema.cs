@@ -59,6 +59,13 @@ internal class EventStoreFeatureSchema : FeatureSchemaBase
             yield return _events.BuildEventProjectionFloorsTable();
         }
 
+        // jasperfx#1215 / #1222: the event-range marks of rewrites and backfills, on by default in Polecat 6
+        // (Events.EnableEventRangeMarks) and left out under RestoreV5Defaults()
+        if (_events.EnableEventRangeMarks)
+        {
+            yield return new EventRangeMarksTable(_events);
+        }
+
         // #1054 (marten#6007): the skipped high water ranges and the late events found in them, on by default
         // in Polecat 6 (Events.EnableLateEventDetection) and left out under RestoreV5Defaults()
         if (_events.EnableLateEventDetection)
