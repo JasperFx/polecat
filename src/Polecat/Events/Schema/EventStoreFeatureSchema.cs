@@ -51,9 +51,8 @@ internal class EventStoreFeatureSchema : FeatureSchemaBase
         yield return _events.BuildEventsTable();
         yield return _events.BuildEventProgressionTable();
 
-        // #813 (jasperfx#809): projection start floors, OPT-IN in Polecat 5
-        // (Events.EnableProjectionFloors) so upgrading adds no table and no schema delta to an existing
-        // store. Planned to become opt-out in Polecat 6.
+        // #813 (jasperfx#809): projection start floors, on by default since Polecat 6
+        // (Events.EnableProjectionFloors) and left out under RestoreV5Defaults()
         if (_events.EnableProjectionFloors)
         {
             yield return _events.BuildEventProjectionFloorsTable();

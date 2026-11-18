@@ -112,12 +112,12 @@ public class subscribe_from_first_run_tests : IAsyncLifetime
     }
 
     /// <summary>
-    ///     Opt-in in Polecat 5 (opt-out planned for 6): a store that has not asked for floors gets no
-    ///     table and no schema delta from upgrading, every shard still starts (no floor), and the floor
-    ///     writes refuse, naming the switch, rather than failing on a missing table.
+    ///     Turned off (as <c>RestoreV5Defaults()</c> does): no table and no schema delta, every shard still
+    ///     starts (no floor), and the floor writes refuse, naming the switch, rather than failing on a
+    ///     missing table.
     /// </summary>
     [Fact]
-    public async Task floors_are_opt_in_no_table_no_floor_and_the_writes_name_the_switch()
+    public async Task floors_turned_off_mean_no_table_no_floor_and_the_writes_name_the_switch()
     {
         var token = TestContext.Current.CancellationToken;
         using var store = CreateStore(enableFloors: false);

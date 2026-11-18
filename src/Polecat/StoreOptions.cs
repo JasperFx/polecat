@@ -547,6 +547,7 @@ public class StoreOptions
     ///       <item><see cref="Polecat.Events.EventGraph.UseArchivedStreamPartitioning" /> &rarr; <c>false</c></item>
     ///       <item><see cref="EventStoreOptions.EnableLateEventDetection" /> &rarr; <c>false</c></item>
     ///       <item><see cref="EventStoreOptions.EnableEventRangeMarks" /> &rarr; <c>false</c></item>
+    ///       <item><see cref="EventStoreOptions.EnableProjectionFloors" /> &rarr; <c>false</c></item>
     ///       <item>
     ///         <c>GateSideEffectsBehindPriorVersion</c> &rarr; <c>false</c> on every registered projection
     ///         (JasperFx 3.0 turned it on, jasperfx#1075). JasperFx has no store-wide switch, so this is
@@ -576,6 +577,8 @@ public class StoreOptions
         Events.EnableLateEventDetection = false;
 
         Events.EnableEventRangeMarks = false;
+
+        Events.EnableProjectionFloors = false;
 
         _restoreV5Defaults = true;
     }
@@ -1054,9 +1057,8 @@ public class EventStoreOptions : IEventStoreInstrumentation
     /// </summary>
     /// <remarks>
     ///     <para>
-    ///         <b>Default false in Polecat 5</b>, so taking this version adds no table and no schema delta
-    ///         to an existing store — an <c>AutoCreate.None</c> database keeps matching its configuration.
-    ///         Planned to become opt-out (default true) in Polecat 6.
+    ///         <b>On by default since Polecat 6</b>, which adds the table to the schema, as Marten 10 always
+    ///         does. <see cref="StoreOptions.RestoreV5Defaults" /> turns it off and leaves the table out.
     ///     </para>
     ///     <para>
     ///         Off, the daemon still asks for each shard's stored floor on every start and is told "none"
@@ -1065,7 +1067,7 @@ public class EventStoreOptions : IEventStoreInstrumentation
     ///         a missing table.
     ///     </para>
     /// </remarks>
-    public bool EnableProjectionFloors { get; set; }
+    public bool EnableProjectionFloors { get; set; } = true;
 
     /// <summary>
     ///     #1054 (marten#6007): record every sequence range the async daemon's high water mark skips, and check
