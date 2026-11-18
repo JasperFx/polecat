@@ -1,3 +1,4 @@
+using Microsoft.Data.SqlClient;
 using Polecat.Linq;
 using Polecat.Linq.Metadata;
 using Polecat.Tests.Harness;
@@ -12,6 +13,38 @@ public class modified_since_and_before_queries : IntegrationContext
     {
     }
 
+    /// <summary>
+    ///     A cutoff on the server's clock, strictly after every write so far and strictly before every write after
+    ///     it. last_modified is stamped by SQL Server, so a cutoff from this machine's clock is only as good as the
+    ///     two clocks agree, and a container's clock drifts from its host's.
+    /// </summary>
+    private static async Task<DateTimeOffset> serverCutoffAsync()
+    {
+        var token = TestContext.Current.CancellationToken;
+        await using var conn = new SqlConnection(ConnectionSource.ConnectionString);
+        await conn.OpenAsync(token);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT SYSDATETIMEOFFSET()";
+
+        async Task<DateTimeOffset> nowAsync() => (DateTimeOffset)(await cmd.ExecuteScalarAsync(token))!;
+
+        async Task<DateTimeOffset> after(DateTimeOffset time)
+        {
+            var now = await nowAsync();
+            while (now <= time)
+            {
+                await Task.Delay(1, token);
+                now = await nowAsync();
+            }
+
+            return now;
+        }
+
+        var cutoff = await after(await nowAsync());
+        await after(cutoff);
+        return cutoff;
+    }
+
     [Fact]
     public async Task modified_since_filters_documents()
     {
@@ -20,10 +53,7 @@ public class modified_since_and_before_queries : IntegrationContext
         theSession.Store(doc1);
         await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
-        // Small delay so second doc has a later last_modified
-        await Task.Delay(50, TestContext.Current.CancellationToken);
-        var cutoff = DateTimeOffset.UtcNow;
-        await Task.Delay(50, TestContext.Current.CancellationToken);
+        var cutoff = await serverCutoffAsync();
 
         var doc2 = new LinqTarget { Id = Guid.NewGuid(), Name = "new-doc" };
         await using var session2 = theStore.LightweightSession();
@@ -48,10 +78,7 @@ public class modified_since_and_before_queries : IntegrationContext
         theSession.Store(doc1);
         await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
-        // Small delay so second doc has a later last_modified
-        await Task.Delay(50, TestContext.Current.CancellationToken);
-        var cutoff = DateTimeOffset.UtcNow;
-        await Task.Delay(50, TestContext.Current.CancellationToken);
+        var cutoff = await serverCutoffAsync();
 
         var doc2 = new LinqTarget { Id = Guid.NewGuid(), Name = "late-doc" };
         await using var session2 = theStore.LightweightSession();
@@ -75,18 +102,14 @@ public class modified_since_and_before_queries : IntegrationContext
         theSession.Store(doc1);
         await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
-        await Task.Delay(50, TestContext.Current.CancellationToken);
-        var start = DateTimeOffset.UtcNow;
-        await Task.Delay(50, TestContext.Current.CancellationToken);
+        var start = await serverCutoffAsync();
 
         var doc2 = new LinqTarget { Id = Guid.NewGuid(), Name = "in-window" };
         await using var session2 = theStore.LightweightSession();
         session2.Store(doc2);
         await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 
-        await Task.Delay(50, TestContext.Current.CancellationToken);
-        var end = DateTimeOffset.UtcNow;
-        await Task.Delay(50, TestContext.Current.CancellationToken);
+        var end = await serverCutoffAsync();
 
         var doc3 = new LinqTarget { Id = Guid.NewGuid(), Name = "after-window" };
         await using var session3 = theStore.LightweightSession();
@@ -111,9 +134,7 @@ public class modified_since_and_before_queries : IntegrationContext
         theSession.Store(doc1);
         await theSession.SaveChangesAsync(TestContext.Current.CancellationToken);
 
-        await Task.Delay(50, TestContext.Current.CancellationToken);
-        var cutoff = DateTimeOffset.UtcNow;
-        await Task.Delay(50, TestContext.Current.CancellationToken);
+        var cutoff = await serverCutoffAsync();
 
         var doc2 = new LinqTarget { Id = Guid.NewGuid(), Name = "new-count-a" };
         var doc3 = new LinqTarget { Id = Guid.NewGuid(), Name = "new-count-b" };

@@ -146,3 +146,32 @@ reported is where to pick it up again. The rewrite keeps no state of its own and
 daemon: where the cursor is kept, and when the rewrite runs, is up to you.
 
 Because unchanged events are never written, starting over from the beginning is always safe, only slower.
+
+To leave events appended after a point alone, set `StopAfter` to the last sequence to rewrite. Taking the store's
+highest sequence when you start, and passing it again when you resume, keeps one run to the events that were there
+when it began:
+
+```cs
+await store.Advanced.RewriteStoredEventsAsync(x =>
+{
+    x.IncludeType<ClaimImported>();
+    x.StopAfter = highestSequenceWhenStarted;
+});
+```
+
+## Running a rewrite as a Wolverine job
+
+A rewrite can also run as a long-running Wolverine job, started from CritterWatch or from your own code, through
+`IEventStore.RewriteStoredEventsAsync` (jasperfx#1215). The job names the event types by their stored names and the
+transforms by name, so a transform the job uses is registered up front:
+
+```cs
+opts.EventGraph.AddRewriteTransform<PersonMoved>("upper-case-cities",
+    e => e with { City = e.City.ToUpperInvariant() });
+```
+
+The job keeps its ceiling and its cursor in `pc_event_range_marks`, and Polecat writes each page and its cursor in
+one transaction, so a job that stops and starts again never runs a transform over the same event twice. That table
+is part of the Polecat 6 schema unless you turned it off with `opts.Events.EnableEventRangeMarks = false` or
+`RestoreV5Defaults()`; without it the store refuses rewrite jobs. `Advanced.RewriteStoredEventsAsync()` works either
+way.

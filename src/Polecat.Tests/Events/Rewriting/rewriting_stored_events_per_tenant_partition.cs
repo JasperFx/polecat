@@ -1,4 +1,5 @@
 using JasperFx;
+using JasperFx.Events;
 using Polecat.Linq;
 using Polecat.Tests.Harness;
 
@@ -27,6 +28,7 @@ public class rewriting_stored_events_per_tenant_partition : IAsyncLifetime
 
         _store = DocumentStore.For(opts =>
         {
+            opts.EventGraph.AddRewriteTransform<ParcelSent>("bang", e => e with { To = e.To + "!" });
             opts.ConnectionString = ConnectionSource.ConnectionString;
             opts.DatabaseSchemaName = Schema;
             opts.AutoCreateSchemaObjects = AutoCreate.All;
@@ -104,5 +106,39 @@ public class rewriting_stored_events_per_tenant_partition : IAsyncLifetime
 
         (await destinationsOfAsync("alpha")).ShouldBe(["alpha 1", "alpha 2"]);
         (await destinationsOfAsync("beta")).ShouldBe(["BETA 1", "BETA 2"]);
+    }
+
+    [Fact]
+    public async Task a_rewrite_job_over_the_whole_database_sends_each_event_through_the_transform_once()
+    {
+        string[] tenants = ["alpha", "beta", "gamma"];
+        await appendAsync(tenants);
+
+        // jasperfx#1215: the job's cursor is a sequence alone, which three tenants share here, so a page has to
+        // end on a sequence boundary or a resume would apply the transform twice
+        var definition = new EventRewriteDefinition { Name = "pt-bang-" + Guid.NewGuid().ToString("N")[..8], Transforms = ["bang"], BatchSize = 1 };
+        var pages = new List<EventRewriteProgress>();
+
+        var run = await EventRewriteRun.FromMarksAsync(_store.Database, definition, Ct);
+        run.OnPage = (page, _) =>
+        {
+            pages.Add(page);
+            return Task.CompletedTask;
+        };
+
+        var total = (await ((IEventStore)_store).RewriteStoredEventsAsync(run, Ct)).Single();
+
+        total.Rewritten.ShouldBe(6);
+        total.Completed.ShouldBeTrue();
+        pages.Where(x => x.Visited > 0).ShouldAllBe(x => x.Visited == 3);
+
+        // Run again from the stored marks: nothing is left
+        var again = await EventRewriteRun.FromMarksAsync(_store.Database, definition, Ct);
+        (await ((IEventStore)_store).RewriteStoredEventsAsync(again, Ct)).Single().Visited.ShouldBe(0);
+
+        foreach (var tenant in tenants)
+        {
+            (await destinationsOfAsync(tenant)).ShouldBe([$"{tenant} 1!", $"{tenant} 2!"]);
+        }
     }
 }

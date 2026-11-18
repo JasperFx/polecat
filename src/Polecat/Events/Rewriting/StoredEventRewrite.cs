@@ -26,10 +26,20 @@ public sealed class StoredEventRewrite
     internal string? DatabaseIdentifier { get; private set; }
     internal Dictionary<string, StoredEventRewriteCursor> ResumeCursors { get; } = new();
 
+    // jasperfx#1215: stored type names an EventRewriteDefinition lists that no known event type is stored under,
+    // such as the name of a type this application no longer has. Read like any other selected row.
+    internal List<string> StoredTypeNames { get; } = new();
+
     /// <summary>
     ///     Events read per page, and written back in one statement. Default 500.
     /// </summary>
     public int BatchSize { get; set; } = 500;
+
+    /// <summary>
+    ///     The last sequence to rewrite. Events appended with a higher sequence are left alone, so a rewrite
+    ///     started with the current highest sequence leaves later appends as they are. Default none.
+    /// </summary>
+    public long? StopAfter { get; set; }
 
     /// <summary>
     ///     How many databases are rewritten at the same time. Default 1.
