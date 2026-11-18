@@ -42,13 +42,18 @@ internal static class ImplicitFilters
     ///     <paramref name="operators" />. A join's <c>AnyTenant()</c> on the outer side covers both.
     /// </param>
     /// <param name="alias">The table alias to qualify columns with, for a query over more than one table.</param>
+    /// <param name="scope">
+    ///     polecat#1048: the session's tenant scope, which stands in for <paramref name="tenantId" /> when the
+    ///     query has no tenancy operator of its own.
+    /// </param>
     public static IEnumerable<ISqlFragment> For(
         DocumentMapping mapping,
         Type documentType,
         string tenantId,
         LinqQueryParser? operators = null,
         LinqQueryParser? tenancyOperators = null,
-        string? alias = null)
+        string? alias = null,
+        Internal.SessionTenantScope? scope = null)
     {
         string Column(string name) => alias is null ? name : $"{alias}.{name}";
 
@@ -67,9 +72,19 @@ internal static class ImplicitFilters
         // single-tenanted one, so there is no single answer for a query.
         if (mapping.TenancyStyle == TenancyStyle.Conjoined && tenancy is not { IsAnyTenant: true })
         {
-            yield return tenancy?.TenantIds is { } tenantIds
-                ? new TenantInFilter(tenantIds, Column("tenant_id"), mapping.UnicodeKeys)
-                : new ComparisonFilter(Column("tenant_id"), "=", tenantId);
+            if (tenancy?.TenantIds is { } tenantIds)
+            {
+                yield return new TenantInFilter(tenantIds, Column("tenant_id"), mapping.UnicodeKeys);
+            }
+            else if (scope != null)
+            {
+                // QueryAcrossAllDatabasesAsync: every tenant, or the listed tenants, instead of the session's own
+                if (scope.BuildFilter(Column("tenant_id"), mapping.UnicodeKeys) is { } scoped) yield return scoped;
+            }
+            else
+            {
+                yield return new ComparisonFilter(Column("tenant_id"), "=", tenantId);
+            }
         }
 
         if (mapping.DeleteStyle == DeleteStyle.SoftDelete && operators is not { IsMaybeDeleted: true })

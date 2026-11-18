@@ -484,10 +484,19 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
         // ReadStreamAsync path. This method only composes WHERE / ORDER BY.
         await using var cmd = new SqlCommand();
 
+        // polecat#1048: a session reading across its tenant scope reads every tenant, or the listed tenants
+        var scope = _tenantScope == null && _events.TenancyStyle == TenancyStyle.Conjoined
+            ? _session.TenantScope
+            : null;
+
+        var tenantPredicate = scope == null
+            ? " AND tenant_id = @tenant_id"
+            : scope.SqlFilter(cmd, "tenant_id", _events.UnicodeKeys);
+
         var select = $"""
             SELECT {PcEventsRowReader.ComposeSelectColumns(_events.EventOptions)}
             FROM {_events.EventsTableName}
-            WHERE stream_id = @stream_id AND tenant_id = @tenant_id
+            WHERE stream_id = @stream_id{tenantPredicate}
             """;
 
         var sql = "";
@@ -519,7 +528,11 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
         }
 
         sql += " ORDER BY version";
-        cmd.CommandText = _events.StreamEventsSql(select, sql, "@stream_id", "@tenant_id");
+
+        // The tenant-partitioned read narrows to one tenant's partition, so a scope reads without it
+        cmd.CommandText = scope == null
+            ? _events.StreamEventsSql(select, sql, "@stream_id", "@tenant_id")
+            : $"{select}{sql};";
 
         var ctx = new EventHydrationContext(
             _events,
@@ -737,7 +750,9 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
             return await DocumentReads.LoadAsync<T>(id, cancellation).ConfigureAwait(false);
         }
 
-        return await AggregateStreamAsync<T>(id, token: cancellation).ConfigureAwait(false);
+        var aggregate = await AggregateStreamAsync<T>(id, token: cancellation).ConfigureAwait(false);
+        if (aggregate == null) await assertNotASnapshotWithoutItsStreamAsync<T>(id, cancellation).ConfigureAwait(false);
+        return aggregate;
     }
 
     public async ValueTask<T?> FetchLatest<T>(string key, CancellationToken cancellation = default)
@@ -754,7 +769,27 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
             return await DocumentReads.LoadAsync<T>(key, cancellation).ConfigureAwait(false);
         }
 
-        return await AggregateStreamAsync<T>(key, token: cancellation).ConfigureAwait(false);
+        var aggregate = await AggregateStreamAsync<T>(key, token: cancellation).ConfigureAwait(false);
+        if (aggregate == null) await assertNotASnapshotWithoutItsStreamAsync<T>(key, cancellation).ConfigureAwait(false);
+        return aggregate;
+    }
+
+    /// <summary>
+    ///     polecat#1049 (marten#5799): a <c>FetchLatest</c> that found nothing, for an Async aggregate whose
+    ///     snapshot document outlived its stream, refuses rather than answer null. Only runs on the null path.
+    /// </summary>
+    private async Task assertNotASnapshotWithoutItsStreamAsync<T>(object streamId, CancellationToken token)
+        where T : class
+    {
+        var snapshots = _session.AsyncSnapshotProviderFor<T>(streamId.GetType());
+        if (snapshots == null) return;
+
+        var check = (await _session.CheckMissingStreamsAsync(snapshots, [streamId], TenantId, token)
+            .ConfigureAwait(false))[0];
+        if (check == MissingStreamCheck.SnapshotWithoutStream)
+        {
+            throw new Exceptions.SnapshotWithoutStreamException(typeof(T), streamId);
+        }
     }
 
     /// <summary>

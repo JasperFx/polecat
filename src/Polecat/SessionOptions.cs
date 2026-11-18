@@ -38,6 +38,12 @@ public class SessionOptions
     public PolecatDatabase? Database { get; set; }
 
     /// <summary>
+    ///     polecat#1048: the tenants a query session reads for conjoined documents and events when a query does
+    ///     not say. Only <c>QueryAcrossAllDatabasesAsync</c> sets it. Null is the session's own tenant.
+    /// </summary>
+    internal Internal.SessionTenantScope? TenantScope { get; set; }
+
+    /// <summary>
     ///     Create session options bound to <paramref name="database" /> for the default tenant.
     ///     Mirrors Marten's <c>SessionOptions.ForDatabase</c>.
     /// </summary>
