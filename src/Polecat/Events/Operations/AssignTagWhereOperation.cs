@@ -16,6 +16,8 @@ namespace Polecat.Events.Operations;
 ///   AND NOT EXISTS (SELECT 1 FROM [schema].[pc_event_tag_{suffix}] x WHERE x.value = @value AND x.seq_id = e.seq_id)
 /// For conjoined tenancy, includes tenant_id in INSERT and NOT EXISTS check, and tags only the session
 /// tenant's events: under per-tenant sequences the same seq_id exists in every tenant (#842).
+/// Then moves the assigned tag's <c>pc_dcb_tag_version</c> rows (#1070, see
+/// <see cref="Polecat.Events.Dcb.StreamTagVersionBump.WriteAssignedSql" />).
 /// </summary>
 internal class AssignTagWhereOperation : Polecat.Internal.IStorageOperation, Weasel.Storage.NoDataReturnedCall,
     Polecat.Internal.Operations.IKeyedWrite
@@ -24,6 +26,7 @@ internal class AssignTagWhereOperation : Polecat.Internal.IStorageOperation, Wea
     string? Polecat.Internal.Operations.IKeyedWrite.TenantId => _tenantId;
     object? Polecat.Internal.Operations.IKeyedWrite.Key => _value;
 
+    private readonly EventGraph _events;
     private readonly string _schemaName;
     private readonly ITagTypeRegistration _registration;
     private readonly object _value;
@@ -31,18 +34,19 @@ internal class AssignTagWhereOperation : Polecat.Internal.IStorageOperation, Wea
     private readonly bool _isConjoined;
     private readonly bool _useArchivedPartitioning;
     private readonly string? _tenantOrdinalColumn;
-    private readonly string? _tenantId;
+    private readonly string _tenantId;
     private readonly bool _unicode; // #935
 
     /// <param name="tenantOrdinalColumn">
     ///     The partition column under per-tenant partitioning, which a tag row needs for its foreign key
     ///     to <c>pc_events</c>. Null otherwise.
     /// </param>
-    public AssignTagWhereOperation(string schemaName, ITagTypeRegistration registration, object value,
-        ISqlFragment whereFragment, bool isConjoined = false, string? tenantId = null,
+    public AssignTagWhereOperation(EventGraph events, ITagTypeRegistration registration, object value,
+        ISqlFragment whereFragment, string tenantId, bool isConjoined = false,
         bool useArchivedPartitioning = false, string? tenantOrdinalColumn = null, bool unicode = false)
     {
-        _schemaName = schemaName;
+        _events = events;
+        _schemaName = events.DatabaseSchemaName;
         _registration = registration;
         _value = value;
         _whereFragment = whereFragment;
@@ -77,7 +81,7 @@ internal class AssignTagWhereOperation : Polecat.Internal.IStorageOperation, Wea
         if (_isConjoined)
         {
             builder.Append(", ");
-            builder.AppendParameter(_tenantId!);
+            builder.AppendParameter(_tenantId);
         }
 
         builder.Append(", e.seq_id");
@@ -90,7 +94,7 @@ internal class AssignTagWhereOperation : Polecat.Internal.IStorageOperation, Wea
         if (_isConjoined)
         {
             builder.Append(" AND e.tenant_id = ");
-            builder.AppendParameter(_tenantId!, Polecat.Storage.KeyColumns.DbType(_unicode));
+            builder.AppendParameter(_tenantId, Polecat.Storage.KeyColumns.DbType(_unicode));
         }
 
         // is_archived is deliberately left out of this check even though it is in the tag table's key.
@@ -101,10 +105,14 @@ internal class AssignTagWhereOperation : Polecat.Internal.IStorageOperation, Wea
         if (_isConjoined)
         {
             builder.Append(" AND x.tenant_id = ");
-            builder.AppendParameter(_tenantId!);
+            builder.AppendParameter(_tenantId);
         }
 
         builder.Append(" AND x.seq_id = e.seq_id);");
+
+        // #1070: after the tag rows are in, in the same command
+        Polecat.Events.Dcb.StreamTagVersionBump.WriteAssignedSql(builder, _events, _registration,
+            TagValueStringifier.Stringify(_value), _tenantId, _whereFragment, _isConjoined);
     }
 
     public Task PostprocessAsync(DbDataReader reader, IList<Exception> exceptions, CancellationToken token)

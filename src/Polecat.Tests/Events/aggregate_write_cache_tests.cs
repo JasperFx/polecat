@@ -55,9 +55,42 @@ public sealed class RecordingWriteCache : IAggregateWriteCache
 
     public void Store(AggregateCacheKey key, object aggregate, long version)
     {
+        if (FailStores) throw new InvalidOperationException("The cache is down");
+
         Stores.Add((key, aggregate, version));
         _entries[key] = (aggregate, version);
     }
+
+    /// <summary>
+    ///     The write-back's own form (jasperfx#1050). Overridden so the default, which is built from
+    ///     <see cref="TryTake" />, doesn't show up in <see cref="Takes" /> and <see cref="Hits" />.
+    /// </summary>
+    public bool StoreIfNewer(AggregateCacheKey key, object aggregate, long version)
+    {
+        if (_entries.TryGetValue(key, out var existing) && existing.Version > version) return false;
+
+        Store(key, aggregate, version);
+        return true;
+    }
+
+    /// <summary>Every write throws, as a remote cache does when it is down.</summary>
+    public bool FailStores { get; set; }
+
+    public bool TryPeek(AggregateCacheKey key, out object? aggregate, out long version)
+    {
+        if (_entries.TryGetValue(key, out var entry))
+        {
+            aggregate = entry.Aggregate;
+            version = entry.Version;
+            return true;
+        }
+
+        aggregate = null;
+        version = 0;
+        return false;
+    }
+
+    public IReadOnlyCollection<AggregateCacheKey> Keys => _entries.Keys;
 
     public void Evict(AggregateCacheKey key) => _entries.Remove(key);
 
@@ -266,11 +299,11 @@ public class aggregate_write_cache_tests : OneOffConfigurationsContext
     [Fact]
     public async Task fetch_many_for_writing_discards_a_baseline_the_archiver_outran()
     {
-        // The batched form of the archival fallback: the stream says there are events past the baseline
-        // and the read comes back empty because they are archived, so the baseline is discarded and the
-        // stream re-read from version 1 — which also finds nothing, so an archived stream aggregates to
-        // null exactly as it does on the single-stream path. The sibling in the same call must be
-        // unaffected, and the refetch must cost exactly one extra round trip for the whole call.
+        // The batched form of the archival fallback: an archived stream's baseline is discarded and the
+        // stream read from version 1, which finds nothing, so an archived stream aggregates to null exactly
+        // as it does on the single-stream path. The sibling in the same call must be unaffected. Since
+        // #1035 the version read carries the archived flag, so the baseline goes before the events are read
+        // and costs no extra round trip; the refetch is left for an archive landing between the two reads.
         await ConfigureAsync();
 
         var archived = await AnOpenVaultAsync();
@@ -297,8 +330,8 @@ public class aggregate_write_cache_tests : OneOffConfigurationsContext
         streams[0].Aggregate.ShouldBeNull("the baseline was discarded and the archived stream has no readable events");
         streams[1].Aggregate!.Coins.ShouldBe(7010, "the sibling keeps its own baseline");
 
-        // Versions, then events, then the one refetch batch.
-        session.RequestCount.ShouldBe(3);
+        // Versions, then events, and no refetch batch.
+        session.RequestCount.ShouldBe(2);
     }
 
     [Fact]

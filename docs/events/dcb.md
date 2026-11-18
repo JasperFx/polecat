@@ -388,8 +388,10 @@ The table's shape follows the event store's:
 `QueryByTagsAsync`, `EventsExistAsync`, `AggregateByTagsAsync` and `FetchForWritingByTags` leave out
 archived events, as every other event query does. Archiving or un-archiving a stream also moves the
 [version](#consistency-check) of each tag on its events, so it conflicts with a boundary that read those
-tags: the boundary's decision was made from a set of events that has since changed. Tombstoning a stream
-conflicts for the same reason, as [described below](#what-a-tombstone-erases).
+tags: the boundary's decision was made from a set of events that has since changed. `AssignTagWhere` moves
+the version of the tag it assigns for the same reason, and creates the row if the tag has none. An
+assignment that matches no event of the session's tenant writes nothing. Tombstoning a stream conflicts
+too, as [described below](#what-a-tombstone-erases).
 
 The event store explorer's tag lookup (`IEventStore.QueryByTagsAsync`) still shows archived events,
 because it is a diagnostic surface, like its stream reads.
@@ -491,7 +493,7 @@ the events, and its tag rows go with the events. Once a tombstone commits, nothi
   stores the tag, so deleting it would erase nothing. Its version moves instead. The last stream to go takes
   it. An archived stream counts as carrying its tags, because its events are still stored.
 - **A tombstone never creates a row.** A tag with no row stays that way. A tag can have events and no row
-  if they were written before this table existed, or tagged later with `AssignTagWhere`.
+  if they were written before this table existed, or tagged with `AssignTagWhere` before Polecat 6.
 - **A boundary still can't save through it.** A boundary that captured a version finds the row moved or
   gone. A boundary that read events under a tag with no row has no row to lose against, so its save checks
   that the events it read are still there and throws `DcbConcurrencyException` if they aren't. That check
