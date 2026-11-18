@@ -39,6 +39,10 @@ This cleans:
 It leaves `pc_dcb_tag_version_sequence` where it is, so a boundary captured before the clean can't match
 a row created after it.
 
+It leaves documents in place, including the snapshots of aggregates projected with
+`ProjectionLifecycle.Async`. Fetching one of those aggregates afterwards throws `SnapshotWithoutStreamException`,
+so delete its documents too, for example with `CleanAsync<T>()`.
+
 It deliberately leaves `pc_event_projection_floors` alone. A projection's start floor is
 configuration about where its history begins, so it outlives a data reset, just as it outlives a
 rebuild.

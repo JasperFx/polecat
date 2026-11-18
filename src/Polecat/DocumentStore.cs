@@ -398,7 +398,10 @@ public partial class DocumentStore : IDocumentStore
             _providers,
             ensurer,
             Events,
-            options.TenantId);
+            options.TenantId)
+        {
+            TenantScope = options.TenantScope
+        };
     }
 
     public IDocumentSession OpenSession(SessionOptions options)

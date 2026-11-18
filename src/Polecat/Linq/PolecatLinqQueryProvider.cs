@@ -67,6 +67,25 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
     private string TenantIdForFilter => _tenantOverride ?? _session.TenantId;
 
     /// <summary>
+    ///     polecat#1048: the session's tenant scope, unless a ForTenant() view names its own tenant.
+    /// </summary>
+    private SessionTenantScope? TenantScope => _tenantOverride == null ? _session.TenantScope : null;
+
+    /// <summary>
+    ///     polecat#1048: one more predicate for every statement this provider builds. The by-id loads of a
+    ///     session with a tenant scope go through LINQ with an id predicate here, so that they get the same
+    ///     implicit filters a query does.
+    /// </summary>
+    private readonly ISqlFragment? _extraWhere;
+
+    internal PolecatLinqQueryProvider(QuerySession session, DocumentProviderRegistry providers,
+        DocumentTableEnsurer tableEnsurer, ISqlFragment extraWhere)
+        : this(session, providers, tableEnsurer)
+    {
+        _extraWhere = extraWhere;
+    }
+
+    /// <summary>
     ///     A parsed query carrying its implicit filters. See <see cref="Parse" />.
     /// </summary>
     private readonly record struct ParsedQuery(
@@ -98,8 +117,11 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
         if (parser.GroupJoinData == null)
         {
             parser.Statement.Wheres.AddRange(
-                ImplicitFilters.For(provider.Mapping, documentType, _tenantOverride ?? tenantId, parser));
+                ImplicitFilters.For(provider.Mapping, documentType, _tenantOverride ?? tenantId, parser,
+                    scope: TenantScope));
         }
+
+        if (_extraWhere != null) parser.Statement.Wheres.Add(_extraWhere);
 
         return new ParsedQuery(parser, memberFactory, provider, documentType);
     }
@@ -954,9 +976,9 @@ internal class PolecatLinqQueryProvider : IPolecatAsyncQueryProvider,
         var innerTenancy = parser.IsAnyTenant || parser.TenantIds != null ? parser : inner;
 
         joinStatement.OuterWheres.AddRange(ImplicitFilters.For(outerMapping, joinData.OuterElementType,
-            TenantIdForFilter, parser, alias: "outer_t"));
+            TenantIdForFilter, parser, alias: "outer_t", scope: TenantScope));
         joinStatement.InnerWheres.AddRange(ImplicitFilters.For(innerMapping, joinData.InnerElementType,
-            TenantIdForFilter, inner, innerTenancy, alias: "inner_t"));
+            TenantIdForFilter, inner, innerTenancy, alias: "inner_t", scope: TenantScope));
 
         // Add any WHERE clauses from the outer source (captured by parser before GroupJoin).
         // These use bare column names (data, id) — wrap them with aliasing for outer_t.

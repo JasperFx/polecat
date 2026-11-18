@@ -172,6 +172,12 @@ internal partial class QuerySession : IQuerySession, JasperFx.Events.IEventTenan
     }
 
     public int RequestCount { get; internal set; }
+
+    /// <summary>
+    ///     polecat#1048: which tenants this session reads for conjoined documents and events when a query does
+    ///     not say. Null, the normal case, is the session's own tenant.
+    /// </summary>
+    internal SessionTenantScope? TenantScope { get; init; }
     public IPolecatSessionLogger Logger { get; set; }
 
     public IQueryEventStore Events => _events ??= new QueryEventStore(this, _eventGraph, Options);
@@ -185,6 +191,7 @@ internal partial class QuerySession : IQuerySession, JasperFx.Events.IEventTenan
     {
         assertNotDisposed();
         RequestCount++;
+        if (BeforeExecuteAsync != null) await BeforeExecuteAsync(command.CommandText, token).ConfigureAwait(false);
         var started = Stopwatch.GetTimestamp();
         try
         {
@@ -202,6 +209,7 @@ internal partial class QuerySession : IQuerySession, JasperFx.Events.IEventTenan
     {
         assertNotDisposed();
         RequestCount++;
+        if (BeforeExecuteAsync != null) await BeforeExecuteAsync(command.CommandText, token).ConfigureAwait(false);
         var started = Stopwatch.GetTimestamp();
         try
         {
@@ -219,6 +227,7 @@ internal partial class QuerySession : IQuerySession, JasperFx.Events.IEventTenan
     {
         assertNotDisposed();
         RequestCount++;
+        if (BeforeExecuteAsync != null) await BeforeExecuteAsync(command.CommandText, token).ConfigureAwait(false);
         var started = Stopwatch.GetTimestamp();
         try
         {
@@ -236,6 +245,7 @@ internal partial class QuerySession : IQuerySession, JasperFx.Events.IEventTenan
     {
         assertNotDisposed();
         RequestCount++;
+        if (BeforeExecuteAsync != null) await runBeforeExecuteAsync(batch, token).ConfigureAwait(false);
         var started = Stopwatch.GetTimestamp();
         try
         {
@@ -248,6 +258,9 @@ internal partial class QuerySession : IQuerySession, JasperFx.Events.IEventTenan
             RecordQueryDuration(started);
         }
     }
+
+    private Task runBeforeExecuteAsync(SqlBatch batch, CancellationToken token)
+        => BeforeExecuteAsync!(string.Join(Environment.NewLine, batch.BatchCommands.Cast<SqlBatchCommand>().Select(x => x.CommandText)), token);
 
     // Free when nothing listens: the histogram reports Enabled only while a MeterListener subscribes to it.
     private static void RecordQueryDuration(long started)
@@ -314,11 +327,10 @@ internal partial class QuerySession : IQuerySession, JasperFx.Events.IEventTenan
             ? " AND is_deleted = 0"
             : "";
 
-        // #234: tenant_id predicate is conjoined-only.
-        var tenantFilter = provider.Mapping.TenancyStyle == TenancyStyle.Conjoined ? " AND tenant_id = @tenant_id" : "";
+        // #234: tenant_id predicate is conjoined-only. polecat#1048: or the session's tenant scope.
+        var tenantFilter = tenantFilterFor(provider.Mapping, tenantId, cmd);
         cmd.CommandText = $"SELECT CAST(CASE WHEN EXISTS(SELECT 1 FROM {provider.Mapping.QualifiedTableName} WHERE id = @id{tenantFilter}{softDeleteFilter}) THEN 1 ELSE 0 END AS BIT);";
         cmd.Parameters.AddIdParameter("@id", id, Options.Advanced.UseUnicodeKeys);
-        if (provider.Mapping.TenancyStyle == TenancyStyle.Conjoined) cmd.Parameters.AddKey("@tenant_id", tenantId, Options.Advanced.UseUnicodeKeys);
 
         Logger.OnBeforeExecute(cmd.CommandText);
         try
@@ -381,6 +393,13 @@ internal partial class QuerySession : IQuerySession, JasperFx.Events.IEventTenan
         var provider = _providers.GetProvider<T>();
         await _tableEnsurer.EnsureTableAsync(provider, HasOpenTransaction, token).ConfigureAwait(false);
         if (!await CouldHaveIdAsync(provider.Mapping, id, token).ConfigureAwait(false)) return default;
+
+        // polecat#1048: across the session's tenant scope. Two tenants sharing an id answer with one of them.
+        if (readsAcrossTenantScope(provider.Mapping, TenantId))
+        {
+            return (await loadAcrossTenantScopeAsync<T>(provider.Mapping, [id], token).ConfigureAwait(false))
+                .FirstOrDefault();
+        }
 
         // #273 E2a/E2e: all document loads route through the closed-shape storage layer
         // (shared selectors + dialect commands over the descriptor); subclass types resolve
@@ -478,6 +497,12 @@ internal partial class QuerySession : IQuerySession, JasperFx.Events.IEventTenan
         ids = await IdsThatCouldBeStoredAsync(provider.Mapping, ids, token).ConfigureAwait(false);
         if (ids.Count == 0) return [];
 
+        // polecat#1048: across the session's tenant scope
+        if (readsAcrossTenantScope(provider.Mapping, TenantId))
+        {
+            return await loadAcrossTenantScopeAsync<T>(provider.Mapping, ids, token).ConfigureAwait(false);
+        }
+
         // #273 E2a/E2e: all document loads route through the closed-shape storage layer.
         var storage = (Polecat.Storage.ClosedShape.IPolecatObjectStorage<T>)
             ((Weasel.Storage.IStorageSession)this).StorageFor<T>();
@@ -547,11 +572,10 @@ internal partial class QuerySession : IQuerySession, JasperFx.Events.IEventTenan
             ? " AND is_deleted = 0"
             : "";
 
-        // #234: tenant_id predicate is conjoined-only.
-        var tenantFilter = provider.Mapping.TenancyStyle == TenancyStyle.Conjoined ? " AND tenant_id = @tenant_id" : "";
+        // #234: tenant_id predicate is conjoined-only. polecat#1048: or the session's tenant scope.
+        var tenantFilter = tenantFilterFor(provider.Mapping, tenantId, cmd);
         cmd.CommandText = $"SELECT data FROM {provider.Mapping.QualifiedTableName} WHERE id = @id{tenantFilter}{softDeleteFilter};";
         cmd.Parameters.AddIdParameter("@id", id, Options.Advanced.UseUnicodeKeys);
-        if (provider.Mapping.TenancyStyle == TenancyStyle.Conjoined) cmd.Parameters.AddKey("@tenant_id", tenantId, Options.Advanced.UseUnicodeKeys);
 
         Logger.OnBeforeExecute(cmd.CommandText);
         try

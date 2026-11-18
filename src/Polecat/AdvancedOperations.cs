@@ -1431,6 +1431,172 @@ public class AdvancedOperations
     }
 
     /// <summary>
+    ///     Run one query against every database the store knows about and flatten the results. Multi-database
+    ///     tenancies (database per tenant, master table) have no session that spans databases, so this opens a
+    ///     query session per database with bounded parallelism. Mirrors Marten's method of the same name.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         The query reads every tenant. For conjoined (multi-tenanted) documents and events, each session
+    ///         reads every tenant's rows in its database wherever an ordinary session would read only its own
+    ///         tenant: LINQ queries, <c>LoadAsync()</c> / <c>LoadManyAsync()</c>, <c>LoadJsonAsync()</c>,
+    ///         <c>CheckExistsAsync()</c>, event queries and <c>FetchStreamAsync()</c>. An <c>AnyTenant()</c> or
+    ///         <c>TenantIsOneOf(...)</c> in the query still applies as written.
+    ///     </para>
+    ///     <para>
+    ///         Results are grouped per database: each database's items stay together, in the order the store's
+    ///         tenancy listed the databases for this call. That order is not guaranteed to be the same from one
+    ///         call to the next.
+    ///     </para>
+    /// </remarks>
+    /// <param name="query">The query to run in each database</param>
+    /// <param name="maxParallelism">
+    ///     How many databases are queried concurrently. Each slot holds one connection to a different database.
+    /// </param>
+    /// <param name="token"></param>
+    public Task<IReadOnlyList<T>> QueryAcrossAllDatabasesAsync<T>(
+        Func<IQuerySession, CancellationToken, Task<IReadOnlyList<T>>> query,
+        int maxParallelism = 8,
+        CancellationToken token = default)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        return QueryAcrossAllDatabasesAsync<T>((session, _, ct) => query(session, ct), maxParallelism, token);
+    }
+
+    /// <summary>
+    ///     Like <see cref="QueryAcrossAllDatabasesAsync{T}(Func{IQuerySession,CancellationToken,Task{IReadOnlyList{T}}},int,CancellationToken)" />,
+    ///     but also hands the <see cref="PolecatDatabase" /> to the query, for work that lives beside the
+    ///     documents rather than in them, such as the async daemon progression. The same remarks about tenants
+    ///     and the order of the results apply.
+    /// </summary>
+    public async Task<IReadOnlyList<T>> QueryAcrossAllDatabasesAsync<T>(
+        Func<IQuerySession, PolecatDatabase, CancellationToken, Task<IReadOnlyList<T>>> query,
+        int maxParallelism = 8,
+        CancellationToken token = default)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        ArgumentOutOfRangeException.ThrowIfLessThan(maxParallelism, 1);
+
+        var databases = await allDatabasesAsync(token).ConfigureAwait(false);
+
+        return await queryDatabasesAsync(databases.Select(x => (x, SessionTenantScope.AllTenants)).ToArray(),
+            query, maxParallelism, token).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    ///     Run one query for the given tenants only. Only the databases that hold those tenants are visited, and
+    ///     each session reads only those tenants' rows of conjoined documents and events, as if the query said
+    ///     <c>TenantIsOneOf(tenantIds)</c>. Otherwise the same as
+    ///     <see cref="QueryAcrossAllDatabasesAsync{T}(Func{IQuerySession,CancellationToken,Task{IReadOnlyList{T}}},int,CancellationToken)" />.
+    /// </summary>
+    /// <param name="query">The query to run in each database</param>
+    /// <param name="maxParallelism">
+    ///     How many databases are queried concurrently. Each slot holds one connection to a different database.
+    /// </param>
+    /// <param name="token"></param>
+    /// <param name="tenantIds">The tenants to read. No tenant ids is an empty result.</param>
+    /// <exception cref="JasperFx.MultiTenancy.UnknownTenantIdException">A tenant id the store does not know</exception>
+    public Task<IReadOnlyList<T>> QueryAcrossAllDatabasesAsync<T>(
+        Func<IQuerySession, CancellationToken, Task<IReadOnlyList<T>>> query,
+        int maxParallelism,
+        CancellationToken token,
+        params string[] tenantIds)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        return QueryAcrossAllDatabasesAsync<T>((session, _, ct) => query(session, ct), maxParallelism, token,
+            tenantIds);
+    }
+
+    /// <summary>
+    ///     Like <see cref="QueryAcrossAllDatabasesAsync{T}(Func{IQuerySession,CancellationToken,Task{IReadOnlyList{T}}},int,CancellationToken,string[])" />,
+    ///     but also hands the <see cref="PolecatDatabase" /> to the query.
+    /// </summary>
+    /// <exception cref="JasperFx.MultiTenancy.UnknownTenantIdException">A tenant id the store does not know</exception>
+    public async Task<IReadOnlyList<T>> QueryAcrossAllDatabasesAsync<T>(
+        Func<IQuerySession, PolecatDatabase, CancellationToken, Task<IReadOnlyList<T>>> query,
+        int maxParallelism,
+        CancellationToken token,
+        params string[] tenantIds)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        ArgumentNullException.ThrowIfNull(tenantIds);
+        ArgumentOutOfRangeException.ThrowIfLessThan(maxParallelism, 1);
+
+        var distinct = tenantIds.Distinct().ToArray();
+        if (distinct.Length == 0) return [];
+
+        // FindDatabaseAsync is the read-only lookup: it never registers or provisions a tenant. Grouped by
+        // connection string, because a database-per-tenant tenancy has a PolecatDatabase per tenant even when
+        // two tenants are in one database, and that database is read once.
+        var tenancy = _store.Options.Tenancy;
+        var tenantsByDatabase = new Dictionary<string, (PolecatDatabase Database, List<string> TenantIds)>(
+            StringComparer.OrdinalIgnoreCase);
+        foreach (var tenantId in distinct)
+        {
+            var found = tenancy == null
+                ? _store.Database
+                : await tenancy.FindDatabaseAsync(tenantId, token).ConfigureAwait(false)
+                  ?? throw new JasperFx.MultiTenancy.UnknownTenantIdException(tenantId);
+
+            if (!tenantsByDatabase.TryGetValue(found.ConnectionString, out var group))
+            {
+                group = (found, new List<string>());
+                tenantsByDatabase[found.ConnectionString] = group;
+            }
+
+            group.TenantIds.Add(tenantId);
+        }
+
+        return await queryDatabasesAsync(
+            tenantsByDatabase.Values.Select(x => (x.Database, SessionTenantScope.For(x.TenantIds.ToArray())))
+                .ToArray(), query, maxParallelism, token).ConfigureAwait(false);
+    }
+
+    private async Task<IReadOnlyList<T>> queryDatabasesAsync<T>(
+        (PolecatDatabase Database, SessionTenantScope Scope)[] targets,
+        Func<IQuerySession, PolecatDatabase, CancellationToken, Task<IReadOnlyList<T>>> query,
+        int maxParallelism,
+        CancellationToken token)
+    {
+        var perDatabase = new IReadOnlyList<T>[targets.Length];
+        await Parallel.ForEachAsync(
+                Enumerable.Range(0, targets.Length),
+                new ParallelOptions { MaxDegreeOfParallelism = maxParallelism, CancellationToken = token },
+                async (index, ct) =>
+                {
+                    var (database, scope) = targets[index];
+                    var options = SessionOptions.ForDatabase(database);
+                    options.TenantScope = scope;
+
+                    await using var session = _store.QuerySession(options);
+                    perDatabase[index] = await query(session, database, ct).ConfigureAwait(false);
+                })
+            .ConfigureAwait(false);
+
+        return perDatabase.SelectMany(x => x).ToList();
+    }
+
+    /// <summary>
+    ///     Every database of this store, looked up again for a dynamic tenancy (master table), and each physical
+    ///     database once: a database-per-tenant tenancy has a PolecatDatabase per tenant even when two tenants
+    ///     are in one database.
+    /// </summary>
+    private async Task<IReadOnlyList<PolecatDatabase>> allDatabasesAsync(CancellationToken token)
+    {
+        if (_store.Options.Tenancy is not { } tenancy) return [_store.Database];
+
+        var databases = await tenancy.BuildDatabasesAsync(token).ConfigureAwait(false);
+        if (databases.Count == 0)
+        {
+            throw new InvalidOperationException(
+                "The document store has no databases registered with its tenancy. Add a tenant, or query one " +
+                "tenant's database with a session for that tenant.");
+        }
+
+        return databases.DistinctBy(x => x.ConnectionString, StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    /// <summary>
     ///     Every database this store can reach — one per tenant under a database-per-tenant tenancy,
     ///     otherwise just the store's own. #514.
     /// </summary>

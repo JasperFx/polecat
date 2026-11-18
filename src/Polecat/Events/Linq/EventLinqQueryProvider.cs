@@ -144,6 +144,15 @@ internal class EventLinqQueryProvider : IPolecatAsyncQueryProvider,
             {
                 parser.Statement.Wheres.Add(new TenantInFilter(parser.TenantIds, _events.UnicodeKeys));
             }
+            else if (_tenantId == null && _events.TenancyStyle == TenancyStyle.Conjoined
+                     && _session.TenantScope is { } scope)
+            {
+                // polecat#1048: QueryAcrossAllDatabasesAsync reads every tenant, or the listed tenants
+                if (scope.BuildFilter("tenant_id", _events.UnicodeKeys) is { } scoped)
+                {
+                    parser.Statement.Wheres.Add(scoped);
+                }
+            }
             else
             {
                 parser.Statement.Wheres.Add(

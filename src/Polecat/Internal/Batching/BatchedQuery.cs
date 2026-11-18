@@ -63,7 +63,10 @@ internal class BatchedQuery : IBatchedQuery
     {
         var provider = _providers.GetProvider<T>();
         _involvedProviders.Add(provider);
-        return new BatchedQueryable<T>(this, provider, _session.Options, _session.TenantId, _session.Serializer);
+        return new BatchedQueryable<T>(this, provider, _session.Options, _session.TenantId, _session.Serializer)
+        {
+            TenantScope = _session.TenantScope
+        };
     }
 
     public Task<IReadOnlyList<T>> Query<T>(string sql, params object[] parameters)
