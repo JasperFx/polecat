@@ -96,8 +96,8 @@ public partial class DocumentStore : IDocumentStore
         // Fail fast on a masking rule that could only ever appear to work (#860)
         options.EventGraph.AssertMaskingRulesCanRun();
 
-        // #935: what UseUnicodeKeys doesn't cover, and the keys it declares past SQL Server's index limit
-        Storage.UnicodeKeys.AssertSupported(options);
+        // #935: the keys UseUnicodeKeys declares past SQL Server's index limit. Managed tenant partitioning
+        // is covered since #1042 (EventGraph.TenantPartitionManager widens the registry).
         if (options.Advanced.UseUnicodeKeys)
         {
             Storage.UnicodeKeys.WarnAboutWideKeys(options, _providers.ConfiguredMappings());

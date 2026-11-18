@@ -307,13 +307,114 @@ public class unicode_keys_tests : IAsyncLifetime
         _logger.Warnings.ShouldNotContain(x => x.Contains("UseUnicodeKeys"));
     }
 
-    [Fact]
-    public void the_setting_is_refused_with_managed_tenant_partitioning()
+    /// <summary>
+    ///     Events and documents both partitioned by tenant. A store of its own, without the documents
+    ///     <see cref="unicode_keys_upgrade_tests.Configure" /> adds, since a foreign key between two
+    ///     tenant-partitioned document tables isn't supported.
+    /// </summary>
+    private DocumentStore partitionedStoreFor(bool unicode = true)
     {
-        var refused = Should.Throw<InvalidOperationException>(() =>
-            storeFor(configure: opts => opts.EventGraph.UseTenantPartitionedEvents = true));
-        refused.Message.ShouldContain("UseUnicodeKeys");
-        refused.Message.ShouldContain("pc_tenant_partitions");
+        var options = new StoreOptions
+        {
+            ConnectionString = ConnectionSource.ConnectionStringFor(Database),
+            AutoCreateSchemaObjects = AutoCreate.All,
+            DatabaseSchemaName = Schema,
+            UseNativeJsonType = ConnectionSource.SupportsNativeJson
+        };
+
+        options.Events.TenancyStyle = TenancyStyle.Conjoined;
+        options.Events.StreamIdentity = StreamIdentity.AsString;
+        options.Events.AddEventType<UnicodeTicketOpened>();
+        options.EventGraph.UseTenantPartitionedEvents = true;
+        options.Schema.For<Документ>().MultiTenanted();
+        options.Policies.PartitionMultiTenantedDocumentsUsingPolecatManagement();
+        options.Advanced.UseUnicodeKeys = unicode;
+
+        var store = new DocumentStore(options);
+        _stores.Add(store);
+        return store;
+    }
+
+    /// <summary>
+    ///     #1042: the partition registry is nvarchar too, so two tenants that varchar would make one (both are
+    ///     ?? in the default code page) get partitions of their own, and their events and documents stay apart.
+    /// </summary>
+    [Fact]
+    public async Task two_tenants_varchar_would_make_one_get_partitions_of_their_own()
+    {
+        var store = partitionedStoreFor();
+        await store.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: Ct);
+
+        foreach (var tenant in new[] { "東京", "大阪" })
+        {
+            await using var session = store.LightweightSession(new SessionOptions { TenantId = tenant });
+            session.Store(new Документ { Id = Key, Name = tenant });
+            session.Events.StartStream(Key, new UnicodeTicketOpened($"code {tenant}", tenant));
+            await session.SaveChangesAsync(Ct);
+        }
+
+        (await rowsAsync($"""
+            SELECT DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = '{Schema}' AND TABLE_NAME = 'pc_tenant_partitions'
+              AND COLUMN_NAME IN ('tenant_id', 'bucket')
+            """)).Select(x => x[0]).ShouldBe(["nvarchar", "nvarchar"]);
+
+        var registry = await rowsAsync($"SELECT tenant_id, ordinal FROM {Schema}.pc_tenant_partitions ORDER BY ordinal");
+        registry.Select(x => x[0]).ShouldBe(["東京", "大阪"]);
+        registry.Select(x => x[1]).Distinct().Count().ShouldBe(2);
+
+        (await rowsAsync($"SELECT DISTINCT tenant_ordinal FROM {Schema}.pc_events")).Count.ShouldBe(2);
+        (await rowsAsync($"SELECT DISTINCT tenant_ordinal FROM {Schema}.pc_doc_документ")).Count.ShouldBe(2);
+
+        foreach (var tenant in new[] { "東京", "大阪" })
+        {
+            await using var query = store.QuerySession(new SessionOptions { TenantId = tenant });
+            (await query.LoadAsync<Документ>(Key, Ct))!.Name.ShouldBe(tenant);
+            (await query.Query<Документ>().ToListAsync(Ct)).Single().Name.ShouldBe(tenant);
+
+            var events = await query.Events.FetchStreamAsync(Key, token: Ct);
+            events.Single().Data.ShouldBe(new UnicodeTicketOpened($"code {tenant}", tenant));
+        }
+    }
+
+    /// <summary>
+    ///     #1042: turning the setting on for a store that already partitions by tenant migrates the registry,
+    ///     and the tenants already in it keep their ordinals.
+    /// </summary>
+    [Fact]
+    public async Task turning_the_setting_on_widens_an_existing_partition_registry()
+    {
+        var narrow = partitionedStoreFor(unicode: false);
+        await narrow.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: Ct);
+
+        await using (var session = narrow.LightweightSession(new SessionOptions { TenantId = "plain" }))
+        {
+            session.Store(new Документ { Id = "kept", Name = "kept" });
+            await session.SaveChangesAsync(Ct);
+        }
+
+        var before = await rowsAsync($"SELECT tenant_id, ordinal FROM {Schema}.pc_tenant_partitions");
+
+        var wide = partitionedStoreFor();
+        await wide.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: Ct);
+
+        (await rowsAsync($"""
+            SELECT DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = '{Schema}' AND TABLE_NAME = 'pc_tenant_partitions' AND COLUMN_NAME = 'tenant_id'
+            """)).Single()[0].ShouldBe("nvarchar");
+        (await rowsAsync($"SELECT tenant_id, ordinal FROM {Schema}.pc_tenant_partitions")).ShouldBe(before);
+
+        await using (var session = wide.LightweightSession(new SessionOptions { TenantId = Tenant }))
+        {
+            session.Store(new Документ { Id = "new", Name = Tenant });
+            await session.SaveChangesAsync(Ct);
+        }
+
+        await using var query = wide.QuerySession(new SessionOptions { TenantId = "plain" });
+        (await query.LoadAsync<Документ>("kept", Ct))!.Name.ShouldBe("kept");
+
+        (await rowsAsync($"SELECT tenant_id FROM {Schema}.pc_tenant_partitions ORDER BY ordinal"))
+            .Select(x => x[0]).ShouldBe(["plain", Tenant]);
     }
 
     [Fact]

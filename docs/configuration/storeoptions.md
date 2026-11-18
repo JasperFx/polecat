@@ -139,6 +139,7 @@ It's off by default. With it on, these columns are `nvarchar` at the same width,
 | `id`, `stream_id`, `stream_key` | string-keyed documents, `pc_streams`, `pc_events`, `pc_natural_key_*` |
 | `value`, `tag_value` | string tag tables, `pc_dcb_tag_version` |
 | `name` | `pc_event_progression` and `pc_event_projection_floors`, because a per-tenant name ends in the tenant id |
+| `tenant_id`, `bucket` | `pc_tenant_partitions`, the managed tenant partition registry, at `nvarchar(200)` |
 | `correlation_id`, `causation_id`, `user_name`, `last_modified_by`, `dotnet_type`, `doc_type` | `pc_events` and the document tables |
 
 **Keep a key under 450 characters.** An `nvarchar` character takes two bytes, and SQL Server allows 900
@@ -147,8 +148,10 @@ at 1,000 bytes. SQL Server allows that, but refuses a row whose own key is longe
 id and the id together have to stay under 450 characters. Polecat logs the keys declared past the limit once
 when the store starts, and a write that goes past it throws `KeyTooLongException`, naming the tenant and id.
 
-It can't be combined with managed tenant partitioning, whose registry keeps tenant ids as `varchar`. The store
-refuses that combination when it's built.
+With managed tenant partitioning (`Events.UseTenantPartitionedEvents` or
+`Policies.PartitionMultiTenantedDocumentsUsingPolecatManagement()`), the partition registry
+`pc_tenant_partitions` keeps its `tenant_id` and `bucket` as `nvarchar(200)` too, so every tenant gets a
+partition of its own.
 
 Turning it on for an existing store is an ordinary schema migration. See
 [the migration guide](/migration-guide#upgrading-to-6-0-opt-in-nvarchar-keys). Once a store's columns are

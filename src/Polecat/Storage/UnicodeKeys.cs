@@ -9,8 +9,8 @@ using Weasel.SqlServer.Tables;
 namespace Polecat.Storage;
 
 /// <summary>
-///     #935: what <see cref="AdvancedOptions.UseUnicodeKeys" /> checks when the store starts, and what it
-///     refuses when a migration would undo it.
+///     #935: what <see cref="AdvancedOptions.UseUnicodeKeys" /> warns about when the store starts, and what
+///     it refuses when a migration would undo it.
 /// </summary>
 internal static partial class UnicodeKeys
 {
@@ -19,22 +19,6 @@ internal static partial class UnicodeKeys
 
     /// <summary>SQL Server's limit on the key of a nonclustered index, in bytes.</summary>
     public const int NonclusteredKeyLimit = 1700;
-
-    /// <summary>
-    ///     Refuse what the setting doesn't cover. Managed tenant partitioning keeps its own registry of
-    ///     tenant ids, <c>pc_tenant_partitions</c>, whose <c>tenant_id</c> is Weasel's <c>varchar(200)</c>,
-    ///     so two tenant ids the code page can't hold would become one partition.
-    /// </summary>
-    public static void AssertSupported(StoreOptions options)
-    {
-        if (!options.Advanced.UseUnicodeKeys || !options.EventGraph.AnyTenantPartitioning) return;
-
-        throw new InvalidOperationException(
-            "StoreOptions.Advanced.UseUnicodeKeys can't be combined with managed tenant partitioning "
-            + "(Events.UseTenantPartitionedEvents or Policies.PartitionMultiTenantedDocumentsUsingPolecatManagement()). "
-            + "The partition registry, pc_tenant_partitions, keeps tenant ids as varchar, so tenant ids outside "
-            + "the database's code page would share a partition.");
-    }
 
     /// <summary>
     ///     Log, once, the keys this store declares wider than SQL Server allows an index to hold: SQL Server's

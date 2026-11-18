@@ -373,11 +373,31 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
     ///     one registry per database.
     /// </summary>
     internal ManagedTenantPartitions TenantPartitionManager =>
-        LazyInitializer.EnsureInitialized(ref _tenantPartitions, ref _tenantPartitionLock, () =>
-            new ManagedTenantPartitions(
-                "pc_events_tenants",
-                new DbObjectName(DatabaseSchemaName, "pc_tenant_partitions"),
-                column: "tenant_ordinal"));
+        LazyInitializer.EnsureInitialized(ref _tenantPartitions, ref _tenantPartitionLock, buildTenantPartitionManager);
+
+    private ManagedTenantPartitions buildTenantPartitionManager()
+    {
+        var partitions = new ManagedTenantPartitions(
+            "pc_events_tenants",
+            new DbObjectName(DatabaseSchemaName, "pc_tenant_partitions"),
+            column: "tenant_ordinal");
+
+        if (UnicodeKeys)
+        {
+            // #1042: Weasel declares the registry's tenant_id and bucket as varchar(200), so two tenant ids
+            // outside the database's code page (東京 and 大阪 are both ?? there) would share one ordinal, and
+            // the partition, high water marks and sequences keyed through it. Weasel has no setting for it, so
+            // widen the registry's own table here, at the width Weasel gives it. Weasel binds its registry
+            // parameters with AddWithValue, which is already nvarchar. An existing varchar registry migrates
+            // like Polecat's other key columns.
+            var registry = partitions.Objects.OfType<Weasel.SqlServer.Tables.Table>()
+                .Single(x => x.Identifier.Equals(partitions.RegistryTableIdentifier));
+            registry.ColumnFor("tenant_id")!.Type = "nvarchar(200)";
+            registry.ColumnFor("bucket")!.Type = "nvarchar(200)";
+        }
+
+        return partitions;
+    }
 
     private PolecatDatabase? _tenantPartitionDatabase;
     private TenantPartitionOrdinalRegistry? _tenantOrdinals;
