@@ -422,6 +422,35 @@ internal class DocumentMapping
     /// <summary>The partition column every managed-tenant-partitioned table carries (#335).</summary>
     public const string TenantOrdinalColumn = "tenant_ordinal";
 
+    /// <summary>
+    ///     #1075: a tenant-partitioned table's primary key is <c>(tenant_id, id, tenant_ordinal)</c>, so a
+    ///     foreign key to one has to carry <c>tenant_ordinal</c> too, and only a tenant-partitioned table has
+    ///     that column. Throws when this document references a tenant-partitioned document without being
+    ///     partitioned itself.
+    /// </summary>
+    internal void AssertForeignKeysFitTenantPartitioning()
+    {
+        if (TenantPartitioned) return;
+
+        foreach (var fk in ForeignKeys)
+        {
+            var reference = new DocumentMapping(fk.ReferenceDocumentType, StoreOptions);
+            if (!reference.TenantPartitioned) continue;
+
+            throw new NotSupportedException(
+                $"Document '{DocumentType.Name}' has a foreign key to '{reference.DocumentType.Name}', whose " +
+                "table is partitioned per tenant by " +
+                "Policies.PartitionMultiTenantedDocumentsUsingPolecatManagement(), but " +
+                $"'{DocumentType.Name}' is not partitioned that way " +
+                (TenancyStyle == TenancyStyle.Conjoined
+                    ? $"(Policies.ForDocument<{DocumentType.Name}>(p => p.DisableTenantPartitioning = true)). "
+                    : "(it is not multi-tenanted). ") +
+                "The referenced table's primary key includes tenant_ordinal, which only a tenant-partitioned " +
+                "table has. Partition both document types, or opt the referenced type out as well with " +
+                $"Policies.ForDocument<{reference.DocumentType.Name}>(p => p.DisableTenantPartitioning = true).");
+        }
+    }
+
     /// <summary>SQL fragment appended to an INSERT column list for the partition column (or empty).</summary>
     public string PartitionInsertColumns => HasPartitionColumn ? $", {Partitioning!.ColumnName}" : string.Empty;
 
