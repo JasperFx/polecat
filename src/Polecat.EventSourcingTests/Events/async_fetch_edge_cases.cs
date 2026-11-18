@@ -29,9 +29,9 @@ public class async_fetch_edge_cases : OneOffConfigurationsContext
     private async Task catchTheDaemonUpAsync()
     {
         using var daemon = (IProjectionDaemon)await theStore.BuildProjectionDaemonAsync();
-        // CatchUpAsync runs the shards to the high water mark itself. Not after StartAllAsync: it stops the
-        // running agents first, and one that is still loading can report a closed channel as an error.
+        await daemon.StartAllAsync();
         await daemon.CatchUpAsync(TimeSpan.FromSeconds(60), Ct);
+        await daemon.StopAllAsync();
     }
 
     private async Task<Guid> aStreamAsync(params object[] events)

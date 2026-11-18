@@ -157,6 +157,32 @@ public class cancelled_projection_teardown_tests : IAsyncLifetime
     }
 
     /// <summary>
+    ///     The reads the daemon makes on its own token. <c>CatchUpAsync</c> stops the running shards, and a shard
+    ///     stopped during a Composite rebuild's first read of the highest sequence recorded SqlClient's form of
+    ///     the cancel as a failure, so the catch-up threw it.
+    /// </summary>
+    [Fact]
+    public async Task the_daemons_read_of_the_highest_sequence_cancelled_inside_its_command_reports_cancellation()
+    {
+        await Store.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: Ct);
+
+        await using var blocked = await TableLock.TakeAsync(Store.Events.EventsTableName);
+
+        await ShouldReportCancellationAsync(token => Store.Database.FetchHighestEventSequenceNumber(token));
+    }
+
+    [Fact]
+    public async Task the_daemons_read_of_a_shards_progress_cancelled_inside_its_command_reports_cancellation()
+    {
+        await Store.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: Ct);
+
+        await using var blocked = await TableLock.TakeAsync(Store.Events.ProgressionTableName);
+
+        await ShouldReportCancellationAsync(token =>
+            Store.Database.ProjectionProgressFor(new ShardName(ProjectionName), token));
+    }
+
+    /// <summary>
     ///     The other half of the rule. Teardown against a table that is not there is a real failure, and it
     ///     has to stay one.
     /// </summary>

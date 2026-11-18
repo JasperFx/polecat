@@ -16,7 +16,7 @@ namespace Polecat.Tests.Session;
 /// </remarks>
 public class session_isolation_level_tests : OneOffConfigurationsContext
 {
-    private const int ReadCommittedLevel = 2;
+    internal const int ReadCommittedLevel = 2;
     private const int SnapshotUpdateConflict = 3960;
 
     private const string ReadLevelSql =
@@ -124,7 +124,7 @@ public class session_isolation_level_tests : OneOffConfigurationsContext
         return Convert.ToInt32(await cmd.ExecuteScalarAsync(Ct));
     }
 
-    private static async Task<(int Level, int Spid, int TranCount)> DescribeConnectionAsync(QuerySession session)
+    internal static async Task<(int Level, int Spid, int TranCount)> DescribeConnectionAsync(QuerySession session)
     {
         await using var cmd = new SqlCommand($"""
             SELECT CONVERT(varchar(20), ({ReadLevelSql})) + ',' + CONVERT(varchar(20), @@SPID)
@@ -268,6 +268,21 @@ public class session_isolation_level_tests : OneOffConfigurationsContext
         described.Level.ShouldBe(ReadCommittedLevel);
         described.TranCount.ShouldBe(0);
     }
+}
+
+/// <summary>
+///     Split out of <see cref="session_isolation_level_tests" /> so it runs alone: the connection under test has
+///     to stay in its pool between the two sessions, and another test calling <c>SqlConnection.ClearAllPools()</c>
+///     in between discarded it (see <see cref="ConnectionPoolCollection" />).
+/// </summary>
+[Collection("connection-pool")]
+public class session_isolation_level_pool_tests : OneOffConfigurationsContext
+{
+    public override async ValueTask InitializeAsync()
+    {
+        await base.InitializeAsync();
+        await session_isolation_level_tests.AllowSnapshotIsolationAsync(TestContext.Current.CancellationToken);
+    }
 
     /// <summary>
     ///     <c>BeginTransaction(level)</c> sets the connection's level, and <c>sp_reset_connection</c> does
@@ -290,15 +305,15 @@ public class session_isolation_level_tests : OneOffConfigurationsContext
         int spid;
         await using (var session = theStore.LightweightSession(new SessionOptions { IsolationLevel = level }))
         {
-            spid = (await DescribeConnectionAsync((DocumentSessionBase)session)).Spid;
+            spid = (await session_isolation_level_tests.DescribeConnectionAsync((DocumentSessionBase)session)).Spid;
         }
 
         await using var query = theStore.QuerySession();
-        var described = await DescribeConnectionAsync((QuerySession)query);
+        var described = await session_isolation_level_tests.DescribeConnectionAsync((QuerySession)query);
 
         // Otherwise this is not the connection under test and the assertion below proves nothing.
         described.Spid.ShouldBe(spid);
-        described.Level.ShouldBe(ReadCommittedLevel);
+        described.Level.ShouldBe(session_isolation_level_tests.ReadCommittedLevel);
 
         SqlConnection.ClearPool(new SqlConnection(connectionString));
     }

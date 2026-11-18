@@ -58,9 +58,9 @@ public abstract class async_fetch_reads_in_a_safe_order : OneOffConfigurationsCo
     private async Task catchTheDaemonUpAsync()
     {
         using var daemon = (IProjectionDaemon)await theStore.BuildProjectionDaemonAsync();
-        // CatchUpAsync runs the shards to the high water mark itself. Not after StartAllAsync: it stops the
-        // running agents first, and one that is still loading can report a closed channel as an error.
+        await daemon.StartAllAsync();
         await daemon.CatchUpAsync(TimeSpan.FromSeconds(60), TestContext.Current.CancellationToken);
+        await daemon.StopAllAsync();
     }
 
     private async Task appendAsync(string? tenant, object id, bool start, params char[] letters)
