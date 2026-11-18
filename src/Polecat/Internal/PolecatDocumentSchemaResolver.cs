@@ -9,7 +9,8 @@ namespace Polecat.Internal;
 ///     diagnostics, and projection-coordinator activity tags.
 /// </summary>
 /// <remarks>
-///     Polecat stores documents in <c>pc_doc_{typename}</c> and the event-store
+///     Polecat stores documents in <c>pc_doc_{typename}</c> (<c>pc_doc_{typename}_{version}</c> for the
+///     document of a projection above version 1, #1089) and the event-store
 ///     tables in <c>pc_events</c> / <c>pc_streams</c> / <c>pc_event_progression</c>,
 ///     all under the single <see cref="StoreOptions.DatabaseSchemaName"/> (events
 ///     share the document schema). A qualified name is bracket-quoted
@@ -33,7 +34,7 @@ internal sealed class PolecatDocumentSchemaResolver : IDocumentSchemaResolver
     public string For<TDocument>(bool qualified = true) => For(typeof(TDocument), qualified);
 
     public string For(Type documentType, bool qualified = true)
-        => Format($"pc_doc_{documentType.Name.ToLowerInvariant()}", qualified);
+        => Format(Storage.DocumentMapping.TableNameFor(documentType, _options), qualified);
 
     public string ForEvents(bool qualified = true) => Format("pc_events", qualified);
 

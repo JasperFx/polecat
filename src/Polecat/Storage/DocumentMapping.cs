@@ -98,7 +98,7 @@ internal class DocumentMapping
             }
         }
 
-        var tableName = $"pc_doc_{documentType.Name.ToLowerInvariant()}";
+        var tableName = TableNameFor(documentType, options);
         QualifiedTableName = Internal.SqlEscaping.QualifiedName(options.DatabaseSchemaName, tableName);
         TableName = tableName;
         DatabaseSchemaName = options.DatabaseSchemaName;
@@ -460,6 +460,37 @@ internal class DocumentMapping
     /// <summary>SQL fragment appended to an UPDATE SET clause for the partition column (or empty).</summary>
     public string PartitionUpdateSet =>
         HasPartitionColumn ? $", {Partitioning!.ColumnName} = @partition_value" : string.Empty;
+
+    /// <summary>
+    ///     The table name without its <c>pc_doc_</c> prefix: the lower-cased type name, plus the projection version
+    ///     suffix when there is one. It is what Marten calls the document alias, and what the diagnostics report.
+    /// </summary>
+    internal string TableAlias => TableName.StartsWith(TablePrefix, StringComparison.Ordinal)
+        ? TableName[TablePrefix.Length..]
+        : TableName;
+
+    private const string TablePrefix = "pc_doc_";
+
+    /// <summary>
+    ///     The bare table name for a document type: <c>pc_doc_{type}</c>, with a <c>_{version}</c> suffix when the
+    ///     type is the document of an aggregate projection whose <c>Version</c> is above 1.
+    /// </summary>
+    /// <remarks>
+    ///     #1089, as Marten's <c>ProjectionVersionAliasPolicy</c>: a new version of a projection rebuilds into its
+    ///     own table, so it neither applies every event a second time on top of the old version's documents nor
+    ///     writes over the documents the old version is still serving during a blue/green deploy.
+    /// </remarks>
+    internal static string TableNameFor(Type documentType, StoreOptions options)
+    {
+        var tableName = TablePrefix + documentType.Name.ToLowerInvariant();
+
+        if (options.Projections.TryFindAggregate(documentType, out var projection) && projection.Version > 1)
+        {
+            tableName += "_" + projection.Version;
+        }
+
+        return tableName;
+    }
 
     /// <summary>
     ///     The alias used in the doc_type discriminator column for the base type.

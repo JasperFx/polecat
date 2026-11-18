@@ -7,7 +7,8 @@ namespace Polecat.Storage;
 
 /// <summary>
 ///     Weasel table definition for a document type.
-///     Table name follows the pattern: pc_doc_{lowercase_type_name}
+///     Table name follows the pattern: pc_doc_{lowercase_type_name}, with _{version} for the document of a
+///     projection above version 1 (see DocumentMapping.TableNameFor)
 /// </summary>
 internal partial class DocumentTable : AdditiveTable
 {
