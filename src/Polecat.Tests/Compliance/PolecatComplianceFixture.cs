@@ -111,9 +111,8 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
         // #858: no two writes in a fact share a timestamp
         options.Listeners.Add(ServerClockTickListener.Instance);
 
-        // #813: start floors are opt-in in Polecat 5, and ProjectionFloorCompliance is what pins them.
-        // Opted in for every compliance store rather than per suite, because the seam has no config
-        // member to ask for it -- the suite just calls the IEventDatabase members.
+        // #813: ProjectionFloorCompliance pins the start floors. On by default since Polecat 6, and set
+        // here anyway so a suite's RestoreV5Defaults() can't take the table away from it.
         options.Events.EnableProjectionFloors = true;
 
         // marten#5887: the DCB append condition facts race saves against each other, and a retried

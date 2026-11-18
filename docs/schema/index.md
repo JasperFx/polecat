@@ -38,7 +38,7 @@ Polecat manages these SQL Server objects:
 - `pc_events` -- Global event log
 - `pc_streams` -- Stream metadata
 - `pc_event_progression` -- Async daemon progress
-- `pc_event_projection_floors` -- Persisted projection start floors (only with `Events.EnableProjectionFloors`)
+- `pc_event_projection_floors` -- Persisted projection start floors (unless `Events.EnableProjectionFloors` is turned off)
 
 ### Support Tables
 

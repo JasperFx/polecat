@@ -597,16 +597,13 @@ sequence (`SubscribeFromSequence`), a time (`SubscribeFromTime`), or the moment 
 runs:
 
 ```cs
-// Opt in: adds the pc_event_projection_floors table
-opts.Events.EnableProjectionFloors = true;
-
 opts.Projections.Add(new SingleStreamProjection<QuestParty, Guid>(), ProjectionLifecycle.Async,
     asyncConfiguration: o => o.SubscribeFromFirstRun());
 ```
 
 ::: warning
-Persisted floors are **opt-in in Polecat 5**, so upgrading adds no table to an existing store. They
-are planned to become opt-out in Polecat 6. Without `EnableProjectionFloors`, every projection starts
+Persisted floors are **on by default since Polecat 6**, which adds the `pc_event_projection_floors` table.
+`RestoreV5Defaults()` or `EnableProjectionFloors = false` turns them off. Without them, every projection starts
 as it always has, `FetchProjectionFloorAsync` returns `null`, and `SubscribeFromFirstRun()` or
 `SetProjectionFloorAsync` fail with a `NotSupportedException` that names the flag.
 :::
