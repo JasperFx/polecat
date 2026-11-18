@@ -250,6 +250,33 @@ public class master_table_tenancy_tests : IAsyncLifetime
         }
     }
 
+    /// <summary>
+    ///     polecat#1047: a tenant database has a database id of server + catalog, and the same one on
+    ///     every resolution, so Wolverine can match it against its agent URIs.
+    /// </summary>
+    [Fact]
+    public async Task every_tenant_database_has_a_stable_database_id()
+    {
+        var (store, tenancy) = CreateStore();
+        using (store)
+        {
+            await tenancy.AddDatabaseRecordAsync(TenantA, Db(DbA), TestContext.Current.CancellationToken);
+
+            var database = await tenancy.FindDatabaseAsync(TenantA, TestContext.Current.CancellationToken);
+            database.ShouldNotBeNull();
+
+            var expected = new SqlConnectionStringBuilder(Db(DbA));
+            database!.Id.ShouldBe(new DatabaseId(expected.DataSource, DbA));
+
+            var (store2, tenancy2) = CreateStore();
+            using (store2)
+            {
+                var again = await tenancy2.FindDatabaseAsync(TenantA, TestContext.Current.CancellationToken);
+                again!.Id.ShouldBe(database.Id);
+            }
+        }
+    }
+
     [Fact]
     public async Task disable_then_enable_toggles_routing()
     {

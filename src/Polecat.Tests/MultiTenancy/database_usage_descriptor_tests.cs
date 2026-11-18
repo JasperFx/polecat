@@ -218,4 +218,53 @@ public class database_usage_descriptor_tests
         database.Cardinality.ShouldBe(DatabaseCardinality.DynamicMultiple);
         database.Databases.ShouldBeEmpty();
     }
+
+    // polecat#1047: IDatabase.Id was null for every Polecat database, so Wolverine's
+    // LocallyOwnedDatabases (which matches agent URIs by server + database name) never matched one.
+
+    [Fact]
+    public async Task a_single_database_store_has_a_database_id_of_server_and_catalog()
+    {
+        await using var store = BuildStore(_ => { });
+
+        store.Database.Id.ShouldBe(new DatabaseId("localhost", "usage_main"));
+
+        // The same identity on a copy made for a different command timeout.
+        store.Database.WithCommandTimeout(5).Id.ShouldBe(store.Database.Id);
+    }
+
+    [Fact]
+    public async Task every_database_of_a_static_multi_tenanted_store_has_a_database_id()
+    {
+        await using var store = BuildStore(opts =>
+        {
+            opts.MultiTenantedDatabases(tenancy =>
+            {
+                tenancy.AddTenant("tenant1", ConnectionStringFor("usage_tenant1"));
+                tenancy.AddTenant("tenant2", ConnectionStringFor("usage_tenant2"));
+            });
+        });
+
+        var tenancy = store.Options.Tenancy!;
+        tenancy.GetDatabase("tenant1").Id.ShouldBe(new DatabaseId("localhost", "usage_tenant1"));
+        tenancy.GetDatabase("tenant2").Id.ShouldBe(new DatabaseId("localhost", "usage_tenant2"));
+
+        // Stable: asking again answers the same id.
+        tenancy.GetDatabase("tenant1").Id.ShouldBe(tenancy.GetDatabase("tenant1").Id);
+    }
+
+    [Fact]
+    public void the_database_id_does_not_come_from_an_identifier_that_parses_as_one()
+    {
+        // DatabaseBase sets Id from the identifier when it parses as "server.name"; a tenant id with a
+        // dot in it would otherwise have named a database that doesn't exist.
+        var options = new StoreOptions
+        {
+            ConnectionString = ConnectionStringFor("usage_main"),
+            AutoCreateSchemaObjects = AutoCreate.None
+        };
+
+        var database = new PolecatDatabase(options, ConnectionStringFor("usage_dotted"), "acme.eu");
+        database.Id.ShouldBe(new DatabaseId("localhost", "usage_dotted"));
+    }
 }
