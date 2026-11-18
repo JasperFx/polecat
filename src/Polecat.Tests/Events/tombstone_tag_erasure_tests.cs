@@ -264,9 +264,12 @@ public class tombstone_tag_erasure_tests : OneOffConfigurationsContext
         await Should.ThrowAsync<DcbConcurrencyException>(() => session.SaveChangesAsync(Ct));
     }
 
-    /// <summary>The way a tag legitimately has events and no row, with no row deleted by hand.</summary>
+    /// <summary>
+    ///     A tag assigned after the fact. Through the Polecat 6 alphas this was the way a tag legitimately had
+    ///     events and no row; since #1070 the assignment creates the row, and the tombstone conflicts either way.
+    /// </summary>
     [Fact]
-    public async Task a_tag_assigned_after_the_fact_has_no_row_and_still_conflicts()
+    public async Task a_tag_assigned_after_the_fact_still_conflicts()
     {
         await ConfigureAsync();
         var course = new CourseId(Guid.NewGuid());
@@ -278,7 +281,7 @@ public class tombstone_tag_erasure_tests : OneOffConfigurationsContext
             await assign.SaveChangesAsync(Ct);
         }
 
-        (await VersionRowsAsync(course.Value)).ShouldBe(0);
+        (await VersionRowsAsync(course.Value)).ShouldBe(1);
 
         await using var session = theStore.LightweightSession();
         var boundary = await session.Events.FetchForWritingByTags<StudentCourseEnrollment>(

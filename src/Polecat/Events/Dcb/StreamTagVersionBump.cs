@@ -1,5 +1,6 @@
 using JasperFx.Events.Tags;
 using Polecat.Internal;
+using Polecat.Linq.SqlGeneration;
 using Weasel.SqlServer;
 
 namespace Polecat.Events.Dcb;
@@ -80,6 +81,82 @@ internal static class StreamTagVersionBump
 
                 """);
         }
+    }
+
+    /// <summary>
+    ///     What <c>AssignTagWhere</c> does after it tags the events (polecat#1070, marten#6078): move the
+    ///     assigned tag value's row, and its per-event-type rows under a scope that keeps them, creating any
+    ///     that are missing. Nothing is written when no event of the tenant matched.
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         Tagging existing events changes what a boundary over that tag reads without appending anything,
+    ///         and a boundary only compares the rows it captured. Without this, a boundary that read the tag
+    ///         before the assignment saved straight through it, as if the newly tagged events weren't there.
+    ///         Creating a missing row is what catches a boundary that captured 0: it read no row, and finds one
+    ///         with a sequence value at save. The value is the one the assignment just wrote into the tag table,
+    ///         so the row adds no copy of anything that wasn't already there.
+    ///     </para>
+    ///     <para>
+    ///         <c>MERGE ... HOLDLOCK</c> for the reason <see cref="WriteSql" /> gives: assigning tags is not
+    ///         common, and appending is.
+    ///     </para>
+    /// </remarks>
+    /// <param name="builder">The assignment's command, after its <c>INSERT</c>.</param>
+    /// <param name="events">The event store's configuration.</param>
+    /// <param name="registration">The assigned tag's type.</param>
+    /// <param name="tagValue">The value in <see cref="TagValueStringifier" />'s form.</param>
+    /// <param name="tenantId">The session's tenant, which owns the rows.</param>
+    /// <param name="where">The assignment's filter over <c>pc_events e</c>.</param>
+    /// <param name="conjoined">Limit the matching events to <paramref name="tenantId" />'s, as the assignment is.</param>
+    public static void WriteAssignedSql(ICommandBuilder builder, EventGraph events,
+        ITagTypeRegistration registration, string tagValue, string tenantId, ISqlFragment where, bool conjoined)
+    {
+        builder.Append($"\nDECLARE {Version} bigint = NEXT VALUE FOR {events.DcbTagVersionSequenceName};\n");
+        builder.Append($"DECLARE @assign_value {events.KeyText()} = ");
+        builder.AppendParameter(tagValue, events.KeyDbType);
+        builder.Append($"; DECLARE @assign_tenant {events.KeyText()} = ");
+        builder.AppendParameter(tenantId, events.KeyDbType);
+        builder.Append(";\n");
+
+        void matching(bool byEventType)
+        {
+            builder.Append($"FROM {events.EventsTableName} e WHERE (");
+            where.Apply(builder);
+            builder.Append(")");
+            if (conjoined) builder.Append(" AND e.tenant_id = @assign_tenant");
+            if (byEventType) builder.Append($" AND {FitsKeySql(registration, "e")}");
+        }
+
+        builder.Append($"""
+            MERGE {events.DcbTagVersionTableName} WITH (HOLDLOCK) AS target
+            USING (
+                SELECT DISTINCT CONVERT(varchar(250), '{SqlEscaping.LiteralBody(registration.TableSuffix)}') AS tag_table
+            """);
+        builder.Append("\n    ");
+        matching(false);
+
+        // #973: under a scope that keeps per-event-type versions, the assignment moves those too, or a
+        // boundary checked by event type would save straight through it.
+        if (events.RecordsDcbEventTypeVersions)
+        {
+            builder.Append($"\n    UNION\n    SELECT DISTINCT {EventTypeKeySql(registration, "e")} AS tag_table\n    ");
+            matching(true);
+        }
+
+        builder.Append("""
+
+            ) AS source
+            ON target.tag_table = source.tag_table AND target.tag_value = @assign_value
+                AND target.tenant_id = @assign_tenant
+            """);
+        builder.Append($"""
+
+            WHEN MATCHED THEN UPDATE SET version = {Version}
+            WHEN NOT MATCHED THEN INSERT (tag_table, tag_value, tenant_id, version)
+                VALUES (source.tag_table, @assign_value, @assign_tenant, {Version});
+
+            """);
     }
 
     /// <summary>

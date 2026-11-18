@@ -73,50 +73,29 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     // #478 / jasperfx#674: aggregate snapshots this session's FetchForWriting calls owe back to the
     // second-level write cache, published once the commit succeeds. Null until an enrolled type is
     // actually fetched, which is the overwhelmingly common case.
-    private List<PendingAggregateCacheWrite>? _aggregateCacheWrites;
-
-    private readonly record struct PendingAggregateCacheWrite(
-        IAggregateWriteCache Cache,
-        AggregateCacheKey Key,
-        object Aggregate,
-        long Version);
+    private PolecatAggregateWriteCacheSession? _aggregateWriteCache;
 
     /// <summary>
-    ///     Enlist an aggregate snapshot to be published to the write cache when this session commits.
+    ///     This unit of work's dealings with the aggregate write cache (jasperfx#1050), the same rules
+    ///     Marten's plans follow: a claim removes the entry, nothing reaches the cache before the commit,
+    ///     the entry is labelled with the version the instance reflects, and a slower session can't
+    ///     replace a newer entry (polecat#1035).
+    /// </summary>
+    internal AggregateWriteCacheSession AggregateWriteCache => _aggregateWriteCache ??= new(this);
+
+    /// <summary>
+    ///     Publishing is a hand-off, so the session gives up its own handle on the instance.
     /// </summary>
     /// <remarks>
-    ///     Deferred rather than written at fetch time on purpose; see the call site in
-    ///     <see cref="Polecat.Events.EventOperations" /> for why take-on-read requires it.
+    ///     Without this, an aggregate could be reachable from BOTH the cache (where another session may
+    ///     take it) and this session's aggregate identity map -- two live references to one mutable
+    ///     object, which is precisely what take-on-read exists to prevent. Only reachable with
+    ///     UseIdentityMapForAggregates also turned on, and a no-op otherwise.
     /// </remarks>
-    internal void RegisterAggregateWriteCacheEntry(IAggregateWriteCache cache, AggregateCacheKey key,
-        object aggregate, long version)
+    private sealed class PolecatAggregateWriteCacheSession(QuerySession session) : AggregateWriteCacheSession
     {
-        _aggregateCacheWrites ??= new List<PendingAggregateCacheWrite>();
-        _aggregateCacheWrites.Add(new PendingAggregateCacheWrite(cache, key, aggregate, version));
-    }
-
-    /// <summary>
-    ///     Publish the enlisted aggregate snapshots. Called only after a successful commit, so a
-    ///     rolled-back unit of work leaves no entry rather than a poisoned one.
-    /// </summary>
-    private void StoreAggregateWriteCacheEntries()
-    {
-        if (_aggregateCacheWrites is not { Count: > 0 }) return;
-
-        foreach (var pending in _aggregateCacheWrites)
-        {
-            pending.Cache.Store(pending.Key, pending.Aggregate, pending.Version);
-
-            // Publishing is a hand-off, so this session gives up its own handle on the instance.
-            // Without this, an aggregate could be reachable from BOTH the cache (where another
-            // session may take it) and this session's aggregate identity map (where ProjectLatest
-            // folds pending events onto whatever it finds) -- two live references to one mutable
-            // object, which is precisely what take-on-read exists to prevent. Only reachable with
-            // UseIdentityMapForAggregates also turned on, and a no-op otherwise.
-            EvictAggregateFromIdentityMap(pending.Key.DocumentType, pending.Key.Id);
-        }
-
-        _aggregateCacheWrites.Clear();
+        protected override void OnPublished(AggregateCacheKey key)
+            => session.EvictAggregateFromIdentityMap(key.DocumentType, key.Id);
     }
 
     Polecat.Events.IQueryEventStore IQuerySession.Events => EventOps;
@@ -1116,8 +1095,9 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
 
             // #478: the aggregate write cache is published here and nowhere else. After the commit,
             // so a failed one leaves nothing behind; before the tracker is reset, purely to keep it
-            // beside the other post-commit work.
-            StoreAggregateWriteCacheEntries();
+            // beside the other post-commit work. polecat#1035: a cache that throws here can't turn the
+            // commit into a failed save, and an older entry can't replace a newer one.
+            _aggregateWriteCache?.Flush();
 
             // marten#6004: where this commit's events are, before the tracker is reset and before any
             // listener, so an AfterCommitAsync listener can carry the position on
@@ -1249,8 +1229,9 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
 
             // Drop anything a failed commit left enlisted. Harmless either way -- an entry is stored
             // at the version the instance reflects, so it would still be correct on a later commit --
-            // but a session should not carry a fetch's leftovers past the save that failed.
-            _aggregateCacheWrites?.Clear();
+            // but a session should not carry a fetch's leftovers past the save that failed. A no-op
+            // after a commit, which has already flushed them.
+            _aggregateWriteCache?.Discard();
         }
     }
 

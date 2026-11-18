@@ -261,12 +261,17 @@ internal class EventOperations : QueryEventStore, IEventOperations, IEventOperat
         }
 
         // ---- in memory: take each stream's write-cache baseline, so the read below can start from it ----
-        var baselines = new AggregateBaseline<T>[streamIds.Length];
+        var baselines = new AggregateWriteBaseline<T>[streamIds.Length];
         for (var i = 0; i < streamIds.Length; i++)
         {
             if (states[i] is { Version: > 0 } state)
             {
-                baselines[i] = takeWriteBaseline<T>(streamIds[i], state.Version);
+                baselines[i] = takeWriteBaseline<T>(streamIds[i], state.Version, state.IsArchived);
+            }
+            else
+            {
+                // polecat#1035: a stream that isn't there takes its entry too, see FetchForWritingInternal
+                takeWriteBaseline<T>(streamIds[i], 0, false);
             }
         }
 
@@ -277,7 +282,7 @@ internal class EventOperations : QueryEventStore, IEventOperations, IEventOperat
         {
             if (states[i] is { Version: > 0 })
             {
-                eventReads[i] = addFetchStreamItem(eventBatch, streamIds[i], baselines[i].Version + 1);
+                eventReads[i] = addFetchStreamItem(eventBatch, streamIds[i], baselines[i].FirstVersionToRead);
             }
         }
 
@@ -392,7 +397,7 @@ internal class EventOperations : QueryEventStore, IEventOperations, IEventOperat
     ///     overwhelmingly common case where no stream needs it.
     /// </summary>
     private async Task refetchArchivedBaselinesAsync<T>(object[] streamIds, StreamState?[] states,
-        AggregateBaseline<T>[] baselines, IReadOnlyList<IEvent>[] events, CancellationToken cancellation)
+        AggregateWriteBaseline<T>[] baselines, IReadOnlyList<IEvent>[] events, CancellationToken cancellation)
         where T : class
     {
         List<int>? stale = null;
@@ -643,9 +648,12 @@ internal class EventOperations : QueryEventStore, IEventOperations, IEventOperat
             await _sessionBase.BeginTransactionAsync(cancellation).ConfigureAwait(false);
         }
 
+        // polecat#1035: only an enrolled type reads the archived flag with the version, see buildForWritingAsync
+        var cached = _events.AggregateWriteCaching.IsEnabled(typeof(T));
+
         for (var attempt = 1; ; attempt++)
         {
-            var (version, streamExists) = await readVersionForWritingAsync(streamId, forExclusive, cancellation).ConfigureAwait(false);
+            var (version, streamExists, archived) = await readVersionForWritingAsync(streamId, forExclusive, cached, cancellation).ConfigureAwait(false);
 
             // polecat#1049 (marten#5799): a snapshot without its stream is refused, and a stream started since
             // the version read is read again. The exclusive read holds a range lock on a missing stream, so
@@ -672,9 +680,16 @@ internal class EventOperations : QueryEventStore, IEventOperations, IEventOperat
                 // polecat#1049: the events read is a separate statement, so an append committed after the
                 // version read is in it. The fetch answers at the version it actually reached, aggregate
                 // and version together, which is also the version the write cache is given.
-                (aggregate, version) = await buildForWritingAsync<T>(streamId, version, cancellation).ConfigureAwait(false);
+                (aggregate, version) = await buildForWritingAsync<T>(streamId, version, archived, cancellation).ConfigureAwait(false);
                 assertExpectedVersion<T>(streamId, expectedVersion, version);
                 cacheAggregateInIdentityMap<T>(streamId, aggregate);
+            }
+            else if (cached)
+            {
+                // polecat#1035 (jasperfx#1050): a stream that isn't there takes its entry as well, which is
+                // what removes a tombstoned stream's. Left in place, it outlived the stream and became the
+                // baseline of a new stream with the same id once that one got past its version.
+                takeWriteBaseline<T>(streamId, 0, false);
             }
 
             return trackForWriting<T>(streamId, version, streamExists, aggregate, cancellation);
@@ -699,22 +714,46 @@ internal class EventOperations : QueryEventStore, IEventOperations, IEventOperat
     /// <summary>
     ///     The stream's version for a fetch for writing, under <c>UPDLOCK, HOLDLOCK</c> for an exclusive one.
     /// </summary>
-    private async Task<(long Version, bool StreamExists)> readVersionForWritingAsync(object streamId,
-        bool forExclusive, CancellationToken cancellation)
+    /// <param name="readArchived">
+    ///     polecat#1035: also read <c>is_archived</c>, in the same statement, for an aggregate enrolled in the
+    ///     write cache. False for every other type, which reads the version alone as before.
+    /// </param>
+    private async Task<(long Version, bool StreamExists, bool IsArchived)> readVersionForWritingAsync(object streamId,
+        bool forExclusive, bool readArchived, CancellationToken cancellation)
     {
         // #919: a key the column can't hold is a new stream, not the one it collapses onto, and an
         // exclusive fetch has no business locking that one.
         if (!await _sessionBase.CouldHaveStreamAsync(streamId, cancellation).ConfigureAwait(false))
         {
-            return (0, false);
+            return (0, false, false);
         }
+
+        var columns = readArchived ? "version, is_archived" : "version";
 
         await using var cmd = new SqlCommand();
         cmd.CommandText = forExclusive
-            ? _events.LockedStreamReadSql("version", "id = @id AND tenant_id = @tenant_id", _tenantId, cmd)
-            : $"SELECT version FROM {_events.StreamsTableName} WHERE id = @id AND tenant_id = @tenant_id;";
+            ? _events.LockedStreamReadSql(columns, "id = @id AND tenant_id = @tenant_id", _tenantId, cmd)
+            : $"SELECT {columns} FROM {_events.StreamsTableName} WHERE id = @id AND tenant_id = @tenant_id;";
         cmd.Parameters.AddIdParameter("@id", streamId, _events.UnicodeKeys);
         cmd.Parameters.AddKey("@tenant_id", _tenantId, _events.UnicodeKeys);
+
+        if (readArchived)
+        {
+            try
+            {
+                await using var reader = await _sessionBase.ExecuteReaderAsync(cmd, cancellation).ConfigureAwait(false);
+                if (!await reader.ReadAsync(cancellation).ConfigureAwait(false)) return (0, false, false);
+
+                var version = await reader.GetFieldValueAsync<long>(0, cancellation).ConfigureAwait(false);
+                var archived = await reader.GetFieldValueAsync<bool>(1, cancellation).ConfigureAwait(false);
+                return (version, true, archived);
+            }
+            // #652, as below
+            catch (Exception e) when (forExclusive && IsLockFailure(e))
+            {
+                throw new JasperFx.Events.StreamLockedException(streamId, FindLockFailure(e));
+            }
+        }
 
         object? result;
         try
@@ -731,7 +770,7 @@ internal class EventOperations : QueryEventStore, IEventOperations, IEventOperat
             throw new JasperFx.Events.StreamLockedException(streamId, FindLockFailure(e));
         }
 
-        return result != null && result != DBNull.Value ? ((long)result, true) : (0, false);
+        return result != null && result != DBNull.Value ? ((long)result, true, false) : (0, false, false);
     }
 
     /// <summary>
@@ -801,20 +840,20 @@ internal class EventOperations : QueryEventStore, IEventOperations, IEventOperat
     ///     </para>
     ///     <para>
     ///         Every path that cannot trust the baseline discards it and refetches from version 1 —
-    ///         an entry ahead of the stream (a restore or a rollback), and a stream whose events
-    ///         have been archived out from under a baseline. Discarding is always sound because
-    ///         <see cref="IAggregateWriteCache.TryTake" /> has already removed the entry.
+    ///         an entry ahead of the stream (a restore or a rollback), an archived stream, and a stream
+    ///         whose events have been archived out from under a baseline. Discarding is always sound
+    ///         because <see cref="IAggregateWriteCache.TryTake" /> has already removed the entry.
     ///     </para>
     /// </remarks>
     private async Task<(T? Aggregate, long Version)> buildForWritingAsync<T>(object streamId, long version,
-        CancellationToken cancellation)
+        bool archived, CancellationToken cancellation)
         where T : class
     {
-        var baseline = takeWriteBaseline<T>(streamId, version);
+        var baseline = takeWriteBaseline<T>(streamId, version, archived);
 
-        // fromVersion is inclusive, so a baseline at version N reads N+1 and after. With no baseline
-        // this is `fromVersion: 1`, which is the whole stream -- the uncached behavior, unchanged.
-        var events = await fetchForWritingEventsAsync(streamId, baseline.Version + 1, cancellation).ConfigureAwait(false);
+        // With no baseline this is `fromVersion: 1`, which is the whole stream -- the uncached behavior,
+        // unchanged.
+        var events = await fetchForWritingEventsAsync(streamId, baseline.FirstVersionToRead, cancellation).ConfigureAwait(false);
 
         if (baseline.NeedsArchivalRefetch(events, version))
         {
@@ -831,30 +870,33 @@ internal class EventOperations : QueryEventStore, IEventOperations, IEventOperat
     ///     is what lets <c>FetchManyForWriting</c> take every stream's baseline before it issues its
     ///     one event read.
     /// </summary>
-    private AggregateBaseline<T> takeWriteBaseline<T>(object streamId, long version) where T : class
+    /// <param name="version">The stream's version, zero for a stream that does not exist.</param>
+    /// <param name="archived">
+    ///     polecat#1035 (marten#5225): the stream is archived. Its events are left out of the read, so the
+    ///     uncached fetch answers with no aggregate, and the cached one must not bring it back. Without this
+    ///     an entry at the stream's current version had no delta to read and was served as it was.
+    /// </param>
+    private AggregateWriteBaseline<T> takeWriteBaseline<T>(object streamId, long version, bool archived)
+        where T : class
     {
         // Nullo for any type nobody enrolled, so there is no `if (caching enabled)` branch here:
-        // every take simply misses. `cacheable` exists only to keep the key construction and the
-        // tenancy lookup off the overwhelmingly common uncached path, not to change behavior.
+        // every take simply misses. The early return keeps the key construction and the tenancy lookup
+        // off the overwhelmingly common uncached path; `default` registers nothing.
         var cache = _events.AggregateWriteCaching.ResolveCache(typeof(T));
         if (ReferenceEquals(cache, NulloAggregateWriteCache.Instance))
         {
-            return new AggregateBaseline<T>(cache, default, false, null, 0);
+            return default;
         }
 
         var key = new AggregateCacheKey(typeof(T), databaseIdentifier(), _tenantId, streamId);
 
-        // Take-on-read: the entry is removed in the same atomic step, so exactly one caller can
-        // ever win it. That is a requirement rather than a detail -- an aggregate is commonly
-        // mutable and the fold below mutates the instance it is handed, so two callers holding
-        // one instance would corrupt each other. A loser just misses and takes the path below.
-        if (cache.TryTake(key, out var taken, out var takenVersion) && taken is T typed
-            && takenVersion <= version)
-        {
-            return new AggregateBaseline<T>(cache, key, true, typed, takenVersion);
-        }
+        // Take-on-read, through the session (jasperfx#1050): the entry is removed in the same atomic step,
+        // so exactly one caller can ever win it, and one ahead of the stream (a restore, a rollback) or at
+        // version zero is refused. The claim has already removed it, so refusing it is all the healing
+        // required, and the fetch still writes back.
+        var baseline = _sessionBase.AggregateWriteCache.TakeBaseline<T>(cache, key, version);
 
-        return new AggregateBaseline<T>(cache, key, true, null, 0);
+        return archived ? baseline.WithoutAggregate() : baseline;
     }
 
     /// <summary>
@@ -863,7 +905,7 @@ internal class EventOperations : QueryEventStore, IEventOperations, IEventOperat
     ///     finish a stream the same way.
     /// </summary>
     private async Task<(T? Aggregate, long Version)> foldForWritingAsync<T>(object streamId, long version,
-        IReadOnlyList<IEvent> events, AggregateBaseline<T> baseline, CancellationToken cancellation) where T : class
+        IReadOnlyList<IEvent> events, AggregateWriteBaseline<T> baseline, CancellationToken cancellation) where T : class
     {
         // polecat#1049 (marten#5799): the version read and the events read are separate statements, so an
         // append committed between them is in the events. The aggregate reflects it, so the version this
@@ -899,56 +941,21 @@ internal class EventOperations : QueryEventStore, IEventOperations, IEventOperat
             }
         }
 
-        if (baseline.Cacheable && aggregate != null)
-        {
-            // Deferred to the commit, and stored at the version the instance actually reflects --
-            // `version`, the newest version this fetch's reads saw (see above), NOT the version the
-            // commit lands on. Polecat does not apply appended events to the instance it handed out
-            // (an inline projection writes its own document rather than mutating this one), so
-            // claiming the committed version would silently skip every event this session appended
-            // the next time the entry was used as a baseline.
-            //
-            // Deferring is what makes take-on-read work: storing at fetch time would republish the
-            // very instance this caller is still holding, and a concurrent fetch could then take it.
-            // The commit is the point at which this caller is done with it. It also means a rolled
-            // back commit leaves no entry at all rather than a poisoned one.
-            _sessionBase.RegisterAggregateWriteCacheEntry(baseline.Cache, baseline.Key, aggregate, version);
-        }
+        // Deferred to the commit, and stored at the version the instance actually reflects --
+        // `version`, the newest version this fetch's reads saw (see above), NOT the version the
+        // commit lands on. Polecat does not apply appended events to the instance it handed out
+        // (an inline projection writes its own document rather than mutating this one), so
+        // claiming the committed version would silently skip every event this session appended
+        // the next time the entry was used as a baseline.
+        //
+        // Deferring is what makes take-on-read work: storing at fetch time would republish the
+        // very instance this caller is still holding, and a concurrent fetch could then take it.
+        // The commit is the point at which this caller is done with it. It also means a rolled
+        // back commit leaves no entry at all rather than a poisoned one. A null aggregate, or a
+        // type nobody enrolled (a default baseline), registers nothing.
+        _sessionBase.AggregateWriteCache.Register(baseline, aggregate, version);
 
         return (aggregate, version);
-    }
-
-    /// <summary>
-    ///     One stream's write-cache state between taking the baseline and folding onto it.
-    /// </summary>
-    private readonly struct AggregateBaseline<T> where T : class
-    {
-        public AggregateBaseline(IAggregateWriteCache cache, AggregateCacheKey key, bool cacheable,
-            T? aggregate, long version)
-        {
-            Cache = cache;
-            Key = key;
-            Cacheable = cacheable;
-            Aggregate = aggregate;
-            Version = version;
-        }
-
-        public IAggregateWriteCache Cache { get; }
-        public AggregateCacheKey Key { get; }
-        public bool Cacheable { get; }
-        public T? Aggregate { get; }
-        public long Version { get; }
-
-        /// <summary>
-        ///     The stream says there are events past the baseline and the read returned none, which means
-        ///     they are archived. Discarding is always sound because <see cref="IAggregateWriteCache.TryTake" />
-        ///     has already removed the entry, and it makes an archived stream aggregate to null exactly as
-        ///     it did before the cache existed.
-        /// </summary>
-        public bool NeedsArchivalRefetch(IReadOnlyList<IEvent> events, long streamVersion)
-            => Aggregate != null && events.Count == 0 && Version < streamVersion;
-
-        public AggregateBaseline<T> WithoutAggregate() => new(Cache, Key, Cacheable, null, 0);
     }
 
     private Task<IReadOnlyList<IEvent>> fetchForWritingEventsAsync(object streamId, long fromVersion,
@@ -1310,14 +1317,13 @@ internal class EventOperations : QueryEventStore, IEventOperations, IEventOperat
                                $"Tag type '{tagType.Name}' is not registered. Call RegisterTagType<{tagType.Name}>() first.");
 
         var value = registration.ExtractValue(tag);
-        var schema = _events.DatabaseSchemaName;
 
         var parser = new EventWhereClauseParser();
         var whereFragment = parser.Parse(expression.Body);
 
         var isConjoined = _events.TenancyStyle == TenancyStyle.Conjoined;
         var op = new AssignTagWhereOperation(
-            schema, registration, value, whereFragment, isConjoined, _tenantId,
+            _events, registration, value, whereFragment, _tenantId, isConjoined,
             useArchivedPartitioning: _events.UseArchivedStreamPartitioning,
             tenantOrdinalColumn: _events.UseTenantPartitionedEvents
                 ? _events.TenantPartitionManager.Column
