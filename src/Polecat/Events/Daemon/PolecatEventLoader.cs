@@ -30,9 +30,9 @@ namespace Polecat.Events.Daemon;
 ///         <see cref="SqlServerEventPagingDialect" /> for how it renders, at any length (weasel#846).
 ///     </para>
 ///     <para>
-///         <b>Archived events stay excluded</b>, as they always have been here: the loader does not pass the
-///         shard's <c>IncludeArchivedEvents</c> through, so this adoption changes nothing about which rows a
-///         shard reads beyond the two Weasel fixes above.
+///         <b>#1065: a shard that sets <c>IncludeArchivedEvents</c> reads archived events</b>, in a continuous
+///         run and in a rebuild, as Marten's daemon does and as the per-identity rebuild (#1060) already did.
+///         Before 6.0 this loader never passed the flag through, so every shard left archived events out.
 ///     </para>
 /// </remarks>
 [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
@@ -59,7 +59,12 @@ internal class PolecatEventLoader : EventLoaderBase
             // #163 Phase 2: a per-tenant rebuild/subscription shard scopes the load to one tenant so it
             // reads only that tenant's bounded sequence range, not the whole store. Null = store-global.
             TenantId = tenantFilter,
-            EventTypes = EventTypeAllowList.For(events, filtering)
+            EventTypes = EventTypeAllowList.For(events, filtering),
+
+            // #1065: the shard's own IncludeArchivedEvents, as Marten's loader takes it. pc_events carries
+            // is_archived itself, so with archived-stream partitioning (the 6.0 default) leaving the predicate
+            // out reads both partitions, and there is no stream join to drop.
+            IncludeArchivedEvents = filtering?.IncludeArchivedEvents ?? false
         })
     {
         _events = events;

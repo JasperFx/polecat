@@ -574,9 +574,11 @@ partial class Build
     string laneDatabase(SupervisedSuite suite, int lane) => $"{LanePrefix}_{suite.Lanes}_w{lane}";
 
     /// <summary>
-    ///     The start of every lane catalog's name, <c>polecat</c> unless a run asks for another. Two gates
+    ///     The start of every lane catalog's name, <c>polecat</c> unless a run asks for another. Two runs
     ///     on one SQL Server at once (two worktrees) would otherwise drop each other's catalogs: give one
-    ///     of them its own prefix.
+    ///     of them its own prefix. LocalGate makes the second of two gates with one prefix wait for the
+    ///     first one's catalogs (<see cref="GateTrackLocks" />), so a prefix of its own is what lets it run
+    ///     beside it; the single-suite CI targets take no such lock.
     /// </summary>
     [Parameter("The start of every lane catalog's name (default polecat), so two gates can share one SQL Server")]
     readonly string LanePrefix = "polecat";

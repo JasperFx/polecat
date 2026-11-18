@@ -731,7 +731,8 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
         // providers, so "Skipping stale gap", the only trace a skip leaves, went nowhere on this path.
         var connStr = db.ConnectionString;
         var detector = new PolecatHighWaterDetector(Events, connStr,
-            Options.DaemonSettings, logger, Options.ResiliencePipeline);
+            Options.DaemonSettings, logger, Options.ResiliencePipeline,
+            new LateEventRecovery(this, db, logger));
 
         return new PolecatProjectionDaemon(this, db, logger, detector);
     }

@@ -1688,9 +1688,10 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
 
     internal PolecatProjectionDaemon StartProjectionDaemon(DocumentStore store, ILoggerFactory loggerFactory)
     {
+        var logger = loggerFactory.CreateLogger<PolecatHighWaterDetector>();
         var detector = new PolecatHighWaterDetector(_events, _connectionString,
-            _options.DaemonSettings, loggerFactory.CreateLogger<PolecatHighWaterDetector>(),
-            _options.ResiliencePipeline);
+            _options.DaemonSettings, logger, _options.ResiliencePipeline,
+            new LateEventRecovery(store, this, logger));
         return new PolecatProjectionDaemon(store, this, loggerFactory, detector);
     }
 

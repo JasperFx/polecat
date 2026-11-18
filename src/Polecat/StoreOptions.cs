@@ -545,6 +545,7 @@ public class StoreOptions
     ///       <item><see cref="EventStoreOptions.EnableSideEffectsOnInlineProjections" /> &rarr; <c>false</c></item>
     ///       <item><see cref="EventStoreOptions.DcbConflictScope" /> &rarr; <c>DcbConflictScope.TagValue</c></item>
     ///       <item><see cref="Polecat.Events.EventGraph.UseArchivedStreamPartitioning" /> &rarr; <c>false</c></item>
+    ///       <item><see cref="EventStoreOptions.EnableLateEventDetection" /> &rarr; <c>false</c></item>
     ///       <item>
     ///         <c>GateSideEffectsBehindPriorVersion</c> &rarr; <c>false</c> on every registered projection
     ///         (JasperFx 3.0 turned it on, jasperfx#1075). JasperFx has no store-wide switch, so this is
@@ -570,6 +571,8 @@ public class StoreOptions
         Events.DcbConflictScope = Polecat.Events.DcbConflictScope.TagValue;
 
         EventGraph.UseArchivedStreamPartitioning = false;
+
+        Events.EnableLateEventDetection = false;
 
         _restoreV5Defaults = true;
     }
@@ -1060,6 +1063,18 @@ public class EventStoreOptions : IEventStoreInstrumentation
     ///     </para>
     /// </remarks>
     public bool EnableProjectionFloors { get; set; }
+
+    /// <summary>
+    ///     #1054 (marten#6007): record every sequence range the async daemon's high water mark skips, and check
+    ///     the numbers in it that had no committed event for events that commit late. Such an event is recorded
+    ///     in <c>pc_high_water_late_events</c>, logged as a warning and counted in the
+    ///     <c>polecat.daemon.late_events</c> metric, and the async single-stream projections that handle it
+    ///     rebuild its stream. On by default since Polecat 6, which adds <c>pc_high_water_skips</c> and
+    ///     <c>pc_high_water_late_events</c> to the schema. <see cref="StoreOptions.RestoreV5Defaults" /> turns
+    ///     it off, and the two tables are left out with it. See
+    ///     <see cref="Polecat.Projections.PolecatProjectionOptions.LateEventDetectionWindow" />.
+    /// </summary>
+    public bool EnableLateEventDetection { get; set; } = true;
 
     /// <summary>
     ///     <see cref="JasperFx.Events.IEventStoreInstrumentation" /> surface (jasperfx#424). The

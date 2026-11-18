@@ -59,6 +59,14 @@ internal class EventStoreFeatureSchema : FeatureSchemaBase
             yield return _events.BuildEventProjectionFloorsTable();
         }
 
+        // #1054 (marten#6007): the skipped high water ranges and the late events found in them, on by default
+        // in Polecat 6 (Events.EnableLateEventDetection) and left out under RestoreV5Defaults()
+        if (_events.EnableLateEventDetection)
+        {
+            yield return new HighWaterSkipsTable(_events);
+            yield return new HighWaterLateEventsTable(_events);
+        }
+
         // Per-tenant partitioning registry (#163 / polecat#171). Only materialized when the feature is
         // on, so off-flag stores see no schema delta. The registry (pc_tenant_partitions: tenant_id ->
         // ordinal) is owned by the Weasel.SqlServer ManagedTenantPartitions strategy; the physical

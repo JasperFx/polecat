@@ -990,8 +990,9 @@ public class AdvancedOperations
     }
 
     /// <summary>
-    ///     Delete all rows from event store tables (pc_events, pc_streams, pc_event_progression)
-    ///     and all natural key and DCB tag tables (pc_natural_key_*, pc_event_tag_*, pc_dcb_tag_version).
+    ///     Delete all rows from event store tables (pc_events, pc_streams, pc_event_progression, and the
+    ///     #1054 pc_high_water_skips and pc_high_water_late_events) and all natural key and DCB tag tables
+    ///     (pc_natural_key_*, pc_event_tag_*, pc_dcb_tag_version).
     /// </summary>
     public async Task CleanAllEventDataAsync(CancellationToken token = default)
     {
@@ -1015,9 +1016,13 @@ public class AdvancedOperations
         var progressionTable = events.ProgressionTableName;
         var flatTables = CollectFlatTableNames();
 
+        // #1054: the skipped high water ranges and the late events found in them go with the events, or a new
+        // event at a reused sequence number would be read as filling an old skipped range
+        var highWaterTables = new[] { events.HighWaterSkipsTableName, events.HighWaterLateEventsTableName };
+
         await _resilience.ExecuteAsync(static async (state, ct) =>
         {
-            var (connectionString, schemaName, evtTable, strmTable, progTable, flatTableNames) = state;
+            var (connectionString, schemaName, evtTable, strmTable, progTable, flatTableNames, skipTables) = state;
             await using var conn = new SqlConnection(connectionString);
             await conn.OpenAsync(ct).ConfigureAwait(false);
 
@@ -1082,7 +1087,14 @@ public class AdvancedOperations
                     $"IF OBJECT_ID({SqlEscaping.Literal(progTable)}, 'U') IS NOT NULL DELETE FROM {progTable};";
                 await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
             }
-        }, (connStr, schema, eventsTable, streamsTable, progressionTable, flatTables), token).ConfigureAwait(false);
+
+            foreach (var table in skipTables)
+            {
+                await using var cmd = conn.CreateCommand();
+                cmd.CommandText = $"IF OBJECT_ID({SqlEscaping.Literal(table)}, 'U') IS NOT NULL DELETE FROM {table};";
+                await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+            }
+        }, (connStr, schema, eventsTable, streamsTable, progressionTable, flatTables, highWaterTables), token).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -1778,7 +1790,7 @@ public class AdvancedOperations
     {
         await _resilience.ExecuteAsync(static async (state, ct) =>
         {
-            var (connectionString, schema, progressionTable, tenants, deleteData, unicode) = state;
+            var (connectionString, schema, progressionTable, tenants, deleteData, unicode, skipTables) = state;
 
             await using var conn = new SqlConnection(connectionString);
             await conn.OpenAsync(ct).ConfigureAwait(false);
@@ -1826,11 +1838,25 @@ public class AdvancedOperations
                 progression.Parameters.Add("@suffix", Storage.KeyColumns.DbType(unicode), 500).Value =
                     Internal.TenantDataCleaner.ProgressionNameSuffix(tenantId);
                 await progression.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+
+                // #1054 (marten#6007): its recorded high water skips and late events too, for the same reason as
+                // its progression rows: its sequence restarts at 1, and its new events would be read as filling
+                // its old skipped ranges
+                foreach (var table in skipTables)
+                {
+                    await using var skips = conn.CreateCommand();
+                    skips.Transaction = tx;
+                    skips.CommandText =
+                        $"IF OBJECT_ID({Internal.SqlEscaping.Literal(table)}, 'U') IS NOT NULL DELETE FROM {table} WHERE tenant_id = @tenant;";
+                    skips.Parameters.Add("@tenant", Storage.KeyColumns.DbType(unicode), 250).Value = tenantId;
+                    await skips.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+                }
             }
 
             await Internal.Sessions.SqlTransactionRequests.CommitAsync(tx, ct).ConfigureAwait(false);
         }, (_store.Options.ConnectionString, events.DatabaseSchemaName, events.ProgressionTableName, tenantIds,
-            behavior == TenantDropBehavior.DeleteData, _store.Options.Advanced.UseUnicodeKeys), token).ConfigureAwait(false);
+            behavior == TenantDropBehavior.DeleteData, _store.Options.Advanced.UseUnicodeKeys,
+            new[] { events.HighWaterSkipsTableName, events.HighWaterLateEventsTableName }), token).ConfigureAwait(false);
     }
 
     /// <summary>

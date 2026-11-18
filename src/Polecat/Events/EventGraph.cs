@@ -111,6 +111,18 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
     public bool EnableProjectionFloors => _options.Events.EnableProjectionFloors;
 
     /// <summary>
+    ///     #1054: whether skipped high water ranges are recorded and checked for late events. See
+    ///     <see cref="EventStoreOptions.EnableLateEventDetection" />.
+    /// </summary>
+    public bool EnableLateEventDetection => _options.Events.EnableLateEventDetection;
+
+    internal TimeSpan LateEventDetectionWindow => _options.Projections.LateEventDetectionWindow;
+
+    internal TimeSpan LateEventProbeInterval => _options.Projections.LateEventProbeInterval;
+
+    internal Polecat.Internal.OpenTelemetry.OpenTelemetryOptions OpenTelemetry => _options.OpenTelemetry;
+
+    /// <summary>
     ///     #973: whether appends maintain a <c>pc_dcb_tag_version</c> row per (tag value, event type) as well
     ///     as the one per tag value. See <see cref="DcbConflictScope" />.
     /// </summary>
@@ -235,6 +247,13 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
     // #813 (jasperfx#809): the persisted projection start floors. See EventProjectionFloorsTable.
     internal string ProjectionFloorsTableName =>
         Polecat.Internal.SqlEscaping.QualifiedName(DatabaseSchemaName, Schema.EventProjectionFloorsTable.TableName);
+
+    // #1054: the skipped high water ranges and the events that committed inside them late
+    internal string HighWaterSkipsTableName =>
+        Polecat.Internal.SqlEscaping.QualifiedName(DatabaseSchemaName, Schema.HighWaterSkipsTable.TableName);
+
+    internal string HighWaterLateEventsTableName =>
+        Polecat.Internal.SqlEscaping.QualifiedName(DatabaseSchemaName, Schema.HighWaterLateEventsTable.TableName);
 
     internal string TenantPartitionsTableName =>
         Polecat.Internal.SqlEscaping.QualifiedName(DatabaseSchemaName, "pc_tenant_partitions");

@@ -168,6 +168,8 @@ public abstract class HighWaterLockingContext : IAsyncLifetime
             DELETE FROM dbo.pc_streams;
             DELETE FROM dbo.pc_event_progression;
             IF OBJECT_ID('dbo.pc_doc_ticktotal') IS NOT NULL DELETE FROM dbo.pc_doc_ticktotal;
+            IF OBJECT_ID('dbo.pc_high_water_skips') IS NOT NULL DELETE FROM dbo.pc_high_water_skips;
+            IF OBJECT_ID('dbo.pc_high_water_late_events') IS NOT NULL DELETE FROM dbo.pc_high_water_late_events;
 
             -- RESEED on a table that has never had a row would hand out 0 next, not 1.
             IF EXISTS (SELECT 1 FROM sys.identity_columns

@@ -9,6 +9,7 @@ using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Logging;
 using Polly;
 
+using Polecat.Events.Schema;
 using Polecat.Internal;
 namespace Polecat.Events.Daemon;
 
@@ -76,15 +77,31 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
     private readonly ILogger _logger;
     private readonly ResiliencePipeline _resilience;
 
+    // #1054: re-probes recorded skips for events that commit late, on the poll. Null for a detector that no
+    // daemon owns, which still records its skips.
+    private readonly LateEventRecovery? _lateEvents;
+
+    // #1054: a per-tenant skip decided in advancePerTenantMarkAsync is persisted by the coordinator through
+    // MarkHighWaterForTenantAsync, which is where the skip gets recorded, so it is never recorded for a mark
+    // that did not move
+    private readonly ConcurrentDictionary<string, PendingSkip> _pendingTenantSkips = new(StringComparer.Ordinal);
+
+    /// <summary>
+    ///     #1054: a skip of the range (<paramref name="Starting" />, <paramref name="Ending" />], to be recorded with
+    ///     the mark that carries it. <paramref name="Ordinal" /> is the tenant partition of a per-tenant mark.
+    /// </summary>
+    internal sealed record PendingSkip(long Starting, long Ending, HighWaterSkipReason Reason, int? Ordinal = null);
+
     public PolecatHighWaterDetector(EventGraph events, string connectionString,
         DaemonSettings daemonSettings, ILogger logger,
-        ResiliencePipeline resilience)
+        ResiliencePipeline resilience, LateEventRecovery? lateEvents = null)
     {
         _events = events;
         _connectionString = connectionString;
         _daemonSettings = daemonSettings;
         _logger = logger;
         _resilience = resilience;
+        _lateEvents = lateEvents;
 
         DatabaseUri = BuildDatabaseUri(connectionString);
     }
@@ -122,6 +139,11 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
     }
 
     public Uri DatabaseUri { get; }
+
+    internal LateEventRecovery? LateEvents => _lateEvents;
+
+    private Task probeLateEventsAsync(CancellationToken token)
+        => _lateEvents?.ProbeIfDueAsync(token) ?? Task.CompletedTask;
 
     // #791: when THIS detector first saw the store-global mark held at its current position by a gap.
     // The stale-gap skip in DetectInSafeZone ages the gap from here. It used to age it from the
@@ -192,6 +214,7 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
             // found work to do.
             forgetHeldMark();
             await MarkHighWaterAsync(stats.CurrentMark, token).ConfigureAwait(false);
+            await probeLateEventsAsync(token).ConfigureAwait(false);
             return stats;
         }
 
@@ -210,6 +233,7 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
         // anything at all; a store that skips the write has a LastUpdated that ages exactly like a
         // dead one.
         await MarkHighWaterAsync(stats.CurrentMark, token).ConfigureAwait(false);
+        await probeLateEventsAsync(token).ConfigureAwait(false);
 
         return stats;
     }
@@ -226,10 +250,12 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
             // found work to do.
             forgetHeldMark();
             await MarkHighWaterAsync(stats.CurrentMark, token).ConfigureAwait(false);
+            await probeLateEventsAsync(token).ConfigureAwait(false);
             return stats;
         }
 
         var held = await advanceToGapAsync(stats, token).ConfigureAwait(false);
+        PendingSkip? skip = null;
 
         // #791: aged from when this detector first saw the mark held here, never from last_updated. See
         // _heldMark.
@@ -242,12 +268,15 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
                     "Skipping stale gap starting after seq_id {HeldAt}. The high water mark has been held there since {Since}, with no append in flight below {Target}",
                     held.Mark, held.Since, target.Value);
 
+                // #1054: nothing in flight could fill what is skipped, so an event that turns up there later is a
+                // bug in this detector, which the late event probe reports as one
+                skip = new PendingSkip(held.Mark, target.Value, HighWaterSkipReason.Proven);
                 stats.CurrentMark = target.Value;
                 stats.IncludesSkipping = true;
             }
             else if (_stall != null && HasOutlastedCap(_stall, stats.Timestamp, _events))
             {
-                await skipPastStuckAppendAsync(stats, _stall, token).ConfigureAwait(false);
+                skip = await skipPastStuckAppendAsync(stats, _stall, token).ConfigureAwait(false);
             }
             else
             {
@@ -273,7 +302,8 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
         // DaemonSettings.SlowPollingTime (1s by default). That is the price of the field meaning
         // anything at all; a store that skips the write has a LastUpdated that ages exactly like a
         // dead one.
-        await MarkHighWaterAsync(stats.CurrentMark, token).ConfigureAwait(false);
+        await MarkHighWaterAsync(stats.CurrentMark, token, skip).ConfigureAwait(false);
+        await probeLateEventsAsync(token).ConfigureAwait(false);
 
         return stats;
     }
@@ -359,7 +389,8 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
     ///     <see cref="HeldMark.Ceiling" /> was handed out when the clock started, so whatever is in flight
     ///     there has been open for the whole of the cap. Anything younger is above it and stays held.
     /// </summary>
-    private async Task skipPastStuckAppendAsync(HighWaterStatistics stats, HeldMark stall, CancellationToken token)
+    private async Task<PendingSkip?> skipPastStuckAppendAsync(HighWaterStatistics stats, HeldMark stall,
+        CancellationToken token)
     {
         var target = await _resilience.ExecuteAsync(static async (state, ct) =>
         {
@@ -370,16 +401,23 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
             return await findHighestCommittedAsync(conn, events, null, mark, ceiling, ct).ConfigureAwait(false);
         }, (_connectionString, _events, stall.Mark, stall.Ceiling), token).ConfigureAwait(false);
 
-        if (!target.HasValue) return;
+        if (!target.HasValue) return null;
 
         _logger.LogWarning(
-            "Skipping the event sequence range ({HeldAt}, {Target}] although an append below {Target} is still in flight, because the high water mark has been held at {HeldAt} since {Since}, past the SkipStaleGapsDespiteLiveTransactionsAfter cap of {Cap}. If that append commits, its events will NOT be read by any async projection or subscription",
+            "Skipping the event sequence range ({HeldAt}, {Target}] although an append below {Target} is still in flight, because the high water mark has been held at {HeldAt} since {Since}, past the SkipStaleGapsDespiteLiveTransactionsAfter cap of {Cap}. {LateEvents}",
             stall.Mark, target.Value, target.Value, stall.Mark, stall.Since,
-            _events.SkipStaleGapsDespiteLiveTransactionsAfter);
+            _events.SkipStaleGapsDespiteLiveTransactionsAfter, lateEventsNote(_events));
 
         stats.CurrentMark = target.Value;
         stats.IncludesSkipping = true;
+
+        return new PendingSkip(stall.Mark, target.Value, HighWaterSkipReason.LiveTransaction);
     }
+
+    // What a capped skip means for an append that commits after it
+    private static string lateEventsNote(EventGraph events) => events.EnableLateEventDetection
+        ? "Async projections and subscriptions will miss that append's events if it commits; Polecat records them in pc_high_water_late_events, and async single stream projections rebuild their streams"
+        : "If that append commits, its events will NOT be read by any async projection or subscription";
 
     /// <summary>
     ///     The highest committed seq_id in the range, whatever is in flight inside it. This is what makes it
@@ -543,8 +581,17 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
         return result is long target ? target : null;
     }
 
-    internal async Task MarkHighWaterAsync(long mark, CancellationToken token)
+    internal async Task MarkHighWaterAsync(long mark, CancellationToken token, PendingSkip? skip = null)
     {
+        // #1054: the mark that carries a skip records it in the same transaction, before any shard can be told
+        // about the new mark
+        if (skip != null && _events.EnableLateEventDetection)
+        {
+            await markWithSkipAsync(ShardState.HighWaterMark, HighWaterSkipsTable.GlobalTenant, mark, null, skip, token)
+                .ConfigureAwait(false);
+            return;
+        }
+
         await _resilience.ExecuteAsync(static async (state, ct) =>
         {
             var (connectionString, events, markValue) = state;
@@ -588,6 +635,84 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
         }, (_connectionString, _events, mark), token).ConfigureAwait(false);
     }
 
+    /// <summary>
+    ///     #1054: the sequence numbers in (<c>@skip_starting</c>, <c>@skip_ending</c>] with no committed event, as a
+    ///     JSON array of inclusive pairs, <c>[[first, last], ...]</c>. An append still in flight is not committed, so
+    ///     its numbers are in the gaps, which is the point. <paramref name="inScope" /> limits it to one tenant
+    ///     partition, for a per-tenant mark.
+    /// </summary>
+    internal static string GapsSql(EventGraph events, string inScope) => $"""
+        (SELECT ISNULL('[' + STRING_AGG(CAST(CONCAT('[', g.lo, ',', g.hi, ']') AS nvarchar(max)), ',') WITHIN GROUP (ORDER BY g.lo) + ']', N'[]')
+         FROM (SELECT w.prev + 1 AS lo, w.seq_id - 1 AS hi
+               FROM (SELECT s.seq_id, ISNULL(LAG(s.seq_id) OVER (ORDER BY s.seq_id), @skip_starting) AS prev
+                     FROM (SELECT e.seq_id FROM {events.EventsTableName} e {CommittedRows}
+                           WHERE e.seq_id > @skip_starting AND e.seq_id <= @skip_ending{inScope}
+                           UNION ALL SELECT @skip_ending + 1) s) w
+               WHERE w.seq_id - w.prev > 1) g)
+        """;
+
+    /// <summary>
+    ///     #1054: one row of <c>pc_high_water_skips</c> with its reason and gaps. Expects <c>@skip_starting</c>,
+    ///     <c>@skip_ending</c>, <c>@skip_tenant</c> and <c>@skip_reason</c>, and runs inside the transaction that
+    ///     moves the mark. A range another node already recorded is left alone.
+    /// </summary>
+    internal static string RecordSkipSql(EventGraph events, string inScope) => $"""
+        DECLARE @skip_gaps nvarchar(max) = {GapsSql(events, inScope)};
+        IF NOT EXISTS (SELECT 1 FROM {events.HighWaterSkipsTableName} WITH (UPDLOCK, HOLDLOCK)
+                       WHERE ending_sequence = @skip_ending AND tenant_id = @skip_tenant)
+            INSERT INTO {events.HighWaterSkipsTableName} (ending_sequence, tenant_id, starting_sequence, reason, gaps)
+            VALUES (@skip_ending, @skip_tenant, @skip_starting, @skip_reason, @skip_gaps);
+        """;
+
+    private static string partitionScope(EventGraph events)
+        => $" AND e.{events.TenantPartitionManager.Column} = @skip_ordinal";
+
+    private async Task markWithSkipAsync(string markName, string skipTenant, long mark, DateTimeOffset? stamp,
+        PendingSkip skip, CancellationToken token)
+    {
+        await _resilience.ExecuteAsync(static async (state, ct) =>
+        {
+            var (connectionString, events, name, tenant, markValue, stampValue, pending) = state;
+
+            await using var conn = new SqlConnection(connectionString);
+            await conn.OpenAsync(ct).ConfigureAwait(false);
+
+            var inScope = pending.Ordinal == null ? "" : partitionScope(events);
+
+            await using var cmd = conn.CreateCommand();
+            // The same MERGE, with the same hints for the same reason, as the plain write (#500). XACT_ABORT so an
+            // error mid-batch rolls the transaction back rather than leaving it open on a pooled connection.
+            cmd.CommandText = $"""
+                SET XACT_ABORT ON;
+                BEGIN TRANSACTION;
+
+                MERGE {events.ProgressionTableName} WITH (UPDLOCK, HOLDLOCK) AS target
+                USING (SELECT @name AS name) AS source ON target.name = source.name
+                WHEN MATCHED THEN UPDATE SET last_seq_id = @mark, last_updated = ISNULL(@stamp, SYSDATETIMEOFFSET())
+                WHEN NOT MATCHED THEN INSERT (name, last_seq_id, last_updated)
+                    VALUES (@name, @mark, ISNULL(@stamp, SYSDATETIMEOFFSET()));
+
+                {RecordSkipSql(events, inScope)}
+
+                COMMIT TRANSACTION;
+                """;
+
+            cmd.Parameters.AddKey("@name", name, events.UnicodeKeys);
+            cmd.Parameters.AddWithValue("@mark", markValue);
+            cmd.Parameters.Add(new SqlParameter("@stamp", System.Data.SqlDbType.DateTimeOffset)
+            {
+                Value = (object?)stampValue ?? DBNull.Value
+            });
+            cmd.Parameters.AddWithValue("@skip_starting", pending.Starting);
+            cmd.Parameters.AddWithValue("@skip_ending", pending.Ending);
+            cmd.Parameters.AddKey("@skip_tenant", tenant, events.UnicodeKeys);
+            cmd.Parameters.Add("@skip_reason", System.Data.SqlDbType.VarChar, 50).Value = pending.Reason.ToString();
+            if (pending.Ordinal != null) cmd.Parameters.AddWithValue("@skip_ordinal", pending.Ordinal.Value);
+
+            await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+        }, (_connectionString, _events, markName, skipTenant, mark, stamp, skip), token).ConfigureAwait(false);
+    }
+
     // ── #163 Phase 2: vectorized per-tenant high-water ──────────────────────
 
     /// <summary>
@@ -619,7 +744,11 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
 
         if (tenantIds.Count == 0) return new HighWaterVector([]);
 
-        return new HighWaterVector(await LoadPerTenantStatisticsAsync(tenantIds, token).ConfigureAwait(false));
+        var vector = new HighWaterVector(await LoadPerTenantStatisticsAsync(tenantIds, token).ConfigureAwait(false));
+
+        // #1054: the store-global Detect() is not polled under per-tenant partitioning
+        await probeLateEventsAsync(token).ConfigureAwait(false);
+        return vector;
     }
 
     public async Task<HighWaterVector> DetectInSafeZoneForTenantsAsync(
@@ -636,7 +765,9 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
         // per tenant the two share one rule, because only the non-safe-zone entry point is ever called
         // and confining the stale-gap escape to this one would make it unreachable — see
         // AdvancePerTenantMark's remarks.
-        return new HighWaterVector(await LoadPerTenantStatisticsAsync(tenantIds, token).ConfigureAwait(false));
+        var vector = new HighWaterVector(await LoadPerTenantStatisticsAsync(tenantIds, token).ConfigureAwait(false));
+        await probeLateEventsAsync(token).ConfigureAwait(false);
+        return vector;
     }
 
     /// <summary>
@@ -660,6 +791,19 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
     public async Task MarkHighWaterForTenantAsync(string tenantId, long sequence, DateTimeOffset timestamp,
         CancellationToken token)
     {
+        // #1054: the mark that carries a skip records the skip with it
+        if (_pendingTenantSkips.TryGetValue(tenantId, out var skip) && sequence >= skip.Ending)
+        {
+            _pendingTenantSkips.TryRemove(new KeyValuePair<string, PendingSkip>(tenantId, skip));
+
+            if (_events.EnableLateEventDetection && skip.Ordinal != null)
+            {
+                await markWithSkipAsync(PerTenantHighWaterName(tenantId), tenantId, sequence, timestamp, skip, token)
+                    .ConfigureAwait(false);
+                return;
+            }
+        }
+
         await _resilience.ExecuteAsync(static async (state, ct) =>
         {
             var (connectionString, events, name, markValue, stamp) = state;
@@ -737,7 +881,7 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
 
         return await _resilience.ExecuteAsync(static async (state, ct) =>
         {
-            var (connectionString, events, tenantsJson, staleThreshold, logger, stalls) = state;
+            var (connectionString, events, tenantsJson, staleThreshold, logger, stalls, pendingSkips) = state;
 
             var ordinal = events.TenantPartitionManager.Column;
 
@@ -807,12 +951,13 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
             var results = new List<HighWaterStatistics>(readings.Count);
             foreach (var (stats, run, partition) in readings)
             {
-                await advancePerTenantMarkAsync(conn, events, stats, run, partition, staleThreshold, logger, stalls, ct).ConfigureAwait(false);
+                await advancePerTenantMarkAsync(conn, events, stats, run, partition, staleThreshold, logger, stalls,
+                    pendingSkips, ct).ConfigureAwait(false);
                 results.Add(stats);
             }
 
             return (IReadOnlyList<HighWaterStatistics>)results;
-        }, (_connectionString, _events, tenantsJson, staleThreshold, logger, _tenantStalls), token).ConfigureAwait(false);
+        }, (_connectionString, _events, tenantsJson, staleThreshold, logger, _tenantStalls, _pendingTenantSkips), token).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -861,7 +1006,8 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
     /// </remarks>
     private static async Task advancePerTenantMarkAsync(SqlConnection conn, EventGraph events,
         HighWaterStatistics stats, ContiguousRun run, int? partition, TimeSpan staleThreshold, ILogger logger,
-        ConcurrentDictionary<string, HeldMark> stalls, CancellationToken ct)
+        ConcurrentDictionary<string, HeldMark> stalls, ConcurrentDictionary<string, PendingSkip> pendingSkips,
+        CancellationToken ct)
     {
         // Caught up: the persisted mark already equals the committed height.
         if (stats.CurrentMark == stats.HighestSequence)
@@ -909,6 +1055,7 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
                     "Tenant {TenantId}: skipping stale gap starting after seq_id {HeldAt}, with no append in flight below {Target}. Its high water was last updated {TimeSinceUpdate} ago",
                     stats.TenantId, heldAt, target.Value, timeSinceUpdate);
 
+                pendingSkips[stats.TenantId!] = new PendingSkip(heldAt, target.Value, HighWaterSkipReason.Proven, partition);
                 stats.CurrentMark = target.Value;
                 stats.IncludesSkipping = true;
                 return;
@@ -925,10 +1072,11 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
             if (!target.HasValue) return;
 
             logger.LogWarning(
-                "Tenant {TenantId}: skipping the event sequence range ({HeldAt}, {Target}] although an append below {Target} is still in flight, because its high water mark has been held at {HeldAt} since {Since}, past the SkipStaleGapsDespiteLiveTransactionsAfter cap of {Cap}. If that append commits, its events will NOT be read by any async projection or subscription",
+                "Tenant {TenantId}: skipping the event sequence range ({HeldAt}, {Target}] although an append below {Target} is still in flight, because its high water mark has been held at {HeldAt} since {Since}, past the SkipStaleGapsDespiteLiveTransactionsAfter cap of {Cap}. {LateEvents}",
                 stats.TenantId, heldAt, target.Value, target.Value, heldAt, stall.Since,
-                events.SkipStaleGapsDespiteLiveTransactionsAfter);
+                events.SkipStaleGapsDespiteLiveTransactionsAfter, lateEventsNote(events));
 
+            pendingSkips[stats.TenantId!] = new PendingSkip(heldAt, target.Value, HighWaterSkipReason.LiveTransaction, partition);
             stats.CurrentMark = target.Value;
             stats.IncludesSkipping = true;
         }
@@ -1043,6 +1191,30 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
             reader.GetInt64(2));
     }
 
+    /// <summary>
+    ///     #1054 (marten#6007): an operator's advance is recorded as a skip with reason Manual, so an append still
+    ///     in flight below the new mark is found when it commits, like any other skip's.
+    /// </summary>
+    private static string recordManualSkipSql(EventGraph events, string? tenantId)
+    {
+        if (!events.EnableLateEventDetection) return "";
+
+        var ordinal = tenantId == null
+            ? ""
+            : $"DECLARE @skip_ordinal int = (SELECT p.ordinal FROM {events.TenantPartitionsTableName} p WHERE p.tenant_id = @tenant);";
+
+        return $"""
+            IF @skipped > 0
+            BEGIN
+                DECLARE @skip_starting bigint = @current;
+                DECLARE @skip_ending bigint = @new;
+                DECLARE @skip_reason varchar(50) = '{nameof(HighWaterSkipReason.Manual)}';
+                {ordinal}
+                {RecordSkipSql(events, tenantId == null ? "" : partitionScope(events))}
+            END
+            """;
+    }
+
     private static async Task<HighWaterMarkAdvance> advanceMarkAsync(SqlConnection conn, EventGraph events,
         string databaseIdentifier, string? tenantId, long? expectedCurrentMark, CancellationToken ct)
     {
@@ -1079,13 +1251,18 @@ internal class PolecatHighWaterDetector : IHighWaterDetector
             DECLARE @skipped bigint = CASE WHEN @new > @current
                 THEN (@new - @current) - (SELECT COUNT_BIG(*) {scope} WHERE e.seq_id > @current AND e.seq_id <= @new)
                 ELSE 0 END;
-
+            {recordManualSkipSql(events, tenantId)}
             COMMIT TRANSACTION;
 
             SELECT @outcome, @current, @new, @skipped;
             """;
         cmd.Parameters.AddKey("@name", markName(tenantId), events.UnicodeKeys);
         if (tenantId != null) cmd.Parameters.AddKey("@tenant", tenantId, events.UnicodeKeys);
+        if (events.EnableLateEventDetection)
+        {
+            cmd.Parameters.AddKey("@skip_tenant", tenantId ?? HighWaterSkipsTable.GlobalTenant, events.UnicodeKeys);
+        }
+
         cmd.Parameters.Add(new SqlParameter("@expected", System.Data.SqlDbType.BigInt)
         {
             Value = (object?)expectedCurrentMark ?? DBNull.Value
