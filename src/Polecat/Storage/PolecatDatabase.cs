@@ -59,6 +59,12 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
         // (jasperfx#329) adds a ShardName == HighWaterMark guard — harmless here
         // since Polecat only ever subscribes it for the HWM tracker.
         Tracker.Subscribe(new SkippedEventsCountObserver());
+
+        // #1047: server + database name, the same identity Marten's databases (Weasel's PostgresqlDatabase)
+        // and Wolverine's agent URIs use. The base class only sets Id when the identifier happens to parse
+        // as one ("Polecat" and "Polecat_{tenant}" never do), so every Polecat database had a null Id.
+        var descriptor = Describe();
+        Id = new DatabaseId(descriptor.ServerName, descriptor.DatabaseName);
     }
 
     /// <summary>
