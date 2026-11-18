@@ -154,7 +154,9 @@ public static class PolecatRetryPredicates
     {
         if (sqlErrorNumber == SnapshotUpdateConflict) return true;
 
-        if (sqlErrorNumber is DeadlockVictim or LockRequestTimeout)
+        // Events.EventGraph.StreamLockFailure is the lock on a new stream's id failing (#1072), which
+        // like 1222 ends the statement and not the transaction
+        if (sqlErrorNumber is DeadlockVictim or LockRequestTimeout or Events.EventGraph.StreamLockFailure)
         {
             return isolationLevel is IsolationLevel.Snapshot or IsolationLevel.Serializable;
         }
