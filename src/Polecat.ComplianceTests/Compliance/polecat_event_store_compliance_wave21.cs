@@ -11,21 +11,38 @@ namespace Polecat.Tests.Compliance;
  */
 public class polecat_compliance_suite_inventory
 {
+    /// <summary>
+    ///     #1063: the suites compile into Polecat.Tests.Shared, beside the fixtures, and the enrollments are
+    ///     in this assembly, so the inventory reads both. Reading this assembly alone found no suites at all,
+    ///     which passes the document inventory without checking anything.
+    /// </summary>
+    private static Type[] ComplianceTypes()
+    {
+        var suites = typeof(PolecatComplianceFixture).Assembly.GetTypes();
+        suites.ShouldContain(x => x.IsAbstract && x.Name.EndsWith("Compliance`3"));
+
+        return suites.Concat(typeof(polecat_compliance_suite_inventory).Assembly.GetTypes()).ToArray();
+    }
+
+    private static void AssertEnrolled(object fixture, Dictionary<Type, string> excused)
+    {
+        var problems = ComplianceSuiteInventory.Check(ComplianceTypes(), fixture, excused);
+        problems.ShouldBeEmpty($"Compliance suite enrollment problems for {fixture.GetType().Name}");
+    }
+
     [Fact]
     public void every_event_compliance_suite_is_enrolled_or_excused()
     {
-        ComplianceSuiteInventory.AssertEnrolled(typeof(polecat_compliance_suite_inventory).Assembly,
-            new PolecatComplianceFixture(), new Dictionary<Type, string>
-            {
-                [typeof(BackfillCompliance<,,>)] =
-                    "Projection backfills wait on the table naming for version-bumped projections (polecat#1055, marten#5632)"
-            });
+        AssertEnrolled(new PolecatComplianceFixture(), new Dictionary<Type, string>
+        {
+            [typeof(BackfillCompliance<,,>)] =
+                "Projection backfills wait on the table naming for version-bumped projections (polecat#1055, marten#5632)"
+        });
     }
 
     [Fact]
     public void every_document_compliance_suite_is_enrolled_or_excused()
     {
-        ComplianceSuiteInventory.AssertEnrolled(typeof(polecat_compliance_suite_inventory).Assembly,
-            new PolecatDocumentComplianceFixture(), new Dictionary<Type, string>());
+        AssertEnrolled(new PolecatDocumentComplianceFixture(), new Dictionary<Type, string>());
     }
 }
