@@ -77,7 +77,7 @@ public record NkOrderNumberChanged(OrderNumber NewOrderNumber);
 public record NkOrderCompleted;
 public record NkInvoiceCreated(string Code, decimal Amount);
 ```
-<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.Tests/Events/natural_key_tests.cs#L9-L71' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_natural_key_aggregate_types' title='Start of snippet'>anchor</a></sup>
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.Tests.Shared/Events/NaturalKeyTypes.cs#L9-L71' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_natural_key_aggregate_types' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 The `[NaturalKeySource]` attribute tells Polecat which `Create` / `Apply` methods produce or change the natural key value. Polecat uses this information to keep the lookup table in sync whenever events are appended.
@@ -153,7 +153,7 @@ stream.Aggregate!.OrderNum.ShouldBe(orderNumber);
 stream.AppendOne(new NkOrderItemAdded("Gadget", 19.99m));
 await session2.SaveChangesAsync(TestContext.Current.CancellationToken);
 ```
-<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.Tests/Events/natural_key_tests.cs#L113-L123' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_fetch_for_writing_by_natural_key' title='Start of snippet'>anchor</a></sup>
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.EventSourcingTests/Events/natural_key_tests.cs#L49-L59' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_fetch_for_writing_by_natural_key' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 This resolves the natural key to a stream id and fetches the aggregate in a single database round-trip. Polecat uses `WITH (UPDLOCK, HOLDLOCK)` hints to ensure safe concurrent access during the lookup.
@@ -168,7 +168,7 @@ For read-only access, you can use `FetchLatest` with a natural key:
 // Read-only access by natural key
 var aggregate = await session2.Events.FetchLatest<OrderAggregate, OrderNumber>(orderNumber, TestContext.Current.CancellationToken);
 ```
-<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.Tests/Events/natural_key_tests.cs#L141-L144' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_fetch_latest_by_natural_key' title='Start of snippet'>anchor</a></sup>
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.EventSourcingTests/Events/natural_key_tests.cs#L77-L80' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_fetch_latest_by_natural_key' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 ## Mutability

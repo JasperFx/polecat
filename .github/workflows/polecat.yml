@@ -27,7 +27,8 @@ jobs:
       STORAGE_TYPE: ${{ matrix.storage_type }}
       SHARD: ${{ matrix.shard }}
       SHARD_COUNT: 3
-      # Polecat.Tests is the workflow's critical path by an order of magnitude (~7,300 tests against
+      # The core suites (Polecat.Tests until #1063, now six projects CIPolecat runs in turn) are the
+      # workflow's critical path by an order of magnitude (~7,300 tests against
       # ~2 minutes for every other job), so this job's wall clock IS the PR feedback loop.
       #
       # 4 OVERRIDES the ProcessorCount / 2 clamp (which would make it 2 on a 4-vCPU hosted runner),

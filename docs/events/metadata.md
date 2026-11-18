@@ -34,7 +34,7 @@ Correlation id, causation id, headers and the user name are optional and each ha
 // Correlation id, causation id, headers and the user name
 opts.Events.EnableAllEventMetadata();
 ```
-<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.Tests/Events/event_metadata_tests.cs#L216-L219' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_enable_all_event_metadata' title='Start of snippet'>anchor</a></sup>
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.EventSourcingTests/Events/event_metadata_tests.cs#L216-L219' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_enable_all_event_metadata' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 `EnableAllEventMetadata()` includes the user name, so the session's `LastModifiedBy` is stored on every

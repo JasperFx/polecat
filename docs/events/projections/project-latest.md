@@ -83,7 +83,7 @@ public async Task includes_pending_events_from_start_stream()
     await session.SaveChangesAsync(TestContext.Current.CancellationToken);
 }
 ```
-<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.Tests/Events/project_latest_tests.cs#L46-L73' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_project_latest_example' title='Start of snippet'>anchor</a></sup>
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.EventSourcingTests/Events/project_latest_tests.cs#L46-L73' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_project_latest_example' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 ## Merging Committed and Pending Events
@@ -128,7 +128,7 @@ public async Task includes_pending_events_after_committed_events()
     }
 }
 ```
-<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.Tests/Events/project_latest_tests.cs#L75-L111' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_project_latest_merge_example' title='Start of snippet'>anchor</a></sup>
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.EventSourcingTests/Events/project_latest_tests.cs#L75-L111' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_project_latest_merge_example' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 ## String-Keyed Streams

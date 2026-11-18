@@ -23,12 +23,12 @@ using static Nuke.Common.Tools.DotNet.DotNetTasks;
 //
 //   - Worker processes, partitioned by test CLASS. xUnit's isolation contract is per class, so a
 //     class's fixtures and static state assume one process; the supervisor never splits one.
-//   - A catalog per lane, and the lanes are the SUITE's. Polecat.Tests isolates by DatabaseSchemaName
+//   - A catalog per lane, and the lanes are the SUITE's. The core suites isolate by DatabaseSchemaName
 //     inside ONE catalog, which separates classes from each other but not two processes from each
 //     other — so each worker is pointed at its own catalog through POLECAT_TESTING_DATABASE
 //     (Polecat.TestUtils/ConnectionSource). Anything a test creates at SERVER scope goes through
 //     ConnectionSource.Scoped(), which carries the lane's catalog name, so sibling databases do not
-//     collide either. Each suite's catalogs carry its own prefix (polecat_core_w0, polecat_aspnet_w0,
+//     collide either. Each suite's catalogs carry its own prefix (polecat_docs_w0, polecat_aspnet_w0,
 //     polecat_efcore_w0) and a suite drops only its own, so the three suites can run at the same time
 //     against one SQL Server — which is what the LocalGate target (build/LocalGate.cs) does.
 //   - Retries are opt-in, per test. A failure is reported as a failure unless that test says, in the
@@ -175,7 +175,7 @@ partial class Build
 
     /// <summary>
     ///     One supervised test project: where it is, its committed worker count, and the prefix of its
-    ///     lane catalogs (<c>{LanePrefix}_{Lanes}_w{lane}</c>, <c>polecat_core_w0</c> by default). The prefix is what lets the three suites run
+    ///     lane catalogs (<c>{LanePrefix}_{Lanes}_w{lane}</c>, <c>polecat_docs_w0</c> by default). The prefix is what lets the three suites run
     ///     at the same time on one SQL Server: each one drops and recreates only its own catalogs.
     /// </summary>
     sealed record SupervisedSuite(string Lanes, string ProjectPath, int Workers)
@@ -191,12 +191,37 @@ partial class Build
         public string[]? Frameworks { get; init; }
     }
 
-    /// <summary>
-    ///     Polecat.Tests — ~3,400 tests and the critical path of every PR by an order of magnitude.
-    ///     Four workers is the committed count; the clamp takes it to two on a 4-vCPU runner unless
-    ///     the workflow says otherwise (it does — see polecat.yml for the evidence it says it on).
-    /// </summary>
-    static readonly SupervisedSuite PolecatTests = new("core", "src/Polecat.Tests/Polecat.Tests.csproj", Workers: 4);
+    // #1063: Polecat.Tests was one project of ~8,700 tests per framework, the critical path of every gate
+    // by an order of magnitude, and it couldn't be split across tracks. It is now six projects, each a suite
+    // with lane catalogs of its own, so LocalGate runs them side by side.
+
+    /// <summary>Documents, sessions, storage, schema, metadata and patching: about half the tests.</summary>
+    static readonly SupervisedSuite DocumentDbTests =
+        new("docs", "src/Polecat.DocumentDbTests/Polecat.DocumentDbTests.csproj", Workers: 2);
+
+    /// <summary>LINQ and querying.</summary>
+    static readonly SupervisedSuite LinqTests =
+        new("linq", "src/Polecat.LinqTests/Polecat.LinqTests.csproj", Workers: 1);
+
+    /// <summary>Events, DCB, projections and subscriptions.</summary>
+    static readonly SupervisedSuite EventSourcingTests =
+        new("events", "src/Polecat.EventSourcingTests/Polecat.EventSourcingTests.csproj", Workers: 2);
+
+    /// <summary>The async daemon, whose tests are few but long.</summary>
+    static readonly SupervisedSuite DaemonTests =
+        new("daemon", "src/Polecat.DaemonTests/Polecat.DaemonTests.csproj", Workers: 2);
+
+    /// <summary>Multi-tenancy: separate databases, the master table and tenant partitioning.</summary>
+    static readonly SupervisedSuite MultiTenancyTests =
+        new("mt", "src/Polecat.MultiTenancyTests/Polecat.MultiTenancyTests.csproj", Workers: 1);
+
+    /// <summary>The JasperFx cross-store compliance suites.</summary>
+    static readonly SupervisedSuite ComplianceTests =
+        new("compliance", "src/Polecat.ComplianceTests/Polecat.ComplianceTests.csproj", Workers: 1);
+
+    /// <summary>What Polecat.Tests used to be, longest first. <see cref="CIPolecat" /> runs them in turn.</summary>
+    static readonly SupervisedSuite[] CoreSuites =
+        [DocumentDbTests, EventSourcingTests, DaemonTests, LinqTests, ComplianceTests, MultiTenancyTests];
 
     /// <summary>Two minutes end to end; one worker is parity, and more would buy nothing.</summary>
     static readonly SupervisedSuite AspNetCoreTests =
@@ -214,10 +239,34 @@ partial class Build
         new("specs", "src/Polecat.Specs/Polecat.Specs.csproj", Workers: 1) { Frameworks = ["net11.0"] };
 
     /// <summary>Every supervised suite, longest first.</summary>
-    static readonly SupervisedSuite[] Suites = [PolecatTests, AspNetCoreTests, EfCoreTests, PolecatSpecs];
+    static readonly SupervisedSuite[] Suites = [..CoreSuites, AspNetCoreTests, EfCoreTests, PolecatSpecs];
 
+    /// <summary>
+    ///     Every core suite (<see cref="CoreSuites" />), one after another. A red suite doesn't stop the
+    ///     ones after it; the target fails at the end, naming every red one.
+    /// </summary>
     Target CIPolecat => _ => _
-        .Executes(() => RunSupervised(PolecatTests));
+        .Executes(() =>
+        {
+            var failures = new List<string>();
+            foreach (var suite in CoreSuites)
+            {
+                try
+                {
+                    RunSupervised(suite);
+                }
+                catch (InvalidOperationException e)
+                {
+                    Log.Error("{Message}", e.Message);
+                    failures.Add(e.Message);
+                }
+            }
+
+            if (failures.Count > 0)
+            {
+                throw new InvalidOperationException(string.Join(Environment.NewLine, failures));
+            }
+        });
 
     Target CIAspNetCore => _ => _
         .Executes(() => RunSupervised(AspNetCoreTests));
@@ -591,7 +640,7 @@ partial class Build
     ///     Dropped and recreated rather than reused: a catalog holding the previous run's tables is the
     ///     false-green trap (a schema-shape change passes against stale tables locally and fails on CI's
     ///     fresh server). The lane's sibling databases — what <c>ConnectionSource.Scoped()</c> names,
-    ///     <c>polecat_core_w0_tenant_a</c> — are dropped with it for the same reason.
+    ///     <c>polecat_docs_w0_tenant_a</c> — are dropped with it for the same reason.
     ///     <para>
     ///     Only THIS suite's catalogs: every name here starts <c>polecat_{suite}_w</c>, so another
     ///     suite running at the same time on the same server (LocalGate) never loses its lanes.

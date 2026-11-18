@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <!-- #1063: multi-tenancy, separate databases and tenant partitioning. -->
+    <Import Project="..\Polecat.Tests.Common.props" />
+
+</Project>

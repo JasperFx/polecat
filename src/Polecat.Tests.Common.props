@@ -1,0 +1,51 @@
+<Project>
+    <!-- #1063: what every Polecat core test project shares. Polecat.Tests was split into
+         DocumentDbTests, LinqTests, EventSourcingTests, DaemonTests, MultiTenancyTests and
+         ComplianceTests; the harness and the types more than one of them uses are in
+         Polecat.Tests.Shared. Namespaces kept their Polecat.Tests.* names. -->
+
+    <PropertyGroup>
+        <IsPackable>false</IsPackable>
+        <!-- An xunit v3 test project is its own MTP executable and will not build without it. -->
+        <OutputType>Exe</OutputType>
+    </PropertyGroup>
+
+    <!-- #808: C# 15 unions only exist on .NET 11, and the `union` keyword needs LangVersion preview on
+         the RC SDK. -->
+    <PropertyGroup Condition="'$(TargetFramework)' == 'net11.0'">
+        <LangVersion>preview</LangVersion>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Shouldly" />
+        <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" />
+        <PackageReference Include="Microsoft.Testing.Extensions.TrxReport" />
+        <PackageReference Include="xunit.v3" />
+        <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+        <PackageReference Include="Microsoft.Extensions.Hosting" />
+        <PackageReference Include="Microsoft.CodeAnalysis.CSharp" />
+        <PackageReference Include="StronglyTypedId" />
+        <PackageReference Include="Vogen" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <Using Include="Xunit" />
+        <Using Include="Shouldly" />
+        <Using Include="Polecat.TestUtils" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="$(MSBuildThisFileDirectory)Polecat.TestUtils\Polecat.TestUtils.csproj" />
+        <ProjectReference Include="$(MSBuildThisFileDirectory)Polecat\Polecat.csproj" />
+        <ProjectReference Include="$(MSBuildThisFileDirectory)Polecat.Tests.Shared\Polecat.Tests.Shared.csproj" />
+        <PackageReference Include="JasperFx.Events.SourceGenerator" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+    </ItemGroup>
+
+    <!-- xUnit only finds a [CollectionDefinition] in the test assembly itself, so every project
+         compiles the shared ones, along with the global usings. -->
+    <ItemGroup>
+        <Compile Include="$(MSBuildThisFileDirectory)Polecat.Tests.Shared\Collections\*.cs" Link="Harness\Collections\%(Filename)%(Extension)" />
+        <Compile Include="$(MSBuildThisFileDirectory)Polecat.Tests.Shared\Common\GlobalUsings.cs" Link="GlobalUsings.cs" />
+        <Content Include="$(MSBuildThisFileDirectory)Polecat.Tests.Shared\Common\xunit.runner.json" Link="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
+    </ItemGroup>
+</Project>

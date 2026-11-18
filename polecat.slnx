@@ -12,7 +12,13 @@
     <Project Path="src/Polecat.EntityFrameworkCore.Tests/Polecat.EntityFrameworkCore.Tests.csproj" />
     <Project Path="src/Polecat.EntityFrameworkCore/Polecat.EntityFrameworkCore.csproj" />
     <Project Path="src/Polecat.Specs/Polecat.Specs.csproj" />
-    <Project Path="src/Polecat.Tests/Polecat.Tests.csproj" />
+    <Project Path="src/Polecat.ComplianceTests/Polecat.ComplianceTests.csproj" />
+    <Project Path="src/Polecat.DaemonTests/Polecat.DaemonTests.csproj" />
+    <Project Path="src/Polecat.DocumentDbTests/Polecat.DocumentDbTests.csproj" />
+    <Project Path="src/Polecat.EventSourcingTests/Polecat.EventSourcingTests.csproj" />
+    <Project Path="src/Polecat.LinqTests/Polecat.LinqTests.csproj" />
+    <Project Path="src/Polecat.MultiTenancyTests/Polecat.MultiTenancyTests.csproj" />
+    <Project Path="src/Polecat.Tests.Shared/Polecat.Tests.Shared.csproj" />
     <Project Path="src/Polecat.TestUtils/Polecat.TestUtils.csproj" />
     <Project Path="src/Polecat/Polecat.csproj" />
   </Folder>

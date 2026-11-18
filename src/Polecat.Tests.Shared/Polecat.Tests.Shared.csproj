@@ -1,0 +1,66 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <!-- #1063: the harness (IntegrationContext, fixtures, test document and event types) and the
+         types more than one Polecat core test project uses. A library, not a test host. -->
+    <PropertyGroup>
+        <IsPackable>false</IsPackable>
+        <IsTestProject>false</IsTestProject>
+    </PropertyGroup>
+
+    <PropertyGroup Condition="'$(TargetFramework)' == 'net11.0'">
+        <LangVersion>preview</LangVersion>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <!-- The test projects compile these themselves (Polecat.Tests.Common.props) -->
+        <Compile Remove="Collections/**" />
+        <Compile Remove="Common/**" />
+        <Compile Include="Common/GlobalUsings.cs" />
+        <None Remove="Common/xunit.runner.json" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Shouldly" />
+        <!-- NOT xunit.v3: that package forces OutputType=Exe on anything referencing it. -->
+        <PackageReference Include="xunit.v3.extensibility.core" />
+        <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+        <PackageReference Include="Microsoft.Extensions.Hosting" />
+        <PackageReference Include="StronglyTypedId" />
+        <PackageReference Include="Vogen" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <Using Include="Xunit" />
+        <Using Include="Shouldly" />
+        <Using Include="Polecat.TestUtils" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <!-- Source-only: the compliance suites compile into this assembly, beside Polecat's fixtures in Compliance/, so the aggregate source
+             generator binds Polecat's session types. -->
+        <PackageReference Include="JasperFx.Events.ComplianceTests" Condition="'$(ComplianceSourceDir)' == ''" />
+        <!-- LOCAL DEV LOOP ONLY: -p:ComplianceSourceDir=/path/to/jasperfx/src/JasperFx.Events.ComplianceTests
+             swaps the published suites for a working copy, so wave-N authoring can be validated
+             against Polecat before the JasperFx release. -->
+        <Compile Include="$(ComplianceSourceDir)\**\*.cs"
+                 Exclude="$(ComplianceSourceDir)\bin\**\*.cs;$(ComplianceSourceDir)\obj\**\*.cs;$(ComplianceSourceDir)\Local\**\*.cs"
+                 LinkBase="ComplianceSuites"
+                 Condition="'$(ComplianceSourceDir)' != ''" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <InternalsVisibleTo Include="Polecat.DocumentDbTests" />
+        <InternalsVisibleTo Include="Polecat.LinqTests" />
+        <InternalsVisibleTo Include="Polecat.EventSourcingTests" />
+        <InternalsVisibleTo Include="Polecat.DaemonTests" />
+        <InternalsVisibleTo Include="Polecat.MultiTenancyTests" />
+        <InternalsVisibleTo Include="Polecat.ComplianceTests" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\Polecat.TestUtils\Polecat.TestUtils.csproj" />
+        <ProjectReference Include="..\Polecat\Polecat.csproj" />
+        <PackageReference Include="JasperFx.Events.SourceGenerator" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+    </ItemGroup>
+
+</Project>

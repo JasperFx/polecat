@@ -81,7 +81,7 @@ public record AccountOpened(string AccountName);
 public record AccountDebited(decimal Amount, string Description);
 public record AccountCredited(decimal Amount, string Description);
 ```
-<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.Tests/Projections/time_based_multi_stream_projection_tests.cs#L9-L15' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_monthly_account_activity_events' title='Start of snippet'>anchor</a></sup>
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.EventSourcingTests/Projections/time_based_multi_stream_projection_tests.cs#L9-L15' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_monthly_account_activity_events' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 **Read model document:**
@@ -100,7 +100,7 @@ public partial class MonthlyAccountActivity
     public decimal NetChange => TotalCredits - TotalDebits;
 }
 ```
-<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.Tests/Projections/time_based_multi_stream_projection_tests.cs#L17-L30' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_monthly_account_activity_document' title='Start of snippet'>anchor</a></sup>
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.EventSourcingTests/Projections/time_based_multi_stream_projection_tests.cs#L17-L30' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_monthly_account_activity_document' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 **Projection with time-based routing:**
@@ -149,7 +149,7 @@ public partial class MonthlyAccountActivityProjection : MultiStreamProjection<Mo
     }
 }
 ```
-<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.Tests/Projections/time_based_multi_stream_projection_tests.cs#L32-L75' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_monthly_account_activity_projection' title='Start of snippet'>anchor</a></sup>
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.EventSourcingTests/Projections/time_based_multi_stream_projection_tests.cs#L32-L75' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_monthly_account_activity_projection' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 Register the projection as inline (for immediate consistency) or async (for eventual consistency):

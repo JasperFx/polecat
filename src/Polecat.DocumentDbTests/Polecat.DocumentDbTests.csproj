@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <!-- #1063: documents, sessions, storage, schema, metadata, patching and the rest of the document
+         side of Polecat.Tests. -->
+    <Import Project="..\Polecat.Tests.Common.props" />
+
+    <ItemGroup>
+        <!-- #642: SQLite FTS5 porter stems for 23,549 dictionary words; both Porter stemmers are pinned to it. -->
+        <Content Include="Storage/FullText/porter_oracle.tsv" CopyToOutputDirectory="PreserveNewest" />
+    </ItemGroup>
+
+</Project>
