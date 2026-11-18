@@ -223,3 +223,6 @@ de-duplicated only when fetching from storage to avoid redundant loads.
 - In `pc_event_progression`, you will see rows for both the parent composite and every constituent projection — they should never disagree.
 - You can use as many stages as you wish, but two or three is usually enough.
 - If you rebuild a composite projection, you have to rebuild every constituent projection.
+- The constituent projections take the composite's `Version`, whatever they set themselves. Set `composite.Version`
+  inside `CompositeProjectionFor()` to deploy a new version, and every member gets its own progression row and
+  its own document table (see [blue/green deployments](async-daemon.md#blue-green-deployments-with-projection-versioning)).

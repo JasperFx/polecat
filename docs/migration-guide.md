@@ -254,6 +254,25 @@ public TripProjection()
 The docs at [side effects](/events/projections/side-effects) and [the async daemon](/events/projections/async-daemon)
 still describe the gate as opt-in; read them as "on unless you set it to `false`".
 
+## Upgrading to 6.0: a projection above version 1 gets its own document table
+
+A new version of a projection used to write into the same `pc_doc_{type}` table as the version before it, so a
+blue/green bump applied every event a second time on top of the old version's documents. 6.0 names the tables the
+way Marten does ([#1089](https://github.com/JasperFx/polecat/issues/1089)):
+
+| | 5.x | 6.0 |
+| :--- | :--- | :--- |
+| Document table of a single stream or multi stream projection at `Version = 3` | `pc_doc_trip` | `pc_doc_trip_3` |
+| Document table at `Version = 1` (the default) | `pc_doc_trip` | `pc_doc_trip` (unchanged) |
+| `Version` of a composite projection's member | its own | the composite's |
+
+- **What to do.** If a projection is above version 1 today, 6.0 creates its new table empty while its progression row
+  says it is caught up. Rebuild that projection once after upgrading. The same goes for a composite whose members set
+  a `Version` of their own: they now run under the composite's version, so rebuild the composite.
+- **Schema effect.** The versioned tables are added by the next schema migration. The old `pc_doc_{type}` table is
+  left where it is; drop it yourself once nothing reads it.
+- **Version 1 projections** see no change.
+
 ## Upgrading to 6.0: DCB conflicts honour event types, and a check no longer bumps what it read
 
 Two changes to `FetchForWritingByTags` ([polecat#972](https://github.com/JasperFx/polecat/issues/972),

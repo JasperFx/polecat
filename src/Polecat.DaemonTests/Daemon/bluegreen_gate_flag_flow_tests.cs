@@ -80,16 +80,20 @@ public partial class bluegreen_gate_flag_flow_tests : OneOffConfigurationsContex
     // v0-versioned parent shard (its children are internal stages, not separately-versioned shards), so
     // the per-child gate is not a top-level shard concern — but the wrapper must not strip the child's
     // AsyncOptions during assembly. Assert the child instance keeps its gate + version after composite
-    // registration.
+    // registration. #1089: the child takes the composite's version, so the version comes from the composite.
     [Fact]
     public void composite_assembly_preserves_child_gate()
     {
-        var child = new GatedSingleStream { Version = 2 };
+        var child = new GatedSingleStream();
         child.Options.GateSideEffectsBehindPriorVersion = true;
 
         ConfigureStore(opts =>
         {
-            opts.Projections.CompositeProjectionFor("GatedComposite", composite => composite.Add(child));
+            opts.Projections.CompositeProjectionFor("GatedComposite", composite =>
+            {
+                composite.Version = 2;
+                composite.Add(child);
+            });
         });
 
         child.Options.GateSideEffectsBehindPriorVersion.ShouldBeTrue();

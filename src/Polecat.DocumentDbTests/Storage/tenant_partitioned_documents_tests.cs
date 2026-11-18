@@ -22,6 +22,21 @@ public class OptedOutTenantDoc
     public string Name { get; set; } = string.Empty;
 }
 
+public record PartitionedTallyIncrement;
+
+public class PartitionedVersionedTally
+{
+    public Guid Id { get; set; }
+    public int Count { get; set; }
+}
+
+public partial class PartitionedVersionedTallyProjection : SingleStreamProjection<PartitionedVersionedTally, Guid>
+{
+    public PartitionedVersionedTally Create(PartitionedTallyIncrement _) => new() { Count = 1 };
+
+    public void Apply(PartitionedTallyIncrement _, PartitionedVersionedTally tally) => tally.Count++;
+}
+
 /// <summary>
 ///     Covers #335 scopes 1 + 3 + 4 — managed per-tenant partitioning of conjoined document tables:
 ///     the AllDocumentsAreMultiTenantedWithPartitioning / PartitionMultiTenantedDocumentsUsingPolecatManagement
@@ -433,5 +448,76 @@ public class tenant_partitioned_documents_tests : IAsyncLifetime
 
         await using var query = store.QuerySession(new SessionOptions { TenantId = "Newcomer" });
         (await query.LoadAsync<QuestParty>(streamId, TestContext.Current.CancellationToken)).ShouldNotBeNull();
+    }
+    /// <summary>
+    ///     #1089: the document table of a projection above version 1 is <c>pc_doc_{type}_{version}</c>, and it is
+    ///     partitioned and keyed exactly as the unversioned table would be.
+    /// </summary>
+    [Fact]
+    public async Task a_versioned_projection_table_is_partitioned_and_keyed_by_tenant_ordinal()
+    {
+        const string table = "pc_doc_partitionedversionedtally_2";
+
+        using var store = CreateStore(opts => opts.Projections.Add(
+            new PartitionedVersionedTallyProjection { Version = 2 }, ProjectionLifecycle.Inline));
+
+        store.Options.Providers.GetProvider(typeof(PartitionedVersionedTally)).Mapping.TableName.ShouldBe(table);
+
+        var redId = Guid.NewGuid();
+        var blueId = Guid.NewGuid();
+
+        await using (var red = store.LightweightSession(new SessionOptions { TenantId = "Red" }))
+        {
+            red.Events.StartStream(redId, new PartitionedTallyIncrement(), new PartitionedTallyIncrement());
+            await red.SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        await using (var blue = store.LightweightSession(new SessionOptions { TenantId = "Blue" }))
+        {
+            blue.Events.StartStream(blueId, new PartitionedTallyIncrement());
+            await blue.SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        (await TestSchema.ColumnExistsAsync(Schema, table, "tenant_ordinal")).ShouldBeTrue();
+
+        // The partition function is named from the versioned table, and every row sits in its tenant's partition.
+        var rows = await TestSchema.QueryAsync($"""
+            SELECT d.tenant_id, d.tenant_ordinal, tp.ordinal,
+                   $PARTITION.pf_{table}_tenant_ordinal(d.tenant_ordinal) AS p
+            FROM [{Schema}].[{table}] d
+            JOIN [{Schema}].[pc_tenant_partitions] tp ON tp.tenant_id = d.tenant_id
+            ORDER BY d.tenant_id
+            """);
+
+        rows.Count.ShouldBe(2);
+        rows.Select(r => r[3]).Distinct().Count().ShouldBe(2);
+        foreach (var row in rows)
+        {
+            ((int)row[1]).ShouldBe((int)row[2]);
+        }
+
+        // The primary key carries the tenant ordinal, as it does on any partitioned document table.
+        var keyColumns = await TestSchema.QueryAsync($"""
+            SELECT c.name
+            FROM sys.indexes i
+            JOIN sys.index_columns ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id
+            JOIN sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id
+            WHERE i.is_primary_key = 1 AND i.object_id = OBJECT_ID('[{Schema}].[{table}]')
+            ORDER BY ic.key_ordinal
+            """);
+        keyColumns.Select(r => (string)r[0]).ShouldBe(["tenant_id", "id", "tenant_ordinal"]);
+
+        // Managed tenant onboarding splits the versioned table too.
+        var statuses = await store.Advanced.AddPolecatManagedTenantsAsync(CancellationToken.None, "Green");
+        statuses.ShouldContain(s =>
+            s.Identifier.QualifiedName == $"{Schema}.{table}" && s.Status == PartitionMigrationStatus.Complete);
+
+        await using var redQuery = store.QuerySession(new SessionOptions { TenantId = "Red" });
+        (await redQuery.LoadAsync<PartitionedVersionedTally>(redId, TestContext.Current.CancellationToken))!
+            .Count.ShouldBe(2);
+
+        await using var blueQuery = store.QuerySession(new SessionOptions { TenantId = "Blue" });
+        (await blueQuery.LoadAsync<PartitionedVersionedTally>(blueId, TestContext.Current.CancellationToken))!
+            .Count.ShouldBe(1);
     }
 }

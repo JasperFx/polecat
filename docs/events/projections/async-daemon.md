@@ -506,7 +506,8 @@ so firing post-commit side effects for each historical batch is almost never wha
 
 Every projection carries a `Version` (default `1`). The version is baked into the shard's
 progression identity, so different versions of the same projection track their progress
-independently:
+independently. Above version 1 it is also baked into the name of an aggregate projection's
+document table, so each version writes its own documents:
 
 ```cs
 public class TripProjection : SingleStreamProjection<Trip, Guid>
@@ -519,15 +520,24 @@ public class TripProjection : SingleStreamProjection<Trip, Guid>
 }
 ```
 
-| Projection | `Version` | Progression identity (`pc_event_progression.name`) |
-|------------|-----------|-----------------------------------------------------|
-| `Trip`     | `1`       | `Trips:All`                                         |
-| `Trip`     | `2`       | `Trips:V2:All`                                       |
-| `Trip`     | `3`       | `Trips:V3:All`                                       |
+| Projection | `Version` | Progression identity (`pc_event_progression.name`) | Document table |
+|------------|-----------|-----------------------------------------------------|----------------|
+| `Trip`     | `1`       | `Trips:All`                                         | `pc_doc_trip`   |
+| `Trip`     | `2`       | `Trips:V2:All`                                      | `pc_doc_trip_2` |
+| `Trip`     | `3`       | `Trips:V3:All`                                      | `pc_doc_trip_3` |
 
-Because each version has its own progression row, you can stand up a new version alongside
-the old one and let it rebuild from zero while the old version keeps serving reads — a
-blue/green deployment.
+Because each version has its own progression row and its own table, you can stand up a new
+version alongside the old one and let it rebuild from zero into an empty table while the old
+version keeps serving reads from its table. That's a blue/green deployment. Once nothing runs
+the old version any more, its table and progression row are yours to drop.
+
+The table suffix applies to the documents of single stream and multi stream projections (the
+same rule as Marten's). An `EventProjection` stores whatever documents it chooses, so their
+tables keep their names.
+
+The members of a [composite projection](composite.md) don't keep a version of their own: each
+one takes the composite's `Version`, so bump the composite to rebuild all of its members into
+new tables.
 
 ### Gating Side Effects Behind the Prior Version
 

@@ -187,6 +187,14 @@ public class PolecatProjectionOptions
     {
         var composite = new PolecatCompositeProjection(name, _storeOptions!);
         configure(composite);
+
+        // #1089, as Marten: every member takes the composite's version, so bumping the composite gives each
+        // member its own progression row and, above version 1, its own document table.
+        foreach (var member in composite.AllProjections())
+        {
+            member.OverwriteVersion(composite.Version);
+        }
+
         composite.AssembleAndAssertValidity();
 
         // Register event types from all child projections

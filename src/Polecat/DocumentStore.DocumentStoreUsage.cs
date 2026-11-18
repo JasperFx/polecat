@@ -145,8 +145,8 @@ public partial class DocumentStore : IDocumentStoreUsageSource
         // column value (defaults to "base"), not the table-name suffix.
         // Convert the type name so the descriptor's `Alias` field carries
         // a Marten-equivalent table-name suffix the operator can correlate
-        // with the actual table.
-        var tableNameSuffix = mapping.DocumentType.Name.ToLowerInvariant();
+        // with the actual table, including a projection's version suffix (#1089).
+        var tableNameSuffix = mapping.TableAlias;
 
         return new DocumentMappingDescriptor
         {

@@ -55,7 +55,7 @@ public partial class DocumentStore : IDocumentStoreDiagnostics
 
             refs.Add(new DocumentTypeRef(
                 rootTypeName,
-                mapping.DocumentType.Name.ToLowerInvariant(),
+                mapping.TableAlias,
                 mapping.DatabaseSchemaName)
             {
                 IsSoftDeleted = isSoftDeleted,
@@ -652,7 +652,8 @@ public partial class DocumentStore : IDocumentStoreDiagnostics
         {
             if (NameMatches(mapping.DocumentType, documentTypeName)
                 || string.Equals(mapping.DocumentType.Name.ToLowerInvariant(), documentTypeName,
-                    StringComparison.OrdinalIgnoreCase))
+                    StringComparison.OrdinalIgnoreCase)
+                || string.Equals(mapping.TableAlias, documentTypeName, StringComparison.OrdinalIgnoreCase))
             {
                 return (mapping, mapping.DocumentType);
             }
