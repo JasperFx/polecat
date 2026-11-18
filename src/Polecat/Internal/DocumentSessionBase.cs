@@ -975,7 +975,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         catch (Exception e)
         {
             // #783 (marten#5688): FetchForExclusiveWriting / AppendExclusive begin the session's
-            // transaction, and take UPDLOCK, HOLDLOCK on the stream row, before SaveChangesAsync is called.
+            // transaction, and lock the stream (EventGraph.LockedStreamReadSql), before SaveChangesAsync is called.
             // A save that fails or is cancelled before the `using var tx` below has not taken ownership of
             // that transaction, so it used to stay open, holding the stream lock, until the session was
             // disposed. End it here, as a failure after that point does.
@@ -1815,7 +1815,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     ///     #420: build the append operations for the <see cref="StreamAction" />s a projection
     ///     raised, so the async daemon batch can write them inside its own transaction rather than
     ///     dropping them. Same path as the inline append — resolve the tenant partition, read the
-    ///     stream rows under <c>UPDLOCK, HOLDLOCK</c> (one batched read for the whole group),
+    ///     stream rows locked (one batched read for the whole group, see <c>EventGraph.LockedStreamReadSql</c>),
     ///     assign versions client-side from what that read returned, then build the closed-shape
     ///     quick-append ops.
     ///     <para>
@@ -1932,7 +1932,8 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
 
     /// <summary>
     ///     Read the (version, exists, archived) state of every stream in <paramref name="streams" />
-    ///     under <c>UPDLOCK, HOLDLOCK</c> in ONE round trip, instead of one locking read per stream.
+    ///     locked (see <c>EventGraph.LockedStreamReadSql</c>) in ONE round trip, instead of one locking
+    ///     read per stream.
     ///     A stream absent from the result simply has no entry in the returned dictionary — callers
     ///     treat that as (0, not-exists, not-archived), exactly as the old per-stream read did.
     ///     <para>

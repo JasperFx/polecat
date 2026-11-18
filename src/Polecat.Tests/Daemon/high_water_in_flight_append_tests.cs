@@ -246,9 +246,8 @@ public abstract class HighWaterLockingContext : IAsyncLifetime
     ///     as long as the test wants. Disposing an append still in flight rolls it back.
     /// </summary>
     /// <remarks>
-    ///     Append only to a stream that already exists. The append planner reads the stream row under
-    ///     <c>UPDLOCK, HOLDLOCK</c>, so a NEW stream takes a key-range lock on <c>pc_streams</c> that can
-    ///     make the next new stream wait for this one, which would stop the test before it starts.
+    ///     A new stream is fine since #1072: it is locked by its own id, not by a key-range lock that could
+    ///     make the next new stream wait for this one.
     /// </remarks>
     protected sealed class InFlightAppend : IAsyncDisposable
     {

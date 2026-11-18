@@ -19,10 +19,11 @@ public class batched_stream_state_read_tests : IntegrationContext
     {
     }
 
+    // #1072: the locked read, which takes the lock on a missing stream's name before it reads
     private static bool IsStreamStateRead(string commandText)
-        => commandText.TrimStart().StartsWith("SELECT", StringComparison.OrdinalIgnoreCase)
-           && commandText.Contains("pc_streams")
-           && commandText.Contains("WITH (UPDLOCK, HOLDLOCK)");
+        => commandText.Contains("pc_streams")
+           && commandText.Contains("WITH (UPDLOCK)")
+           && commandText.Contains("polecat:stream:");
 
     [Fact]
     public async Task multi_stream_append_issues_one_stream_state_query()

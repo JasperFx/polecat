@@ -517,7 +517,8 @@ internal class EventOperations : QueryEventStore, IEventOperations, IEventOperat
         {
             if (current is Exceptions.SessionTransactionUnusableException) return null;
 
-            if (current is SqlException { Number: 1222 or 1205 } sql)
+            // EventGraph.StreamLockFailure: the lock on the id of a stream that doesn't exist yet (#1072)
+            if (current is SqlException { Number: 1222 or 1205 or EventGraph.StreamLockFailure } sql)
             {
                 return sql;
             }
@@ -712,7 +713,8 @@ internal class EventOperations : QueryEventStore, IEventOperations, IEventOperat
     }
 
     /// <summary>
-    ///     The stream's version for a fetch for writing, under <c>UPDLOCK, HOLDLOCK</c> for an exclusive one.
+    ///     The stream's version for a fetch for writing, locked for an exclusive one (see
+    ///     <see cref="EventGraph.LockedStreamReadSql" />).
     /// </summary>
     /// <param name="readArchived">
     ///     polecat#1035: also read <c>is_archived</c>, in the same statement, for an aggregate enrolled in the

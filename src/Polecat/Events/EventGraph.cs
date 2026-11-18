@@ -457,11 +457,21 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
         _options.Projections.SkipStaleGapsDespiteLiveTransactionsAfter;
 
     /// <summary>
+    ///     The error number <see cref="LockedStreamReadSql" /> throws when it can't take the lock on a
+    ///     stream that doesn't exist yet (a lock timeout, or the lock request chosen as a deadlock victim).
+    ///     Like 1222, it ends the statement and leaves the transaction open.
+    /// </summary>
+    internal const int StreamLockFailure = 51072;
+
+    /// <summary>
     ///     The read of stream rows that a version check rests on: locked until the transaction ends, so
     ///     that nothing can move the version it returns, or start a stream it found missing.
     /// </summary>
     /// <param name="columns">The columns to select, from the alias <c>s</c> if there are <paramref name="ids" />.</param>
-    /// <param name="match">The predicate naming the rows, on the same terms.</param>
+    /// <param name="match">
+    ///     The predicate naming the rows, on the same terms. It names the tenant as <c>@tenant_id</c>, and
+    ///     without <paramref name="ids" /> the stream as <c>@id</c>.
+    /// </param>
     /// <param name="tenantId">The tenant in <paramref name="match" />.</param>
     /// <param name="command">Takes the ordinal's parameter, when there is one.</param>
     /// <param name="ids">
@@ -470,23 +480,33 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
     /// </param>
     /// <remarks>
     ///     <para>
-    ///         <b>#852: this has to reach each row by its whole key</b>, because <c>HOLDLOCK</c> locks all
-    ///         that a read walks over and not just what it returns. Two ways of missing that are ruled out
-    ///         here, both measured with one append held open.
+    ///         <b>#1072: a stream that exists is locked by its row, and one that doesn't by its id.</b> The
+    ///         read used to be <c>UPDLOCK, HOLDLOCK</c>. For a missing row <c>HOLDLOCK</c> locks the range up
+    ///         to the next key in the index, so an append creating stream B waited on an open append creating
+    ///         an unrelated stream A whenever A was B's next key. Now an existing row is read with
+    ///         <c>UPDLOCK</c> alone, held to the end of the transaction, and a stream that isn't there takes a
+    ///         transaction-owned <c>sp_getapplock</c> on its own tenant and id before the read. Two appends
+    ///         creating the same stream still take turns (#852): the second waits on the lock, then finds
+    ///         the first one's row. Rows are locked first, in the order of the ids, and then the ids that
+    ///         are missing, in the order of their lock names, so two saves over the same streams take their
+    ///         locks in the same order.
     ///     </para>
     ///     <para>
-    ///         Under <see cref="UseTenantPartitionedEvents" /> the key is
-    ///         <c>(tenant_id, id, tenant_ordinal)</c>, so <c>(tenant_id, id)</c> is a range, walked once per
-    ///         partition. In every partition but the stream's own it finds nothing and locks the end of the
-    ///         partition, one key that every other such read needs too, so the open append blocked
-    ///         24 of 24 appends to other streams in its tenant and 24 of 24 in another tenant, against
-    ///         none on the same schema unpartitioned. The whole key is a singleton in one partition, and
-    ///         the append then holds exactly the locks it holds unpartitioned.
+    ///         The lock name is a hash of the streams table, the tenant and the id, upper-cased, because
+    ///         <c>sp_getapplock</c> compares names in binary and the id column follows the database's
+    ///         collation. Two ids that differ only by case share a lock, which costs nothing but a wait.
+    ///         Outside a transaction no lock is taken: each statement would release it as it finished.
     ///     </para>
     ///     <para>
-    ///         Several streams at once read as <c>id IN (...)</c> left the plan to the optimizer, and on any
-    ///         conjoined store it walked the tenant, locking all of it. The loop join is what guarantees
-    ///         one singleton per id. It also takes them in the order the ids were sorted into.
+    ///         <b>#852: the read has to reach each row by its whole key.</b> Under
+    ///         <see cref="UseTenantPartitionedEvents" /> the key is <c>(tenant_id, id, tenant_ordinal)</c>, so
+    ///         <c>(tenant_id, id)</c> is a range, walked once per partition. The locked read names the
+    ///         ordinal. Several streams at once read as <c>id IN (...)</c> left the plan to the optimizer,
+    ///         and on any conjoined store it walked the tenant, so the loop join is what guarantees one
+    ///         singleton per id. It also takes them in the order the ids were sorted into. The missing ids are
+    ///         found the same way, by locking the rows that are there and taking the rest away from the ids,
+    ///         not with a join to the rows that aren't: SQL Server turned that into an anti semi join that
+    ///         sought the tenant alone, and waited on an open append's row in it.
     ///     </para>
     ///     <para>
     ///         <b>The second branch is not there for the lock.</b> A stream row keeps the ordinal it was
@@ -496,10 +516,11 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
     ///         such a row, in the second update in <c>SqlServerEventStoreDialect</c>, but that update names
     ///         the version this read returned, and if it finds no row the append fails. So <c>NOLOCK</c>
     ///         can't lose a version here. Two appends racing on such a stream can both get past this read,
-    ///         and the loser then fails, on the event's unique index or on that check.
+    ///         and the loser then fails, on the event's unique index or on that check. Such a stream takes
+    ///         the lock on its id as well, as one missing from its tenant's partition.
     ///     </para>
     ///     <para>
-    ///         An ordinal this process has not resolved yet keeps the wider lock. Looking it up here could
+    ///         An ordinal this process has not resolved yet reads every partition. Looking it up here could
     ///         mean DDL with this transaction open, which is #864.
     ///     </para>
     /// </remarks>
@@ -510,20 +531,85 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
             ? $"{StreamsTableName} WITH ({hint})"
             : $"({ids}) ids INNER LOOP JOIN {StreamsTableName} s WITH ({hint}) ON s.id = ids.id";
 
-        if (!UseTenantPartitionedEvents || !TenantOrdinals.TryGetOrdinal(tenantId, out var ordinal))
+        var ordinalPredicate = "";
+        string read;
+
+        if (UseTenantPartitionedEvents && TenantOrdinals.TryGetOrdinal(tenantId, out var ordinal))
         {
-            return $"SELECT {columns} FROM {from("UPDLOCK, HOLDLOCK")} WHERE {match};";
+            var column = (ids == null ? "" : "s.") + TenantPartitionManager.Column;
+            command.Parameters.Add("@tenant_ordinal", SqlDbType.Int).Value = ordinal;
+            ordinalPredicate = $" AND {column} = @tenant_ordinal";
+
+            read = $"""
+                SELECT {columns} FROM {from("UPDLOCK")} WHERE {match}{ordinalPredicate}
+                UNION ALL
+                SELECT {columns} FROM {from("NOLOCK")} WHERE {match} AND {column} <> @tenant_ordinal;
+                """;
+        }
+        else
+        {
+            read = $"SELECT {columns} FROM {from("UPDLOCK")} WHERE {match};";
         }
 
-        var column = (ids == null ? "" : "s.") + TenantPartitionManager.Column;
-        command.Parameters.Add("@tenant_ordinal", SqlDbType.Int).Value = ordinal;
+        // sp_getapplock reports a timeout or a deadlock through its return value rather than an error, so a
+        // negative answer is thrown here: going on without the lock would let two appends create one stream.
+        var table = Polecat.Internal.SqlEscaping.LiteralBody(StreamsTableName);
+        var takeLock = $"""
+                EXEC @pc_stream_lock = sp_getapplock @Resource = @pc_stream_lock_name, @LockMode = 'Exclusive',
+                    @LockOwner = 'Transaction';
+                IF @pc_stream_lock < 0
+                BEGIN
+                    DECLARE @pc_stream_lock_failure nvarchar(2048) = N'Polecat could not lock a new stream in {table} '
+                        + N'(sp_getapplock answered ' + CONVERT(nvarchar(11), @pc_stream_lock) + N').';
+                    THROW {StreamLockFailure}, @pc_stream_lock_failure, 1;
+                END;
+            """;
+
+        if (ids == null)
+        {
+            return $"""
+                DECLARE @pc_stream_lock int, @pc_stream_lock_name nvarchar(255);
+                IF @@TRANCOUNT > 0
+                   AND NOT EXISTS (SELECT 1 FROM {from("UPDLOCK")} WHERE {match}{ordinalPredicate})
+                BEGIN
+                    SET @pc_stream_lock_name = {streamLockName("@id")};
+                {takeLock}
+                END;
+                {read}
+                """;
+        }
 
         return $"""
-            SELECT {columns} FROM {from("UPDLOCK, HOLDLOCK")} WHERE {match} AND {column} = @tenant_ordinal
-            UNION ALL
-            SELECT {columns} FROM {from("NOLOCK")} WHERE {match} AND {column} <> @tenant_ordinal;
+            DECLARE @pc_stream_lock int, @pc_stream_lock_name nvarchar(255);
+            IF @@TRANCOUNT > 0
+            BEGIN
+                DECLARE @pc_streams_found TABLE (name nvarchar(255) NOT NULL PRIMARY KEY);
+                INSERT INTO @pc_streams_found (name)
+                SELECT DISTINCT {streamLockName("s.id")} FROM {from("UPDLOCK")} WHERE {match}{ordinalPredicate};
+
+                DECLARE @pc_stream_locks TABLE (name nvarchar(255) NOT NULL PRIMARY KEY);
+                INSERT INTO @pc_stream_locks (name)
+                SELECT DISTINCT missing.name
+                FROM (SELECT {streamLockName("ids.id")} AS name FROM ({ids}) ids) missing
+                WHERE missing.name NOT IN (SELECT name FROM @pc_streams_found);
+
+                SET @pc_stream_lock_name = (SELECT MIN(name) FROM @pc_stream_locks);
+                WHILE @pc_stream_lock_name IS NOT NULL
+                BEGIN
+                {takeLock}
+                    SET @pc_stream_lock_name = (SELECT MIN(name) FROM @pc_stream_locks WHERE name > @pc_stream_lock_name);
+                END;
+            END;
+            {read}
             """;
     }
+
+    /// <summary>
+    ///     The <c>sp_getapplock</c> name for a stream of <c>@tenant_id</c> whose id is
+    ///     <paramref name="id" />, for <see cref="LockedStreamReadSql" />.
+    /// </summary>
+    private string streamLockName(string id)
+        => $"N'polecat:stream:' + CONVERT(nvarchar(64), HASHBYTES('SHA2_256', UPPER(CONCAT(N'{Polecat.Internal.SqlEscaping.LiteralBody(StreamsTableName)}', NCHAR(1), @tenant_id, NCHAR(1), CONVERT(nvarchar(450), {id})))), 2)";
 
     /// <summary>
     ///     The statement that reads one stream's events.
