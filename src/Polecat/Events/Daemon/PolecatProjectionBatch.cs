@@ -132,7 +132,14 @@ internal class PolecatProjectionBatch : ProjectionBatchBase<IDocumentSession>,
         // #318: the progression write now rides the shared Weasel.Storage.EventStorage<TId> seam
         // (EventGraph.UpdateProgressOperation) instead of instantiating RecordProgressionOperation here.
         // Floor == 0 means the row may not exist yet, so upsert; otherwise it's already there.
-        var op = _events.UpdateProgressOperation(name, ceiling, upsert: range.SequenceFloor == 0);
+        //
+        // #1060: past the first batch the UPDATE is floor-checked, as Marten's is, so a batch whose progression
+        // moved under it fails rather than writing over it.
+        Weasel.Storage.IStorageOperation op = range.SequenceFloor == 0
+            ? _events.UpdateProgressOperation(name, ceiling, upsert: true)
+            : new Polecat.Internal.Operations.RecordProgressionOperation(_events.ProgressionTableName, name, ceiling,
+                _events.EnableExtendedProgressionTracking, upsert: false, _events.UnicodeKeys,
+                expectedFloor: range.SequenceFloor);
 
         _progressOps.Enqueue(op);
         return ValueTask.CompletedTask;

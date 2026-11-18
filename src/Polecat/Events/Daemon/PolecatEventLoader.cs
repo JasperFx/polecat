@@ -100,6 +100,21 @@ internal class PolecatEventLoader : EventLoaderBase
         }
     }
 
+    /// <summary>
+    ///     The daemon's own row hydration, for the readers that must read a row exactly as a shard would: the
+    ///     per-identity rebuild's re-fold (#1060) and the stored-event rewrite (#1034). The row has to be in
+    ///     <see cref="Internal.PcEventsRowReader.ComposeSelectColumns" />'s order. Null when the row's
+    ///     <c>dotnet_type</c> resolves to nothing.
+    /// </summary>
+    internal ValueTask<IEvent?> ReadRowAsync(DbDataReader reader, CancellationToken token)
+        => ReadEventAsync(reader, token);
+
+    /// <summary>
+    ///     The exception a shard raises for a row whose <c>dotnet_type</c> resolves to nothing.
+    /// </summary>
+    internal static UnknownEventTypeException UnknownEventTypeFor(DbDataReader reader, long sequence)
+        => new(reader.IsDBNull(DotNetTypeOrdinal) ? null : reader.GetString(DotNetTypeOrdinal), sequence);
+
     protected override void ReportLastObservedSequence(EventPage page, long? lastObservedSequence)
         => page.LastObservedSequence = lastObservedSequence;
 
@@ -107,8 +122,7 @@ internal class PolecatEventLoader : EventLoaderBase
     // unregistered event type reports UnknownEventType with the offending sequence rather than classifying
     // as Other with no detail.
     protected override Exception UnresolvedEventTypeException(DbDataReader reader, long sequence)
-        => new UnknownEventTypeException(
-            reader.IsDBNull(DotNetTypeOrdinal) ? null : reader.GetString(DotNetTypeOrdinal), sequence);
+        => UnknownEventTypeFor(reader, sequence);
 
     /// <summary>
     ///     One of the five hydration paths CLAUDE.md lists. Returns null for a row whose <c>dotnet_type</c>

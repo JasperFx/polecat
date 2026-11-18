@@ -1,7 +1,9 @@
 using System.Data;
 using System.Data.Common;
+using Microsoft.Data.SqlClient;
 using Weasel.Core;
 using Weasel.SqlServer;
+using JasperFx.Core.Exceptions;
 
 namespace Polecat.Internal.Operations;
 
@@ -11,18 +13,30 @@ namespace Polecat.Internal.Operations;
 ///     UPDATE (Floor > 0, so the row is already there), and extended tracking adds the heartbeat
 ///     column. The SET clause is shared by both shapes.
 /// </summary>
-internal class RecordProgressionOperation : IStorageOperation, Weasel.Storage.NoDataReturnedCall
+/// <remarks>
+///     #1060: a daemon batch passes the floor its range was built from, and the UPDATE only moves the row when it
+///     is still there, as Marten's <c>UpdateProjectionProgress</c> does. A row that has moved (a second daemon on
+///     the shard, or a rewind under the batch) fails the batch with
+///     <see cref="ProgressionProgressOutOfOrderException" /> instead of overwriting it. JasperFx's per-identity
+///     rebuild relies on it: an idle shard carries the rebuild in an empty <c>(C, C]</c> batch, and that batch has
+///     to fail with everything in it when the progression moved.
+/// </remarks>
+internal class RecordProgressionOperation : IStorageOperation, Weasel.Storage.NoDataReturnedCall, IExceptionTransform
 {
+    // Raised by the floor check below and mapped back by TryTransform
+    internal const int ProgressionOutOfOrderErrorNumber = 51013;
+
     private readonly string _progressionTableName;
     private readonly string _name;
     private readonly long _ceiling;
     private readonly bool _extendedTracking;
     private readonly bool _upsert;
     private readonly bool _unicode; // #935
+    private readonly long? _expectedFloor; // #1060
 
     public RecordProgressionOperation(
         string progressionTableName, string name, long ceiling, bool extendedTracking, bool upsert,
-        bool unicode = false)
+        bool unicode = false, long? expectedFloor = null)
     {
         _progressionTableName = progressionTableName;
         _name = name;
@@ -30,6 +44,7 @@ internal class RecordProgressionOperation : IStorageOperation, Weasel.Storage.No
         _extendedTracking = extendedTracking;
         _upsert = upsert;
         _unicode = unicode;
+        _expectedFloor = expectedFloor;
     }
 
     public Type DocumentType => typeof(object);
@@ -64,6 +79,14 @@ internal class RecordProgressionOperation : IStorageOperation, Weasel.Storage.No
                     VALUES ({values});
                 """);
         }
+        else if (_expectedFloor is { } floor)
+        {
+            builder.Append($"UPDATE {_progressionTableName} SET {set} WHERE name = ");
+            builder.AppendParameter(_name, Storage.KeyColumns.DbType(_unicode));
+            builder.Append(" AND last_seq_id = ");
+            builder.AppendParameter(floor);
+            builder.Append($"; IF @@ROWCOUNT = 0 THROW {ProgressionOutOfOrderErrorNumber}, 'The shard''s progression is not at the floor this batch was built from.', 1;");
+        }
         else
         {
             builder.Append($"UPDATE {_progressionTableName} SET {set} WHERE name = ");
@@ -79,4 +102,16 @@ internal class RecordProgressionOperation : IStorageOperation, Weasel.Storage.No
 
     public Task PostprocessAsync(DbDataReader reader, IList<Exception> exceptions, CancellationToken token) =>
         Task.CompletedTask;
+
+    public bool TryTransform(Exception original, out Exception? transformed)
+    {
+        if (_expectedFloor is { } floor && original is SqlException { Number: ProgressionOutOfOrderErrorNumber })
+        {
+            transformed = new ProgressionProgressOutOfOrderException(_name, floor, _ceiling);
+            return true;
+        }
+
+        transformed = null;
+        return false;
+    }
 }

@@ -603,6 +603,50 @@ Floors are keyed by the projection name **without** its version, so a version bu
 Setting or clearing a floor does not reprocess anything by itself. The next start or rebuild honours
 the new value.
 
+## Rebuilding a Single Stream <Badge type="tip" text="6.0" />
+
+When one stream's document is wrong, you don't have to rebuild the whole projection. `RebuildSingleStreamAsync`
+folds that one stream again and commits the document:
+
+```cs
+await store.Advanced.RebuildSingleStreamAsync<TripSummary>(tripId);
+
+// Under conjoined tenancy or a database per tenant
+await store.Advanced.RebuildSingleStreamAsync<TripSummary>(tripId, "tenant-b");
+```
+
+A stream that folds to nothing (its aggregate was deleted, say) deletes the document, which is what a full rebuild
+would leave behind.
+
+When the document is written by an **asynchronous** single-stream projection, Polecat takes one of three paths
+([#1060](https://github.com/JasperFx/polecat/issues/1060)), the same as Marten:
+
+1. **A daemon of this store in this process runs the projection's shard.** The rebuild goes through that daemon and is
+   bound to the shard's next batch. That batch re-folds the stream from its first event and commits the document
+   together with the shard's progression, so the rebuild can't race the shard. The call returns when the batch
+   commits.
+2. **The shard is running on another node.** If the shard's progression row was written in the last 30 seconds by a
+   running agent, the call throws `IdentityRebuildRefusedException` with
+   `Reason == IdentityRebuildRefusal.ShardLiveOnAnotherNode`. Do the rebuild on the node that runs the projection.
+3. **Otherwise** the stream is aggregated and stored right here, outside any daemon. That is only safe when no daemon is
+   running the projection. Without extended progression tracking, a shard on another node that has had nothing to do
+   for 30 seconds stops rewriting its row and looks stopped, so the call isn't refused.
+
+Inline and live projections always take the third path, since there is no shard to race.
+
+You can also rebuild one identity through a running daemon directly. It works for any single-stream projection the
+daemon runs, and refuses with `IdentityRebuildRefusedException` when it can't (the shard isn't running there, is
+rebuilding, or has never committed anything):
+
+```cs
+var result = await daemon.RebuildIdentityAsync("TripSummary", tenantId: null, identity: tripId, token);
+
+// The document is now consistent with every event of its stream up to result.BoundCeiling
+```
+
+A projection whose documents are kept in custom projection storage, like an EF Core entity from
+`Polecat.EntityFrameworkCore`, can't be rebuilt one identity at a time. Use `RebuildProjectionAsync()` for those.
+
 ## Error Handling
 
 The daemon uses Polly resilience pipelines for error handling. See [Resiliency Policies](/configuration/retries) for configuration.

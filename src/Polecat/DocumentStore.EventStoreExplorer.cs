@@ -744,7 +744,7 @@ public partial class DocumentStore
     ///         on top, because a sharded store co-locates many tenants in each database.
     ///     </para>
     /// </remarks>
-    private PolecatDatabase? DatabaseForTenant(string tenantId)
+    internal PolecatDatabase? DatabaseForTenant(string tenantId)
         => IsSingleDatabase ? null : Options.Tenancy!.GetDatabase(tenantId);
 
     private void RequireSingleDatabase(string member)

@@ -124,22 +124,32 @@ internal sealed class SqlServerEventPagingDialect : IEventPagingDialect
         }
 
         var parameters = new List<EventPageParameter>();
-        var sql = new StringBuilder(" AND (dotnet_type IS NULL OR dotnet_type IN (")
+        var rendered = new RenderedTypeFilter(allowList, RenderTypeFilter(allowList, "", parameters), parameters);
+        _typeFilter = rendered;
+        return rendered;
+    }
+
+    /// <summary>
+    ///     The <c> AND (...)</c> type predicate for a non-empty allow list, with its parameters. Shared with the
+    ///     per-identity rebuild's re-fold loader (#1060), which has to filter exactly as the shard does.
+    /// </summary>
+    /// <param name="alias">A table alias with its dot (<c>"e."</c>), or empty.</param>
+    internal static string RenderTypeFilter(EventTypeAllowList allowList, string alias,
+        List<EventPageParameter> parameters)
+    {
+        var sql = new StringBuilder($" AND ({alias}dotnet_type IS NULL OR {alias}dotnet_type IN (")
             .Append(RenderList(allowList.DotNetTypeNames, "t", parameters))
             .Append(')');
 
         if (allowList.UpcastSourceAliases.Count > 0)
         {
-            sql.Append(" OR type IN (")
+            sql.Append($" OR {alias}type IN (")
                 .Append(RenderList(allowList.UpcastSourceAliases, "u", parameters))
                 .Append(')');
         }
 
         sql.Append(')');
-
-        var rendered = new RenderedTypeFilter(allowList, sql.ToString(), parameters);
-        _typeFilter = rendered;
-        return rendered;
+        return sql.ToString();
     }
 
     /// <summary>
