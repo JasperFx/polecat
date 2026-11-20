@@ -219,6 +219,14 @@ compacting to, which reads the `Compacted<T>` snapshot instead of the deleted ev
 projection or a subscription (Wolverine's event forwarding included) that was behind never saw the compacted events
 at all ([#1086](https://github.com/JasperFx/polecat/issues/1086)).
 
+Being past an event isn't always proof of having seen it. When the async daemon's high water mark skips a sequence
+range, an event can still commit late inside that range, after every projection moved past it. The daemon's late
+event recovery checks a skipped range for such events for `LateEventDetectionWindow` (one hour by default) after the
+skip. Until it's done, Polecat also refuses to compact a stream whose events sit in the gaps of that range, and the
+exception names the skip, its range, and when recovery will close it
+([#1099](https://github.com/JasperFx/polecat/issues/1099)). This needs `EnableLateEventDetection`, which is on by
+default.
+
 An archiver can be closed over either `IDocumentOperations` or `IDocumentSession`. If you set one that
 Polecat cannot call, `CompactStreamAsync` throws an `InvalidOperationException` and nothing is
 compacted, because the alternative is deleting the events without archiving them.
