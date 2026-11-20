@@ -1568,6 +1568,41 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
         CancellationToken ct) =>
         ApplyAllConfiguredChangesToDatabaseAsync(@override, reconnectionOptions, ct);
 
+    /// <summary>
+    ///     Apply every configured change to this database under <paramref name="globalLock" />, and once that has
+    ///     looked at the whole schema, let the event store's first-use ensures trust it (#1095).
+    /// </summary>
+    /// <remarks>
+    ///     Weasel marks its own feature checks after an apply, but Polecat's ensures don't read them: a session's
+    ///     first append or event read goes through <c>DocumentTableEnsurer.EnsureEventStoreSchemaAsync</c>, and the
+    ///     daemon through <see cref="EnsureStorageExistsAsync" />. Without this, the first save after a host started
+    ///     with <c>ApplyAllDatabaseChangesOnStartup()</c> took the migration lock and read the catalog again, racing
+    ///     whatever DDL other processes were running against the same database. Marten's first use trusts a
+    ///     completed apply. Hides Weasel's overload, which is not virtual; every other overload here comes through
+    ///     this one.
+    /// </remarks>
+    public new async Task<SchemaPatchDifference> ApplyAllConfiguredChangesToDatabaseAsync(
+        IGlobalLock<SqlConnection> globalLock,
+        AutoCreate? @override = null,
+        ReconnectionOptions? reconnectionOptions = null,
+        CancellationToken ct = default)
+    {
+        var difference = await base.ApplyAllConfiguredChangesToDatabaseAsync(globalLock, @override, reconnectionOptions, ct)
+            .ConfigureAwait(false);
+
+        // Under ContinueOnFailures, a loser of the lock returns as if nothing needed doing, and it has not looked
+        var lookedAtTheSchema = globalLock is SchemaMigrationLock { Attained: true }
+                                || ResourceMigrationFailureMode != ResourceMigrationFailureMode.ContinueOnFailures;
+
+        if (lookedAtTheSchema)
+        {
+            _storageEnsured = true;
+            _options.Store?.MarkEventStoreSchemaApplied(_connectionString);
+        }
+
+        return difference;
+    }
+
     private volatile bool _storageEnsured;
 
     public new async Task EnsureStorageExistsAsync(Type storageType, CancellationToken token)

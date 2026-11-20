@@ -990,4 +990,88 @@ public class first_use_schema_lock_tests
 
         (await TableExistsAsync(schema, "pc_events", token)).ShouldBeFalse();
     }
+
+    // -------------------------------------------------------------------------------------
+    // #1095: a completed apply counts as the event store's first-use ensure
+    // -------------------------------------------------------------------------------------
+
+    public enum ApplyPath
+    {
+        NoLockArgument,
+        Interface,
+        HostStartup
+    }
+
+    /// <summary>
+    ///     #1095: the schema was applied in full, so the first append and the daemon trust it, as Marten's do,
+    ///     rather than read the catalog again under the lock while other processes run DDL. Each would time out
+    ///     against the held lock, in 300ms, if it asked for it.
+    /// </summary>
+    [Theory]
+    [InlineData(ApplyPath.NoLockArgument)]
+    [InlineData(ApplyPath.Interface)]
+    [InlineData(ApplyPath.HostStartup)]
+    public async Task a_completed_apply_counts_as_the_event_stores_first_use_ensure(ApplyPath path)
+    {
+        var token = TestContext.Current.CancellationToken;
+        var schema = NewSchema();
+        using var store = BuildStore(schema, lockTimeout: TimeSpan.FromMilliseconds(300));
+
+        switch (path)
+        {
+            case ApplyPath.NoLockArgument:
+                await store.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: token);
+                break;
+
+            case ApplyPath.Interface:
+                await ((IDatabase)store.Database).ApplyAllConfiguredChangesToDatabaseAsync(ct: token);
+                break;
+
+            case ApplyPath.HostStartup:
+                store.Options.ShouldApplyChangesOnStartup = true;
+                await new PolecatActivator(store).StartAsync(token);
+                break;
+        }
+
+        await using var holder = await LockHolder.TakeAsync(schema, token);
+
+        await using (var session = store.LightweightSession())
+        {
+            session.Events.StartStream(Guid.NewGuid(), new FirstUseTick());
+            await session.SaveChangesAsync(token);
+        }
+
+        await using (var query = store.QuerySession())
+        {
+            await query.Events.FetchStreamAsync(Guid.NewGuid(), token: token);
+        }
+
+        await store.Database.EnsureStorageExistsAsync(typeof(IEvent), token);
+    }
+
+    /// <summary>
+    ///     A loser that carried on under ContinueOnFailures never looked at the schema, so it can't count.
+    /// </summary>
+    [Fact]
+    public async Task an_apply_that_lost_the_lock_does_not_count_as_the_first_use_ensure()
+    {
+        var token = TestContext.Current.CancellationToken;
+        var schema = NewSchema();
+        using var store = BuildStore(schema, lockTimeout: TimeSpan.FromMilliseconds(300));
+        store.Database.ResourceMigrationFailureMode = ResourceMigrationFailureMode.ContinueOnFailures;
+
+        await using var holder = await LockHolder.TakeAsync(schema, token);
+
+        (await store.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: token))
+            .ShouldBe(SchemaPatchDifference.None);
+
+        await AssertWaitsThenCarriesOnAsync(holder, async () =>
+        {
+            await using var session = store.LightweightSession();
+            session.Events.StartStream(Guid.NewGuid(), new FirstUseTick());
+            await session.SaveChangesAsync(token);
+        });
+
+        (await TableExistsAsync(schema, "pc_events", token)).ShouldBeTrue();
+    }
 }
