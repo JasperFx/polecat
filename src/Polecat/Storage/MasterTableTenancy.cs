@@ -190,7 +190,9 @@ public class MasterTableTenancy : MasterTableTenancyBase<PolecatDatabase, DbData
             _resilience.Execute(static state =>
             {
                 var (connectionString, options, schema, ddl) = state;
-                using var conn = new SqlConnection(connectionString);
+
+                // #1090: without MARS, so this blocking I/O doesn't need a second pool thread to complete
+                using var conn = new SqlConnection(ConnectionFactory.WithoutMars(connectionString));
                 conn.Open();
 
                 // Nothing has to worry about a transaction here, as for the asynchronous path: this runs as a

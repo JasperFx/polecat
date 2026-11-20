@@ -130,6 +130,43 @@ public class multi_stream_projection_stepthrough_tests : OneOffConfigurationsCon
         final.GetProperty("name").GetString().ShouldBe("replay");
     }
 
+    /// <summary>
+    ///     marten#6107 parity: Marten's step-through read every event body with its own static
+    ///     JsonSerializerOptions, so an event that only deserializes with the store's settings failed in the
+    ///     explorer. Polecat's step-through reads them through the store's serializer.
+    /// </summary>
+    [Fact]
+    public async Task step_through_reads_events_with_the_stores_serializer_settings()
+    {
+        var store = await StoreWith(opts =>
+        {
+            // SQL Server's json type doesn't promise to keep the discriminator first either
+            opts.ConfigureSerialization(configure: json => json.AllowOutOfOrderMetadataProperties = true);
+            opts.Projections.Snapshot<StepItemTally>(SnapshotLifecycle.Inline);
+        });
+
+        var streamId = Guid.NewGuid();
+        using var body = JsonDocument.Parse(
+            """{"items":[{"text":"hello","type":"user"},{"tool":"search","type":"tool"},{"text":"again","type":"user"}]}""");
+
+        // Control: without the store's setting, this body doesn't deserialize
+        Should.Throw<NotSupportedException>(() => body.RootElement.Deserialize<StepItemsRecorded>(s_camelCase));
+
+        var events = new List<EventRecord>
+        {
+            new(Guid.NewGuid(), 1, 1, streamId.ToString(), "step_items_recorded", body.RootElement.Clone(), null,
+                DateTimeOffset.UtcNow, "*DEFAULT*", null!)
+        };
+
+        IEventStore es = store;
+        var result = await es.RunMultiStreamProjectionAsync(nameof(StepItemTally), events, CancellationToken.None);
+
+        var timeline = result.AggregatesByIdentity[streamId.ToString()];
+        timeline.Steps.ShouldHaveSingleItem().Error.ShouldBeNull();
+        timeline.FinalState!.Value.GetProperty("users").GetInt32().ShouldBe(2);
+        timeline.FinalState!.Value.GetProperty("tools").GetInt32().ShouldBe(1);
+    }
+
     [Fact]
     public async Task enrich_events_async_runs_through_the_real_path_per_group()
     {
@@ -189,5 +226,36 @@ public partial class EnrichingCustomerSummaryProjection : MultiStreamProjection<
     {
         Interlocked.Increment(ref EnrichCalls);
         return Task.CompletedTask;
+    }
+}
+
+[System.Text.Json.Serialization.JsonPolymorphic(TypeDiscriminatorPropertyName = "type")]
+[System.Text.Json.Serialization.JsonDerivedType(typeof(StepUserItem), "user")]
+[System.Text.Json.Serialization.JsonDerivedType(typeof(StepToolItem), "tool")]
+public abstract record StepModelItem;
+
+public sealed record StepUserItem(string Text) : StepModelItem;
+
+public sealed record StepToolItem(string Tool) : StepModelItem;
+
+public record StepItemsRecorded(List<StepModelItem> Items);
+
+public class StepItemTally
+{
+    public Guid Id { get; set; }
+    public int Users { get; set; }
+    public int Tools { get; set; }
+
+    public static StepItemTally Create(StepItemsRecorded e)
+    {
+        var tally = new StepItemTally();
+        tally.Apply(e);
+        return tally;
+    }
+
+    public void Apply(StepItemsRecorded e)
+    {
+        Users += e.Items.OfType<StepUserItem>().Count();
+        Tools += e.Items.OfType<StepToolItem>().Count();
     }
 }

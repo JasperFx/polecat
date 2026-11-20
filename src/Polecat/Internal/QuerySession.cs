@@ -79,6 +79,20 @@ internal partial class QuerySession : IQuerySession, JasperFx.Events.IEventTenan
         }
     }
 
+    /// <summary>
+    ///     Drop every aggregate identity map entry for one stream, whatever the aggregate type (#1094).
+    /// </summary>
+    internal void EvictStreamFromAggregateIdentityMap(object streamId)
+    {
+        foreach (var raw in AggregateIdentityMap.Values)
+        {
+            if (raw is System.Collections.IDictionary dictionary)
+            {
+                dictionary.Remove(streamId);
+            }
+        }
+    }
+
     internal bool TryGetAggregateFromIdentityMap<TDoc, TId>(TId id, out TDoc? document)
         where TDoc : class where TId : notnull
     {

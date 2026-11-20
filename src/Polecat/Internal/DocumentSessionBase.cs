@@ -1099,6 +1099,11 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             // commit into a failed save, and an older entry can't replace a newer one.
             _aggregateWriteCache?.Flush();
 
+            // #1094: an aggregate FetchForWriting left in the aggregate identity map is the stream as it was
+            // read, without the events this commit just appended. Left there, every FetchLatest after the
+            // commit answered with it. Dropped, the next read goes to the database.
+            evictCommittedStreamsFromAggregateIdentityMap();
+
             // marten#6004: where this commit's events are, before the tracker is reset and before any
             // listener, so an AfterCommitAsync listener can carry the position on
             recordAppendedPosition();
@@ -1239,6 +1244,17 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     ///     Is this table there, as far as the transaction this save holds can tell? On the session's own
     ///     connection, so it needs nothing from the pool, and any wait on it is one the server can see.
     /// </summary>
+    private void evictCommittedStreamsFromAggregateIdentityMap()
+    {
+        if (AggregateIdentityMap.Count == 0) return;
+
+        foreach (var stream in _workTracker.Streams)
+        {
+            if (stream.Events.Count == 0) continue;
+            EvictStreamFromAggregateIdentityMap(stream.Key ?? (object)stream.Id);
+        }
+    }
+
     private async Task<bool> tableExistsAsync(string qualifiedTableName, CancellationToken token)
     {
         await using var cmd = new SqlCommand("SELECT OBJECT_ID(@table);");

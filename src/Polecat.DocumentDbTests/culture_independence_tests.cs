@@ -6,6 +6,7 @@ using Polecat.Linq.QueryHandlers;
 using Polecat.Linq.SqlGeneration;
 using Polecat.Patching;
 using Polecat.Projections.Flattened;
+using Polecat.Storage;
 using Polecat.Tests.Harness;
 
 namespace Polecat.Tests;
@@ -257,6 +258,44 @@ public class culture_independence_tests : OneOffConfigurationsContext
         new CultureFlatProjection().Table.Columns.Select(x => x.Name).ToArray().ShouldBe(invariant);
     }
 
+    /// <summary>
+    ///     marten#6103 parity: Marten lowered a duplicated field's upsert argument with the current culture,
+    ///     so on a Turkish host a column named <c>IsFlagged</c> became <c>ısflagged</c> and the upsert named a
+    ///     column that does not exist. Polecat's duplicated field is an index's persisted computed column, and
+    ///     the document's own table name lowers the type name as well.
+    /// </summary>
+    [Fact]
+    public async Task an_index_on_a_member_with_a_capital_i_works_on_a_turkish_host()
+    {
+        DocumentIndex.ColumnNameForPath("$.IsFlagged").ShouldBe("cc_isflagged");
+
+        using var scope = CultureScope.Formatting("tr-TR");
+
+        // Control: this is the culture the mapping has to survive
+        "IsFlagged".ToLower().ShouldBe("ısflagged");
+
+        DocumentIndex.ColumnNameForPath("$.IsFlagged").ShouldBe("cc_isflagged");
+
+        ConfigureStore(opts => opts.Schema.For<IndexedCultureFlag>().Index(x => x.IsFlagged));
+        theStore.Options.Providers.GetProvider(typeof(IndexedCultureFlag)).Mapping.TableName.ShouldBe("pc_doc_indexedcultureflag");
+
+        var flagged = new IndexedCultureFlag { Id = Guid.NewGuid(), IsFlagged = true };
+        await using (var session = theStore.LightweightSession())
+        {
+            session.Store(flagged, new IndexedCultureFlag { Id = Guid.NewGuid() });
+            await session.SaveChangesAsync(Ct);
+
+            // and again, so the second write goes through the update side of the upsert
+            flagged.IsFlagged = true;
+            session.Store(flagged);
+            await session.SaveChangesAsync(Ct);
+        }
+
+        await using var query = theStore.QuerySession();
+        (await query.Query<IndexedCultureFlag>().Where(x => x.IsFlagged).Select(x => x.Id).ToListAsync(Ct))
+            .ShouldBe([flagged.Id]);
+    }
+
     // ---- reading numbers back -----------------------------------------------------------------------
 
     [Theory]
@@ -317,6 +356,12 @@ public class culture_independence_tests : OneOffConfigurationsContext
 }
 
 public record CultureChild(string Name);
+
+public class IndexedCultureFlag
+{
+    public Guid Id { get; set; }
+    public bool IsFlagged { get; set; }
+}
 
 public class CultureDoc
 {

@@ -263,6 +263,15 @@ public partial class DocumentStore : IDocumentStore
     }
 
     /// <summary>
+    ///     #1095: the whole configured schema was just applied to the database behind
+    ///     <paramref name="connectionString" />, so its sessions don't check the event store schema again.
+    /// </summary>
+    internal void MarkEventStoreSchemaApplied(string connectionString)
+    {
+        EnsurerFor(connectionString).MarkEventStoreEnsured();
+    }
+
+    /// <summary>
     ///     Everything that memoizes "this table exists", for after those tables have been dropped.
     /// </summary>
     internal void ForgetEnsuredTables()

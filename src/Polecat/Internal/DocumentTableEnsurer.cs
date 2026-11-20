@@ -491,6 +491,20 @@ internal class DocumentTableEnsurer
     private readonly SemaphoreSlim _eventStoreSemaphore = new(1, 1);
 
     /// <summary>
+    ///     #1095: a completed <c>ApplyAllConfiguredChangesToDatabaseAsync</c> on this database covered the event
+    ///     store schema, so <see cref="EnsureEventStoreSchemaAsync" /> has nothing left to check.
+    /// </summary>
+    /// <remarks>
+    ///     Not under per-tenant partitioning, where the ensure also loads the partition manager's tenant map
+    ///     before it compares the tables, and the apply doesn't.
+    /// </remarks>
+    internal void MarkEventStoreEnsured()
+    {
+        if (_options.EventGraph.AnyTenantPartitioning) return;
+        _eventStoreEnsured = true;
+    }
+
+    /// <summary>
     ///     #219: ensures the event store schema (streams / events / progression tables, plus any tag
     ///     and natural-key tables) exists on first usage of the event store — the event-sourcing
     ///     analogue of EnsureTableAsync for documents. Idempotent and applied once per process; a
