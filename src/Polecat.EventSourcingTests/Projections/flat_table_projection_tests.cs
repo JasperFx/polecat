@@ -65,16 +65,20 @@ public class flat_table_projection_tests : IntegrationContext
     private async Task<DocumentStore> CreateStoreWithFlatTable(
         ProjectionLifecycle lifecycle = ProjectionLifecycle.Inline)
     {
+        // Drop the quest_metrics table if it exists from a previous test run. Before the store applies its schema,
+        // because a completed apply counts as the event store's first-use ensure (#1095), so nothing would put a
+        // table dropped afterwards back.
+        await using (var conn = await OpenConnectionAsync())
+        await using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = "IF OBJECT_ID('dbo.quest_metrics', 'U') IS NOT NULL DROP TABLE dbo.quest_metrics;";
+            await cmd.ExecuteNonQueryAsync();
+        }
+
         await StoreOptions(opts =>
         {
             opts.Projections.Add<QuestMetricsProjection>(lifecycle);
         });
-
-        // Drop the quest_metrics table if it exists from a previous test run
-        await using var conn = await OpenConnectionAsync();
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = "IF OBJECT_ID('dbo.quest_metrics', 'U') IS NOT NULL DROP TABLE dbo.quest_metrics;";
-        await cmd.ExecuteNonQueryAsync();
 
         return theStore;
     }
@@ -210,17 +214,18 @@ public class flat_table_projection_tests : IntegrationContext
         // force-lowercased column names which produced duplicate-column DDL
         // errors when two events mapped to the same logical column with
         // different casing.
-        await StoreOptions(opts =>
-        {
-            opts.Projections.Add<PascalCaseFlatProjection>(ProjectionLifecycle.Inline);
-        });
-
+        // Before the apply, as in CreateStoreWithFlatTable (#1095)
         await using (var conn = await OpenConnectionAsync())
         await using (var dropCmd = conn.CreateCommand())
         {
             dropCmd.CommandText = "IF OBJECT_ID('dbo.order_history', 'U') IS NOT NULL DROP TABLE dbo.order_history;";
             await dropCmd.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
         }
+
+        await StoreOptions(opts =>
+        {
+            opts.Projections.Add<PascalCaseFlatProjection>(ProjectionLifecycle.Inline);
+        });
 
         var streamId = Guid.NewGuid();
         await using var session = theStore.LightweightSession();
