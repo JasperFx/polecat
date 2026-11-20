@@ -1538,9 +1538,13 @@
              SequentialGuid.SqlServerOrder, so new document ids go in at the end of the clustered key. -->
         <!-- Weasel 10.0.0-alpha.11 (from alpha.9, through alpha.10). Builds with no Polecat change. weasel#890 makes
              AdvancedOperations.DeleteReferencingDocumentsFirstAsync (#1085) redundant; it stays, since it is harmless. -->
-        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="10.0.0-alpha.11" />
-        <PackageVersion Include="Weasel.SqlServer" Version="10.0.0-alpha.11" />
-        <PackageVersion Include="Weasel.Storage" Version="10.0.0-alpha.11" />
+        <!-- Weasel 10.0.0-alpha.12 (from alpha.11). Builds with no Polecat change. The release is PostgreSQL only:
+             weasel#891/#892/#895/#896 fix ManagedListPartitions (Weasel.Postgresql) and Weasel's own test image moves to
+             PostgreSQL 17. Nothing in Weasel.Core, Weasel.Storage, Weasel.SqlServer or Weasel.EntityFrameworkCore changed,
+             so no SQL Server code path Polecat uses is touched. JasperFx floor stays 3.6.0, satisfied by the 3.8.0 pins. -->
+        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="10.0.0-alpha.12" />
+        <PackageVersion Include="Weasel.SqlServer" Version="10.0.0-alpha.12" />
+        <PackageVersion Include="Weasel.Storage" Version="10.0.0-alpha.12" />
 
         <!-- Strongly typed IDs. Both generators are test-only: they prove Polecat's value-type id
              support against the two libraries Marten's ValueTypeTests exercise. StronglyTypedId emits
