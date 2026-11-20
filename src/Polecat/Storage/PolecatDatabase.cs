@@ -369,17 +369,20 @@ public partial class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDataba
                     failure_category = CASE WHEN @touchFailure = 1 THEN @failureCategory ELSE failure_category END,
                     failure_event_sequence = CASE WHEN @touchFailure = 1 THEN @failureSequence ELSE failure_event_sequence END,
                     failure_event_type = CASE WHEN @touchFailure = 1 THEN @failureEventType ELSE failure_event_type END,
-                    failure_event_tenant_id = CASE WHEN @touchFailure = 1 THEN @failureTenantId ELSE failure_event_tenant_id END
+                    failure_event_tenant_id = CASE WHEN @touchFailure = 1 THEN @failureTenantId ELSE failure_event_tenant_id END,
+                    parked_count = COALESCE(@parked, parked_count)
                 WHERE name = @name
                   AND NOT EXISTS (
                       SELECT heartbeat, agent_status, pause_reason, running_on_node,
-                             failure_category, failure_event_sequence, failure_event_type, failure_event_tenant_id
+                             failure_category, failure_event_sequence, failure_event_type, failure_event_tenant_id,
+                             parked_count
                       INTERSECT
                       SELECT @heartbeat, @status, @reason, @node,
                              CASE WHEN @touchFailure = 1 THEN @failureCategory ELSE failure_category END,
                              CASE WHEN @touchFailure = 1 THEN @failureSequence ELSE failure_event_sequence END,
                              CASE WHEN @touchFailure = 1 THEN @failureEventType ELSE failure_event_type END,
-                             CASE WHEN @touchFailure = 1 THEN @failureTenantId ELSE failure_event_tenant_id END
+                             CASE WHEN @touchFailure = 1 THEN @failureTenantId ELSE failure_event_tenant_id END,
+                             COALESCE(@parked, parked_count)
                   );
                 """;
 
@@ -393,6 +396,9 @@ public partial class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDataba
             var failureSequence = cmd.Parameters.AddWithValue("@failureSequence", DBNull.Value);
             var failureEventType = cmd.Parameters.AddVarChar("@failureEventType", null);
             var failureTenantId = cmd.Parameters.AddKey("@failureTenantId", null, unicode);
+
+            // #1053: null when the state doesn't say (a shard that doesn't park), which leaves the column alone
+            var parked = cmd.Parameters.Add("@parked", System.Data.SqlDbType.Int);
 
             foreach (var shardState in shardStates)
             {
@@ -416,6 +422,7 @@ public partial class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDataba
                 failureSequence.Value = (object?)failure?.Event?.Sequence ?? DBNull.Value;
                 failureEventType.Value = (object?)failure?.Event?.EventTypeName ?? DBNull.Value;
                 failureTenantId.Value = (object?)failure?.Event?.TenantId ?? DBNull.Value;
+                parked.Value = (object?)shardState.ParkedCount ?? DBNull.Value;
 
                 // One ExecuteNonQueryAsync per shard, deliberately: each is its own implicit
                 // transaction, so this loop never holds more than a single row lock at a time.
@@ -471,7 +478,7 @@ public partial class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDataba
                 // #705 / jasperfx#924: last_updated comes back on BOTH shapes and sits last, after the
                 // optional extended block, so the ordinals of everything already read stay put.
                 var columns = events.EnableExtendedProgressionTracking
-                    ? "name, last_seq_id, heartbeat, agent_status, pause_reason, running_on_node, warning_behind_threshold, critical_behind_threshold, failure_category, failure_event_sequence, failure_event_type, failure_event_tenant_id, last_updated"
+                    ? "name, last_seq_id, heartbeat, agent_status, pause_reason, running_on_node, warning_behind_threshold, critical_behind_threshold, failure_category, failure_event_sequence, failure_event_type, failure_event_tenant_id, last_updated, parked_count"
                     : "name, last_seq_id, last_updated";
 
                 if (tenant == null)
@@ -532,6 +539,9 @@ public partial class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDataba
                             reader.IsDBNull(10) ? null : reader.GetString(10),
                             reader.IsDBNull(11) ? null : reader.GetString(11),
                             shardState);
+
+                        // #1053 (marten#6003): after last_updated, so no earlier ordinal moved
+                        if (!reader.IsDBNull(13)) shardState.ParkedCount = reader.GetInt32(13);
                     }
 
                     list.Add(shardState);

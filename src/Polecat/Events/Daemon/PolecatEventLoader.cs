@@ -89,6 +89,11 @@ internal class PolecatEventLoader : EventLoaderBase
     ///     is reported on <see cref="EventPage.Unreadable" /> with its stream and tenant when the request parks such
     ///     events, and a projection that slices by DCB tag gets its events' tags.
     /// </summary>
+    /// <remarks>
+    ///     Weasel's <see cref="EventLoaderBase" /> doesn't know about <c>EventRequest.ParksUnreadableEvents</c> yet
+    ///     (weasel#901), so the unreadable rows are collected here through <c>ShouldSkip</c> and
+    ///     <c>RecordSkippedEventAsync</c>, as Fisher's loader does. Move this into the base when #901 lands.
+    /// </remarks>
     public override async Task<EventPage> LoadAsync(EventRequest request, CancellationToken token)
     {
         List<UnreadableEvent>? unreadable = null;

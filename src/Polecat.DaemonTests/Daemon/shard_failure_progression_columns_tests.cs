@@ -104,6 +104,32 @@ public class shard_failure_progression_columns_tests : OneOffConfigurationsConte
     }
 
     [Fact]
+    public async Task the_parked_count_is_read_back_and_kept_when_a_state_does_not_say()
+    {
+        // #1053 (marten#6003): ShardState.ParkedCount under extended progression, for a poller of a node that is down
+        await SeedProgressionRowAsync();
+
+        var parked = WithoutFailure(ShardAction.Updated, "Running");
+        parked.ParkedCount = 3;
+        await ((IEventDatabase)theDatabase).WriteExtendedProgressionAsync(parked, TestContext.Current.CancellationToken);
+
+        (await theDatabase.AllProjectionProgress(TestContext.Current.CancellationToken))
+            .Single(x => x.ShardName == TheShard).ParkedCount.ShouldBe(3);
+
+        // A state from something that doesn't park says nothing about it, and leaves the count alone
+        await ((IEventDatabase)theDatabase).WriteExtendedProgressionAsync(
+            WithoutFailure(ShardAction.Stopped, "Stopped"), TestContext.Current.CancellationToken);
+        (await theDatabase.AllProjectionProgress(TestContext.Current.CancellationToken))
+            .Single(x => x.ShardName == TheShard).ParkedCount.ShouldBe(3);
+
+        var unparked = WithoutFailure(ShardAction.Updated, "Running");
+        unparked.ParkedCount = 0;
+        await ((IEventDatabase)theDatabase).WriteExtendedProgressionAsync(unparked, TestContext.Current.CancellationToken);
+        (await theDatabase.AllProjectionProgress(TestContext.Current.CancellationToken))
+            .Single(x => x.ShardName == TheShard).ParkedCount.ShouldBe(0);
+    }
+
+    [Fact]
     public async Task a_healthy_shard_reports_no_failure()
     {
         await SeedProgressionRowAsync();

@@ -418,6 +418,11 @@ public class connection_pool_timeout_in_a_projection_tests : OneOffConfiguration
         ConfigureStore(opts =>
         {
             opts.ConnectionString = connectionString;
+
+            // Skip, the default before #1053: its build loop is what goes round again. Under Park or Pause the
+            // same transient AggregateException pauses the shard instead (jasperfx#1256).
+            opts.Projections.Errors.SkipApplyErrors = true;
+
             opts.Projections.Add(new PoolStarvedAggregation(exhaustion), ProjectionLifecycle.Async);
         });
 

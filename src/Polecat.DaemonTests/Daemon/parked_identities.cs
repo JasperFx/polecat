@@ -1,4 +1,5 @@
 using JasperFx;
+using JasperFx.Descriptors;
 using JasperFx.Events;
 using JasperFx.Events.ComplianceTests;
 using JasperFx.Events.Daemon;
@@ -299,6 +300,51 @@ public class parked_identities : IAsyncLifetime
         page.Source.ShouldBe(tagged ? IdentityEventSource.Tag : IdentityEventSource.SliceIndex);
         page.Events.Count.ShouldBe(3);
         page.Events.ShouldAllBe(x => x.TenantId == "red");
+    }
+
+    // ---- the stepper ----
+
+    [Fact]
+    public async Task stepping_a_tag_grouped_projection_from_records_finds_its_identity_by_the_records_tags()
+    {
+        var store = await aStoreAsync("parked_step_tags", opts =>
+        {
+            opts.Events.AddEventType<TallyTicked>();
+            opts.Events.AddEventType<TallyPoisoned>();
+            opts.Events.AddEventType<TallySideEffect>();
+            opts.Events.RegisterTagType<TallyTag>("tally");
+            opts.Projections.Add(new ParkingTagTallyProjection(), ProjectionLifecycle.Async);
+        });
+
+        var tally = Guid.NewGuid();
+        var other = Guid.NewGuid();
+        var typeName = store.Events.EventMappingFor(typeof(TallyTicked)).EventTypeName;
+
+        EventRecord record(long sequence, Guid tagged, IReadOnlyDictionary<string, string>? tags)
+            => new(Guid.NewGuid(), sequence, 1, Guid.NewGuid().ToString(), typeName,
+                System.Text.Json.JsonDocument.Parse(store.Options.Serializer.ToJson(new TallyTicked([tagged])))
+                    .RootElement.Clone(),
+                null, DateTimeOffset.UtcNow, StorageConstants.DefaultTenantId, tags);
+
+        // Keyed by the tag type's name, as the explorer's tag queries are, or by its table suffix
+        var records = new[]
+        {
+            record(1, tally, new Dictionary<string, string> { ["TallyTag"] = tally.ToString() }),
+            record(2, other, new Dictionary<string, string> { ["TallyTag"] = other.ToString() }),
+            record(3, tally, new Dictionary<string, string> { ["tally"] = tally.ToString() })
+        };
+
+        var timeline = await ((IEventStore)store).RunMultiStreamProjectionForIdentityAsync(
+            ParkingTagTallyProjection.ProjectionName, tally, records, null, Ct);
+
+        timeline.Steps.Count.ShouldBe(2);
+        timeline.Steps.Select(x => x.Event.Sequence).ShouldBe([1L, 3L]);
+        timeline.FinalState.ShouldNotBeNull().GetProperty("amount").GetInt32().ShouldBe(2);
+
+        // The same records without their tags give the identity nothing
+        var untagged = records.Select(x => x with { Tags = null }).ToArray();
+        (await ((IEventStore)store).RunMultiStreamProjectionForIdentityAsync(
+            ParkingTagTallyProjection.ProjectionName, tally, untagged, null, Ct)).Steps.ShouldBeEmpty();
     }
 
     // ---- rewinds and ejects ----

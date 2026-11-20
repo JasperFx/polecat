@@ -220,6 +220,11 @@ public class operation_result_set_alignment_tests : IAsyncLifetime
             "Polecat.Patching.PatchOperation",
             "Polecat.Projections.Flattened.FlatTableSqlOperation",
 
+            // #1053 (marten#6003): a MERGE, a DELETE and an INSERT ... SELECT, none with an OUTPUT clause
+            "Polecat.Events.Daemon.ParkIdentityOperation",
+            "Polecat.Events.Daemon.UnparkIdentityOperation",
+            "Polecat.Events.Daemon.AppendSliceIndexOperation",
+
             // Declared as returning nothing because QueueSqlCommand's contract says so. This is the one
             // entry that rests on the caller rather than on SQL we can read: see IDocumentOperations.
             "Polecat.Internal.Operations.ExecuteSqlStorageOperation"

@@ -80,6 +80,22 @@ internal static class EventTagHydrator
         }
     }
 
+    /// <summary>
+    ///     #1053: a tag back from its text, as an <c>EventRecord</c> carries it (keyed by the tag type's name or table
+    ///     suffix), so stepping an <c>IdentityFromTag</c> projection from records sees its tags.
+    /// </summary>
+    public static object TagFromText(ITagTypeRegistration registration, string text)
+    {
+        var simple = registration.SimpleType;
+        object value = simple == typeof(Guid) ? Guid.Parse(text)
+            : simple == typeof(int) ? int.Parse(text, System.Globalization.CultureInfo.InvariantCulture)
+            : simple == typeof(long) ? long.Parse(text, System.Globalization.CultureInfo.InvariantCulture)
+            : simple == typeof(short) ? short.Parse(text, System.Globalization.CultureInfo.InvariantCulture)
+            : text;
+
+        return wrapperFor(registration)(value);
+    }
+
     private static string tableFor(EventGraph events, ITagTypeRegistration registration)
         => Polecat.Internal.SqlEscaping.QualifiedName(events.DatabaseSchemaName, EventGraph.TagTableNameFor(registration));
 
