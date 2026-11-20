@@ -371,6 +371,15 @@ that is the first tenant's database, or the master table's. So an id is unique a
 database has to stay reachable for every tenant's inserts, and a tenant's database moved elsewhere doesn't take its position
 in the sequence with it. This differs from Marten, which keeps a sequence per database.
 
+### HiLo and MARS
+
+A synchronous `Store()` that has to reserve a new block of ids reads `pc_hilo` with blocking I/O. On Linux and macOS,
+SqlClient completes a synchronous read on a connection with `MultipleActiveResultSets=True` through the thread pool, so
+a burst of synchronous `Store()` calls could hold every pool thread while each one waited for another. Polecat opens the
+connections for that synchronous work, and for creating `pc_hilo` and the master table tenancy's `pc_tenants` table on
+first use, with MARS turned off. If your connection string turns MARS on, those connections get a second connection pool
+of their own.
+
 ### Resetting the Sequence Floor
 
 ```cs
