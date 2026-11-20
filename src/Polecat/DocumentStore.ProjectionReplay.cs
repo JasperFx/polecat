@@ -4,6 +4,7 @@ using System.Text.Json;
 using JasperFx.Descriptors;
 using JasperFx.Events;
 using JasperFx.Events.Projections;
+using JasperFx.Events.Tags;
 using Polecat.Events;
 
 namespace Polecat;
@@ -69,6 +70,21 @@ public partial class DocumentStore
     }
 
     /// <summary>
+    ///     marten#6003 / #1053: step one identity of a projection from a starting state, sliced the way the daemon
+    ///     slices. Read the identity's events with <c>LoadIdentityEventsAsync</c> first.
+    /// </summary>
+    async Task<ProjectionTimelineRaw> IEventStore.RunMultiStreamProjectionForIdentityAsync(
+        string projectionName, object identity, IReadOnlyList<EventRecord> events, JsonElement? startingState,
+        CancellationToken ct)
+    {
+        var stepThrough = StepThrough();
+        await using var session = QuerySession();
+        return await stepThrough
+            .RunMultiStreamProjectionForIdentityAsync(projectionName, identity, events, startingState, session, ct)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
     ///     Converts a wire-level <see cref="EventRecord"/> back into a Polecat
     ///     domain event the aggregator can apply. Returns <c>null</c> when the
     ///     event type isn't registered with the store.
@@ -118,6 +134,21 @@ public partial class DocumentStore
         else
         {
             wrapped.StreamKey = record.StreamId;
+        }
+
+        // #1053: the record's DCB tags, keyed by the tag type's name or table suffix, so a projection grouped with
+        // IdentityFromTag<TTag>() finds its identity when it is stepped from records. A tag the store doesn't know
+        // can't be one a projection slices by, so it is left out.
+        if (record.Tags is { Count: > 0 } tags && Events.TagTypes.Count > 0)
+        {
+            foreach (var (name, text) in tags)
+            {
+                var registration = Events.TagTypes.FindByTagName(name);
+                if (registration == null) continue;
+
+                wrapped.AddTag(new EventTag(registration.TagType,
+                    Polecat.Events.Daemon.EventTagHydrator.TagFromText(registration, text)));
+            }
         }
 
         return wrapped;

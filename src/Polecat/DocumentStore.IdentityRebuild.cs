@@ -27,6 +27,24 @@ public partial class DocumentStore
         IEventDatabase database, IdentityRebuildEventRequest request, CancellationToken token)
         => new IdentityRebuildEventLoader(this, (PolecatDatabase)database).LoadAsync(request, token);
 
+    // marten#6003 / #1053: parking. On by default in Polecat 6 (Events.EnableParkedIdentities), off under
+    // RestoreV5Defaults(), and then a projection set to park pauses instead.
+    bool IEventStore<IDocumentSession, IQuerySession>.SupportsParkedIdentities => Options.Events.EnableParkedIdentities;
+
+    // marten#6003 / #1053: where one identity of a multi-stream projection finds its events. Streams and DCB tags are
+    // always there; the slice index needs its tables and the event-range marks its start is kept in.
+    bool IEventStore<IDocumentSession, IQuerySession>.SupportsIdentityEventSource(IdentityEventSource source)
+        => source switch
+        {
+            IdentityEventSource.Stream or IdentityEventSource.Tag or IdentityEventSource.Scan => true,
+            IdentityEventSource.SliceIndex => Events.SupportsSliceIndex,
+            _ => false
+        };
+
+    Task<IReadOnlyList<IEvent>> IEventStore<IDocumentSession, IQuerySession>.LoadEventsForIdentityAsync(
+        IEventDatabase database, IdentityEventLoadRequest request, CancellationToken token)
+        => new IdentityEventSourceLoader(this, (PolecatDatabase)database).LoadAsync(request, token);
+
     /// <summary>
     ///     The asynchronous single-stream projection that writes <paramref name="documentType" />, or null when
     ///     none does.

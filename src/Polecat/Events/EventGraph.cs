@@ -122,6 +122,18 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
     /// </summary>
     public bool EnableEventRangeMarks => _options.Events.EnableEventRangeMarks;
 
+    /// <summary>
+    ///     marten#6003 / #1053: whether pc_parked_identities is part of the schema. See
+    ///     <see cref="EventStoreOptions.EnableParkedIdentities" />.
+    /// </summary>
+    public bool EnableParkedIdentities => _options.Events.EnableParkedIdentities;
+
+    /// <summary>
+    ///     marten#6003 / #1053: can this store write and read a projection's slice index? It needs the parked identities
+    ///     and the event-range marks, where the index's start is kept.
+    /// </summary>
+    internal bool SupportsSliceIndex => EnableParkedIdentities && EnableEventRangeMarks;
+
     internal TimeSpan LateEventDetectionWindow => _options.Projections.LateEventDetectionWindow;
 
     internal TimeSpan LateEventProbeInterval => _options.Projections.LateEventProbeInterval;
@@ -257,6 +269,10 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
     // jasperfx#1215 / #1222: the ceilings and cursors of rewrites and backfills. See EventRangeMarksTable.
     internal string EventRangeMarksTableName =>
         Polecat.Internal.SqlEscaping.QualifiedName(DatabaseSchemaName, Schema.EventRangeMarksTable.TableName);
+
+    // marten#6003 / #1053: the parked identities of async projections. See ParkedIdentitiesTable.
+    internal string ParkedIdentitiesTableName =>
+        Polecat.Internal.SqlEscaping.QualifiedName(DatabaseSchemaName, Schema.ParkedIdentitiesTable.TableName);
 
     // #1054: the skipped high water ranges and the events that committed inside them late
     internal string HighWaterSkipsTableName =>

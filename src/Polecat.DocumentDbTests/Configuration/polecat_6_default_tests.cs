@@ -39,6 +39,21 @@ public class polecat_6_default_tests
         options.Events.EnableLateEventDetection.ShouldBeTrue();
         options.Events.EnableEventRangeMarks.ShouldBeTrue();
         options.Events.EnableProjectionFloors.ShouldBeTrue();
+        options.Events.EnableParkedIdentities.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void a_failing_async_projection_parks_by_default()
+    {
+        // #1053 (marten#6003): park the failing identity, or pause where a projection can't park
+        var options = new StoreOptions();
+
+        options.Projections.Errors.ApplyErrors.ShouldBe(JasperFx.Events.Daemon.ProjectionErrorAction.Park);
+        options.Projections.Errors.SerializationErrors.ShouldBe(JasperFx.Events.Daemon.ProjectionErrorAction.Park);
+        options.Projections.Errors.SkipUnknownEvents.ShouldBeTrue();
+
+        // A rebuild still pauses
+        options.Projections.RebuildErrors.ApplyErrors.ShouldBe(JasperFx.Events.Daemon.ProjectionErrorAction.Pause);
     }
 
     [Fact]
@@ -75,6 +90,9 @@ public class polecat_6_default_tests
         options.Events.EnableLateEventDetection.ShouldBeFalse();
         options.Events.EnableEventRangeMarks.ShouldBeFalse();
         options.Events.EnableProjectionFloors.ShouldBeFalse();
+        options.Events.EnableParkedIdentities.ShouldBeFalse();
+        options.Projections.Errors.SkipApplyErrors.ShouldBeTrue();
+        options.Projections.Errors.SkipSerializationErrors.ShouldBeTrue();
 
         // Registered after the call, and still restored when the store is built
         var projection = new Polecat.Tests.Projections.PublishingTallyProjection();

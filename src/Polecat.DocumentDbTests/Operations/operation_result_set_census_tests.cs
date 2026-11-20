@@ -92,6 +92,10 @@ public class operation_result_set_census_tests : OneOffConfigurationsContext
             // #882: a flat table is a schema object, so it needs its projection registered. Async keeps
             // this census driving the operations by hand
             opts.Projections.Add(new CensusFlatProjection(opts.DatabaseSchemaName), JasperFx.Events.Projections.ProjectionLifecycle.Async);
+
+            // #1053: a slice index table for the parking operations below
+            opts.Projections.Add(new JasperFx.Events.ComplianceTests.ParkingIndexedTallyProjection(),
+                JasperFx.Events.Projections.ProjectionLifecycle.Async);
         });
         await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync(ct: Ct);
         await EnsureNaturalKeyTableAsync();
@@ -240,6 +244,24 @@ public class operation_result_set_census_tests : OneOffConfigurationsContext
             seeded.EventTypeName, seeded.DotNetTypeName, s.TenantId));
         await built("SetCompactedVersion", s => new SetCompactedVersionOperation(events, streamId, 1, s.TenantId));
         await built("DeleteEvents", s => new DeleteEventsOperation(events, [seeded.Sequence], s.TenantId));
+
+        // #1053 (marten#6003): parks, unparks and slice index rows ride the daemon batch
+        var parkedRow = new JasperFx.Events.Daemon.ParkedIdentity
+        {
+            ProjectionName = "Census", ShardKey = "All", TenantId = StorageConstants.DefaultTenantId,
+            Identity = streamId, IdentityText = streamId.ToString(), IdentityType = "guid",
+            FirstFailingSequence = 2, ResumeAfter = 1, ExceptionMessage = "census"
+        };
+        await built("ParkIdentity", _ => new Polecat.Events.Daemon.ParkIdentityOperation(events.ParkedIdentitiesTableName,
+            parkedRow, events.UnicodeKeys));
+        await built("UnparkIdentity", _ => new Polecat.Events.Daemon.UnparkIdentityOperation(
+            events.ParkedIdentitiesTableName, parkedRow.Key, events.UnicodeKeys));
+        await built("AppendSliceIndex", _ => new Polecat.Events.Daemon.AppendSliceIndexOperation(
+            $"[{Schema}].[{Polecat.Events.Schema.SliceIndexTable.TableNameFor(JasperFx.Events.ComplianceTests.ParkingIndexedTallyProjection.ProjectionName, 1)}]",
+            new JasperFx.Events.Projections.SliceIndexRows(
+                JasperFx.Events.ComplianceTests.ParkingIndexedTallyProjection.ProjectionName, 1, typeof(Guid),
+                [new JasperFx.Events.Projections.SliceIndexEntry(StorageConstants.DefaultTenantId, streamId, 1)]),
+            events.UnicodeKeys));
 
         var naturalKeys = $"[{Schema}].[{NaturalKeyTable}]";
         await built("NaturalKeyUpsert", _ => new NaturalKeyUpsertOperation(naturalKeys, "key", Guid.NewGuid(),

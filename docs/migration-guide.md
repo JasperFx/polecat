@@ -10,7 +10,7 @@ The foundation pins move in lockstep, so a consuming project has to move with th
 
 | Package | 5.50.0 | 6.0 |
 |---|---|---|
-| `JasperFx`, `JasperFx.Events` | 2.102 | 3.9.0 |
+| `JasperFx`, `JasperFx.Events` | 2.102 | 3.10.0 |
 | `Weasel.SqlServer`, `Weasel.Storage` | 9.50.0 | 10.0 |
 | `Microsoft.Data.SqlClient` | 7.0.0 | 7.1.1 |
 | `Microsoft.EntityFrameworkCore.SqlServer` (`Polecat.EntityFrameworkCore`) | 9.x | 10.0 |
@@ -149,6 +149,7 @@ effects before upgrading, or set `opts.Events.EnableSideEffectsOnInlineProjectio
 | `Policies.StartIndexesByTenantId`: non-unique indexes on conjoined documents start with `tenant_id` | off | on | Each such index is dropped and recreated with `tenant_id` first. Unique indexes are unchanged | `opts.Policies.StartIndexesByTenantId = false` |
 | `Events.EnableSideEffectsOnInlineProjections` | off | on | None. **See the callout above** | `opts.Events.EnableSideEffectsOnInlineProjections = false` |
 | `EventGraph.UseArchivedStreamPartitioning`: `pc_events` partitioned on `is_archived` | off | on (off when `UseTenantPartitionedEvents` is on) | **The first migration rewrites `pc_events`.** See below | `opts.EventGraph.UseArchivedStreamPartitioning = false` |
+| `Projections.Errors.ApplyErrors` and `SerializationErrors`: what an async projection does when it fails on an event | skip | park the failing identity, or pause where a projection can't park. See below | Adds `pc_parked_identities` (`Events.EnableParkedIdentities`), and a `pc_slice_index_*` table for each projection that calls `UseSliceIndex()` | `opts.Projections.Errors.SkipApplyErrors = true` and `SkipSerializationErrors = true` |
 
 The new columns are nullable and are added in place by the next schema migration. Rows written before it have
 `NULL` in them. Apply that migration (`db-apply`, `db-patch` or `ApplyAllDatabaseChangesOnStartup()`) before
@@ -225,6 +226,26 @@ part of every store, as it is in Marten 10, so `opts.Events.EnableProjectionFloo
 - **Schema effect.** The table is added by the next schema migration. Nothing existing changes.
 - **Opting out.** `opts.Events.EnableProjectionFloors = false`, or `RestoreV5Defaults()`, leaves the table out. The
   floor writes then throw `NotSupportedException`, and every projection starts with no floor.
+
+## Upgrading to 6.0: a failing projection identity parks, or the shard pauses
+
+Polecat 5 skipped an event that an async projection failed on, and the event was lost to that projection. Polecat 6
+parks the identity that failed instead: its events are held back, everything else carries on, and you replay or
+discard it later ([#1053](https://github.com/JasperFx/polecat/issues/1053), ported from
+[marten#6003](https://github.com/JasperFx/marten/issues/6003)). How it works is in the JasperFx docs on
+[parked identities](https://jasperfx.github.io/events/parked-identities), and the Polecat side in
+[Parking a Failing Identity](/events/projections/async-daemon#parking-a-failing-identity).
+
+- **Behavior change.** A projection that can't park **pauses** its shard on a failing event instead of skipping it:
+  event projections, flat table projections, composite projections, and multi-stream projections grouped by
+  `Identity`/`Identities` delegates or custom grouping. To make a multi-stream projection park, group it with
+  `IdentityFromStream<TEvent>()` or `IdentityFromTag<TTag>()`, or turn on its slice index with
+  `Options.UseSliceIndex()`. The daemon logs how each projection finds one identity's events when it starts.
+- **Schema effect.** `pc_parked_identities` is added by the next schema migration, plus one `pc_slice_index_*` table
+  for each projection that opts into the slice index. Nothing existing changes.
+- **Opting out.** `opts.Projections.Errors.SkipApplyErrors = true` and `SkipSerializationErrors = true` skip as 5.x did.
+  `opts.Events.EnableParkedIdentities = false` leaves the table out, and then `Park` means pause. `RestoreV5Defaults()`
+  does all of it.
 
 ## Upgrading to 6.0: a projection's `IncludeArchivedEvents` reaches the async daemon
 

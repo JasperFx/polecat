@@ -227,6 +227,10 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
             int intId => session.LoadAsync<T>(intId, token),
             long longId => session.LoadAsync<T>(longId, token),
             string stringId => session.LoadAsync<T>(stringId, token),
+
+            // #1053: ParkedIdentityCompliance keys counters by strong-typed ids, which LoadAsync(object) takes
+            _ when JasperFx.Core.Reflection.StrongTypedIdResolver.TryResolve(id.GetType(), out _) =>
+                session.LoadAsync<T>(id, token),
             _ => throw new ArgumentOutOfRangeException(nameof(id),
                 $"Polecat cannot load documents by an identity of type {id.GetType().FullName}")
         };
@@ -579,6 +583,30 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
     ///     (#1034), each page written in one transaction with its cursor.
     /// </summary>
     public override bool SupportsEventRewrites => true;
+
+    /// <summary>
+    ///     marten#6003 / #1053: the store parks a failing identity in pc_parked_identities, inside the projection batch,
+    ///     and reads one identity's events from its stream, a DCB tag, the projection's slice index or a scan.
+    /// </summary>
+    public override bool SupportsParkedIdentities => true;
+
+    /// <summary>
+    ///     marten#6003 / #1053: <see cref="MakeEventUnreadableAsync" /> overwrites the stored body with JSON no event
+    ///     type deserializes from (an array), which is still valid for the native json column.
+    /// </summary>
+    public override bool SupportsUnreadableEvents => true;
+
+    public override async Task MakeEventUnreadableAsync(long sequence)
+    {
+        await using var conn = new SqlConnection(_store.Options.ConnectionString);
+        await conn.OpenAsync().ConfigureAwait(false);
+
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"UPDATE {_store.Events.EventsTableName} SET data = '[1]' WHERE seq_id = @seq;";
+        cmd.Parameters.AddWithValue("@seq", sequence);
+        var rows = await cmd.ExecuteNonQueryAsync().ConfigureAwait(false);
+        if (rows != 1) throw new InvalidOperationException($"No event with sequence {sequence} to make unreadable");
+    }
 
     // jasperfx#763 / #420. Polecat has a real message outbox (StoreOptions.MessageOutbox, defaulting
     // to NulloMessageOutbox) that the projection batch vends from, so the outbox facts run rather

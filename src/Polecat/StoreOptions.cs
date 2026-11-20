@@ -43,6 +43,13 @@ public class StoreOptions
         Events.EventGraph = EventGraph;
         Projections = new PolecatProjectionOptions(EventGraph);
         Projections.SetStoreOptions(this);
+
+        // marten#6003 / #1053: Polecat 6 parks a failing identity of an async projection instead of skipping the
+        // event. A projection that can't park (an event or flat table projection, a composite, a multi-stream
+        // projection that can only be scanned) pauses instead. RestoreV5Defaults() puts skip back.
+        Projections.Errors.ApplyErrors = JasperFx.Events.Daemon.ProjectionErrorAction.Park;
+        Projections.Errors.SerializationErrors = JasperFx.Events.Daemon.ProjectionErrorAction.Park;
+
         ResiliencePipeline = new ResiliencePipelineBuilder().AddPolecatDefaults().Build();
     }
 
@@ -549,6 +556,9 @@ public class StoreOptions
     ///       <item><see cref="EventStoreOptions.EnableLateEventDetection" /> &rarr; <c>false</c></item>
     ///       <item><see cref="EventStoreOptions.EnableEventRangeMarks" /> &rarr; <c>false</c></item>
     ///       <item><see cref="EventStoreOptions.EnableProjectionFloors" /> &rarr; <c>false</c></item>
+    ///       <item><see cref="EventStoreOptions.EnableParkedIdentities" /> &rarr; <c>false</c></item>
+    ///       <item><c>Projections.Errors.ApplyErrors</c> and <c>Projections.Errors.SerializationErrors</c> &rarr;
+    ///       <c>Skip</c> (Polecat 6 parks the failing identity, or pauses where it can't park)</item>
     ///       <item>
     ///         <c>GateSideEffectsBehindPriorVersion</c> &rarr; <c>false</c> on every registered projection
     ///         (JasperFx 3.0 turned it on, jasperfx#1075). JasperFx has no store-wide switch, so this is
@@ -580,6 +590,10 @@ public class StoreOptions
         Events.EnableEventRangeMarks = false;
 
         Events.EnableProjectionFloors = false;
+
+        Events.EnableParkedIdentities = false;
+        Projections.Errors.SkipApplyErrors = true;
+        Projections.Errors.SkipSerializationErrors = true;
 
         _restoreV5Defaults = true;
     }
@@ -1096,6 +1110,14 @@ public class EventStoreOptions : IEventStoreInstrumentation
     ///     <see cref="NotSupportedException" />. <c>Advanced.RewriteStoredEventsAsync()</c> works either way.
     /// </summary>
     public bool EnableEventRangeMarks { get; set; } = true;
+
+    /// <summary>
+    ///     marten#6003 / #1053: keep parked projection identities in <c>pc_parked_identities</c>, so an async projection
+    ///     can park the one identity whose events fail instead of skipping the event or pausing the shard. On by
+    ///     default since Polecat 6, which adds the table to the schema. <see cref="StoreOptions.RestoreV5Defaults" />
+    ///     turns it off and leaves the table out; a projection set to park then pauses instead.
+    /// </summary>
+    public bool EnableParkedIdentities { get; set; } = true;
 
     /// <summary>
     ///     <see cref="JasperFx.Events.IEventStoreInstrumentation" /> surface (jasperfx#424). The

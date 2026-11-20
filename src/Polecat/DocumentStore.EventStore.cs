@@ -597,18 +597,9 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
         // right "shard halts on error" vs "view related dead letters" affordance.
         // Mirror of the Marten companion so the descriptor is populated identically
         // regardless of which store backs the monitored service.
-        usage.ProjectionErrors = new ProjectionErrorHandlingDescriptor
-        {
-            SkipApplyErrors = Options.Projections.Errors.SkipApplyErrors,
-            SkipUnknownEvents = Options.Projections.Errors.SkipUnknownEvents,
-            SkipSerializationErrors = Options.Projections.Errors.SkipSerializationErrors
-        };
-        usage.ProjectionRebuildErrors = new ProjectionErrorHandlingDescriptor
-        {
-            SkipApplyErrors = Options.Projections.RebuildErrors.SkipApplyErrors,
-            SkipUnknownEvents = Options.Projections.RebuildErrors.SkipUnknownEvents,
-            SkipSerializationErrors = Options.Projections.RebuildErrors.SkipSerializationErrors
-        };
+        // marten#6003 / #1053: with the error actions (Pause, Skip, Park) and the parking cap
+        usage.ProjectionErrors = ProjectionErrorHandlingDescriptor.For(Options.Projections.Errors);
+        usage.ProjectionRebuildErrors = ProjectionErrorHandlingDescriptor.For(Options.Projections.RebuildErrors);
 
         // DCB tag-type registrations — first-class typed list mirroring
         // Marten's plumbing. Polecat doesn't expose a GlobalAggregates surface
@@ -895,6 +886,10 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
 
         await deleteDeadLettersBeingReplayedAsync((PolecatDatabase)database, subscriptionName, sequenceFloor ?? 0,
             token).ConfigureAwait(false);
+
+        // marten#6003 / #1053: the parks and slice index rows above the floor are written again by the replay
+        await ClearParkingForRewindAsync((PolecatDatabase)database, ParkingShardsFor(subscriptionName),
+            sequenceFloor ?? 0, token).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -1005,6 +1000,10 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
             cmd.Parameters.AddWithValue("@seq", seqFloor);
             await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
         }, (connStr, Events.ProgressionTableName, shardName, sequenceFloor, Options.Advanced.UseUnicodeKeys), token).ConfigureAwait(false);
+
+        // marten#6003 / #1053: as in RewindSubscriptionProgressAsync
+        await ClearParkingForRewindAsync((PolecatDatabase)database, ParkingShardsFor(shardName), sequenceFloor, token)
+            .ConfigureAwait(false);
     }
 
     // TeardownExistingProjectionProgressAsync was removed from
@@ -1131,6 +1130,10 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
             await deleteDeadLettersBeingReplayedAsync((PolecatDatabase)database, identity, 0, token)
                 .TranslatingCancellation("Per-tenant projection teardown", token).ConfigureAwait(false);
         }
+
+        // marten#6003 / #1053: the tenant's parks and slice index rows, as the store-global teardown clears them all
+        await ClearParkingForTeardownAsync((PolecatDatabase)database, subscriptionName, tenantId, token)
+            .TranslatingCancellation("Per-tenant projection teardown", token).ConfigureAwait(false);
     }
 
     // ISubscriptionRunner<ISubscription>
@@ -1308,6 +1311,10 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
         foreach (var name in names)
         {
             await deleteDeadLettersBeingReplayedAsync((PolecatDatabase)database, name, 0, token)
+                .TranslatingCancellation("Projection teardown", token).ConfigureAwait(false);
+
+            // marten#6003 / #1053: a rebuild re-folds every identity and writes the slice index again
+            await ClearParkingForTeardownAsync((PolecatDatabase)database, name, null, token)
                 .TranslatingCancellation("Projection teardown", token).ConfigureAwait(false);
         }
     }

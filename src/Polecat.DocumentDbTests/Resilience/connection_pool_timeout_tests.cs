@@ -327,7 +327,7 @@ public class connection_pool_timeout_tests
 
 /// <summary>
 ///     #845's consequence, end to end against a running daemon and a pool that has really run out.
-///     With the default <c>SkipApplyErrors = true</c> a projection that lost that race used to have the
+///     With <c>SkipApplyErrors = true</c> (the default before Polecat 6) a projection that lost that race used to have the
 ///     failure wrapped as <see cref="ApplyEventException" />, because nothing called it transient, and
 ///     the wrapper is what the daemon dead-letters: the event was skipped for good and the read model
 ///     silently diverged, over a load spike that had already cleared.
@@ -351,6 +351,9 @@ public class connection_pool_timeout_in_a_projection_tests : OneOffConfiguration
         {
             opts.ConnectionString = connectionString;
 
+            // The configuration the issue is about, which was the default before #1053 made parking the default
+            opts.Projections.Errors.SkipApplyErrors = true;
+
             if (shape == "aggregation")
             {
                 opts.Projections.Add(new PoolStarvedAggregation(exhaustion), ProjectionLifecycle.Async);
@@ -361,7 +364,6 @@ public class connection_pool_timeout_in_a_projection_tests : OneOffConfiguration
             }
         });
 
-        // Deliberately not set: the default is the configuration the issue is about
         theStore.Options.Projections.Errors.SkipApplyErrors.ShouldBeTrue();
 
         await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync(ct: Ct);
@@ -416,6 +418,11 @@ public class connection_pool_timeout_in_a_projection_tests : OneOffConfiguration
         ConfigureStore(opts =>
         {
             opts.ConnectionString = connectionString;
+
+            // Skip, the default before #1053: its build loop is what goes round again. Under Park or Pause the
+            // same transient AggregateException pauses the shard instead (jasperfx#1256).
+            opts.Projections.Errors.SkipApplyErrors = true;
+
             opts.Projections.Add(new PoolStarvedAggregation(exhaustion), ProjectionLifecycle.Async);
         });
 

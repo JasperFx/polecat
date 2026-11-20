@@ -2,6 +2,7 @@ using JasperFx;
 using JasperFx.Events.Aggregation;
 using JasperFx.Events.Daemon;
 using JasperFx.Events.Daemon.HighWater;
+using JasperFx.Events.Projections;
 using Microsoft.Extensions.Logging;
 using Polecat.Projections;
 using Polecat.Storage;
@@ -26,6 +27,8 @@ public class PolecatProjectionDaemon
     {
         _store = store;
         store.TrackDaemon(this);
+        database.TrackDaemon(this);
+        logIdentityAccess();
     }
 
     public PolecatProjectionDaemon(
@@ -37,6 +40,38 @@ public class PolecatProjectionDaemon
     {
         _store = store;
         store.TrackDaemon(this);
+        database.TrackDaemon(this);
+        logIdentityAccess();
+    }
+
+    /// <summary>
+    ///     marten#6003 / #1053: say once, when the daemon is built, how each async projection finds one identity's
+    ///     events, and so whether a failing identity parks or the shard pauses. Information when the store parks,
+    ///     debug otherwise.
+    /// </summary>
+    private void logIdentityAccess()
+    {
+        var parking = _store.Options.Projections.Errors.ApplyErrors == ProjectionErrorAction.Park
+                      && _store.Options.Events.EnableParkedIdentities;
+        var level = parking ? LogLevel.Information : LogLevel.Debug;
+        if (!Logger.IsEnabled(level)) return;
+
+        foreach (var projection in _store.Options.Projections.All.Where(x => x.Lifecycle == ProjectionLifecycle.Async))
+        {
+            var access = (projection as IHasIdentityAccess)?.IdentityAccess;
+            var parks = parking && access is { CanPark: true }
+                        && (access.Source is not { } source
+                            || ((JasperFx.Events.IEventStore<IDocumentSession, IQuerySession>)_store)
+                            .SupportsIdentityEventSource(source));
+
+            Logger.Log(level, "Projection {Projection} is {IdentityAccess}: a failing identity {Outcome}. {Reason}",
+                projection.Name, access?.Class.ToString() ?? nameof(IdentityAccessClass.NotSupported),
+                parks ? "parks"
+                : _store.Options.Projections.Errors.ApplyErrors == ProjectionErrorAction.Skip
+                    ? "skips the event"
+                    : "pauses the shard",
+                access?.Reason ?? "It is not sliced by identity.");
+        }
     }
 
     /// <summary>

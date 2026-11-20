@@ -86,7 +86,9 @@ internal sealed class IdentityRebuildEventLoader
                     {
                         @event = await hydrator.ReadRowAsync(reader, token).ConfigureAwait(false);
                     }
-                    catch (EventDeserializationFailureException) when (errors.SkipSerializationErrors)
+                    // marten#6003 (decision 12): the request's own setting, never the store's continuous one, so
+                    // the replay of a parked identity can't skip the very event it was parked for
+                    catch (EventDeserializationFailureException) when (request.SkipSerializationErrors)
                     {
                         continue;
                     }

@@ -913,14 +913,17 @@
              ToTableAlias and the *IgnoreCase helpers no longer depend on the current culture. That reaches Polecat's
              default DCB tag table suffixes (EventRegistry.DefaultTagTableSuffixFor); event type names come from
              Polecat's own ToEventTypeName, which already lowered invariantly. -->
-        <PackageVersion Include="JasperFx" Version="3.9.0" />
-        <PackageVersion Include="JasperFx.Events" Version="3.9.0" />
+        <!-- JasperFx 3.10.0 (from 3.9.0, polecat#1053): marten#6003 parked identities (jasperfx#1251 single-stream,
+             jasperfx#1252 multi-stream, the slice index and the per-identity stepper), with ParkedIdentityCompliance
+             and MultiStreamParkedIdentityCompliance. -->
+        <PackageVersion Include="JasperFx" Version="3.10.0" />
+        <PackageVersion Include="JasperFx.Events" Version="3.10.0" />
         <!--
              The shared cross-store event sourcing compliance suites. Source-only package: the
              suites compile inside Polecat.Tests.Shared (#1063) so JasperFx's aggregate source generator binds
              Polecat's own session types.
         -->
-        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="3.9.0" />
+        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="3.10.0" />
         <!-- Pin the sibling JasperFx packages for parity with Marten 9's matrix
              even though Polecat doesn't currently reference them directly —
              keeps the lockstep matrix coherent when transitive resolution
@@ -928,7 +931,7 @@
              JasperFx.RuntimeCompiler is deliberately NOT pinned: nothing in Polecat references it,
              directly or transitively (projection dispatch is source-generated, and Polecat.AotSmoke
              proves a consumer builds without it), so a pin only invited needless bumps. -->
-        <PackageVersion Include="JasperFx.SourceGenerator" Version="3.9.0" />
+        <PackageVersion Include="JasperFx.SourceGenerator" Version="3.10.0" />
         <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.1.1" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
@@ -1559,7 +1562,7 @@
         <PackageVersion Include="Vogen" Version="7.0.0" />
 
         <!-- Source generators (matched to JasperFx.Events above) -->
-        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="3.9.0" />
+        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="3.10.0" />
 
         <!-- Build automation -->
         <PackageVersion Include="Nuke.Common" Version="9.0.4" />

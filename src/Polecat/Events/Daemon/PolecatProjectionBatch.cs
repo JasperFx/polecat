@@ -38,6 +38,9 @@ internal class PolecatProjectionBatch : ProjectionBatchBase<IDocumentSession>,
     private readonly ResiliencePipeline _resilience;
     private readonly ConcurrentQueue<Weasel.Storage.IStorageOperation> _progressOps = new();
 
+    // marten#6003 / #1053: parks, unparks and slice index rows, which commit with the progression they ride
+    private readonly ConcurrentQueue<Weasel.Storage.IStorageOperation> _parkingOps = new();
+
     // #867: held here and not on the sessions, because this batch is what commits. See AdoptSession.
     private readonly ConcurrentQueue<ITransactionParticipant> _participants = new();
 
@@ -146,6 +149,40 @@ internal class PolecatProjectionBatch : ProjectionBatchBase<IDocumentSession>,
     }
 
     /// <summary>
+    ///     marten#6003 / #1053: write the parked row of an identity that failed in this batch, in this batch's
+    ///     transaction.
+    /// </summary>
+    public void ParkIdentity(ParkedIdentity parked)
+    {
+        ArgumentNullException.ThrowIfNull(parked);
+        _parkingOps.Enqueue(new ParkIdentityOperation(_events.ParkedIdentitiesTableName, parked, _events.UnicodeKeys));
+    }
+
+    /// <summary>
+    ///     marten#6003 / #1053: delete the parked row of an identity in this batch's transaction, with the re-folded
+    ///     document and the progression.
+    /// </summary>
+    public void UnparkIdentity(ParkedIdentityKey key)
+    {
+        ArgumentNullException.ThrowIfNull(key);
+        _parkingOps.Enqueue(new UnparkIdentityOperation(_events.ParkedIdentitiesTableName, key, _events.UnicodeKeys));
+    }
+
+    /// <summary>
+    ///     marten#6003 / #1053: write slice index rows in this batch's transaction, so the index is exactly what the
+    ///     daemon applied.
+    /// </summary>
+    public void AppendSliceIndex(SliceIndexRows rows)
+    {
+        ArgumentNullException.ThrowIfNull(rows);
+        if (rows.Entries.Count == 0) return;
+
+        var table = Polecat.Internal.SqlEscaping.QualifiedName(_events.DatabaseSchemaName,
+            Polecat.Events.Schema.SliceIndexTable.TableNameFor(rows.ProjectionName, rows.ProjectionVersion));
+        _parkingOps.Enqueue(new AppendSliceIndexOperation(table, rows, _events.UnicodeKeys));
+    }
+
+    /// <summary>
     ///     #420: turn the captured <see cref="StreamAction" />s into append operations that join
     ///     this batch's transaction, so raised events commit atomically with the projection
     ///     documents and the progression row they were produced alongside. Numbering the events needs
@@ -229,6 +266,12 @@ internal class PolecatProjectionBatch : ProjectionBatchBase<IDocumentSession>,
 
         // #420: raised-event appends ride the same transaction as the documents above.
         allOps.AddRange(_raisedEventOps);
+
+        // marten#6003 / #1053: parks, unparks and slice index rows, ahead of the progression they explain
+        while (_parkingOps.TryDequeue(out var parkingOp))
+        {
+            allOps.Add(parkingOp);
+        }
 
         // Add progress operations
         while (_progressOps.TryDequeue(out var progressOp))

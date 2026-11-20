@@ -16,6 +16,7 @@ internal class EventStoreFeatureSchema : FeatureSchemaBase
     private readonly EventGraph _events;
     private readonly IReadOnlyList<NaturalKeyDefinition> _naturalKeys;
     private readonly IReadOnlyList<Table> _flatTables;
+    private readonly IReadOnlyList<(string ProjectionName, uint Version, Type IdentityType)> _sliceIndexes;
 
     /// <summary>
     ///     One answer to "what does the event store declare", because the whole-database schema and a
@@ -36,6 +37,8 @@ internal class EventStoreFeatureSchema : FeatureSchemaBase
             .Select(p => p.Table)
             .DistinctBy(t => t.Identifier.QualifiedName, StringComparer.OrdinalIgnoreCase)
             .ToList();
+
+        _sliceIndexes = SliceIndexTable.IndexedProjections(options).ToList();
     }
 
     public override Type StorageType => typeof(EventStoreFeatureSchema);
@@ -63,6 +66,23 @@ internal class EventStoreFeatureSchema : FeatureSchemaBase
         if (_events.EnableEventRangeMarks)
         {
             yield return new EventRangeMarksTable(_events);
+        }
+
+        // marten#6003 / #1053: parked projection identities, on by default in Polecat 6
+        // (Events.EnableParkedIdentities) and left out under RestoreV5Defaults()
+        if (_events.EnableParkedIdentities)
+        {
+            yield return new ParkedIdentitiesTable(_events);
+        }
+
+        // marten#6003 / #1053: the slice index of each multi-stream projection that opted in with UseSliceIndex().
+        // Its start is an event-range mark, so it needs those too.
+        if (_events.SupportsSliceIndex)
+        {
+            foreach (var (projectionName, version, identityType) in _sliceIndexes)
+            {
+                yield return new SliceIndexTable(_events, projectionName, version, identityType);
+            }
         }
 
         // #1054 (marten#6007): the skipped high water ranges and the late events found in them, on by default

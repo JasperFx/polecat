@@ -24,7 +24,9 @@ public class event_store_instrumentation_tests : IAsyncLifetime
         "heartbeat", "agent_status", "pause_reason", "running_on_node",
         "warning_behind_threshold", "critical_behind_threshold",
         // #368 / jasperfx#565: the classified reason a shard is paused or stopped
-        "failure_category", "failure_event_sequence", "failure_event_type", "failure_event_tenant_id"
+        "failure_category", "failure_event_sequence", "failure_event_type", "failure_event_tenant_id",
+        // #1053 (marten#6003): how many identities the shard holds parked
+        "parked_count"
     ];
 
     public async ValueTask InitializeAsync()

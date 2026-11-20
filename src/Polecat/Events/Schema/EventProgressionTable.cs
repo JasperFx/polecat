@@ -40,6 +40,10 @@ internal class EventProgressionTable : Polecat.Storage.KeyedTable
             AddColumn("failure_event_sequence", "bigint").AllowNulls();
             AddColumn("failure_event_type", "varchar(500)").AllowNulls();
             AddColumn("failure_event_tenant_id", eventGraph.KeyText(500)).AllowNulls();
+
+            // #1053 (marten#6003): how many identities the shard holds parked, for a monitor polling a node
+            // that is down
+            AddColumn("parked_count", "int").AllowNulls();
         }
     }
 }

@@ -96,6 +96,11 @@ public class event_store_usage_integration_tests : IntegrationContext
         usage.ProjectionErrors.SkipUnknownEvents.ShouldBe(storeErrors.SkipUnknownEvents);
         usage.ProjectionErrors.SkipSerializationErrors.ShouldBe(storeErrors.SkipSerializationErrors);
 
+        // #1053 (marten#6003): the error actions and the parking cap
+        usage.ProjectionErrors.ApplyErrors.ShouldBe(storeErrors.ApplyErrors.ToString());
+        usage.ProjectionErrors.SerializationErrors.ShouldBe(storeErrors.SerializationErrors.ToString());
+        usage.ProjectionErrors.MaxParkedIdentitiesPerShard.ShouldBe(storeErrors.MaxParkedIdentitiesPerShard);
+
         var storeRebuildErrors = theStore.Options.Projections.RebuildErrors;
         usage.ProjectionRebuildErrors.SkipApplyErrors.ShouldBe(storeRebuildErrors.SkipApplyErrors);
         usage.ProjectionRebuildErrors.SkipUnknownEvents.ShouldBe(storeRebuildErrors.SkipUnknownEvents);
