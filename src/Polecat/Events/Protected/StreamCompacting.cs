@@ -35,7 +35,7 @@ internal sealed class PolecatStreamCompacting : StreamCompactingExecution<EventO
         // the Compacted<T>, and the rest are deleted. A stream that folds to nothing is left alone anyway.
         if (aggregate != null && events.Count > 0)
         {
-            await ensureNoAsyncShardIsBehindAsync<T>(session, events[^1], token).ConfigureAwait(false);
+            await ensureNoAsyncShardIsBehindAsync<T>(session, events, token).ConfigureAwait(false);
         }
 
         return aggregate;
@@ -49,9 +49,16 @@ internal sealed class PolecatStreamCompacting : StreamCompactingExecution<EventO
     ///     A single-stream projection of <typeparamref name="T" /> itself is exempt: it fast-forwards over the
     ///     snapshot. See <see cref="AsyncShardProgressGuard" /> for when a shard counts as behind.
     /// </summary>
-    private static async Task ensureNoAsyncShardIsBehindAsync<T>(EventOperations session, IEvent last,
+    /// <remarks>
+    ///     #1099 (marten#6114): a shard past the events has not necessarily processed them. After a high water skip,
+    ///     an event that committed late inside the skipped range sits below every shard's progress unseen, until
+    ///     late event recovery records it. So compaction also waits while an open skip has a recorded gap holding one
+    ///     of the events (<see cref="OpenHighWaterSkips" />, which the cold move of #1051 should call too).
+    /// </remarks>
+    private static async Task ensureNoAsyncShardIsBehindAsync<T>(EventOperations session, IReadOnlyList<IEvent> events,
         CancellationToken token) where T : class
     {
+        var last = events[^1];
         var behind = await AsyncShardProgressGuard.FindShardsBehindAsync(session, last.Sequence, typeof(T), token)
             .ConfigureAwait(false);
 
@@ -62,6 +69,21 @@ internal sealed class PolecatStreamCompacting : StreamCompactingExecution<EventO
                 $"(sequence {last.Sequence}) yet: these async projections or subscriptions have not processed its " +
                 $"events: {string.Join(", ", behind.Select(x => $"{x.Name} (at {x.Sequence})"))}. Compacting " +
                 "deletes them, so those would never see them. Nothing was compacted; try again once they caught up.");
+        }
+
+        // With nothing to check, nothing could miss a late event: a single-stream projection of T reads the snapshot
+        if (!AsyncShardProgressGuard.AnyShardToCheck(session, typeof(T))) return;
+
+        var skips = await OpenHighWaterSkips.FindHoldingAsync(session, events.Select(x => x.Sequence).ToArray(), token)
+            .ConfigureAwait(false);
+
+        if (skips.Count > 0)
+        {
+            throw new InvalidOperationException(
+                $"Cannot compact stream '{(object?)last.StreamKey ?? last.StreamId}' through version {last.Version} " +
+                $"(sequence {last.Sequence}) yet: {OpenHighWaterSkips.Describe(skips, session.Graph)} " +
+                "Compacting deletes those events, so recovery could never record them and multi-stream projections " +
+                "and subscriptions would never see them. Nothing was compacted; try again after that.");
         }
     }
 

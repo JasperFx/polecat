@@ -33,23 +33,7 @@ internal static class AsyncShardProgressGuard
     internal static async Task<IReadOnlyList<(string Name, long Sequence)>> FindShardsBehindAsync(
         EventOperations events, long sequence, Type? exemptAggregateType, CancellationToken token)
     {
-        var options = events.Session.Options;
-
-        var exempt = exemptAggregateType == null
-            ? new HashSet<string>(StringComparer.Ordinal)
-            : options.Projections.All
-                .Where(x => x is IAggregateProjection { Scope: AggregationScope.SingleStream } aggregate &&
-                            aggregate.AggregateType == exemptAggregateType)
-                .Select(x => x.Name)
-                .ToHashSet(StringComparer.Ordinal);
-
-        var tenantId = events.TenantId;
-        var shards = options.Projections.AllShards()
-            .Where(x => !exempt.Contains(x.Name.Name))
-            .Select(x => (Global: x.Name.Identity,
-                Tenant: ShardName.Compose(x.Name.Name, x.Name.ShardKey, tenantId, x.Name.Version).Identity))
-            .Distinct()
-            .ToArray();
+        var shards = shardsToCheck(events, exemptAggregateType);
 
         if (shards.Length == 0)
         {
@@ -85,6 +69,34 @@ internal static class AsyncShardProgressGuard
                 ? (Name: x.Tenant, Sequence: tenantSeq)
                 : (Name: x.Global, Sequence: progress.GetValueOrDefault(x.Global)))
             .Where(x => x.Sequence < sequence)
+            .ToArray();
+    }
+
+    /// <summary>
+    ///     Whether any async projection or subscription has to be checked at all, leaving out the single-stream
+    ///     projections of <paramref name="exemptAggregateType" />.
+    /// </summary>
+    internal static bool AnyShardToCheck(EventOperations events, Type? exemptAggregateType) =>
+        shardsToCheck(events, exemptAggregateType).Length > 0;
+
+    private static (string Global, string Tenant)[] shardsToCheck(EventOperations events, Type? exemptAggregateType)
+    {
+        var options = events.Session.Options;
+
+        var exempt = exemptAggregateType == null
+            ? new HashSet<string>(StringComparer.Ordinal)
+            : options.Projections.All
+                .Where(x => x is IAggregateProjection { Scope: AggregationScope.SingleStream } aggregate &&
+                            aggregate.AggregateType == exemptAggregateType)
+                .Select(x => x.Name)
+                .ToHashSet(StringComparer.Ordinal);
+
+        var tenantId = events.TenantId;
+        return options.Projections.AllShards()
+            .Where(x => !exempt.Contains(x.Name.Name))
+            .Select(x => (Global: x.Name.Identity,
+                Tenant: ShardName.Compose(x.Name.Name, x.Name.ShardKey, tenantId, x.Name.Version).Identity))
+            .Distinct()
             .ToArray();
     }
 }
