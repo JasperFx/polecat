@@ -104,7 +104,8 @@ internal class HiloSequence : HiloSequenceBase
             }
             else
             {
-                using var conn = _connectionFactory.Create();
+                // #1090: without MARS, as AdvanceToNextHiSync
+                using var conn = _connectionFactory.CreateForSynchronousWork();
                 conn.Open();
                 ensureHiloTableOn(conn, insideTransaction);
             }
@@ -210,7 +211,9 @@ internal class HiloSequence : HiloSequenceBase
         // synchronous Execute) so all pc_hilo access is covered.
         _resilience.Execute(() =>
         {
-            using var conn = _connectionFactory.Create();
+            // #1090: without MARS. On Linux and macOS a synchronous read on a MARS connection needs a second pool
+            // thread to complete, which a burst of synchronous Store() calls holding the pool's threads doesn't have.
+            using var conn = _connectionFactory.CreateForSynchronousWork();
             conn.Open();
 
             // #1088: synchronous from start to finish, never blocking on the asynchronous ensure

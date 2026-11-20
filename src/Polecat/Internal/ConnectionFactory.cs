@@ -75,12 +75,41 @@ public class ConnectionFactory
                && string.Equals(mine.InitialCatalog, theirs.InitialCatalog, StringComparison.Ordinal);
     }
 
+    private string? _withoutMars;
+
     /// <summary>
     ///     Create a new SqlConnection. Caller is responsible for opening and disposing it.
     /// </summary>
-    public SqlConnection Create()
+    public SqlConnection Create() => create(_connectionString);
+
+    /// <summary>
+    ///     #1090: a connection for Polecat's own synchronous work, such as reserving a block of Hi-Lo ids from a
+    ///     synchronous <c>Store()</c>, opened without MARS. See <see cref="WithoutMars" />.
+    /// </summary>
+    internal SqlConnection CreateForSynchronousWork() => create(_withoutMars ??= WithoutMars(_connectionString));
+
+    /// <summary>
+    ///     #1090: <paramref name="connectionString" /> with <c>MultipleActiveResultSets</c> turned off.
+    /// </summary>
+    /// <remarks>
+    ///     SqlClient's managed network layer (Linux and macOS) completes a synchronous read on a MARS connection
+    ///     through the thread pool, so a thread blocked on one waits for the pool to hand it a second thread. When a
+    ///     burst of synchronous callers holds the pool's threads, that wait lasts until the pool injects more. A
+    ///     connection string that already has MARS off comes back as it is, so it keeps using the same pool;
+    ///     otherwise these connections have a pool of their own.
+    /// </remarks>
+    internal static string WithoutMars(string connectionString)
     {
-        var connection = new SqlConnection(_connectionString);
+        var builder = new SqlConnectionStringBuilder(connectionString);
+        if (!builder.MultipleActiveResultSets) return connectionString;
+
+        builder.MultipleActiveResultSets = false;
+        return builder.ConnectionString;
+    }
+
+    private static SqlConnection create(string connectionString)
+    {
+        var connection = new SqlConnection(connectionString);
 
         var options = new SqlRetryLogicOption()
         {

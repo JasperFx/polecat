@@ -36,13 +36,10 @@ public class hilo_thread_pool_starvation_tests : OneOffConfigurationsContext
     {
         ConfigureStore(opts =>
         {
-            // Without MARS. SqlClient's managed network layer (Linux and macOS) completes a synchronous read on a
-            // MARS connection through the thread pool, so with MARS on, any synchronous I/O in a burst like this one
-            // waits for the pool to inject threads, whatever Polecat does. That is SqlClient's, not this test's.
-            opts.ConnectionString = new SqlConnectionStringBuilder(ConnectionSource.ConnectionString)
-            {
-                MultipleActiveResultSets = false
-            }.ConnectionString;
+            // #1090: with MARS on, as the test connection string has it. SqlClient's managed network layer (Linux
+            // and macOS) completes a synchronous read on a MARS connection through the thread pool, so Polecat opens
+            // the connections for its own synchronous pc_hilo work without MARS.
+            new SqlConnectionStringBuilder(opts.ConnectionString).MultipleActiveResultSets.ShouldBeTrue();
 
             opts.Schema.For<StarvationIntDoc>();
             opts.Schema.For<StarvationLongDoc>();
