@@ -10,7 +10,7 @@ The foundation pins move in lockstep, so a consuming project has to move with th
 
 | Package | 5.50.0 | 6.0 |
 |---|---|---|
-| `JasperFx`, `JasperFx.Events` | 2.102 | 3.7.0 |
+| `JasperFx`, `JasperFx.Events` | 2.102 | 3.9.0 |
 | `Weasel.SqlServer`, `Weasel.Storage` | 9.50.0 | 10.0 |
 | `Microsoft.Data.SqlClient` | 7.0.0 | 7.1.1 |
 | `Microsoft.EntityFrameworkCore.SqlServer` (`Polecat.EntityFrameworkCore`) | 9.x | 10.0 |
@@ -24,6 +24,14 @@ Two consequences worth checking in your own projects:
 The test-project side of the train (xunit.v3 4.x, Microsoft.Testing.Platform 2.x extension packages) only
 concerns you if you reuse `JasperFx.Events.ComplianceTests`; see the testing notes in the repository's
 `CLAUDE.md`.
+
+## Upgrading to 6.0: JasperFx 3.9.0 names tag tables the same in every culture
+
+JasperFx 3.9.0 lowercases the default DCB tag table suffix, taken from the tag type's name, with the invariant
+culture. If you ran Polecat on a Turkish or Azerbaijani machine with an `I` in a tag type's name, register that
+tag type with its old table suffix before upgrading ([details](https://shared-libs.jasperfx.net/migration-guide#key-changes-in-3-9-0)).
+Polecat's event type names never depended on the culture. Separately, `Evolve()` methods may now use bare
+`case Foo:` labels, and the source generator bundled in the Polecat package picks them up.
 
 ## Upgrading to 6.0: the net11.0 build uses runtime-async
 
