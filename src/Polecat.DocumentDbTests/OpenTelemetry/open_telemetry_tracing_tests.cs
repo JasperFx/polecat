@@ -98,6 +98,43 @@ public class open_telemetry_tracing_tests : IntegrationContext
         captured.Events.ShouldContain(e => e.Name.StartsWith("polecat."));
     }
 
+    /// <summary>
+    ///     marten#6103 parity: Marten named these events with the current culture, so an insert was traced
+    ///     as <c>marten.ınsert</c> on a Turkish host. Polecat lowers the role invariantly.
+    /// </summary>
+    [Fact]
+    public async Task verbose_operation_event_names_are_the_same_on_a_turkish_host()
+    {
+        await StoreOptions(opts =>
+        {
+            opts.DatabaseSchemaName = "otel_verbose_culture";
+            opts.OpenTelemetry.TrackConnections = TrackLevel.Verbose;
+        });
+
+        var stopped = new System.Collections.Concurrent.ConcurrentBag<Activity>();
+
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == "Polecat",
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStopped = activity => stopped.Add(activity),
+        };
+        ActivitySource.AddActivityListener(listener);
+
+        using var scope = CultureScope.Formatting("tr-TR");
+
+        // Control: this is the culture the event name has to survive
+        "Insert".ToLower().ShouldBe("ınsert");
+
+        await using var session = theStore.LightweightSession();
+        session.Insert(new TracedDoc { Id = Guid.NewGuid(), Name = "Turkish" });
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        var names = stopped.SelectMany(x => x.Events).Select(x => x.Name).ToList();
+        names.ShouldContain("polecat.insert");
+        names.ShouldNotContain(x => x.Contains('ı'));
+    }
+
     [Fact]
     public async Task activity_records_exception_on_failure()
     {
