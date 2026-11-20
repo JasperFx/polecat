@@ -220,7 +220,8 @@ public class MasterTableTenancy : MasterTableTenancyBase<PolecatDatabase, DbData
     // cache or with one synchronous read of pc_tenants, with no Task in the chain. #1087: on the cold start
     // of a process it provisions the control table synchronously first (TryProvisionControlTableSynchronously).
     // It still declines while an asynchronous provisioning in this process is part way through, or when the
-    // driver refuses synchronous I/O, and only then does this take the blocking fallback.
+    // driver refuses synchronous I/O, and only then does this take the blocking fallback. The synchronous read
+    // opens its connection without MARS (#1100, ControlPlaneDataSource), as the synchronous provisioning does.
     private PolecatDatabase Resolve(string tenantId)
     {
         if (!TryResolveTenant(tenantId, out var resolution))
@@ -231,9 +232,14 @@ public class MasterTableTenancy : MasterTableTenancyBase<PolecatDatabase, DbData
         return resolution.Database ?? throw CreateTenantRefusal(tenantId, resolution.Status);
     }
 
+    /// <summary>
+    ///     The control-plane data source. Asynchronous reads and writes use the connection string as configured;
+    ///     the synchronous <c>pc_tenants</c> read behind <c>TryResolveTenant</c> opens its connection without MARS
+    ///     (#1100). See <see cref="ControlPlaneDataSource" />.
+    /// </summary>
     protected override DbDataSource BuildDataSource(string connectionString)
     {
-        return SqlClientFactory.Instance.CreateDataSource(connectionString);
+        return new ControlPlaneDataSource(connectionString);
     }
 
     protected override PolecatDatabase BuildDatabase(string tenantId, string connectionString)
