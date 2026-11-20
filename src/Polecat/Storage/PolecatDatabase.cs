@@ -1730,7 +1730,8 @@ public partial class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDataba
                 .Where(p => !IsRetiredVersion(p, expected))
                 .ToList();
 
-            if (AllShardsAreCaughtUp(expected, projectionProgress, highWater))
+            if (AllShardsAreCaughtUp(expected, projectionProgress, highWater)
+                && inProcessAgentsHaveCaughtUp(projectionProgress))
             {
                 return;
             }
@@ -1777,7 +1778,7 @@ public partial class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDataba
                 .Select(x => $"{x.height.Key} at {x.height.Value}: {DescribeLaggingShards(expected, x.rows, x.height.Value)}")
                 .ToList();
 
-            if (lagging.Count == 0) return;
+            if (lagging.Count == 0 && inProcessAgentsHaveCaughtUp(progress)) return;
 
             await Task.Delay(100).ConfigureAwait(false);
         }

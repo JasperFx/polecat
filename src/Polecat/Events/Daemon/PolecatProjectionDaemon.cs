@@ -27,6 +27,7 @@ public class PolecatProjectionDaemon
     {
         _store = store;
         store.TrackDaemon(this);
+        database.TrackDaemon(this);
         logIdentityAccess();
     }
 
@@ -39,6 +40,7 @@ public class PolecatProjectionDaemon
     {
         _store = store;
         store.TrackDaemon(this);
+        database.TrackDaemon(this);
         logIdentityAccess();
     }
 

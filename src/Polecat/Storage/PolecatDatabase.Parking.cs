@@ -310,6 +310,35 @@ public partial class PolecatDatabase
         }, (_connectionString, sql.ToString(), shard, _events.UnicodeKeys), token).ConfigureAwait(false);
     }
 
+    // The daemons of this process that run against this database, for WaitForNonStaleProjectionDataAsync. Weak, so
+    // a daemon nobody disposed is not kept alive by the database.
+    private readonly System.Runtime.CompilerServices.ConditionalWeakTable<IProjectionDaemon, object> _daemons = new();
+
+    internal void TrackDaemon(IProjectionDaemon daemon) => _daemons.AddOrUpdate(daemon, daemon);
+
+    /// <summary>
+    ///     #1053: has every running agent of this process's daemons on this database taken in the batches its
+    ///     progression row says are committed? A batch commits before the agent applies what it did in memory (its
+    ///     parked identities, its aggregate cache), so a wait that only reads the rows can hand control back in
+    ///     between, and a replay of an identity that just parked answers <c>NotParked</c>. An agent moves its
+    ///     position after that, so the position is what says the batch is done. See jasperfx#1258.
+    /// </summary>
+    private bool inProcessAgentsHaveCaughtUp(IReadOnlyList<ShardState> progress)
+    {
+        foreach (var (daemon, _) in _daemons)
+        {
+            foreach (var agent in daemon.CurrentAgents())
+            {
+                if (agent.Status != JasperFx.AgentStatus.Running) continue;
+
+                var row = progress.FirstOrDefault(x => x.ShardName == agent.Name.Identity);
+                if (row != null && agent.Position < row.Sequence) return false;
+            }
+        }
+
+        return true;
+    }
+
     private async Task EnsureParkedIdentitiesAsync(CancellationToken token)
         => await EnsureStorageExistsAsync(typeof(EventStoreFeatureSchema), token).ConfigureAwait(false);
 
