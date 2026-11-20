@@ -27,7 +27,7 @@ namespace Polecat.Storage;
 ///     Handles auto-creation and migration of event store tables.
 ///     Implements IEventDatabase for async daemon infrastructure.
 /// </summary>
-public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IProjectionDatabase,
+public partial class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IProjectionDatabase,
     ICrossTenantRebuildSource, Weasel.Storage.IStorageDatabase, IDatabase
 {
     private readonly StoreOptions _options;
@@ -287,6 +287,10 @@ public class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDatabase, IPro
         catch (Exception e) when (MissingStorageDetection.IsMissingStorage(e))
         {
         }
+
+        // marten#6003 / #1053: an ejected shard starts again from nothing, so its parks and slice index rows go with
+        // its progression. That covers ejecting a retired projection version too.
+        await deleteParkingForShardAsync(shardIdentity, token).ConfigureAwait(false);
     }
 
     // marten#5001 / CritterWatch#750: persist the async daemon's extended telemetry (heartbeat,

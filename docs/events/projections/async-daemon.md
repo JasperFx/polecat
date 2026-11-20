@@ -687,6 +687,54 @@ A projection whose documents are kept in custom projection storage, like an EF C
 
 The daemon uses Polly resilience pipelines for error handling. See [Resiliency Policies](/configuration/retries) for configuration.
 
+## Parking a Failing Identity <Badge type="tip" text="6.0" />
+
+When your projection code throws on an event, Polecat 6 parks the identity that failed instead of skipping the
+event or stopping the shard ([#1053](https://github.com/JasperFx/polecat/issues/1053)). The daemon drops that
+identity's events from the batch, writes a row for it to `pc_parked_identities` in the same transaction that moves
+the shard's progression, and keeps going with everything else. Later events for the parked identity are held back
+until you replay it or discard it. Its document stays at its last good state.
+
+The details, including how a replay works and the guard rails, are in the JasperFx documentation on
+[parked identities](https://jasperfx.github.io/events/parked-identities). What's specific to Polecat:
+
+- Parking is the default. `opts.Projections.Errors.ApplyErrors` and `SerializationErrors` are both
+  `ProjectionErrorAction.Park`.
+- A projection that can't park pauses its shard instead: event projections, flat table projections, composite
+  projections, and a multi-stream projection whose identities can only be found by scanning. When the daemon starts it
+  logs how each async projection finds one identity's events, and whether it parks.
+- A multi-stream projection parks when it groups with `IdentityFromStream<TEvent>()` or `IdentityFromTag<TTag>()`, or
+  when it opts into the slice index with `Options.UseSliceIndex()`. The slice index is a table of its own for each
+  projection version, `pc_slice_index_{projection}` (`pc_slice_index_{projection}_v2` and on for later versions).
+- An event Polecat can't deserialize parks its stream for a single-stream projection.
+- Rebuilding the projection clears its parked rows and writes its slice index again. Rewinding it clears the parks and
+  index rows above the new floor. Removing a tenant, or ejecting a shard, removes theirs.
+
+Replay or discard a parked identity on the node that runs the shard:
+
+```cs
+var daemon = await store.BuildProjectionDaemonAsync();
+
+var parked = await daemon.FetchParkedIdentitiesAsync("TripSummary", tenantId: null, token);
+await daemon.ReplayParkedIdentityAsync("TripSummary", null, tripId, token);
+await daemon.DiscardParkedIdentityAsync("TripSummary", null, tripId, token);
+```
+
+From anywhere else, `projections parked` on the command line or `IEventDatabase.RequestParkedActionAsync()` writes a
+request that the node running the shard picks up.
+
+To keep skipping the bad event the way Polecat 5 did:
+
+```cs
+opts.Projections.Errors.SkipApplyErrors = true;
+opts.Projections.Errors.SkipSerializationErrors = true;
+
+// Or leave pc_parked_identities out of the schema too
+opts.Events.EnableParkedIdentities = false;
+```
+
+`RestoreV5Defaults()` does all three.
+
 ## Architecture
 
 ```text

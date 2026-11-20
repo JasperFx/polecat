@@ -69,6 +69,21 @@ public partial class DocumentStore
     }
 
     /// <summary>
+    ///     marten#6003 / #1053: step one identity of a projection from a starting state, sliced the way the daemon
+    ///     slices. Read the identity's events with <c>LoadIdentityEventsAsync</c> first.
+    /// </summary>
+    async Task<ProjectionTimelineRaw> IEventStore.RunMultiStreamProjectionForIdentityAsync(
+        string projectionName, object identity, IReadOnlyList<EventRecord> events, JsonElement? startingState,
+        CancellationToken ct)
+    {
+        var stepThrough = StepThrough();
+        await using var session = QuerySession();
+        return await stepThrough
+            .RunMultiStreamProjectionForIdentityAsync(projectionName, identity, events, startingState, session, ct)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
     ///     Converts a wire-level <see cref="EventRecord"/> back into a Polecat
     ///     domain event the aggregator can apply. Returns <c>null</c> when the
     ///     event type isn't registered with the store.

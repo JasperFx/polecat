@@ -308,9 +308,20 @@ internal sealed class LateEventRecovery
             _logger.LogDebug("Rebuilding stream {StreamId} for tenant {TenantId} in projection {Projection} for the late event(s) {Sequences}",
                 streamId, tenantId, name, relevant.Select(x => x.Sequence).ToArray());
 
+            var identity = DocumentStore.DocumentIdentityFor(aggregate.IdentityType, streamIdFor(streamId));
+
+            // marten#6003 (decision 12): a parked identity's replay or discard folds the late events in. Until then
+            // they are owed, and a rebuild here would only fail on the event the identity was parked for.
+            if (daemon.IsIdentityParked(name, tenantId, identity))
+            {
+                _logger.LogDebug(
+                    "Stream {StreamId} for tenant {TenantId} is parked in projection {Projection}, so its late event(s) {Sequences} wait for its replay",
+                    streamId, tenantId, name, relevant.Select(x => x.Sequence).ToArray());
+                continue;
+            }
+
             try
             {
-                var identity = DocumentStore.DocumentIdentityFor(aggregate.IdentityType, streamIdFor(streamId));
                 var result = await daemon.RebuildIdentityAsync(name, tenantId, identity, token).ConfigureAwait(false);
 
                 // The re-fold covers the stream up to the batch it was bound to. An event above that is not in

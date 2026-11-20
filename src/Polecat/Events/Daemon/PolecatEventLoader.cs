@@ -48,6 +48,15 @@ internal class PolecatEventLoader : EventLoaderBase
     private readonly StoreOptions _options;
     private readonly string _connectionString;
 
+    // marten#6003 / #1053: whether the shard's projection slices by DCB tag, so its events need their tags, and the
+    // shard's tenant under tenant-partitioned events
+    private readonly bool _includeTags;
+    private readonly string? _tenantFilter;
+
+    // marten#6003 / #1053: the unreadable events of the load in flight when its request parks them. Set by LoadAsync
+    // for the length of one load, which the base runs in a single async flow.
+    private readonly AsyncLocal<List<UnreadableEvent>?> _unreadable = new();
+
     // #756: fixed for the loader's lifetime, computed from the same options the dialect composes the SELECT
     // from, so the two cannot disagree about where a metadata column is.
     private readonly Internal.MetadataSlots _metadataSlots;
@@ -71,6 +80,62 @@ internal class PolecatEventLoader : EventLoaderBase
         _options = options;
         _connectionString = connectionString;
         _metadataSlots = Internal.MetadataSlots.Compute(options.Events);
+        _includeTags = filtering?.IncludeEventTags == true;
+        _tenantFilter = tenantFilter;
+    }
+
+    /// <summary>
+    ///     The base's load, plus two things marten#6003 asks of a store (#1053): an event the store can't deserialize
+    ///     is reported on <see cref="EventPage.Unreadable" /> with its stream and tenant when the request parks such
+    ///     events, and a projection that slices by DCB tag gets its events' tags.
+    /// </summary>
+    public override async Task<EventPage> LoadAsync(EventRequest request, CancellationToken token)
+    {
+        List<UnreadableEvent>? unreadable = null;
+        if (request.ParksUnreadableEvents)
+        {
+            unreadable = new List<UnreadableEvent>();
+            _unreadable.Value = unreadable;
+        }
+
+        EventPage page;
+        try
+        {
+            page = await base.LoadAsync(request, token).ConfigureAwait(false);
+        }
+        finally
+        {
+            if (unreadable != null) _unreadable.Value = null;
+        }
+
+        if (unreadable is { Count: > 0 })
+        {
+            foreach (var @event in unreadable) page.AddUnreadable(@event);
+        }
+
+        if (_includeTags && page.Count > 0)
+        {
+            await EventTagHydrator.HydrateAsync(_connectionString, _events, page, _tenantFilter, token)
+                .ConfigureAwait(false);
+        }
+
+        return page;
+    }
+
+    // marten#6003 / #1053: a request that parks unreadable events takes every one of them, whatever
+    // SkipSerializationErrors says, and the base counts it as skipped so the page's ceiling still covers it
+    protected override bool ShouldSkip(Exception ex, ErrorHandlingOptions options)
+        => (_unreadable.Value != null && ex is EventDeserializationFailureException) || base.ShouldSkip(ex, options);
+
+    protected override ValueTask RecordSkippedEventAsync(Exception ex, EventRequest request, CancellationToken token)
+    {
+        if (_unreadable.Value is { } unreadable && ex is EventDeserializationFailureException failure)
+        {
+            unreadable.Add(new UnreadableEvent(failure.Sequence, failure.StreamId, failure.StreamKey, failure.TenantId,
+                failure.EventTypeName, failure));
+        }
+
+        return base.RecordSkippedEventAsync(ex, request, token);
     }
 
     protected override async ValueTask<DbConnection> OpenConnectionAsync(CancellationToken token)
@@ -129,6 +194,17 @@ internal class PolecatEventLoader : EventLoaderBase
     protected override Exception UnresolvedEventTypeException(DbDataReader reader, long sequence)
         => UnknownEventTypeFor(reader, sequence);
 
+    // marten#6003 / #1053: the row's stream and tenant ride the failure, so a single-stream projection can park the
+    // stream it belongs to
+    private EventDeserializationFailureException unreadable(long sequence, string typeName, object rawStreamId,
+        string tenantId, Exception inner)
+        => new(sequence, typeName, inner)
+        {
+            StreamId = _events.StreamIdentity == StreamIdentity.AsGuid && rawStreamId is Guid id ? id : null,
+            StreamKey = _events.StreamIdentity == StreamIdentity.AsGuid ? null : rawStreamId.ToString(),
+            TenantId = tenantId
+        };
+
     /// <summary>
     ///     One of the five hydration paths CLAUDE.md lists. Returns null for a row whose <c>dotnet_type</c>
     ///     resolves to nothing, which the base turns into a skip or an <see cref="UnknownEventTypeException" />
@@ -167,7 +243,7 @@ internal class PolecatEventLoader : EventLoaderBase
                 // An upcast that throws is a payload-shape problem like any other failed deserialization, so
                 // it carries the same ShardFailureCategory and obeys the same SkipSerializationErrors policy
                 // (the base classifies it) rather than pausing the shard as something new.
-                throw new EventDeserializationFailureException(seqId, typeName, ex);
+                throw unreadable(seqId, typeName, rawStreamId, tenantId, ex);
             }
 
             mapping = _events.EventMappingFor(transformation!.EventType);
@@ -189,7 +265,7 @@ internal class PolecatEventLoader : EventLoaderBase
                 // #368 / jasperfx#565: report the store's type alias (the `type` column) rather than the
                 // assembly-qualified dotnet_type, matching what ShardFailure.Event.EventTypeName carries
                 // everywhere else and what a client-side consumer can act on.
-                throw new EventDeserializationFailureException(seqId, typeName, ex);
+                throw unreadable(seqId, typeName, rawStreamId, tenantId, ex);
             }
 
             mapping = _events.EventMappingFor(resolvedType);

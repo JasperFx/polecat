@@ -990,9 +990,10 @@ public class AdvancedOperations
     }
 
     /// <summary>
-    ///     Delete all rows from event store tables (pc_events, pc_streams, pc_event_progression, and the
-    ///     #1054 pc_high_water_skips and pc_high_water_late_events) and all natural key and DCB tag tables
-    ///     (pc_natural_key_*, pc_event_tag_*, pc_dcb_tag_version).
+    ///     Delete all rows from event store tables (pc_events, pc_streams, pc_event_progression, the
+    ///     #1054 pc_high_water_skips and pc_high_water_late_events, and the #1053 pc_parked_identities) and all
+    ///     natural key, DCB tag and slice index tables (pc_natural_key_*, pc_event_tag_*, pc_dcb_tag_version,
+    ///     pc_slice_index_*).
     /// </summary>
     public async Task CleanAllEventDataAsync(CancellationToken token = default)
     {
@@ -1018,7 +1019,11 @@ public class AdvancedOperations
 
         // #1054: the skipped high water ranges and the late events found in them go with the events, or a new
         // event at a reused sequence number would be read as filling an old skipped range
-        var highWaterTables = new[] { events.HighWaterSkipsTableName, events.HighWaterLateEventsTableName };
+        // marten#6003 / #1053: and the parked identities, which point at events and sequences that are gone
+        var highWaterTables = new[]
+        {
+            events.HighWaterSkipsTableName, events.HighWaterLateEventsTableName, events.ParkedIdentitiesTableName
+        };
 
         await _resilience.ExecuteAsync(static async (state, ct) =>
         {
@@ -1041,6 +1046,7 @@ public class AdvancedOperations
                     SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES
                     WHERE TABLE_SCHEMA = @schema
                       AND (TABLE_NAME LIKE 'pc_natural_key_%' OR TABLE_NAME LIKE 'pc_event_tag_%'
+                        OR TABLE_NAME LIKE 'pc[_]slice[_]index[_]%'
                         OR TABLE_NAME = {SqlEscaping.Literal(Events.Schema.DcbTagVersionTable.TableName)})
                     ORDER BY TABLE_NAME;
                     """;
@@ -1885,7 +1891,11 @@ public class AdvancedOperations
             await Internal.Sessions.SqlTransactionRequests.CommitAsync(tx, ct).ConfigureAwait(false);
         }, (_store.Options.ConnectionString, events.DatabaseSchemaName, events.ProgressionTableName, tenantIds,
             behavior == TenantDropBehavior.DeleteData, _store.Options.Advanced.UseUnicodeKeys,
-            new[] { events.HighWaterSkipsTableName, events.HighWaterLateEventsTableName }), token).ConfigureAwait(false);
+            new[] { events.HighWaterSkipsTableName, events.HighWaterLateEventsTableName,
+                    // marten#6003 / #1053: its parked identities and slice index rows hold positions in the sequence
+                    // that restarts too
+                    events.ParkedIdentitiesTableName }
+                .Concat(Events.Schema.SliceIndexTable.QualifiedTableNames(_store.Options)).ToArray()), token).ConfigureAwait(false);
     }
 
     /// <summary>
