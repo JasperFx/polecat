@@ -1124,10 +1124,12 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
         }
 
         // #871 item 1, as in the store-global teardown. A shard identity carries the tenant, so this
-        // leaves every other tenant's dead letters alone.
+        // leaves every other tenant's dead letters alone. Translated like the teardown above (#896): a
+        // cancel that lands in this delete's batch comes out of SqlBatch as an ArgumentOutOfRangeException.
         foreach (var identity in shardIdentities)
         {
-            await deleteDeadLettersBeingReplayedAsync((PolecatDatabase)database, identity, 0, token).ConfigureAwait(false);
+            await deleteDeadLettersBeingReplayedAsync((PolecatDatabase)database, identity, 0, token)
+                .TranslatingCancellation("Per-tenant projection teardown", token).ConfigureAwait(false);
         }
     }
 
