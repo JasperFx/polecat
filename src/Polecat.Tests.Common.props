@@ -24,6 +24,9 @@
         <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
         <PackageReference Include="Microsoft.Extensions.Hosting" />
         <PackageReference Include="Microsoft.CodeAnalysis.CSharp" />
+        <!-- #1123: Roslyn 5.9.0 depends on Microsoft.CodeAnalysis.Analyzers 5.9.0-1.26328.17, a prerelease.
+             Reference the 5.9.0 release so no prerelease is left in a test project's restore graph. -->
+        <PackageReference Include="Microsoft.CodeAnalysis.Analyzers" PrivateAssets="all" />
         <PackageReference Include="StronglyTypedId" />
         <PackageReference Include="Vogen" />
     </ItemGroup>
