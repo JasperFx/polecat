@@ -452,7 +452,9 @@ with its own settings, so it can sit beside the default store's check.
 [parked identities](#parking-a-failing-identity):
 
 - **Degraded** while any identity is parked, in any of the store's databases. The description names each projection
-  and tenant with its count. A parked identity's document is stuck, but the rest of the projection keeps going.
+  and tenant with its count, then lists up to 10 of each projection's parked identities, as `id (natural key)` when
+  the aggregate has a [natural key](/events/natural-keys). A parked identity's document is stuck, but the rest
+  of the projection keeps going.
 - **Unhealthy** while a shard is paused because it reached the parking cap (`MaxParkedIdentitiesPerShard`, or a batch
   that would have parked most of its identities at once). That shard isn't projecting anything until you replay or
   discard parked identities, or fix the projection, and restart it.
@@ -752,6 +754,20 @@ await daemon.DiscardParkedIdentityAsync("TripSummary", null, tripId, token);
 
 From anywhere else, `projections parked` on the command line or `IEventDatabase.RequestParkedActionAsync()` writes a
 request that the node running the shard picks up.
+
+When the projection's aggregate has a [natural key](/events/natural-keys), the parked list shows it next to the stream
+id, so you can tell which order or invoice is stuck without looking the stream up
+([#1117](https://github.com/JasperFx/polecat/issues/1117)). `IEventDatabase.FetchParkedIdentitiesAsync()` fills in
+`ParkedIdentity.NaturalKey` from the aggregate's `pc_natural_key_*` table, and `projections parked` shows it in its
+"Natural Key" column:
+
+```text
+│ Projection   │ Tenant    │ Identity                             │ Natural Key │ Failed At │ Error
+│ OrderSummary │ *DEFAULT* │ a1302820-d55d-4879-8178-ece14e6dd34c │ ORD-2002    │         3 │ ApplyEvent: ...
+│ OrderSummary │ *DEFAULT* │ b1a088fa-7298-4b56-aeb0-00fc65952fb0 │             │         6 │ ApplyEvent: ...
+```
+
+A stream that never got a natural key, or a projection whose aggregate doesn't have one, leaves it blank.
 
 To be told when something parks, add the [parked identities health check](#parked-identities-health-check).
 
