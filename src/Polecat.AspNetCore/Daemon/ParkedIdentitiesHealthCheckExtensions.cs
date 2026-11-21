@@ -106,6 +106,7 @@ public static class ParkedIdentitiesHealthCheckExtensions
                 var capped = await pausedAtTheCapAsync(databases, cancellationToken).ConfigureAwait(false);
 
                 var parked = new List<string>();
+                var counted = new List<(IEventDatabase Database, ParkedShardCount Count)>();
                 var total = 0;
                 foreach (var database in databases)
                 {
@@ -114,12 +115,19 @@ public static class ParkedIdentitiesHealthCheckExtensions
                     {
                         total += count.Count;
                         parked.Add($"{count.ProjectionName} (tenant {count.TenantId}): {count.Count}");
+                        counted.Add((database, count));
                     }
                 }
 
                 var parkedText = total == 0
                     ? "No projection identities are parked."
                     : $"{total} projection {(total == 1 ? "identity is" : "identities are")} parked: {string.Join(", ", parked)}";
+
+                if (total > 0)
+                {
+                    parkedText += ". Parked identities: "
+                                  + await parkedIdentitiesAsync(counted, cancellationToken).ConfigureAwait(false);
+                }
 
                 if (capped.Count > 0)
                 {
@@ -181,5 +189,44 @@ public static class ParkedIdentitiesHealthCheckExtensions
 
         private static string describe(string shard, string? database, int databaseCount) =>
             database == null || databaseCount <= 1 ? shard : $"{shard} (database {database})";
+
+        /// <summary>
+        ///     #1117: the parked identities themselves, at most <see cref="IdentitiesPerProjection" /> per projection,
+        ///     each as <c>id (natural key)</c> when its aggregate has a natural key, so an operator can tell which
+        ///     business record is stuck without a second lookup.
+        /// </summary>
+        private static async Task<string> parkedIdentitiesAsync(
+            List<(IEventDatabase Database, ParkedShardCount Count)> counted, CancellationToken token)
+        {
+            var projections = new List<string>();
+            foreach (var projection in counted.GroupBy(x => x.Count.ProjectionName)
+                         .OrderBy(x => x.Key, StringComparer.Ordinal))
+            {
+                var shown = new List<string>();
+                foreach (var database in projection.Select(x => x.Database).Distinct())
+                {
+                    if (shown.Count >= IdentitiesPerProjection) break;
+
+                    var rows = await database.FetchParkedIdentitiesAsync(new ParkedIdentityQuery
+                    {
+                        ProjectionName = projection.Key,
+                        Limit = IdentitiesPerProjection - shown.Count
+                    }, token).ConfigureAwait(false);
+
+                    shown.AddRange(rows.Select(x =>
+                        x.NaturalKey == null ? x.IdentityText : $"{x.IdentityText} ({x.NaturalKey})"));
+                }
+
+                // Rows can come and go between the counts and the listing, so never a negative "more"
+                var more = projection.Sum(x => x.Count.Count) - shown.Count;
+                projections.Add(
+                    $"{projection.Key}: {string.Join(", ", shown)}{(more > 0 ? $" and {more} more" : "")}");
+            }
+
+            return string.Join("; ", projections);
+        }
+
+        /// <summary>How many parked identities of one projection the check lists in its description.</summary>
+        internal const int IdentitiesPerProjection = 10;
     }
 }

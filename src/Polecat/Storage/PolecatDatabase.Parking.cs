@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Text;
 using JasperFx.Events;
 using JasperFx.Events.Daemon;
+using JasperFx.Events.Aggregation;
 using JasperFx.Events.Projections;
 using Microsoft.Data.SqlClient;
 using Polecat.Events.Schema;
@@ -57,9 +58,133 @@ public partial class PolecatDatabase
             parameters.Add(keyParameter("@tenant", query.TenantId));
         }
 
-        return await readParkedAsync(
+        var rows = await readParkedAsync(
             $"SELECT TOP(@limit) {ParkedColumns} FROM {_events.ParkedIdentitiesTableName} WHERE {where} {ParkedOrder};",
             parameters, token).ConfigureAwait(false);
+
+        return await withNaturalKeysAsync(rows, token).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    ///     #1117 (marten#6132, jasperfx#1273): the natural key of each parked identity's stream, for the projections
+    ///     whose aggregate has one. One query per such projection against its <c>pc_natural_key_*</c> table, matched
+    ///     on the stream identity and, under conjoined tenancy, the tenant. No natural key, or no row for the stream,
+    ///     leaves <see cref="ParkedIdentity.NaturalKey" /> null.
+    /// </summary>
+    private async Task<IReadOnlyList<ParkedIdentity>> withNaturalKeysAsync(IReadOnlyList<ParkedIdentity> rows,
+        CancellationToken token)
+    {
+        if (rows.Count == 0) return rows;
+
+        var isGuid = _events.StreamIdentity == StreamIdentity.AsGuid;
+        var conjoined = _events.TenancyStyle == TenancyStyle.Conjoined;
+        ParkedIdentity[]? result = null;
+
+        foreach (var projection in rows.Select((row, index) => (Row: row, Index: index))
+                     .GroupBy(x => x.Row.ProjectionName))
+        {
+            if (!_options.Projections.TryFindProjection(projection.Key, out var source)
+                || source is not IAggregateProjection { NaturalKeyDefinition: { } naturalKey })
+            {
+                continue;
+            }
+
+            // Only an identity that can be a stream id: a multi-stream projection's identities are not streams
+            var streams = projection.Where(x => isGuid ? x.Row.Identity is Guid : x.Row.Identity is string).ToList();
+            if (streams.Count == 0) continue;
+
+            var keys = await readNaturalKeysAsync(_events.NaturalKeyTableName(naturalKey.AggregateType),
+                streams.Select(x => (x.Row.TenantId, x.Row.Identity)), token).ConfigureAwait(false);
+
+            foreach (var (row, index) in streams)
+            {
+                if (keys.TryGetValue((conjoined ? row.TenantId : string.Empty, row.Identity), out var key))
+                {
+                    result ??= rows.ToArray();
+                    result[index] = row with { NaturalKey = key };
+                }
+            }
+        }
+
+        return result ?? rows;
+    }
+
+    // The natural key of each (tenant, stream), as text. The tenant is the empty string unless the store is conjoined.
+    private async Task<Dictionary<(string Tenant, object Stream), string>> readNaturalKeysAsync(string table,
+        IEnumerable<(string Tenant, object Stream)> streams, CancellationToken token)
+    {
+        var isGuid = _events.StreamIdentity == StreamIdentity.AsGuid;
+        var conjoined = _events.TenancyStyle == TenancyStyle.Conjoined;
+        var streamColumn = isGuid ? "stream_id" : "stream_key";
+        var streamType = isGuid ? "uniqueidentifier" : _events.KeyText();
+        var tenantColumn = JasperFx.StorageConstants.TenantIdColumn;
+
+        // SQL Server has no array parameters, so the (tenant, stream) pairs travel as one JSON array for OPENJSON,
+        // the way the session reads many streams' versions (#363), cast back to the columns' own types to keep the
+        // index seek. An archived row sorts last, so a live key wins if a stream somehow has both.
+        var tenantMatch = conjoined ? $" AND nk.{tenantColumn} = CAST(p.tenant_id AS {_events.KeyText()})" : "";
+        var sql = $"""
+            IF OBJECT_ID({SqlEscaping.Literal(table)}, 'U') IS NOT NULL
+            SELECT {(conjoined ? $"nk.{tenantColumn}" : "NULL")}, nk.{streamColumn}, nk.natural_key_value
+            FROM OPENJSON(@streams) WITH (tenant_id nvarchar(4000) '$.t', stream nvarchar(4000) '$.s') AS p
+            INNER JOIN {table} nk ON nk.{streamColumn} = CAST(p.stream AS {streamType}){tenantMatch}
+            ORDER BY nk.is_archived;
+            """;
+
+        var json = writeStreamPairsAsJson(streams
+            .Select(x => (conjoined ? x.Tenant : string.Empty, x.Stream))
+            .Distinct());
+
+        return await executeAsync(static async (state, ct) =>
+        {
+            var (connectionString, text, json, isGuid) = state;
+            await using var conn = new SqlConnection(connectionString);
+            await conn.OpenAsync(ct).ConfigureAwait(false);
+
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = text;
+            cmd.Parameters.Add("@streams", SqlDbType.NVarChar, -1).Value = json;
+
+            var keys = new Dictionary<(string Tenant, object Stream), string>();
+            await using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+            while (await reader.ReadAsync(ct).ConfigureAwait(false))
+            {
+                var tenant = reader.IsDBNull(0) ? string.Empty : reader.GetString(0);
+                var stream = isGuid ? (object)reader.GetGuid(1) : reader.GetString(1);
+                var key = Convert.ToString(reader.GetValue(2), CultureInfo.InvariantCulture);
+                if (key != null) keys.TryAdd((tenant, stream), key);
+            }
+
+            return keys;
+        }, (_connectionString, sql, json, isGuid), token).ConfigureAwait(false);
+    }
+
+    private static string writeStreamPairsAsJson(IEnumerable<(string Tenant, object Stream)> pairs)
+    {
+        var buffer = new System.Buffers.ArrayBufferWriter<byte>();
+        using (var writer = new System.Text.Json.Utf8JsonWriter(buffer))
+        {
+            writer.WriteStartArray();
+            foreach (var (tenant, stream) in pairs)
+            {
+                writer.WriteStartObject();
+                writer.WriteString("t", tenant);
+                if (stream is Guid guid)
+                {
+                    writer.WriteString("s", guid);
+                }
+                else
+                {
+                    writer.WriteString("s", (string)stream);
+                }
+
+                writer.WriteEndObject();
+            }
+
+            writer.WriteEndArray();
+        }
+
+        return Encoding.UTF8.GetString(buffer.WrittenSpan);
     }
 
     /// <inheritdoc />
