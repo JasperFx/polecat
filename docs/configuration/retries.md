@@ -275,6 +275,31 @@ opts.ConfigureDaemonPolly(builder =>
 opts.ConfigureDaemonPolly(_ => { });
 ```
 
+To keep the default and add to it, start the builder with `AddPolecatDaemonDefaults()`. It retries a SQL Server
+error on the transient list (a deadlock, a lock timeout, a command timeout, a dropped connection, an Azure SQL
+throttle or failover), SqlClient's connection pool timeout, a `TimeoutException` or a dropped socket, up to 3 times,
+so a batch is built at most 4 times. Polly runs the strategies in the order you add them, so a strategy added before
+it wraps Polecat's retries and one added after it runs inside each attempt. This one waits out a longer outage:
+
+<!-- snippet: sample_configure_daemon_polly_from_the_default -->
+<a id='snippet-sample_configure_daemon_polly_from_the_default'></a>
+```cs
+// Keep Polecat's default retries, and when they run out, wait 5 seconds
+// and run them once more before the shard pauses
+opts.ConfigureDaemonPolly(builder => builder
+    .AddRetry(new RetryStrategyOptions
+    {
+        MaxRetryAttempts = 1,
+        Delay = TimeSpan.FromSeconds(5)
+    })
+    .AddPolecatDaemonDefaults());
+```
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.DocumentDbTests/Resilience/daemon_pipeline_defaults.cs#L68-L80' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_configure_daemon_polly_from_the_default' title='Start of snippet'>anchor</a></sup>
+<!-- endSnippet -->
+
+Don't add Polly's `AddTimeout()` to this pipeline. A timed-out attempt throws Polly's `TimeoutRejectedException`,
+which isn't a `TimeoutException`, so JasperFx doesn't count it as transient.
+
 ## Circuit breaker
 
 A circuit breaker has none of the replay hazard above — it fails fast rather than re-issuing work:

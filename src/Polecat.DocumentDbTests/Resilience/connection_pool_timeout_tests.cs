@@ -317,7 +317,7 @@ public class connection_pool_timeout_tests
             }, Ct));
 
         // jasperfx#1256: the first build and every retry, then the real failure goes back to the daemon to pause on
-        attempts.ShouldBe(1 + PolecatResilienceDefaults.DaemonRetryAttempts);
+        attempts.ShouldBe(1 + PolecatResiliencePipelineBuilderExtensions.DaemonRetryAttempts);
         thrown.ShouldBeSameAs(timeout);
     }
 
@@ -518,7 +518,7 @@ public class connection_pool_timeout_in_a_projection_tests : OneOffConfiguration
 
         // Every retry was spent on the dry pool, and only then did the shard pause, with a label that tells a
         // supervisor it is worth restarting. Nothing was dead-lettered or parked.
-        retries.Count.ShouldBe(PolecatResilienceDefaults.DaemonRetryAttempts);
+        retries.Count.ShouldBe(PolecatResiliencePipelineBuilderExtensions.DaemonRetryAttempts);
         outcome.DeadLetters.ShouldBe(0);
         agent.Status.ShouldBe(AgentStatus.Paused);
         agent.Failure.ShouldNotBeNull().IsTransient.ShouldBeTrue();
