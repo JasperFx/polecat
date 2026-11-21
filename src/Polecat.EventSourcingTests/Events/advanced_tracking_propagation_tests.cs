@@ -25,6 +25,9 @@ public class advanced_tracking_propagation_tests
             opts.ConnectionString = ConnectionSource.ConnectionString;
             opts.DatabaseSchemaName = "advanced_tracking_main";
             opts.UseNativeJsonType = ConnectionSource.SupportsNativeJson;
+
+            // On by default since #1116, so start from the opt-out to see the host turn it on
+            opts.Events.EnableExtendedProgressionTracking = false;
         });
 
         using var provider = services.BuildServiceProvider();
@@ -36,8 +39,8 @@ public class advanced_tracking_propagation_tests
     [Fact]
     public void advanced_tracking_off_leaves_extended_progression_tracking_at_default()
     {
-        // Sanity: when EnableAdvancedTracking is not set (default false), we do NOT
-        // flip EnableExtendedProgressionTracking on. Per-store opt-in is preserved.
+        // Sanity: when EnableAdvancedTracking is not set (default false), the host does not touch
+        // EnableExtendedProgressionTracking. The store's own default (on since #1116) stands.
         var services = new ServiceCollection();
         services.AddJasperFx();
         services.AddPolecat(opts =>
@@ -50,6 +53,25 @@ public class advanced_tracking_propagation_tests
         using var provider = services.BuildServiceProvider();
 
         var store = provider.GetRequiredService<IDocumentStore>();
+        store.Options.Events.EnableExtendedProgressionTracking.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void advanced_tracking_off_leaves_a_store_opt_out_alone()
+    {
+        var services = new ServiceCollection();
+        services.AddJasperFx();
+        services.AddPolecat(opts =>
+        {
+            opts.ConnectionString = ConnectionSource.ConnectionString;
+            opts.DatabaseSchemaName = "advanced_tracking_off_opt_out";
+            opts.UseNativeJsonType = ConnectionSource.SupportsNativeJson;
+            opts.Events.EnableExtendedProgressionTracking = false;
+        });
+
+        using var provider = services.BuildServiceProvider();
+
+        var store = provider.GetRequiredService<IDocumentStore>();
         store.Options.Events.EnableExtendedProgressionTracking.ShouldBeFalse();
     }
 
@@ -57,7 +79,7 @@ public class advanced_tracking_propagation_tests
     public void no_jasperfx_options_registered_leaves_extended_progression_tracking_at_default()
     {
         // When AddJasperFx is never called, ReadJasperFxOptions receives null and is a
-        // no-op — the per-store default (opt-out) stands.
+        // no-op — the per-store default (on since #1116) stands.
         var services = new ServiceCollection();
         services.AddPolecat(opts =>
         {
@@ -69,7 +91,7 @@ public class advanced_tracking_propagation_tests
         using var provider = services.BuildServiceProvider();
 
         var store = provider.GetRequiredService<IDocumentStore>();
-        store.Options.Events.EnableExtendedProgressionTracking.ShouldBeFalse();
+        store.Options.Events.EnableExtendedProgressionTracking.ShouldBeTrue();
     }
 
     // Both AddPolecat and AddPolecatStore<T> funnel through the same
@@ -82,7 +104,7 @@ public class advanced_tracking_propagation_tests
     public void read_jasperfx_options_propagates_advanced_tracking_when_enabled()
     {
         var options = new StoreOptions();
-        options.Events.EnableExtendedProgressionTracking.ShouldBeFalse();
+        options.Events.EnableExtendedProgressionTracking = false;
 
         options.ReadJasperFxOptions(new JasperFxOptions { EnableAdvancedTracking = true });
 
@@ -93,6 +115,7 @@ public class advanced_tracking_propagation_tests
     public void read_jasperfx_options_leaves_flag_alone_when_advanced_tracking_off()
     {
         var options = new StoreOptions();
+        options.Events.EnableExtendedProgressionTracking = false;
 
         options.ReadJasperFxOptions(new JasperFxOptions { EnableAdvancedTracking = false });
 
@@ -103,11 +126,11 @@ public class advanced_tracking_propagation_tests
     public void read_jasperfx_options_is_a_noop_for_null()
     {
         var options = new StoreOptions();
-        options.Events.EnableExtendedProgressionTracking = true;
+        options.Events.EnableExtendedProgressionTracking = false;
 
         options.ReadJasperFxOptions(null);
 
         // Null host options must not disturb the existing per-store value.
-        options.Events.EnableExtendedProgressionTracking.ShouldBeTrue();
+        options.Events.EnableExtendedProgressionTracking.ShouldBeFalse();
     }
 }

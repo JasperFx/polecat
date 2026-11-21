@@ -823,6 +823,9 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
     /// </summary>
     private (string Where, IReadOnlyList<KeyValuePair<string, string>> Parameters) ProgressionFilterFor(
         string subscriptionName)
+        => ProgressionNameFilter.For(ProgressionRootsFor(subscriptionName));
+
+    private string[] ProgressionRootsFor(string subscriptionName)
     {
         var shards = ProgressionShardsFor(subscriptionName);
 
@@ -830,12 +833,18 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
         // Unregistered → the name itself, where only the ':'-anchored, escaped pattern can match; an
         // unknown name has to stay a no-op rather than an error, because teardown/rewind are also run
         // against projections that were removed from the configuration since they last wrote progress.
-        var roots = shards.Length > 0
+        return shards.Length > 0
             ? shards.Select(x => x.Identity).Distinct().ToArray()
             : [subscriptionName];
-
-        return ProgressionNameFilter.For(roots);
     }
+
+    /// <summary>
+    ///     #1118: the shard identities of a composite's members, whose progression rows are their own. Empty for
+    ///     anything but a composite.
+    /// </summary>
+    private static IEnumerable<string> CompositeMemberShardIdentities(
+        IProjectionSource<IDocumentSession, IQuerySession> source)
+        => WithCompositeMembers(source).Skip(1).SelectMany(x => x.Shards()).Select(x => x.Name.Identity);
 
     /// <remarks>
     ///     ⚠️ The two branches below must agree on how a progression row is NAMED, and they did not
@@ -1086,9 +1095,12 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
             publishedTableNames = TeardownTargetsFor(source);
 
             // The exact per-tenant progression rows to delete: each shard's identity composed for
-            // this tenant (carries the trailing :tenantId).
-            shardIdentities = source.Shards()
+            // this tenant (carries the trailing :tenantId). #1118: a composite's members' rows too, as in Marten,
+            // or the rebuild's first batch finds them past 0.
+            shardIdentities = WithCompositeMembers(source)
+                .SelectMany(x => x.Shards())
                 .Select(s => s.Name.ForTenant(tenantId).Identity)
+                .Distinct()
                 .ToArray();
         }
 
@@ -1288,7 +1300,15 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
             publishedTableNames = TeardownTargetsFor(source);
         }
 
-        var filter = ProgressionFilterFor(subscriptionName);
+        // #1118: a composite's members keep progression rows of their own, and they go with the composite's, as they
+        // do in Marten's teardownProjectionStorage. Left in place, the rebuild's first batch, which starts every member
+        // from 0, found them past it.
+        var filter = source == null
+            ? ProgressionFilterFor(subscriptionName)
+            : ProgressionNameFilter.For(ProgressionRootsFor(subscriptionName)
+                .Concat(CompositeMemberShardIdentities(source))
+                .Distinct()
+                .ToArray());
 
         await Options.ResiliencePipeline.ExecuteAsync(static async (state, ct) =>
         {

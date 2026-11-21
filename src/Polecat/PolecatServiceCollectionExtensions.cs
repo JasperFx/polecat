@@ -222,10 +222,10 @@ internal class SetEventStoreInstrumentation : IConfigurePolecat, IEventStoreInst
 
     private bool? _extendedProgressionEnabled;
 
-    // Unset reads as the default the adapter leaves in place
+    // Unset reads as the default the adapter leaves in place, on since Polecat 6 (#1116)
     public bool ExtendedProgressionEnabled
     {
-        get => _extendedProgressionEnabled ?? false;
+        get => _extendedProgressionEnabled ?? true;
         set => _extendedProgressionEnabled = value;
     }
 }
@@ -246,7 +246,7 @@ internal class SetEventStoreInstrumentation<T> : IConfigurePolecat<T>, IEventSto
 
     public bool ExtendedProgressionEnabled
     {
-        get => _extendedProgressionEnabled ?? false;
+        get => _extendedProgressionEnabled ?? true;
         set => _extendedProgressionEnabled = value;
     }
 }

@@ -23,14 +23,13 @@ public class event_store_instrumentation_di_tests
         {
             opts.ConnectionString = ConnectionSource.ConnectionString;
             opts.UseNativeJsonType = ConnectionSource.SupportsNativeJson;
+            opts.Events.EnableExtendedProgressionTracking = false;
         });
 
         using var provider = services.BuildServiceProvider();
 
         var instrumentation = provider.GetRequiredService<IEventStoreInstrumentation>();
         instrumentation.ShouldNotBeNull();
-        // Defaults to opt-out — same as Marten and Polecat's StoreOptions default.
-        instrumentation.ExtendedProgressionEnabled.ShouldBeFalse();
 
         // External tooling flips the toggle BEFORE first IDocumentStore resolution.
         instrumentation.ExtendedProgressionEnabled = true;
@@ -78,20 +77,71 @@ public class event_store_instrumentation_di_tests
 
         var instruments = provider.GetServices<IEventStoreInstrumentation>().ToList();
         instruments.Count.ShouldBe(2);
-        instruments.ShouldAllBe(i => !i.ExtendedProgressionEnabled);
+
+        // #1116: on by default since Polecat 6, as in Marten 10
+        instruments.ShouldAllBe(i => i.ExtendedProgressionEnabled);
 
         foreach (var i in instruments)
         {
-            i.ExtendedProgressionEnabled = true;
+            i.ExtendedProgressionEnabled = false;
         }
 
         var store = provider.GetRequiredService<IDocumentStore>();
-        store.Options.Events.EnableExtendedProgressionTracking.ShouldBeTrue();
+        store.Options.Events.EnableExtendedProgressionTracking.ShouldBeFalse();
+    }
+
+    /// <summary>
+    ///     #1116: the default is on, and AddPolecat's untouched adapter leaves it on (#1108 was the adapter
+    ///     resetting a store's own value).
+    /// </summary>
+    [Fact]
+    public void the_default_survives_add_polecat()
+    {
+        var services = new ServiceCollection();
+        services.AddPolecat(opts =>
+        {
+            opts.ConnectionString = ConnectionSource.ConnectionString;
+            opts.UseNativeJsonType = ConnectionSource.SupportsNativeJson;
+        });
+
+        using var provider = services.BuildServiceProvider();
+
+        provider.GetRequiredService<IEventStoreInstrumentation>().ExtendedProgressionEnabled.ShouldBeTrue();
+        provider.GetRequiredService<IDocumentStore>().Options.Events.EnableExtendedProgressionTracking.ShouldBeTrue();
+    }
+
+    /// <summary>
+    ///     #1116: an explicit opt-out wins over the new default, through AddPolecat and AddPolecatStore&lt;T&gt;,
+    ///     directly or through RestoreV5Defaults()
+    /// </summary>
+    [Fact]
+    public void a_direct_opt_out_survives_the_untouched_adapter()
+    {
+        var services = new ServiceCollection();
+        services.AddPolecat(opts =>
+        {
+            opts.ConnectionString = ConnectionSource.ConnectionString;
+            opts.UseNativeJsonType = ConnectionSource.SupportsNativeJson;
+            opts.Events.EnableExtendedProgressionTracking = false;
+        });
+        services.AddPolecatStore<IInvoicingStore>(opts =>
+        {
+            opts.RestoreV5Defaults();
+            opts.ConnectionString = ConnectionSource.ConnectionString;
+            opts.DatabaseSchemaName = "invoices_1116";
+            opts.UseNativeJsonType = ConnectionSource.SupportsNativeJson;
+        });
+
+        using var provider = services.BuildServiceProvider();
+
+        provider.GetRequiredService<IDocumentStore>().Options.Events.EnableExtendedProgressionTracking.ShouldBeFalse();
+        provider.GetRequiredService<IInvoicingStore>().Options.Events.EnableExtendedProgressionTracking.ShouldBeFalse();
     }
 
     /// <summary>
     ///     #1108: AddPolecat always registers the instrumentation adapter, and its default used to reset a direct
     ///     <c>opts.Events.EnableExtendedProgressionTracking = true</c> back to false when the store was built.
+    ///     Starts from RestoreV5Defaults(), where the flag is off, since it is on by default now (#1116).
     /// </summary>
     [Fact]
     public void a_direct_opt_in_survives_the_untouched_adapter()
@@ -99,12 +149,14 @@ public class event_store_instrumentation_di_tests
         var services = new ServiceCollection();
         services.AddPolecat(opts =>
         {
+            opts.RestoreV5Defaults();
             opts.ConnectionString = ConnectionSource.ConnectionString;
             opts.UseNativeJsonType = ConnectionSource.SupportsNativeJson;
             opts.Events.EnableExtendedProgressionTracking = true;
         });
         services.AddPolecatStore<IInvoicingStore>(opts =>
         {
+            opts.RestoreV5Defaults();
             opts.ConnectionString = ConnectionSource.ConnectionString;
             opts.DatabaseSchemaName = "invoices_1108";
             opts.UseNativeJsonType = ConnectionSource.SupportsNativeJson;

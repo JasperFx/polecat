@@ -806,20 +806,47 @@ internal class EventOperations : QueryEventStore, IEventOperations, IEventOperat
     private IEventStream<T> trackForWriting<T>(object streamId, long version, bool streamExists, T? aggregate,
         CancellationToken cancellation) where T : class
     {
-        var actionType = streamExists ? StreamActionType.Append : StreamActionType.Start;
+        StreamAction action;
 
-        var action = streamId is Guid guidId
-            ? new StreamAction(guidId, actionType)
-            : new StreamAction((string)streamId, actionType);
+        // #1115 (marten#6094): a new stream this session already started, by an earlier fetch of it or by
+        // StartStream, gets the same Start action. A second one started the stream twice: Events.Append(id, ...)
+        // found the first, this fetch's handle wrote to the second, and SaveChangesAsync failed.
+        if (!streamExists && tryFindStartedStream(streamId, out var started))
+        {
+            action = started;
+        }
+        else
+        {
+            var actionType = streamExists ? StreamActionType.Append : StreamActionType.Start;
+
+            action = streamId is Guid guidId
+                ? new StreamAction(guidId, actionType)
+                : new StreamAction((string)streamId, actionType);
+
+            action.TenantId = _tenantId;
+            _workTracker.AddStream(action);
+        }
 
         action.ExpectedVersionOnServer = streamExists ? version : 0;
-        action.TenantId = _tenantId;
         action.AggregateType = typeof(T);
-        _workTracker.AddStream(action);
 
         return streamId is Guid gId
             ? new EventStream<T>(_sessionBase, _events, gId, aggregate, cancellation, action)
             : new EventStream<T>(_sessionBase, _events, (string)streamId, aggregate, cancellation, action);
+    }
+
+    // #1115: the Start action this session holds for the stream in this instance's tenant, if any
+    private bool tryFindStartedStream(object streamId, [NotNullWhen(true)] out StreamAction? started)
+    {
+        var scope = _events.StreamIdScope(_tenantId);
+        var found = streamId is Guid id
+            ? _workTracker.TryFindStream(id, scope, out started)
+            : _workTracker.TryFindStream((string)streamId, scope, out started);
+
+        if (found && started!.ActionType == StreamActionType.Start) return true;
+
+        started = null;
+        return false;
     }
 
     /// <summary>

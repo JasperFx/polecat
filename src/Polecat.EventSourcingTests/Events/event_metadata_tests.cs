@@ -294,16 +294,38 @@ public class event_metadata_tests : OneOffConfigurationsContext
     }
 
     [Fact]
-    public async Task user_name_column_not_created_when_disabled()
+    public async Task user_name_column_created_but_not_written_when_disabled()
     {
-        // On by default since Polecat 6 (#1032)
+        // On by default since Polecat 6 (#1032). Turned off, the column is still created (#1116, marten#5765), and
+        // nothing is written to it or read from it.
         await ConfigureAndApply(opts => opts.Events.EnableUserName = false);
 
-        await using var conn = await OpenConnectionAsync();
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"SELECT COL_LENGTH('[{_schema()}].[pc_events]', 'user_name')";
-        var result = await cmd.ExecuteScalarAsync(TestContext.Current.CancellationToken);
-        (result == null || result == DBNull.Value).ShouldBeTrue();
+        await using (var conn = await OpenConnectionAsync())
+        {
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = $"SELECT COL_LENGTH('[{_schema()}].[pc_events]', 'user_name')";
+            var result = await cmd.ExecuteScalarAsync(TestContext.Current.CancellationToken);
+            (result == null || result == DBNull.Value).ShouldBeFalse();
+        }
+
+        var streamId = Guid.NewGuid();
+        await using (var session = theStore.LightweightSession())
+        {
+            session.LastModifiedBy = "session-user";
+            session.Events.StartStream(streamId, new QuestStarted("Not Written"));
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        await using (var conn = await OpenConnectionAsync())
+        {
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = $"SELECT COUNT(*) FROM [{_schema()}].[pc_events] WHERE user_name IS NOT NULL";
+            ((int)(await cmd.ExecuteScalarAsync(TestContext.Current.CancellationToken))!).ShouldBe(0);
+        }
+
+        await using var query = theStore.QuerySession();
+        var events = await query.Events.FetchStreamAsync(streamId, token: TestContext.Current.CancellationToken);
+        events[0].UserName.ShouldBeNull();
     }
 
     private string _schema() => GetType().Name.ToLowerInvariant();

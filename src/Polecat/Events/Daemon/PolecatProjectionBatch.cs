@@ -132,19 +132,11 @@ internal class PolecatProjectionBatch : ProjectionBatchBase<IDocumentSession>,
         var name = range.ShardName.Identity;
         var ceiling = range.SequenceCeiling;
 
-        // #318: the progression write now rides the shared Weasel.Storage.EventStorage<TId> seam
-        // (EventGraph.UpdateProgressOperation) instead of instantiating RecordProgressionOperation here.
-        // Floor == 0 means the row may not exist yet, so upsert; otherwise it's already there.
-        //
-        // #1060: past the first batch the UPDATE is floor-checked, as Marten's is, so a batch whose progression
-        // moved under it fails rather than writing over it.
-        Weasel.Storage.IStorageOperation op = range.SequenceFloor == 0
-            ? _events.UpdateProgressOperation(name, ceiling, upsert: true)
-            : new Polecat.Internal.Operations.RecordProgressionOperation(_events.ProgressionTableName, name, ceiling,
-                _events.EnableExtendedProgressionTracking, upsert: false, _events.UnicodeKeys,
-                expectedFloor: range.SequenceFloor);
-
-        _progressOps.Enqueue(op);
+        // Floor == 0 means the row may not exist yet, so upsert; otherwise it's already there. Both are floor-checked,
+        // as Marten's and Fisher's are, so a batch whose progression moved under it fails rather than writing over it:
+        // #1060 for the UPDATE past the first batch, #1118 for the first commit's MERGE, which another daemon on the
+        // shard may have beaten to the row.
+        _progressOps.Enqueue(_events.ProjectionBatchProgressOperation(name, range.SequenceFloor, ceiling));
         return ValueTask.CompletedTask;
     }
 

@@ -60,17 +60,17 @@ public class event_store_instrumentation_tests : IAsyncLifetime
 
         var instrumentation = (IEventStoreInstrumentation)options.Events;
 
-        // Default is opt-out.
-        instrumentation.ExtendedProgressionEnabled.ShouldBeFalse();
-        options.Events.EnableExtendedProgressionTracking.ShouldBeFalse();
-
-        // Setting through the storage-agnostic interface flips the Polecat-named flag...
-        instrumentation.ExtendedProgressionEnabled = true;
+        // On by default since Polecat 6 (#1116, marten#5763)
+        instrumentation.ExtendedProgressionEnabled.ShouldBeTrue();
         options.Events.EnableExtendedProgressionTracking.ShouldBeTrue();
 
+        // Setting through the storage-agnostic interface flips the Polecat-named flag...
+        instrumentation.ExtendedProgressionEnabled = false;
+        options.Events.EnableExtendedProgressionTracking.ShouldBeFalse();
+
         // ...and vice versa — they are one setting.
-        options.Events.EnableExtendedProgressionTracking = false;
-        instrumentation.ExtendedProgressionEnabled.ShouldBeFalse();
+        options.Events.EnableExtendedProgressionTracking = true;
+        instrumentation.ExtendedProgressionEnabled.ShouldBeTrue();
     }
 
     [Fact]
@@ -88,8 +88,13 @@ public class event_store_instrumentation_tests : IAsyncLifetime
         }
     }
 
+    /// <summary>
+    ///     #1116 (marten#5765): opting out still creates the extended columns, so a store with the flag off and one
+    ///     with it on can share a schema without dropping each other's columns. The flag decides what the daemon
+    ///     writes and reads.
+    /// </summary>
     [Fact]
-    public async Task opting_out_produces_no_schema_delta()
+    public async Task opting_out_still_creates_the_extended_columns()
     {
         using var store = CreateStore(OffSchema, extended: false);
         await store.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
@@ -97,16 +102,61 @@ public class event_store_instrumentation_tests : IAsyncLifetime
         var columns = (await SchemaInspector.GetColumnInfoAsync("pc_event_progression", OffSchema))
             .Select(c => c.Name).ToList();
 
-        // Base columns present...
         columns.ShouldContain("name");
         columns.ShouldContain("last_seq_id");
         columns.ShouldContain("last_updated");
 
-        // ...but none of the extended monitoring columns.
         foreach (var col in ExtendedColumns)
         {
-            columns.ShouldNotContain(col);
+            columns.ShouldContain(col);
         }
+
+        await store.Database.AssertDatabaseMatchesConfigurationAsync(TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
+    public async Task opting_out_writes_and_reads_none_of_the_extended_columns()
+    {
+        using var store = CreateStore(OffSchema, extended: false);
+        await store.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
+
+        // The write the daemon's first batch makes with the flag off
+        await ExecuteAsync(new RecordProgressionOperation(store.Database.Events.ProgressionTableName,
+            "Instrumented:All", ceiling: 42, extendedTracking: store.Options.Events.EnableExtendedProgressionTracking,
+            upsert: true));
+
+        var state = (await store.Database.AllProjectionProgress(TestContext.Current.CancellationToken)).ShouldHaveSingleItem();
+        state.Sequence.ShouldBe(42);
+        state.LastHeartbeat.ShouldBeNull();
+
+        await using var conn = new SqlConnection(ConnectionSource.ConnectionString);
+        await conn.OpenAsync(TestContext.Current.CancellationToken);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"SELECT heartbeat FROM {store.Database.Events.ProgressionTableName} WHERE name = 'Instrumented:All'";
+        (await cmd.ExecuteScalarAsync(TestContext.Current.CancellationToken)).ShouldBe(DBNull.Value);
+    }
+
+    [Fact]
+    public async Task an_opted_out_store_drops_nothing_an_opted_in_store_created()
+    {
+        using (var on = CreateStore(OnSchema, extended: true))
+        {
+            await on.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
+            await ExecuteAsync(new RecordProgressionOperation(on.Database.Events.ProgressionTableName,
+                "Instrumented:All", ceiling: 42, extendedTracking: true, upsert: true));
+        }
+
+        using (var off = CreateStore(OnSchema, extended: false))
+        {
+            await off.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
+            await off.Database.AssertDatabaseMatchesConfigurationAsync(TestContext.Current.CancellationToken);
+        }
+
+        using var again = CreateStore(OnSchema, extended: true);
+        await again.Database.AssertDatabaseMatchesConfigurationAsync(TestContext.Current.CancellationToken);
+
+        var state = (await again.Database.AllProjectionProgress(TestContext.Current.CancellationToken)).ShouldHaveSingleItem();
+        state.LastHeartbeat.ShouldNotBeNull("the opted-out store's migration left the column and its value alone");
     }
 
     /// <summary>

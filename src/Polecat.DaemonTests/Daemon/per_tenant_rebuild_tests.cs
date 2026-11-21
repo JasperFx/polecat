@@ -189,6 +189,58 @@ public class per_tenant_rebuild_tests : IAsyncLifetime
         }
     }
 
+    // #1118: a composite's members keep progression rows of their own, per tenant. A per-tenant rebuild deletes them
+    // with the composite's, so its first batch, now floor-checked, starts every member from 0 again.
+    [Fact]
+    public async Task rebuilding_one_tenant_of_a_composite_again_starts_its_members_over()
+    {
+        using var store = DocumentStore.For(opts =>
+        {
+            opts.ConnectionString = ConnectionSource.ConnectionString;
+            opts.DatabaseSchemaName = Schema;
+            opts.AutoCreateSchemaObjects = AutoCreate.All;
+            opts.UseNativeJsonType = ConnectionSource.SupportsNativeJson;
+            opts.Events.TenancyStyle = TenancyStyle.Conjoined;
+            opts.EventGraph.UseTenantPartitionedEvents = true;
+            opts.Projections.CompositeProjectionFor("PtComposite", composite => composite.Snapshot<QuestParty>());
+        });
+        await store.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
+
+        var streams = new Dictionary<string, Guid>();
+        foreach (var tenant in Tenants)
+        {
+            var streamId = Guid.NewGuid();
+            streams[tenant] = streamId;
+            await using var session = store.LightweightSession(new SessionOptions { TenantId = tenant });
+            session.Events.StartStream(streamId,
+                new QuestStarted($"{tenant} Quest"),
+                new MembersJoined(1, $"{tenant} Town", [$"{tenant}Hero"]));
+            await session.SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        using var daemon = (IProjectionDaemon)await store.BuildProjectionDaemonAsync();
+
+        foreach (var tenant in Tenants)
+        {
+            await daemon.RebuildProjectionAsync("PtComposite", tenant, CancellationToken.None);
+        }
+
+        var redBefore = await ProgressRowsForTenantAsync("Red");
+        redBefore.Count.ShouldBeGreaterThan(1, "the composite and its member each keep a row");
+        var blueBefore = await ProgressRowsForTenantAsync("Blue");
+
+        // Again, over the rows the first rebuild left. With the member's row left in place, the first batch failed on
+        // it and the composite's own row was never written back.
+        await daemon.RebuildProjectionAsync("PtComposite", "Red", CancellationToken.None);
+
+        (await ProgressRowsForTenantAsync("Red")).ShouldBe(redBefore);
+        (await ProgressRowsForTenantAsync("Blue")).ShouldBe(blueBefore);
+
+        await using var query = store.QuerySession(new SessionOptions { TenantId = "Red" });
+        var party = await query.LoadAsync<QuestParty>(streams["Red"], TestContext.Current.CancellationToken);
+        party.ShouldNotBeNull().Members.ShouldBe(["RedHero"]);
+    }
+
     // Progression rows (name -> last_seq_id) whose composed identity targets the given tenant.
     private static async Task<Dictionary<string, long>> ProgressRowsForTenantAsync(string tenantId)
     {

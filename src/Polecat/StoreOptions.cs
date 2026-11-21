@@ -536,15 +536,18 @@ public class StoreOptions
 
     /// <summary>
     ///     Put back the defaults that Polecat 6 changed, for an application that wants to upgrade with no
-    ///     change in behavior or schema and take the new defaults one at a time later. Call it first in
-    ///     your configuration, and turn any one of them back on after it.
+    ///     change in behavior and take the new defaults one at a time later. Call it first in your
+    ///     configuration, and turn any one of them back on after it. The schema changes only by the nullable
+    ///     event metadata and extended progression columns, which Polecat 6 creates whatever the flags say
+    ///     (#1116).
     /// </summary>
     /// <remarks>
     ///     <para>
     ///     Each one is a row in the Polecat 6 migration guide. Restored settings:
     ///     <list type="bullet">
     ///       <item><see cref="EventStoreOptions.EnableCorrelationId" />, <see cref="EventStoreOptions.EnableCausationId" />,
-    ///       <see cref="EventStoreOptions.EnableHeaders" /> and <see cref="EventStoreOptions.EnableUserName" /> &rarr; <c>false</c></item>
+    ///       <see cref="EventStoreOptions.EnableHeaders" /> and <see cref="EventStoreOptions.EnableUserName" /> &rarr; <c>false</c>.
+    ///       The <c>pc_events</c> columns stay in the schema; appends stop writing them</item>
     ///       <item><see cref="StorePolicies.EnableDocumentMetadataByDefault" /> &rarr; <c>false</c></item>
     ///       <item><see cref="OpenTelemetryOptions.EventCountersEnabled" /> &rarr; <c>false</c></item>
     ///       <item><c>AllowOutOfOrderMetadataProperties</c> &rarr; <c>false</c> on Polecat's default serializer.
@@ -557,6 +560,8 @@ public class StoreOptions
     ///       <item><see cref="EventStoreOptions.EnableLateEventDetection" /> &rarr; <c>false</c></item>
     ///       <item><see cref="EventStoreOptions.EnableEventRangeMarks" /> &rarr; <c>false</c></item>
     ///       <item><see cref="EventStoreOptions.EnableProjectionFloors" /> &rarr; <c>false</c></item>
+    ///       <item><see cref="EventStoreOptions.EnableExtendedProgressionTracking" /> &rarr; <c>false</c>. The
+    ///       extended <c>pc_event_progression</c> columns stay in the schema; the daemon stops writing them</item>
     ///       <item><see cref="EventStoreOptions.EnableParkedIdentities" /> &rarr; <c>false</c></item>
     ///       <item><c>Projections.Errors.ApplyErrors</c> and <c>Projections.Errors.SerializationErrors</c> &rarr;
     ///       <c>Skip</c> (Polecat 6 parks the failing identity, or pauses where it can't park)</item>
@@ -591,6 +596,8 @@ public class StoreOptions
         Events.EnableEventRangeMarks = false;
 
         Events.EnableProjectionFloors = false;
+
+        Events.EnableExtendedProgressionTracking = false;
 
         Events.EnableParkedIdentities = false;
         Projections.Errors.SkipApplyErrors = true;
@@ -1099,15 +1106,21 @@ public class EventStoreOptions : IEventStoreInstrumentation
     public bool EnableSideEffectsOnInlineProjections { get; set; } = true;
 
     /// <summary>
-    ///     Opt into extended columns on the event progression table for CritterWatch alerting.
-    ///     Adds nullable heartbeat, agent_status, pause_reason, running_on_node,
-    ///     warning_behind_threshold, critical_behind_threshold, and the #368 classified-failure columns
+    ///     Write and read the extended columns of the event progression table, for CritterWatch alerting and
+    ///     your own shard health checks: heartbeat, agent_status, pause_reason, running_on_node,
+    ///     warning_behind_threshold, critical_behind_threshold, the #368 classified-failure columns
     ///     (failure_category, failure_event_sequence, failure_event_type, failure_event_tenant_id) that
-    ///     carry <see cref="JasperFx.Events.Daemon.ShardFailure" /> onto the row. This is the
+    ///     carry <see cref="JasperFx.Events.Daemon.ShardFailure" /> onto the row, and parked_count. This is the
     ///     Polecat-named alias for <see cref="IEventStoreInstrumentation.ExtendedProgressionEnabled" />;
     ///     both read and write the same setting.
     /// </summary>
-    public bool EnableExtendedProgressionTracking { get; set; }
+    /// <remarks>
+    ///     #1116 (marten#5763): on by default since Polecat 6, as in Marten 10.
+    ///     <see cref="StoreOptions.RestoreV5Defaults" /> turns it back off. The columns are part of
+    ///     <c>pc_event_progression</c> either way (marten#5765); the flag only decides whether the daemon
+    ///     writes and reads them.
+    /// </remarks>
+    public bool EnableExtendedProgressionTracking { get; set; } = true;
 
     /// <summary>
     ///     #813 (jasperfx#809): opt into persisted projection start floors, stored in
