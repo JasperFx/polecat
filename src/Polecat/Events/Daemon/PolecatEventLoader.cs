@@ -53,10 +53,6 @@ internal class PolecatEventLoader : EventLoaderBase
     private readonly bool _includeTags;
     private readonly string? _tenantFilter;
 
-    // marten#6003 / #1053: the unreadable events of the load in flight when its request parks them. Set by LoadAsync
-    // for the length of one load, which the base runs in a single async flow.
-    private readonly AsyncLocal<List<UnreadableEvent>?> _unreadable = new();
-
     // #756: fixed for the loader's lifetime, computed from the same options the dialect composes the SELECT
     // from, so the two cannot disagree about where a metadata column is.
     private readonly Internal.MetadataSlots _metadataSlots;
@@ -85,38 +81,16 @@ internal class PolecatEventLoader : EventLoaderBase
     }
 
     /// <summary>
-    ///     The base's load, plus two things marten#6003 asks of a store (#1053): an event the store can't deserialize
-    ///     is reported on <see cref="EventPage.Unreadable" /> with its stream and tenant when the request parks such
-    ///     events, and a projection that slices by DCB tag gets its events' tags.
+    ///     The base's load, plus the events' tags for a projection that slices by DCB tag (marten#6003, #1053).
     /// </summary>
     /// <remarks>
-    ///     Weasel's <see cref="EventLoaderBase" /> doesn't know about <c>EventRequest.ParksUnreadableEvents</c> yet
-    ///     (weasel#901), so the unreadable rows are collected here through <c>ShouldSkip</c> and
-    ///     <c>RecordSkippedEventAsync</c>, as Fisher's loader does. Move this into the base when #901 lands.
+    ///     An event the store can't deserialize is reported on <see cref="EventPage.Unreadable" /> by Weasel's
+    ///     <see cref="EventLoaderBase" /> itself when the request parks such events (weasel#901), from the stream and
+    ///     tenant <see cref="EventDeserializationFailureException" /> carries.
     /// </remarks>
     public override async Task<EventPage> LoadAsync(EventRequest request, CancellationToken token)
     {
-        List<UnreadableEvent>? unreadable = null;
-        if (request.ParksUnreadableEvents)
-        {
-            unreadable = new List<UnreadableEvent>();
-            _unreadable.Value = unreadable;
-        }
-
-        EventPage page;
-        try
-        {
-            page = await base.LoadAsync(request, token).ConfigureAwait(false);
-        }
-        finally
-        {
-            if (unreadable != null) _unreadable.Value = null;
-        }
-
-        if (unreadable is { Count: > 0 })
-        {
-            foreach (var @event in unreadable) page.AddUnreadable(@event);
-        }
+        var page = await base.LoadAsync(request, token).ConfigureAwait(false);
 
         if (_includeTags && page.Count > 0)
         {
@@ -125,22 +99,6 @@ internal class PolecatEventLoader : EventLoaderBase
         }
 
         return page;
-    }
-
-    // marten#6003 / #1053: a request that parks unreadable events takes every one of them, whatever
-    // SkipSerializationErrors says, and the base counts it as skipped so the page's ceiling still covers it
-    protected override bool ShouldSkip(Exception ex, ErrorHandlingOptions options)
-        => (_unreadable.Value != null && ex is EventDeserializationFailureException) || base.ShouldSkip(ex, options);
-
-    protected override ValueTask RecordSkippedEventAsync(Exception ex, EventRequest request, CancellationToken token)
-    {
-        if (_unreadable.Value is { } unreadable && ex is EventDeserializationFailureException failure)
-        {
-            unreadable.Add(new UnreadableEvent(failure.Sequence, failure.StreamId, failure.StreamKey, failure.TenantId,
-                failure.EventTypeName, failure));
-        }
-
-        return base.RecordSkippedEventAsync(ex, request, token);
     }
 
     protected override async ValueTask<DbConnection> OpenConnectionAsync(CancellationToken token)

@@ -52,9 +52,11 @@ namespace Polecat.Resilience;
 ///         Safe is not the same as free, though. Each attempt has already waited out the whole
 ///         <c>Connect Timeout</c>, and a retry puts another waiter on a pool that has nothing to
 ///         give, so this is a load problem a retry can only stretch. That is why Polecat adds no retry
-///         of its own: the daemon pauses the shard for a supervisor to restart, with
-///         <c>ShardFailure.IsTransient</c> true, and <see cref="Internal.ConnectionFactory" />'s open
-///         retry looks only at <see cref="SqlException" />s and never sees it.
+///         of its own to this pipeline, and <see cref="Internal.ConnectionFactory" />'s open retry looks
+///         only at <see cref="SqlException" />s and never sees it. The async daemon does build a batch
+///         again after one, a few times with a short backoff, through its own pipeline
+///         (<see cref="StoreOptions.ConfigureDaemonPolly" />, jasperfx#1256), and then pauses the shard
+///         for a supervisor to restart, with <c>ShardFailure.IsTransient</c> true.
 ///     </para>
 /// </remarks>
 public static class PolecatRetryPredicates

@@ -45,6 +45,12 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
 
     TimeProvider IEventStore<IDocumentSession, IQuerySession>.TimeProvider => Events.TimeProvider;
 
+    // jasperfx#1256: the daemon builds each projection batch through this, so a transient failure (a pool timeout
+    // under a load spike) builds the batch again instead of pausing the shard. The daemon's own pipeline, not
+    // Options.ResiliencePipeline, because the commands a batch build runs already go through that one.
+    ResiliencePipeline IEventStore<IDocumentSession, IQuerySession>.ResiliencePipeline =>
+        Options.DaemonResiliencePipeline;
+
     AutoCreate IEventStore<IDocumentSession, IQuerySession>.AutoCreateSchemaObjects =>
         Options.AutoCreateSchemaObjects;
 

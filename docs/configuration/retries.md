@@ -76,13 +76,13 @@ waited out the whole `Connect Timeout`, 15 seconds by default, and a pool timeou
 is out of capacity, which a retry adds to rather than relieves. If you do retry one, keep the attempts
 few and the delay long.
 
-The async daemon does not retry it. A projection that hits a pool timeout does not dead-letter the
-event, whatever `SkipApplyErrors` says. The shard pauses with `ShardFailure.IsTransient` set, so a
-supervisor knows it is worth restarting, and a restart picks up from the shard's persisted progress
-without losing anything. If nothing in your application supervises the daemon, the shard stays paused
-until something restarts it, as it does after any other failure. Wolverine's managed subscription
-distribution is one such supervisor. Several slices timing out together are the exception: the daemon
-gets them as a group with no single event to blame, and builds the batch again in place.
+The async daemon handles it on its own pipeline, described [below](#the-async-daemon-s-pipeline). A
+projection that hits a pool timeout never dead-letters or parks the event. The daemon builds the batch
+again a few times, and if the pool is still dry, the shard pauses with `ShardFailure.IsTransient` set, so
+a supervisor knows it is worth restarting. A restart picks up from the shard's persisted progress without
+losing anything. If nothing in your application supervises the daemon, the shard stays paused until
+something restarts it, as it does after any other failure. Wolverine's managed subscription distribution
+is one such supervisor.
 
 ```cs
 using Polecat.Resilience;
@@ -240,6 +240,39 @@ opts.ExtendPolly(builder =>
 {
     builder.AddTimeout(TimeSpan.FromSeconds(30));
 });
+```
+
+## The async daemon's pipeline
+
+The async daemon builds each projection batch through a pipeline of its own, set with
+`ConfigureDaemonPolly()` ([JasperFx 3.11](https://jasperfx.github.io/migration-guide#key-changes-in-3-11-0)).
+When a build fails for a transient reason, like a connection pool timeout during a load spike, a deadlock
+or a dropped connection, the daemon builds the batch again. That holds under every `ApplyErrors` setting, and
+whether one slice failed or several. A failure in your projection's own code is never handed to this
+pipeline. It parks, pauses or skips as `ApplyErrors` says.
+
+By default the batch is built again up to 3 times, after 100ms and then doubling, with jitter. When that runs
+out, the shard pauses with `ShardFailure.IsTransient` true.
+
+Building a batch again is safe in a way that replaying a command is not. Nothing has been written when the
+build fails, and the batch is sliced again from the same events. It's a separate pipeline because the
+commands a build runs already go through `StoreOptions.ResiliencePipeline`, and a retry on both would
+multiply.
+
+```cs
+// More patience for a load spike
+opts.ConfigureDaemonPolly(builder =>
+{
+    builder.AddRetry(new RetryStrategyOptions
+    {
+        MaxRetryAttempts = 5,
+        BackoffType = DelayBackoffType.Exponential,
+        Delay = TimeSpan.FromMilliseconds(500)
+    });
+});
+
+// Or pause the shard on the first transient failure, as Polecat 6.0.0-alpha.8 and earlier did
+opts.ConfigureDaemonPolly(_ => { });
 ```
 
 ## Circuit breaker
