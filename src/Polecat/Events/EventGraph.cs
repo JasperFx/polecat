@@ -817,6 +817,17 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
             : StringEventStorage.UpdateProgress(shardIdentity, sequence, upsert);
 
     /// <summary>
+    ///     The progression write of an async daemon batch, checked against the floor the batch was built from. Floor 0 is
+    ///     the shard's first commit, a MERGE because the row may not exist yet; any other floor is an UPDATE. Either one
+    ///     fails with <see cref="JasperFx.Events.Daemon.ProgressionProgressOutOfOrderException" /> when the row has moved
+    ///     past the floor (#1060, #1118).
+    /// </summary>
+    internal Polecat.Internal.Operations.RecordProgressionOperation ProjectionBatchProgressOperation(string shardIdentity,
+        long floor, long ceiling)
+        => new(ProgressionTableName, shardIdentity, ceiling, EnableExtendedProgressionTracking, upsert: floor == 0,
+            UnicodeKeys, expectedFloor: floor);
+
+    /// <summary>
     ///     Guard for identity-sensitive entry points that take a Guid stream id (marten#5244's
     ///     Polecat twin). Downstream code branches on the store's configured
     ///     <see cref="StreamIdentity" /> rather than on which overload the caller used, so a

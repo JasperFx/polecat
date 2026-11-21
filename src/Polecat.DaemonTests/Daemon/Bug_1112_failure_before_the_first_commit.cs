@@ -111,7 +111,7 @@ public class Bug_1112_failure_before_the_first_commit : OneOffConfigurationsCont
 
     // The first commit of a shard that starts at 0, exactly as the daemon's projection batch writes it
     private async Task commitFromZeroAsync(long ceiling) => await executeAsync(
-        (RecordProgressionOperation)theDatabase.Events.UpdateProgressOperation(TheShard, ceiling, upsert: true));
+        theDatabase.Events.ProjectionBatchProgressOperation(TheShard, floor: 0, ceiling));
 
     private async Task executeAsync(RecordProgressionOperation op)
     {
@@ -120,8 +120,17 @@ public class Bug_1112_failure_before_the_first_commit : OneOffConfigurationsCont
         var builder = new Weasel.SqlServer.BatchBuilder(batch);
         op.ConfigureCommand(builder);
         builder.Compile();
-        await using var reader = await batch.ExecuteReaderAsync(Ct);
-        await op.PostprocessAsync(reader, new List<Exception>(), Ct);
+
+        try
+        {
+            await using var reader = await batch.ExecuteReaderAsync(Ct);
+            await op.PostprocessAsync(reader, new List<Exception>(), Ct);
+        }
+        // As a session does with an operation's errors
+        catch (Exception e) when (op.TryTransform(e, out var transformed))
+        {
+            throw transformed!;
+        }
     }
 
     private async Task<ShardState?> progressionAsync(string shard)
@@ -254,6 +263,30 @@ public class Bug_1112_failure_before_the_first_commit : OneOffConfigurationsCont
         row.EventType.ShouldBeNull();
 
         (await progressionAsync(TheShard)).ShouldNotBeNull().Failure.ShouldBeNull();
+    }
+
+    // #1118: the port of Marten's test of the same name. The MERGE used to write over the row, which ended at 20.
+    [Fact]
+    public async Task a_first_commit_still_fails_on_a_row_another_daemon_committed()
+    {
+        await buildStorageAsync();
+        await commitFromZeroAsync(12);
+
+        var ex = await Should.ThrowAsync<ProgressionProgressOutOfOrderException>(() => commitFromZeroAsync(20));
+        ex.Message.ShouldContain(TheShard);
+
+        (await progressionAsync(TheShard)).ShouldNotBeNull().Sequence.ShouldBe(12);
+    }
+
+    [Fact]
+    public async Task a_first_commit_still_fails_on_a_row_another_daemon_committed_without_extended_tracking()
+    {
+        await buildStorageAsync(opts => opts.Events.EnableExtendedProgressionTracking = false);
+        await commitFromZeroAsync(12);
+
+        await Should.ThrowAsync<ProgressionProgressOutOfOrderException>(() => commitFromZeroAsync(20));
+
+        (await progressionAsync(TheShard)).ShouldNotBeNull().Sequence.ShouldBe(12);
     }
 
     [Fact]

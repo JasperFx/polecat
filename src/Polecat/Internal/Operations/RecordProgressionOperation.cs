@@ -21,6 +21,11 @@ namespace Polecat.Internal.Operations;
 ///     rebuild relies on it: an idle shard carries the rebuild in an empty <c>(C, C]</c> batch, and that batch has
 ///     to fail with everything in it when the progression moved.
 ///     <para>
+///         #1118: the first commit, the MERGE at floor 0, is floor-checked too when a daemon batch passes its floor. A row
+///         another daemon on the shard has already moved past 0 fails the batch the same way, where the MERGE used to
+///         write over it. A composite rebuild deletes its members' rows first, so its first batch finds none.
+///     </para>
+///     <para>
 ///         #1112 (marten#6127): the first commit, the MERGE at floor 0, finds a row already there when the shard
 ///         failed before it ever committed, because the failure is written at the shard's start position
 ///         (<c>PolecatDatabase.WriteExtendedProgressionAsync</c>). That row has no progress in it, so the MERGE
@@ -85,12 +90,32 @@ internal class RecordProgressionOperation : IStorageOperation, Weasel.Storage.No
             // agents starting together both take the INSERT branch without it. See #500.
             builder.Append($"MERGE {_progressionTableName} WITH (UPDLOCK, HOLDLOCK) AS target USING (SELECT ");
             builder.AppendParameter(_name, Storage.KeyColumns.DbType(_unicode));
-            builder.Append($"""
-                 AS name) AS source ON target.name = source.name
-                WHEN MATCHED THEN UPDATE SET {matchedSet}
-                WHEN NOT MATCHED THEN INSERT ({columns})
-                    VALUES ({values});
-                """);
+            if (_expectedFloor is { } firstFloor)
+            {
+                // #1118: a daemon batch's first commit takes over a row only while it is still at the floor, which
+                // is 0. A row past it was committed by another daemon on the shard, and writing over it applies those
+                // events twice, so the MERGE changes nothing and the batch fails, as the UPDATE below does.
+                builder.Append($"""
+                     AS name) AS source ON target.name = source.name
+                    WHEN MATCHED AND target.last_seq_id = 
+                    """);
+                builder.AppendParameter(firstFloor);
+                builder.Append($"""
+                     THEN UPDATE SET {matchedSet}
+                    WHEN NOT MATCHED THEN INSERT ({columns})
+                        VALUES ({values});
+                    IF @@ROWCOUNT = 0 THROW {ProgressionOutOfOrderErrorNumber}, 'The shard''s progression is not at the floor this batch was built from.', 1;
+                    """);
+            }
+            else
+            {
+                builder.Append($"""
+                     AS name) AS source ON target.name = source.name
+                    WHEN MATCHED THEN UPDATE SET {matchedSet}
+                    WHEN NOT MATCHED THEN INSERT ({columns})
+                        VALUES ({values});
+                    """);
+            }
         }
         else if (_expectedFloor is { } floor)
         {
