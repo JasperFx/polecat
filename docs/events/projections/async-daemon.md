@@ -736,6 +736,11 @@ The details, including how a replay works and the guard rails, are in the Jasper
 - Rebuilding the projection clears its parked rows and writes its slice index again. Rewinding it clears the parks and
   index rows above the new floor. Removing a tenant, or ejecting a shard, removes theirs.
 
+The daemon logs through the host's `ILoggerFactory` when the store came from `AddPolecat`, however it was started:
+`AddAsyncDaemon`, Wolverine-managed projection distribution, or `BuildProjectionDaemonAsync()` without a logger. That
+covers the startup line above, each parked identity, and `ParkedLimitReachedException`. A store built with
+`DocumentStore.For(...)` has no host, so its daemons log nothing unless you pass them a logger.
+
 Replay or discard a parked identity on the node that runs the shard:
 
 ```cs
