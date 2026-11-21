@@ -20,6 +20,12 @@ namespace Polecat.Internal.Operations;
 ///     <see cref="ProgressionProgressOutOfOrderException" /> instead of overwriting it. JasperFx's per-identity
 ///     rebuild relies on it: an idle shard carries the rebuild in an empty <c>(C, C]</c> batch, and that batch has
 ///     to fail with everything in it when the progression moved.
+///     <para>
+///         #1112 (marten#6127): the first commit, the MERGE at floor 0, finds a row already there when the shard
+///         failed before it ever committed, because the failure is written at the shard's start position
+///         (<c>PolecatDatabase.WriteExtendedProgressionAsync</c>). That row has no progress in it, so the MERGE
+///         takes it over and clears the failure it carried, which this commit has moved past.
+///     </para>
 /// </remarks>
 internal class RecordProgressionOperation : IStorageOperation, Weasel.Storage.NoDataReturnedCall, IExceptionTransform
 {
@@ -61,6 +67,13 @@ internal class RecordProgressionOperation : IStorageOperation, Weasel.Storage.No
         // waiting for the open batch of every shard it passes on the way to its own row.
         if (_upsert)
         {
+            // #1112: a row at 0 may carry the failure of a shard that paused before its first commit. Moving past
+            // 0 moves past that failure, so it goes, as it does on Fisher. Marten deletes the row and inserts.
+            var matchedSet = _extendedTracking
+                ? set + ", pause_reason = NULL, failure_category = NULL, failure_event_sequence = NULL, " +
+                        "failure_event_type = NULL, failure_event_tenant_id = NULL"
+                : set;
+
             var columns = _extendedTracking
                 ? "name, last_seq_id, last_updated, heartbeat"
                 : "name, last_seq_id, last_updated";
@@ -74,7 +87,7 @@ internal class RecordProgressionOperation : IStorageOperation, Weasel.Storage.No
             builder.AppendParameter(_name, Storage.KeyColumns.DbType(_unicode));
             builder.Append($"""
                  AS name) AS source ON target.name = source.name
-                WHEN MATCHED THEN UPDATE SET {set}
+                WHEN MATCHED THEN UPDATE SET {matchedSet}
                 WHEN NOT MATCHED THEN INSERT ({columns})
                     VALUES ({values});
                 """);

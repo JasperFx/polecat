@@ -177,12 +177,14 @@ public class parked_identities_health_check
 
         try
         {
-            // The first park commits with the shard's progression row. The failure columns are only ever updated on
-            // that row, so a shard that trips on its very first batch has nothing in pc_event_progression to say so.
-            await weighInAsync(store, poison: true);
-            await store.Database.WaitForNonStaleProjectionDataAsync(Generous);
-
-            await weighInAsync(store, poison: true);
+            // Two failing identities in the shard's very first batch pass the cap of one, so it pauses before it has
+            // committed anything (#1112)
+            await using (var session = store.LightweightSession())
+            {
+                session.Events.StartStream<WeighIn>(Guid.NewGuid(), new WeighInStarted(), new Weighed(true));
+                session.Events.StartStream<WeighIn>(Guid.NewGuid(), new WeighInStarted(), new Weighed(true));
+                await session.SaveChangesAsync(Ct);
+            }
 
             var shard = ((IEventStore)store).RegisteredShardNames().Single().Identity;
             await waitForPausedAsync(() => daemon.StatusFor(shard));

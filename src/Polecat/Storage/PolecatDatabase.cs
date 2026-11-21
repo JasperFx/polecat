@@ -296,14 +296,22 @@ public partial class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDataba
     // marten#5001 / CritterWatch#750: persist the async daemon's extended telemetry (heartbeat,
     // agent_status, pause_reason, running_on_node) that the shared ExtendedProgressionWriter drives
     // through IEventDatabase.WriteExtendedProgressionAsync (the default is a no-op). Mirrors Marten's
-    // mt_mark_event_progression_extended: TELEMETRY-ONLY — decorate an EXISTING progression row's
-    // extended columns and nothing else. It must never INSERT and never touch last_seq_id/last_updated,
-    // because the progression row (name/last_seq_id/last_updated) is owned by the projection batch
-    // commit: a pre-emptive insert here would race the batch's own insert into a duplicate-key failure,
-    // and updating last_seq_id on a throttled heartbeat would roll committed progress backwards (the
-    // "clobber" defect). If no row exists yet, the zero-row UPDATE simply skips until the first commit
-    // creates it. running_on_node stays NULL until a distribution layer stamps AssignedNodeNumber onto
-    // the published ShardState (Wolverine-managed distribution), which the writer carries into RunningOnNode.
+    // mt_mark_event_progression_extended: TELEMETRY — decorate a progression row's extended columns and
+    // never touch an existing row's last_seq_id/last_updated, because the row's position is owned by the
+    // projection batch commit, and updating last_seq_id on a throttled heartbeat would roll committed
+    // progress backwards (the "clobber" defect). A state WITHOUT a failure is an UPDATE of an existing row,
+    // so a shard with no row yet is skipped until the first commit creates it. running_on_node stays NULL
+    // until a distribution layer stamps AssignedNodeNumber onto the published ShardState
+    // (Wolverine-managed distribution), which the writer carries into RunningOnNode.
+    //
+    // #1112 (marten#6127, fisher#660): a state that CARRIES a failure creates the row when there isn't one.
+    // A shard that pauses on its first batch, a ParkedLimitReached pause included, has never committed, so
+    // its failure was written nowhere, and nothing reading the database (the parked identities health check
+    // on another node, the CLI, CritterWatch) could see it. The row goes in at max(state.Sequence, 0), which
+    // for a shard that never committed is the floor it started from, so it does not change where the shard
+    // starts next time. An existing row only gets the telemetry and failure columns, never a new
+    // last_seq_id. The shard's first commit, a MERGE (RecordProgressionOperation), takes a row at 0 over and
+    // clears the failure it carried.
     //
     // #368 / jasperfx#565: the four failure_* columns follow a DIFFERENT rule from the rest. They are
     // written when the state carries a ShardFailure, CLEARED when a ShardAction.Started arrives without
@@ -337,7 +345,7 @@ public partial class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDataba
     //
     // Writes go in shard-name order so two writers racing over the same rows cannot take their locks
     // in opposite orders and deadlock. The NOT EXISTS(... INTERSECT ...) guard makes replaying
-    // unchanged telemetry a zero-row UPDATE rather than a fresh row version — the SET list is
+    // unchanged telemetry a zero-row write rather than a fresh row version — the SET list is
     // unconditional, so without it every flush rewrote every matched row whether anything had changed
     // or not, and each avoided rewrite is also an avoided row lock. INTERSECT is used rather than
     // `IS DISTINCT FROM` because it treats NULLs as equal on every supported server version.
@@ -359,76 +367,199 @@ public partial class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDataba
             await using var conn = new SqlConnection(connectionString);
             await conn.OpenAsync(ct).ConfigureAwait(false);
 
-            await using var cmd = conn.CreateCommand();
-            cmd.CommandText = $"""
-                UPDATE {progressionTable}
-                SET heartbeat = @heartbeat,
-                    agent_status = @status,
-                    pause_reason = @reason,
-                    running_on_node = @node,
-                    failure_category = CASE WHEN @touchFailure = 1 THEN @failureCategory ELSE failure_category END,
-                    failure_event_sequence = CASE WHEN @touchFailure = 1 THEN @failureSequence ELSE failure_event_sequence END,
-                    failure_event_type = CASE WHEN @touchFailure = 1 THEN @failureEventType ELSE failure_event_type END,
-                    failure_event_tenant_id = CASE WHEN @touchFailure = 1 THEN @failureTenantId ELSE failure_event_tenant_id END,
-                    parked_count = COALESCE(@parked, parked_count)
-                WHERE name = @name
-                  AND NOT EXISTS (
-                      SELECT heartbeat, agent_status, pause_reason, running_on_node,
-                             failure_category, failure_event_sequence, failure_event_type, failure_event_tenant_id,
-                             parked_count
-                      INTERSECT
-                      SELECT @heartbeat, @status, @reason, @node,
-                             CASE WHEN @touchFailure = 1 THEN @failureCategory ELSE failure_category END,
-                             CASE WHEN @touchFailure = 1 THEN @failureSequence ELSE failure_event_sequence END,
-                             CASE WHEN @touchFailure = 1 THEN @failureEventType ELSE failure_event_type END,
-                             CASE WHEN @touchFailure = 1 THEN @failureTenantId ELSE failure_event_tenant_id END,
-                             COALESCE(@parked, parked_count)
-                  );
-                """;
+            await using var update = conn.CreateCommand();
+            update.CommandText = extendedProgressionUpdateSql(progressionTable);
+            var updateParameters = new ExtendedProgressionParameters(update, unicode, withStartPosition: false);
 
-            var name = cmd.Parameters.AddKey("@name", null, unicode);
-            var heartbeat = cmd.Parameters.AddWithValue("@heartbeat", DBNull.Value);
-            var status = cmd.Parameters.AddWithValue("@status", DBNull.Value);
-            var reason = cmd.Parameters.AddWithValue("@reason", DBNull.Value);
-            var node = cmd.Parameters.AddWithValue("@node", DBNull.Value);
-            var touchFailure = cmd.Parameters.AddWithValue("@touchFailure", 0);
-            var failureCategory = cmd.Parameters.AddVarChar("@failureCategory", null);
-            var failureSequence = cmd.Parameters.AddWithValue("@failureSequence", DBNull.Value);
-            var failureEventType = cmd.Parameters.AddVarChar("@failureEventType", null);
-            var failureTenantId = cmd.Parameters.AddKey("@failureTenantId", null, unicode);
+            // #1112: only built when a flush carries a failure, which is rare
+            SqlCommand? upsert = null;
+            ExtendedProgressionParameters? upsertParameters = null;
+
+            try
+            {
+                foreach (var shardState in shardStates)
+                {
+                    if (shardState.Failure == null)
+                    {
+                        updateParameters.Apply(shardState);
+
+                        // One ExecuteNonQueryAsync per shard, deliberately: each is its own implicit
+                        // transaction, so this loop never holds more than a single row lock at a time.
+                        await update.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+                        continue;
+                    }
+
+                    // #1112: a failure must land even when the shard has never committed, so it creates the
+                    // row at the position the shard started from if there isn't one. Still one row, one statement.
+                    if (upsert == null)
+                    {
+                        upsert = conn.CreateCommand();
+                        upsert.CommandText = extendedProgressionUpsertSql(progressionTable);
+                        upsertParameters = new ExtendedProgressionParameters(upsert, unicode, withStartPosition: true);
+                    }
+
+                    upsertParameters!.Apply(shardState);
+                    await upsert.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+                }
+            }
+            finally
+            {
+                if (upsert != null)
+                {
+                    await upsert.DisposeAsync().ConfigureAwait(false);
+                }
+            }
+        }, (_connectionString, _events.ProgressionTableName, ordered, _events.UnicodeKeys), token).ConfigureAwait(false);
+    }
+
+    // The failure_* columns of a state without a failure: written only when @touchFailure says so (#368)
+    private const string TouchedFailureCategory =
+        "CASE WHEN @touchFailure = 1 THEN @failureCategory ELSE failure_category END";
+
+    private const string TouchedFailureSequence =
+        "CASE WHEN @touchFailure = 1 THEN @failureSequence ELSE failure_event_sequence END";
+
+    private const string TouchedFailureEventType =
+        "CASE WHEN @touchFailure = 1 THEN @failureEventType ELSE failure_event_type END";
+
+    private const string TouchedFailureTenantId =
+        "CASE WHEN @touchFailure = 1 THEN @failureTenantId ELSE failure_event_tenant_id END";
+
+    private static string extendedProgressionUpdateSql(string progressionTable) => $"""
+        UPDATE {progressionTable}
+        SET heartbeat = @heartbeat,
+            agent_status = @status,
+            pause_reason = @reason,
+            running_on_node = @node,
+            failure_category = {TouchedFailureCategory},
+            failure_event_sequence = {TouchedFailureSequence},
+            failure_event_type = {TouchedFailureEventType},
+            failure_event_tenant_id = {TouchedFailureTenantId},
+            parked_count = COALESCE(@parked, parked_count)
+        WHERE name = @name
+          AND NOT EXISTS (
+              SELECT heartbeat, agent_status, pause_reason, running_on_node,
+                     failure_category, failure_event_sequence, failure_event_type, failure_event_tenant_id,
+                     parked_count
+              INTERSECT
+              SELECT @heartbeat, @status, @reason, @node,
+                     {TouchedFailureCategory},
+                     {TouchedFailureSequence},
+                     {TouchedFailureEventType},
+                     {TouchedFailureTenantId},
+                     COALESCE(@parked, parked_count)
+          );
+        """;
+
+    // #1112 (marten#6127): the write for a state that carries a failure. The update branch is the statement
+    // above with the failure always written; the insert branch creates the row of a shard that has not
+    // committed yet, at its start position. last_seq_id is only ever set by the insert, never by the update,
+    // so a committed position is never moved. UPDLOCK, HOLDLOCK for the same reason as the first commit's
+    // MERGE (#500): without it this and the shard's first commit could both miss the row and both insert.
+    private static string extendedProgressionUpsertSql(string progressionTable) => $"""
+        MERGE {progressionTable} WITH (UPDLOCK, HOLDLOCK) AS target
+        USING (SELECT @name AS name) AS source ON target.name = source.name
+        WHEN MATCHED AND NOT EXISTS (
+                SELECT target.heartbeat, target.agent_status, target.pause_reason, target.running_on_node,
+                       target.failure_category, target.failure_event_sequence, target.failure_event_type,
+                       target.failure_event_tenant_id, target.parked_count
+                INTERSECT
+                SELECT @heartbeat, @status, @reason, @node,
+                       @failureCategory, @failureSequence, @failureEventType, @failureTenantId,
+                       COALESCE(@parked, target.parked_count)
+            ) THEN UPDATE SET
+                heartbeat = @heartbeat,
+                agent_status = @status,
+                pause_reason = @reason,
+                running_on_node = @node,
+                failure_category = @failureCategory,
+                failure_event_sequence = @failureSequence,
+                failure_event_type = @failureEventType,
+                failure_event_tenant_id = @failureTenantId,
+                parked_count = COALESCE(@parked, target.parked_count)
+        WHEN NOT MATCHED THEN INSERT
+                (name, last_seq_id, heartbeat, agent_status, pause_reason, running_on_node, failure_category,
+                 failure_event_sequence, failure_event_type, failure_event_tenant_id, parked_count)
+            VALUES (source.name, @startPosition, @heartbeat, @status, @reason, @node, @failureCategory,
+                    @failureSequence, @failureEventType, @failureTenantId, @parked);
+        """;
+
+    // The parameters both extended progression statements bind, by name
+    private sealed class ExtendedProgressionParameters
+    {
+        private readonly SqlParameter _name;
+        private readonly SqlParameter _heartbeat;
+        private readonly SqlParameter _status;
+        private readonly SqlParameter _reason;
+        private readonly SqlParameter _node;
+        private readonly SqlParameter? _touchFailure;
+        private readonly SqlParameter _failureCategory;
+        private readonly SqlParameter _failureSequence;
+        private readonly SqlParameter _failureEventType;
+        private readonly SqlParameter _failureTenantId;
+        private readonly SqlParameter _parked;
+        private readonly SqlParameter? _startPosition;
+
+        public ExtendedProgressionParameters(SqlCommand command, bool unicode, bool withStartPosition)
+        {
+            _name = command.Parameters.AddKey("@name", null, unicode);
+            _heartbeat = command.Parameters.AddWithValue("@heartbeat", DBNull.Value);
+            _status = command.Parameters.AddWithValue("@status", DBNull.Value);
+            _reason = command.Parameters.AddWithValue("@reason", DBNull.Value);
+            _node = command.Parameters.AddWithValue("@node", DBNull.Value);
+            _failureCategory = command.Parameters.AddVarChar("@failureCategory", null);
+            _failureSequence = command.Parameters.AddWithValue("@failureSequence", DBNull.Value);
+            _failureEventType = command.Parameters.AddVarChar("@failureEventType", null);
+            _failureTenantId = command.Parameters.AddKey("@failureTenantId", null, unicode);
 
             // #1053: null when the state doesn't say (a shard that doesn't park), which leaves the column alone
-            var parked = cmd.Parameters.Add("@parked", System.Data.SqlDbType.Int);
+            _parked = command.Parameters.Add("@parked", System.Data.SqlDbType.Int);
 
-            foreach (var shardState in shardStates)
+            // The upsert always writes the failure it was handed, so it has no use for @touchFailure
+            if (withStartPosition)
             {
-                var failure = shardState.Failure;
+                _startPosition = command.Parameters.Add("@startPosition", System.Data.SqlDbType.BigInt);
+            }
+            else
+            {
+                _touchFailure = command.Parameters.AddWithValue("@touchFailure", 0);
+            }
+        }
 
-                name.Value = shardState.ShardName;
-                heartbeat.Value = (object?)shardState.LastHeartbeat ?? DBNull.Value;
-                status.Value = (object?)shardState.AgentStatus ?? DBNull.Value;
-                reason.Value = (object?)shardState.PauseReason ?? DBNull.Value;
-                node.Value = (object?)shardState.RunningOnNode ?? DBNull.Value;
+        public void Apply(ShardState state)
+        {
+            var failure = state.Failure;
 
+            _name.Value = state.ShardName;
+            _heartbeat.Value = (object?)state.LastHeartbeat ?? DBNull.Value;
+            _status.Value = (object?)state.AgentStatus ?? DBNull.Value;
+            _reason.Value = (object?)state.PauseReason ?? DBNull.Value;
+            _node.Value = (object?)state.RunningOnNode ?? DBNull.Value;
+
+            if (_touchFailure != null)
+            {
                 // #368 / jasperfx#565: the failure_* columns are written when the state carries a
                 // ShardFailure, CLEARED when a ShardAction.Started arrives without one, and otherwise
                 // LEFT ALONE — SubscriptionAgent publishes a plain Stopped right behind a Paused, and
                 // an unconditional write would erase the reason microseconds after recording it.
-                touchFailure.Value = failure != null || shardState.Action == ShardAction.Started ? 1 : 0;
-
-                // The enum NAME, never the ordinal — reordering ShardFailureCategory must not silently
-                // re-label rows written by an older deployment.
-                failureCategory.Value = (object?)failure?.Category.ToString() ?? DBNull.Value;
-                failureSequence.Value = (object?)failure?.Event?.Sequence ?? DBNull.Value;
-                failureEventType.Value = (object?)failure?.Event?.EventTypeName ?? DBNull.Value;
-                failureTenantId.Value = (object?)failure?.Event?.TenantId ?? DBNull.Value;
-                parked.Value = (object?)shardState.ParkedCount ?? DBNull.Value;
-
-                // One ExecuteNonQueryAsync per shard, deliberately: each is its own implicit
-                // transaction, so this loop never holds more than a single row lock at a time.
-                await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+                _touchFailure.Value = failure != null || state.Action == ShardAction.Started ? 1 : 0;
             }
-        }, (_connectionString, _events.ProgressionTableName, ordered, _events.UnicodeKeys), token).ConfigureAwait(false);
+
+            // The enum NAME, never the ordinal — reordering ShardFailureCategory must not silently
+            // re-label rows written by an older deployment.
+            _failureCategory.Value = (object?)failure?.Category.ToString() ?? DBNull.Value;
+            _failureSequence.Value = (object?)failure?.Event?.Sequence ?? DBNull.Value;
+            _failureEventType.Value = (object?)failure?.Event?.EventTypeName ?? DBNull.Value;
+            _failureTenantId.Value = (object?)failure?.Event?.TenantId ?? DBNull.Value;
+            _parked.Value = (object?)state.ParkedCount ?? DBNull.Value;
+
+            if (_startPosition != null)
+            {
+                // #1112: a shard that never committed publishes the floor it started from as its sequence
+                // (SubscriptionAgent sets LastCommitted to the start floor), so this is where it starts again
+                _startPosition.Value = Math.Max(state.Sequence, 0);
+            }
+        }
     }
 
     public Task<IReadOnlyList<ShardState>> AllProjectionProgress(CancellationToken token = default)

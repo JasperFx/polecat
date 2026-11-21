@@ -13,7 +13,8 @@ namespace Polecat.Tests.Daemon;
 ///     daemon's extended telemetry (heartbeat / agent_status / pause_reason / running_on_node) that the
 ///     shared ExtendedProgressionWriter drives. Mirrors Marten's telemetry-only
 ///     mt_mark_event_progression_extended: it decorates an EXISTING progression row's extended columns and
-///     never touches last_seq_id (no "clobber") and never INSERTs.
+///     never touches last_seq_id (no "clobber"). A state without a failure never INSERTs. Only a failure creates
+///     a missing row (#1112, Bug_1112_failure_before_the_first_commit).
 /// </summary>
 public class write_projection_progress_extended_tests : OneOffConfigurationsContext
 {
@@ -57,7 +58,8 @@ public class write_projection_progress_extended_tests : OneOffConfigurationsCont
         var shardName = new ShardName("NeverCommitted");
         var state = new ShardState(shardName.Identity, 7) { AgentStatus = "Running", RunningOnNode = 3 };
 
-        // No row exists yet — the zero-row UPDATE must not throw and must not create a row.
+        // No row exists yet and the state carries no failure, so the zero-row UPDATE must not throw and must
+        // not create a row.
         await theDatabase.WriteExtendedProgressionAsync(state, CancellationToken.None);
 
         var progress = await theDatabase.AllProjectionProgress(TestContext.Current.CancellationToken);
