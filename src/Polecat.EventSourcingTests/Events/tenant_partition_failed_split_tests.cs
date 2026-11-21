@@ -77,6 +77,18 @@ public class tenant_partition_failed_split_tests : IAsyncLifetime
         var store = CreateStore(AutoCreate.None, 2, configure);
         store.Events.TenantOrdinals.SplitRetryTimeoutSeconds = 1;
         store.Events.TenantOrdinals.SplitRetryInterval = TimeSpan.Zero;
+
+        // #1103: the store's first registration loads the registry, and that starts with Weasel reading
+        // pc_tenant_partitions back from the catalog. That read compiles about a second of catalog views
+        // whenever its plan isn't cached, which on a busy server is several seconds, and on the two-second
+        // connection it timed out before any SPLIT ran. The two seconds are for the SPLIT, so load the
+        // registry here, on a connection with the ordinary limit.
+        await using (var conn = new SqlConnection(ConnectionSource.ConnectionString))
+        {
+            await conn.OpenAsync(Ct);
+            await store.Options.EventGraph.TenantPartitionManager.InitializeAsync(conn, Ct);
+        }
+
         return store;
     }
 
