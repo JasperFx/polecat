@@ -109,9 +109,10 @@ public class projection_progression_tests : IntegrationContext
         row!.ProjectionName.ShouldBe(shardName.Identity);
         row.TenantId.ShouldBeNull();
         row.Sequence.ShouldBe(42);
-        // The default store has no extended progression tracking, so these columns don't exist / aren't read.
+        // Extended progression tracking is on by default since #1116: the progress write stamps the heartbeat, and
+        // nothing in Polecat writes agent_status (#323)
         row.AgentStatus.ShouldBeNull();
-        row.LastHeartbeat.ShouldBeNull();
+        row.LastHeartbeat.ShouldNotBeNull();
     }
 
     // A missing (projection, tenant) pair is the meaningful "not observed yet" answer: null, never 0.
@@ -156,7 +157,7 @@ public class projection_progression_tests : IntegrationContext
         row.TenantId.ShouldBeNull();
         row.Sequence.ShouldBe(55);
         row.AgentStatus.ShouldBeNull();
-        row.LastHeartbeat.ShouldBeNull();
+        row.LastHeartbeat.ShouldNotBeNull();
     }
 
     [Fact]
