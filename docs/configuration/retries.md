@@ -245,7 +245,7 @@ opts.ExtendPolly(builder =>
 ## The async daemon's pipeline
 
 The async daemon builds each projection batch through a pipeline of its own, set with
-`ConfigureDaemonPolly()` ([JasperFx 3.11](https://jasperfx.github.io/migration-guide#key-changes-in-3-11-0)).
+`ConfigureDaemonPolly()` ([JasperFx 3.11](https://shared-libs.jasperfx.net/migration-guide#key-changes-in-3-11-0)).
 When a build fails for a transient reason, like a connection pool timeout during a load spike, a deadlock
 or a dropped connection, the daemon builds the batch again. That holds under every `ApplyErrors` setting, and
 whether one slice failed or several. A failure in your projection's own code is never handed to this
