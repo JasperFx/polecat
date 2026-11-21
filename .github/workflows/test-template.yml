@@ -13,6 +13,13 @@ on:
         required: false
         type: string
         default: "default"
+      # The framework the suite runs on. The callers pair it with the storage leg: the newest
+      # framework with the newest SQL Server (default, 2025) and the oldest with the oldest (edge,
+      # 2022), so both frameworks Polecat targets run every suite without doubling the jobs.
+      FRAMEWORK:
+        required: false
+        type: string
+        default: "net10.0"
       # Worker processes. 0 leaves the target's committed count in charge, which the runner clamps
       # to ProcessorCount / 2 (2 on a 4-vCPU hosted runner). A positive number is passed as
       # --test-workers, which overrides the committed count AND the clamp — so a caller that sets it
@@ -36,6 +43,9 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # 20 minutes is a signal, not a budget to grow: a job that needs longer gets split into more
+    # shards (SHARD_COUNT), the way polecat.yml already splits the core suites.
+    timeout-minutes: 20
     env:
       # Per-job artifact name: sibling shards of one run must not collide on upload.
       LEDGER_ARTIFACT: test-ledger-${{ inputs.NUKE_TARGET }}-${{ inputs.STORAGE_TYPE }}${{ inputs.SHARD_COUNT > 1 && format('-shard{0}of{1}', inputs.SHARD, inputs.SHARD_COUNT) || '' }}
@@ -43,8 +53,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      # 10.0.x builds and runs the Nuke project and the net10.0 test hosts (bin/Release/net10.0).
-      # net11.0 is built locally against the 11.0 SDK preview until it ships.
+      # Both runtimes: the 11.0 SDK builds either target framework, and the Nuke project and the
+      # net10.0 test hosts (bin/Release/net10.0) need the .NET 10 runtime as well.
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
         with:
@@ -104,7 +114,7 @@ jobs:
           if [ "${{ inputs.TEST_WORKERS }}" != "0" ]; then WORKERS="--test-workers ${{ inputs.TEST_WORKERS }}"; fi
           SHARD=""
           if [ "${{ inputs.SHARD_COUNT }}" != "1" ]; then SHARD="--test-shard ${{ inputs.SHARD }} --test-shard-count ${{ inputs.SHARD_COUNT }}"; fi
-          ./build.sh ${{ inputs.NUKE_TARGET }} --framework net10.0 --storage ${{ inputs.STORAGE_TYPE }} $WORKERS $SHARD
+          ./build.sh ${{ inputs.NUKE_TARGET }} --framework ${{ inputs.FRAMEWORK }} --storage ${{ inputs.STORAGE_TYPE }} $WORKERS $SHARD
 
       # Every run's ledger, red or green, PR or main — the fetched history plus this run. Only a green
       # main run's is ever read back, by the next run of this workflow.
@@ -123,7 +133,7 @@ jobs:
         uses: dorny/test-reporter@v3
         if: ${{ !cancelled() }}
         with:
-          name: xUnit Tests (${{ inputs.STORAGE_TYPE }}${{ inputs.SHARD_COUNT > 1 && format(' {0}/{1}', inputs.SHARD, inputs.SHARD_COUNT) || '' }})
+          name: xUnit Tests (${{ inputs.STORAGE_TYPE }}, ${{ inputs.FRAMEWORK }}${{ inputs.SHARD_COUNT > 1 && format(' {0}/{1}', inputs.SHARD, inputs.SHARD_COUNT) || '' }})
           path: "**/TestResults/*.trx"
           reporter: dotnet-trx
           list-suites: "failed"

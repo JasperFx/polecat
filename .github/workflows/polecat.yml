@@ -22,9 +22,16 @@ jobs:
         # test time per job on the same numbers. Public repository: the extra runners cost nothing
         # but concurrency.
         shard: [1, 2, 3]
+        # Newest framework on the newest SQL Server, oldest on the oldest (test-template.yml).
+        include:
+          - storage_type: default
+            framework: net11.0
+          - storage_type: edge
+            framework: net10.0
     with:
       NUKE_TARGET: CIPolecat
       STORAGE_TYPE: ${{ matrix.storage_type }}
+      FRAMEWORK: ${{ matrix.framework }}
       SHARD: ${{ matrix.shard }}
       SHARD_COUNT: 3
       # The core suites (Polecat.Tests until #1063, now six projects CIPolecat runs in turn) are the
@@ -39,3 +46,11 @@ jobs:
       # job summary; if a run ever dies with "The runner has received a shutdown signal", drop this
       # line and let the clamp decide.
       TEST_WORKERS: 4
+
+  # #808's union specifications, net11.0 only (C# 15 unions), so they get a job of their own rather
+  # than a leg of the matrix above. About a second of tests.
+  specs:
+    uses: ./.github/workflows/test-template.yml
+    with:
+      NUKE_TARGET: CISpecs
+      FRAMEWORK: net11.0
