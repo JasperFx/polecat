@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Runtime.CompilerServices;
 using Microsoft.Data.SqlClient;
 using Polecat.Tests.Harness;
 
@@ -16,13 +17,28 @@ public class StarvationLongDoc
 }
 
 /// <summary>
-///     #1088 (marten#5969): the first burst of synchronous <c>Store()</c> calls on a Hi-Lo document type, on a
-///     schema where <c>pc_hilo</c> does not exist yet, must not starve the thread pool. Each writer blocks a pool
-///     thread in <c>Store()</c>, as application code does, and a 10 ms heartbeat on the pool has to keep running.
+///     #1088 (marten#5969): the first synchronous <c>Store()</c> calls on a Hi-Lo document type, on a schema where
+///     <c>pc_hilo</c> does not exist yet, must not need the thread pool. Application code calls <c>Store()</c> from
+///     pool threads, so a first burst of them can hold every pool thread, and the <c>pc_hilo</c> ensure used to block
+///     on asynchronous work that needed a free pool thread to finish. A 10 ms heartbeat came back up to two seconds late.
 /// </summary>
+/// <remarks>
+///     This test used to time a pool heartbeat during a burst of writers against a 500 ms limit. A cold
+///     <c>pc_hilo</c> ensure holds every waiting writer for as long as the DDL takes, so that measured the database's
+///     latency as much as the pool, and it failed at 580 ms on a loaded CI runner against SQL Server 2022 with
+///     nothing wrong. Now it saturates the pool and checks the stores finish while a sentinel is still queued behind
+///     the blockers, which doesn't depend on how fast the database is. It saturates the pool on purpose, so it runs
+///     alone, in the <c>thread-pool</c> collection.
+/// </remarks>
+[Collection("thread-pool")]
 public class hilo_thread_pool_starvation_tests : OneOffConfigurationsContext
 {
-    private static readonly TimeSpan HeartbeatInterval = TimeSpan.FromMilliseconds(10);
+    // A pool with every thread blocked injects threads slowly (a couple a second), and each one it injects picks up
+    // the next blocker. This many more than it has keeps the sentinel queued far longer than the stores take.
+    private const int ExtraBlockers = 256;
+
+    // Only a regression comes anywhere near this: the stores then wait on pool work queued behind every blocker
+    private static readonly TimeSpan StoreTimeout = TimeSpan.FromSeconds(30);
 
     private readonly ITestOutputHelper _output;
 
@@ -32,7 +48,7 @@ public class hilo_thread_pool_starvation_tests : OneOffConfigurationsContext
     }
 
     [Fact]
-    public async Task the_first_burst_of_synchronous_stores_does_not_starve_the_thread_pool()
+    public async Task the_first_synchronous_stores_complete_without_the_thread_pool()
     {
         ConfigureStore(opts =>
         {
@@ -49,36 +65,23 @@ public class hilo_thread_pool_starvation_tests : OneOffConfigurationsContext
         theStore.Options.Providers.GetProvider<StarvationIntDoc>();
         theStore.Options.Providers.GetProvider<StarvationLongDoc>();
 
-        // More writers than the pool has threads, so it cannot hand every one of them a thread without injecting
-        // more
-        var writers = Math.Max(ThreadPool.ThreadCount, Environment.ProcessorCount) + 16;
-        const int docsPerWriter = 5;
-
-        using var stop = new CancellationTokenSource();
-        var clock = Stopwatch.StartNew();
-        var poolTicks = new ConcurrentQueue<TimeSpan>();
-        var dedicatedTicks = new ConcurrentQueue<TimeSpan>();
-        var heartbeat = Task.Run(() => poolHeartbeatAsync(clock, poolTicks, stop.Token));
-        var dedicated = new Thread(() => dedicatedHeartbeat(clock, dedicatedTicks, stop.Token)) { IsBackground = true };
-        dedicated.Start();
-
-        // Let the heartbeats settle into their loops before the writers arrive
-        await Task.Delay(100);
-
+        // Several writers, so all but one of them wait on the ensure the first one runs, as a burst of cold
+        // callers does
+        const int writerCount = 8;
+        const int docsPerType = 5;
         var ints = new ConcurrentBag<int>();
         var longs = new ConcurrentBag<long>();
         var failures = new ConcurrentBag<Exception>();
         var sessions = new ConcurrentBag<IDocumentSession>();
 
-        var stopwatch = Stopwatch.StartNew();
-        var tasks = Enumerable.Range(0, writers).Select(_ => Task.Run(() =>
+        var writers = Enumerable.Range(0, writerCount).Select(_ => new Thread(() =>
         {
             try
             {
-                // IDocumentSession is only IAsyncDisposable, so the sessions are disposed after the burst
+                // IDocumentSession is only IAsyncDisposable, so the sessions are disposed once the pool is let go
                 var session = theStore.LightweightSession();
                 sessions.Add(session);
-                for (var i = 0; i < docsPerWriter; i++)
+                for (var i = 0; i < docsPerType; i++)
                 {
                     var doc = new StarvationIntDoc();
                     session.Store(doc);
@@ -93,70 +96,66 @@ public class hilo_thread_pool_starvation_tests : OneOffConfigurationsContext
             {
                 failures.Add(e);
             }
-        })).ToArray();
+        }) { IsBackground = true }).ToArray();
 
-        await Task.WhenAll(tasks);
-        var burst = stopwatch.Elapsed;
+        using var release = new ManualResetEventSlim(false);
+        var sentinel = new StrongBox<bool>();
+        var blockers = ThreadPool.ThreadCount + ExtraBlockers;
+        bool finished;
+        bool sentinelHadRun;
+        TimeSpan elapsed;
 
-        foreach (var session in sessions) await session.DisposeAsync();
-
-        stop.Cancel();
-        await heartbeat;
-        dedicated.Join();
-
-        // The stall is counted on a dedicated (non-pool) thread's clock: a busy machine delays that thread as much
-        // as the pool heartbeat, and pool starvation does not delay it at all
-        var pool = poolTicks.ToArray();
-        var reference = dedicatedTicks.ToArray();
-        var worstWallClock = TimeSpan.Zero;
-        var worstTicks = 0;
-        for (var i = 1; i < pool.Length; i++)
+        try
         {
-            var gap = pool[i] - pool[i - 1];
-            if (gap > worstWallClock) worstWallClock = gap;
+            // Every pool thread, and every thread the pool injects for a long while, picks up a blocker, and the
+            // sentinel goes in behind them all. Pool work the stores queue goes in behind the sentinel, so stores
+            // that finish while it is still queued needed nothing from the pool.
+            for (var i = 0; i < blockers; i++)
+            {
+                ThreadPool.UnsafeQueueUserWorkItem(static r => r.Wait(), release, preferLocal: false);
+            }
 
-            var from = pool[i - 1];
-            var to = pool[i];
-            var ticks = reference.Count(x => x > from && x < to);
-            if (ticks > worstTicks) worstTicks = ticks;
+            ThreadPool.UnsafeQueueUserWorkItem(static s => Volatile.Write(ref s.Value, true), sentinel,
+                preferLocal: false);
+
+            var stopwatch = Stopwatch.StartNew();
+            foreach (var writer in writers) writer.Start();
+
+            // Blocks the test's own thread too, on purpose: awaiting here would need the pool
+            finished = writers.All(writer => writer.Join(remaining(stopwatch)));
+            elapsed = stopwatch.Elapsed;
+            sentinelHadRun = Volatile.Read(ref sentinel.Value);
+        }
+        finally
+        {
+            release.Set();
         }
 
-        var stall = HeartbeatInterval * worstTicks;
+        foreach (var writer in writers) writer.Join();
+        foreach (var session in sessions) await session.DisposeAsync();
 
         _output.WriteLine(
-            $"{writers} writers on {Environment.ProcessorCount} processors: burst took {burst.TotalMilliseconds:N0} ms, " +
-            $"worst pool heartbeat gap {worstWallClock.TotalMilliseconds:N0} ms wall clock, {stall.TotalMilliseconds:N0} ms on a dedicated thread's clock");
+            $"{writerCount} writers, {blockers} blockers on {Environment.ProcessorCount} processors: the stores took {elapsed.TotalMilliseconds:N0} ms, " +
+            $"finished: {finished}, sentinel had run: {sentinelHadRun}");
 
         failures.ShouldBeEmpty(string.Join(Environment.NewLine, failures.Select(x => x.ToString())));
 
-        ints.Count.ShouldBe(writers * docsPerWriter);
+        finished.ShouldBeTrue(
+            $"the first synchronous Store() calls were still blocked after {StoreTimeout.TotalSeconds:N0} s with the thread pool saturated");
+        sentinelHadRun.ShouldBeFalse(
+            $"the pool got through all {blockers} blockers while the stores ran ({elapsed.TotalMilliseconds:N0} ms), so this run can't show whether they needed it");
+
+        ints.Count.ShouldBe(writerCount * docsPerType);
         ints.ShouldAllBe(id => id > 0);
         ints.Distinct().Count().ShouldBe(ints.Count);
+        longs.Count.ShouldBe(writerCount * docsPerType);
         longs.ShouldAllBe(id => id > 0);
         longs.Distinct().Count().ShouldBe(longs.Count);
-
-        stall.ShouldBeLessThan(TimeSpan.FromMilliseconds(500),
-            $"the thread pool was starved for {stall.TotalMilliseconds:N0} ms while {writers} writers stored their first documents");
     }
 
-    private static async Task poolHeartbeatAsync(Stopwatch clock, ConcurrentQueue<TimeSpan> ticks,
-        CancellationToken token)
+    private static TimeSpan remaining(Stopwatch stopwatch)
     {
-        while (!token.IsCancellationRequested)
-        {
-            ticks.Enqueue(clock.Elapsed);
-            await Task.Delay(HeartbeatInterval, CancellationToken.None);
-        }
-
-        ticks.Enqueue(clock.Elapsed);
-    }
-
-    private static void dedicatedHeartbeat(Stopwatch clock, ConcurrentQueue<TimeSpan> ticks, CancellationToken token)
-    {
-        while (!token.IsCancellationRequested)
-        {
-            ticks.Enqueue(clock.Elapsed);
-            Thread.Sleep(HeartbeatInterval);
-        }
+        var left = StoreTimeout - stopwatch.Elapsed;
+        return left > TimeSpan.Zero ? left : TimeSpan.Zero;
     }
 }
