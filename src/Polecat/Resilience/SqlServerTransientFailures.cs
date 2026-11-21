@@ -172,6 +172,16 @@ internal static class SqlServerTransientFailures
     }
 
     /// <summary>
+    ///     The <c>ShouldHandle</c> of the async daemon's batch-build retry
+    ///     (<see cref="PolecatResilienceDefaults.AddPolecatDaemonDefaults" />, jasperfx#1256): a SQL Server failure
+    ///     this classifier calls transient, the connection pool timeout among them, or anything else
+    ///     <see cref="TransientFailures" /> calls transient, like a <see cref="TimeoutException" /> or a dropped
+    ///     socket.
+    /// </summary>
+    internal static bool IsWorthBuildingAgain(Exception exception)
+        => Classify(exception) == true || TransientFailures.IsTransient(exception);
+
+    /// <summary>
     ///     Whether <paramref name="exception" /> is SqlClient reporting that it could not get a
     ///     connection from the pool in time. See the remarks on the class for why this reads the message.
     /// </summary>

@@ -117,39 +117,11 @@ public partial class DocumentStore
         if (raw is null) return null;
 
         var mapping = Events.EventMappingFor(clrType);
-        var wrapped = mapping.Wrap(raw);
 
-        wrapped.Id = record.EventId;
-        wrapped.Sequence = record.Sequence;
-        wrapped.Version = record.StreamVersion;
-        wrapped.Timestamp = record.Timestamp;
-        wrapped.TenantId = record.TenantId ?? JasperFx.StorageConstants.DefaultTenantId;
-        wrapped.EventTypeName = record.EventTypeName;
-        wrapped.DotNetTypeName = clrType.AssemblyQualifiedName ?? clrType.FullName!;
-
-        if (Events.StreamIdentity == StreamIdentity.AsGuid && Guid.TryParse(record.StreamId, out var sg))
-        {
-            wrapped.StreamId = sg;
-        }
-        else
-        {
-            wrapped.StreamKey = record.StreamId;
-        }
-
-        // #1053: the record's DCB tags, keyed by the tag type's name or table suffix, so a projection grouped with
-        // IdentityFromTag<TTag>() finds its identity when it is stepped from records. A tag the store doesn't know
-        // can't be one a projection slices by, so it is left out.
-        if (record.Tags is { Count: > 0 } tags && Events.TagTypes.Count > 0)
-        {
-            foreach (var (name, text) in tags)
-            {
-                var registration = Events.TagTypes.FindByTagName(name);
-                if (registration == null) continue;
-
-                wrapped.AddTag(new EventTag(registration.TagType,
-                    Polecat.Events.Daemon.EventTagHydrator.TagFromText(registration, text)));
-            }
-        }
+        // jasperfx#1254: WithRecordMetadata stamps the record's metadata and, given the store's tag types, puts its
+        // DCB tags back on the event, so a projection grouped with IdentityFromTag<TTag>() finds its identity when it
+        // is stepped from records. A tag the store doesn't know is left out.
+        var wrapped = mapping.Wrap(raw).WithRecordMetadata(record, Events.StreamIdentity, Events.TagTypes);
 
         return wrapped;
     }

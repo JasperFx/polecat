@@ -10,7 +10,7 @@ The foundation pins move in lockstep, so a consuming project has to move with th
 
 | Package | 5.50.0 | 6.0 |
 |---|---|---|
-| `JasperFx`, `JasperFx.Events` | 2.102 | 3.10.0 |
+| `JasperFx`, `JasperFx.Events` | 2.102 | 3.11.0 |
 | `Weasel.SqlServer`, `Weasel.Storage` | 9.50.0 | 10.0 |
 | `Microsoft.Data.SqlClient` | 7.0.0 | 7.1.1 |
 | `Microsoft.EntityFrameworkCore.SqlServer` (`Polecat.EntityFrameworkCore`) | 9.x | 10.0 |
@@ -150,6 +150,7 @@ effects before upgrading, or set `opts.Events.EnableSideEffectsOnInlineProjectio
 | `Events.EnableSideEffectsOnInlineProjections` | off | on | None. **See the callout above** | `opts.Events.EnableSideEffectsOnInlineProjections = false` |
 | `EventGraph.UseArchivedStreamPartitioning`: `pc_events` partitioned on `is_archived` | off | on (off when `UseTenantPartitionedEvents` is on) | **The first migration rewrites `pc_events`.** See below | `opts.EventGraph.UseArchivedStreamPartitioning = false` |
 | `Projections.Errors.ApplyErrors` and `SerializationErrors`: what an async projection does when it fails on an event | skip | park the failing identity, or pause where a projection can't park. See below | Adds `pc_parked_identities` (`Events.EnableParkedIdentities`), and a `pc_slice_index_*` table for each projection that calls `UseSliceIndex()` | `opts.Projections.Errors.SkipApplyErrors = true` and `SkipSerializationErrors = true` |
+| Transient failures while the async daemon builds a projection batch: a connection pool timeout, a deadlock, a dropped connection | the shard paused, except several slices failing together under skip, which were built again without limit | the batch is built again up to 3 times with a short backoff, under every error setting, then the shard pauses with `ShardFailure.IsTransient = true`. See JasperFx's [Key Changes in 3.11.0](https://jasperfx.github.io/migration-guide#key-changes-in-3-11-0) and [the async daemon's pipeline](/configuration/retries#the-async-daemon-s-pipeline) | None | `opts.ConfigureDaemonPolly(_ => { })` pauses on the first transient failure |
 
 The new columns are nullable and are added in place by the next schema migration. Rows written before it have
 `NULL` in them. Apply that migration (`db-apply`, `db-patch` or `ApplyAllDatabaseChangesOnStartup()`) before

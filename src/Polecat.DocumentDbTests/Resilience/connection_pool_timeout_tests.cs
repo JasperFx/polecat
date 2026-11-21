@@ -12,6 +12,7 @@ using Polecat.Resilience;
 using Polecat.Tests.Harness;
 using Polly;
 using Polly.Retry;
+using Polly.Telemetry;
 
 namespace Polecat.Tests.Resilience;
 
@@ -301,6 +302,62 @@ public class connection_pool_timeout_tests
         shouldBeTheRealShape(retries.ShouldHaveSingleItem());
     }
 
+    [Fact]
+    public async Task the_daemon_pipeline_builds_a_batch_again_after_a_real_pool_timeout_until_it_gives_up()
+    {
+        var timeout = await PoolTimeouts.CaptureAsync(Ct);
+        var pipeline = new ResiliencePipelineBuilder().AddPolecatDaemonDefaults().Build();
+
+        var attempts = 0;
+        var thrown = await Should.ThrowAsync<InvalidOperationException>(async () =>
+            await pipeline.ExecuteAsync(_ =>
+            {
+                attempts++;
+                throw timeout;
+            }, Ct));
+
+        // jasperfx#1256: the first build and every retry, then the real failure goes back to the daemon to pause on
+        attempts.ShouldBe(1 + PolecatResilienceDefaults.DaemonRetryAttempts);
+        thrown.ShouldBeSameAs(timeout);
+    }
+
+    [Fact]
+    public async Task the_daemon_pipeline_does_not_build_again_after_a_failure_that_is_not_transient()
+    {
+        var pipeline = new ResiliencePipelineBuilder().AddPolecatDaemonDefaults().Build();
+
+        var attempts = 0;
+        await Should.ThrowAsync<InvalidOperationException>(async () =>
+            await pipeline.ExecuteAsync(_ =>
+            {
+                attempts++;
+                throw new InvalidOperationException("Not a pool timeout");
+            }, Ct));
+
+        attempts.ShouldBe(1);
+    }
+
+    [Fact]
+    public void the_store_hands_the_daemon_its_own_pipeline_and_not_the_session_one()
+    {
+        using var store = DocumentStore.For(ConnectionSource.ConnectionString);
+        var daemonPipeline = ((IEventStore<IDocumentSession, IQuerySession>)store).ResiliencePipeline;
+
+        // A retry here and one on the session pipeline would multiply, since a batch build runs session commands
+        daemonPipeline.ShouldBeSameAs(store.Options.DaemonResiliencePipeline);
+        daemonPipeline.ShouldNotBeSameAs(store.Options.ResiliencePipeline);
+        daemonPipeline.ShouldNotBeSameAs(ResiliencePipeline.Empty);
+
+        using var replaced = DocumentStore.For(opts =>
+        {
+            opts.ConnectionString = ConnectionSource.ConnectionString;
+            opts.ConfigureDaemonPolly(_ => { });
+        });
+
+        ((IEventStore<IDocumentSession, IQuerySession>)replaced).ResiliencePipeline
+            .ShouldBeSameAs(replaced.Options.DaemonResiliencePipeline);
+    }
+
     private static void shouldBeTheRealShape(Exception timeout)
     {
         timeout.GetType().ShouldBe(typeof(InvalidOperationException));
@@ -332,6 +389,11 @@ public class connection_pool_timeout_tests
 ///     the wrapper is what the daemon dead-letters: the event was skipped for good and the read model
 ///     silently diverged, over a load spike that had already cleared.
 /// </summary>
+/// <remarks>
+///     jasperfx#1256: since JasperFx 3.11 the daemon builds a batch that fails transiently again through the store's
+///     daemon pipeline (<see cref="StoreOptions.ConfigureDaemonPolly" />), under every error setting. So a spike that
+///     clears within the retries builds the batch with nothing paused, and only one that outlasts them pauses the shard.
+/// </remarks>
 public class connection_pool_timeout_in_a_projection_tests : OneOffConfigurationsContext
 {
     private const int MaxPoolSize = 5;
@@ -340,19 +402,90 @@ public class connection_pool_timeout_in_a_projection_tests : OneOffConfiguration
 
     public static TheoryData<string> ProjectionShapes => ["aggregation", "event projection"];
 
+    public static TheoryData<string, string> ProjectionShapesAndErrors => new()
+    {
+        { "aggregation", "park" },
+        { "aggregation", "skip" },
+        { "event projection", "park" },
+        { "event projection", "skip" }
+    };
+
     [Theory]
-    [MemberData(nameof(ProjectionShapes))]
-    public async Task a_real_pool_timeout_does_not_dead_letter_and_skip_the_event(string shape)
+    [MemberData(nameof(ProjectionShapesAndErrors))]
+    public async Task a_real_pool_timeout_does_not_dead_letter_and_skip_the_event(string shape, string errors)
     {
         var connectionString = PoolTimeouts.LimitedPool(MaxPoolSize);
         var exhaustion = new PoolExhaustion(connectionString, MaxPoolSize);
+        var retries = new RetryCounter();
 
         ConfigureStore(opts =>
         {
             opts.ConnectionString = connectionString;
 
-            // The configuration the issue is about, which was the default before #1053 made parking the default
-            opts.Projections.Errors.SkipApplyErrors = true;
+            // Skip is the configuration the issue is about, which was the default before #1053 made parking the
+            // default. A transient failure is built again under either.
+            opts.Projections.Errors.SkipApplyErrors = errors == "skip";
+
+            // Polecat's own daemon pipeline, watched
+            opts.ConfigureDaemonPolly(builder =>
+            {
+                builder.TelemetryListener = retries;
+                builder.AddPolecatDaemonDefaults();
+            });
+
+            addPoolStarvedProjection(opts, shape, exhaustion);
+        });
+
+        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync(ct: Ct);
+        await theStore.Advanced.CleanAsync<DeadLetterEvent>(Ct);
+
+        var streamId = Guid.NewGuid();
+        await using (var session = theStore.LightweightSession())
+        {
+            session.Events.StartStream(streamId, new PoolPressureEvent(1), new PoolPressureEvent(2),
+                new PoolPressureEvent(3));
+            await session.SaveChangesAsync(Ct);
+        }
+
+        using var daemon = (IProjectionDaemon)await theStore.BuildProjectionDaemonAsync();
+        await daemon.StartAllAsync();
+
+        var agent = daemon.CurrentAgents().ShouldHaveSingleItem();
+        await waitForTheViewsAsync(agent, [streamId], applied: 3);
+
+        // It really happened, and it was the real thing rather than a test double
+        var witnessed = exhaustion.Witnessed.ShouldNotBeNull();
+        witnessed.GetType().ShouldBe(typeof(InvalidOperationException));
+        witnessed.InnerException.ShouldBeNull();
+
+        // The batch was built again once, after the one pool timeout, and nothing paused, parked or dead-lettered
+        retries.Count.ShouldBe(1);
+        agent.Status.ShouldBe(AgentStatus.Running);
+        agent.Failure.ShouldBeNull();
+        (await deadLetterCountAsync()).ShouldBe(0);
+        (await parkedAsync(agent)).ShouldBeEmpty();
+    }
+
+    [Theory]
+    [MemberData(nameof(ProjectionShapes))]
+    public async Task a_pool_timeout_that_outlasts_the_retries_pauses_the_shard_as_transient(string shape)
+    {
+        var connectionString = PoolTimeouts.LimitedPool(MaxPoolSize);
+        await using var exhaustion = new SustainedPoolExhaustion(connectionString, MaxPoolSize);
+        var retries = new RetryCounter();
+
+        ConfigureStore(opts =>
+        {
+            opts.ConnectionString = connectionString;
+
+            // The Polecat 6 default, parking, which a transient failure must not trigger
+            opts.Projections.Errors.SkipApplyErrors.ShouldBeFalse();
+
+            opts.ConfigureDaemonPolly(builder =>
+            {
+                builder.TelemetryListener = retries;
+                builder.AddPolecatDaemonDefaults();
+            });
 
             if (shape == "aggregation")
             {
@@ -363,8 +496,6 @@ public class connection_pool_timeout_in_a_projection_tests : OneOffConfiguration
                 opts.Projections.Add(new PoolStarvedEventProjection(exhaustion), ProjectionLifecycle.Async);
             }
         });
-
-        theStore.Options.Projections.Errors.SkipApplyErrors.ShouldBeTrue();
 
         await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync(ct: Ct);
         await theStore.Advanced.CleanAsync<DeadLetterEvent>(Ct);
@@ -383,19 +514,17 @@ public class connection_pool_timeout_in_a_projection_tests : OneOffConfiguration
         var agent = daemon.CurrentAgents().ShouldHaveSingleItem();
         var outcome = await waitForAnOutcomeAsync(agent);
 
-        // It really happened, and it was the real thing rather than a test double
-        var witnessed = exhaustion.Witnessed.ShouldNotBeNull();
-        witnessed.GetType().ShouldBe(typeof(InvalidOperationException));
-        witnessed.InnerException.ShouldBeNull();
+        exhaustion.Witnessed.ShouldNotBeNull().GetType().ShouldBe(typeof(InvalidOperationException));
 
-        // The whole of the bug, in one line
+        // Every retry was spent on the dry pool, and only then did the shard pause, with a label that tells a
+        // supervisor it is worth restarting. Nothing was dead-lettered or parked.
+        retries.Count.ShouldBe(PolecatResilienceDefaults.DaemonRetryAttempts);
         outcome.DeadLetters.ShouldBe(0);
-
-        // The shard pauses with a label that tells a supervisor it is worth restarting
         agent.Status.ShouldBe(AgentStatus.Paused);
         agent.Failure.ShouldNotBeNull().IsTransient.ShouldBeTrue();
 
         // Which, once the pressure has gone, loses nothing: it picks up from persisted progress
+        await exhaustion.ReleaseAsync();
         await daemon.StartAgentAsync(agent.Name.Identity, Ct);
         await daemon.WaitForNonStaleData(TimeSpan.FromSeconds(30));
 
@@ -403,6 +532,7 @@ public class connection_pool_timeout_in_a_projection_tests : OneOffConfiguration
         (await query.LoadAsync<PoolPressureView>(streamId, Ct)).ShouldNotBeNull().Applied.ShouldBe(3);
 
         (await deadLetterCountAsync()).ShouldBe(0);
+        (await parkedAsync(agent)).ShouldBeEmpty();
     }
 
     [Fact]
@@ -411,17 +541,23 @@ public class connection_pool_timeout_in_a_projection_tests : OneOffConfiguration
         // What a load spike really looks like: slices run concurrently, so more than one fails, and the
         // daemon gets an AggregateException. That is a different catch block from the single failure's,
         // and the one IsSystemicDatabaseFailure guards. Nothing in it is an ApplyEventException any more,
-        // so nothing is skipped, and the daemon goes round again and builds the batch.
+        // so nothing is skipped or parked, and the daemon builds the batch again through its pipeline.
         var connectionString = PoolTimeouts.LimitedPool(MaxPoolSize);
         var exhaustion = new PoolExhaustion(connectionString, MaxPoolSize, parties: 2);
+        var retries = new RetryCounter();
 
         ConfigureStore(opts =>
         {
             opts.ConnectionString = connectionString;
 
-            // Skip, the default before #1053: its build loop is what goes round again. Under Park or Pause the
-            // same transient AggregateException pauses the shard instead (jasperfx#1256).
-            opts.Projections.Errors.SkipApplyErrors = true;
+            // The Polecat 6 default, parking. Before jasperfx#1256 only skip's build loop went round again here.
+            opts.Projections.Errors.SkipApplyErrors.ShouldBeFalse();
+
+            opts.ConfigureDaemonPolly(builder =>
+            {
+                builder.TelemetryListener = retries;
+                builder.AddPolecatDaemonDefaults();
+            });
 
             opts.Projections.Add(new PoolStarvedAggregation(exhaustion), ProjectionLifecycle.Async);
         });
@@ -442,27 +578,49 @@ public class connection_pool_timeout_in_a_projection_tests : OneOffConfiguration
 
         using var daemon = (IProjectionDaemon)await theStore.BuildProjectionDaemonAsync();
         await daemon.StartAllAsync();
-        await waitForAViewOfEachAsync(streams);
+
+        var agent = daemon.CurrentAgents().ShouldHaveSingleItem();
+        await waitForTheViewsAsync(agent, streams, applied: 1);
 
         exhaustion.AllWitnessed.Length.ShouldBe(2);
+        retries.Count.ShouldBe(1);
+        agent.Failure.ShouldBeNull();
         (await deadLetterCountAsync()).ShouldBe(0);
+        (await parkedAsync(agent)).ShouldBeEmpty();
     }
 
-    private async Task waitForAViewOfEachAsync(Guid[] streams)
+    private static void addPoolStarvedProjection(StoreOptions opts, string shape, PoolExhaustion exhaustion)
+    {
+        // An event projection stores the view without declaring it, and the test reads it while the daemon runs
+        opts.Schema.For<PoolPressureView>();
+
+        if (shape == "aggregation")
+        {
+            opts.Projections.Add(new PoolStarvedAggregation(exhaustion), ProjectionLifecycle.Async);
+        }
+        else
+        {
+            opts.Projections.Add(new PoolStarvedEventProjection(exhaustion), ProjectionLifecycle.Async);
+        }
+    }
+
+    private async Task waitForTheViewsAsync(ISubscriptionAgent agent, Guid[] streams, int applied)
     {
         for (var attempt = 0; attempt < 120; attempt++)
         {
-            // Dead letters are the failure this looks for, so stop as soon as one shows up
-            if (await deadLetterCountAsync() > 0) return;
+            // A dead letter or a pause is the failure this looks for, so stop as soon as one shows up
+            if (agent.Status == AgentStatus.Paused || await deadLetterCountAsync() > 0) return;
 
             await using var query = observer.QuerySession();
             var views = await query.LoadManyAsync<PoolPressureView>(streams, Ct);
-            if (views.Count == streams.Length) return;
+            if (views.Count == streams.Length && views.All(x => x.Applied == applied)) return;
 
             await Task.Delay(250, Ct);
         }
 
-        throw new TimeoutException("The batch never got built");
+        throw new TimeoutException(
+            $"The batch never got built. Status is {agent.Status}, and the failure was "
+            + (agent.Failure is null ? "not reported" : agent.Failure.Detail));
     }
 
     private async Task<(AgentStatus Status, long DeadLetters)> waitForAnOutcomeAsync(ISubscriptionAgent agent)
@@ -482,6 +640,10 @@ public class connection_pool_timeout_in_a_projection_tests : OneOffConfiguration
             $"The shard neither paused nor dead-lettered anything. Status is {agent.Status}, and the "
             + "exhausted pool was " + (agent.Failure is null ? "not reported" : agent.Failure.Detail));
     }
+
+    private async Task<IReadOnlyList<ParkedIdentity>> parkedAsync(ISubscriptionAgent agent)
+        => await ((IEventDatabase)observer.Database).FetchParkedIdentitiesAsync(
+            new ParkedIdentityQuery { ProjectionName = agent.Name.Name }, Ct);
 
     private async Task<long> deadLetterCountAsync()
     {
@@ -531,7 +693,7 @@ public class PoolTimeoutTarget
 /// <summary>
 ///     The aggregation shape the issue describes: <c>session.LoadAsync</c> inside <c>EvolveAsync</c>.
 /// </summary>
-public partial class PoolStarvedAggregation(PoolExhaustion exhaustion) : SingleStreamProjection<PoolPressureView, Guid>
+public partial class PoolStarvedAggregation(IPoolPressure exhaustion) : SingleStreamProjection<PoolPressureView, Guid>
 {
     public override async ValueTask<PoolPressureView?> EvolveAsync(PoolPressureView? snapshot, Guid id,
         IQuerySession session, IEvent e, CancellationToken cancellation)
@@ -546,9 +708,9 @@ public partial class PoolStarvedAggregation(PoolExhaustion exhaustion) : SingleS
 
 public partial class PoolStarvedEventProjection : EventProjection
 {
-    private readonly PoolExhaustion _exhaustion;
+    private readonly IPoolPressure _exhaustion;
 
-    public PoolStarvedEventProjection(PoolExhaustion exhaustion)
+    public PoolStarvedEventProjection(IPoolPressure exhaustion)
     {
         _exhaustion = exhaustion;
     }
@@ -565,11 +727,93 @@ public partial class PoolStarvedEventProjection : EventProjection
 }
 
 /// <summary>
+///     Runs a pool dry and lets a projection's own load find out.
+/// </summary>
+public interface IPoolPressure
+{
+    Task LoadOnceThePoolIsDryAsync(IQuerySession session, Guid id, CancellationToken token);
+}
+
+/// <summary>
+///     Counts the retries of the pipeline it listens to.
+/// </summary>
+public sealed class RetryCounter : TelemetryListener
+{
+    private int _count;
+
+    public int Count => Volatile.Read(ref _count);
+
+    public override void Write<TResult, TArgs>(in TelemetryEventArguments<TResult, TArgs> args)
+    {
+        if (args.Event.EventName == "OnRetry") Interlocked.Increment(ref _count);
+    }
+}
+
+/// <summary>
+///     Takes every connection the pool has on the first load and holds them until <see cref="ReleaseAsync" />, so every
+///     load in between fails: a load spike that outlasts the daemon's retries.
+/// </summary>
+public sealed class SustainedPoolExhaustion(string connectionString, int maxPoolSize) : IPoolPressure, IAsyncDisposable
+{
+    private readonly SemaphoreSlim _gate = new(1, 1);
+    private readonly ConcurrentQueue<Exception> _witnessed = new();
+    private List<SqlConnection>? _held;
+    private bool _released;
+
+    public Exception? Witnessed => _witnessed.TryPeek(out var first) ? first : null;
+
+    public async Task LoadOnceThePoolIsDryAsync(IQuerySession session, Guid id, CancellationToken token)
+    {
+        await _gate.WaitAsync(token);
+        try
+        {
+            if (_released) return;
+            _held ??= await PoolExhaustion.DrainAsync(connectionString, maxPoolSize, token);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+
+        try
+        {
+            await session.LoadAsync<PoolPressureView>(id, token);
+        }
+        catch (Exception e)
+        {
+            _witnessed.Enqueue(e);
+            throw;
+        }
+    }
+
+    public async Task ReleaseAsync()
+    {
+        await _gate.WaitAsync();
+        try
+        {
+            _released = true;
+            foreach (var connection in _held ?? [])
+            {
+                await connection.DisposeAsync();
+            }
+
+            _held = null;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    public async ValueTask DisposeAsync() => await ReleaseAsync();
+}
+
+/// <summary>
 ///     Takes every connection the pool has, then lets a projection's own load find out. The first
 ///     <paramref name="parties" /> calls pay for it, all failing against the same dry pool; after that
 ///     the pressure has gone, as it does once a spike passes.
 /// </summary>
-public sealed class PoolExhaustion(string connectionString, int maxPoolSize, int parties = 1)
+public sealed class PoolExhaustion(string connectionString, int maxPoolSize, int parties = 1) : IPoolPressure
 {
     private static readonly TimeSpan Patience = TimeSpan.FromSeconds(30);
 
@@ -587,7 +831,8 @@ public sealed class PoolExhaustion(string connectionString, int maxPoolSize, int
         var arrival = Interlocked.Increment(ref _arrivals);
         if (arrival > parties) return;
 
-        var held = arrival == 1 ? await drainAsync(token) : [];
+        var held = arrival == 1 ? await DrainAsync(connectionString, maxPoolSize, token) : [];
+        if (arrival == 1) _dry.TrySetResult();
         try
         {
             await _dry.Task.WaitAsync(Patience, token);
@@ -615,7 +860,8 @@ public sealed class PoolExhaustion(string connectionString, int maxPoolSize, int
         }
     }
 
-    private async Task<List<SqlConnection>> drainAsync(CancellationToken token)
+    internal static async Task<List<SqlConnection>> DrainAsync(string connectionString, int maxPoolSize,
+        CancellationToken token)
     {
         var held = new List<SqlConnection>();
         var started = TimeProvider.System.GetTimestamp();
@@ -642,7 +888,6 @@ public sealed class PoolExhaustion(string connectionString, int maxPoolSize, int
             }
         }
 
-        _dry.TrySetResult();
         return held;
     }
 }

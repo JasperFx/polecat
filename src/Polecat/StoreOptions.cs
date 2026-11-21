@@ -51,6 +51,7 @@ public class StoreOptions
         Projections.Errors.SerializationErrors = JasperFx.Events.Daemon.ProjectionErrorAction.Park;
 
         ResiliencePipeline = new ResiliencePipelineBuilder().AddPolecatDefaults().Build();
+        DaemonResiliencePipeline = new ResiliencePipelineBuilder().AddPolecatDaemonDefaults().Build();
     }
 
     /// <summary>
@@ -671,6 +672,14 @@ public class StoreOptions
     internal ResiliencePipeline ResiliencePipeline { get; set; }
 
     /// <summary>
+    ///     jasperfx#1256: the Polly pipeline the async daemon builds each projection batch through, so a batch whose
+    ///     build fails transiently is built again. Separate from <see cref="ResiliencePipeline" />, which wraps the
+    ///     session commands a batch build runs. See
+    ///     <see cref="Resilience.PolecatResilienceDefaults.AddPolecatDaemonDefaults" />.
+    /// </summary>
+    internal ResiliencePipeline DaemonResiliencePipeline { get; set; }
+
+    /// <summary>
     ///     The tenancy strategy. Defaults to DefaultTenancy (single database).
     ///     Set via MultiTenantedDatabases() for separate database per tenant.
     /// </summary>
@@ -790,6 +799,33 @@ public class StoreOptions
         var builder = new ResiliencePipelineBuilder();
         configure(builder);
         ResiliencePipeline = builder.Build();
+    }
+
+    /// <summary>
+    ///     Replace the pipeline the async daemon builds each projection batch through (jasperfx#1256).
+    /// </summary>
+    /// <remarks>
+    ///     <para>
+    ///         The daemon only hands this pipeline a failure JasperFx judged transient, like a connection pool
+    ///         timeout, a deadlock or a dropped connection, and never one from your projection's own code. By
+    ///         default the batch is built again up to 3 times with a short exponential backoff (100ms, doubling,
+    ///         with jitter), and then the shard pauses with <c>ShardFailure.IsTransient</c> true. An empty pipeline,
+    ///         <c>ConfigureDaemonPolly(_ =&gt; { })</c>, pauses the shard on the first transient failure.
+    ///     </para>
+    ///     <para>
+    ///         Building a batch again is safe in a way that replaying a session command is not: nothing has been
+    ///         written when the build fails, and the batch is sliced again from the same events. This pipeline does
+    ///         not replace <see cref="ConfigurePolly" />, which still covers each command the build runs. A retry
+    ///         on both multiplies.
+    ///     </para>
+    /// </remarks>
+    public void ConfigureDaemonPolly(Action<ResiliencePipelineBuilder> configure)
+    {
+        ArgumentNullException.ThrowIfNull(configure);
+
+        var builder = new ResiliencePipelineBuilder();
+        configure(builder);
+        DaemonResiliencePipeline = builder.Build();
     }
 
     /// <summary>

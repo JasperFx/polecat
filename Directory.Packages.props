@@ -916,14 +916,19 @@
         <!-- JasperFx 3.10.0 (from 3.9.0, polecat#1053): marten#6003 parked identities (jasperfx#1251 single-stream,
              jasperfx#1252 multi-stream, the slice index and the per-identity stepper), with ParkedIdentityCompliance
              and MultiStreamParkedIdentityCompliance. -->
-        <PackageVersion Include="JasperFx" Version="3.10.0" />
-        <PackageVersion Include="JasperFx.Events" Version="3.10.0" />
+        <!-- JasperFx 3.11.0 (from 3.10.0, 6.0.0-alpha.9): jasperfx#1256 the daemon builds a batch that fails transiently
+             again through IEventStore.ResiliencePipeline, which Polecat answers with its own daemon pipeline
+             (StoreOptions.ConfigureDaemonPolly, a bounded retry). jasperfx#1254 WithRecordMetadata(..., tagTypes) puts a
+             record's tags back on a stepped event, replacing Polecat's own copy. jasperfx#1255/#1258 parked-count and
+             parked-replay fixes. -->
+        <PackageVersion Include="JasperFx" Version="3.11.0" />
+        <PackageVersion Include="JasperFx.Events" Version="3.11.0" />
         <!--
              The shared cross-store event sourcing compliance suites. Source-only package: the
              suites compile inside Polecat.Tests.Shared (#1063) so JasperFx's aggregate source generator binds
              Polecat's own session types.
         -->
-        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="3.10.0" />
+        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="3.11.0" />
         <!-- Pin the sibling JasperFx packages for parity with Marten 9's matrix
              even though Polecat doesn't currently reference them directly —
              keeps the lockstep matrix coherent when transitive resolution
@@ -931,7 +936,7 @@
              JasperFx.RuntimeCompiler is deliberately NOT pinned: nothing in Polecat references it,
              directly or transitively (projection dispatch is source-generated, and Polecat.AotSmoke
              proves a consumer builds without it), so a pin only invited needless bumps. -->
-        <PackageVersion Include="JasperFx.SourceGenerator" Version="3.10.0" />
+        <PackageVersion Include="JasperFx.SourceGenerator" Version="3.11.0" />
         <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.1.1" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
@@ -1550,9 +1555,12 @@
              weasel#891/#892/#895/#896 fix ManagedListPartitions (Weasel.Postgresql) and Weasel's own test image moves to
              PostgreSQL 17. Nothing in Weasel.Core, Weasel.Storage, Weasel.SqlServer or Weasel.EntityFrameworkCore changed,
              so no SQL Server code path Polecat uses is touched. JasperFx floor stays 3.6.0, satisfied by the 3.8.0 pins. -->
-        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="10.0.0-alpha.12" />
-        <PackageVersion Include="Weasel.SqlServer" Version="10.0.0-alpha.12" />
-        <PackageVersion Include="Weasel.Storage" Version="10.0.0-alpha.12" />
+        <!-- Weasel 10.0.0-alpha.13 (from alpha.12, 6.0.0-alpha.9). weasel#901: EventLoaderBase reports an unreadable
+             event on EventPage.Unreadable when the request parks such events, so PolecatEventLoader's own workaround is
+             gone. weasel#900: SQL Server re-reads a deadlocked catalog read. -->
+        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="10.0.0-alpha.13" />
+        <PackageVersion Include="Weasel.SqlServer" Version="10.0.0-alpha.13" />
+        <PackageVersion Include="Weasel.Storage" Version="10.0.0-alpha.13" />
 
         <!-- Strongly typed IDs. Both generators are test-only: they prove Polecat's value-type id
              support against the two libraries Marten's ValueTypeTests exercise. StronglyTypedId emits
@@ -1562,7 +1570,7 @@
         <PackageVersion Include="Vogen" Version="7.0.0" />
 
         <!-- Source generators (matched to JasperFx.Events above) -->
-        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="3.10.0" />
+        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="3.11.0" />
 
         <!-- Build automation -->
         <PackageVersion Include="Nuke.Common" Version="9.0.4" />
