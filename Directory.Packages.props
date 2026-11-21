@@ -941,7 +941,10 @@
              directly or transitively (projection dispatch is source-generated, and Polecat.AotSmoke
              proves a consumer builds without it), so a pin only invited needless bumps. -->
         <PackageVersion Include="JasperFx.SourceGenerator" Version="3.12.1" />
-        <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.1.1" />
+        <!-- 7.1.2 (#1123): the floor Weasel.SqlServer 10.0.0-rc.1 depends on, and the first SqlClient whose
+             transitive System.Security.Cryptography.Pkcs (9.0.21) carries the GHSA-846f-f764-76mx fix, so the
+             direct Pkcs override is gone. -->
+        <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.1.2" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
         <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
         <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.0" />
@@ -950,7 +953,7 @@
 
         <!-- Code analysis -->
         <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="5.9.0" />
-        <PackageVersion Include="Microsoft.CodeAnalysis.Analyzers" Version="3.3.4" />
+        <PackageVersion Include="Microsoft.CodeAnalysis.Analyzers" Version="5.9.0" />
 
         <!-- Testing -->
         <PackageVersion Include="Alba" Version="9.0.0" />
@@ -1562,9 +1565,13 @@
         <!-- Weasel 10.0.0-alpha.13 (from alpha.12, 6.0.0-alpha.9). weasel#901: EventLoaderBase reports an unreadable
              event on EventPage.Unreadable when the request parks such events, so PolecatEventLoader's own workaround is
              gone. weasel#900: SQL Server re-reads a deadlocked catalog read. -->
-        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="10.0.0-alpha.13" />
-        <PackageVersion Include="Weasel.SqlServer" Version="10.0.0-alpha.13" />
-        <PackageVersion Include="Weasel.Storage" Version="10.0.0-alpha.13" />
+        <!-- Weasel 10.0.0-rc.1 (from alpha.13, #1123). Builds with no Polecat change. weasel#905: SQL Server's catalog
+             reads no longer take 1-9 s in a brand-new database, the likely cause of the load timeouts in #1103.
+             Its Weasel.SqlServer depends on Microsoft.Data.SqlClient 7.1.2, and its net11.0 Weasel.EntityFrameworkCore on
+             EF Core 11.0.0, so both pins below move with it. -->
+        <PackageVersion Include="Weasel.EntityFrameworkCore" Version="10.0.0-rc.1" />
+        <PackageVersion Include="Weasel.SqlServer" Version="10.0.0-rc.1" />
+        <PackageVersion Include="Weasel.Storage" Version="10.0.0-rc.1" />
 
         <!-- Strongly typed IDs. Both generators are test-only: they prove Polecat's value-type id
              support against the two libraries Marten's ValueTypeTests exercise. StronglyTypedId emits
@@ -1595,28 +1602,15 @@
         <PackageVersion Include="WolverineFx.Bobcat" Version="7.0.0-alpha.2" />
     </ItemGroup>
 
-    <!-- GHSA-846f-f764-76mx (CVE-2026-84008, high): SignedCms.CheckSignature DoS in
-         System.Security.Cryptography.Pkcs. Microsoft.Data.SqlClient carries it transitively —
-         7.0.0 pins 9.0.13, and even 7.1.1 still pins 9.0.18 — so bumping SqlClient does not
-         clear it. Polecat references the package directly (src/Polecat/Polecat.csproj) so the
-         patched floor lands in the published nuspec and reaches every consumer. Drop this once a
-         SqlClient release depends on a patched version. -->
-    <ItemGroup Condition=" '$(TargetFramework)' == 'net10.0' ">
-        <PackageVersion Include="System.Security.Cryptography.Pkcs" Version="10.0.13" />
-    </ItemGroup>
-    <ItemGroup Condition=" '$(TargetFramework)' == 'net11.0' ">
-        <PackageVersion Include="System.Security.Cryptography.Pkcs" Version="11.0.0-rc.3.26522.148" />
-    </ItemGroup>
-
     <!-- EF Core -->
     <ItemGroup Condition=" '$(TargetFramework)' == 'net10.0' ">
         <PackageVersion Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.0" />
     </ItemGroup>
-    <!-- net11.0 stays on EF Core 10.x: Weasel 10 binds the EF Core 10 surface on both frameworks
-         (weasel#790; EF Core 10 runs on the .NET 11 runtime), so an EF Core 11 preview breaks it
-         with MissingMethodException (IIndex.get_Properties). -->
+    <!-- net11.0 takes EF Core 11.0.0 GA (#1123): Weasel.EntityFrameworkCore 10.0.0-rc.1's net11.0 build depends on
+         Microsoft.EntityFrameworkCore.Relational 11.0.0 (weasel#907), so a 10.x SqlServer provider would sit on an
+         11.x Relational. -->
     <ItemGroup Condition=" '$(TargetFramework)' == 'net11.0' ">
-        <PackageVersion Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.0" />
+        <PackageVersion Include="Microsoft.EntityFrameworkCore.SqlServer" Version="11.0.0" />
     </ItemGroup>
 
     <!-- JasperFx's net11.0 build depends on the .NET 11 Microsoft.Extensions.* packages (11.0.0 GA from

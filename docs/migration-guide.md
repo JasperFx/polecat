@@ -10,16 +10,24 @@ The foundation pins move in lockstep, so a consuming project has to move with th
 
 | Package | 5.50.0 | 6.0 |
 |---|---|---|
-| `JasperFx`, `JasperFx.Events` | 2.102 | 3.11.0 |
-| `Weasel.SqlServer`, `Weasel.Storage` | 9.50.0 | 10.0 |
-| `Microsoft.Data.SqlClient` | 7.0.0 | 7.1.1 |
-| `Microsoft.EntityFrameworkCore.SqlServer` (`Polecat.EntityFrameworkCore`) | 9.x | 10.0 |
+| `JasperFx`, `JasperFx.Events` | 2.102 | 3.12.1 |
+| `Weasel.SqlServer`, `Weasel.Storage` | 9.50.0 | 10.0.0-rc.1 |
+| `Microsoft.Data.SqlClient` | 7.0.0 | 7.1.2 |
+| `Microsoft.Extensions.*` (net11.0) | n/a | 11.0.0 |
+| `Microsoft.EntityFrameworkCore.SqlServer` (`Polecat.EntityFrameworkCore`, net10.0) | 9.x | 10.0.0 |
+| `Microsoft.EntityFrameworkCore.SqlServer` (`Polecat.EntityFrameworkCore`, net11.0) | n/a | 11.0.0 |
 
-Two consequences worth checking in your own projects:
+Every .NET 11 package Polecat depends on is the 11.0.0 release, not a preview or release candidate.
 
-- **Don't pin `Microsoft.Data.SqlClient` below 7.1.1.** Polecat 6.0 is built and tested against it; a lower
+Three consequences worth checking in your own projects:
+
+- **Don't pin `Microsoft.Data.SqlClient` below 7.1.2.** Polecat 6.0 is built and tested against it; a lower
   direct reference in your project is a NuGet package downgrade (NU1605) rather than a quiet override.
-- **`Polecat.EntityFrameworkCore` needs EF Core 10.** An application on EF Core 9 can't take 6.0.
+- **`Polecat.EntityFrameworkCore` needs EF Core 10 on net10.0 and EF Core 11 on net11.0.** An application on
+  EF Core 9 can't take 6.0.
+- **Polecat no longer references `System.Security.Cryptography.Pkcs` itself.** 5.x lifted SqlClient's vulnerable
+  Pkcs (GHSA-846f-f764-76mx) with a direct reference. SqlClient 7.1.2 depends on a patched Pkcs, so the
+  override is gone.
 
 The test-project side of the train (xunit.v3 4.x, Microsoft.Testing.Platform 2.x extension packages) only
 concerns you if you reuse `JasperFx.Events.ComplianceTests`; see the testing notes in the repository's
