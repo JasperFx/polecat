@@ -723,7 +723,7 @@ the shard's progression, and keeps going with everything else. Later events for 
 until you replay it or discard it. Its document stays at its last good state.
 
 The details, including how a replay works and the guard rails, are in the JasperFx documentation on
-[parked identities](https://jasperfx.github.io/events/parked-identities). What's specific to Polecat:
+[parked identities](https://shared-libs.jasperfx.net/events/parked-identities). What's specific to Polecat:
 
 - Parking is the default. `opts.Projections.Errors.ApplyErrors` and `SerializationErrors` are both
   `ProjectionErrorAction.Park`.

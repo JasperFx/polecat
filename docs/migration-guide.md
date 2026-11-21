@@ -11,15 +11,15 @@ The foundation pins move in lockstep, so a consuming project has to move with th
 | Package | 5.50.0 | 6.0 |
 |---|---|---|
 | `JasperFx`, `JasperFx.Events` | 2.102 | 3.12.1 |
-| `Weasel.SqlServer`, `Weasel.Storage` | 9.50.0 | 10.0.0-rc.1 |
+| `Weasel.SqlServer`, `Weasel.Storage`, `Weasel.EntityFrameworkCore` | 9.50.0 | 10.0.0-rc.1 |
 | `Microsoft.Data.SqlClient` | 7.0.0 | 7.1.2 |
 | `Microsoft.Extensions.*` (net11.0) | n/a | 11.0.0 |
-| `Microsoft.EntityFrameworkCore.SqlServer` (`Polecat.EntityFrameworkCore`, net10.0) | 9.x | 10.0.0 |
+| `Microsoft.EntityFrameworkCore.SqlServer` (`Polecat.EntityFrameworkCore`, net10.0) | 10.0.0 (9.0.14 on net9.0) | 10.0.0 |
 | `Microsoft.EntityFrameworkCore.SqlServer` (`Polecat.EntityFrameworkCore`, net11.0) | n/a | 11.0.0 |
 
 Every .NET 11 package Polecat depends on is the 11.0.0 release, not a preview or release candidate.
 
-Three consequences worth checking in your own projects:
+Four consequences worth checking in your own projects:
 
 - **Don't pin `Microsoft.Data.SqlClient` below 7.1.2.** Polecat 6.0 is built and tested against it; a lower
   direct reference in your project is a NuGet package downgrade (NU1605) rather than a quiet override.
@@ -28,6 +28,9 @@ Three consequences worth checking in your own projects:
 - **Polecat no longer references `System.Security.Cryptography.Pkcs` itself.** 5.x lifted SqlClient's vulnerable
   Pkcs (GHSA-846f-f764-76mx) with a direct reference. SqlClient 7.1.2 depends on a patched Pkcs, so the
   override is gone.
+- **Recompile anything built against Polecat 5.x**, such as an in-house extension package. Several public
+  members now come from JasperFx and Weasel base classes (see below), which keeps source compiling but not an
+  old binary's references to them.
 
 The test-project side of the train (xunit.v3 4.x, Microsoft.Testing.Platform 2.x extension packages) only
 concerns you if you reuse `JasperFx.Events.ComplianceTests`; see the testing notes in the repository's
@@ -40,6 +43,20 @@ culture. If you ran Polecat on a Turkish or Azerbaijani machine with an `I` in a
 tag type with its old table suffix before upgrading ([details](https://shared-libs.jasperfx.net/migration-guide#key-changes-in-3-9-0)).
 Polecat's event type names never depended on the culture. Separately, `Evolve()` methods may now use bare
 `case Foo:` labels, and the source generator bundled in the Polecat package picks them up.
+
+## Upgrading to 6.0: JasperFx 3.12 checks natural keys at startup, and a failed composite rebuild throws
+
+Two JasperFx 3.12 changes reach Polecat applications
+([details](https://shared-libs.jasperfx.net/migration-guide#key-changes-in-3-12-0)):
+
+- **A natural key has to be an `int`, `long` or `string`**, or a strong-typed id wrapping one of those
+  ([jasperfx#1272](https://github.com/JasperFx/jasperfx/issues/1272)). Any other type, a `Guid` for example, now
+  throws `InvalidProjectionException` when the projection is registered, naming the aggregate, the member and its
+  type. Check your `[NaturalKey]` members before upgrading, because the store won't start with one of those.
+- **A composite projection rebuild that fails throws** ([jasperfx#1277](https://github.com/JasperFx/jasperfx/issues/1277)).
+  It used to return normally with the shard paused or stopped, so the rebuild looked finished when it wasn't. It now
+  throws the shard's failure, as a single-stream rebuild always has. A full rebuild never parks, so `Projections.RebuildErrors`
+  set to `Park` behaves like `Pause` there and throws too.
 
 ## Upgrading to 6.0: the net11.0 build uses runtime-async
 
@@ -159,7 +176,7 @@ effects before upgrading, or set `opts.Events.EnableSideEffectsOnInlineProjectio
 | `Events.EnableSideEffectsOnInlineProjections` | off | on | None. **See the callout above** | `opts.Events.EnableSideEffectsOnInlineProjections = false` |
 | `EventGraph.UseArchivedStreamPartitioning`: `pc_events` partitioned on `is_archived` | off | on (off when `UseTenantPartitionedEvents` is on) | **The first migration rewrites `pc_events`.** See below | `opts.EventGraph.UseArchivedStreamPartitioning = false` |
 | `Projections.Errors.ApplyErrors` and `SerializationErrors`: what an async projection does when it fails on an event | skip | park the failing identity, or pause where a projection can't park. See below | Adds `pc_parked_identities` (`Events.EnableParkedIdentities`), and a `pc_slice_index_*` table for each projection that calls `UseSliceIndex()` | `opts.Projections.Errors.SkipApplyErrors = true` and `SkipSerializationErrors = true` |
-| Transient failures while the async daemon builds a projection batch: a connection pool timeout, a deadlock, a dropped connection | the shard paused, except several slices failing together under skip, which were built again without limit | the batch is built again up to 3 times with a short backoff, under every error setting, then the shard pauses with `ShardFailure.IsTransient = true`. See JasperFx's [Key Changes in 3.11.0](https://jasperfx.github.io/migration-guide#key-changes-in-3-11-0) and [the async daemon's pipeline](/configuration/retries#the-async-daemon-s-pipeline) | None | `opts.ConfigureDaemonPolly(_ => { })` pauses on the first transient failure |
+| Transient failures while the async daemon builds a projection batch: a connection pool timeout, a deadlock, a dropped connection | the shard paused, except several slices failing together under skip, which were built again without limit | the batch is built again up to 3 times with a short backoff, under every error setting, then the shard pauses with `ShardFailure.IsTransient = true`. See JasperFx's [Key Changes in 3.11.0](https://shared-libs.jasperfx.net/migration-guide#key-changes-in-3-11-0) and [the async daemon's pipeline](/configuration/retries#the-async-daemon-s-pipeline) | None | `opts.ConfigureDaemonPolly(_ => { })` pauses on the first transient failure. To add to the default rather than replace it, end the builder with the public `AddPolecatDaemonDefaults()` ([#1111](https://github.com/JasperFx/polecat/issues/1111)) |
 
 The new columns are nullable and are added in place by the next schema migration. Rows written before it have
 `NULL` in them. Apply that migration (`db-apply`, `db-patch` or `ApplyAllDatabaseChangesOnStartup()`) before
@@ -175,6 +192,11 @@ different settings used to drop each other's columns when either one migrated. S
 `RestoreV5Defaults()`, still gets these nullable columns on its next migration, and leaves them `NULL`. Polecat 5
 created the extended columns only with `EnableExtendedProgressionTracking` on, and the metadata columns only with
 their flags on.
+
+One more thing about `EnableExtendedProgressionTracking`: in Polecat 5, `AddPolecat()` set it back to `false` on every
+store it registered, unless a tool turned it on through `IEventStoreInstrumentation`, so turning it on inside the
+`AddPolecat()` lambda did nothing ([#1108](https://github.com/JasperFx/polecat/issues/1108)). 6.0 only applies a value
+someone set. If you thought you had it on in 5.x, you probably didn't, and you will now.
 
 The tables Polecat 6 adds (`pc_event_projection_floors`, `pc_event_range_marks`, `pc_parked_identities`,
 `pc_high_water_skips` and `pc_high_water_late_events`) still follow their flags. A migration never drops a table it
@@ -256,7 +278,7 @@ Polecat 5 skipped an event that an async projection failed on, and the event was
 parks the identity that failed instead: its events are held back, everything else carries on, and you replay or
 discard it later ([#1053](https://github.com/JasperFx/polecat/issues/1053), ported from
 [marten#6003](https://github.com/JasperFx/marten/issues/6003)). How it works is in the JasperFx docs on
-[parked identities](https://jasperfx.github.io/events/parked-identities), and the Polecat side in
+[parked identities](https://shared-libs.jasperfx.net/events/parked-identities), and the Polecat side in
 [Parking a Failing Identity](/events/projections/async-daemon#parking-a-failing-identity).
 
 - **Behavior change.** A projection that can't park **pauses** its shard on a failing event instead of skipping it:
@@ -269,6 +291,16 @@ discard it later ([#1053](https://github.com/JasperFx/polecat/issues/1053), port
 - **Opting out.** `opts.Projections.Errors.SkipApplyErrors = true` and `SkipSerializationErrors = true` skip as 5.x did.
   `opts.Events.EnableParkedIdentities = false` leaves the table out, and then `Park` means pause. `RestoreV5Defaults()`
   does all of it.
+- **Seeing what's parked.** `projections parked` on the command line lists, replays and discards parked identities
+  ([#1105](https://github.com/JasperFx/polecat/issues/1105)), with the stream's natural key in a "Natural Key" column
+  when the aggregate has one ([#1117](https://github.com/JasperFx/polecat/issues/1117)). The new
+  `AddPolecatParkedIdentitiesHealthCheck()` in `Polecat.AspNetCore` is Degraded while anything is parked, lists up
+  to 10 parked identities per projection, and is Unhealthy while a shard is paused at the parking cap
+  ([details](/events/projections/async-daemon#parked-identities-health-check)).
+- **Logging under Wolverine.** A daemon built without a logger, which is how Wolverine's managed projection
+  distribution builds them, now logs through the host's `ILoggerFactory`
+  ([#1109](https://github.com/JasperFx/polecat/issues/1109)). Before, it logged nothing, so a park, the parking cap
+  and the identity access line at startup went unseen. Expect those lines in your logs now.
 
 ## Upgrading to 6.0: a projection's `IncludeArchivedEvents` reaches the async daemon
 
@@ -568,6 +600,18 @@ running the same shard, or a rewind), the batch fails with `ProgressionProgressO
 nothing, where it used to write its own sequence over the row ([#1060](https://github.com/JasperFx/polecat/issues/1060)).
 Nothing to change in your code. The per-identity rebuild depends on it.
 
+A shard's first commit is checked the same way ([#1118](https://github.com/JasperFx/polecat/issues/1118)). It takes over
+the row only while the row is still at 0, so a second daemon that committed first makes it fail rather than apply the
+same events again. For that to work, rebuilding a composite projection, whether for the whole store or for one tenant,
+now deletes its members' progression rows too, as Marten does.
+
+A failure before a shard's first commit is recorded ([#1112](https://github.com/JasperFx/polecat/issues/1112)). With
+extended progression tracking on, which is the 6.0 default, a shard that fails before it has ever committed now gets a
+`pc_event_progression` row at its start position carrying the failure, so another node, the health check and
+CritterWatch can see it. Polecat 5 wrote nothing until the first commit. A failure never moves a committed position,
+and the first commit clears the failure columns. If you count rows in `pc_event_progression`, expect a row for a
+shard that failed before it got going.
+
 ## Upgrading to 6.0: stream compaction waits for async projections and subscriptions
 
 `CompactStreamAsync()` now throws an `InvalidOperationException` while an asynchronous projection or subscription has
@@ -595,6 +639,31 @@ that version, and the write cache stores the aggregate at it. In 5.x the version
 the aggregate and its version could disagree. `FetchForWriting(id, expectedVersion)` throws
 `EventStreamUnexpectedMaxEventIdException` straight away when the events read reaches past the expected
 version.
+
+## Upgrading to 6.0: fetching a new stream for writing twice in one session
+
+A session that calls `FetchForWriting()` twice for a stream that doesn't exist yet, or calls `StartStream()` and then
+`FetchForWriting()` for the same id, now holds one start of that stream, and `SaveChangesAsync()` writes one stream
+with every event appended through either handle ([#1115](https://github.com/JasperFx/polecat/issues/1115), the port of
+[marten#6094](https://github.com/JasperFx/marten/issues/6094)). In 5.x each fetch started the stream again, and the
+save failed with `ExistingStreamIdCollisionException`. The same holds for `FetchManyForWriting()` followed by
+`FetchForWriting()`, and per tenant under `ForTenant()`.
+
+## Upgrading to 6.0: a completed schema apply counts as the event store's first-use check
+
+Once `ApplyAllDatabaseChangesOnStartup()`, `resources setup` or another full apply has run, the first save no longer
+checks the event store's schema again under the migration lock ([#1095](https://github.com/JasperFx/polecat/issues/1095)),
+as in Marten. That check raced other processes' DDL on a shared database. The one thing you might notice: a table you
+drop by hand after the apply is not put back by the first save any more. Apply the schema again instead.
+
+## Upgrading to 6.0: synchronous `pc_hilo` and `pc_tenants` work opens connections without MARS
+
+The connections Polecat opens for its own synchronous work on `pc_hilo` (a synchronous HiLo id), for creating
+`pc_tenants` on a synchronous first use, and for the synchronous `pc_tenants` lookup of an uncached tenant are opened
+with `MultipleActiveResultSets=false` ([#1090](https://github.com/JasperFx/polecat/issues/1090),
+[#1100](https://github.com/JasperFx/polecat/issues/1100)). Under MARS those blocking calls starved the thread pool.
+If your connection string turns MARS on, those connections come from a second pool with the same settings otherwise;
+if it doesn't, nothing changes. See [HiLo and MARS](/documents/identity#hilo-and-mars).
 
 ## Upgrading to 6.0: `MasterTableTenancy` runs on Weasel's shared base
 
@@ -692,6 +761,35 @@ opts.Schema.For<Order>().Index(x => x.CustomerEmail, x =>
 
 A `Casing = IndexCasing.Lower` (or `Upper`) index already gets a name of its own (`..._lower`), so it can
 sit beside the plain index over the same member.
+
+## Upgrading to 6.0: LINQ answers that change
+
+A set of LINQ fixes ported from Marten make paging, ordering and joins answer what LINQ to Objects answers
+([#995](https://github.com/JasperFx/polecat/issues/995) to [#1001](https://github.com/JasperFx/polecat/issues/1001),
+[#1011](https://github.com/JasperFx/polecat/issues/1011)). Nothing needs changing unless something had come to depend
+on one of the old answers.
+
+| Query | 5.x | 6.0 |
+| --- | --- | --- |
+| `Take(3).CountAsync()`, and `Sum`, `Min`, `Max`, `Average`, `LongCount` after `Take`/`Skip` | the whole query | the page |
+| `Skip(k).CountAsync()` | threw | the count after skipping |
+| `Take(0).AnyAsync()` | `true` | `false` |
+| `Take(5).Where(...)`, `Take(3).Last()`, a `Distinct()` after a page | applied to the whole query | applied to the page |
+| `Skip(2).Take(5).Skip(1).Take(2)` | the last `Skip`/`Take` replaced the first | the pages compose |
+| `OrderBy(x => x.Number).Take(4).OrderByDescending(x => x.Number)` | a different page | the first 4, then reversed |
+| `OrderBy(a).OrderBy(b)` | ordered by `b` only | by `b`, then `a` to break ties |
+| `OrderBy(x => (byte)x.Number)` | the cast was dropped | ordered by the cast value |
+| An ordering by an outer member after `GroupJoin(...).SelectMany(...)` | no order (it read `NULL`) | ordered |
+| `Where`, `First`, `OrderBy`, `Distinct`, `Take(n).Count()`, `Any()` or `Select()` after `GroupJoin(...).SelectMany(...)` | wrong rows, or threw | read the joined rows |
+
+These are refused with `BadLinqExpressionException` now, and were a quiet wrong answer before:
+
+- `OrderBy`, `ThenBy` and their descending forms with an `IComparer`. The comparer was dropped and SQL Server's
+  collation decided the order. Drop the comparer, or sort in memory after the query.
+- An ordering key with no exact SQL Server translation, such as a `Math` call, a narrowing cast or a conditional.
+  Over a join these were skipped.
+- Anything but `Where()` before a `GroupJoin`, an inner source that isn't a `session.Query<T>()` (an in-memory list
+  joined the database table of that type), and the `GroupJoin` overload with an `IEqualityComparer`.
 
 ## Deprecation: `MapPolecatMcp`
 
@@ -1773,7 +1871,7 @@ Polecat 4 inherits the same AOT-friendly posture introduced in JasperFx 2.0 ([ja
 
 Polecat 4 applications target the same Critter Stack 2026 AOT pre-gen flow Marten 9 uses — Polecat is a thin consumer of `JasperFx.Events`, so the consumer-side recipe (csproj flags, `WarningsAsErrors=IL*` set, source-generator-backed `ISerializer` swap, projection-class partial requirement, smoke-test pattern) lives in JasperFx's docs rather than being forked here:
 
-- **[Publishing AOT with JasperFx](https://jasperfx.github.io/codegen/aot)** — the end-to-end Critter Stack guide. Read this first.
+- **[Publishing AOT with JasperFx](https://shared-libs.jasperfx.net/codegen/aot)** — the end-to-end Critter Stack guide. Read this first.
 - **[Marten's AOT publishing walkthrough](https://martendb.io/configuration/aot-publishing)** — longer worked example with full csproj + program snippets. Polecat-applicable apart from the Marten-specific service registrations.
 
 Polecat-specific call-outs:
