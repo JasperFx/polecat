@@ -41,7 +41,7 @@ using static Nuke.Common.Tools.DotNet.DotNetTasks;
 //     each run downloads the last green main run's, balances on it, folds its own results in and
 //     uploads it again (test-template.yml). Bobcat 1.0 keys it by display name (bobcat#730).
 //
-// The workflow runs `./build.sh CIPolecat --framework net10.0 --storage default` (or edge) and owns
+// The workflow runs `./build.sh CIPolecat --framework net11.0 --storage default` (or net10.0 with edge) and owns
 // nothing but the services: SQL Server comes from docker compose (docker-compose.yml for default,
 // the standalone docker-compose.edge.yml for edge).
 partial class Build
@@ -233,7 +233,7 @@ partial class Build
 
     /// <summary>
     ///     #808: the Bobcat specifications for union support, about a second. net11.0 only (C# 15
-    ///     unions), so the net10.0 CI workflows never run it, and the local gate is where it runs.
+    ///     unions), so <see cref="CISpecs" /> runs it on net11.0 whatever <c>--framework</c> says.
     /// </summary>
     static readonly SupervisedSuite PolecatSpecs =
         new("specs", "src/Polecat.Specs/Polecat.Specs.csproj", Workers: 1) { Frameworks = ["net11.0"] };
@@ -274,12 +274,16 @@ partial class Build
     Target CIEfCore => _ => _
         .Executes(() => RunSupervised(EfCoreTests));
 
+    /// <summary>The union specifications (<see cref="PolecatSpecs" />), always on net11.0.</summary>
+    Target CISpecs => _ => _
+        .Executes(() => RunSupervised(PolecatSpecs));
+
     /// <summary>
     ///     Every supervised suite, one after another — what the three workflows run between them.
-    ///     LocalGate runs the same three at once.
+    ///     LocalGate runs the same suites at once.
     /// </summary>
     Target CI => _ => _
-        .DependsOn(CIPolecat, CIAspNetCore, CIEfCore);
+        .DependsOn(CIPolecat, CIAspNetCore, CIEfCore, CISpecs);
 
     // ─── The run ───────────────────────────────────────────────────────
 
@@ -304,6 +308,14 @@ partial class Build
         }
 
         var framework = string.IsNullOrEmpty(Framework) ? "net10.0" : Framework;
+
+        // A suite that builds for fewer frameworks than the repository runs on its newest one, the
+        // same fallback LocalGate makes, so a net11.0-only suite still runs under --framework net10.0.
+        if (suite.Frameworks is { Length: > 0 } declared && !declared.Contains(framework))
+        {
+            framework = declared[^1];
+        }
+
         var projectName = suite.Name;
 
         if (SkipBuild)

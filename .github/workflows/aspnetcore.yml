@@ -14,6 +14,13 @@ jobs:
       fail-fast: false
       matrix:
         storage_type: [default, edge]
+        # Newest framework on the newest SQL Server, oldest on the oldest (test-template.yml).
+        include:
+          - storage_type: default
+            framework: net11.0
+          - storage_type: edge
+            framework: net10.0
     with:
       NUKE_TARGET: CIAspNetCore
       STORAGE_TYPE: ${{ matrix.storage_type }}
+      FRAMEWORK: ${{ matrix.framework }}

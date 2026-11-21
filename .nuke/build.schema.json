@@ -31,6 +31,7 @@
         "CIAspNetCore",
         "CIEfCore",
         "CIPolecat",
+        "CISpecs",
         "Compile",
         "CompileProject",
         "Detach",
