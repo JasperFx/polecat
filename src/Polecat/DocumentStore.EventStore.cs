@@ -699,7 +699,7 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
         string? tenantIdOrDatabaseIdentifier = null,
         ILogger? logger = null)
     {
-        logger ??= NullLogger.Instance;
+        logger ??= DefaultDaemonLogger();
 
         // #514: with the default tenant disabled (which configuring a database-per-tenant tenancy
         // does), building a daemon with no tenant has no coherent answer. Marten asserts the same
@@ -737,11 +737,17 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
     // #871 item 4: this used to ignore the id and build the default daemon, which a database-per-tenant
     // store refuses, so Wolverine's agent family could run nothing on one. Mirrors Marten: the one database
     // answers for a single-database store, and a database the tenancy doesn't have is refused.
+    //
+    // #1109: Wolverine-managed projection distribution builds every daemon through this seam, which has no
+    // logger parameter. It used to hand the daemon NullLogger, so the daemon and every agent on it logged
+    // nothing: no identity access line, no parked identity, no ParkedLimitReachedException.
     async ValueTask<IProjectionDaemon> IEventStore.BuildProjectionDaemonAsync(DatabaseId id)
     {
+        var logger = DefaultDaemonLogger();
+
         if (IsSingleDatabase)
         {
-            return await buildProjectionDaemonAsync(SingleDatabase, NullLogger.Instance).ConfigureAwait(false);
+            return await buildProjectionDaemonAsync(SingleDatabase, logger).ConfigureAwait(false);
         }
 
         var databases = await Options.Tenancy!.BuildDatabasesAsync().ConfigureAwait(false);
@@ -753,8 +759,18 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
 
         return database == null
             ? throw new ArgumentOutOfRangeException(nameof(id), $"Requested database {id.Identity} cannot be found")
-            : await buildProjectionDaemonAsync(database, NullLogger.Instance).ConfigureAwait(false);
+            : await buildProjectionDaemonAsync(database, logger).ConfigureAwait(false);
     }
+
+    /// <summary>
+    ///     The logger a daemon gets when its caller passes none: one from the host's <see cref="ILoggerFactory" />
+    ///     when <c>AddPolecat</c> registered the store, otherwise <see cref="NullLogger" />. Marten does the same
+    ///     from its <c>StoreOptions.LogFactory</c> (#1109).
+    /// </summary>
+    internal ILogger DefaultDaemonLogger()
+        => (ILogger?)Options.LogFactory?.CreateLogger<PolecatProjectionDaemon>()
+           ?? Options.DotNetLogger
+           ?? NullLogger.Instance;
 
     private static string ResolveConnectionString(IEventDatabase database, StoreOptions options)
     {
