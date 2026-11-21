@@ -199,6 +199,11 @@ When enabled, the next schema apply adds six nullable columns to `pc_event_progr
 read back into `JasperFx.Events.Projections.ShardState`. The default is `false`, in which case
 no extra columns are created.
 
+A shard that fails before its first commit, like one that hits the parking cap on its first batch, has no row
+yet. Its failure creates the row at the position the shard started from, so the parked identities health check
+on another node, the CLI and CritterWatch can see it. The row doesn't change where the shard starts next time,
+and the shard's first commit takes it over and clears the failure.
+
 `StoreOptions.Events` also implements the storage-agnostic
 `JasperFx.Events.IEventStoreInstrumentation` interface, whose `ExtendedProgressionEnabled`
 property is an alias for `EnableExtendedProgressionTracking`. This lets store-agnostic tooling

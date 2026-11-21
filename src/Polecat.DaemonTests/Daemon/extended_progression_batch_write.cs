@@ -103,8 +103,9 @@ public class extended_progression_batch_write : IAsyncLifetime
 
         await theDatabase.WriteExtendedProgressionAsync([
             Telemetry(First, "Running"),
-            // A shard that has never committed progression: no row to decorate, so it must be skipped
-            // silently, exactly like the single-state path.
+            // A shard that has never committed progression: no row to decorate, so a state without a failure
+            // is skipped silently, exactly like the single-state path. Only a failure creates the row (#1112,
+            // Bug_1112_failure_before_the_first_commit).
             Telemetry("NoSuchProjection:All:98123456", "Running")
         ], TestContext.Current.CancellationToken);
 

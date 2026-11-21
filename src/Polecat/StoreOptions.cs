@@ -675,7 +675,7 @@ public class StoreOptions
     ///     jasperfx#1256: the Polly pipeline the async daemon builds each projection batch through, so a batch whose
     ///     build fails transiently is built again. Separate from <see cref="ResiliencePipeline" />, which wraps the
     ///     session commands a batch build runs. See
-    ///     <see cref="Resilience.PolecatResilienceDefaults.AddPolecatDaemonDefaults" />.
+    ///     <see cref="PolecatResiliencePipelineBuilderExtensions.AddPolecatDaemonDefaults" />.
     /// </summary>
     internal ResiliencePipeline DaemonResiliencePipeline { get; set; }
 
@@ -810,7 +810,9 @@ public class StoreOptions
     ///         timeout, a deadlock or a dropped connection, and never one from your projection's own code. By
     ///         default the batch is built again up to 3 times with a short exponential backoff (100ms, doubling,
     ///         with jitter), and then the shard pauses with <c>ShardFailure.IsTransient</c> true. An empty pipeline,
-    ///         <c>ConfigureDaemonPolly(_ =&gt; { })</c>, pauses the shard on the first transient failure.
+    ///         <c>ConfigureDaemonPolly(_ =&gt; { })</c>, pauses the shard on the first transient failure. To keep the
+    ///         default and add to it, call
+    ///         <see cref="PolecatResiliencePipelineBuilderExtensions.AddPolecatDaemonDefaults" /> on the builder.
     ///     </para>
     ///     <para>
     ///         Building a batch again is safe in a way that replaying a session command is not: nothing has been
