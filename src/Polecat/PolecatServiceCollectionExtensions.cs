@@ -211,10 +211,23 @@ internal class SetEventStoreInstrumentation : IConfigurePolecat, IEventStoreInst
 {
     public void Configure(IServiceProvider serviceProvider, StoreOptions options)
     {
-        options.Events.EnableExtendedProgressionTracking = ExtendedProgressionEnabled;
+        // #1108 (marten#4981 / marten#5310): apply the adapter's value only when someone set it. AddPolecat always
+        // registers this adapter, so an unconditional assignment reset a direct
+        // `opts.Events.EnableExtendedProgressionTracking = true` back to false when the store was built.
+        if (_extendedProgressionEnabled.HasValue)
+        {
+            options.Events.EnableExtendedProgressionTracking = _extendedProgressionEnabled.Value;
+        }
     }
 
-    public bool ExtendedProgressionEnabled { get; set; }
+    private bool? _extendedProgressionEnabled;
+
+    // Unset reads as the default the adapter leaves in place
+    public bool ExtendedProgressionEnabled
+    {
+        get => _extendedProgressionEnabled ?? false;
+        set => _extendedProgressionEnabled = value;
+    }
 }
 
 internal class SetEventStoreInstrumentation<T> : IConfigurePolecat<T>, IEventStoreInstrumentation
@@ -222,8 +235,18 @@ internal class SetEventStoreInstrumentation<T> : IConfigurePolecat<T>, IEventSto
 {
     public void Configure(IServiceProvider serviceProvider, StoreOptions options)
     {
-        options.Events.EnableExtendedProgressionTracking = ExtendedProgressionEnabled;
+        // #1108: see SetEventStoreInstrumentation.Configure
+        if (_extendedProgressionEnabled.HasValue)
+        {
+            options.Events.EnableExtendedProgressionTracking = _extendedProgressionEnabled.Value;
+        }
     }
 
-    public bool ExtendedProgressionEnabled { get; set; }
+    private bool? _extendedProgressionEnabled;
+
+    public bool ExtendedProgressionEnabled
+    {
+        get => _extendedProgressionEnabled ?? false;
+        set => _extendedProgressionEnabled = value;
+    }
 }

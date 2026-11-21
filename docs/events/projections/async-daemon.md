@@ -446,6 +446,32 @@ builder.Services.AddHealthChecks()
 Call it once per store. Each store's check is registered under its own name, `HighWaterHealthCheck:IInvoicingStore`,
 with its own settings, so it can sit beside the default store's check.
 
+### Parked Identities Health Check <Badge type="tip" text="6.0" />
+
+`AddPolecatParkedIdentitiesHealthCheck()`, also from `Polecat.AspNetCore`, watches the
+[parked identities](#parking-a-failing-identity):
+
+- **Degraded** while any identity is parked, in any of the store's databases. The description names each projection
+  and tenant with its count. A parked identity's document is stuck, but the rest of the projection keeps going.
+- **Unhealthy** while a shard is paused because it reached the parking cap (`MaxParkedIdentitiesPerShard`, or a batch
+  that would have parked most of its identities at once). That shard isn't projecting anything until you replay or
+  discard parked identities, or fix the projection, and restart it.
+
+```cs
+builder.Services.AddHealthChecks()
+    .AddPolecatParkedIdentitiesHealthCheck();
+
+// For a store registered with AddPolecatStore<IInvoicingStore>(),
+// registered as "ParkedIdentitiesHealthCheck:IInvoicingStore"
+builder.Services.AddHealthChecks()
+    .AddPolecatParkedIdentitiesHealthCheck<IInvoicingStore>();
+```
+
+The parked counts come from `pc_parked_identities`, so any node can run the check. A node that runs the shard sees the
+pause through its own daemon. Any other node only sees it with `opts.Events.EnableExtendedProgressionTracking = true`,
+which records the reason a shard paused in `pc_event_progression`, and only once the shard has committed at least one
+batch.
+
 ## Listening for Daemon Commits
 
 Sometimes you need to run a side effect **after** an aggregate has been durably updated by the async
@@ -722,6 +748,8 @@ await daemon.DiscardParkedIdentityAsync("TripSummary", null, tripId, token);
 
 From anywhere else, `projections parked` on the command line or `IEventDatabase.RequestParkedActionAsync()` writes a
 request that the node running the shard picks up.
+
+To be told when something parks, add the [parked identities health check](#parked-identities-health-check).
 
 To keep skipping the bad event the way Polecat 5 did:
 

@@ -88,4 +88,49 @@ public class event_store_instrumentation_di_tests
         var store = provider.GetRequiredService<IDocumentStore>();
         store.Options.Events.EnableExtendedProgressionTracking.ShouldBeTrue();
     }
+
+    /// <summary>
+    ///     #1108: AddPolecat always registers the instrumentation adapter, and its default used to reset a direct
+    ///     <c>opts.Events.EnableExtendedProgressionTracking = true</c> back to false when the store was built.
+    /// </summary>
+    [Fact]
+    public void a_direct_opt_in_survives_the_untouched_adapter()
+    {
+        var services = new ServiceCollection();
+        services.AddPolecat(opts =>
+        {
+            opts.ConnectionString = ConnectionSource.ConnectionString;
+            opts.UseNativeJsonType = ConnectionSource.SupportsNativeJson;
+            opts.Events.EnableExtendedProgressionTracking = true;
+        });
+        services.AddPolecatStore<IInvoicingStore>(opts =>
+        {
+            opts.ConnectionString = ConnectionSource.ConnectionString;
+            opts.DatabaseSchemaName = "invoices_1108";
+            opts.UseNativeJsonType = ConnectionSource.SupportsNativeJson;
+            opts.Events.EnableExtendedProgressionTracking = true;
+        });
+
+        using var provider = services.BuildServiceProvider();
+
+        provider.GetRequiredService<IDocumentStore>().Options.Events.EnableExtendedProgressionTracking.ShouldBeTrue();
+        provider.GetRequiredService<IInvoicingStore>().Options.Events.EnableExtendedProgressionTracking.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void the_adapter_can_still_turn_a_direct_opt_in_off()
+    {
+        var services = new ServiceCollection();
+        services.AddPolecat(opts =>
+        {
+            opts.ConnectionString = ConnectionSource.ConnectionString;
+            opts.UseNativeJsonType = ConnectionSource.SupportsNativeJson;
+            opts.Events.EnableExtendedProgressionTracking = true;
+        });
+
+        using var provider = services.BuildServiceProvider();
+        provider.GetRequiredService<IEventStoreInstrumentation>().ExtendedProgressionEnabled = false;
+
+        provider.GetRequiredService<IDocumentStore>().Options.Events.EnableExtendedProgressionTracking.ShouldBeFalse();
+    }
 }
