@@ -142,7 +142,8 @@ effects before upgrading, or set `opts.Events.EnableSideEffectsOnInlineProjectio
 
 | Setting | 5.x | 6.0 | Schema effect | To keep 5.x's behavior |
 | :--- | :--- | :--- | :--- | :--- |
-| Event metadata: `Events.EnableCorrelationId`, `EnableCausationId`, `EnableHeaders`, `EnableUserName` | off | on | Adds the nullable `correlation_id`, `causation_id`, `headers` and `user_name` columns to `pc_events` | Set each to `false` |
+| Event metadata: `Events.EnableCorrelationId`, `EnableCausationId`, `EnableHeaders`, `EnableUserName` | off | on | Adds the nullable `correlation_id`, `causation_id`, `headers` and `user_name` columns to `pc_events`, whatever the flags say. See below | Set each to `false` |
+| `Events.EnableExtendedProgressionTracking`: the daemon writes `heartbeat`, `agent_status`, `pause_reason`, `running_on_node`, the `failure_*` columns and `parked_count` on `pc_event_progression` | off | on | Adds those nullable columns to `pc_event_progression`, whatever the flag says. See below | `opts.Events.EnableExtendedProgressionTracking = false` |
 | Document metadata: correlation id, causation id, last modified by, headers | off | on | Adds the nullable `correlation_id`, `causation_id`, `last_modified_by` and `headers` columns to every document table | `opts.Policies.EnableDocumentMetadataByDefault = false`, or per type with `Schema.For<T>().Metadata(m => m.Headers.Enabled = false)` |
 | `OpenTelemetry.EventCountersEnabled` (the `polecat.event.append` counter) | off | on | None. Without a listener on the meter it costs nothing | `opts.OpenTelemetry.EventCountersEnabled = false` |
 | `AllowOutOfOrderMetadataProperties` on the default serializer | off | on | None | `opts.RestoreV5Defaults()`, or your own options through `ConfigureSerialization(JsonSerializerOptions, ...)` |
@@ -158,6 +159,19 @@ The new columns are nullable and are added in place by the next schema migration
 migrated on demand after the first save that writes it, and that first save fails with "Invalid column name
 'correlation_id'". The index change rebuilds each index it touches, which takes as long as building it did; run it
 through `db-patch` in a maintenance window on a large table.
+
+The event metadata columns and the extended progression columns are part of the schema whatever their flags say
+([#1116](https://github.com/JasperFx/polecat/issues/1116), as in [marten#5765](https://github.com/JasperFx/marten/issues/5765)).
+The flags only decide what Polecat writes and reads. Two applications, or two stores, sharing one schema with
+different settings used to drop each other's columns when either one migrated. So a store with the flags off, or with
+`RestoreV5Defaults()`, still gets these nullable columns on its next migration, and leaves them `NULL`. Polecat 5
+created the extended columns only with `EnableExtendedProgressionTracking` on, and the metadata columns only with
+their flags on.
+
+The tables Polecat 6 adds (`pc_event_projection_floors`, `pc_event_range_marks`, `pc_parked_identities`,
+`pc_high_water_skips` and `pc_high_water_late_events`) still follow their flags. A migration never drops a table it
+doesn't know about, so they don't have the problem. Archived-stream partitioning stays conditional too, because it
+changes the shape of `pc_events`.
 
 `RestoreV5Defaults()` also puts back the two 6.0 changes that came from JasperFx 3.0 and are described below:
 `GateSideEffectsBehindPriorVersion` (off on every projection) and `DcbConflictScope.TagValue`.

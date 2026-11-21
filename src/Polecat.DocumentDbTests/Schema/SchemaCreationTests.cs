@@ -141,9 +141,10 @@ public class SchemaCreationTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task events_table_omits_metadata_columns_when_disabled()
+    public async Task events_table_keeps_metadata_columns_when_disabled()
     {
-        // On by default since Polecat 6 (#1032)
+        // On by default since Polecat 6 (#1032). Turned off, the columns are still created (#1116, marten#5765):
+        // the flags decide what is written, not what exists.
         var database = CreateDatabase(o =>
         {
             o.Events.EnableCorrelationId = false;
@@ -156,10 +157,13 @@ public class SchemaCreationTests : IAsyncLifetime
         var columns = await SchemaInspector.GetColumnInfoAsync("pc_events");
         var names = columns.Select(c => c.Name).ToList();
 
-        names.ShouldNotContain("correlation_id");
-        names.ShouldNotContain("causation_id");
-        names.ShouldNotContain("headers");
-        names.ShouldNotContain("user_name");
+        names.ShouldContain("correlation_id");
+        names.ShouldContain("causation_id");
+        names.ShouldContain("headers");
+        names.ShouldContain("user_name");
+
+        // And nothing to migrate afterwards: the flags-off store doesn't see them as extras to drop
+        await database.AssertDatabaseMatchesConfigurationAsync(TestContext.Current.CancellationToken);
     }
 
     [Fact]

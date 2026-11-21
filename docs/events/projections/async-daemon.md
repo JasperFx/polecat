@@ -468,9 +468,8 @@ builder.Services.AddHealthChecks()
 ```
 
 The parked counts come from `pc_parked_identities`, so any node can run the check. A node that runs the shard sees the
-pause through its own daemon. Any other node only sees it with `opts.Events.EnableExtendedProgressionTracking = true`,
-which records the reason a shard paused in `pc_event_progression`, and only once the shard has committed at least one
-batch.
+pause through its own daemon. Any other node only sees it with `opts.Events.EnableExtendedProgressionTracking` on
+(the default since Polecat 6), which records the reason a shard paused in `pc_event_progression`.
 
 ## Listening for Daemon Commits
 

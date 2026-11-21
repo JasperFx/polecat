@@ -40,6 +40,7 @@ public class polecat_6_default_tests
         options.Events.EnableEventRangeMarks.ShouldBeTrue();
         options.Events.EnableProjectionFloors.ShouldBeTrue();
         options.Events.EnableParkedIdentities.ShouldBeTrue();
+        options.Events.EnableExtendedProgressionTracking.ShouldBeTrue();
     }
 
     [Fact]
@@ -91,6 +92,7 @@ public class polecat_6_default_tests
         options.Events.EnableEventRangeMarks.ShouldBeFalse();
         options.Events.EnableProjectionFloors.ShouldBeFalse();
         options.Events.EnableParkedIdentities.ShouldBeFalse();
+        options.Events.EnableExtendedProgressionTracking.ShouldBeFalse();
         options.Projections.Errors.SkipApplyErrors.ShouldBeTrue();
         options.Projections.Errors.SkipSerializationErrors.ShouldBeTrue();
 
@@ -262,15 +264,29 @@ public class polecat_6_default_schema_tests : OneOffConfigurationsContext
     }
 
     [Fact]
-    public async Task restored_v5_defaults_add_no_metadata_columns()
+    public async Task restored_v5_defaults_add_no_document_metadata_columns_and_write_no_event_metadata()
     {
         configure(restore: true);
         await saveAShipmentAsync();
 
         (await columnsAsync("pc_doc_shipment"))
             .ShouldNotContain(x => x == "correlation_id" || x == "causation_id" || x == "last_modified_by" || x == "headers");
-        (await columnsAsync("pc_events"))
-            .ShouldNotContain(x => x == "correlation_id" || x == "causation_id" || x == "headers" || x == "user_name");
+
+        // #1116 (marten#5765): pc_events has the metadata columns whatever the flags say, and the flags decide
+        // whether an append writes them
+        var eventColumns = await columnsAsync("pc_events");
+        foreach (var column in new[] { "correlation_id", "causation_id", "headers", "user_name" })
+        {
+            eventColumns.ShouldContain(column);
+        }
+
+        await using var conn = await OpenConnectionAsync();
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"""
+            SELECT COUNT(*) FROM [{theStore.Options.DatabaseSchemaName}].[pc_events]
+            WHERE correlation_id IS NOT NULL OR causation_id IS NOT NULL OR headers IS NOT NULL OR user_name IS NOT NULL
+            """;
+        ((int)(await cmd.ExecuteScalarAsync(Ct))!).ShouldBe(0);
     }
 
     [Fact]

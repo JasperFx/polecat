@@ -127,9 +127,8 @@ Two situations reach it, and both are ordinary:
 
 * **`AutoCreate.None` against a database where the schema was never applied.** Being in the migration
   set does not help if nothing ever applies it.
-* **Column drift.** A `pc_event_progression` created before `Events.EnableExtendedProgressionTracking`
-  was turned on has none of the `heartbeat` / `agent_status` / `pause_reason` columns the progression
-  reads select.
+* **Column drift.** A `pc_event_progression` that hasn't been migrated since before Polecat 6 can be
+  missing the `heartbeat` / `agent_status` / `pause_reason` columns the progression reads select.
 
 This matters most for a monitoring tool polling a fleet: one store in the fan-out throwing would
 otherwise abort the whole poll, and the operator gets an empty page for the shards that *do* have data.
@@ -178,26 +177,29 @@ These cleanup methods permanently delete data. They are intended for testing and
 
 ### Extended Progression Tracking
 
-Polecat can extend its event-progression table (`pc_event_progression`) with additional
-columns that the asynchronous projection daemon uses to report per-shard health — the same
-surface monitoring tools such as **CritterWatch** read to show heartbeat liveness, agent
-status, pause reasons, and per-shard alert thresholds.
+The event-progression table (`pc_event_progression`) has extra columns that the asynchronous
+projection daemon uses to report per-shard health — the same surface monitoring tools such as
+**CritterWatch** read to show heartbeat liveness, agent status, pause reasons, and per-shard alert
+thresholds.
 
-Opt in via the event store options:
+This is on by default since Polecat 6, as it is in Marten 10. To turn it off:
 
 ```cs
 var store = DocumentStore.For(opts =>
 {
     opts.Connection("...");
-    opts.Events.EnableExtendedProgressionTracking = true;
+    opts.Events.EnableExtendedProgressionTracking = false;
 });
 ```
 
-When enabled, the next schema apply adds six nullable columns to `pc_event_progression`
-(`heartbeat`, `agent_status`, `pause_reason`, `running_on_node`, `warning_behind_threshold`,
-`critical_behind_threshold`); the daemon writes its runtime agent state to them, and they are
-read back into `JasperFx.Events.Projections.ShardState`. The default is `false`, in which case
-no extra columns are created.
+`RestoreV5Defaults()` turns it off too.
+
+The nullable columns (`heartbeat`, `agent_status`, `pause_reason`, `running_on_node`,
+`warning_behind_threshold`, `critical_behind_threshold`, the `failure_*` columns and `parked_count`) are
+part of `pc_event_progression` whatever the setting says. With it on, the daemon writes its runtime agent
+state to them and they are read back into `JasperFx.Events.Projections.ShardState`. With it off, they stay
+`NULL`. Keeping the columns either way means two applications sharing a schema with different settings
+don't drop each other's columns when they migrate.
 
 A shard that fails before its first commit, like one that hits the parking cap on its first batch, has no row
 yet. Its failure creates the row at the position the shard started from, so the parked identities health check
@@ -212,5 +214,5 @@ types:
 
 ```cs
 IEventStoreInstrumentation instrumentation = store.Options.Events;
-instrumentation.ExtendedProgressionEnabled = true;
+instrumentation.ExtendedProgressionEnabled = false;
 ```

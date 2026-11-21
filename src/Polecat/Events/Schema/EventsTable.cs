@@ -83,27 +83,15 @@ internal class EventsTable : Polecat.Storage.KeyedTable
         // .NET type for deserialization
         AddColumn("dotnet_type", events.KeyText(500)).AllowNulls();
 
-        // Optional metadata columns
-        if (events.EventOptions.EnableCorrelationId)
-        {
-            AddColumn("correlation_id", events.KeyText()).AllowNulls();
-        }
-
-        if (events.EventOptions.EnableCausationId)
-        {
-            AddColumn("causation_id", events.KeyText()).AllowNulls();
-        }
-
-        if (events.EventOptions.EnableHeaders)
-        {
-            AddColumn("headers", events.JsonColumnType).AllowNulls();
-        }
-
-        // #237: opt-in user / last-modified-by column, mirroring Marten's user_name.
-        if (events.EventOptions.EnableUserName)
-        {
-            AddColumn("user_name", events.KeyText()).AllowNulls();
-        }
+        // Metadata columns. #1116 (marten#5765): nullable and always there, whatever the
+        // EnableCorrelationId / EnableCausationId / EnableHeaders / EnableUserName flags say. The flags decide
+        // what an append writes and what a read selects; the schema stops depending on them, so two stores or
+        // two apps on one schema with different flags can't drop each other's columns. #237: user_name
+        // mirrors Marten's.
+        AddColumn("correlation_id", events.KeyText()).AllowNulls();
+        AddColumn("causation_id", events.KeyText()).AllowNulls();
+        AddColumn("headers", events.JsonColumnType).AllowNulls();
+        AddColumn("user_name", events.KeyText()).AllowNulls();
 
         // Archive flag
         var archiveColumn = AddColumn("is_archived", "bit").NotNull().DefaultValue(0);
