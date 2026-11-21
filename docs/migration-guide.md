@@ -1,5 +1,45 @@
 # Migration Guide
 
+## What's new in Polecat 6.0
+
+Polecat 6.0 is Polecat's part of the Critter Stack's .NET 11 release, beside JasperFx 3, Weasel 10, Marten 10,
+Fisher 2 and Wolverine 7.
+
+- **Targets `net10.0` and `net11.0`.** `net9.0` is dropped. The `net11.0` build is compiled with runtime-async and
+  uses the .NET 11 GA packages.
+- **Dependencies:** JasperFx 3.12.1, Weasel 10, `Microsoft.Data.SqlClient` 7.1.2, and EF Core 10 or 11 by framework
+  for `Polecat.EntityFrameworkCore`.
+- **Defaults follow Marten 10**: event and document metadata, extended progression tracking, inline projection side
+  effects, archived-stream partitioning and projection start floors are on. `RestoreV5Defaults()` puts Polecat 5's
+  defaults back. See [the defaults that changed](#upgrading-to-6-0-defaults-that-changed-with-marten-10).
+- **A failing async projection identity is parked** instead of skipping its event, and the daemon builds a batch again
+  after a transient failure. `projections parked` and `AddPolecatParkedIdentitiesHealthCheck()` show what is parked.
+  See [parking](/events/projections/async-daemon#parking-a-failing-identity).
+- **Late events are recovered.** The daemon records the ranges its high water mark skips and picks up events that
+  commit late inside them. See [events that commit late](/events/projections/async-daemon#events-that-commit-late).
+- **Reading your own writes**: `session.LastAppendedPosition` and `store.WaitForProjectionsAsync(...)`. See
+  [reading your own writes](/events/projections/async-daemon#reading-your-own-writes).
+- **Rebuilding less than a whole projection**: `RebuildSingleStreamAsync` for one stream, and per-identity rebuilds
+  of multi-stream projections. See [rebuilding a single stream](/events/projections/async-daemon#rebuilding-a-single-stream).
+- **Rewriting stored events in bulk**, run directly or as a Wolverine job. See [rewriting](/events/rewriting).
+- **DCB:** a check no longer bumps the tags it read, and a conflict honours the event types the query selects.
+- **Multi-tenancy:** `Advanced.QueryAcrossAllDatabasesAsync` runs one query against every tenant database
+  ([details](/configuration/multitenancy#querying-across-all-databases)), and `opts.Storage.PartitionPerTenant(table)`
+  partitions a table of your own per tenant ([details](/documents/multi-tenancy#partitioning-your-own-tables-by-tenant)).
+- **`opts.Advanced.UseUnicodeKeys`** stores keys as `nvarchar`, so they can hold any character
+  ([details](/configuration/storeoptions#unicode-keys)).
+- **Aspire:** `UseSqlConnectionFromServices()` takes the connection string from the `SqlConnection` that
+  `AddSqlServerClient()` registers.
+- **LINQ:** computed ordering keys, indexes into arrays and lists, `Join`, `LeftJoin` and `RightJoin`, `SelectMany`
+  over a document's own collections, `ToAsyncEnumerable()` streaming, a `ToLower()` comparison that seeks a
+  lower-cased index, and C# union-typed members on `net11.0`. A wave of fixes makes paging, ordering and joins answer
+  what LINQ to Objects answers.
+- **Serialization:** `ISerializer` has UTF-8 byte overloads, and `Polecat.AspNetCore` streams responses straight to
+  the response body.
+
+Some of this changes behaviour in an existing application. The sections below say what, what it does to an
+existing database, and how to opt out.
+
 ## Upgrading to 6.0: target frameworks and dependency floor
 
 Polecat 6.0 is part of the Critter Stack .NET 11 release train and targets **`net10.0;net11.0`**.
