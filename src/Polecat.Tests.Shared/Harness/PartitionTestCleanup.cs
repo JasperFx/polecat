@@ -56,8 +56,8 @@ public static class PartitionTestCleanup
 
     /// <summary>
     ///     The same for <c>UseArchivedStreamPartitioning</c>, except that it never drops a table:
-    ///     <c>ps_pc_events_is_archived</c> is one database-global object, and since it became the 6.0
-    ///     default (#1041) every test schema's <c>pc_events</c> sits on it, so dropping the tables on it
+    ///     <c>ps_pc_events_is_archived</c> is one database-global object, and every test schema that turns
+    ///     archived partitioning on puts its <c>pc_events</c> on it (#1041), so dropping the tables on it
     ///     would pull the event store out from under whatever else is running. Weasel's partition DDL has
     ///     reused a scheme that is in use since weasel#765, so a leftover table no longer blocks anything;
     ///     this only removes the scheme and function when nothing is on them.

@@ -46,6 +46,46 @@ first pass reached, so if a rule isn't safe to run twice, such as one that draws
 filter for this, which masks every archived event in the store.
 :::
 
+## Hot/Cold Storage Partitioning {#hot-cold-storage-partitioning}
+
+Polecat can put `pc_events` on a SQL Server partition scheme by `is_archived`, so archived events sit in a partition
+of their own. This is off by default. With it on, archiving a stream moves its events out of the active partition, so
+the part of `pc_events` that your appends, reads and the async daemon work against only holds the streams still in
+use.
+
+::: tip Turn it on if your system archives whole streams
+We strongly recommend turning this on when your system archives whole streams that are rarely read afterward: closed
+accounts, completed orders, finished workflows. The active partition then stays the size of your live data instead of
+growing with your whole history, which is the point of archiving those streams. If your system rarely or never
+archives a stream, leave it off. You would pay its cost on every write and get nothing back.
+:::
+
+```cs
+opts.EventGraph.UseArchivedStreamPartitioning = true;
+```
+
+With it on, the clustered primary key of `pc_events` is `(seq_id, is_archived)` on the partition scheme, and each
+[DCB tag table](/events/dcb) has `is_archived` in its primary key and no foreign key to `pc_events`, so Polecat deletes
+tag rows itself wherever it deletes events. `pc_streams` is never partitioned, so an archived stream's id still can't
+be reused. It cannot be combined with [per-tenant event partitioning](/events/multitenancy) (`UseTenantPartitionedEvents`),
+because a SQL Server table has only one partition scheme; setting both is refused.
+
+::: warning Turning it on rewrites pc_events
+On an existing store, the first schema migration after you turn it on moves `pc_events` onto the partition scheme in
+place ([#1041](https://github.com/JasperFx/polecat/issues/1041)). It rebuilds the clustered primary key on the scheme,
+which moves every row, and archived streams' events land in the archived partition. That rewrites the whole table,
+twice over, so it takes time and transaction log space in proportion to the table. Run it through `db-patch` in a
+maintenance window on a large store. Turning it off again is the same rewrite.
+:::
+
+### What it costs
+
+Partitioning is not free: every write to `pc_events` goes to a partition through the partition scheme, and the
+clustered key carries `is_archived`. Polecat's cost has not been measured on its own yet. Marten measured a cost of the
+same kind on PostgreSQL ([Marten's numbers](https://martendb.io/events/archiving#what-it-costs)), largest on bulk
+loading and smaller on everyday appends. Expect something similar in kind on SQL Server, and measure your own workload
+before and after turning it on.
+
 ## Unarchiving a Stream
 
 Restore an archived stream — this is what the refusal above points you at:

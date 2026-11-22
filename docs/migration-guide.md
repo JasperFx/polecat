@@ -10,8 +10,11 @@ Fisher 2 and Wolverine 7.
 - **Dependencies:** JasperFx 3.12.1, Weasel 10, `Microsoft.Data.SqlClient` 7.1.2, and EF Core 10 or 11 by framework
   for `Polecat.EntityFrameworkCore`.
 - **Defaults follow Marten 10**: event and document metadata, extended progression tracking, inline projection side
-  effects, archived-stream partitioning and projection start floors are on. `RestoreV5Defaults()` puts Polecat 5's
-  defaults back. See [the defaults that changed](#upgrading-to-6-0-defaults-that-changed-with-marten-10).
+  effects and projection start floors are on. `RestoreV5Defaults()` puts Polecat 5's defaults back. See
+  [the defaults that changed](#upgrading-to-6-0-defaults-that-changed-with-marten-10).
+- **Archived-stream partitioning stays opt-in**, and turning it on for an existing store now migrates `pc_events` in
+  place. Turn it on if your system archives whole streams. See
+  [archived-stream partitioning](#archived-stream-partitioning-is-opt-in).
 - **A failing async projection identity is parked** instead of skipping its event, and the daemon builds a batch again
   after a transient failure. `projections parked` and `AddPolecatParkedIdentitiesHealthCheck()` show what is parked.
   See [parking](/events/projections/async-daemon#parking-a-failing-identity).
@@ -196,7 +199,7 @@ all of them at once, to upgrade with no change in behavior and take the new defa
 // Upgrade with the Polecat 5 defaults, then take the new ones one at a time
 options.RestoreV5Defaults();
 ```
-<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.DocumentDbTests/Configuration/polecat_6_default_tests.cs#L75-L78' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_restore_v5_defaults' title='Start of snippet'>anchor</a></sup>
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.DocumentDbTests/Configuration/polecat_6_default_tests.cs#L82-L85' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_restore_v5_defaults' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 **Inline projections now run their side effects.** `EnableSideEffectsOnInlineProjections` is on by default, so
@@ -214,7 +217,6 @@ effects before upgrading, or set `opts.Events.EnableSideEffectsOnInlineProjectio
 | `AllowOutOfOrderMetadataProperties` on the default serializer | off | on | None | `opts.RestoreV5Defaults()`, or your own options through `ConfigureSerialization(JsonSerializerOptions, ...)` |
 | `Policies.StartIndexesByTenantId`: non-unique indexes on conjoined documents start with `tenant_id` | off | on | Each such index is dropped and recreated with `tenant_id` first. Unique indexes are unchanged | `opts.Policies.StartIndexesByTenantId = false` |
 | `Events.EnableSideEffectsOnInlineProjections` | off | on | None. **See the callout above** | `opts.Events.EnableSideEffectsOnInlineProjections = false` |
-| `EventGraph.UseArchivedStreamPartitioning`: `pc_events` partitioned on `is_archived` | off | on (off when `UseTenantPartitionedEvents` is on) | **The first migration rewrites `pc_events`.** See below | `opts.EventGraph.UseArchivedStreamPartitioning = false` |
 | `Projections.Errors.ApplyErrors` and `SerializationErrors`: what an async projection does when it fails on an event | skip | park the failing identity, or pause where a projection can't park. See below | Adds `pc_parked_identities` (`Events.EnableParkedIdentities`), and a `pc_slice_index_*` table for each projection that calls `UseSliceIndex()` | `opts.Projections.Errors.SkipApplyErrors = true` and `SkipSerializationErrors = true` |
 | Transient failures while the async daemon builds a projection batch: a connection pool timeout, a deadlock, a dropped connection | the shard paused, except several slices failing together under skip, which were built again without limit | the batch is built again up to 3 times with a short backoff, under every error setting, then the shard pauses with `ShardFailure.IsTransient = true`. See JasperFx's [Key Changes in 3.11.0](https://shared-libs.jasperfx.net/migration-guide#key-changes-in-3-11-0) and [the async daemon's pipeline](/configuration/retries#the-async-daemon-s-pipeline) | None | `opts.ConfigureDaemonPolly(_ => { })` pauses on the first transient failure. To add to the default rather than replace it, end the builder with the public `AddPolecatDaemonDefaults()` ([#1111](https://github.com/JasperFx/polecat/issues/1111)) |
 
@@ -254,15 +256,31 @@ Marten 10 changes that Polecat has nothing to change for:
   (or `tenant_id, id`) and an archived stream's id can't be reused.
 - **A sticky connection lifetime option.** Polecat never had one.
 
-### Archived-stream partitioning is on by default
+### Archived-stream partitioning stays opt-in {#archived-stream-partitioning-is-opt-in}
 
-`pc_events` is partitioned on `is_archived`, so archived events sit in their own partition
-([#1041](https://github.com/JasperFx/polecat/issues/1041)). On an existing store the first schema migration after
-the upgrade moves `pc_events` onto the partition scheme in place: it rebuilds the table's clustered primary key as
+`opts.EventGraph.UseArchivedStreamPartitioning` is off by default, as it was in Polecat 5, and as in Marten 10
+([Hot/Cold Storage Partitioning](/events/archiving#hot-cold-storage-partitioning)). The 6.0 alphas turned it on by
+default. That was reversed before 6.0.0-rc.1 because partitioning costs something on every write, which only pays off
+for a system that archives streams. Polecat's cost has not been measured on its own yet; Marten measured a cost of
+the same kind on PostgreSQL ([Marten's numbers](https://martendb.io/events/archiving#what-it-costs)). Measure your own
+workload.
+
+**If your system archives whole streams that are rarely read afterward (closed accounts, completed orders, finished
+workflows), we strongly recommend turning it on.** `pc_events` is then partitioned on `is_archived`, so archived
+events sit in their own partition and the active one stays the size of your live data:
+
+```cs
+opts.EventGraph.UseArchivedStreamPartitioning = true;
+```
+
+What changed in 6.0 is turning it on for a store that already has events
+([#1041](https://github.com/JasperFx/polecat/issues/1041)). The first schema migration after you turn it on moves
+`pc_events` onto the partition scheme in place: it rebuilds the table's clustered primary key as
 `(seq_id, is_archived)` on the scheme, which moves every row, and archived streams' events land in the archived
 partition. Nothing is dropped or copied into another table, under `AutoCreate.CreateOrUpdate` or `AutoCreate.All`,
 and `db-patch` writes the same script. Each tag table gets an `is_archived` column in its primary key and loses its
-foreign key to `pc_events`.
+foreign key to `pc_events`. Before #1041, turning it on for a store with events threw under `CreateOrUpdate` and dropped
+`pc_events` under `AutoCreate.All`.
 
 **That migration rewrites the whole of `pc_events`, twice over** (dropping the old clustered key makes it a heap, and
 the new key rebuilds it), so it takes time and transaction log space in proportion to the table. On a large store:
@@ -271,10 +289,14 @@ the new key rebuilds it), so it takes time and transaction log space in proporti
 - or raise `Command Timeout` in the connection string first, because a rebuild that outlasts it fails the startup
   migration. A migration cut off part way through finishes on the next run.
 
-To keep `pc_events` as it is, set `opts.EventGraph.UseArchivedStreamPartitioning = false` (or call
-`RestoreV5Defaults()`). Turning it off on a store that is already partitioned moves the table back off the scheme,
-which is the same rewrite. `UseTenantPartitionedEvents` takes the table's one partition scheme for itself, so
-archived partitioning stays off there unless you set both, which is refused.
+Turning it off on a store that is already partitioned moves the table back off the scheme, which is the same
+rewrite. `UseTenantPartitionedEvents` takes the table's one partition scheme for itself, so setting both is refused.
+
+::: warning If you ran a 6.0 alpha with the default
+A database created or migrated by a Polecat 6.0 alpha with the default settings already has `pc_events` on the
+partition scheme. Set `opts.EventGraph.UseArchivedStreamPartitioning = true` to keep it there. Otherwise the next
+schema migration moves `pc_events` back off the scheme, rewriting the table as described above.
+:::
 
 ## Upgrading to 6.0: skipped high water ranges are recorded, and late events are recovered
 

@@ -556,7 +556,6 @@ public class StoreOptions
     ///       <item><see cref="StorePolicies.StartIndexesByTenantId" /> &rarr; <c>false</c></item>
     ///       <item><see cref="EventStoreOptions.EnableSideEffectsOnInlineProjections" /> &rarr; <c>false</c></item>
     ///       <item><see cref="EventStoreOptions.DcbConflictScope" /> &rarr; <c>DcbConflictScope.TagValue</c></item>
-    ///       <item><see cref="Polecat.Events.EventGraph.UseArchivedStreamPartitioning" /> &rarr; <c>false</c></item>
     ///       <item><see cref="EventStoreOptions.EnableLateEventDetection" /> &rarr; <c>false</c></item>
     ///       <item><see cref="EventStoreOptions.EnableEventRangeMarks" /> &rarr; <c>false</c></item>
     ///       <item><see cref="EventStoreOptions.EnableProjectionFloors" /> &rarr; <c>false</c></item>
@@ -588,8 +587,6 @@ public class StoreOptions
         OpenTelemetry.EventCountersEnabled = false;
 
         Events.DcbConflictScope = Polecat.Events.DcbConflictScope.TagValue;
-
-        EventGraph.UseArchivedStreamPartitioning = false;
 
         Events.EnableLateEventDetection = false;
 

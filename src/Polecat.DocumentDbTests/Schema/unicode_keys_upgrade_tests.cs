@@ -300,8 +300,8 @@ public class unicode_keys_upgrade_tests : IAsyncLifetime
 
     /// <summary>
     ///     A store the way Polecat 5 left it, <c>varchar</c> keys and <c>pc_events</c> off the partition scheme,
-    ///     upgraded to 6.0 with <see cref="AdvancedOptions.UseUnicodeKeys" /> on: archived-stream partitioning is
-    ///     on by default there, so one migration both widens the keys and moves <c>pc_events</c> onto the scheme.
+    ///     upgraded to 6.0 with <see cref="AdvancedOptions.UseUnicodeKeys" /> and archived-stream partitioning both
+    ///     turned on, so one migration both widens the keys and moves <c>pc_events</c> onto the scheme.
     /// </summary>
     private async Task<long> v5StoreWithArchivedStreamsAsync()
     {
@@ -365,8 +365,8 @@ public class unicode_keys_upgrade_tests : IAsyncLifetime
     {
         var eventsBefore = await v5StoreWithArchivedStreamsAsync();
 
-        var after = storeFor(unicode: true);
-        after.Options.EventGraph.UseArchivedStreamPartitioning.ShouldBeTrue(); // the 6.0 default
+        var after = storeFor(unicode: true, partitioned: true);
+        after.Options.EventGraph.UseArchivedStreamPartitioning.ShouldBeTrue();
         await after.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: Ct);
 
         // Nothing left to do: the migration it ran is the one it wanted
@@ -380,14 +380,14 @@ public class unicode_keys_upgrade_tests : IAsyncLifetime
     {
         var eventsBefore = await v5StoreWithArchivedStreamsAsync();
 
-        var after = storeFor(unicode: true, AutoCreate.CreateOrUpdate);
+        var after = storeFor(unicode: true, AutoCreate.CreateOrUpdate, partitioned: true);
 
         await assertOnTheSchemeWithUnicodeKeysAsync(after, eventsBefore);
     }
     [Fact]
     public async Task a_new_store_with_unicode_keys_is_on_the_archived_partitions()
     {
-        var store = storeFor(unicode: true);
+        var store = storeFor(unicode: true, partitioned: true);
         store.Options.EventGraph.UseArchivedStreamPartitioning.ShouldBeTrue();
         await store.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: Ct);
 

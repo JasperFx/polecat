@@ -35,7 +35,6 @@ public class polecat_6_default_tests
         options.Policies.StartIndexesByTenantId.ShouldBeTrue();
         options.OpenTelemetry.EventCountersEnabled.ShouldBeTrue();
         ((Serializer)options.Serializer).Options.AllowOutOfOrderMetadataProperties.ShouldBeTrue();
-        options.EventGraph.UseArchivedStreamPartitioning.ShouldBeTrue();
         options.Events.EnableLateEventDetection.ShouldBeTrue();
         options.Events.EnableEventRangeMarks.ShouldBeTrue();
         options.Events.EnableProjectionFloors.ShouldBeTrue();
@@ -58,9 +57,16 @@ public class polecat_6_default_tests
     }
 
     [Fact]
+    public void archived_stream_partitioning_is_off_by_default()
+    {
+        // Opt-in, as in Polecat 5. It was on by default in the 6.0 alphas (#1041)
+        new StoreOptions().EventGraph.UseArchivedStreamPartitioning.ShouldBeFalse();
+    }
+
+    [Fact]
     public void per_tenant_event_partitioning_keeps_archived_partitioning_off_unless_asked()
     {
-        // A table has one partition scheme, and per-tenant partitioning takes it
+        // A table has one partition scheme, and per-tenant partitioning takes it, so setting both is refused
         var options = new StoreOptions();
         options.Events.TenancyStyle = TenancyStyle.Conjoined;
         options.EventGraph.UseTenantPartitionedEvents = true;

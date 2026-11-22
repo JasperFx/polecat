@@ -602,8 +602,8 @@ public class AdvancedOperations
                 if (table.SqlServerPartitioning is not { } partitioning) continue;
 
                 // #1041: a partition scheme is database-wide and named after the table, so another store's
-                // pc_events in another schema of this database can still be on it — and with archived
-                // partitioning the 6.0 default, usually is. Leave it for the last one out.
+                // pc_events in another schema of this database can still be on it. Leave it for the last one
+                // out.
                 var scheme = partitioning.PartitionSchemeName(table);
                 writer.WriteLine("IF NOT EXISTS (SELECT 1 FROM sys.partition_schemes ps " +
                                  "JOIN sys.indexes i ON i.data_space_id = ps.data_space_id " +
