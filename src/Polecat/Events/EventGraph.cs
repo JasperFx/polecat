@@ -567,6 +567,28 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
     internal string LockedStreamReadSql(string columns, string match, string tenantId, SqlCommand command,
         string? ids = null)
     {
+        var withOrdinal = false;
+        if (UseTenantPartitionedEvents && TenantOrdinals.TryGetOrdinal(tenantId, out var ordinal))
+        {
+            withOrdinal = true;
+            command.Parameters.Add("@tenant_ordinal", SqlDbType.Int).Value = ordinal;
+        }
+
+        // #1128: the text depends on nothing else, and building it cost about 9 KB of strings on every
+        // append. The call sites pass a handful of fixed combinations, so the cache stays that small.
+        var key = (DatabaseSchemaName, columns, match, ids, withOrdinal);
+        if (_lockedStreamReads.TryGetValue(key, out var sql)) return sql;
+
+        sql = buildLockedStreamReadSql(columns, match, ids, withOrdinal);
+        _lockedStreamReads[key] = sql;
+        return sql;
+    }
+
+    private readonly ConcurrentDictionary<(string schema, string columns, string match, string? ids, bool withOrdinal), string>
+        _lockedStreamReads = new();
+
+    private string buildLockedStreamReadSql(string columns, string match, string? ids, bool withOrdinal)
+    {
         string from(string hint) => ids == null
             ? $"{StreamsTableName} WITH ({hint})"
             : $"({ids}) ids INNER LOOP JOIN {StreamsTableName} s WITH ({hint}) ON s.id = ids.id";
@@ -574,10 +596,9 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
         var ordinalPredicate = "";
         string read;
 
-        if (UseTenantPartitionedEvents && TenantOrdinals.TryGetOrdinal(tenantId, out var ordinal))
+        if (withOrdinal)
         {
             var column = (ids == null ? "" : "s.") + TenantPartitionManager.Column;
-            command.Parameters.Add("@tenant_ordinal", SqlDbType.Int).Value = ordinal;
             ordinalPredicate = $" AND {column} = @tenant_ordinal";
 
             read = $"""
