@@ -67,7 +67,7 @@ internal class PolecatEventLoader : EventLoaderBase
             EventTypes = EventTypeAllowList.For(events, filtering),
 
             // #1065: the shard's own IncludeArchivedEvents, as Marten's loader takes it. pc_events carries
-            // is_archived itself, so with archived-stream partitioning (the 6.0 default) leaving the predicate
+            // is_archived itself, so with archived-stream partitioning leaving the predicate
             // out reads both partitions, and there is no stream join to drop.
             IncludeArchivedEvents = filtering?.IncludeArchivedEvents ?? false
         })

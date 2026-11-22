@@ -33,9 +33,11 @@ public class a_shard_honours_include_archived_events : IAsyncLifetime
             opts.UseNativeJsonType = ConnectionSource.SupportsNativeJson;
             opts.Projections.Add<ArchivedLedgerProjection>(ProjectionLifecycle.Async);
             opts.Projections.Add<LiveLedgerProjection>(ProjectionLifecycle.Async);
+
+            // So the archived events sit in a partition of their own
+            opts.EventGraph.UseArchivedStreamPartitioning = true;
         });
 
-        // The 6.0 default, so the archived events sit in a partition of their own
         theStore.Options.EventGraph.UseArchivedStreamPartitioning.ShouldBeTrue();
 
         await theStore.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: Ct);

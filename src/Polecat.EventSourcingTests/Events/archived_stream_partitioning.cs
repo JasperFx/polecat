@@ -12,9 +12,9 @@ public class archived_stream_partitioning : IntegrationContext
 
     public override async ValueTask InitializeAsync()
     {
-        // Start from an empty schema. The partition scheme and function are database-global and, since
-        // archived partitioning became the 6.0 default (#1041), other schemas' pc_events tables sit on
-        // them too, so they are left alone: Weasel reuses a scheme that is already there.
+        // Start from an empty schema. The partition scheme and function are database-global, and other
+        // schemas' pc_events tables may sit on them too (#1041), so they are left alone: Weasel reuses a
+        // scheme that is already there.
         await TestSchema.DropSchemaTablesAsync("archived_part");
         await TestSchema.DropSequencesAsync("archived_part");
 
