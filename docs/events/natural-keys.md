@@ -253,8 +253,12 @@ A rebuild works from the events that are left. [Compacting a stream](/events/arc
 
 When writing integration tests:
 
-- Natural key lookups work against the same session's uncommitted data, so you can append events and look up by natural key within the same unit of work
-- If you are using `FetchForWriting` with a natural key that does not exist, the behavior is the same as with a stream id that does not exist
+- Natural key lookups read the lookup table, which is written when the session commits. A key appended in the same
+  session isn't found until `SaveChangesAsync()`: `FetchLatest` returns `null` and `FetchForWriting` throws. Commit
+  the events that set the key before you look the stream up by it.
+- `FetchForWriting` and `FetchForExclusiveWriting` by a natural key that no stream has throw an
+  `InvalidOperationException`, unlike a fetch by a stream id that does not exist, which starts a new stream. To start a
+  stream for a new key, use `StartStream`.
 
 ## Integration with Wolverine
 
