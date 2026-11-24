@@ -650,7 +650,19 @@ public class StoreOptions
     ///     The lock everything provisioning this store's schema serializes on (#664, #868).
     /// </summary>
     internal Internal.SchemaMigrationLock BuildMigrationLock() =>
-        new(DatabaseSchemaName, StartupMigrationLockTimeout);
+        new(DatabaseSchemaName, StartupMigrationLockTimeout, DeclaresPartitionObjects);
+
+    /// <summary>
+    ///     Whether this store declares any partitioned table: <c>pc_events</c> under archived-stream partitioning,
+    ///     anything under per-tenant partitioning, or a document type with RANGE partitioning. Weasel names a
+    ///     partition function and scheme after the table alone, and both belong to the database, so another store
+    ///     in another schema of the same database declares the same ones, and migrations that may touch them
+    ///     serialize across the whole database (#1136).
+    /// </summary>
+    internal bool DeclaresPartitionObjects() =>
+        EventGraph.UseArchivedStreamPartitioning
+        || EventGraph.AnyTenantPartitioning
+        || (Providers?.AllProviders.Any(p => p.Mapping.Partitioning is not null) ?? false);
 
     /// <summary>
     ///     Internal access to the document provider registry. Set by DocumentStore during construction.

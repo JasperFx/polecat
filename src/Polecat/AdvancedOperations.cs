@@ -1364,7 +1364,8 @@ public class AdvancedOperations
         await conn.OpenAsync(token).ConfigureAwait(false);
 
         await using var migrationLock = (await SchemaMigrationLock
-            .HoldForFirstUseAsync(_store.Options, conn, insideTransaction: false, token).ConfigureAwait(false));
+            .HoldForFirstUseAsync(_store.Options, conn, insideTransaction: false, token, sharesPartitionObjects: true)
+            .ConfigureAwait(false));
 
         // Hydrate + capture the ordinals of the tenants being dropped BEFORE the drop clears the
         // registry rows, so fully-released ordinals can be identified afterwards. From the database rather

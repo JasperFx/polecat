@@ -1732,6 +1732,13 @@ public partial class PolecatDatabase : DatabaseBase<SqlConnection>, IEventDataba
         ReconnectionOptions? reconnectionOptions = null,
         CancellationToken ct = default)
     {
+        // #1136: a caller's own lock replaces the schema's, but it cannot know about the partition objects this
+        // store shares with every other store in the database, so those are still serialized on
+        if (globalLock is not SchemaMigrationLock)
+        {
+            globalLock = SchemaMigrationLock.AroundCallerLock(globalLock, _options);
+        }
+
         var difference = await base.ApplyAllConfiguredChangesToDatabaseAsync(globalLock, @override, reconnectionOptions, ct)
             .ConfigureAwait(false);
 

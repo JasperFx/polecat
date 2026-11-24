@@ -131,9 +131,12 @@ internal class DocumentTableEnsurer
 
             // #868: serialized against the daemon and against other stores and processes. The semaphore
             // above only keeps this ensurer from racing itself. Always taken in that order, semaphore then
-            // lock, and nothing here waits on a semaphore while it holds the lock.
+            // lock, and nothing here waits on a semaphore while it holds the lock. #1136: a partitioned table's
+            // function and scheme belong to the database, so its ensure serializes with every store's.
             await using var migrationLock = (await SchemaMigrationLock.HoldForFirstUseAsync(
-                _options, conn, insideTransaction, token).ConfigureAwait(false));
+                _options, conn, insideTransaction, token,
+                sharesPartitionObjects: provider.Mapping.Partitioning is not null || provider.Mapping.TenantPartitioned)
+                .ConfigureAwait(false));
             if (migrationLock is null) return;
 
             var migrator = new SqlServerMigrator();
@@ -538,9 +541,13 @@ internal class DocumentTableEnsurer
             // schema through PolecatDatabase.EnsureStorageExistsAsync, so without this a session's first
             // write and the daemon both read an empty catalog, and whoever ran second failed with
             // "There is already an object named 'fk_pc_events_stream_id' in the database". A loser waits
-            // here, then the diff below finds the schema already there and comes out empty.
+            // here, then the diff below finds the schema already there and comes out empty. #1136: a partitioned
+            // pc_events shares its partition function and scheme with every other store in the database, so
+            // that ensure serializes with theirs as well.
             await using var migrationLock = (await SchemaMigrationLock.HoldForFirstUseAsync(
-                _options, conn, insideTransaction, token).ConfigureAwait(false));
+                _options, conn, insideTransaction, token,
+                sharesPartitionObjects: _options.EventGraph.UseArchivedStreamPartitioning
+                                        || _options.EventGraph.UseTenantPartitionedEvents).ConfigureAwait(false));
             if (migrationLock is null) return;
 
             var migrator = new SqlServerMigrator();
