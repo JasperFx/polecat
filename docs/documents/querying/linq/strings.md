@@ -42,8 +42,8 @@ index seek in place. Case still follows the database's collation.
 
 ## Chaining
 
-`ToLower`, `ToUpper`, `Trim`, `TrimStart` and `TrimEnd` can be chained, and any of the operators on this
-page can be called on the result:
+`ToLower`, `ToUpper`, their `Invariant` forms, `Trim`, `TrimStart` and `TrimEnd` can be chained, and any of the
+operators on this page can be called on the result:
 
 ```cs
 var results = await session.Query<User>()
@@ -118,4 +118,21 @@ exception, and leaves it to [SQL Server](/documents/querying/linq/operators#dist
 
 ## Case Sensitivity
 
-SQL Server string comparisons follow the database collation by default. For case-insensitive searches, configure your database collation accordingly.
+SQL Server string comparisons follow the database collation by default, and the default collation ignores case.
+For a comparison that ignores case whatever the collation is, use `Equals()` with an ignore-case
+`StringComparison`, which Polecat compares under a case-insensitive collation:
+
+<!-- snippet: sample_polecat_linq_case_insensitive_equals -->
+<a id='snippet-sample_polecat_linq_case_insensitive_equals'></a>
+```cs
+var results = await session.Query<User>()
+    .Where(x => x.Email.Equals("Admin@Example.com", StringComparison.OrdinalIgnoreCase))
+    .ToListAsync();
+```
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.LinqTests/Linq/linq_documentation_samples.cs#L475-L479' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_linq_case_insensitive_equals' title='Start of snippet'>anchor</a></sup>
+<!-- endSnippet -->
+
+`Equals()` is the only string method that takes a `StringComparison`. `StartsWith()`, `EndsWith()` and
+`Contains()` with one are refused with `BadLinqExpressionException`, as are `string.Compare()`, `CompareTo()` and
+`Regex.IsMatch()`. Compare `ToLower()` of the member with a lower-case value instead, or run the query as raw SQL
+through `session.AdvancedSql.QueryAsync<T>(...)`.
