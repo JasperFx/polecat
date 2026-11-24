@@ -1,4 +1,4 @@
-# JasperFx Commands in the Aspire Dashboard <Badge type="tip" text="4.2" />
+# JasperFx Commands in the Aspire Dashboard <Badge type="tip" text="4.2" /> {#jasperfx-commands-in-the-aspire-dashboard}
 
 The optional **`JasperFx.Aspire`** package surfaces a Polecat application's
 command-line verbs as clickable **custom commands** on each resource tile in the
@@ -13,9 +13,14 @@ Polecat apps inherit this for free because they build on the same JasperFx
 command layer that Marten and Wolverine use. Because the projection commands are
 defined on the shared `JasperFx.Events` abstractions, the `projections` and
 `resources` buttons behave identically whether your event store is backed by
-SQL Server (Polecat) or PostgreSQL (Marten). See the
-[JasperFx.Aspire package README](https://github.com/JasperFx/jasperfx/tree/master/src/JasperFx.Aspire)
+SQL Server (Polecat) or PostgreSQL (Marten). See
+[Aspire Dashboard Integration](https://shared-libs.jasperfx.net/cli/aspire) in the JasperFx documentation
 for the full, store-agnostic reference.
+
+The same package can also run a verb to completion **before** the service starts, so `resources setup`
+provisions Polecat's schema, or `codegen write` writes the generated code, ahead of the first request. That
+is `WithJasperFxStartup()`, and it isn't covered on this page: see
+[Startup gates](https://shared-libs.jasperfx.net/cli/aspire#startup-gates).
 
 ## Quick start
 
@@ -53,9 +58,11 @@ reuses that exact CLI path, so the service itself needs no changes.
 - **`check-env`** *(read-only)* — runs every registered environment check.
   Confirms the Polecat service can reach its SQL Server database, that all
   projection dependencies are wired, that the required schemas exist, etc.
+  See [Environment Checks](https://shared-libs.jasperfx.net/cli/environment-checks).
 - **`describe`** *(read-only)* — dumps the resolved Polecat `StoreOptions`
   (document mappings, event store config, projections, retry policies, tenancy
   strategy, …). Useful for verifying composite configuration at a glance.
+  See [Describe Command](https://shared-libs.jasperfx.net/cli/describe).
 - **`resources`** *(mutating)* — applies / patches Polecat's schema objects
   (`pc_events`, `pc_streams`, `pc_event_progression`, document tables, indexes,
   projection tables). Equivalent to applying all configured changes to the
@@ -142,3 +149,5 @@ button down to one specific projection rather than exposing the full
 - Buttons require `RunJasperFxCommands(args)` to already be wired in the Polecat
   service's `Program.cs`. Without that wiring the verb spawn succeeds but the
   child process won't recognize the verb.
+- The full list of requirements, and how a published deployment behaves, is in the
+  JasperFx [Aspire Dashboard Integration](https://shared-libs.jasperfx.net/cli/aspire#requirements) page.

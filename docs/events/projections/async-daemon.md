@@ -446,7 +446,7 @@ builder.Services.AddHealthChecks()
 Call it once per store. Each store's check is registered under its own name, `HighWaterHealthCheck:IInvoicingStore`,
 with its own settings, so it can sit beside the default store's check.
 
-### Parked Identities Health Check <Badge type="tip" text="6.0" />
+### Parked Identities Health Check <Badge type="tip" text="6.0" /> {#parked-identities-health-check}
 
 `AddPolecatParkedIdentitiesHealthCheck()`, also from `Polecat.AspNetCore`, watches the
 [parked identities](#parking-a-failing-identity):
@@ -458,6 +458,11 @@ with its own settings, so it can sit beside the default store's check.
 - **Unhealthy** while a shard is paused because it reached the parking cap (`MaxParkedIdentitiesPerShard`, or a batch
   that would have parked most of its identities at once). That shard isn't projecting anything until you replay or
   discard parked identities, or fix the projection, and restart it.
+
+The cap and the trip have defaults (1,000 parked identities per shard, and a batch that would park more than half of
+its identities, at least 20 of them), set on `opts.Projections.Errors` (see [Error Handling](#error-handling)). The
+JasperFx [guard rails](https://shared-libs.jasperfx.net/events/parked-identities#guard-rails) section explains both,
+and lists the parked metrics a shard reports.
 
 ```cs
 builder.Services.AddHealthChecks()
@@ -666,17 +671,21 @@ Floors are keyed by the projection name **without** its version, so a version bu
 Setting or clearing a floor does not reprocess anything by itself. The next start or rebuild honours
 the new value.
 
-## Rebuilding a Single Stream <Badge type="tip" text="6.0" />
+## Rebuilding a Single Stream <Badge type="tip" text="6.0" /> {#rebuilding-a-single-stream}
 
 When one stream's document is wrong, you don't have to rebuild the whole projection. `RebuildSingleStreamAsync`
 folds that one stream again and commits the document:
 
+<!-- snippet: sample_polecat_rebuild_single_stream -->
+<a id='snippet-sample_polecat_rebuild_single_stream'></a>
 ```cs
 await store.Advanced.RebuildSingleStreamAsync<TripSummary>(tripId);
 
 // Under conjoined tenancy or a database per tenant
 await store.Advanced.RebuildSingleStreamAsync<TripSummary>(tripId, "tenant-b");
 ```
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.DaemonTests/Daemon/async_daemon_documentation_samples.cs#L47-L52' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_rebuild_single_stream' title='Start of snippet'>anchor</a></sup>
+<!-- endSnippet -->
 
 A stream that folds to nothing (its aggregate was deleted, say) deletes the document, which is what a full rebuild
 would leave behind.
@@ -697,24 +706,128 @@ When the document is written by an **asynchronous** single-stream projection, Po
 
 Inline and live projections always take the third path, since there is no shard to race.
 
-You can also rebuild one identity through a running daemon directly. It works for any single-stream projection the
-daemon runs, and refuses with `IdentityRebuildRefusedException` when it can't (the shard isn't running there, is
-rebuilding, or has never committed anything):
+### Rebuilding one identity through the daemon {#rebuilding-one-identity}
 
+You can also rebuild one identity through a running daemon directly, with `RebuildIdentityAsync`. It works for:
+
+- any single-stream projection the daemon runs, and
+- a multi-stream projection whose identities can be found exactly: one that groups with `IdentityFromStream<TEvent>()`
+  or `IdentityFromTag<TTag>()`, or that opts into the slice index with `Options.UseSliceIndex()`.
+
+The rebuild is bound to the shard's next batch, which re-folds the identity from nothing and commits it with the
+shard's progression. It refuses with `IdentityRebuildRefusedException` when it can't: the shard isn't running there,
+is rebuilding, or has never committed anything, or the projection's identities can't be found one at a time
+(`IdentityRebuildRefusal.IdentityNotFindable`).
+
+<!-- snippet: sample_polecat_rebuild_identity_through_the_daemon -->
+<a id='snippet-sample_polecat_rebuild_identity_through_the_daemon'></a>
 ```cs
+// A single-stream projection
 var result = await daemon.RebuildIdentityAsync("TripSummary", tenantId: null, identity: tripId, token);
 
 // The document is now consistent with every event of its stream up to result.BoundCeiling
+
+// A multi-stream projection grouped with IdentityFromStream<T>(), IdentityFromTag<T>()
+// or Options.UseSliceIndex()
+await daemon.RebuildIdentityAsync("InvoiceTotals", tenantId: null, identity: invoiceId, token);
 ```
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.DaemonTests/Daemon/async_daemon_documentation_samples.cs#L60-L69' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_rebuild_identity_through_the_daemon' title='Start of snippet'>anchor</a></sup>
+<!-- endSnippet -->
+
+Any other multi-stream projection (one grouped with `Identity` or `Identities` delegates, a custom grouping, or a
+custom slicer, without the slice index) can still be rebuilt one identity at a time by scanning.
+`RebuildIdentityByScanAsync` reads every event of the projection's types up to the shard's position, keeps the ones
+that slice to the identity, and binds the rest to the next batch the same way. That reads the whole event store's
+worth of the projection's events, so it is logged as a warning and reports its progress:
+
+<!-- snippet: sample_polecat_rebuild_identity_by_scan -->
+<a id='snippet-sample_polecat_rebuild_identity_by_scan'></a>
+```cs
+// Any other multi-stream projection: read every event of its types and keep this identity's
+var progress = new Progress<IdentityScanProgress>(p =>
+    Console.WriteLine($"{p.ScannedThrough} of {p.Ceiling}, {p.EventsFound} found"));
+
+await daemon.RebuildIdentityByScanAsync("Departments", tenantId: null, identity: "engineering", progress,
+    token);
+```
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.DaemonTests/Daemon/async_daemon_documentation_samples.cs#L71-L78' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_rebuild_identity_by_scan' title='Start of snippet'>anchor</a></sup>
+<!-- endSnippet -->
+
+A successful rebuild of a [parked](#parking-a-failing-identity) identity unparks it. See
+[Rebuilding one identity](https://shared-libs.jasperfx.net/events/parked-identities#rebuilding-one-identity) in the
+JasperFx documentation for the details, including how the slice index has to reach back to the start before an
+identity can be rebuilt through it.
 
 A projection whose documents are kept in custom projection storage, like an EF Core entity from
-`Polecat.EntityFrameworkCore`, can't be rebuilt one identity at a time. Use `RebuildProjectionAsync()` for those.
+`Polecat.EntityFrameworkCore`, can't be rebuilt one identity at a time
+(`IdentityRebuildRefusal.NotSupportedByStore`). Use `RebuildProjectionAsync()` for those.
 
 ## Error Handling
 
-The daemon uses Polly resilience pipelines for error handling. See [Resiliency Policies](/configuration/retries) for configuration.
+What the daemon does when your projection code throws on an event is set by `opts.Projections.Errors`, and by
+`opts.Projections.RebuildErrors` for a rebuild. Both are JasperFx `ErrorHandlingOptions`, and each one chooses a
+`ProjectionErrorAction` for an exception from your `Apply`, `Create` or `Evolve` code (`ApplyErrors`) and for an event
+the store can't deserialize (`SerializationErrors`):
 
-## Parking a Failing Identity <Badge type="tip" text="6.0" />
+| Action | What happens | Default |
+|---|---|---|
+| `Park` | The identity that failed is [parked](#parking-a-failing-identity). Its events are held back until you replay or discard it, and the rest of the shard keeps going. A projection that can't park pauses instead | A continuous run, since Polecat 6 |
+| `Pause` | The shard stops. Nothing moves until you fix the problem and restart it | A rebuild |
+| `Skip` | The event is written to a dead letter and the batch carries on without it | A continuous run in Polecat 5, and after `RestoreV5Defaults()` |
+
+<!-- snippet: sample_polecat_daemon_error_handling -->
+<a id='snippet-sample_polecat_daemon_error_handling'></a>
+```cs
+// A continuous run: park the identity that failed (the Polecat 6 default),
+// Pause to stop the shard, or Skip to dead-letter the event and carry on
+opts.Projections.Errors.ApplyErrors = ProjectionErrorAction.Park;
+opts.Projections.Errors.SerializationErrors = ProjectionErrorAction.Park;
+
+// The parking guard rails, shown with their defaults
+opts.Projections.Errors.MaxParkedIdentitiesPerShard = 1000;
+opts.Projections.Errors.ParkedTripFraction = 0.5;
+opts.Projections.Errors.ParkedTripMinimum = 20;
+
+// A rebuild has options of its own. It pauses by default, and never parks
+opts.Projections.RebuildErrors.ApplyErrors = ProjectionErrorAction.Skip;
+```
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.DaemonTests/Daemon/async_daemon_documentation_samples.cs#L15-L28' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_daemon_error_handling' title='Start of snippet'>anchor</a></sup>
+<!-- endSnippet -->
+
+`SkipApplyErrors` and `SkipSerializationErrors` are the older spelling of the same two settings: `true` is `Skip` and
+`false` is `Pause`. `SkipUnknownEvents` skips an event whose type the store doesn't know, and is on by default for a continuous run.
+
+A skipped event is stored as a `DeadLetterEvent` document, in `pc_doc_deadletterevent`, with the projection, the shard,
+the event's sequence and the exception. Query it like any other document:
+
+<!-- snippet: sample_polecat_reading_dead_letters -->
+<a id='snippet-sample_polecat_reading_dead_letters'></a>
+```cs
+await using var session = store.QuerySession();
+
+// Each skipped event is a DeadLetterEvent document, in pc_doc_deadletterevent
+var deadLetters = await session.Query<DeadLetterEvent>()
+    .Where(x => x.ProjectionName == "TripSummary")
+    .ToListAsync(token);
+```
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.DaemonTests/Daemon/async_daemon_documentation_samples.cs#L34-L41' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_reading_dead_letters' title='Start of snippet'>anchor</a></sup>
+<!-- endSnippet -->
+
+Rebuilding a projection deletes its dead letters first, since the rebuild writes them again for any event that still
+fails, and rewinding one deletes those above the new floor.
+
+Two kinds of failure never park, pause or skip on the first try:
+
+- A **systemic database failure** raised from your projection code, like a missing column or a permissions problem,
+  pauses the shard, because every event would fail the same way.
+- A **transient failure**, like a connection pool timeout, a deadlock or a dropped connection, builds the batch again
+  through the daemon's own resilience pipeline. See [The async daemon's pipeline](/configuration/retries#the-async-daemon-s-pipeline).
+
+The JasperFx documentation explains all of this in more detail: see
+[Turning it on](https://shared-libs.jasperfx.net/events/parked-identities#turning-it-on) and
+[What fails and what parks](https://shared-libs.jasperfx.net/events/parked-identities#what-fails-and-what-parks).
+
+## Parking a Failing Identity <Badge type="tip" text="6.0" /> {#parking-a-failing-identity}
 
 When your projection code throws on an event, Polecat 6 parks the identity that failed instead of skipping the
 event or stopping the shard ([#1053](https://github.com/JasperFx/polecat/issues/1053)). The daemon drops that
@@ -726,7 +839,7 @@ The details, including how a replay works and the guard rails, are in the Jasper
 [parked identities](https://shared-libs.jasperfx.net/events/parked-identities). What's specific to Polecat:
 
 - Parking is the default. `opts.Projections.Errors.ApplyErrors` and `SerializationErrors` are both
-  `ProjectionErrorAction.Park`.
+  `ProjectionErrorAction.Park`. See [Error Handling](#error-handling).
 - A projection that can't park pauses its shard instead: event projections, flat table projections, composite
   projections, and a multi-stream projection whose identities can only be found by scanning. When the daemon starts it
   logs how each async projection finds one identity's events, and whether it parks.
@@ -736,24 +849,81 @@ The details, including how a replay works and the guard rails, are in the Jasper
 - An event Polecat can't deserialize parks its stream for a single-stream projection.
 - Rebuilding the projection clears its parked rows and writes its slice index again. Rewinding it clears the parks and
   index rows above the new floor. Removing a tenant, or ejecting a shard, removes theirs.
+- A shard holds at most 1,000 parked identities, and a batch that would park more than half of its identities (at
+  least 20) pauses the shard instead. See the [guard rails](https://shared-libs.jasperfx.net/events/parked-identities#guard-rails).
 
 The daemon logs through the host's `ILoggerFactory` when the store came from `AddPolecat`, however it was started:
 `AddAsyncDaemon`, Wolverine-managed projection distribution, or `BuildProjectionDaemonAsync()` without a logger. That
 covers the startup line above, each parked identity, and `ParkedLimitReachedException`. A store built with
 `DocumentStore.For(...)` has no host, so its daemons log nothing unless you pass them a logger.
 
-Replay or discard a parked identity on the node that runs the shard:
+### Replaying and discarding {#replaying-and-discarding}
 
+A replay re-folds the identity in the shard that runs it, runs the side effects of the events it held back once, and
+unparks it. If it fails again, the identity stays parked with the new error. A discard is a replay that drops and
+dead-letters each event that still fails. Do either on the node that runs the shard. `ReplayParkedIdentitiesAsync`
+replays every parked identity of a projection (`ParkedSelection.All`) or the oldest few
+(`ParkedSelection.OldestFirst(n)`), at most `ParkedReplayBatchSize` (10 by default) to a batch:
+
+<!-- snippet: sample_polecat_replay_and_discard_parked_identities -->
+<a id='snippet-sample_polecat_replay_and_discard_parked_identities'></a>
 ```cs
 var daemon = await store.BuildProjectionDaemonAsync();
 
 var parked = await daemon.FetchParkedIdentitiesAsync("TripSummary", tenantId: null, token);
+
+// One identity
 await daemon.ReplayParkedIdentityAsync("TripSummary", null, tripId, token);
 await daemon.DiscardParkedIdentityAsync("TripSummary", null, tripId, token);
+
+// Every parked identity, or the five parked first
+await daemon.ReplayParkedIdentitiesAsync("TripSummary", null, ParkedSelection.All, token);
+await daemon.ReplayParkedIdentitiesAsync("TripSummary", null, ParkedSelection.OldestFirst(5), token);
+```
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.DaemonTests/Daemon/async_daemon_documentation_samples.cs#L86-L98' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_replay_and_discard_parked_identities' title='Start of snippet'>anchor</a></sup>
+<!-- endSnippet -->
+
+From anywhere else, `IEventDatabase.RequestParkedActionAsync()` writes a durable request that the node running the
+shard picks up on its heartbeat. If no node is running the shard, the request waits until it next starts:
+
+<!-- snippet: sample_polecat_request_parked_action -->
+<a id='snippet-sample_polecat_request_parked_action'></a>
+```cs
+// From a node that doesn't run the shard. The node that does picks it up on its heartbeat
+await store.Database.RequestParkedActionAsync(new ParkedActionRequest
+{
+    ProjectionName = "TripSummary",
+    Action = ParkedAction.Replay
+}, token);
+```
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.DaemonTests/Daemon/async_daemon_documentation_samples.cs#L104-L111' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_request_parked_action' title='Start of snippet'>anchor</a></sup>
+<!-- endSnippet -->
+
+See [Replay and discard](https://shared-libs.jasperfx.net/events/parked-identities#replay-and-discard) in the JasperFx
+documentation for exactly what a replay re-folds and when side effects run.
+
+### On the command line {#parked-identities-command-line}
+
+`projections parked` lists the parked identities, and with a mode it writes the same durable request:
+
+```bash
+# List them
+dotnet run -- projections parked
+
+# Replay one, all of them, or the five parked first
+dotnet run -- projections parked --projection TripSummary --replay --identity 3f2a...
+dotnet run -- projections parked --projection TripSummary --replay --all
+dotnet run -- projections parked --projection TripSummary --replay --oldest 5
+
+# Discard one, without asking for confirmation
+dotnet run -- projections parked --projection TripSummary --discard --identity 3f2a... --yes
+
+# Wait up to 60 seconds for them to be unparked
+dotnet run -- projections parked --projection TripSummary --replay --all --wait 60
 ```
 
-From anywhere else, `projections parked` on the command line or `IEventDatabase.RequestParkedActionAsync()` writes a
-request that the node running the shard picks up.
+The usual `--store`, `--database` and `--tenant` flags narrow it. See
+[Command line](https://shared-libs.jasperfx.net/events/parked-identities#command-line) in the JasperFx documentation.
 
 When the projection's aggregate has a [natural key](/events/natural-keys), the parked list shows it next to the stream
 id, so you can tell which order or invoice is stuck without looking the stream up
@@ -767,12 +937,17 @@ id, so you can tell which order or invoice is stuck without looking the stream u
 │ OrderSummary │ *DEFAULT* │ b1a088fa-7298-4b56-aeb0-00fc65952fb0 │             │         6 │ ApplyEvent: ...
 ```
 
-A stream that never got a natural key, or a projection whose aggregate doesn't have one, leaves it blank.
+A stream that never got a natural key, or a projection whose aggregate doesn't have one, leaves it blank. `*DEFAULT*`
+is the default tenant's id.
 
 To be told when something parks, add the [parked identities health check](#parked-identities-health-check).
 
+### Skipping instead, as Polecat 5 did {#skipping-instead-of-parking}
+
 To keep skipping the bad event the way Polecat 5 did:
 
+<!-- snippet: sample_polecat_skip_errors_like_polecat_5 -->
+<a id='snippet-sample_polecat_skip_errors_like_polecat_5'></a>
 ```cs
 opts.Projections.Errors.SkipApplyErrors = true;
 opts.Projections.Errors.SkipSerializationErrors = true;
@@ -780,6 +955,8 @@ opts.Projections.Errors.SkipSerializationErrors = true;
 // Or leave pc_parked_identities out of the schema too
 opts.Events.EnableParkedIdentities = false;
 ```
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.DaemonTests/Daemon/async_daemon_documentation_samples.cs#L118-L124' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_skip_errors_like_polecat_5' title='Start of snippet'>anchor</a></sup>
+<!-- endSnippet -->
 
 `RestoreV5Defaults()` does all three.
 

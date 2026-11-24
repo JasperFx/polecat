@@ -248,6 +248,8 @@ for SingleStreamProjection<CourseEnrollmentSummary, string>
 
 (The `string` type argument is vestigial -- it matches the `SingleStreamProjection<T, string>` the DCB aggregator builds and is never used by boundary-aggregate dispatch.)
 
+The marker's opposite mistake is caught at build time: a `[BoundaryAggregate]` type with no `Evolve` method and no conventional `Apply` or `Create` methods has nothing to fold events with, and fails the build with `JFXEVT007`. See [Build Diagnostics](https://shared-libs.jasperfx.net/codegen/diagnostics#projections-and-aggregates).
+
 **Placement.** Put `[BoundaryAggregate]` on the aggregate type itself, and keep the type `partial` so the generator can attach the emitted dispatcher. The attribute must sit on the type **in its own defining assembly** -- that is the compilation the generator emits the `[assembly: GeneratedEvolver]` into, and it is the assembly the runtime scans (`typeof(T).Assembly`) when resolving the evolver.
 
 **Aggregates with an `Id` need no marker** and keep working unchanged -- `[BoundaryAggregate]` is only for the identity-less case.

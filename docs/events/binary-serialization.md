@@ -1,4 +1,4 @@
-# Binary Event Serialization <Badge type="tip" text="5.17" />
+# Binary Event Serialization <Badge type="tip" text="5.17" /> {#binary-event-serialization}
 
 Polecat can store the body of an individual event type in a compact binary format —
 [MessagePack](https://msgpack.org/), [MemoryPack](https://github.com/Cysharp/MemoryPack),

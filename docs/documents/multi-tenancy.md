@@ -99,7 +99,7 @@ The async daemon starts one daemon per tenant database with the default tenant d
 [No default tenant is required](/configuration/multitenancy#no-default-tenant-is-required).
 :::
 
-## Partitioning your own tables by tenant <Badge type="tip" text="6.0" />
+## Partitioning your own tables by tenant <Badge type="tip" text="6.0" /> {#partitioning-your-own-tables-by-tenant}
 
 If you add your own tables to the store through `opts.Storage.ExtendedSchemaObjects` and want them partitioned per
 tenant the same way as the document and event tables, use `opts.Storage.PartitionPerTenant(table)`:
