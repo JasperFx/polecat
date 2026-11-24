@@ -9,8 +9,11 @@ Fisher 2 and Wolverine 7.
   uses the .NET 11 GA packages.
 - **Dependencies:** JasperFx 3.12.1, Weasel 10, `Microsoft.Data.SqlClient` 7.1.2, and EF Core 10 or 11 by framework
   for `Polecat.EntityFrameworkCore`.
-- **Defaults follow Marten 10**: event and document metadata, extended progression tracking, inline projection side
-  effects and projection start floors are on. `RestoreV5Defaults()` puts Polecat 5's defaults back. See
+- **Defaults follow Marten 10**: extended progression tracking, inline projection side effects (with a startup
+  warning for each inline projection that has them), parking, late-event recovery, the event append counter and
+  projection start floors are on. `RestoreV5Defaults()` puts Polecat 5's defaults back. Event metadata, document
+  metadata and tenant-leading indexes on conjoined documents stay opt-in, as in Polecat 5; turn the metadata on for
+  CritterWatch's event and document filters. See
   [the defaults that changed](#upgrading-to-6-0-defaults-that-changed-with-marten-10).
 - **Archived-stream partitioning stays opt-in**, and turning it on for an existing store now migrates `pc_events` in
   place. Turn it on if your system archives whole streams. See
@@ -190,8 +193,12 @@ On `net10.0` no type is a union, so none of this applies and nothing changes for
 ## Upgrading to 6.0: defaults that changed with Marten 10
 
 Polecat 6 takes the default changes Marten 10 made ([polecat#1032](https://github.com/JasperFx/polecat/issues/1032),
-[marten#5812](https://github.com/JasperFx/marten/issues/5812)). Each one can be turned back off on its own, or
-all of them at once, to upgrade with no change in behavior and take the new defaults later:
+[marten#5812](https://github.com/JasperFx/marten/issues/5812)), as Marten 10 finally decided them before its release
+([polecat#1134](https://github.com/JasperFx/polecat/issues/1134),
+[marten#6144](https://github.com/JasperFx/marten/issues/6144)): three of them went back to being opt-in, and are
+described [below](#event-and-document-metadata-and-tenant-leading-indexes-stay-opt-in). Each default in the table can
+be turned back off on its own, or all of them at once, to upgrade with no change in behavior and take the new defaults
+later:
 
 <!-- snippet: sample_polecat_restore_v5_defaults -->
 <a id='snippet-sample_polecat_restore_v5_defaults'></a>
@@ -199,41 +206,41 @@ all of them at once, to upgrade with no change in behavior and take the new defa
 // Upgrade with the Polecat 5 defaults, then take the new ones one at a time
 options.RestoreV5Defaults();
 ```
-<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.DocumentDbTests/Configuration/polecat_6_default_tests.cs#L82-L85' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_restore_v5_defaults' title='Start of snippet'>anchor</a></sup>
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.DocumentDbTests/Configuration/polecat_6_default_tests.cs#L114-L117' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_restore_v5_defaults' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 **Inline projections now run their side effects.** `EnableSideEffectsOnInlineProjections` is on by default, so
-an application with `RaiseSideEffects()` on an inline projection starts running it on every `SaveChangesAsync()`:
-messages it publishes go to the configured `MessageOutbox`, and a `slice.AppendEvent(...)` from an inline
-projection, which is not supported, now throws where it was ignored. Check every inline projection with side
-effects before upgrading, or set `opts.Events.EnableSideEffectsOnInlineProjections = false`.
+an application with `RaiseSideEffects()` on an inline projection starts running it inside every `SaveChangesAsync()`
+that touches the projection, in the same transaction: messages it publishes go to the configured `MessageOutbox`, and
+a `slice.AppendEvent(...)` from an inline projection, which is not supported, now throws where it was ignored. The store
+logs a warning when it is built, naming each `Inline` projection that overrides `RaiseSideEffects()`. Check every one
+before upgrading, or set `opts.Events.EnableSideEffectsOnInlineProjections = false`. See
+[side effects in inline projections](/events/projections/side-effects#side-effects-in-inline-projections) for what it
+costs and what it buys.
 
 | Setting | 5.x | 6.0 | Schema effect | To keep 5.x's behavior |
 | :--- | :--- | :--- | :--- | :--- |
-| Event metadata: `Events.EnableCorrelationId`, `EnableCausationId`, `EnableHeaders`, `EnableUserName` | off | on | Adds the nullable `correlation_id`, `causation_id`, `headers` and `user_name` columns to `pc_events`, whatever the flags say. See below | Set each to `false` |
 | `Events.EnableExtendedProgressionTracking`: the daemon writes `heartbeat`, `agent_status`, `pause_reason`, `running_on_node`, the `failure_*` columns and `parked_count` on `pc_event_progression` | off | on | Adds those nullable columns to `pc_event_progression`, whatever the flag says. See below | `opts.Events.EnableExtendedProgressionTracking = false` |
-| Document metadata: correlation id, causation id, last modified by, headers | off | on | Adds the nullable `correlation_id`, `causation_id`, `last_modified_by` and `headers` columns to every document table | `opts.Policies.EnableDocumentMetadataByDefault = false`, or per type with `Schema.For<T>().Metadata(m => m.Headers.Enabled = false)` |
 | `OpenTelemetry.EventCountersEnabled` (the `polecat.event.append` counter) | off | on | None. Without a listener on the meter it costs nothing | `opts.OpenTelemetry.EventCountersEnabled = false` |
 | `AllowOutOfOrderMetadataProperties` on the default serializer | off | on | None | `opts.RestoreV5Defaults()`, or your own options through `ConfigureSerialization(JsonSerializerOptions, ...)` |
-| `Policies.StartIndexesByTenantId`: non-unique indexes on conjoined documents start with `tenant_id` | off | on | Each such index is dropped and recreated with `tenant_id` first. Unique indexes are unchanged | `opts.Policies.StartIndexesByTenantId = false` |
-| `Events.EnableSideEffectsOnInlineProjections` | off | on | None. **See the callout above** | `opts.Events.EnableSideEffectsOnInlineProjections = false` |
-| `Projections.Errors.ApplyErrors` and `SerializationErrors`: what an async projection does when it fails on an event | skip | park the failing identity, or pause where a projection can't park. See below | Adds `pc_parked_identities` (`Events.EnableParkedIdentities`), and a `pc_slice_index_*` table for each projection that calls `UseSliceIndex()` | `opts.Projections.Errors.SkipApplyErrors = true` and `SkipSerializationErrors = true` |
+| `Events.EnableSideEffectsOnInlineProjections` | off | on, with a startup warning per `Inline` projection that overrides `RaiseSideEffects()` | None. **See the callout above** | `opts.Events.EnableSideEffectsOnInlineProjections = false` |
+| `Projections.Errors.ApplyErrors` and `SerializationErrors`: what an async projection does when it fails on an event | skip | park the failing identity, or pause where a projection can't park. See below | Adds `pc_parked_identities` (`Events.EnableParkedIdentities`), and a `pc_slice_index_*` table for each projection that calls `UseSliceIndex()` | `opts.Projections.Errors.SkipApplyErrors = true` and `SkipSerializationErrors = true`; `opts.Events.EnableParkedIdentities = false` leaves the table out |
 | Transient failures while the async daemon builds a projection batch: a connection pool timeout, a deadlock, a dropped connection | the shard paused, except several slices failing together under skip, which were built again without limit | the batch is built again up to 3 times with a short backoff, under every error setting, then the shard pauses with `ShardFailure.IsTransient = true`. See JasperFx's [Key Changes in 3.11.0](https://shared-libs.jasperfx.net/migration-guide#key-changes-in-3-11-0) and [the async daemon's pipeline](/configuration/retries#the-async-daemon-s-pipeline) | None | `opts.ConfigureDaemonPolly(_ => { })` pauses on the first transient failure. To add to the default rather than replace it, end the builder with the public `AddPolecatDaemonDefaults()` ([#1111](https://github.com/JasperFx/polecat/issues/1111)) |
+| `Events.EnableLateEventDetection`: the daemon records the ranges its high water mark skips and recovers events that commit late in them. See [below](#upgrading-to-6-0-skipped-high-water-ranges-are-recorded-and-late-events-are-recovered) | off (not available) | on | Adds `pc_high_water_skips` and `pc_high_water_late_events` | `opts.Events.EnableLateEventDetection = false` |
+| `Events.EnableEventRangeMarks`. See [below](#upgrading-to-6-0-a-table-for-the-event-range-marks) | off (not available) | on | Adds `pc_event_range_marks` | `opts.Events.EnableEventRangeMarks = false` |
+| `Events.EnableProjectionFloors`. See [below](#upgrading-to-6-0-projection-start-floors-are-on-by-default) | off | on | Adds `pc_event_projection_floors` | `opts.Events.EnableProjectionFloors = false` |
+| `GateSideEffectsBehindPriorVersion` on every projection (from JasperFx 3.0). See [below](#upgrading-to-6-0-gatesideeffectsbehindpriorversion-is-on-by-default) | off | on | None | `Options.GateSideEffectsBehindPriorVersion = false` in the projection, or `opts.RestoreV5Defaults()` for every projection |
+| `Events.DcbConflictScope`. See [below](#upgrading-to-6-0-dcb-conflicts-honour-event-types-and-a-check-no-longer-bumps-what-it-read) | `TagValue` | `TagValueAndEventType` | None. The per-event-type versions are rows in `pc_dcb_tag_version` | `opts.Events.DcbConflictScope = DcbConflictScope.TagValue` |
 
-The new columns are nullable and are added in place by the next schema migration. Rows written before it have
-`NULL` in them. Apply that migration (`db-apply`, `db-patch` or `ApplyAllDatabaseChangesOnStartup()`) before
-6.0 nodes take traffic: a document type that an inline `EventProjection` stores without declaring it is only
-migrated on demand after the first save that writes it, and that first save fails with "Invalid column name
-'correlation_id'". The index change rebuilds each index it touches, which takes as long as building it did; run it
-through `db-patch` in a maintenance window on a large table.
-
-The event metadata columns and the extended progression columns are part of the schema whatever their flags say
+The extended progression columns and the event metadata columns are part of the schema whatever their flags say
 ([#1116](https://github.com/JasperFx/polecat/issues/1116), as in [marten#5765](https://github.com/JasperFx/marten/issues/5765)).
 The flags only decide what Polecat writes and reads. Two applications, or two stores, sharing one schema with
-different settings used to drop each other's columns when either one migrated. So a store with the flags off, or with
-`RestoreV5Defaults()`, still gets these nullable columns on its next migration, and leaves them `NULL`. Polecat 5
-created the extended columns only with `EnableExtendedProgressionTracking` on, and the metadata columns only with
-their flags on.
+different settings used to drop each other's columns when either one migrated. So every store, whatever its flags and
+with or without `RestoreV5Defaults()`, gets the nullable `correlation_id`, `causation_id`, `headers` and `user_name`
+columns on `pc_events` and the extended columns on `pc_event_progression` on its next migration, and leaves `NULL` in
+the ones its flags turn off. Polecat 5 created the extended columns only with `EnableExtendedProgressionTracking` on,
+and the metadata columns only with their flags on. The new columns are added in place by the next schema migration;
+apply it (`db-apply`, `db-patch` or `ApplyAllDatabaseChangesOnStartup()`) before 6.0 nodes take traffic.
 
 One more thing about `EnableExtendedProgressionTracking`: in Polecat 5, `AddPolecat()` set it back to `false` on every
 store it registered, unless a tool turned it on through `IEventStoreInstrumentation`, so turning it on inside the
@@ -245,9 +252,6 @@ The tables Polecat 6 adds (`pc_event_projection_floors`, `pc_event_range_marks`,
 doesn't know about, so they don't have the problem. Archived-stream partitioning stays conditional too, because it
 changes the shape of `pc_events`.
 
-`RestoreV5Defaults()` also puts back the two 6.0 changes that came from JasperFx 3.0 and are described below:
-`GateSideEffectsBehindPriorVersion` (off on every projection) and `DcbConflictScope.TagValue`.
-
 Marten 10 changes that Polecat has nothing to change for:
 
 - **Event skipping in projections and subscriptions.** Polecat has no event skipping.
@@ -255,6 +259,41 @@ Marten 10 changes that Polecat has nothing to change for:
 - **Strict stream identity enforcement.** Polecat's `pc_streams` is never partitioned, so its key stays `id`
   (or `tenant_id, id`) and an archived stream's id can't be reused.
 - **A sticky connection lifetime option.** Polecat never had one.
+
+### Event and document metadata and tenant-leading indexes stay opt-in {#event-and-document-metadata-and-tenant-leading-indexes-stay-opt-in}
+
+Three defaults that the 6.0 alphas and 6.0.0-rc.1 turned on are opt-in again, as they were in Polecat 5, because
+Marten 10 put them back after its release-candidate performance round
+([#1134](https://github.com/JasperFx/polecat/issues/1134), [marten#6144](https://github.com/JasperFx/marten/issues/6144)).
+Coming from 5.x, nothing changes for any of them. `RestoreV5Defaults()` doesn't touch them, since there is nothing to
+restore, so one you turn on before calling it stays on.
+
+| Setting | Default | What turning it on buys | What it costs | To turn it on |
+| :--- | :--- | :--- | :--- | :--- |
+| Event metadata: correlation id, causation id, headers, user name | off | [CritterWatch](https://critterwatch.jasperfx.net)'s event query filters on correlation id, causation id and user name, and the correlation and causation ids are how a Wolverine conversation links to the events it appended. See [event metadata](/events/metadata#turning-on-optional-metadata) | A bound value per appended event for each one. Marten measured all four as most of its remaining append cost | `opts.Events.EnableAllEventMetadata()`, or `opts.Events.EnableCorrelationId`, `EnableCausationId`, `EnableHeaders` and `EnableUserName` one at a time |
+| Document metadata: correlation id, causation id, last modified by, headers | off | CritterWatch's document explorer filters and saved filter watches on `last_modified_by`, `correlation_id` and `causation_id`. See [document metadata](/documents/metadata#metadata-columns) | Four nullable columns on each document table, four more values on every write. Marten measured them as about half its remaining projection rebuild cost | `opts.Policies.EnableDocumentMetadataByDefault = true`, or per type with `Schema.For<T>().Metadata(m => m.CorrelationId.Enabled = true)` |
+| `Policies.StartIndexesByTenantId`: non-unique computed indexes on conjoined documents start with `tenant_id` | off | A query in one tenant's session seeks the index on `tenant_id` too. Recommended for a large conjoined table queried tenant by tenant. See [computed indexes](/documents/indexing/computed-indexes#leading-every-index-on-a-conjoined-document-with-tenant-id) | Turning it on drops and recreates each of those indexes; a query across tenants can no longer seek them | `opts.Policies.StartIndexesByTenantId = true` |
+
+The event metadata columns exist whatever the settings say (see above), so turning event metadata on needs no schema
+migration. Turning document metadata on adds the columns in place on the next migration, with `NULL` in existing rows.
+Apply that migration before nodes with the setting take traffic: a document type that an inline `EventProjection`
+stores without declaring it is only migrated on demand after the first save that writes it, and that first save fails
+with "Invalid column name 'correlation_id'". A global unique index never gets `tenant_id`, whatever
+`StartIndexesByTenantId` says, so it stays unique across tenants.
+
+::: warning If you ran a 6.0 alpha or 6.0.0-rc.1 with the defaults
+A database those versions created or migrated has their defaults' schema. On 6.0 from rc.2 on:
+
+- **Event metadata** stops being written. The `pc_events` columns stay, and the values already written stay. To keep
+  writing them, call `opts.Events.EnableAllEventMetadata()`.
+- **Document metadata** stops being written, and `MetadataForAsync()` stops reading it. The four columns stay on every
+  document table: a document table's migration never drops a column it doesn't declare, so nothing is lost, and the
+  next migration reports no difference. New rows leave them `NULL`. To keep writing them, set
+  `opts.Policies.EnableDocumentMetadataByDefault = true`. To get rid of them, drop them yourself.
+- **Tenant-leading indexes** are rebuilt without `tenant_id` by the next schema migration, which takes as long as
+  building each index did. To keep them as they are, set `opts.Policies.StartIndexesByTenantId = true`. Otherwise run
+  that migration through `db-patch` in a maintenance window on a large table.
+:::
 
 ### Archived-stream partitioning stays opt-in {#archived-stream-partitioning-is-opt-in}
 

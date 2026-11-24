@@ -79,22 +79,26 @@ public class StorePolicies
     }
 
     /// <summary>
-    ///     Store correlation id, causation id, last modified by and headers for every document type.
-    ///     True by default since Polecat 6, as in Marten 10, and each one adds a nullable column to every
-    ///     document table. Set it to false, or call <see cref="StoreOptions.RestoreV5Defaults" />, to go
-    ///     back to Polecat 5's opt-in columns. Either way a document type can still turn one on or off
-    ///     with a metadata attribute or <c>Schema.For&lt;T&gt;().Metadata(m =&gt; m.Headers.Enabled = false)</c>.
+    ///     Store correlation id, causation id, last modified by and headers for every document type, each in
+    ///     a nullable column on every document table. Off by default, as in Polecat 5 and Marten 10 (#1134,
+    ///     marten#6144): the 6.0 alphas turned it on, and Marten's rc.1 perf round measured these columns as
+    ///     about half of the remaining projection rebuild cost. Turn it on for CritterWatch's document explorer
+    ///     filters and saved filter watches, which filter on these columns. Either way a document type can turn
+    ///     one on or off with a metadata attribute or
+    ///     <c>Schema.For&lt;T&gt;().Metadata(m =&gt; m.CorrelationId.Enabled = true)</c>.
     /// </summary>
-    public bool EnableDocumentMetadataByDefault { get; set; } = true;
+    public bool EnableDocumentMetadataByDefault { get; set; }
 
     /// <summary>
     ///     Start every non-unique <c>Index(...)</c> on a conjoined-tenancy document with <c>tenant_id</c>, so a
-    ///     query in one tenant seeks the index on both. True by default since Polecat 6, as in Marten 10.
-    ///     A unique index is left as it is, because putting <c>tenant_id</c> in front of it would change
-    ///     what it enforces; use <see cref="Storage.DocumentIndex.TenancyScope" /> for that. Set it to false,
-    ///     or call <see cref="StoreOptions.RestoreV5Defaults" />, to go back to Polecat 5's indexes.
+    ///     query in one tenant's session seeks the index on both. Off by default, as in Polecat 5 and Marten 10
+    ///     (#1134, marten#6144): turning it on rebuilds each such index, and a query across tenants can no longer
+    ///     seek it. Worth turning on for a large conjoined table that is queried tenant by tenant. A unique index
+    ///     is always left as it is, because putting <c>tenant_id</c> in front of it would change what it
+    ///     enforces, so a global unique index stays global; use <see cref="Storage.DocumentIndex.TenancyScope" />
+    ///     for a per-tenant one.
     /// </summary>
-    public bool StartIndexesByTenantId { get; set; } = true;
+    public bool StartIndexesByTenantId { get; set; }
 
     /// <summary>
     ///     Enable soft deletes for a specific document type.

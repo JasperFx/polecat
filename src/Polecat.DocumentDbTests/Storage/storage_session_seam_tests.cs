@@ -97,7 +97,7 @@ public class storage_session_seam_tests : OneOffConfigurationsContext
     {
         ConfigureStore(opts =>
         {
-            // All four are on by default since Polecat 6 (#1032)
+            // Set both ways, so this holds whatever the default is (off, as in Polecat 5, since #1134)
             opts.Events.EnableCorrelationId = true;
             opts.Events.EnableHeaders = true;
             opts.Events.EnableCausationId = false;

@@ -133,8 +133,9 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
             options.Events.StreamIdentity = config.StreamIdentity.Value;
         }
 
-        // Set either way: the suites declare which metadata a store tracks, and since Polecat 6 (#1032)
-        // all four are on by default, so a flag the config leaves false has to be turned off.
+        // Set either way: the suites declare which metadata a store tracks, so the store captures exactly what
+        // the config asks for whatever Polecat's default is (off, as in Polecat 5, since #1134; the 6.0 alphas
+        // turned all four on, #1032).
         options.Events.EnableCorrelationId = config.EnableCorrelationTracking;
         options.Events.EnableCausationId = config.EnableCorrelationTracking;
 

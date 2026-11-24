@@ -64,8 +64,8 @@ public partial class appending_past_the_parameter_limit_tests : OneOffConfigurat
         {
             opts.Events.AddEventType<Ping>();
 
-            // The arithmetic in this class is for an event with none of the optional metadata, which
-            // is on by default since Polecat 6 (#1032). The "metadata" shape turns it back on.
+            // The arithmetic in this class is for an event with none of the optional metadata, which is
+            // the default (#1134); set explicitly so it doesn't depend on it. The "metadata" shape turns it on.
             opts.Events.EnableCorrelationId = false;
             opts.Events.EnableCausationId = false;
             opts.Events.EnableHeaders = false;

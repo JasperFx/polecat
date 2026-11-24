@@ -157,7 +157,8 @@ public class document_diagnostics_295_tests
     [Fact]
     public async Task explain_refuses_an_uncaptured_metadata_filter_and_writes_nothing()
     {
-        // Since Polecat 6 (#1032) the type captures correlation id unless it says otherwise
+        // The type doesn't capture correlation id. Off by default again (#1134); set explicitly so the fact
+        // doesn't depend on the default
         await using var store = await TicketStoreAsync("explain_refuse",
             opts => opts.Schema.For<ExplainTicket>().Metadata(m => m.CorrelationId.Enabled = false));
         await SeedTicketsAsync(store, 2);
@@ -228,7 +229,7 @@ public class document_diagnostics_295_tests
     [Fact]
     public async Task metadata_capture_is_reported_per_type()
     {
-        // Since Polecat 6 (#1032) all three are captured unless a type turns one off
+        // Set all three both ways, so the fact holds whatever the default is (off since #1134)
         await using var store = await TicketStoreAsync("desc_metadata", opts =>
             opts.Schema.For<ExplainTicket>().Metadata(m =>
             {

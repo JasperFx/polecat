@@ -10,19 +10,53 @@ namespace Polecat.Tests.Configuration;
 
 /// <summary>
 ///     #1032: the defaults Polecat 6 changed to match Marten 10 (marten#5812), and
-///     <see cref="StoreOptions.RestoreV5Defaults" /> putting each one back.
+///     <see cref="StoreOptions.RestoreV5Defaults" /> putting each one back. #1134 (marten#6144) put three of them
+///     back to their Polecat 5 default before 6.0: event metadata, document metadata and
+///     <see cref="StorePolicies.StartIndexesByTenantId" />.
 /// </summary>
 public class polecat_6_default_tests
 {
+    // #1134 (marten#6144): the optional event metadata stays off by default, as in Polecat 5. The 6.0 alphas
+    // turned it on (#1032)
     [Fact]
-    public void event_metadata_is_on_by_default()
+    public void event_metadata_is_off_by_default()
     {
         var options = new StoreOptions();
 
+        options.Events.EnableCorrelationId.ShouldBeFalse();
+        options.Events.EnableCausationId.ShouldBeFalse();
+        options.Events.EnableHeaders.ShouldBeFalse();
+        options.Events.EnableUserName.ShouldBeFalse();
+    }
+
+    // #1134 (marten#6144): document metadata and tenant-leading indexes stay opt-in, as in Polecat 5
+    [Fact]
+    public void document_metadata_and_tenant_leading_indexes_are_off_by_default()
+    {
+        var options = new StoreOptions();
+
+        options.Policies.EnableDocumentMetadataByDefault.ShouldBeFalse();
+        options.Policies.StartIndexesByTenantId.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void settings_turned_on_before_restoring_stay_on()
+    {
+        var options = new StoreOptions();
+        options.Events.EnableCorrelationId = true;
+        options.Events.EnableCausationId = true;
+        options.Policies.EnableDocumentMetadataByDefault = true;
+        options.Policies.StartIndexesByTenantId = true;
+
+        options.RestoreV5Defaults();
+
+        // Nothing to restore for these three since #1134, so RestoreV5Defaults() leaves them as they were set
         options.Events.EnableCorrelationId.ShouldBeTrue();
         options.Events.EnableCausationId.ShouldBeTrue();
-        options.Events.EnableHeaders.ShouldBeTrue();
-        options.Events.EnableUserName.ShouldBeTrue();
+        options.Events.EnableHeaders.ShouldBeFalse();
+        options.Events.EnableUserName.ShouldBeFalse();
+        options.Policies.EnableDocumentMetadataByDefault.ShouldBeTrue();
+        options.Policies.StartIndexesByTenantId.ShouldBeTrue();
     }
 
     [Fact]
@@ -31,8 +65,6 @@ public class polecat_6_default_tests
         var options = new StoreOptions();
 
         options.Events.EnableSideEffectsOnInlineProjections.ShouldBeTrue();
-        options.Policies.EnableDocumentMetadataByDefault.ShouldBeTrue();
-        options.Policies.StartIndexesByTenantId.ShouldBeTrue();
         options.OpenTelemetry.EventCountersEnabled.ShouldBeTrue();
         ((Serializer)options.Serializer).Options.AllowOutOfOrderMetadataProperties.ShouldBeTrue();
         options.Events.EnableLateEventDetection.ShouldBeTrue();
@@ -163,10 +195,10 @@ public class polecat_6_default_tests
     {
         var options = new StoreOptions();
         options.RestoreV5Defaults();
-        options.Events.EnableUserName = true;
+        options.Events.EnableLateEventDetection = true;
 
-        options.Events.EnableUserName.ShouldBeTrue();
-        options.Events.EnableCorrelationId.ShouldBeFalse();
+        options.Events.EnableLateEventDetection.ShouldBeTrue();
+        options.Events.EnableEventRangeMarks.ShouldBeFalse();
     }
 }
 
@@ -243,10 +275,29 @@ public class polecat_6_default_schema_tests : OneOffConfigurationsContext
         });
     }
 
-    [Fact]
-    public async Task documents_and_events_store_metadata_by_default()
+    // The settings the 6.0 alphas and rc.1 had on by default, which #1134 (marten#6144) made opt-in again
+    private static void turnOnTheOptInMetadataAndIndexes(StoreOptions opts)
     {
-        configure(restore: false);
+        opts.Events.EnableAllEventMetadata();
+        opts.Policies.EnableDocumentMetadataByDefault = true;
+        opts.Policies.StartIndexesByTenantId = true;
+    }
+
+    private async Task<int> eventsWithMetadataAsync()
+    {
+        await using var conn = await OpenConnectionAsync();
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"""
+            SELECT COUNT(*) FROM [{theStore.Options.DatabaseSchemaName}].[pc_events]
+            WHERE correlation_id IS NOT NULL OR causation_id IS NOT NULL OR headers IS NOT NULL OR user_name IS NOT NULL
+            """;
+        return (int)(await cmd.ExecuteScalarAsync(Ct))!;
+    }
+
+    [Fact]
+    public async Task documents_and_events_store_metadata_when_turned_on()
+    {
+        configure(restore: false, turnOnTheOptInMetadataAndIndexes);
         await saveAShipmentAsync();
 
         var documentColumns = await columnsAsync("pc_doc_shipment");
@@ -261,6 +312,8 @@ public class polecat_6_default_schema_tests : OneOffConfigurationsContext
             eventColumns.ShouldContain(column);
         }
 
+        (await eventsWithMetadataAsync()).ShouldBe(1);
+
         await using var query = theStore.QuerySession("tenant-a");
         var shipment = await query.Query<Shipment>().SingleAsync(Ct);
         var metadata = await query.MetadataForAsync(shipment, Ct);
@@ -269,10 +322,13 @@ public class polecat_6_default_schema_tests : OneOffConfigurationsContext
         metadata.LastModifiedBy.ShouldBe("someone");
     }
 
-    [Fact]
-    public async Task restored_v5_defaults_add_no_document_metadata_columns_and_write_no_event_metadata()
+    // #1134: off by default, as in Polecat 5, so the default and RestoreV5Defaults() give the same schema
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task no_document_metadata_columns_and_no_event_metadata_written_by_default(bool restore)
     {
-        configure(restore: true);
+        configure(restore);
         await saveAShipmentAsync();
 
         (await columnsAsync("pc_doc_shipment"))
@@ -286,19 +342,17 @@ public class polecat_6_default_schema_tests : OneOffConfigurationsContext
             eventColumns.ShouldContain(column);
         }
 
-        await using var conn = await OpenConnectionAsync();
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"""
-            SELECT COUNT(*) FROM [{theStore.Options.DatabaseSchemaName}].[pc_events]
-            WHERE correlation_id IS NOT NULL OR causation_id IS NOT NULL OR headers IS NOT NULL OR user_name IS NOT NULL
-            """;
-        ((int)(await cmd.ExecuteScalarAsync(Ct))!).ShouldBe(0);
+        (await eventsWithMetadataAsync()).ShouldBe(0);
     }
 
     [Fact]
-    public async Task one_document_type_can_turn_a_default_column_off()
+    public async Task one_document_type_can_turn_a_store_wide_column_off()
     {
-        configure(restore: false, opts => opts.Schema.For<Invoice>().Metadata(m => m.Headers.Enabled = false));
+        configure(restore: false, opts =>
+        {
+            opts.Policies.EnableDocumentMetadataByDefault = true;
+            opts.Schema.For<Invoice>().Metadata(m => m.Headers.Enabled = false);
+        });
 
         await using (var session = theStore.LightweightSession("tenant-a"))
         {
@@ -311,10 +365,12 @@ public class polecat_6_default_schema_tests : OneOffConfigurationsContext
         columns.ShouldContain("correlation_id");
     }
 
-    [Fact]
-    public async Task one_document_type_can_turn_a_column_on_after_restoring()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task one_document_type_can_turn_a_column_on(bool restore)
     {
-        configure(restore: true, opts => opts.Schema.For<Invoice>().Metadata(m => m.CorrelationId.Enabled = true));
+        configure(restore, opts => opts.Schema.For<Invoice>().Metadata(m => m.CorrelationId.Enabled = true));
 
         await using (var session = theStore.LightweightSession("tenant-a"))
         {
@@ -328,23 +384,25 @@ public class polecat_6_default_schema_tests : OneOffConfigurationsContext
     }
 
     [Fact]
-    public async Task conjoined_indexes_start_with_the_tenant_by_default()
+    public async Task conjoined_indexes_start_with_the_tenant_when_turned_on()
     {
-        configure(restore: false);
+        configure(restore: false, opts => opts.Policies.StartIndexesByTenantId = true);
         await saveAShipmentAsync();
 
         (await indexKeyColumnsAsync("pc_doc_shipment", "ix_pc_doc_shipment_carrier"))
             .ShouldBe(["tenant_id", "cc_carrier"]);
 
-        // A unique index keeps what it enforces
+        // A unique index keeps what it enforces: a global one stays global
         (await indexKeyColumnsAsync("pc_doc_shipment", "ux_pc_doc_shipment_tracking"))
             .ShouldBe(["cc_tracking"]);
     }
 
-    [Fact]
-    public async Task restored_v5_defaults_leave_the_tenant_out_of_the_index()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task conjoined_indexes_leave_the_tenant_out_by_default(bool restore)
     {
-        configure(restore: true);
+        configure(restore);
         await saveAShipmentAsync();
 
         (await indexKeyColumnsAsync("pc_doc_shipment", "ix_pc_doc_shipment_carrier"))
@@ -357,18 +415,64 @@ public class polecat_6_default_schema_tests : OneOffConfigurationsContext
         configure(restore: true);
         await saveAShipmentAsync();
 
-        // The same schema, now on the Polecat 6 defaults: additive columns and a rebuilt index
+        // The same schema, now on the Polecat 6 defaults. Since #1134 neither the document table nor its
+        // indexes change; pc_events already has its metadata columns (#1116)
         configure(restore: false);
         await theStore.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: Ct);
         await saveAShipmentAsync();
 
-        (await columnsAsync("pc_doc_shipment")).ShouldContain("last_modified_by");
+        (await columnsAsync("pc_doc_shipment")).ShouldNotContain("last_modified_by");
         (await columnsAsync("pc_events")).ShouldContain("user_name");
         (await indexKeyColumnsAsync("pc_doc_shipment", "ix_pc_doc_shipment_carrier"))
-            .ShouldBe(["tenant_id", "cc_carrier"]);
+            .ShouldBe(["cc_carrier"]);
 
         await using var query = theStore.QuerySession("tenant-a");
         (await query.Query<Shipment>().CountAsync(Ct)).ShouldBe(2);
+        await theStore.Database.AssertDatabaseMatchesConfigurationAsync(Ct);
+    }
+
+    // #1134: a store created by a 6.0 alpha or rc.1 with their defaults has the four document metadata columns and
+    // tenant-leading indexes. On the new defaults the columns are kept (the document table is additive, #267) and
+    // left NULL from then on; the index is rebuilt without tenant_id, because an index is declared in full.
+    [Fact]
+    public async Task an_rc1_store_keeps_its_metadata_columns_on_the_new_defaults()
+    {
+        configure(restore: false, turnOnTheOptInMetadataAndIndexes);
+        await saveAShipmentAsync();
+
+        configure(restore: false);
+        await theStore.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: Ct);
+        await saveAShipmentAsync();
+
+        var documentColumns = await columnsAsync("pc_doc_shipment");
+        foreach (var column in new[] { "correlation_id", "causation_id", "last_modified_by", "headers" })
+        {
+            documentColumns.ShouldContain(column);
+        }
+
+        (await indexKeyColumnsAsync("pc_doc_shipment", "ix_pc_doc_shipment_carrier"))
+            .ShouldBe(["cc_carrier"]);
+
+        // Only the first append wrote event metadata
+        (await eventsWithMetadataAsync()).ShouldBe(1);
+
+        await using var query = theStore.QuerySession("tenant-a");
+        (await query.Query<Shipment>().CountAsync(Ct)).ShouldBe(2);
+        await theStore.Database.AssertDatabaseMatchesConfigurationAsync(Ct);
+    }
+
+    // #1134: how a store that ran rc.1 keeps its tenant-leading indexes as they are
+    [Fact]
+    public async Task an_rc1_store_keeps_its_indexes_by_opting_in()
+    {
+        configure(restore: false, turnOnTheOptInMetadataAndIndexes);
+        await saveAShipmentAsync();
+
+        configure(restore: false, opts => opts.Policies.StartIndexesByTenantId = true);
+        await theStore.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: Ct);
+
+        (await indexKeyColumnsAsync("pc_doc_shipment", "ix_pc_doc_shipment_carrier"))
+            .ShouldBe(["tenant_id", "cc_carrier"]);
         await theStore.Database.AssertDatabaseMatchesConfigurationAsync(Ct);
     }
 }

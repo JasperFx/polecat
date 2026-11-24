@@ -100,8 +100,8 @@ public class mcp_endpoint_tests : IAsyncLifetime
         root.GetProperty("databaseSchemaName").GetString().ShouldNotBeNullOrEmpty();
         root.GetProperty("enableCorrelationId").GetBoolean().ShouldBeTrue();
         root.GetProperty("enableCausationId").GetBoolean().ShouldBeTrue();
-        // On by default since Polecat 6 (#1032)
-        root.GetProperty("enableHeaders").GetBoolean().ShouldBeTrue();
+        // TestApp turns on correlation and causation only; headers stay at their default, off (#1134)
+        root.GetProperty("enableHeaders").GetBoolean().ShouldBeFalse();
     }
 
     [Fact]
