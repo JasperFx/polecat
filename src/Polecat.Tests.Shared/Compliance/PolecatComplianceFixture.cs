@@ -441,6 +441,14 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
     public override bool SupportsNaturalKeys => true;
 
     /// <summary>
+    ///     jasperfx 3.13 (marten 696141240). False because it is <b>not built yet</b>, not a divergence: Polecat
+    ///     has no <c>[MappedNaturalKey&lt;T&gt;]</c> / <c>[NaturalKey(SourceProjection = ...)]</c> resolution
+    ///     through the owning aggregate's lookup. <c>MappedNaturalKeyCompliance</c> and the mapped facts of
+    ///     <c>NaturalKeyRegistrationCompliance</c> skip until it is.
+    /// </summary>
+    public override bool SupportsMappedNaturalKeys => false;
+
+    /// <summary>
     ///     #561 / jasperfx#752. Polecat routes every event hydration path through the shared
     ///     <c>EventRegistry.Upcasters</c> and implements <c>IUpcastPayload</c> over its own row
     ///     reader and serializer.
@@ -763,6 +771,13 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
     ///     tenancy (by the tenant's partition under per-tenant sequencing).
     /// </summary>
     public override bool SupportsPendingEventAges => true;
+
+    /// <summary>
+    ///     jasperfx#1282 (#1130) — <c>RegisteredAggregateTypes()</c> answers from
+    ///     <c>ProjectionGraph.AllAggregateTypes()</c>, and <c>PolecatDatabase.FetchAggregateStreamStatsAsync</c>
+    ///     groups <c>pc_streams</c> by its <c>type</c> column in one round trip, never reading <c>pc_events</c>.
+    /// </summary>
+    public override bool SupportsAggregateStreamStats => true;
 
     /// <summary>
     ///     jasperfx#1048 (polecat#806) — <c>EventDataMasking</c> derives from <c>EventDataMaskingBase</c>, and
