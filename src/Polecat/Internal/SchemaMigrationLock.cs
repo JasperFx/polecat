@@ -38,24 +38,75 @@ namespace Polecat.Internal;
 ///     default, because contention is not retried and the loser would otherwise give up after one second of
 ///     waiting on a migration that takes longer than that. See that property for the whole reasoning.
 ///     </para>
+///     <para>
+///     #1136. Naming the lock after the schema is right for everything a schema owns, and wrong for the one
+///     kind of object Polecat declares that no schema owns: a partition function and scheme belong to the
+///     DATABASE, and Weasel names them after the table alone (<c>pf_pc_events_is_archived</c>), so every store
+///     in a database with archived-stream partitioning declares the very same two objects. Weasel's DDL for
+///     them is check-then-act — drop them while no table is on them, then create whichever is missing — so two
+///     stores in different schemas provisioning at once dropped each other's objects, failed a
+///     <c>DROP PARTITION FUNCTION</c> on the scheme the other had just bound, or deadlocked outright. A store
+///     that declares a partitioned table therefore also takes <see cref="PartitionObjectsResource" />, one
+///     resource for the whole database, after its own schema's lock and always in that order. A store that
+///     declares none never asks for it, so nothing about an unpartitioned store changes.
+///     </para>
 /// </remarks>
 internal sealed class SchemaMigrationLock : IGlobalLock<SqlConnection>
 {
-    private readonly SqlServerGlobalLock _lock;
+    /// <summary>
+    ///     The <c>sp_getapplock</c> resource every path that may run DDL against a database-scoped partition
+    ///     function or scheme serializes on, whatever schema it is provisioning (#1136).
+    /// </summary>
+    internal const string PartitionObjectsResource = "polecat:migrate:partition-objects";
+
+    private readonly IGlobalLock<SqlConnection> _lock;
     private readonly string _resource;
     private readonly TimeSpan _timeout;
+    private readonly Func<bool>? _sharesPartitionObjects;
+    private bool _holdsPartitionObjects;
 
-    internal SchemaMigrationLock(string schemaName, TimeSpan timeout)
+    // Which of the two resources the last attempt failed to get, for the message that says what it waited on
+    private string _missed;
+
+    /// <param name="schemaName">The schema being provisioned, which names the lock.</param>
+    /// <param name="timeout">How long to wait for each of the two locks.</param>
+    /// <param name="sharesPartitionObjects">
+    ///     Whether the work done under this lock may run DDL against a database-scoped partition function or
+    ///     scheme, and so must also hold <see cref="PartitionObjectsResource" />. Asked when the lock is taken
+    ///     rather than when it is built, because a store's document providers are materialized lazily, and a
+    ///     whole-database migration materializes the configured ones only after its lock has been built.
+    /// </param>
+    internal SchemaMigrationLock(string schemaName, TimeSpan timeout, Func<bool>? sharesPartitionObjects = null)
+        : this(new SqlServerGlobalLock(ResourceFor(schemaName), toMilliseconds(timeout)), ResourceFor(schemaName),
+            timeout, sharesPartitionObjects)
     {
-        _resource = ResourceFor(schemaName);
-        _timeout = timeout;
-        _lock = new SqlServerGlobalLock(_resource, (int)Math.Clamp(timeout.TotalMilliseconds, 0, int.MaxValue));
     }
+
+    private SchemaMigrationLock(IGlobalLock<SqlConnection> inner, string resource, TimeSpan timeout,
+        Func<bool>? sharesPartitionObjects)
+    {
+        _lock = inner;
+        _resource = resource;
+        _timeout = timeout;
+        _sharesPartitionObjects = sharesPartitionObjects;
+        _missed = resource;
+    }
+
+    /// <summary>
+    ///     A lock a caller handed <c>ApplyAllConfiguredChangesToDatabaseAsync</c> in place of Polecat's own, with
+    ///     <see cref="PartitionObjectsResource" /> taken after it when the store declares a partitioned table. A
+    ///     caller's lock decides how this store's migrations serialize with each other, and cannot know that
+    ///     another store in the same database shares objects with this one (#1136).
+    /// </summary>
+    internal static SchemaMigrationLock AroundCallerLock(IGlobalLock<SqlConnection> inner, StoreOptions options) =>
+        new(inner, inner.GetType().Name, options.StartupMigrationLockTimeout, options.DeclaresPartitionObjects);
 
     /// <summary>
     ///     The <c>sp_getapplock</c> resource every path provisioning <paramref name="schemaName" /> serializes on.
     /// </summary>
     internal static string ResourceFor(string schemaName) => $"polecat:migrate:{schemaName}";
+
+    private static int toMilliseconds(TimeSpan timeout) => (int)Math.Clamp(timeout.TotalMilliseconds, 0, int.MaxValue);
 
     /// <summary>
     ///     Whether the last attempt actually got the lock. <c>ApplyAllConfiguredChangesToDatabaseAsync</c>
@@ -66,13 +117,68 @@ internal sealed class SchemaMigrationLock : IGlobalLock<SqlConnection>
 
     public async Task<AttainLockResult> TryAttainLock(SqlConnection conn, CancellationToken ct = default)
     {
+        _missed = _resource;
         var result = await _lock.TryAttainLock(conn, ct).ConfigureAwait(false);
+
+        if (result.Succeeded && _sharesPartitionObjects?.Invoke() == true)
+        {
+            // Second, and only ever second: nothing holds this and then waits on a schema's lock, so two stores
+            // cannot each hold what the other wants. It gets a whole timeout of its own rather than what is left
+            // of the schema's: a store that waited out a replica of itself must not then lose to a different
+            // store on a second's leftover budget, which is #664's crash loop by another route.
+            AttainLockResult shared;
+            try
+            {
+                shared = await conn.TryAttainGlobalLock(PartitionObjectsResource, ct, toMilliseconds(_timeout))
+                    .ConfigureAwait(false);
+            }
+            catch (Exception)
+            {
+                // A caller that sees this throw never learns it held the schema's lock, so it would never
+                // release it, and a session-scoped lock outlives the connection going back to the pool
+                await releaseQuietlyAsync(conn).ConfigureAwait(false);
+                throw;
+            }
+
+            if (shared.Succeeded)
+            {
+                _holdsPartitionObjects = true;
+            }
+            else
+            {
+                await _lock.ReleaseLock(conn, CancellationToken.None).ConfigureAwait(false);
+                result = shared;
+                _missed = PartitionObjectsResource;
+            }
+        }
 
         Attained = result.Succeeded;
         return result;
     }
 
-    public Task ReleaseLock(SqlConnection conn, CancellationToken ct = default) => _lock.ReleaseLock(conn, ct);
+    private async Task releaseQuietlyAsync(SqlConnection conn)
+    {
+        try
+        {
+            await _lock.ReleaseLock(conn, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception)
+        {
+            // The failure the caller is about to see is the one that matters, and a connection that cannot run
+            // the release is broken, which ends its session and the lock with it
+        }
+    }
+
+    public async Task ReleaseLock(SqlConnection conn, CancellationToken ct = default)
+    {
+        if (_holdsPartitionObjects)
+        {
+            _holdsPartitionObjects = false;
+            await conn.ReleaseGlobalLock(PartitionObjectsResource, ct).ConfigureAwait(false);
+        }
+
+        await _lock.ReleaseLock(conn, ct).ConfigureAwait(false);
+    }
 
     /// <summary>
     ///     Hold the lock for a first-use ensure running on <paramref name="conn" />, until the result is
@@ -110,11 +216,17 @@ internal sealed class SchemaMigrationLock : IGlobalLock<SqlConnection>
     ///     The schema being provisioned, when that is not the store's own. <c>pc_tenants</c> is the one
     ///     case: its schema is an argument to <c>MultiTenantedMasterTable</c>.
     /// </param>
+    /// <param name="sharesPartitionObjects">
+    ///     True when the ensure may create, reshape or SPLIT a partitioned table, whose partition function and
+    ///     scheme belong to the database rather than the schema. It then also holds
+    ///     <see cref="PartitionObjectsResource" /> (#1136).
+    /// </param>
     internal static async Task<IAsyncDisposable?> HoldForFirstUseAsync(StoreOptions options, SqlConnection conn,
-        bool insideTransaction, CancellationToken token, string? schemaName = null)
+        bool insideTransaction, CancellationToken token, string? schemaName = null, bool sharesPartitionObjects = false)
     {
         var migrationLock = new SchemaMigrationLock(schemaName ?? options.DatabaseSchemaName,
-            insideTransaction ? TimeSpan.Zero : options.StartupMigrationLockTimeout);
+            insideTransaction ? TimeSpan.Zero : options.StartupMigrationLockTimeout,
+            sharesPartitionObjects ? static () => true : null);
 
         await migrationLock.TryAttainLock(conn, token).ConfigureAwait(false);
 
@@ -125,7 +237,7 @@ internal sealed class SchemaMigrationLock : IGlobalLock<SqlConnection>
 
         if (!insideTransaction)
         {
-            throw timedOut(migrationLock._resource, migrationLock._timeout);
+            throw timedOut(migrationLock._missed, migrationLock._timeout);
         }
 
         return null;
@@ -219,7 +331,7 @@ internal sealed class SchemaMigrationLock : IGlobalLock<SqlConnection>
         SqlConnection conn, bool insideTransaction, CancellationToken token)
     {
         var migrationLock = insideTransaction
-            ? new SchemaMigrationLock(options.DatabaseSchemaName, TimeSpan.Zero)
+            ? new SchemaMigrationLock(options.DatabaseSchemaName, TimeSpan.Zero, options.DeclaresPartitionObjects)
             : options.BuildMigrationLock();
 
         await migrationLock.TryAttainLock(conn, token).ConfigureAwait(false);
