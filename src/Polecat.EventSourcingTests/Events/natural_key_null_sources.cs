@@ -193,6 +193,41 @@ public class natural_key_null_sources : IAsyncLifetime
         (await query.Events.FetchLatest<Shipment, ShipmentCode>(withdrawnCode, TestContext.Current.CancellationToken)).ShouldBeNull();
     }
 
+    /// <summary>
+    ///     polecat#1137: a natural key lookup reads the lookup table, which the session writes only when it
+    ///     commits, so a key appended in the same session isn't found until SaveChangesAsync. FetchLatest returns
+    ///     null and FetchForWriting throws, as it does for a key nothing has claimed. The docs used to say the
+    ///     lookup saw the session's uncommitted data.
+    /// </summary>
+    [Fact]
+    public async Task a_lookup_by_natural_key_does_not_see_the_sessions_pending_events()
+    {
+        using var store = CreateStore();
+
+        // Commit one stream first, so the lookup table exists
+        await using (var warm = store.LightweightSession())
+        {
+            warm.Events.StartStream<Shipment>(Guid.NewGuid(), new ShipmentBooked(new ShipmentCode($"SHP-{Guid.NewGuid():N}")));
+            await warm.SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        var code = new ShipmentCode($"SHP-{Guid.NewGuid():N}");
+        var streamId = Guid.NewGuid();
+
+        await using var session = store.LightweightSession();
+        session.Events.StartStream<Shipment>(streamId, new ShipmentBooked(code));
+
+        (await session.Events.FetchLatest<Shipment, ShipmentCode>(code, TestContext.Current.CancellationToken)).ShouldBeNull();
+        await Should.ThrowAsync<InvalidOperationException>(() =>
+            session.Events.FetchForWriting<Shipment, ShipmentCode>(code, TestContext.Current.CancellationToken));
+
+        // After the commit, the same key finds the stream
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        await using var query = store.LightweightSession();
+        (await query.Events.FetchLatest<Shipment, ShipmentCode>(code, TestContext.Current.CancellationToken))!.Id.ShouldBe(streamId);
+    }
+
     [Fact]
     public async Task a_null_key_refusal_says_to_check_for_a_missing_key()
     {
