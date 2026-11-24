@@ -925,14 +925,14 @@
              net11.0 (so the net11.0 Microsoft.Extensions.* pins at the bottom of this file move to 11.0.0 with it),
              jasperfx#1272 natural-key types validated at registration, jasperfx#1273 ParkedIdentity.NaturalKey and
              the "Natural Key" column in `projections parked`, jasperfx#1277 a failed composite rebuild throws. -->
-        <PackageVersion Include="JasperFx" Version="3.12.1" />
-        <PackageVersion Include="JasperFx.Events" Version="3.12.1" />
+        <PackageVersion Include="JasperFx" Version="3.14.0" />
+        <PackageVersion Include="JasperFx.Events" Version="3.14.0" />
         <!--
              The shared cross-store event sourcing compliance suites. Source-only package: the
              suites compile inside Polecat.Tests.Shared (#1063) so JasperFx's aggregate source generator binds
              Polecat's own session types.
         -->
-        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="3.12.1" />
+        <PackageVersion Include="JasperFx.Events.ComplianceTests" Version="3.14.0" />
         <!-- Pin the sibling JasperFx packages for parity with Marten 9's matrix
              even though Polecat doesn't currently reference them directly —
              keeps the lockstep matrix coherent when transitive resolution
@@ -940,7 +940,7 @@
              JasperFx.RuntimeCompiler is deliberately NOT pinned: nothing in Polecat references it,
              directly or transitively (projection dispatch is source-generated, and Polecat.AotSmoke
              proves a consumer builds without it), so a pin only invited needless bumps. -->
-        <PackageVersion Include="JasperFx.SourceGenerator" Version="3.12.1" />
+        <PackageVersion Include="JasperFx.SourceGenerator" Version="3.14.0" />
         <!-- 7.1.2 (#1123): the floor Weasel.SqlServer 10.0.0-rc.1 depends on, and the first SqlClient whose
              transitive System.Security.Cryptography.Pkcs (9.0.21) carries the GHSA-846f-f764-76mx fix, so the
              direct Pkcs override is gone. -->
@@ -1581,7 +1581,7 @@
         <PackageVersion Include="Vogen" Version="7.0.0" />
 
         <!-- Source generators (matched to JasperFx.Events above) -->
-        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="3.12.1" />
+        <PackageVersion Include="JasperFx.Events.SourceGenerator" Version="3.14.0" />
 
         <!-- Build automation -->
         <PackageVersion Include="Nuke.Common" Version="9.0.4" />
