@@ -51,8 +51,10 @@ public class UnpartitionedSample
 /// </remarks>
 public class completely_remove_all_drops_partitions_tests: OneOffConfigurationsContext
 {
-    private const string PartitionFunction = "pf_pc_doc_removeallsample_bucket_end";
-    private const string PartitionScheme = "ps_pc_doc_removeallsample_bucket_end";
+    // Weasel 10.0 (weasel#920, #1140) puts the schema in the names: pf_{schema}_{table}_{column}
+    private const string StoreSchema = nameof(completely_remove_all_drops_partitions_tests);
+    private const string PartitionFunction = $"pf_{StoreSchema}_pc_doc_removeallsample_bucket_end";
+    private const string PartitionScheme = $"ps_{StoreSchema}_pc_doc_removeallsample_bucket_end";
 
     private void ConfigurePartitionedStore()
     {
@@ -181,7 +183,7 @@ public class completely_remove_all_drops_partitions_tests: OneOffConfigurationsC
 
         await theStore.Advanced.CompletelyRemoveAllAsync(token);
 
-        (await CountAsync("sys.partition_schemes", "ps_pc_doc_unpartitionedsample_bucket_end")).ShouldBe(0);
-        (await CountAsync("sys.partition_functions", "pf_pc_doc_unpartitionedsample_bucket_end")).ShouldBe(0);
+        (await CountAsync("sys.partition_schemes", $"ps_{StoreSchema}_pc_doc_unpartitionedsample_bucket_end")).ShouldBe(0);
+        (await CountAsync("sys.partition_functions", $"pf_{StoreSchema}_pc_doc_unpartitionedsample_bucket_end")).ShouldBe(0);
     }
 }

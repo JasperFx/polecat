@@ -82,7 +82,7 @@ public class tenant_partitioned_unseen_tenant_tests : IAsyncLifetime
             SELECT CAST(v.value AS int)
             FROM sys.partition_range_values v
             JOIN sys.partition_functions f ON f.function_id = v.function_id
-            WHERE f.name = 'pf_{table}_tenant_ordinal'
+            WHERE f.name = 'pf_{Schema}_{table}_tenant_ordinal'
             """);
         return rows.Select(x => (int)x[0]).ToList();
     }
@@ -98,9 +98,9 @@ public class tenant_partitioned_unseen_tenant_tests : IAsyncLifetime
             SELECT CAST(v.value AS int)
             FROM [{Schema}].[{table}] r
             LEFT JOIN sys.partition_range_values v
-                ON v.boundary_id = $PARTITION.pf_{table}_tenant_ordinal(r.tenant_ordinal) - 1
+                ON v.boundary_id = $PARTITION.pf_{Schema}_{table}_tenant_ordinal(r.tenant_ordinal) - 1
                AND v.function_id = (SELECT function_id FROM sys.partition_functions
-                                    WHERE name = 'pf_{table}_tenant_ordinal')
+                                    WHERE name = 'pf_{Schema}_{table}_tenant_ordinal')
             WHERE r.tenant_id = '{tenant}'
             """);
         return rows.Select(x => x[0]).ToList();

@@ -36,7 +36,12 @@ public class polecat_compliance_suite_inventory
         AssertEnrolled(new PolecatComplianceFixture(), new Dictionary<Type, string>
         {
             [typeof(BackfillCompliance<,,>)] =
-                "Projection backfills wait on the table naming for version-bumped projections (polecat#1055, marten#5632)"
+                "Projection backfills wait on the table naming for version-bumped projections (polecat#1055, marten#5632)",
+            [typeof(CompositeKeepUnchangedMembersCompliance<,,>)] =
+                "New in JasperFx 3.15.0 (jasperfx#684). Polecat's composite teardown still tears down every member "
+                + "rather than asking CompositeProjection.MembersToTearDownAsync, and its compliance builder does not "
+                + "implement KeepUnchangedMembers(). polecat#1147 tracks it, as marten#5247 does for Marten; "
+                + "SupportsKeepingUnchangedCompositeMembers stays false until then"
         });
     }
 

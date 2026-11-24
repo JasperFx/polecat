@@ -7,7 +7,7 @@ Fisher 2 and Wolverine 7.
 
 - **Targets `net10.0` and `net11.0`.** `net9.0` is dropped. The `net11.0` build is compiled with runtime-async and
   uses the .NET 11 GA packages.
-- **Dependencies:** JasperFx 3.14.0, Weasel 10, `Microsoft.Data.SqlClient` 7.1.2, and EF Core 10 or 11 by framework
+- **Dependencies:** JasperFx 3.15.1, Weasel 10.0.0, `Microsoft.Data.SqlClient` 7.1.2, and EF Core 10 or 11 by framework
   for `Polecat.EntityFrameworkCore`.
 - **Defaults follow Marten 10**: extended progression tracking, inline projection side effects (with a startup
   warning for each inline projection that has them), parking, late-event recovery, the event append counter and
@@ -56,8 +56,8 @@ The foundation pins move in lockstep, so a consuming project has to move with th
 
 | Package | 5.50.0 | 6.0 |
 |---|---|---|
-| `JasperFx`, `JasperFx.Events` | 2.102 | 3.14.0 |
-| `Weasel.SqlServer`, `Weasel.Storage`, `Weasel.EntityFrameworkCore` | 9.50.0 | 10.0.0-rc.1 |
+| `JasperFx`, `JasperFx.Events` | 2.102 | 3.15.1 |
+| `Weasel.SqlServer`, `Weasel.Storage`, `Weasel.EntityFrameworkCore` | 9.50.0 | 10.0.0 |
 | `Microsoft.Data.SqlClient` | 7.0.0 | 7.1.2 |
 | `Microsoft.Extensions.*` (net11.0) | n/a | 11.0.0 |
 | `Microsoft.EntityFrameworkCore.SqlServer` (`Polecat.EntityFrameworkCore`, net10.0) | 10.0.0 (9.0.14 on net9.0) | 10.0.0 |
@@ -357,6 +357,35 @@ A database created or migrated by a Polecat 6.0 alpha with the default settings 
 partition scheme. Set `opts.EventGraph.UseArchivedStreamPartitioning = true` to keep it there. Otherwise the next
 schema migration moves `pc_events` back off the scheme, rewriting the table as described above.
 :::
+
+### Partition functions and schemes carry the schema in their names {#partition-objects-carry-the-schema}
+
+A SQL Server partition function and partition scheme belong to the database, not to a schema. Before 6.0, Weasel named
+them after the table and column alone, for example `pf_pc_events_tenant_ordinal`. So two Polecat stores in different
+schemas of one database put their tables on the **same** function. With per-tenant partitioning, each store keeps its
+own tenant registry and ordinals, so one store's `RemovePolecatManagedTenantsAsync` could merge away a boundary the other
+store's tables still used. RANGE-partitioned documents with different boundaries collided the same way.
+
+Weasel 10.0 ([weasel#920](https://github.com/JasperFx/weasel/issues/920),
+[#1140](https://github.com/JasperFx/polecat/issues/1140)) puts the schema in the name:
+`pf_{schema}_{table}_{column}` and `ps_{schema}_{table}_{column}`.
+
+- **A table partitioned for the first time on 6.0** gets objects of its own.
+- **A table already partitioned before 6.0** keeps the objects it is on. Nothing is renamed, dropped or rebuilt
+  on upgrade, and every `SPLIT`, `MERGE` and `NEXT USED` targets the function the table is actually bound to.
+- **If two schemas' tables still share a function**, Weasel's managed partition strategies log a warning once per
+  function. To find such functions, call `SqlServerPartitionObjects.FindSharedAcrossSchemasAsync`. To move a table onto
+  objects of its own, see Weasel's
+  [Partition Function and Scheme Names](https://weasel.jasperfx.net/sqlserver/partitioning#partition-function-and-scheme-names).
+
+A raw query that names a partition function, for example `$PARTITION.pf_pc_events_tenant_ordinal(...)`, has to use the
+new name for a table partitioned on 6.0.
+
+Polecat also serializes partition DDL across every store in a database
+([#1136](https://github.com/JasperFx/polecat/issues/1136)). A store that declares a partitioned table takes a
+database-wide app lock, `polecat:migrate:partition-objects`, after its own schema's migration lock. Two stores
+provisioning at once therefore can't drop or half-create each other's objects, which still matters for a table that
+is on a shared, pre-6.0 function.
 
 ## Upgrading to 6.0: skipped high water ranges are recorded, and late events are recovered
 

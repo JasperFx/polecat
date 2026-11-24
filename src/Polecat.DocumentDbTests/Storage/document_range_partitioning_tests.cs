@@ -59,8 +59,8 @@ public class document_range_partitioning_tests : IntegrationContext
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = $"""
             IF OBJECT_ID('[{Schema}].[{table}]','U') IS NOT NULL DROP TABLE [{Schema}].[{table}];
-            IF EXISTS (SELECT 1 FROM sys.partition_schemes WHERE name='ps_{table}_bucket_end') DROP PARTITION SCHEME [ps_{table}_bucket_end];
-            IF EXISTS (SELECT 1 FROM sys.partition_functions WHERE name='pf_{table}_bucket_end') DROP PARTITION FUNCTION [pf_{table}_bucket_end];
+            IF EXISTS (SELECT 1 FROM sys.partition_schemes WHERE name='ps_{Schema}_{table}_bucket_end') DROP PARTITION SCHEME [ps_{Schema}_{table}_bucket_end];
+            IF EXISTS (SELECT 1 FROM sys.partition_functions WHERE name='pf_{Schema}_{table}_bucket_end') DROP PARTITION FUNCTION [pf_{Schema}_{table}_bucket_end];
             """;
         await cmd.ExecuteNonQueryAsync();
     }
@@ -84,10 +84,10 @@ public class document_range_partitioning_tests : IntegrationContext
         });
 
         (await ScalarAsync(
-            "SELECT COUNT(*) FROM sys.partition_functions WHERE name = 'pf_pc_doc_metricssample_bucket_end'"))
+            $"SELECT COUNT(*) FROM sys.partition_functions WHERE name = 'pf_{Schema}_pc_doc_metricssample_bucket_end'"))
             .ShouldBe(1);
         (await ScalarAsync(
-            "SELECT COUNT(*) FROM sys.partition_schemes WHERE name = 'ps_pc_doc_metricssample_bucket_end'"))
+            $"SELECT COUNT(*) FROM sys.partition_schemes WHERE name = 'ps_{Schema}_pc_doc_metricssample_bucket_end'"))
             .ShouldBe(1);
 
         // 3 boundaries -> 4 partitions.
@@ -141,7 +141,7 @@ public class document_range_partitioning_tests : IntegrationContext
         // The three documents land in three different physical partitions.
         (await ScalarAsync(
             $"""
-             SELECT COUNT(DISTINCT $PARTITION.pf_pc_doc_metricssample_bucket_end(bucket_end))
+             SELECT COUNT(DISTINCT $PARTITION.pf_{Schema}_pc_doc_metricssample_bucket_end(bucket_end))
              FROM [{Schema}].[pc_doc_metricssample]
              """)).ShouldBe(3);
     }
@@ -257,8 +257,8 @@ public class document_range_partitioning_tests : IntegrationContext
         await using var conn = await OpenConnectionAsync();
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = $"""
-            ALTER PARTITION SCHEME [ps_{table}_bucket_end] NEXT USED [PRIMARY];
-            ALTER PARTITION FUNCTION [pf_{table}_bucket_end]() SPLIT RANGE (CONVERT(datetimeoffset, '{boundaryLiteral}'));
+            ALTER PARTITION SCHEME [ps_{Schema}_{table}_bucket_end] NEXT USED [PRIMARY];
+            ALTER PARTITION FUNCTION [pf_{Schema}_{table}_bucket_end]() SPLIT RANGE (CONVERT(datetimeoffset, '{boundaryLiteral}'));
             """;
         await cmd.ExecuteNonQueryAsync();
     }

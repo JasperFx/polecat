@@ -228,9 +228,9 @@ public class per_tenant_event_sequence_tests : IAsyncLifetime
         // Each tenant's rows carry that tenant's ordinal and physically land in a distinct partition of
         // pc_events (computed via the partition function over tenant_ordinal).
         var rows = await QueryAsync($"""
-            SELECT $PARTITION.pf_pc_events_tenant_ordinal(tenant_ordinal) AS p, tenant_id, COUNT(*) AS c
+            SELECT $PARTITION.pf_{PartitionedSchema}_pc_events_tenant_ordinal(tenant_ordinal) AS p, tenant_id, COUNT(*) AS c
             FROM [{PartitionedSchema}].[pc_events]
-            GROUP BY $PARTITION.pf_pc_events_tenant_ordinal(tenant_ordinal), tenant_id
+            GROUP BY $PARTITION.pf_{PartitionedSchema}_pc_events_tenant_ordinal(tenant_ordinal), tenant_id
             ORDER BY tenant_id
             """);
 

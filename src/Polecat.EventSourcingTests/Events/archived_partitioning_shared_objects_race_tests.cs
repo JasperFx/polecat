@@ -16,6 +16,13 @@ namespace Polecat.Tests.Events;
 /// </summary>
 /// <remarks>
 ///     <para>
+///         Since Weasel 10.0 (weasel#920, #1140) a newly partitioned table gets objects named for its schema
+///         (<c>pf_{schema}_pc_events_is_archived</c>), so two stores provisioning fresh tables no longer share them,
+///         and this test now passes with or without Polecat's database-wide lock. It stays as the guard that two
+///         partitioned stores can provision at once. The lock stays for tables partitioned before 6.0, which keep the
+///         shared objects they are bound to. It failed 3-10 of 12 rounds without the lock on Weasel 10.0.0-rc.1.
+///     </para>
+///     <para>
 ///         The race only exists while no table is on the scheme yet: once one is, the drop is skipped and the
 ///         creates are no-ops. So every round drops both schemas' tables first, leaving the function and the
 ///         scheme behind unused, which is exactly the state a fresh deploy of two stores into one database starts

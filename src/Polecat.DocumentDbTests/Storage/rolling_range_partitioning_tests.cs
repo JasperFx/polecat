@@ -43,9 +43,9 @@ public class rolling_range_partitioning_tests : IntegrationContext
                     new MutableTimeProvider(July));
         });
 
-        (await ScalarAsync($"SELECT COUNT(*) FROM sys.partition_functions WHERE name = 'pf_{table}_bucket_end'"))
+        (await ScalarAsync($"SELECT COUNT(*) FROM sys.partition_functions WHERE name = 'pf_{Schema}_{table}_bucket_end'"))
             .ShouldBe(1);
-        (await ScalarAsync($"SELECT COUNT(*) FROM sys.partition_schemes WHERE name = 'ps_{table}_bucket_end'"))
+        (await ScalarAsync($"SELECT COUNT(*) FROM sys.partition_schemes WHERE name = 'ps_{Schema}_{table}_bucket_end'"))
             .ShouldBe(1);
 
         // June, July, August — the three periods of a (1 ahead, 1 behind) monthly window — plus the
@@ -94,7 +94,7 @@ public class rolling_range_partitioning_tests : IntegrationContext
         // Three periods, three physical partitions.
         (await ScalarAsync(
             $"""
-             SELECT COUNT(DISTINCT $PARTITION.pf_{table}_bucket_end(bucket_end))
+             SELECT COUNT(DISTINCT $PARTITION.pf_{Schema}_{table}_bucket_end(bucket_end))
              FROM [{Schema}].[{table}]
              """)).ShouldBe(3);
     }
@@ -414,7 +414,7 @@ public class rolling_range_partitioning_tests : IntegrationContext
         $"""
          SELECT COUNT(*) FROM sys.partition_range_values prv
          JOIN sys.partition_functions pf ON pf.function_id = prv.function_id
-         WHERE pf.name = 'pf_{table}_bucket_end'
+         WHERE pf.name = 'pf_{Schema}_{table}_bucket_end'
          """);
 
     private Task<int> PartitionCountAsync(string table) => ScalarAsync(
@@ -435,8 +435,8 @@ public class rolling_range_partitioning_tests : IntegrationContext
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = $"""
             IF OBJECT_ID('[{Schema}].[{table}]','U') IS NOT NULL DROP TABLE [{Schema}].[{table}];
-            IF EXISTS (SELECT 1 FROM sys.partition_schemes WHERE name='ps_{table}_bucket_end') DROP PARTITION SCHEME [ps_{table}_bucket_end];
-            IF EXISTS (SELECT 1 FROM sys.partition_functions WHERE name='pf_{table}_bucket_end') DROP PARTITION FUNCTION [pf_{table}_bucket_end];
+            IF EXISTS (SELECT 1 FROM sys.partition_schemes WHERE name='ps_{Schema}_{table}_bucket_end') DROP PARTITION SCHEME [ps_{Schema}_{table}_bucket_end];
+            IF EXISTS (SELECT 1 FROM sys.partition_functions WHERE name='pf_{Schema}_{table}_bucket_end') DROP PARTITION FUNCTION [pf_{Schema}_{table}_bucket_end];
             """;
         await cmd.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
     }

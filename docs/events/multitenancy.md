@@ -262,8 +262,10 @@ only one partition scheme. Archived partitioning is off by default; setting both
 construction, as does this flag without `TenancyStyle.Conjoined`.
 
 Physical partitioning applies to `pc_events` and (since #335) `pc_streams`. The partition
-function/scheme are database-global objects, so a single database should host one tenant-partitioned
-event store.
+function and scheme are database-scoped, and since Polecat 6.0 (Weasel 10.0) their names carry the
+schema, so event stores in different schemas of one database each get their own. A table partitioned
+before 6.0 keeps the shared one it is on; see
+[Upgrading partitioned tables](/migration-guide#partition-objects-carry-the-schema).
 
 Document tables can join the same managed per-tenant partitioning — including runtime tenant
 onboarding/removal via `store.Advanced.AddPolecatManagedTenantsAsync` /

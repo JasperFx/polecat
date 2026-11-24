@@ -47,8 +47,8 @@ public class tenant_partitioned_streams_tests : IAsyncLifetime
         // pc_streams carries the tenant_ordinal partition column and sits on its own
         // partition scheme, exactly like pc_events.
         (await TestSchema.ColumnExistsAsync(Schema, "pc_streams", "tenant_ordinal")).ShouldBeTrue();
-        (await TableIsOnPartitionSchemeAsync("pc_streams", "ps_pc_streams_tenant_ordinal")).ShouldBeTrue();
-        (await TableIsOnPartitionSchemeAsync("pc_events", "ps_pc_events_tenant_ordinal")).ShouldBeTrue();
+        (await TableIsOnPartitionSchemeAsync("pc_streams", $"ps_{Schema}_pc_streams_tenant_ordinal")).ShouldBeTrue();
+        (await TableIsOnPartitionSchemeAsync("pc_events", $"ps_{Schema}_pc_events_tenant_ordinal")).ShouldBeTrue();
     }
 
     [Fact]
@@ -72,7 +72,7 @@ public class tenant_partitioned_streams_tests : IAsyncLifetime
         // Stream rows carry their tenant's registry ordinal and land in distinct physical
         // partitions of pc_streams.
         var rows = await TestSchema.QueryAsync($"""
-            SELECT $PARTITION.pf_pc_streams_tenant_ordinal(st.tenant_ordinal) AS p, st.tenant_id,
+            SELECT $PARTITION.pf_{Schema}_pc_streams_tenant_ordinal(st.tenant_ordinal) AS p, st.tenant_id,
                    st.tenant_ordinal, tp.ordinal
             FROM [{Schema}].[pc_streams] st
             JOIN [{Schema}].[pc_tenant_partitions] tp ON tp.tenant_id = st.tenant_id

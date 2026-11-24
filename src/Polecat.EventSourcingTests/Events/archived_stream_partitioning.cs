@@ -12,9 +12,9 @@ public class archived_stream_partitioning : IntegrationContext
 
     public override async ValueTask InitializeAsync()
     {
-        // Start from an empty schema. The partition scheme and function are database-global, and other
-        // schemas' pc_events tables may sit on them too (#1041), so they are left alone: Weasel reuses a
-        // scheme that is already there.
+        // Start from an empty schema. Since Weasel 10.0 (weasel#920, #1140) the partition scheme and function
+        // carry the schema in their names, so they are this schema's own; they are left alone all the same,
+        // because Weasel reuses a scheme that is already there.
         await TestSchema.DropSchemaTablesAsync("archived_part");
         await TestSchema.DropSequencesAsync("archived_part");
 
@@ -39,13 +39,13 @@ public class archived_stream_partitioning : IntegrationContext
         var conn = await OpenConnectionAsync();
 
         await using var pfCmd = new SqlCommand(
-            "SELECT COUNT(*) FROM sys.partition_functions WHERE name = 'pf_pc_events_is_archived'", conn);
+            "SELECT COUNT(*) FROM sys.partition_functions WHERE name = 'pf_archived_part_pc_events_is_archived'", conn);
         var pfCount = (int)(await pfCmd.ExecuteScalarAsync(TestContext.Current.CancellationToken))!;
         pfCount.ShouldBeGreaterThan(0);
 
         // Verify partition scheme exists
         await using var psCmd = new SqlCommand(
-            "SELECT COUNT(*) FROM sys.partition_schemes WHERE name = 'ps_pc_events_is_archived'", conn);
+            "SELECT COUNT(*) FROM sys.partition_schemes WHERE name = 'ps_archived_part_pc_events_is_archived'", conn);
         var psCount = (int)(await psCmd.ExecuteScalarAsync(TestContext.Current.CancellationToken))!;
         psCount.ShouldBeGreaterThan(0);
 

@@ -41,8 +41,10 @@ namespace Polecat.Internal;
 ///     <para>
 ///     #1136. Naming the lock after the schema is right for everything a schema owns, and wrong for the one
 ///     kind of object Polecat declares that no schema owns: a partition function and scheme belong to the
-///     DATABASE, and Weasel names them after the table alone (<c>pf_pc_events_is_archived</c>), so every store
-///     in a database with archived-stream partitioning declares the very same two objects. Weasel's DDL for
+///     DATABASE, and before Weasel 10.0 they were named after the table alone (<c>pf_pc_events_is_archived</c>),
+///     so every store in a database with archived-stream partitioning declared the very same two objects.
+///     Weasel 10.0 puts the schema in the name (weasel#920, #1140), but a table partitioned before that stays
+///     on the shared objects it is bound to, so the lock still matters on an upgraded database. Weasel's DDL for
 ///     them is check-then-act — drop them while no table is on them, then create whichever is missing — so two
 ///     stores in different schemas provisioning at once dropped each other's objects, failed a
 ///     <c>DROP PARTITION FUNCTION</c> on the scheme the other had just bound, or deadlocked outright. A store

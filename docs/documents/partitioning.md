@@ -258,8 +258,11 @@ Notes:
 - Requires `TenancyStyle.Conjoined` (asserted at store construction) and cannot be combined with
   member `PartitionByRange` on the same document type — a SQL Server table supports only one
   partition scheme.
-- The registry and partition function/scheme are database-global objects: one tenant-partitioned
-  store per database.
+- Partition functions and schemes are database-scoped in SQL Server. Since Polecat 6.0 (Weasel 10.0,
+  [#1140](https://github.com/JasperFx/polecat/issues/1140)) their names carry the schema
+  (`pf_{schema}_{table}_{column}`), so tenant-partitioned stores in different schemas of one database
+  each get their own. A table partitioned before 6.0 stays on the shared object it was created on; see
+  [Upgrading partitioned tables](/migration-guide#partition-objects-carry-the-schema).
 - `AddPolecatManagedTenantsAsync` splits the tables of document types **registered** with the store
   (`opts.Schema.For<T>()` or prior use); a table created later bakes the full boundary set at
   creation.
