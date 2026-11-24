@@ -28,6 +28,9 @@ Fisher 2 and Wolverine 7.
 - **Rebuilding less than a whole projection**: `RebuildSingleStreamAsync` for one stream, and per-identity rebuilds
   of multi-stream projections. See [rebuilding a single stream](/events/projections/async-daemon#rebuilding-a-single-stream).
 - **Rewriting stored events in bulk**, run directly or as a Wolverine job. See [rewriting](/events/rewriting).
+- **Composite projections can keep the members that didn't change** across a version bump, so a change to one
+  member no longer rebuilds the others. See
+  [keeping members that didn't change](/events/projections/composite#keeping-members-that-didn-t-change).
 - **DCB:** a check no longer bumps the tags it read, and a conflict honours the event types the query selects.
 - **Multi-tenancy:** `Advanced.QueryAcrossAllDatabasesAsync` runs one query against every tenant database
   ([details](/configuration/multitenancy#querying-across-all-databases)), and `opts.Storage.PartitionPerTenant(table)`
@@ -514,7 +517,7 @@ way Marten does ([#1089](https://github.com/JasperFx/polecat/issues/1089)):
 | :--- | :--- | :--- |
 | Document table of a single stream or multi stream projection at `Version = 3` | `pc_doc_trip` | `pc_doc_trip_3` |
 | Document table at `Version = 1` (the default) | `pc_doc_trip` | `pc_doc_trip` (unchanged) |
-| `Version` of a composite projection's member | its own | the composite's |
+| `Version` of a composite projection's member | its own | the composite's, unless the composite [keeps its unchanged members](/events/projections/composite#keeping-members-that-didn-t-change) |
 
 - **What to do.** If a projection is above version 1 today, 6.0 creates its new table empty while its progression row
   says it is caught up. Rebuild that projection once after upgrading. The same goes for a composite whose members set

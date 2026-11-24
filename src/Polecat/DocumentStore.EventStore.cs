@@ -848,11 +848,12 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
 
     /// <summary>
     ///     #1118: the shard identities of a composite's members, whose progression rows are their own. Empty for
-    ///     anything but a composite.
+    ///     anything but a composite. <paramref name="tornDown" /> is the projection followed by the members a rebuild
+    ///     tears down (#1147), from <see cref="ProjectionsToTearDownAsync" />.
     /// </summary>
     private static IEnumerable<string> CompositeMemberShardIdentities(
-        IProjectionSource<IDocumentSession, IQuerySession> source)
-        => WithCompositeMembers(source).Skip(1).SelectMany(x => x.Shards()).Select(x => x.Name.Identity);
+        IReadOnlyList<IProjectionSource<IDocumentSession, IQuerySession>> tornDown)
+        => tornDown.Skip(1).SelectMany(x => x.Shards()).Select(x => x.Name.Identity);
 
     /// <remarks>
     ///     ⚠️ The two branches below must agree on how a progression row is NAMED, and they did not
@@ -1099,13 +1100,15 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
         if (Options.Projections.TryFindProjection(subscriptionName, out var source))
         {
             // #439: same collection as the store-global twin, so a composite's members and the
-            // composite's own declared clean-ups are both honoured here too.
-            publishedTableNames = TeardownTargetsFor(source);
+            // composite's own declared clean-ups are both honoured here too. #1147: and the same
+            // members kept, compared on this tenant's rows.
+            var tornDown = await ProjectionsToTearDownAsync(source, database, tenantId, token).ConfigureAwait(false);
+            publishedTableNames = TeardownTargetsFor(source, tornDown);
 
             // The exact per-tenant progression rows to delete: each shard's identity composed for
             // this tenant (carries the trailing :tenantId). #1118: a composite's members' rows too, as in Marten,
             // or the rebuild's first batch finds them past 0.
-            shardIdentities = WithCompositeMembers(source)
+            shardIdentities = tornDown
                 .SelectMany(x => x.Shards())
                 .Select(s => s.Name.ForTenant(tenantId).Identity)
                 .Distinct()
@@ -1223,16 +1226,52 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
     ///     progression dropped, so <c>composite.Options.DeleteViewTypeOnTeardown&lt;T&gt;()</c> and
     ///     <c>TeardownDataOnRebuild = false</c> stop being silent no-ops on it.
     /// </remarks>
-    private string[] TeardownTargetsFor(IProjectionSource<IDocumentSession, IQuerySession> source)
+    private string[] TeardownTargetsFor(IProjectionSource<IDocumentSession, IQuerySession> source,
+        IReadOnlyList<IProjectionSource<IDocumentSession, IQuerySession>> tornDown)
     {
         var tables = new List<string>();
 
-        foreach (var member in WithCompositeMembers(source))
+        // #1147: a kept member's documents stay exactly as they are. The composite's own PublishedTypes() fans out to
+        // every member, kept or not, so its kept members' types are left out of it too. A type a torn-down member
+        // also publishes is still torn down.
+        var keptTypes = WithCompositeMembers(source).Skip(1).Except(tornDown)
+            .SelectMany(x => x.PublishedTypes())
+            .Except(tornDown.Skip(1).SelectMany(x => x.PublishedTypes()))
+            .ToHashSet();
+
+        foreach (var projection in tornDown)
         {
-            CollectTeardownTargets(member, tables);
+            CollectTeardownTargets(projection, tables, keptTypes);
         }
 
         return tables.Distinct().ToArray();
+    }
+
+    /// <summary>
+    ///     #1147 (jasperfx#684): <paramref name="source" /> and the members of it a rebuild tears down. That's every
+    ///     member, unless <paramref name="source" /> is a composite with <c>KeepUnchangedMembers</c> on. Then JasperFx
+    ///     leaves out each member whose own progression row is ahead of the composite's: it kept its version through
+    ///     a bump of the composite's, and the replay skips it up to that row, so its documents and its row have to
+    ///     stay exactly as they are. Asked before any progression row is deleted, because the answer reads them.
+    /// </summary>
+    private static async Task<IReadOnlyList<IProjectionSource<IDocumentSession, IQuerySession>>> ProjectionsToTearDownAsync(
+        IProjectionSource<IDocumentSession, IQuerySession> source, IEventDatabase database, string? tenantId,
+        CancellationToken token)
+    {
+        if (source is not JasperFx.Events.Projections.Composite.CompositeProjection<IDocumentSession, IQuerySession>
+            composite)
+        {
+            return [source];
+        }
+
+        // The composite's shard name carries the tenant of a per-tenant rebuild, so the rows compared are that
+        // tenant's. Null is the store-global name the composite registers.
+        var parent = tenantId == null
+            ? null
+            : ShardName.Compose(composite.Name, tenantId: tenantId, version: composite.Version);
+
+        var members = await composite.MembersToTearDownAsync(database, parent, token).ConfigureAwait(false);
+        return [source, ..members];
     }
 
     /// <summary>
@@ -1254,9 +1293,10 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
     }
 
     private void CollectTeardownTargets(IProjectionSource<IDocumentSession, IQuerySession> source,
-        List<string> tables)
+        List<string> tables, IReadOnlySet<Type> keptTypes)
     {
-        tables.AddRange(source.PublishedTypes().Select(t => GetProvider(t).QualifiedTableName));
+        tables.AddRange(source.PublishedTypes().Where(t => !keptTypes.Contains(t))
+            .Select(t => GetProvider(t).QualifiedTableName));
 
         // #259: a [NaturalKey] aggregate maintains its pc_natural_key_X lookup table via the
         // auto-registered NaturalKeyProjection on the inline-append path. Teardown of the parent
@@ -1289,7 +1329,7 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
                 // Normally already covered by PublishedTypes(), but a projection is free to
                 // register a view type it does not publish. DELETE FROM twice is harmless,
                 // and the Distinct() in the caller keeps it to once anyway.
-                case DeleteDocuments documents:
+                case DeleteDocuments documents when !keptTypes.Contains(documents.DocumentType):
                     tables.Add(GetProvider(documents.DocumentType).QualifiedTableName);
                     break;
             }
@@ -1303,18 +1343,21 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
 
         // Resolve published table names outside the lambda to keep it static
         var publishedTableNames = Array.Empty<string>();
+        IReadOnlyList<IProjectionSource<IDocumentSession, IQuerySession>> tornDown = [];
         if (Options.Projections.TryFindProjection(subscriptionName, out var source))
         {
-            publishedTableNames = TeardownTargetsFor(source);
+            // #1147: before any row is deleted, since a kept member is told apart by its row
+            tornDown = await ProjectionsToTearDownAsync(source, database, null, token).ConfigureAwait(false);
+            publishedTableNames = TeardownTargetsFor(source, tornDown);
         }
 
         // #1118: a composite's members keep progression rows of their own, and they go with the composite's, as they
         // do in Marten's teardownProjectionStorage. Left in place, the rebuild's first batch, which starts every member
-        // from 0, found them past it.
+        // from 0, found them past it. #1147: a kept member's row stays, because it's what the replay skips it to.
         var filter = source == null
             ? ProgressionFilterFor(subscriptionName)
             : ProgressionNameFilter.For(ProgressionRootsFor(subscriptionName)
-                .Concat(CompositeMemberShardIdentities(source))
+                .Concat(CompositeMemberShardIdentities(tornDown))
                 .Distinct()
                 .ToArray());
 
@@ -1353,10 +1396,11 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
 
         // #871 item 1: a rebuild replays everything, so a dead letter is rewritten if its event still fails
         // and is stale if it no longer does. Mirrors Marten's teardownProjectionStorage, which does this for
-        // a composite and for each of its members.
+        // a composite and for each of its members. #1147: not a kept member's, whose replay skips the events they're
+        // about, so nothing would park them again.
         string[] names = source == null
             ? [subscriptionName]
-            : WithCompositeMembers(source).Select(x => x.Name).Distinct().ToArray();
+            : tornDown.Select(x => x.Name).Distinct().ToArray();
 
         foreach (var name in names)
         {

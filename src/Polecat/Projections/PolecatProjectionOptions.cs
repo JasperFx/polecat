@@ -190,9 +190,16 @@ public class PolecatProjectionOptions
 
         // #1089, as Marten: every member takes the composite's version, so bumping the composite gives each
         // member its own progression row and, above version 1, its own document table.
-        foreach (var member in composite.AllProjections())
+        //
+        // #1147 (jasperfx#684): except with KeepUnchangedMembers on. Then each member runs under its own version, and
+        // a member is kept across a bump of the composite by keeping its version, which it couldn't do if it took the
+        // composite's. You bump the members you changed as well as the composite.
+        if (!composite.MembersKeepTheirOwnVersions)
         {
-            member.OverwriteVersion(composite.Version);
+            foreach (var member in composite.AllProjections())
+            {
+                member.OverwriteVersion(composite.Version);
+            }
         }
 
         composite.AssembleAndAssertValidity();
