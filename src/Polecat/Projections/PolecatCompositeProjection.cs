@@ -102,7 +102,7 @@ public class PolecatCompositeProjection : CompositeProjection<IDocumentSession, 
                 $"Please use composite.Add() instead to register {typeof(T).FullNameInCode()}.");
         }
 
-        var identityType = new DocumentMapping(typeof(T), _options).IdType;
+        var identityType = new DocumentMapping(typeof(T), _options).AggregateIdType;
         var source = typeof(SingleStreamProjection<,>).CloseAndBuildAs<ProjectionBase>(typeof(T), identityType);
         source.Lifecycle = ProjectionLifecycle.Async;
         source.AssembleAndAssertValidity();

@@ -1015,7 +1015,7 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
 
         try
         {
-            return new DocumentMapping(aggregateType, _options).IdType;
+            return new DocumentMapping(aggregateType, _options).AggregateIdType;
         }
         catch (InvalidOperationException e)
         {

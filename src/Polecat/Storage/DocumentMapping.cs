@@ -270,6 +270,20 @@ internal class DocumentMapping
     public Type InnerIdType => ValueTypeId?.SimpleType ?? IdType;
 
     /// <summary>
+    ///     The identity type a <c>SingleStreamProjection&lt;TDoc, TId&gt;</c> over this document closes
+    ///     over: <see cref="IdType" /> with any <see cref="Nullable{T}" /> unwrapped.
+    /// </summary>
+    /// <remarks>
+    ///     #1135: an aggregate whose id is a nullable strong-typed id (<c>OrderId? Id</c>) was refused at
+    ///     registration, because the projection was closed over <c>Nullable&lt;OrderId&gt;</c> and its
+    ///     identity source cannot treat <c>Nullable&lt;T&gt;</c> as a value type. Marten's
+    ///     <c>DocumentMapping.IdType</c> reports the member type with the nullable already unwrapped, so its
+    ///     projections close over <c>OrderId</c>. <see cref="IdType" /> itself keeps the declared type,
+    ///     which the document storage depends on.
+    /// </remarks>
+    internal Type AggregateIdType => Nullable.GetUnderlyingType(IdType) ?? IdType;
+
+    /// <summary>
     ///     Non-null when the Id property is a strongly typed value wrapper.
     /// </summary>
     public ValueTypeInfo? ValueTypeId { get; }
