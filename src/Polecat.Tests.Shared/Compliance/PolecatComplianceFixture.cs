@@ -444,7 +444,8 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
     ///     jasperfx 3.13 (marten 696141240). False because it is <b>not built yet</b>, not a divergence: Polecat
     ///     has no <c>[MappedNaturalKey&lt;T&gt;]</c> / <c>[NaturalKey(SourceProjection = ...)]</c> resolution
     ///     through the owning aggregate's lookup. <c>MappedNaturalKeyCompliance</c> and the mapped facts of
-    ///     <c>NaturalKeyRegistrationCompliance</c> skip until it is.
+    ///     <c>NaturalKeyRegistrationCompliance</c> skip until it is. Tracked by polecat#1131, which ports
+    ///     Marten 10's natural key work.
     /// </summary>
     public override bool SupportsMappedNaturalKeys => false;
 
