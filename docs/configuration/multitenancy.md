@@ -360,20 +360,44 @@ dynamic source. Single-database stores and static `MultiTenantedDatabases()` sto
 to a read-only tenant list.
 :::
 
-Two caveats:
+#### When the tenancy isn't known at registration
 
-- The auto-assign overload, `Task<string> AddTenantAsync(string tenantId, CancellationToken)`, throws
-  `NotSupportedException`. Database-per-tenant has no pool for Polecat to assign from, so the caller
-  must supply a connection string via `AddTenantAsync(tenantId, connectionValue)`. CritterWatch treats
-  an empty connection string as "auto-assign" and skips sources that throw.
-- The `AddPolecat(Func<IServiceProvider, StoreOptions>)` overload cannot inspect the tenancy while the
-  container is still being assembled, so it does not auto-register the source. Configure the store with
-  one of the other `AddPolecat` overloads, or register it yourself:
+`AddPolecat()` can only see the tenancy when you hand it the configuration directly. Three forms configure
+the store later, when it's first built, so Polecat can't tell at registration whether the tenancy will be
+dynamic:
 
-  ```cs
-  services.AddSingleton<IDynamicTenantSource<string>>(sp =>
-      (IDynamicTenantSource<string>)((DocumentStore)sp.GetRequiredService<IDocumentStore>()).Options.Tenancy!);
-  ```
+- `AddPolecat(Func<IServiceProvider, StoreOptions>)`
+- tenancy set through `ConfigurePolecat()`
+- an ancillary store, `AddPolecatStore<T>()`
+
+Those opt in with `ExposeDynamicTenantSource()` on the expression they return:
+
+<!-- snippet: sample_polecat_expose_dynamic_tenant_source -->
+<a id='snippet-sample_polecat_expose_dynamic_tenant_source'></a>
+```cs
+services.AddPolecat(sp =>
+{
+    var opts = new StoreOptions { ConnectionString = connectionString };
+    opts.MultiTenantedMasterTable(controlPlaneConnectionString);
+    return opts;
+})
+// Polecat can't see this tenancy until the store is built, so ask for it
+.ExposeDynamicTenantSource();
+```
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.DocumentDbTests/DependencyInjection/dynamic_tenant_source_registration_tests.cs#L106-L117' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_expose_dynamic_tenant_source' title='Start of snippet'>anchor</a></sup>
+<!-- endSnippet -->
+
+`AddPolecatStore<T>().ExposeDynamicTenantSource()` does the same for an ancillary store. The source is
+resolved from the built store, so it's whatever tenancy the configuration ended in. If that turns out not
+to be a dynamic one, resolving it throws an `InvalidOperationException` rather than handing consumers a
+`null`. Calling it on a store that already exposes its tenancy is harmless and registers it once.
+
+#### Caveats
+
+The auto-assign overload, `Task<string> AddTenantAsync(string tenantId, CancellationToken)`, throws
+`NotSupportedException`. Database-per-tenant has no pool for Polecat to assign from, so the caller
+must supply a connection string via `AddTenantAsync(tenantId, connectionValue)`. CritterWatch treats
+an empty connection string as "auto-assign" and skips sources that throw.
 
 Hard-deleting the physical tenant database is out of scope for this abstraction — SQL Server needs
 `ALTER DATABASE ... SET SINGLE_USER WITH ROLLBACK IMMEDIATE` before `DROP DATABASE`, and that is the

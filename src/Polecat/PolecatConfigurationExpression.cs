@@ -22,6 +22,26 @@ public class PolecatConfigurationExpression
     public IServiceCollection Services { get; }
 
     /// <summary>
+    ///     Expose this store's dynamic tenancy (master table) as
+    ///     <see cref="JasperFx.MultiTenancy.IDynamicTenantSource{T}">IDynamicTenantSource&lt;string&gt;</see>, which
+    ///     store-agnostic tenant administration (CritterWatch, for example) resolves through <c>GetServices()</c>.
+    ///     It's resolved lazily from the built store, and resolving it throws if the store's tenancy turns out not to
+    ///     be dynamic.
+    /// </summary>
+    /// <remarks>
+    ///     #1144 (marten#6190): <c>AddPolecat(StoreOptions)</c>, <c>AddPolecat(Action&lt;StoreOptions&gt;)</c> and
+    ///     <c>AddPolecat(string)</c> expose a dynamic tenancy on their own, because the tenancy is known when they
+    ///     run. Call this when it isn't: the store is configured with
+    ///     <c>AddPolecat(Func&lt;IServiceProvider, StoreOptions&gt;)</c>, or its tenancy is set through
+    ///     <c>ConfigurePolecat()</c>. Calling it where the store already exposes its tenancy is harmless.
+    /// </remarks>
+    public PolecatConfigurationExpression ExposeDynamicTenantSource()
+    {
+        PolecatServiceCollectionExtensions.RegisterDynamicTenantSource<IDocumentStore>(Services);
+        return this;
+    }
+
+    /// <summary>
     ///     Take the store's connection string from the <see cref="Microsoft.Data.SqlClient.SqlConnection" />
     ///     registered in the container, which is what Aspire's <c>AddSqlServerClient</c> (or
     ///     <c>AddKeyedSqlServerClient</c>, with <paramref name="serviceKey" />) provides. Runs when the store

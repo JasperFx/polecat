@@ -166,6 +166,24 @@ public class PolecatStoreExpression<T> where T : class, IDocumentStore
     public IServiceCollection Services { get; }
 
     /// <summary>
+    ///     Expose this store's dynamic tenancy (master table) as
+    ///     <see cref="JasperFx.MultiTenancy.IDynamicTenantSource{T}">IDynamicTenantSource&lt;string&gt;</see>, which
+    ///     store-agnostic tenant administration (CritterWatch, for example) resolves through <c>GetServices()</c>.
+    ///     It's resolved lazily from the built store, and resolving it throws if the store's tenancy turns out not to
+    ///     be dynamic.
+    /// </summary>
+    /// <remarks>
+    ///     #1144 (marten#6190): an ancillary store is configured lazily, so Polecat can't tell when it's registered
+    ///     whether its tenancy will be dynamic, and registering it for every store would hand those consumers a
+    ///     source that isn't one.
+    /// </remarks>
+    public PolecatStoreExpression<T> ExposeDynamicTenantSource()
+    {
+        PolecatServiceCollectionExtensions.RegisterDynamicTenantSource<T>(Services);
+        return this;
+    }
+
+    /// <summary>
     ///     Run the async projection daemon for this store in this host, through this store's own
     ///     projection coordinator. See <see cref="PolecatConfigurationExpression.AddAsyncDaemon" />.
     /// </summary>
