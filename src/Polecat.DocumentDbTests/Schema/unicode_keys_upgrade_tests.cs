@@ -17,19 +17,24 @@ public record UnicodeTicketRetitled(string Title);
 
 public record UnicodeTag(string Value);
 
+/// <summary>
+///     A string store refuses a bare <c>string</c> natural key, because fetching by it would fetch by stream key.
+/// </summary>
+public record UnicodeTicketCode(string Value);
+
 public partial class UnicodeTicket
 {
     public string Id { get; set; } = string.Empty;
 
     [NaturalKey]
-    public string Code { get; set; } = string.Empty;
+    public UnicodeTicketCode? Code { get; set; }
 
     public string Title { get; set; } = string.Empty;
 
     [NaturalKeySource]
     public void Apply(UnicodeTicketOpened e)
     {
-        Code = e.Code;
+        Code = new UnicodeTicketCode(e.Code);
         Title = e.Title;
     }
 
@@ -170,14 +175,14 @@ public class unicode_keys_upgrade_tests : IAsyncLifetime
         state.ShouldNotBeNull();
         state.Key.ShouldBe($"ticket {key}");
 
-        (await session.Events.FetchLatest<UnicodeTicket, string>($"code {key}", Ct))!.Title.ShouldBe($"title {key}");
-        (await session.LoadAsync<UnicodeTicket>($"ticket {key}", Ct))!.Code.ShouldBe($"code {key}");
+        (await session.Events.FetchLatest<UnicodeTicket, UnicodeTicketCode>(new($"code {key}"), Ct))!.Title.ShouldBe($"title {key}");
+        (await session.LoadAsync<UnicodeTicket>($"ticket {key}", Ct))!.Code!.Value.ShouldBe($"code {key}");
 
         var tagged = await session.Events.QueryByTagsAsync(new EventTagQuery().Or(new UnicodeTag($"tag {key}")), Ct);
         tagged.Select(x => x.StreamKey).ShouldBe([$"ticket {key}"]);
 
         // A write against what was there, so the boundary row and the natural key row are used as well
-        var stream = await session.Events.FetchForWriting<UnicodeTicket, string>($"code {key}", Ct);
+        var stream = await session.Events.FetchForWriting<UnicodeTicket, UnicodeTicketCode>(new($"code {key}"), Ct);
         stream.AppendOne(new UnicodeTicketRetitled($"retitled {key}"));
         await session.SaveChangesAsync(Ct);
 

@@ -62,20 +62,26 @@ public partial class ParkedMappedGuidCounter
     }
 }
 
+/// <summary>
+///     A string store refuses a bare <c>string</c> natural key, because fetching by it would fetch by stream key, so the
+///     string twin wraps its key.
+/// </summary>
+public record ParkCode(string Value);
+
 /// <summary>The string stream twin of <see cref="ParkedKeyedGuidCounter" />.</summary>
 public partial class ParkedKeyedStringCounter
 {
     public string Id { get; set; } = string.Empty;
 
     [NaturalKey]
-    public string Code { get; set; } = string.Empty;
+    public ParkCode? Code { get; set; }
 
     public int Ticks { get; set; }
 
     public static ParkedKeyedStringCounter Create(IEvent<ParkStarted> e) => new() { Id = e.StreamKey! };
 
     [NaturalKeySource]
-    public void Apply(ParkKeyAssigned e) => Code = e.Code;
+    public void Apply(ParkKeyAssigned e) => Code = new ParkCode(e.Code);
 
     public void Apply(ParkTicked e) => Ticks++;
 

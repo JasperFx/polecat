@@ -189,7 +189,7 @@ public class unicode_keys_tests : IAsyncLifetime
         (await query.LoadAsync<Приложение>($"sub {Key}", Ct))!.Note.ShouldBe("note");
         (await query.Query<Документ>().Where(x => x.Id == $"doc {Key}").ToListAsync(Ct)).Single().Name.ShouldBe("root");
         (await query.Events.FetchStreamAsync($"ticket {Key}", token: Ct)).Count.ShouldBe(2);
-        (await query.Events.FetchLatest<UnicodeTicket, string>($"code {Key}", Ct))!.Id.ShouldBe($"ticket {Key}");
+        (await query.Events.FetchLatest<UnicodeTicket, UnicodeTicketCode>(new($"code {Key}"), Ct))!.Id.ShouldBe($"ticket {Key}");
         (await query.Events.QueryByTagsAsync(new EventTagQuery().Or(new UnicodeTag($"tag {Key}")), Ct)).Count.ShouldBe(1);
 
         // Another tenant's id that varchar would have made the same ?? is somebody else
